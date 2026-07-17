@@ -3,7 +3,7 @@ import {
   getPaginatedCosmetics,
   grantCosmeticsToUsers,
   insertUserCosmeticGrant,
-} from './cosmetics.db';
+} from './cosmetic.db';
 import { explainHarness } from './test/harness';
 
 // DB-backed tier: EXPLAIN (no ANALYZE) each ported query against the live schema — validates that the

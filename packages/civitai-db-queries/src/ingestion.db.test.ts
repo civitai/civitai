@@ -4,6 +4,7 @@ import {
   countImagesPendingIngestion,
   getImagesPendingIngestion,
   getIngestionErrorImages,
+  getIngestionResults,
   resolveIngestionError,
 } from './ingestion.db';
 import { compileHarness } from './test/harness';
@@ -93,7 +94,7 @@ describe('applyIngestionErrorResolution', () => {
     const update = harness.queries[0];
     expect(update.sql).toBe(
       'update "Image" set "nsfwLevel" = $1, "nsfwLevelLocked" = $2, "ingestion" = $3, ' +
-        '"scannedAt" = $4, "metadata" = $5::jsonb where "id" = $6'
+        '"scannedAt" = $4, "metadata" = $5::jsonb, "updatedAt" = $6 where "id" = $7'
     );
     expect(update.parameters[0]).toBe(4);
     expect(update.parameters[1]).toBe(true);
@@ -102,7 +103,8 @@ describe('applyIngestionErrorResolution', () => {
     expect(update.parameters[4]).toBe(
       JSON.stringify({ existing: true, nsfwLevelReason: 'Moderator ingestion error review' })
     );
-    expect(update.parameters[5]).toBe(42);
+    expect(update.parameters[5]).toBeInstanceOf(Date); // updatedAt, plugin-stamped
+    expect(update.parameters[6]).toBe(42);
 
     const rollup = harness.queries[1];
     expect(rollup.sql).toBe('SELECT update_post_nsfw_levels(ARRAY[$1]::int[])');
@@ -120,6 +122,44 @@ describe('applyIngestionErrorResolution', () => {
     expect(harness.queries).toHaveLength(1);
     expect(harness.queries[0].sql).toContain('update "Image"');
     expect(harness.lastQuery().sql).not.toContain('update_post_nsfw_levels');
+  });
+});
+
+describe('getIngestionResults', () => {
+  it('short-circuits an empty id list without touching the DB', async () => {
+    const result = await getIngestionResults(harness.db, { ids: [] });
+    expect(result).toEqual({});
+    expect(harness.queries).toHaveLength(0);
+  });
+
+  it('reads images then composite tags (score > 0 or Moderation, score desc), no votes without userId', async () => {
+    await getIngestionResults(harness.db, { ids: [1, 2, 3] });
+
+    expect(harness.queries).toHaveLength(2);
+    expect(harness.queries[0].sql).toBe(
+      'select "id", "ingestion", "blockedFor" from "Image" where "id" in ($1, $2, $3)'
+    );
+    expect(harness.queries[0].parameters).toEqual([1, 2, 3]);
+
+    const tags = harness.queries[1];
+    expect(tags.sql).toBe(
+      'select "imageId", "tagId", "tagName", "tagType", "tagNsfwLevel", "score", "upVotes", ' +
+        '"downVotes", "automated", "needsReview", "concrete", "lastUpvote", "source" ' +
+        'from "ImageTag" where "imageId" in ($1, $2, $3) and ("score" > $4 or "tagType" = $5) ' +
+        'order by "score" desc'
+    );
+    expect(tags.parameters).toEqual([1, 2, 3, 0, 'Moderation']);
+  });
+
+  it('reads the caller votes when userId is given', async () => {
+    await getIngestionResults(harness.db, { ids: [1, 2], userId: 99 });
+
+    expect(harness.queries).toHaveLength(3);
+    const votes = harness.lastQuery();
+    expect(votes.sql).toBe(
+      'select "tagId", "vote" from "TagsOnImageVote" where "imageId" in ($1, $2) and "userId" = $3'
+    );
+    expect(votes.parameters).toEqual([1, 2, 99]);
   });
 });
 

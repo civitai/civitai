@@ -3,7 +3,7 @@ import {
   getPaginatedCosmetics,
   grantCosmeticsToUsers,
   insertUserCosmeticGrant,
-} from './cosmetics.db';
+} from './cosmetic.db';
 import { compileHarness } from './test/harness';
 
 const harness = compileHarness();

@@ -1,11 +1,20 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  clearArticleModeratorLevel,
   computeArticleDerivedNsfwLevel,
+  countArticleProblematicContentImages,
   getArticleCoverImages,
+  getArticleForRatingReview,
   getArticleLockState,
+  getArticleRatingReviewById,
   getArticleRatingReviewCounts,
   getArticleRatingReviewForResolve,
   getArticleRatingReviews,
+  getLastResolvedArticleRatingReview,
+  getLatestArticleRatingReview,
+  getPendingArticleRatingReviewByArticle,
+  insertArticleRatingReview,
+  insertAutoResolvedArticleRatingReview,
   setArticleModeratorLevel,
   setArticleRatingReviewResolved,
 } from './article-rating-review.db';
@@ -66,6 +75,69 @@ describe.skipIf(!h.hasDb)('article-rating-review queries EXPLAIN against the rea
       appliedLevel: 4,
       basis: 0,
       lockedProperties: ['userNsfwLevel'],
+    });
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getArticleForRatingReview plans', async () => {
+    await getArticleForRatingReview(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getPendingArticleRatingReviewByArticle plans', async () => {
+    await getPendingArticleRatingReviewByArticle(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getLastResolvedArticleRatingReview plans', async () => {
+    await getLastResolvedArticleRatingReview(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getLatestArticleRatingReview plans', async () => {
+    await getLatestArticleRatingReview(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('countArticleProblematicContentImages plans', async () => {
+    await countArticleProblematicContentImages(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('insertArticleRatingReview plans (write, not executed)', async () => {
+    await insertArticleRatingReview(h.db, {
+      articleId: -1,
+      userId: -1,
+      currentLevel: 8,
+      suggestedLevel: 2,
+      userComment: null,
+    }).catch(() => {});
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getArticleRatingReviewById plans', async () => {
+    await getArticleRatingReviewById(h.db, -1).catch(() => {});
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('insertAutoResolvedArticleRatingReview plans (write, not executed)', async () => {
+    await insertAutoResolvedArticleRatingReview(h.db, {
+      articleId: -1,
+      userId: -1,
+      currentLevel: 8,
+      suggestedLevel: 2,
+      userComment: null,
+      resolvedBy: -1,
+      modComment: 'Auto-approved: rescan matched requested rating',
+    }).catch(() => {});
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('clearArticleModeratorLevel plans (write, not executed)', async () => {
+    await clearArticleModeratorLevel(h.db, {
+      articleId: -1,
+      userNsfwLevel: 2,
+      lockedProperties: [],
     });
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });

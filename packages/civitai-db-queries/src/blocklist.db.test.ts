@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getBlocklist, removeBlocklistItems, upsertBlocklist } from './blocklist.db';
+import {
+  getBlocklist,
+  getBlocklistData,
+  removeBlocklistItems,
+  upsertBlocklist,
+} from './blocklist.db';
 import { compileHarness } from './test/harness';
 
 const harness = compileHarness();
@@ -15,6 +20,21 @@ describe('getBlocklist', () => {
 
     expect(sql).toBe('select "id", "type", "data" from "Blocklist" where "type" = $1 limit $2');
     expect(parameters).toEqual(['email', 1]);
+  });
+});
+
+describe('getBlocklistData', () => {
+  it('selects just the data column for a type (the enforcement read core)', async () => {
+    await getBlocklistData(harness.db, { type: 'linkDomain' });
+    const { sql, parameters } = harness.lastQuery();
+
+    expect(sql).toBe('select "data" from "Blocklist" where "type" = $1 limit $2');
+    expect(parameters).toEqual(['linkDomain', 1]);
+  });
+
+  it('runs exactly one query (no redis cache read ported)', async () => {
+    await getBlocklistData(harness.db, { type: 'messagePattern' });
+    expect(harness.queries).toHaveLength(1);
   });
 });
 

@@ -9,12 +9,10 @@ import {
   getPendingImageAppealAppellants,
   recomputeImageNsfwLevel,
   setImageAccepted,
-  setImageAppealRejected,
   setImageAppealRestored,
-  setImageAppealStatus,
   setImageBlocked,
   setImageNsfwLevel,
-  setImageRatingRequestsResolved,
+  toggleImageFlag,
 } from './image-moderation.db';
 import { explainHarness } from './test/harness';
 
@@ -91,28 +89,8 @@ describe.skipIf(!h.hasDb)('image-moderation queries EXPLAIN against the real sch
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 
-  it('setImageAppealStatus plans, no resolvedMessage (write, not executed)', async () => {
-    await setImageAppealStatus(h.db, { imageId: -1, status: 'Approved', userId: -1 });
-    expect((await h.explainLast()).length).toBeGreaterThan(0);
-  });
-
-  it('setImageAppealStatus plans, with resolvedMessage (write, not executed)', async () => {
-    await setImageAppealStatus(h.db, {
-      imageId: -1,
-      status: 'Rejected',
-      userId: -1,
-      resolvedMessage: null,
-    });
-    expect((await h.explainLast()).length).toBeGreaterThan(0);
-  });
-
   it('setImageAppealRestored plans (write, not executed)', async () => {
     await setImageAppealRestored(h.db, -1);
-    expect((await h.explainLast()).length).toBeGreaterThan(0);
-  });
-
-  it('setImageAppealRejected plans (write, not executed)', async () => {
-    await setImageAppealRejected(h.db, -1);
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 
@@ -121,8 +99,8 @@ describe.skipIf(!h.hasDb)('image-moderation queries EXPLAIN against the real sch
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 
-  it('setImageRatingRequestsResolved plans (write, not executed)', async () => {
-    await setImageRatingRequestsResolved(h.db, { imageId: -1, status: 'Actioned' });
+  it('toggleImageFlag plans the SET flag = NOT flag update (write, not executed)', async () => {
+    await toggleImageFlag(h.db, { id: -1, flag: 'poi' });
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 });

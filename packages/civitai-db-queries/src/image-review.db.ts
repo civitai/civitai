@@ -210,6 +210,54 @@ export async function getImageReviewCounts(db: Kysely<DB>): Promise<Record<strin
   return Object.fromEntries(rows.map((r) => [r.needsReview!, Number(r.count)]));
 }
 
+export type ImageModRule = {
+  id: number;
+  definition: unknown;
+  action: DB['ModerationRule']['action'];
+  reason: string | null;
+};
+
+// The enabled Image ModerationRules, in evaluation order — the ruleset the ingestion/mod pipeline matches an
+// image against. The app cached this (fetchThroughCache); the cache is DROPPED here (the caller owns caching),
+// leaving the pure read.
+export async function getImagesModRules(db: Kysely<DB>): Promise<ImageModRule[]> {
+  return db
+    .selectFrom('ModerationRule')
+    .select(['id', 'definition', 'action', 'reason'])
+    .where('entityType', '=', 'Image')
+    .where('enabled', '=', true)
+    .orderBy('order', 'asc')
+    .execute();
+}
+
+export type ModeratorPOITag = { id: number; name: string; count: number };
+
+// Per-tag counts of images awaiting POI review, for tags that descend from the `real person` tag. A
+// MATERIALIZED CTE resolves the real-person tag set first, then rolls up `needsReview='poi'` images by tag,
+// most-common first. Kept as raw sql (bit-agnostic rollup, ORDER BY ordinal).
+export async function getModeratorPOITags(db: Kysely<DB>): Promise<ModeratorPOITag[]> {
+  const result = await sql<ModeratorPOITag>`
+    WITH real_person_tags AS MATERIALIZED (
+      SELECT t.id, t.name
+      FROM "TagsOnTags" tot
+      JOIN "Tag" t ON t.id = tot."toTagId"
+      JOIN "Tag" f ON f.id = tot."fromTagId"
+      WHERE f.name = 'real person'
+    )
+    SELECT
+      rpt.id,
+      rpt.name,
+      CAST(COUNT(i.id) as int) as count
+    FROM "Image" i
+    JOIN "TagsOnImageNew" toi ON toi."imageId" = i.id
+    JOIN real_person_tags rpt ON rpt.id = toi."tagId"
+    WHERE i."needsReview" = 'poi'
+    GROUP BY rpt.id, rpt.name
+    ORDER BY 3 DESC
+  `.execute(db);
+  return result.rows;
+}
+
 export type ReportedImageItem = {
   id: number;
   url: string;

@@ -4,6 +4,7 @@ import {
   countImagesPendingIngestion,
   getImagesPendingIngestion,
   getIngestionErrorImages,
+  getIngestionResults,
   resolveIngestionError,
 } from './ingestion.db';
 import { explainHarness } from './test/harness';
@@ -41,6 +42,14 @@ describe.skipIf(!h.hasDb)('ingestion queries EXPLAIN against the real schema', (
     });
     const plans = await h.explainAll();
     expect(plans).toHaveLength(2); // the UPDATE and the update_post_nsfw_levels(...) call
+    for (const plan of plans) expect(plan.length).toBeGreaterThan(0);
+  });
+
+  it('getIngestionResults plans the image, tag, and vote queries against the real schema', async () => {
+    h.queries.length = 0;
+    await getIngestionResults(h.db, { ids: [-1, -2], userId: -1 });
+    const plans = await h.explainAll();
+    expect(plans).toHaveLength(3); // images, composite tags, caller votes
     for (const plan of plans) expect(plan.length).toBeGreaterThan(0);
   });
 

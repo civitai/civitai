@@ -1,5 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { getTagRules, upsertTagsOnImageNew } from './tags-on-image.db';
+import {
+  deleteTagsOnImageNew,
+  getTagRules,
+  insertTagsOnImageNew,
+  upsertTagsOnImageNew,
+} from './tags-on-image.db';
 import { explainHarness } from './test/harness';
 
 // DB-backed tier: EXPLAIN (no ANALYZE) each ported query against the live schema — parses + plans without
@@ -26,6 +31,26 @@ describe.skipIf(!h.hasDb)('tags-on-image queries EXPLAIN against the real schema
     ]);
     const plans = await h.explainAll();
     expect(plans).toHaveLength(2); // the upsert proc call + the nsfw recompute proc call
+    for (const plan of plans) expect(plan.length).toBeGreaterThan(0);
+  });
+
+  it('insertTagsOnImageNew plans: VALUES→insert_tag_on_image and update_nsfw_levels_new (writes, not executed)', async () => {
+    await insertTagsOnImageNew(h.db, [
+      { imageId: -1, tagId: -1, source: 'Rekognition', confidence: 80, automated: true },
+      { imageId: -2, tagId: -2, disabled: true, needsReview: false },
+    ]);
+    const plans = await h.explainAll();
+    expect(plans).toHaveLength(2); // the insert proc call + the nsfw recompute proc call
+    for (const plan of plans) expect(plan.length).toBeGreaterThan(0);
+  });
+
+  it('deleteTagsOnImageNew plans: VALUES delete and update_nsfw_levels_new (writes, not executed)', async () => {
+    await deleteTagsOnImageNew(h.db, [
+      { imageId: -1, tagId: -1 },
+      { imageId: -2, tagId: -2 },
+    ]);
+    const plans = await h.explainAll();
+    expect(plans).toHaveLength(2); // the delete + the nsfw recompute proc call
     for (const plan of plans) expect(plan.length).toBeGreaterThan(0);
   });
 });

@@ -3,7 +3,9 @@ import {
   getAppealImageQueue,
   getImageReviewCounts,
   getImageReviewQueue,
+  getImagesModRules,
   getModerationRuleDefinitions,
+  getModeratorPOITags,
   getReportedImageQueue,
   getReviewQueueTags,
 } from './image-review.db';
@@ -53,6 +55,16 @@ describe.skipIf(!h.hasDb)('image-review queries EXPLAIN against the real schema'
 
   it('getAppealImageQueue plans', async () => {
     await getAppealImageQueue(h.db, { browsingLevel: 31, cursor: 1_000_000, limit: 20 });
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getImagesModRules plans', async () => {
+    await getImagesModRules(h.db);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getModeratorPOITags plans', async () => {
+    await getModeratorPOITags(h.db);
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 });

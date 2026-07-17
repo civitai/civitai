@@ -7,6 +7,10 @@ import { toJson } from './infra/helpers';
 // needs no separate enum/type import.
 type ImageRow = Selectable<DB['Image']>;
 type MediaTypeValue = ImageRow['type'];
+type ImageIngestionStatusValue = ImageRow['ingestion'];
+type ImageTagRow = Selectable<DB['ImageTag']>;
+type TagTypeValue = ImageTagRow['tagType'];
+type TagSourceValue = ImageTagRow['source'];
 
 export type PendingIngestionImage = {
   id: number;
@@ -173,4 +177,116 @@ export async function resolveIngestionError(
     postId: image.postId,
     existingMetadata: image.metadata,
   });
+}
+
+// --- Ingestion status report for a set of image ids (getIngestionResults) ---
+
+export type IngestionResultTag = {
+  id: number;
+  name: string;
+  type: TagTypeValue;
+  nsfwLevel: number;
+  score: number;
+  upVotes: number;
+  downVotes: number;
+  automated: boolean;
+  needsReview: boolean;
+  concrete: boolean;
+  lastUpvote: Date | null;
+  source: TagSourceValue;
+  vote?: number;
+};
+
+export type IngestionResult = {
+  ingestion: ImageIngestionStatusValue;
+  blockedFor?: string;
+  tags?: IngestionResultTag[];
+};
+
+// Per-image ingestion status plus votable tags, keyed by image id — the ingestion-results endpoint payload.
+// A blocked image reports its `blockedFor` reason and no tags. Tags are the composite rows scoring > 0 or of
+// the Moderation type, newest-scoring first; when `userId` is given, the caller's own votes are overlaid.
+// Guards the empty id list. Pure read + shape — no cache.
+export async function getIngestionResults(
+  db: Kysely<DB>,
+  { ids, userId }: { ids: number[]; userId?: number }
+): Promise<Record<number, IngestionResult>> {
+  if (!ids.length) return {};
+
+  const images = await db
+    .selectFrom('Image')
+    .select(['id', 'ingestion', 'blockedFor'])
+    .where('id', 'in', ids)
+    .execute();
+
+  const tagRows = await db
+    .selectFrom('ImageTag')
+    .select([
+      'imageId',
+      'tagId',
+      'tagName',
+      'tagType',
+      'tagNsfwLevel',
+      'score',
+      'upVotes',
+      'downVotes',
+      'automated',
+      'needsReview',
+      'concrete',
+      'lastUpvote',
+      'source',
+    ])
+    .where('imageId', 'in', ids)
+    .where((eb) => eb.or([eb('score', '>', 0), eb('tagType', '=', 'Moderation')]))
+    .orderBy('score', 'desc')
+    .execute();
+
+  const tagsByImage = new Map<number, IngestionResultTag[]>();
+  for (const row of tagRows) {
+    const tag: IngestionResultTag = {
+      id: row.tagId,
+      name: row.tagName,
+      type: row.tagType,
+      nsfwLevel: row.tagNsfwLevel,
+      score: row.score,
+      upVotes: row.upVotes,
+      downVotes: row.downVotes,
+      automated: row.automated,
+      needsReview: row.needsReview,
+      concrete: row.concrete,
+      lastUpvote: row.lastUpvote,
+      source: row.source,
+    };
+    const list = tagsByImage.get(row.imageId);
+    if (list) list.push(tag);
+    else tagsByImage.set(row.imageId, [tag]);
+  }
+
+  const dictionary: Record<number, IngestionResult> = {};
+  for (const image of images) {
+    const blockedFor = image.blockedFor ?? undefined;
+    dictionary[image.id] = {
+      ingestion: image.ingestion,
+      blockedFor,
+      tags: blockedFor ? undefined : tagsByImage.get(image.id) ?? [],
+    };
+  }
+
+  if (userId) {
+    const votes = await db
+      .selectFrom('TagsOnImageVote')
+      .select(['tagId', 'vote'])
+      .where('imageId', 'in', ids)
+      .where('userId', '=', userId)
+      .execute();
+    const voteByTagId = new Map(votes.map((v) => [v.tagId, v.vote]));
+    for (const key of Object.keys(dictionary)) {
+      for (const tag of dictionary[Number(key)].tags ?? []) {
+        const vote = voteByTagId.get(tag.id);
+        if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
+      }
+    }
+  }
+
+  return dictionary;
 }

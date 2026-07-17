@@ -26,6 +26,24 @@ export async function getBlocklist(
   return row ?? { type, data: [] };
 }
 
+// Just the item array for a type (empty when the type has no blocklist). This is the enforcement read core
+// shared by throwOnBlockedLinkDomain / throwOnBlockedMessagePattern / getBlockedEmailDomains — they differ
+// only in the `type` constant they pass (LinkDomain / MessagePattern / EmailDomain) and in the throw logic
+// the caller layers on top. The redis cache in front of this stays with the caller.
+export async function getBlocklistData(
+  db: Kysely<DB>,
+  { type }: { type: string }
+): Promise<string[]> {
+  const row = await db
+    .selectFrom('Blocklist')
+    .select('data')
+    .where('type', '=', type)
+    .limit(1)
+    .executeTakeFirst();
+
+  return row?.data ?? [];
+}
+
 // Insert a new blocklist (no id) or merge items into an existing one (union with the current data). Items are
 // lowercased and empties dropped, matching the source. Returns the written row so the caller can refresh cache.
 export async function upsertBlocklist(
@@ -59,7 +77,7 @@ export async function upsertBlocklist(
 
   return db
     .updateTable('Blocklist')
-    .set({ data: merged, updatedAt: new Date() })
+    .set({ data: merged })
     .where('id', '=', id)
     .returning(['id', 'type', 'data'])
     .executeTakeFirstOrThrow();
@@ -90,7 +108,7 @@ export async function removeBlocklistItems(
 
   return db
     .updateTable('Blocklist')
-    .set({ data: filtered, updatedAt: new Date() })
+    .set({ data: filtered })
     .where('id', '=', id)
     .returning(['id', 'type', 'data'])
     .executeTakeFirstOrThrow();

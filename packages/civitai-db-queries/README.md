@@ -61,6 +61,15 @@ functions (a factory object closing over every builder would defeat tree-shaking
   - **Always execute** — end the builder in `.execute()` / `.executeTakeFirst()` (or `sql\`…\`.execute(db)`) and
 return the result/`Promise`. Do **not** return an un-executed query builder for the caller to run; it
     breaks the uniform call shape and hides the execution point.
+- **Prefer a generic `update<Entity>` over narrow single-column setters.** Each entity has one
+  `update<Entity>(db, input: Updateable<DB['<Entity>']> & { id: number })` (`{ id, ...data }`), which stamps
+  `updatedAt` automatically when the table has an `@updatedAt` column, and a `update<Entity>Many(db, { ids } &
+  Updateable<…>)` bulk variant where needed (guarding the empty-id case). A trivial `SET <one column> WHERE id`
+  belongs at the call site as `updateX(db, { id, <col>: value })`, **not** a bespoke `set<Entity><Column>`
+  function. Keep a named function only when it (a) sets **two or more** columns as a specific semantic
+  transition (e.g. `setImageAppealRestored`), (b) needs a jsonb/`CASE`/expression or stored-proc write (the
+  generic sets columns raw — a jsonb column must go through `toJson()`, so it can't collapse), (c) toggles /
+  negates a column, or (d) keys on something other than `id`.
 - **Method names: `<verb><Entity>[Qualifier]`** — entity-prefixed so each name is self-identifying at the
   call site.
   - **Verbs**: `get` / `list` / `count` for reads; `set` / `upsert` / `insert` / `delete` for writes.

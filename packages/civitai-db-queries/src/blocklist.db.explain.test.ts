@@ -1,5 +1,10 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { getBlocklist, removeBlocklistItems, upsertBlocklist } from './blocklist.db';
+import {
+  getBlocklist,
+  getBlocklistData,
+  removeBlocklistItems,
+  upsertBlocklist,
+} from './blocklist.db';
 import { explainHarness } from './test/harness';
 
 // DB-backed tier: EXPLAIN (no ANALYZE) each ported query against the live schema. The query functions still
@@ -13,6 +18,11 @@ describe.skipIf(!h.hasDb)('blocklist queries EXPLAIN against the real schema', (
 
   it('getBlocklist plans against the real schema', async () => {
     await getBlocklist(h.db, { type: 'email' });
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getBlocklistData plans against the real schema', async () => {
+    await getBlocklistData(h.db, { type: 'linkDomain' });
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 

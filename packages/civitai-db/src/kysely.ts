@@ -1,4 +1,4 @@
-import { Kysely, PostgresDialect } from 'kysely';
+import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { Pool, types, type PoolConfig } from 'pg';
 
 // Re-export `sql` so apps build raw fragments without a direct kysely dependency — the db layer owns it.
@@ -58,6 +58,8 @@ export interface CreateKyselyClientsOptions extends PoolConfig {
    * pre-built pools are passed through untouched (configure SSL where you build them).
    */
   sslNoVerify?: boolean;
+  /** Kysely plugins installed on every client this builds (e.g. the @updatedAt auto-stamp plugin). */
+  plugins?: KyselyPlugin[];
 }
 
 export function createKyselyClients<DB>(
@@ -69,14 +71,23 @@ export function createKyselyClients<DB>(
 ): { db: Kysely<DB> } | KyselyReadWrite<DB> {
   registerNumericTypeParsers();
 
-  const { pool, readPool, replicaConnectionString, singleClient, sslNoVerify, ...poolConfig } =
-    options;
+  const {
+    pool,
+    readPool,
+    replicaConnectionString,
+    singleClient,
+    sslNoVerify,
+    plugins,
+    ...poolConfig
+  } = options;
   if (sslNoVerify && poolConfig.connectionString) {
     poolConfig.connectionString = forceSslNoVerify(poolConfig.connectionString);
   }
-  const replicaString = sslNoVerify ? forceSslNoVerify(replicaConnectionString) : replicaConnectionString;
+  const replicaString = sslNoVerify
+    ? forceSslNoVerify(replicaConnectionString)
+    : replicaConnectionString;
 
-  const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }) });
+  const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
   const primary = make(pool ?? new Pool(poolConfig));
   if (singleClient) return { db: primary };

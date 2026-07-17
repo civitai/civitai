@@ -5,6 +5,9 @@ import type { DB } from '@civitai/db-schema/kysely';
 // Image.type unwrapped from its Generated<> column wrapper, so this module needs no moderator-app type import.
 type ImageMediaType = Selectable<DB['Image']>['type'];
 
+// ImageRatingRequest.status unwrapped from its Generated<> wrapper, so this module needs no separate enum import.
+type RatingRequestStatusValue = Selectable<DB['ImageRatingRequest']>['status'];
+
 // NsfwLevel.Blocked — the browsing-level bit for blocked content. Inlined here (was NsfwLevel.Blocked in the
 // moderator source) so the module carries no shared-enum runtime dependency; interpolated as a bound param.
 const NSFW_LEVEL_BLOCKED = 32;
@@ -104,4 +107,23 @@ export async function getImageRatingReviewCount(db: Kysely<DB>): Promise<number>
       AND i."nsfwLevel" < ${NSFW_LEVEL_BLOCKED}
   `.execute(db);
   return rows[0]?.count ?? 0;
+}
+
+// Resolve an image's pending community rating requests to a final status (accompanies setImageNsfwLevel).
+export function setImageRatingRequestsResolved(
+  db: Kysely<DB>,
+  {
+    imageId,
+    status,
+  }: {
+    imageId: number;
+    status: RatingRequestStatusValue;
+  }
+) {
+  return db
+    .updateTable('ImageRatingRequest')
+    .set({ status })
+    .where('imageId', '=', imageId)
+    .where('status', '=', 'Pending')
+    .execute();
 }

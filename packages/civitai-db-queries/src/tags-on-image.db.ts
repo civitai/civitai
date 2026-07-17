@@ -62,3 +62,54 @@ export async function upsertTagsOnImageNew(db: Kysely<DB>, args: TagOnImageArgs[
     imageIds.map((id) => sql`${id}::int`)
   )}])`.execute(db);
 }
+
+// DB write core of the main-app `insertTagsOnImageNew`: same VALUES→proc shape as upsertTagsOnImageNew but
+// calls the INSERT proc (`insert_tag_on_image`) instead of the upsert, then recomputes nsfwLevel for the
+// touched images. Tag-rule expansion (applyTagRules), the concurrency Limiter, and the cache/search side
+// effects stay with the caller.
+export async function insertTagsOnImageNew(db: Kysely<DB>, args: TagOnImageArgs[]): Promise<void> {
+  if (!args.length) return;
+
+  const values = sql.join(
+    args.map(
+      (t) =>
+        sql`(${t.imageId}::int, ${t.tagId}::int, ${t.source ?? null}::"TagSource", ${
+          t.confidence ?? null
+        }::integer, ${t.automated ?? null}::boolean, ${t.disabled ?? null}::boolean, ${
+          t.needsReview ?? null
+        }::boolean)`
+    )
+  );
+  await sql`
+    SELECT insert_tag_on_image(
+      t."imageId", t."tagId", t."source", t."confidence", t."automated", t."disabled", t."needsReview"
+    )
+    FROM (VALUES ${values}) AS t("imageId", "tagId", "source", "confidence", "automated", "disabled", "needsReview")
+  `.execute(db);
+
+  const imageIds = [...new Set(args.map((x) => x.imageId))];
+  await sql`SELECT update_nsfw_levels_new(ARRAY[${sql.join(
+    imageIds.map((id) => sql`${id}::int`)
+  )}])`.execute(db);
+}
+
+// DB write core of the main-app `deleteTagsOnImageNew`: delete each (imageId, tagId) pair via a VALUES list,
+// then recompute nsfwLevel for the touched images. The concurrency Limiter and the cache/search side effects
+// stay with the caller.
+export async function deleteTagsOnImageNew(
+  db: Kysely<DB>,
+  args: { imageId: number; tagId: number }[]
+): Promise<void> {
+  if (!args.length) return;
+
+  const values = sql.join(args.map((a) => sql`(${a.imageId}::int, ${a.tagId}::int)`));
+  await sql`
+    DELETE FROM "TagsOnImageNew"
+    WHERE ("imageId", "tagId") IN (SELECT * FROM (VALUES ${values}) AS t("imageId", "tagId"))
+  `.execute(db);
+
+  const imageIds = [...new Set(args.map((x) => x.imageId))];
+  await sql`SELECT update_nsfw_levels_new(ARRAY[${sql.join(
+    imageIds.map((id) => sql`${id}::int`)
+  )}])`.execute(db);
+}

@@ -1,5 +1,6 @@
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Updateable } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { toJson } from './infra/helpers';
 
 // Query functions take a Kysely client (or transaction) as their first argument — the caller decides which
 // tier (read/write/replica) or transaction the query runs on. `Transaction<DB>` satisfies `Kysely<DB>`, so a
@@ -155,14 +156,136 @@ export async function getReports(
   return { items, totalItems, page, limit };
 }
 
-// Set a report's moderator-only internal notes.
-export function updateReportNotes(
+// One report by id (whole row). Prisma took a caller-supplied `select`; the port returns the full row and
+// lets the caller pick fields.
+export function getReportById(db: Kysely<DB>, id: number) {
+  return db.selectFrom('Report').selectAll().where('id', '=', id).executeTakeFirst();
+}
+
+// Reports by id (whole rows). Guards the empty list (Kysely compiles `in ([])` to a syntax error).
+export async function getReportByIds(db: Kysely<DB>, ids: number[]) {
+  if (!ids.length) return [];
+  return db.selectFrom('Report').selectAll().where('id', 'in', ids).execute();
+}
+
+// Generic single-report update by id (Prisma `report.update`). Report has no `@updatedAt` column, so nothing
+// to auto-stamp. jsonb `details`/other columns are the caller's responsibility to pre-wrap where needed.
+export function updateReport(db: Kysely<DB>, input: Updateable<DB['Report']> & { id: number }) {
+  const { id, ...data } = input;
+  return db.updateTable('Report').set(data).where('id', '=', id).returningAll().executeTakeFirst();
+}
+
+// Transition every Report of a given reason attached to one image (UPDATE … FROM the ImageReport join), and
+// RETURN the affected reports' id + reporter. Mirrors the raw `UPDATE "Report" r … FROM "ImageReport" i`.
+export function updateImageReportStatusByReason(
   db: Kysely<DB>,
-  input: { id: number; internalNotes: string | null }
+  input: { id: number; reason: ReportReasonValue; status: ReportStatusValue }
 ) {
   return db
-    .updateTable('Report')
-    .set({ internalNotes: input.internalNotes })
-    .where('id', '=', input.id)
+    .updateTable('Report as r')
+    .from('ImageReport as i')
+    .set({ status: input.status })
+    .whereRef('i.reportId', '=', 'r.id')
+    .where('i.imageId', '=', input.id)
+    .where('r.reason', '=', input.reason)
+    .returning(['r.id', 'r.userId'])
     .execute();
+}
+
+// The Report insert core (Prisma `report.create` sans the nested join). Report has no `@updatedAt`;
+// `createdAt`/`status`-adjacent columns default in the DB. jsonb `details` is bound via `toJson`; an undefined
+// `details` is omitted so the column default (`{}`) applies, mirroring Prisma. RETURNs the created row.
+export function insertReport(
+  db: Kysely<DB>,
+  input: {
+    userId: number;
+    reason: ReportReasonValue;
+    status: ReportStatusValue;
+    details?: unknown;
+    internalNotes?: string | null;
+  }
+) {
+  return db
+    .insertInto('Report')
+    .values({
+      userId: input.userId,
+      reason: input.reason,
+      status: input.status,
+      ...(input.details !== undefined ? { details: toJson(input.details) } : {}),
+      ...(input.internalNotes !== undefined ? { internalNotes: input.internalNotes } : {}),
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow();
+}
+
+// The per-type entity-join insert (`<Entity>Report`: `{ reportId, <x>Id }`) — the Prisma nested `[type].create`.
+// The join table/column is one of 15 (dynamic), so this uses raw sql, as `getReports` does for the same reason.
+export function insertReportEntity(
+  db: Kysely<DB>,
+  input: { type: ReportEntity; reportId: number; entityId: number }
+) {
+  const join = reportEntityJoin[input.type];
+  return sql`insert into ${sql.table(join.table)} (${sql.ref('reportId')}, ${sql.ref(
+    join.fk
+  )}) values (${input.reportId}, ${input.entityId})`.execute(db);
+}
+
+// The ImageRatingRequest branch's write: upsert the (imageId,userId) rating request, bumping `nsfwLevel` on
+// conflict. `weight` defaults to 3 (the app's value for report-derived requests). The moderated-tags lookup +
+// maxRating computation that gate this in the app stay app-side (cache dependency, not pure DB).
+export function upsertImageRatingRequest(
+  db: Kysely<DB>,
+  input: { imageId: number; userId: number; nsfwLevel: number; weight?: number }
+) {
+  return db
+    .insertInto('ImageRatingRequest')
+    .values({
+      imageId: input.imageId,
+      userId: input.userId,
+      nsfwLevel: input.nsfwLevel,
+      weight: input.weight ?? 3,
+    })
+    .onConflict((oc) =>
+      oc.columns(['imageId', 'userId']).doUpdateSet({ nsfwLevel: input.nsfwLevel })
+    )
+    .execute();
+}
+
+export type CreateReportInput = {
+  userId: number;
+  type: ReportEntity;
+  entityId: number;
+  reason: ReportReasonValue;
+  status: ReportStatusValue;
+  details?: unknown;
+  internalNotes?: string | null;
+  // The ImageRatingRequest branch (NSFW image/model reports): when the caller has determined — via the
+  // moderated-tags cache, which stays app-side — that the reported tags imply a higher rating than the image
+  // currently has, it passes this so the same transaction upserts the rating request and unlocks the image.
+  imageRating?: { imageId: number; userId: number; nsfwLevel: number; weight?: number };
+};
+
+// Insert a Report plus its per-type entity-join row in one transaction (the Prisma nested-create decomposed
+// per the package's transaction convention), optionally running the ImageRatingRequest branch (upsert rating
+// request + unlock the image). Side effects on other domains (tag votes, buzz, notifications, imageEngagement
+// hide, the CSAM cascade, search-index sync) and the post-commit article-nsfw recompute are DROPPED — the
+// caller owns those. Returns the created Report row.
+export function createReport(db: Kysely<DB>, input: CreateReportInput) {
+  return db.transaction().execute(async (trx) => {
+    const report = await insertReport(trx, input);
+    await insertReportEntity(trx, {
+      type: input.type,
+      reportId: report.id,
+      entityId: input.entityId,
+    });
+    if (input.imageRating) {
+      await upsertImageRatingRequest(trx, input.imageRating);
+      await trx
+        .updateTable('Image')
+        .set({ nsfwLevelLocked: false })
+        .where('id', '=', input.imageRating.imageId)
+        .execute();
+    }
+    return report;
+  });
 }

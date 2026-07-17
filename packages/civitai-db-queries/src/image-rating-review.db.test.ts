@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getImageRatingRequests, getImageRatingReviewCount } from './image-rating-review.db';
+import {
+  getImageRatingRequests,
+  getImageRatingReviewCount,
+  setImageRatingRequestsResolved,
+} from './image-rating-review.db';
 import { compileHarness } from './test/harness';
 
 const harness = compileHarness();
@@ -55,5 +59,16 @@ describe('getImageRatingReviewCount', () => {
     expect(sql).not.toContain('AND i."id" >=');
     // only the Blocked(32) param remains
     expect(parameters).toEqual([32]);
+  });
+});
+
+describe('setImageRatingRequestsResolved', () => {
+  it('transitions pending requests for the image to the given status', async () => {
+    await setImageRatingRequestsResolved(harness.db, { imageId: 42, status: 'Actioned' });
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe(
+      'update "ImageRatingRequest" set "status" = $1 where "imageId" = $2 and "status" = $3'
+    );
+    expect(parameters).toEqual(['Actioned', 42, 'Pending']);
   });
 });

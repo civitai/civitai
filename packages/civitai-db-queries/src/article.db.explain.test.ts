@@ -2,17 +2,28 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   countArticlesForModeration,
   deleteArticleFiles,
+  deleteArticleForUser,
   deleteArticleImageConnections,
+  deleteArticleReactionForUser,
   deleteArticleRecord,
   getArticleContentImageIngestion,
+  getArticleContentImages,
   getArticleCoverIngestion,
+  getArticleForRescan,
   getArticleForRestore,
+  getArticleForUnpublish,
   getArticleTextModeration,
   getArticlesForModeration,
+  lockArticleForIngestion,
   refreshArticleNsfwLevel,
+  refreshArticleNsfwLevelMany,
   setArticleIngestion,
+  setArticleIngestionState,
+  setArticleRescanRequested,
   setArticleRestored,
-} from './articles.db';
+  setArticleUnpublished,
+  updateArticle,
+} from './article.db';
 import { explainHarness } from './test/harness';
 
 // DB-backed tier: EXPLAIN (no ANALYZE) each ported statement against the live schema. This never executes the
@@ -37,8 +48,23 @@ describe.skipIf(!h.hasDb)('articles queries EXPLAIN against the real schema', ()
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 
+  it('updateArticle plans (write, not executed)', async () => {
+    await updateArticle(h.db, { id: -1, status: 'Published' });
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
   it('getArticleForRestore plans', async () => {
     await getArticleForRestore(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getArticleForUnpublish plans', async () => {
+    await getArticleForUnpublish(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getArticleForRescan plans', async () => {
+    await getArticleForRescan(h.db, -1);
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 
@@ -84,6 +110,51 @@ describe.skipIf(!h.hasDb)('articles queries EXPLAIN against the real schema', ()
 
   it('deleteArticleRecord plans (write, not executed)', async () => {
     await deleteArticleRecord(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('setArticleUnpublished plans (write, not executed)', async () => {
+    await setArticleUnpublished(h.db, { id: -1, status: 'Unpublished', metadata: {} });
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('setArticleRescanRequested plans (write, not executed)', async () => {
+    await setArticleRescanRequested(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('getArticleContentImages plans', async () => {
+    await getArticleContentImages(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('lockArticleForIngestion plans', async () => {
+    await lockArticleForIngestion(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('setArticleIngestionState plans (write, not executed) — with the publish flip', async () => {
+    await setArticleIngestionState(h.db, {
+      id: -1,
+      ingestion: 'Scanned',
+      contentScannedAt: new Date(),
+      publishedAt: new Date(),
+    });
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('refreshArticleNsfwLevelMany plans (write, not executed) — validates the bulk re-derive CTE', async () => {
+    await refreshArticleNsfwLevelMany(h.db, [-1, -2]);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('deleteArticleForUser plans (write, not executed)', async () => {
+    await deleteArticleForUser(h.db, -1);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('deleteArticleReactionForUser plans (write, not executed)', async () => {
+    await deleteArticleReactionForUser(h.db, -1);
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 });

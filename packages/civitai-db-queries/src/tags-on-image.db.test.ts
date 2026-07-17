@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getTagRules, upsertTagsOnImageNew } from './tags-on-image.db';
+import {
+  deleteTagsOnImageNew,
+  getTagRules,
+  insertTagsOnImageNew,
+  upsertTagsOnImageNew,
+} from './tags-on-image.db';
 import { compileHarness } from './test/harness';
 
 const harness = compileHarness();
@@ -78,5 +83,90 @@ describe('upsertTagsOnImageNew', () => {
     const nsfw = harness.queries[harness.queries.length - 1];
     expect(nsfw.sql).toContain('SELECT update_nsfw_levels_new(ARRAY[$1::int, $2::int])');
     expect(nsfw.parameters).toEqual([5, 6]); // deduped imageIds
+  });
+});
+
+describe('insertTagsOnImageNew', () => {
+  it('short-circuits on an empty args list WITHOUT running a query (no empty VALUES)', async () => {
+    const result = await insertTagsOnImageNew(harness.db, []);
+    expect(result).toBeUndefined();
+    expect(harness.queries).toHaveLength(0);
+  });
+
+  it('builds the VALUES list → insert_tag_on_image (INSERT proc, each column cast)', async () => {
+    await insertTagsOnImageNew(harness.db, [
+      { imageId: 1, tagId: 10, source: 'Rekognition', confidence: 80, automated: true },
+      { imageId: 2, tagId: 20, disabled: true, needsReview: false },
+    ]);
+
+    expect(harness.queries).toHaveLength(2);
+    const insert = harness.queries[0];
+
+    expect(insert.sql).toContain('SELECT insert_tag_on_image(');
+    expect(insert.sql).toContain(
+      't."imageId", t."tagId", t."source", t."confidence", t."automated", t."disabled", t."needsReview"'
+    );
+    expect(insert.sql).toContain(
+      'FROM (VALUES ($1::int, $2::int, $3::"TagSource", $4::integer, $5::boolean, $6::boolean, $7::boolean), ' +
+        '($8::int, $9::int, $10::"TagSource", $11::integer, $12::boolean, $13::boolean, $14::boolean)) ' +
+        'AS t("imageId", "tagId", "source", "confidence", "automated", "disabled", "needsReview")'
+    );
+    expect(insert.sql).not.toContain('VALUES ()');
+    expect(insert.parameters).toEqual([
+      1,
+      10,
+      'Rekognition',
+      80,
+      true,
+      null,
+      null,
+      2,
+      20,
+      null,
+      null,
+      null,
+      true,
+      false,
+    ]);
+  });
+
+  it('recomputes nsfwLevel for the distinct touched images via update_nsfw_levels_new', async () => {
+    await insertTagsOnImageNew(harness.db, [
+      { imageId: 5, tagId: 1 },
+      { imageId: 6, tagId: 2 },
+    ]);
+    const nsfw = harness.queries[harness.queries.length - 1];
+    expect(nsfw.sql).toContain('SELECT update_nsfw_levels_new(ARRAY[$1::int, $2::int])');
+    expect(nsfw.parameters).toEqual([5, 6]);
+  });
+});
+
+describe('deleteTagsOnImageNew', () => {
+  it('short-circuits on an empty args list WITHOUT running a query (no empty VALUES)', async () => {
+    const result = await deleteTagsOnImageNew(harness.db, []);
+    expect(result).toBeUndefined();
+    expect(harness.queries).toHaveLength(0);
+  });
+
+  it('deletes each (imageId, tagId) pair via a VALUES list, then recomputes nsfwLevel', async () => {
+    await deleteTagsOnImageNew(harness.db, [
+      { imageId: 1, tagId: 10 },
+      { imageId: 1, tagId: 20 },
+    ]);
+
+    expect(harness.queries).toHaveLength(2);
+    const del = harness.queries[0];
+
+    expect(del.sql).toContain('DELETE FROM "TagsOnImageNew"');
+    expect(del.sql).toContain(
+      'WHERE ("imageId", "tagId") IN (SELECT * FROM (VALUES ($1::int, $2::int), ($3::int, $4::int)) ' +
+        'AS t("imageId", "tagId"))'
+    );
+    expect(del.sql).not.toContain('VALUES ()');
+    expect(del.parameters).toEqual([1, 10, 1, 20]);
+
+    const nsfw = harness.queries[1];
+    expect(nsfw.sql).toContain('SELECT update_nsfw_levels_new(ARRAY[$1::int])');
+    expect(nsfw.parameters).toEqual([1]); // deduped imageIds
   });
 });

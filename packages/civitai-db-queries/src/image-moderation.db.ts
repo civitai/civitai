@@ -1,11 +1,6 @@
 import { sql, type Kysely } from 'kysely';
-import type { Selectable } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-
-// Column value types derived from the schema (Selectable unwraps the Generated<> wrappers), so this module
-// needs no moderator-app enum/type import.
-type AppealStatusValue = Selectable<DB['Appeal']>['status'];
-type RatingRequestStatusValue = Selectable<DB['ImageRatingRequest']>['status'];
+import { keepUpdatedAt } from './infra/updated-at-plugin';
 
 // NsfwLevel.Blocked — the browsing-level bit for blocked content. Inlined (was NsfwLevel.Blocked in the
 // moderator source) so this module carries no shared-enum runtime dependency; passed as a bound param.
@@ -85,6 +80,7 @@ export async function getPendingImageAppealAppellants(
 // and — per needsReview kind — clear poi / auto-clear the minor gate for mature content / stamp scannedAt.
 // `needsReview` is the value the caller read via getImageForModeration. `removeMinorFlag` force-clears the
 // minor gate even for SFW. The raw jsonb `-`/`||` merges and the `CASE nsfwLevel` are preserved exactly.
+// The source ran this as raw `$queryRaw` (no `@updatedAt` bump) — keepUpdatedAt preserves that.
 export function setImageAccepted(
   db: Kysely<DB>,
   {
@@ -120,6 +116,7 @@ export function setImageAccepted(
       ...(needsReview && ['minor', 'poi', 'newUser', 'bestiality'].includes(needsReview)
         ? { scannedAt: sql`now()` }
         : {}),
+      updatedAt: keepUpdatedAt,
     })
     .where('id', '=', imageId)
     .execute();
@@ -150,7 +147,6 @@ export function setImageBlocked(
       ingestion: 'Blocked',
       nsfwLevel: NSFW_LEVEL_BLOCKED,
       blockedFor: BLOCKED_REASON_MODERATED,
-      updatedAt: new Date(),
       ...(needsReview === 'remixSource'
         ? {
             metadata: sql`COALESCE("metadata", '{}'::jsonb) || '{"remixSourceReviewed": true}'::jsonb`,
@@ -167,37 +163,6 @@ export function recomputeImageNsfwLevel(db: Kysely<DB>, imageId: number) {
   return sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(db);
 }
 
-// Close the pending Image appeal — set status + resolver + resolvedAt (and resolvedMessage when the caller
-// passes one). Does NOT set updatedAt (the source didn't). The dropped refund/notify/email cascade is the
-// caller's.
-export function setImageAppealStatus(
-  db: Kysely<DB>,
-  {
-    imageId,
-    status,
-    userId,
-    resolvedMessage,
-  }: {
-    imageId: number;
-    status: AppealStatusValue;
-    userId: number;
-    resolvedMessage?: string | null;
-  }
-) {
-  return db
-    .updateTable('Appeal')
-    .set({
-      status,
-      resolvedBy: userId,
-      resolvedAt: new Date(),
-      ...(resolvedMessage !== undefined ? { resolvedMessage } : {}),
-    })
-    .where('entityType', '=', 'Image')
-    .where('entityId', '=', imageId)
-    .where('status', '=', 'Pending')
-    .execute();
-}
-
 // Approved-appeal branch: restore the image (clear review flag + blockedFor, back to Scanned). Pair with
 // recomputeImageNsfwLevel in the caller.
 export function setImageAppealRestored(db: Kysely<DB>, imageId: number) {
@@ -206,11 +171,6 @@ export function setImageAppealRestored(db: Kysely<DB>, imageId: number) {
     .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
     .where('id', '=', imageId)
     .execute();
-}
-
-// Rejected-appeal branch: just clear the review flag (the image stays blocked).
-export function setImageAppealRejected(db: Kysely<DB>, imageId: number) {
-  return db.updateTable('Image').set({ needsReview: null }).where('id', '=', imageId).execute();
 }
 
 // Pin an image's nsfwLevel and lock it — the moderator's manual rating verdict.
@@ -225,21 +185,20 @@ export function setImageNsfwLevel(
     .execute();
 }
 
-// Resolve an image's pending community rating requests to a final status (accompanies setImageNsfwLevel).
-export function setImageRatingRequestsResolved(
+// The boolean moderation-gate columns a moderator can flip on an Image (matches toggleImageFlagSchema).
+type ImageFlagColumn = 'minor' | 'poi';
+
+// Flip one image's `minor`/`poi` gate. The source read the current value then wrote its negation across two
+// statements; this is the equivalent single atomic `SET flag = NOT flag` (also race-free). `updatedAt` is
+// auto-stamped by the @updatedAt plugin (Prisma `.update` auto-bumped `@updatedAt`). The not-found throw +
+// cache/search side effects are the caller's. Ported from image.service `toggleImageFlag`.
+export function toggleImageFlag(
   db: Kysely<DB>,
-  {
-    imageId,
-    status,
-  }: {
-    imageId: number;
-    status: RatingRequestStatusValue;
-  }
+  { id, flag }: { id: number; flag: ImageFlagColumn }
 ) {
   return db
-    .updateTable('ImageRatingRequest')
-    .set({ status })
-    .where('imageId', '=', imageId)
-    .where('status', '=', 'Pending')
+    .updateTable('Image')
+    .set(flag, sql<boolean>`NOT ${sql.ref(flag)}`)
+    .where('id', '=', id)
     .execute();
 }

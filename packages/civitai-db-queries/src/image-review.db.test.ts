@@ -3,7 +3,9 @@ import {
   getAppealImageQueue,
   getImageReviewCounts,
   getImageReviewQueue,
+  getImagesModRules,
   getModerationRuleDefinitions,
+  getModeratorPOITags,
   getReportedImageQueue,
   getReviewQueueTags,
 } from './image-review.db';
@@ -118,6 +120,33 @@ describe('getImageReviewCounts', () => {
     expect(sql).toContain('"ingestion" = $2');
     expect(sql).toContain('group by "needsReview"');
     expect(parameters).toEqual(['appeal', 'Scanned']);
+  });
+});
+
+describe('getImagesModRules', () => {
+  it('selects the enabled Image rules in evaluation order', async () => {
+    await getImagesModRules(harness.db);
+    const { sql, parameters } = harness.lastQuery();
+
+    expect(sql).toBe(
+      'select "id", "definition", "action", "reason" from "ModerationRule" ' +
+        'where "entityType" = $1 and "enabled" = $2 order by "order" asc'
+    );
+    expect(parameters).toEqual(['Image', true]);
+  });
+});
+
+describe('getModeratorPOITags', () => {
+  it('rolls up poi-review image counts per real-person tag via the materialized CTE', async () => {
+    await getModeratorPOITags(harness.db);
+    const { sql } = harness.lastQuery();
+
+    expect(sql).toContain('WITH real_person_tags AS MATERIALIZED');
+    expect(sql).toContain(`f.name = 'real person'`);
+    expect(sql).toContain('CAST(COUNT(i.id) as int) as count');
+    expect(sql).toContain(`i."needsReview" = 'poi'`);
+    expect(sql).toContain('GROUP BY rpt.id, rpt.name');
+    expect(sql).toContain('ORDER BY 3 DESC');
   });
 });
 

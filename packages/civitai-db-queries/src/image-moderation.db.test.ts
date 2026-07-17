@@ -9,12 +9,10 @@ import {
   getPendingImageAppealAppellants,
   recomputeImageNsfwLevel,
   setImageAccepted,
-  setImageAppealRejected,
   setImageAppealRestored,
-  setImageAppealStatus,
   setImageBlocked,
   setImageNsfwLevel,
-  setImageRatingRequestsResolved,
+  toggleImageFlag,
 } from './image-moderation.db';
 import { compileHarness } from './test/harness';
 
@@ -92,8 +90,9 @@ describe('setImageAccepted', () => {
     const { sql, parameters } = harness.lastQuery();
     expect(sql).toBe(
       'update "Image" set "needsReview" = $1, "blockedFor" = $2, "ingestion" = $3, ' +
-        `"metadata" = "metadata" - 'ruleId' - 'ruleReason' where "id" = $4`
+        `"metadata" = "metadata" - 'ruleId' - 'ruleReason', "updatedAt" = "updatedAt" where "id" = $4`
     );
+    expect(sql).toContain('"updatedAt" = "updatedAt"'); // self-reference: raw-parity, no bump
     expect(parameters).toEqual([null, null, 'Scanned', 42]);
     expect(sql).not.toContain('"poi"');
     expect(sql).not.toContain('"minor"');
@@ -178,63 +177,35 @@ describe('recomputeImageNsfwLevel', () => {
   });
 });
 
-describe('setImageAppealStatus', () => {
-  it('closes the pending appeal without resolvedMessage when omitted', async () => {
-    await setImageAppealStatus(harness.db, { imageId: 42, status: 'Approved', userId: 7 });
-    const { sql, parameters } = harness.lastQuery();
-    expect(sql).toBe(
-      'update "Appeal" set "status" = $1, "resolvedBy" = $2, "resolvedAt" = $3 ' +
-        'where "entityType" = $4 and "entityId" = $5 and "status" = $6'
-    );
-    expect(sql).not.toContain('resolvedMessage');
-    expect(parameters).toEqual(['Approved', 7, expect.any(Date), 'Image', 42, 'Pending']);
-  });
-
-  it('includes resolvedMessage when provided (even null)', async () => {
-    await setImageAppealStatus(harness.db, {
-      imageId: 42,
-      status: 'Rejected',
-      userId: 7,
-      resolvedMessage: null,
-    });
-    const { sql, parameters } = harness.lastQuery();
-    expect(sql).toContain('"resolvedMessage" = $4');
-    expect(parameters).toEqual(['Rejected', 7, expect.any(Date), null, 'Image', 42, 'Pending']);
-  });
-});
-
-describe('setImageAppealRestored / setImageAppealRejected', () => {
+describe('setImageAppealRestored', () => {
   it('restored clears review flag + blockedFor and returns to Scanned', async () => {
     await setImageAppealRestored(harness.db, 42);
     const { sql, parameters } = harness.lastQuery();
     expect(sql).toBe(
-      'update "Image" set "needsReview" = $1, "blockedFor" = $2, "ingestion" = $3 where "id" = $4'
+      'update "Image" set "needsReview" = $1, "blockedFor" = $2, "ingestion" = $3, ' +
+        '"updatedAt" = $4 where "id" = $5'
     );
-    expect(parameters).toEqual([null, null, 'Scanned', 42]);
-  });
-
-  it('rejected clears only the review flag', async () => {
-    await setImageAppealRejected(harness.db, 42);
-    const { sql, parameters } = harness.lastQuery();
-    expect(sql).toBe('update "Image" set "needsReview" = $1 where "id" = $2');
-    expect(parameters).toEqual([null, 42]);
+    expect(parameters).toEqual([null, null, 'Scanned', expect.any(Date), 42]);
   });
 });
 
-describe('setImageNsfwLevel / setImageRatingRequestsResolved', () => {
+describe('setImageNsfwLevel', () => {
   it('setImageNsfwLevel pins nsfwLevel and locks it', async () => {
     await setImageNsfwLevel(harness.db, { id: 42, nsfwLevel: 4 });
     const { sql, parameters } = harness.lastQuery();
-    expect(sql).toBe('update "Image" set "nsfwLevel" = $1, "nsfwLevelLocked" = $2 where "id" = $3');
-    expect(parameters).toEqual([4, true, 42]);
-  });
-
-  it('setImageRatingRequestsResolved transitions pending requests for the image', async () => {
-    await setImageRatingRequestsResolved(harness.db, { imageId: 42, status: 'Actioned' });
-    const { sql, parameters } = harness.lastQuery();
     expect(sql).toBe(
-      'update "ImageRatingRequest" set "status" = $1 where "imageId" = $2 and "status" = $3'
+      'update "Image" set "nsfwLevel" = $1, "nsfwLevelLocked" = $2, "updatedAt" = $3 where "id" = $4'
     );
-    expect(parameters).toEqual(['Actioned', 42, 'Pending']);
+    expect(parameters).toEqual([4, true, expect.any(Date), 42]);
+  });
+});
+
+describe('toggleImageFlag', () => {
+  it('flips the flag column via SET flag = NOT flag and bumps updatedAt', async () => {
+    await toggleImageFlag(harness.db, { id: 42, flag: 'poi' });
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe('update "Image" set "poi" = NOT "poi", "updatedAt" = $1 where "id" = $2');
+    expect(parameters[0]).toBeInstanceOf(Date);
+    expect(parameters[1]).toBe(42);
   });
 });

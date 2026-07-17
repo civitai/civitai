@@ -1,12 +1,14 @@
 import { sql } from 'kysely';
 import type { Kysely, Selectable } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { refreshArticleNsfwLevelMany } from './article.db';
 
 // Column enums derived from the schema (Selectable unwraps the Generated<> wrappers) so this module needs no
 // moderator-app type import. ArticleRatingReview.status is the shared ReportStatus enum; the review UI only
 // filters over its Pending/Actioned/Unactioned members.
 type RatingReviewStatus = Selectable<DB['ArticleRatingReview']>['status'];
 type ImageMediaType = Selectable<DB['Image']>['type'];
+type ImageIngestionValue = Selectable<DB['Image']>['ingestion'];
 
 export type RatingReviewUser = {
   id: number;
@@ -394,5 +396,291 @@ export function resolveArticleRatingReview(
       status,
       articleTitle: article?.title ?? 'your article',
     };
+  });
+}
+
+// =========================================================================================================
+// Owner-driven dispute (create) + auto-approve path — DB cores of `createArticleRatingReview`,
+// `getArticleRatingReviewForOwner`, `evaluateAutoApproveGate`, `autoResolveArticleRatingReview`, and
+// `maybeAutoResolveDisputeAfterScan`. All auth / rate-limit / feature-flag / notification / search-index /
+// analytics logic stays in the caller; only the queries live here.
+// =========================================================================================================
+
+// The article fields powering ownership + the auto-approve gate (and the owner-view banner). One read covers
+// createArticleRatingReview, getArticleRatingReviewForOwner, and maybeAutoResolveDisputeAfterScan — each uses
+// a subset of these columns.
+export function getArticleForRatingReview(db: Kysely<DB>, articleId: number) {
+  return db
+    .selectFrom('Article')
+    .select([
+      'id',
+      'userId',
+      'nsfwLevel',
+      'updatedAt',
+      'status',
+      'ingestion',
+      'moderatorNsfwLevel',
+      'moderatorNsfwLevelBasis',
+      'coverId',
+      'title',
+    ])
+    .where('id', '=', articleId)
+    .executeTakeFirst();
+}
+
+// The Pending dispute for an article (the "one Pending per article" guard + the scan-completion auto-resolve
+// entry). Selects the fields both callers need — createArticleRatingReview only reads `id`.
+export function getPendingArticleRatingReviewByArticle(db: Kysely<DB>, articleId: number) {
+  return db
+    .selectFrom('ArticleRatingReview')
+    .select(['id', 'userId', 'suggestedLevel', 'currentLevel'])
+    .where('articleId', '=', articleId)
+    .where('status', '=', 'Pending')
+    .executeTakeFirst();
+}
+
+// The most recently resolved dispute for an article, powering the re-edit gate (a fresh dispute is allowed
+// only when the article was edited after this resolved).
+export function getLastResolvedArticleRatingReview(db: Kysely<DB>, articleId: number) {
+  return db
+    .selectFrom('ArticleRatingReview')
+    .select(['id', 'resolvedAt'])
+    .where('articleId', '=', articleId)
+    .where('status', 'in', ['Actioned', 'Unactioned'])
+    .where('resolvedAt', 'is not', null)
+    .orderBy('resolvedAt', 'desc')
+    .executeTakeFirst();
+}
+
+// The article's most recent dispute (any status), for the owner detail-page badge.
+export function getLatestArticleRatingReview(db: Kysely<DB>, articleId: number) {
+  return db
+    .selectFrom('ArticleRatingReview')
+    .select([
+      'id',
+      'status',
+      'createdAt',
+      'resolvedAt',
+      'currentLevel',
+      'suggestedLevel',
+      'appliedLevel',
+      'userComment',
+      'modComment',
+    ])
+    .where('articleId', '=', articleId)
+    .orderBy('createdAt', 'desc')
+    .executeTakeFirst();
+}
+
+// Count of an article's content images NOT in a clean scanned state — gate #3 of the auto-approve decision.
+// The status list is a fixed non-empty constant, so no empty-array guard is needed.
+const PROBLEMATIC_IMAGE_INGESTION: ImageIngestionValue[] = [
+  'Pending',
+  'Rescan',
+  'PendingManualAssignment',
+  'Blocked',
+  'Error',
+  'NotFound',
+];
+export async function countArticleProblematicContentImages(
+  db: Kysely<DB>,
+  articleId: number
+): Promise<number> {
+  const row = await db
+    .selectFrom('ImageConnection as ic')
+    .innerJoin('Image as i', 'i.id', 'ic.imageId')
+    .select((eb) => eb.fn.countAll<number>().as('count'))
+    .where('ic.entityId', '=', articleId)
+    .where('ic.entityType', '=', 'Article')
+    .where('i.ingestion', 'in', PROBLEMATIC_IMAGE_INGESTION)
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
+// Insert a new Pending dispute (the owner's re-rate request). ArticleRatingReview has no `updatedAt` and a
+// default createdAt, so neither is set. Returns the full inserted row.
+export function insertArticleRatingReview(
+  db: Kysely<DB>,
+  input: {
+    articleId: number;
+    userId: number;
+    currentLevel: number;
+    suggestedLevel: number;
+    userComment: string | null;
+  }
+) {
+  return db
+    .insertInto('ArticleRatingReview')
+    .values({
+      articleId: input.articleId,
+      userId: input.userId,
+      currentLevel: input.currentLevel,
+      suggestedLevel: input.suggestedLevel,
+      userComment: input.userComment,
+      status: 'Pending',
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow();
+}
+
+// The full dispute row by id (any status) — the auto-resolve final read and the create-path race fallback.
+export function getArticleRatingReviewById(db: Kysely<DB>, reviewId: number) {
+  return db
+    .selectFrom('ArticleRatingReview')
+    .select([
+      'id',
+      'articleId',
+      'userId',
+      'currentLevel',
+      'suggestedLevel',
+      'appliedLevel',
+      'userComment',
+      'modComment',
+      'status',
+      'createdAt',
+      'resolvedAt',
+      'resolvedBy',
+    ])
+    .where('id', '=', reviewId)
+    .executeTakeFirstOrThrow();
+}
+
+// Insert a dispute directly as Actioned (auto-approve `create` mode) — no prior Pending row exists. Stamps the
+// applied level, resolvedAt/resolvedBy (system user), and the auto-approve mod comment. Returns the new id.
+export function insertAutoResolvedArticleRatingReview(
+  db: Kysely<DB>,
+  input: {
+    articleId: number;
+    userId: number;
+    currentLevel: number;
+    suggestedLevel: number;
+    userComment: string | null;
+    resolvedBy: number;
+    modComment: string;
+  }
+) {
+  return db
+    .insertInto('ArticleRatingReview')
+    .values({
+      articleId: input.articleId,
+      userId: input.userId,
+      currentLevel: input.currentLevel,
+      suggestedLevel: input.suggestedLevel,
+      userComment: input.userComment,
+      status: 'Actioned',
+      appliedLevel: input.suggestedLevel,
+      resolvedAt: new Date(),
+      resolvedBy: input.resolvedBy,
+      modComment: input.modComment,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+}
+
+// Clear the moderator override on auto-approve: null out moderatorNsfwLevel + its basis, pin userNsfwLevel to
+// the agreed level (so the follow-up recompute settles there), and persist the caller-merged locked set
+// (userNsfwLevel unlocked). Mirrors a plain Prisma `update()`, so `updatedAt` bumps — auto-stamped by the
+// @updatedAt plugin, same as `setArticleModeratorLevel` (both Prisma-source writes bumped it).
+export function clearArticleModeratorLevel(
+  db: Kysely<DB>,
+  input: { articleId: number; userNsfwLevel: number; lockedProperties: string[] }
+) {
+  return db
+    .updateTable('Article')
+    .set({
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+      userNsfwLevel: input.userNsfwLevel,
+      lockedProperties: input.lockedProperties,
+    })
+    .where('id', '=', input.articleId)
+    .execute();
+}
+
+// Signals the resolve-existing auto-approve lost the status-guard race (another resolver promoted the Pending
+// row first). The caller skips its post-commit side effects on this.
+export class AutoResolveRaceLost extends Error {
+  constructor() {
+    super('Auto-resolve race lost — review was already resolved');
+    this.name = 'AutoResolveRaceLost';
+  }
+}
+
+export type AutoResolveInput =
+  | {
+      mode: 'create';
+      articleId: number;
+      ownerUserId: number;
+      suggestedLevel: number;
+      userComment: string | null;
+      previousLevel: number;
+      systemUserId: number;
+      modComment: string;
+    }
+  | {
+      mode: 'resolve-existing';
+      reviewId: number;
+      articleId: number;
+      ownerUserId: number;
+      suggestedLevel: number;
+      previousLevel: number;
+      systemUserId: number;
+      modComment: string;
+    };
+
+// DB write core of `autoResolveArticleRatingReview`, minus its side effects (search-index, owner notification,
+// analytics). Two modes: `create` inserts a fresh Actioned row; `resolve-existing` promotes a Pending row via
+// the status-guarded `setArticleRatingReviewResolved` (throws AutoResolveRaceLost on a lost race). Both then
+// clear the override, pin userNsfwLevel, and recompute the effective level (via the bulk-of-one
+// `refreshArticleNsfwLevelMany`) so it lands on `suggestedLevel`. `systemUserId`/`modComment` are passed in
+// (the package imports no app constants).
+export function autoResolveArticleRatingReview(
+  db: Kysely<DB>,
+  args: AutoResolveInput
+): Promise<{
+  reviewId: number;
+  appliedLevel: number;
+  review: Awaited<ReturnType<typeof getArticleRatingReviewById>>;
+}> {
+  return db.transaction().execute(async (trx) => {
+    let reviewId: number;
+
+    if (args.mode === 'create') {
+      const created = await insertAutoResolvedArticleRatingReview(trx, {
+        articleId: args.articleId,
+        userId: args.ownerUserId,
+        currentLevel: args.previousLevel,
+        suggestedLevel: args.suggestedLevel,
+        userComment: args.userComment,
+        resolvedBy: args.systemUserId,
+        modComment: args.modComment,
+      });
+      reviewId = created.id;
+    } else {
+      const claim = await setArticleRatingReviewResolved(trx, {
+        reviewId: args.reviewId,
+        status: 'Actioned',
+        appliedLevel: args.suggestedLevel,
+        modComment: args.modComment,
+        moderatorId: args.systemUserId,
+      });
+      if (Number(claim.numUpdatedRows) !== 1) throw new AutoResolveRaceLost();
+      reviewId = args.reviewId;
+    }
+
+    const article = await getArticleLockState(trx, args.articleId);
+    const locked = new Set<string>(article?.lockedProperties ?? []);
+    locked.delete('userNsfwLevel');
+
+    await clearArticleModeratorLevel(trx, {
+      articleId: args.articleId,
+      userNsfwLevel: args.suggestedLevel,
+      lockedProperties: Array.from(locked),
+    });
+
+    await refreshArticleNsfwLevelMany(trx, [args.articleId]);
+
+    const review = await getArticleRatingReviewById(trx, reviewId);
+    return { reviewId, appliedLevel: args.suggestedLevel, review };
   });
 }

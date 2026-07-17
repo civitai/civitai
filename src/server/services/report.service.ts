@@ -7,7 +7,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 
-import { setReportStatusMany } from '@civitai/db-queries/reports';
+import { setReportStatusMany } from '@civitai/db-queries/report';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { reportAcceptedReward } from '~/server/rewards';

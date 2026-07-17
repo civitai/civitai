@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  createImageTagsForReview,
+  deleteImagTagsForReviewByImageIds,
+  disableTags,
+  getImagTagsForReviewByImageIds,
   getImageTagReviewImages,
   getImageTagReviewTags,
   getImageTagReviewQueue,
   getImageTagsNeedingReview,
+  getTagsForReview,
+  moderateTags,
 } from './image-tags.db';
 import { compileHarness } from './test/harness';
 
@@ -87,5 +93,128 @@ describe('getImageTagsNeedingReview', () => {
     expect(sql).toContain('d."imageId" =');
     expect(sql).toContain('d."needsReview" = true');
     expect(parameters).toEqual([42]);
+  });
+});
+
+describe('getTagsForReview', () => {
+  it('emits the DISTINCT ON tags query + count query, scoped to Image.needsReview', async () => {
+    await getTagsForReview(harness.db, { reviewType: 'minor', take: 20, skip: 40 });
+
+    expect(harness.queries).toHaveLength(2);
+    const [items, counts] = harness.queries;
+
+    expect(items.sql).toContain('SELECT DISTINCT ON (t.name) t.id, t.name');
+    expect(items.sql).toContain('FROM "ImageTagForReview" it');
+    expect(items.sql).toContain('WHERE i."needsReview" =');
+    expect(items.sql).toContain('ORDER BY t.name');
+    expect(items.parameters).toEqual(['minor', 20, 40]);
+
+    expect(counts.sql).toContain('SELECT COUNT(DISTINCT t.id)::int AS count');
+    expect(counts.parameters).toEqual(['minor']);
+  });
+});
+
+describe('moderateTags', () => {
+  it('throws Not implemented for model (unimplemented in the source)', async () => {
+    await expect(
+      moderateTags(harness.db, { entityIds: [1], entityType: 'model', disable: true })
+    ).rejects.toThrow('Not implemented');
+  });
+
+  it('image: selects needsReview pairs (upsert skipped as no rows under dummy driver)', async () => {
+    await moderateTags(harness.db, { entityIds: [1, 2], entityType: 'image', disable: true });
+
+    // DummyDriver returns no rows → upsertTagsOnImageNew([]) is guarded away → only the SELECT runs.
+    expect(harness.queries).toHaveLength(1);
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toContain('FROM "TagsOnImageDetails"');
+    expect(sql).toContain('"needsReview" = true');
+    expect(sql).toContain('"imageId" IN ($1, $2)');
+    expect(sql).not.toContain('IN ()');
+    expect(parameters).toEqual([1, 2]);
+  });
+
+  it('image with empty entityIds: no query', async () => {
+    await moderateTags(harness.db, { entityIds: [], entityType: 'image', disable: true });
+    expect(harness.queries).toHaveLength(0);
+  });
+});
+
+describe('disableTags', () => {
+  it('model + tag ids: UPDATE TagsOnModels with ANY(::int[]) match', async () => {
+    await disableTags(harness.db, { tags: [10, 20], entityIds: [1, 2], entityType: 'model' });
+    const { sql } = harness.lastQuery();
+    expect(sql).toContain('UPDATE "TagsOnModels"');
+    expect(sql).toContain('SET "disabled" = true');
+    expect(sql).toContain('"modelId" = ANY(');
+    expect(sql).toContain('"tagId" = ANY(');
+  });
+
+  it('image + tag names: SELECT pairs with name-subquery match (upsert skipped, no rows)', async () => {
+    await disableTags(harness.db, {
+      tags: ['nudity', 'gore'],
+      entityIds: [1, 2],
+      entityType: 'image',
+    });
+    expect(harness.queries).toHaveLength(1);
+    const { sql } = harness.lastQuery();
+    expect(sql).toContain('FROM "TagsOnImageDetails"');
+    expect(sql).toContain('"imageId" = ANY(');
+    expect(sql).toContain('"tagId" IN (SELECT id FROM "Tag" WHERE "name" = ANY(');
+  });
+
+  it('tag + tag ids: DELETE TagsOnTags with fromTagId match', async () => {
+    await disableTags(harness.db, { tags: [10], entityIds: [1], entityType: 'tag' });
+    const { sql } = harness.lastQuery();
+    expect(sql).toContain('DELETE FROM "TagsOnTags"');
+    expect(sql).toContain('"toTagId" = ANY(');
+    expect(sql).toContain('"fromTagId" = ANY(');
+  });
+});
+
+describe('ImageTagForReview bulk rows', () => {
+  it('createImageTagsForReview short-circuits an empty tag list', async () => {
+    const result = await createImageTagsForReview(harness.db, { imageId: 42, tagIds: [] });
+    expect(result).toEqual([]);
+    expect(harness.queries).toHaveLength(0);
+  });
+
+  it('createImageTagsForReview inserts (imageId, tagId) rows ON CONFLICT DO NOTHING', async () => {
+    await createImageTagsForReview(harness.db, { imageId: 42, tagIds: [10, 20] });
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe(
+      'insert into "ImageTagForReview" ("imageId", "tagId") ' +
+        'values ($1, $2), ($3, $4) on conflict do nothing'
+    );
+    expect(parameters).toEqual([42, 10, 42, 20]);
+  });
+
+  it('deleteImagTagsForReviewByImageIds short-circuits an empty id list (no IN ())', async () => {
+    const result = await deleteImagTagsForReviewByImageIds(harness.db, []);
+    expect(result).toEqual([]);
+    expect(harness.queries).toHaveLength(0);
+  });
+
+  it('deleteImagTagsForReviewByImageIds deletes by imageId IN list', async () => {
+    await deleteImagTagsForReviewByImageIds(harness.db, [1, 2, 3]);
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe('delete from "ImageTagForReview" where "imageId" in ($1, $2, $3)');
+    expect(sql).not.toContain('in ()');
+    expect(parameters).toEqual([1, 2, 3]);
+  });
+
+  it('getImagTagsForReviewByImageIds short-circuits an empty id list (no IN ())', async () => {
+    const result = await getImagTagsForReviewByImageIds(harness.db, []);
+    expect(result).toEqual([]);
+    expect(harness.queries).toHaveLength(0);
+  });
+
+  it('getImagTagsForReviewByImageIds reads (imageId, tagId) for the given images', async () => {
+    await getImagTagsForReviewByImageIds(harness.db, [1, 2]);
+    const { sql, parameters } = harness.lastQuery();
+    expect(sql).toBe(
+      'select "imageId", "tagId" from "ImageTagForReview" where "imageId" in ($1, $2)'
+    );
+    expect(parameters).toEqual([1, 2]);
   });
 });

@@ -68,6 +68,7 @@
     "db:deploy": "node scripts/prisma-migrate-with-views-workaround.mjs -p && npm run db:program",
     "db:program": "node scripts/prisma-prepare-programmability.mjs",
     "db:generate": "node scripts/generate-slim-schema.js && prisma generate --no-hints",
+    "db:check-generated": "pnpm run db:generate && git diff --exit-code -- packages/civitai-db-schema/src",
     "db:seed": "prisma db seed",
     "share": "ngrok http 3000",
     "prepare": "husky",

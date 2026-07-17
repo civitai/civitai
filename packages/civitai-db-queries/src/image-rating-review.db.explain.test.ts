@@ -1,5 +1,9 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { getImageRatingRequests, getImageRatingReviewCount } from './image-rating-review.db';
+import {
+  getImageRatingRequests,
+  getImageRatingReviewCount,
+  setImageRatingRequestsResolved,
+} from './image-rating-review.db';
 import { explainHarness } from './test/harness';
 
 // DB-backed tier: EXPLAIN (no ANALYZE) each ported query against the live schema. These are fully raw SQL, so
@@ -22,6 +26,11 @@ describe.skipIf(!h.hasDb)('image-rating-review queries EXPLAIN against the real 
 
   it('getImageRatingReviewCount plans', async () => {
     await getImageRatingReviewCount(h.db);
+    expect((await h.explainLast()).length).toBeGreaterThan(0);
+  });
+
+  it('setImageRatingRequestsResolved plans (write, not executed)', async () => {
+    await setImageRatingRequestsResolved(h.db, { imageId: -1, status: 'Actioned' });
     expect((await h.explainLast()).length).toBeGreaterThan(0);
   });
 });
