@@ -445,6 +445,23 @@ const generatorSubmitSchema = z.object({
   }),
 });
 
+// Client-coalesced telemetry batch — high-volume `track.trackSearch` (~16/s) and
+// `track.addAction` (~6.8/s) were each fired as ONE tRPC call per event, dragging
+// the full non-batched tRPC middleware chain + superjson encode + ClickHouse
+// insert per event (~23 procedures/s of pure telemetry). The browser now buffers
+// them and flushes coalesced batches to the /api/track/batch beacon, which
+// dispatches each event through the SAME Tracker.search()/Tracker.action() (byte-
+// identical ClickHouse inserts) once per batch instead of once per event.
+//
+// Each batch element is discriminated by `kind` and carries the UNCHANGED
+// per-event input under `data` — the search/action schemas below are reused
+// verbatim, so nothing about what is recorded changes, only how it's transported.
+// The array is bounded (min 1, max BATCH_MAX) so a tampered client can't bloat a
+// single request; the browser flushes well below this cap (see trackEventBuffer).
+// `trackBatchEventSchema` / `trackBatchSchema` are declared at the bottom of this
+// file (after `trackActionSchema`, which the action arm references).
+export const TRACK_BATCH_MAX = 100;
+
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
 export const trackActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('AddToBounty_Click') }),
@@ -467,3 +484,20 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   imageRemixClickSchema,
   generatorSubmitSchema,
 ]);
+
+// One coalesced telemetry event in a /api/track/batch payload. `kind` selects the
+// destination (search -> Tracker.search, action -> Tracker.action) and `data` is
+// the EXACT existing per-event input for that destination. No field is added,
+// dropped, or reshaped — the transport changes, the recorded row does not.
+export const trackBatchEventSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('search'), data: trackSearchSchema }),
+  z.object({ kind: z.literal('action'), data: trackActionSchema }),
+]);
+export type TrackBatchEvent = z.infer<typeof trackBatchEventSchema>;
+
+// The whole batch: an ordered, bounded array of events. Order is preserved end to
+// end (client buffer -> array -> server iterates in order), matching the pre-batch
+// emit order. Bounded to TRACK_BATCH_MAX so a malicious/oversized body is rejected
+// at the schema layer before any Tracker dispatch.
+export const trackBatchSchema = z.array(trackBatchEventSchema).min(1).max(TRACK_BATCH_MAX);
+export type TrackBatchInput = z.infer<typeof trackBatchSchema>;
