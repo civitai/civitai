@@ -2538,6 +2538,15 @@ model AppListing {
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
+  // W13 OAuth-connect scope review (DARK — additive, nullable; nothing reads
+  // these yet). `connectRequestedScopes` = the TokenScope bitmask the listing
+  // requests, always a subset ⊆ `connectClient.allowedScopes` (the per-client
+  // ceiling). `connectScopeJustifications` = a JSON object keyed by TokenScope
+  // enum-key STRING (e.g. "ModelsRead") → the dev's rationale (≤500 chars,
+  // SCOPE_JUSTIFICATION_MAX_LENGTH). Both NULL for external-link / on-site
+  // listings (only OAuth-connect listings carry them).
+  connectRequestedScopes     Int?  @map("connect_requested_scopes")
+  connectScopeJustifications Json? @map("connect_scope_justifications")
   // 1:1 backing AppBlock (UNIQUE) + idempotency key. Set for EVERY backfilled
   // row — on-site AND the #2821 off-site rows (both come from an AppBlock). It is
   // NOT a kind discriminator: discriminate on `kind`, never on appBlockId nullness.

@@ -12,6 +12,9 @@ import {
 // imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
 // so the manifest validator and the fetch-time guard share ONE source of truth.
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+// Single source for the per-scope justification length bound — shared with the
+// OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
+import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
@@ -138,9 +141,10 @@ const SHELL_METACHAR_RE = /[;|&$`<>(){}\\!*?\[\]'"\n\r]/;
 
 // Max length of a single per-scope justification string (scopeJustifications
 // map value). Bounded so a malicious/careless manifest can't bloat the stored
-// blob or the mod-review render. Single-sourced with the published schema's
-// scopeJustifications.additionalProperties.maxLength.
-export const SCOPE_JUSTIFICATION_MAX_LENGTH = 500;
+// blob or the mod-review render. LIFTED to @civitai/auth/token-scope (imported
+// above) so the App Blocks manifest path and the OAuth-connect scope-review
+// path share ONE literal; re-exported here to keep existing importers stable.
+export { SCOPE_JUSTIFICATION_MAX_LENGTH };
 
 // Min/max for the iframe height envelope. The host clamps incoming
 // RESIZE_IFRAME to these bounds, but rejecting absurd values at
