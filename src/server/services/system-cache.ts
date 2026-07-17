@@ -11,7 +11,7 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
 import { TagType } from '~/shared/utils/prisma/enums';
-import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import { createKeyedTtlMemo, createTtlMemo } from '~/server/utils/ttl-memoize';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
@@ -58,6 +58,27 @@ const SYSTEM_CACHE_INPROC_TTL_MS = 30_000;
 // CLIENT_CONFIG_TTL_MS — to keep flag-flip propagation fast (<=5s/pod) while still
 // collapsing the per-call sysRedis GET on the generation/feature-flag hot path.
 const LIVE_FLAGS_INPROC_TTL_MS = 5_000;
+
+// getLiveNow is a global boolean (`live-now` redis key, flipped by the twitch
+// stream.online/offline webhook via setLiveNow). It is read on a high-frequency
+// hot path (system.getLiveNow) but only changes when a stream goes on/offline,
+// and the client itself polls it every ~5 min — so a 5s in-proc TTL per pod
+// collapses the per-call redis GET while keeping on/offline flips visible
+// within ~5s.
+const LIVE_NOW_INPROC_TTL_MS = 5_000;
+
+// getTagRules / getSystemTags / getCategoryTags are GLOBAL, user-independent
+// config blobs on the same 4h-redis (SYSTEM_CACHE_EXPIRY) as the moderated-tags
+// family above, so they reuse the same short in-proc TTL. Unlike that family,
+// TAG_RULES + CATEGORIES:<type> ARE opportunistically redis.del-invalidated by
+// tag mutations (tag.service.ts add/removeTagsOnTags) — so the in-proc memo adds
+// at most SYSTEM_CACHE_INPROC_TTL_MS of PER-POD propagation delay on top of that
+// del, after which the pod re-reads redis. Their consumers are backend scan /
+// tag-application paths (image-scan webhooks, the apply-tag-rules job, tag
+// listing) that already tolerate the 4h eventual staleness, so an extra ~30s is
+// invisible. All current consumers use the returned arrays read-only
+// (.map/.filter/.find/.some/.slice — verified), so they opt into { freeze: true }
+// to structurally reject an accidental in-place mutation of the shared blob.
 
 export type SystemModerationTag = {
   id: number;
@@ -117,47 +138,65 @@ export type TagRule = {
   type: TagsOnTagsType;
   createdAt: Date;
 };
+const getTagRulesMemo = createTtlMemo<TagRule[]>(
+  async () => {
+    const cached = await redis.get(REDIS_KEYS.SYSTEM.TAG_RULES);
+    if (cached) return JSON.parse(cached) as TagRule[];
+
+    log('getting tag rules');
+    const rules = await dbWrite.$queryRaw<TagRule[]>`
+      SELECT
+        "fromTagId" as "fromId",
+        "toTagId" as "toId",
+        f."name" as "fromTag",
+        t."name" as "toTag",
+        tot.type,
+        tot."createdAt"
+      FROM "TagsOnTags" tot
+      JOIN "Tag" f ON f."id" = tot."fromTagId"
+      JOIN "Tag" t ON t."id" = tot."toTagId"
+      WHERE tot.type IN ('Replace', 'Append')
+    `;
+    await redis.set(REDIS_KEYS.SYSTEM.TAG_RULES, JSON.stringify(rules), {
+      EX: SYSTEM_CACHE_EXPIRY,
+    });
+
+    log('got tag rules');
+    return rules;
+  },
+  SYSTEM_CACHE_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
+);
+
 export async function getTagRules() {
-  const cached = await redis.get(REDIS_KEYS.SYSTEM.TAG_RULES);
-  if (cached) return JSON.parse(cached) as TagRule[];
-
-  log('getting tag rules');
-  const rules = await dbWrite.$queryRaw<TagRule[]>`
-    SELECT
-      "fromTagId" as "fromId",
-      "toTagId" as "toId",
-      f."name" as "fromTag",
-      t."name" as "toTag",
-      tot.type,
-      tot."createdAt"
-    FROM "TagsOnTags" tot
-    JOIN "Tag" f ON f."id" = tot."fromTagId"
-    JOIN "Tag" t ON t."id" = tot."toTagId"
-    WHERE tot.type IN ('Replace', 'Append')
-  `;
-  await redis.set(REDIS_KEYS.SYSTEM.TAG_RULES, JSON.stringify(rules), {
-    EX: SYSTEM_CACHE_EXPIRY,
-  });
-
-  log('got tag rules');
-  return rules;
+  return getTagRulesMemo();
 }
 
+const getSystemTagsMemo = createTtlMemo<{ id: number; name: string }[]>(
+  async () => {
+    const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.SYSTEM_TAGS);
+    if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+
+    log('getting system tags');
+    const tags = await dbWrite.tag.findMany({
+      where: { type: TagType.System },
+      select: { id: true, name: true },
+    });
+    await redis.set(REDIS_KEYS.SYSTEM.SYSTEM_TAGS, JSON.stringify(tags), {
+      EX: SYSTEM_CACHE_EXPIRY,
+    });
+
+    log('got system tags');
+    return tags;
+  },
+  SYSTEM_CACHE_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
+);
+
 export async function getSystemTags() {
-  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.SYSTEM_TAGS);
-  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
-
-  log('getting system tags');
-  const tags = await dbWrite.tag.findMany({
-    where: { type: TagType.System },
-    select: { id: true, name: true },
-  });
-  await redis.set(REDIS_KEYS.SYSTEM.SYSTEM_TAGS, JSON.stringify(tags), {
-    EX: SYSTEM_CACHE_EXPIRY,
-  });
-
-  log('got system tags');
-  return tags;
+  return getSystemTagsMemo();
 }
 
 export async function getReplacedTagIds(): Promise<number[]> {
@@ -219,32 +258,48 @@ const colorPriority = [
   'grey',
 ];
 
-export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'article' | 'model3d') {
-  let categories: TypeCategory[] | undefined;
-  const categoriesCache = await redis.get(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`);
-  if (categoriesCache) categories = JSON.parse(categoriesCache);
+export type CategoryTagType = 'image' | 'model' | 'post' | 'article' | 'model3d';
 
-  if (!categories) {
-    const systemTags = await getSystemTags();
-    const categoryTag = systemTags.find((t) => t.name === `${type} category`);
-    if (!categoryTag) throw new Error(`${type} category tag not found`);
-    const categoriesRaw = await dbWrite.tag.findMany({
-      where: { fromTags: { some: { fromTagId: categoryTag.id } } },
-      select: { id: true, name: true, color: true, adminOnly: true },
-    });
-    categories = categoriesRaw
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        adminOnly: c.adminOnly,
-        priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
-      }))
-      .sort((a, b) => a.priority - b.priority);
-    if (categories.length)
-      await redis.set(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`, JSON.stringify(categories));
-  }
+// Keyed per category `type` (a fixed 5-value union — bounded, non-user). Each
+// type's value is global; the memo collapses the per-call redis GET + JSON.parse
+// into ~1 read / TTL / pod. CATEGORIES:<type> is redis.del-invalidated by tag
+// mutations (see the block comment above), so the memo adds at most
+// SYSTEM_CACHE_INPROC_TTL_MS of per-pod propagation delay after such a del.
+const getCategoryTagsMemo = createKeyedTtlMemo<TypeCategory[]>(
+  async (type) => {
+    let categories: TypeCategory[] | undefined;
+    const categoriesCache = await redis.get(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`);
+    if (categoriesCache) categories = JSON.parse(categoriesCache);
 
-  return categories;
+    if (!categories) {
+      const systemTags = await getSystemTags();
+      const categoryTag = systemTags.find((t) => t.name === `${type} category`);
+      if (!categoryTag) throw new Error(`${type} category tag not found`);
+      const categoriesRaw = await dbWrite.tag.findMany({
+        where: { fromTags: { some: { fromTagId: categoryTag.id } } },
+        select: { id: true, name: true, color: true, adminOnly: true },
+      });
+      categories = categoriesRaw
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          adminOnly: c.adminOnly,
+          priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
+        }))
+        .sort((a, b) => a.priority - b.priority);
+      if (categories.length)
+        await redis.set(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`, JSON.stringify(categories));
+    }
+
+    return categories;
+  },
+  SYSTEM_CACHE_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
+);
+
+export async function getCategoryTags(type: CategoryTagType) {
+  return getCategoryTagsMemo(type);
 }
 
 // export async function getTagsNeedingReview() {
@@ -331,9 +386,13 @@ export async function setLiveNow(isLive: boolean) {
   await redis.set(REDIS_KEYS.LIVE_NOW, isLive ? 'true' : 'false');
 }
 
-export async function getLiveNow() {
+const getLiveNowMemo = createTtlMemo<boolean>(async () => {
   const cachedLiveNow = await redis.get(REDIS_KEYS.LIVE_NOW);
   return cachedLiveNow === 'true';
+}, LIVE_NOW_INPROC_TTL_MS);
+
+export async function getLiveNow() {
+  return getLiveNowMemo();
 }
 
 // In-proc memo over the RAW sysRedis string only — the try/catch + JSON.parse

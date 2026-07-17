@@ -61,9 +61,10 @@ export function createTtlMemo<T>(
 
 // Keyed variant of createTtlMemo for a GLOBAL-per-key async fetcher — i.e. a
 // fetcher whose result depends ONLY on a small, bounded key (not on the
-// user/session), e.g. the per-domain "latest bug/changelog" timestamp. Each
-// distinct key gets its own independent single-slot TTL memo (same fail-open
-// semantics: only a resolved value is cached, a rejection propagates uncached).
+// user/session), e.g. the per-domain "latest bug/changelog" timestamp, a
+// category `type`, or a `DomainColor`. Each distinct key gets its own
+// independent single-slot TTL memo (same fail-open semantics: only a resolved
+// value is cached, a rejection propagates uncached).
 //
 // 🔴 The key space MUST be bounded (an enum, a domain list, …). This holds one
 // slot per distinct key forever, so a per-user / unbounded key would both leak
