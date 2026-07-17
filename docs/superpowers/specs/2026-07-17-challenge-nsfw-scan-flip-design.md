@@ -74,8 +74,10 @@ A focused, unit-testable helper `applyChallengeNsfwEscalation({ entityId, isNsfw
 A pure `computeNsfwEscalation(...)` decides the branch; the helper applies it. On the non-`blocked` path:
 
 **Green user challenge + NSFW (`cancel`)** — `isNsfw && source === 'User' && buzzType === 'green'`:
-1. Mark the scan resolved: `ingestion = Scanned`, `scannedAt = now` (so the moderation state is coherent).
-2. `await voidChallenge(entityId)` — Cancelled + collection closed + initial prize refunded (idempotent).
+1. `await voidChallenge(entityId)` — Cancelled + collection closed + initial prize refunded (idempotent).
+   Void runs **first**: a crash before step 2 then leaves the challenge Cancelled (hidden), never a
+   Scanned-and-therefore-*visible* green NSFW challenge (the scan gate reveals a challenge once Scanned).
+2. Mark the scan resolved: `ingestion = Scanned`, `scannedAt = now` (moderation state coherent).
 3. Notify the creator (`system-message`, key `challenge-nsfw-cancelled-${entityId}`): the challenge was
    cancelled because its text is adult content; any prize was refunded; recreate it on civitai.red.
 
@@ -112,8 +114,8 @@ Fix: append the currency to the charge id → `challenge-initial-prize-${challen
 - Unit-test the pure `computeNsfwEscalation` for: clean, green-user+nsfw → cancel, yellow+nsfw → raise (no
   cancel), non-user+nsfw → raise (no cancel), already-≥R no-op.
 - Unit-test `applyChallengeNsfwEscalation` (mocked db / `voidChallenge` / notification) for: clean scan (Scanned,
-  no void), green-user+nsfw (Scanned then `voidChallenge` called, cancelled-notification), yellow+nsfw (level
-  raised, collection `updateMany`, raised-notification, `voidChallenge` NOT called), missing challenge no-op.
+  no void), green-user+nsfw (`voidChallenge` called BEFORE the Scanned write, cancelled-notification), yellow+nsfw
+  (level raised, collection `updateMany`, raised-notification, `voidChallenge` NOT called), missing challenge no-op.
 - The existing scan/adapter tests (`challenge-edit-rescan.service.test.ts`, `challenge-review.service.test.ts`)
   cover the new label set / trigger semantics.
 
