@@ -28,6 +28,44 @@ export function grantedPageScopes(
   return declaredScopes.filter((s) => !withheld.has(s));
 }
 
+/**
+ * Issue B (defensive UX): decide whether a REQUEST_CONSENT whose grantable set is
+ * EMPTY should surface a user-visible "not available in this preview" message
+ * instead of the silent no-op that makes an app look dead.
+ *
+ * A block MAY send an advisory `scopes` hint listing what it wants. The host does
+ * NOT use it to GRANT anything (the grant set is bounded server-side to
+ * `missingScopes`), but it CAN use it to tell apart two otherwise-identical
+ * silent-drop cases when nothing is grantable-via-consent:
+ *   - BENIGN (drop silently): every requested scope is ALREADY granted — a block
+ *     re-requesting a scope its token already carries.
+ *   - UN-GRANTABLE (surface a message): a requested scope is neither currently
+ *     granted NOR addable via consent (`missingScopes`) — it was clamped/withheld
+ *     at mint (e.g. a dev-tunnel token that stripped a scope the tunnel allowlist
+ *     doesn't carry), so the block's consent round-trip can never resolve it.
+ *
+ * Returns the un-grantable subset (requested − granted − missing), sorted+deduped.
+ * Returns EMPTY when the hint is absent/garbage OR everything requested is already
+ * granted — the caller then keeps the silent no-op (no fragile heuristic: without
+ * an explicit requested scope proven un-grantable, we never toast).
+ */
+export function resolveUngrantableConsentScopes(
+  rawScopesHint: unknown,
+  grantedScopes: string[],
+  missingScopes: string[] | undefined
+): string[] {
+  if (!Array.isArray(rawScopesHint)) return [];
+  const requested = rawScopesHint.filter(
+    (s): s is string => typeof s === 'string' && s.length > 0
+  );
+  if (requested.length === 0) return [];
+  const granted = new Set<string>(grantedScopes);
+  const missing = new Set<string>(missingScopes ?? []);
+  return Array.from(
+    new Set(requested.filter((s: string) => !granted.has(s) && !missing.has(s)))
+  ).sort();
+}
+
 // ── OPEN_RESOURCE_PICKER (Design 1 host-chrome resource picker) ──────────────
 //
 // The page block asks the HOST to open its native ResourceSelectModal so the
