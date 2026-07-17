@@ -26,6 +26,7 @@ import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
+import type { MyChallengeResult } from '~/server/services/challenge-participation.util';
 
 // Cover image type for challenges (compatible with ImageGuard2)
 export type ChallengeCoverImage = {
@@ -92,6 +93,20 @@ export type ChallengeListItem = {
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
     deletedAt: Date | null;
   };
+};
+
+// Recently participated-in challenges for the current user (Challenges Center "My Participated" row)
+export const getMyParticipatedSchema = z.object({
+  limit: z.number().min(1).max(20).default(6),
+});
+export type GetMyParticipatedInput = z.infer<typeof getMyParticipatedSchema>;
+
+export type MyParticipatedChallengeItem = ChallengeListItem & {
+  myEntryImage: ChallengeListItem['coverImage'];
+  myPlace: number | null;
+  myResult: MyChallengeResult;
+  isLive: boolean;
+  myEnteredAt: Date;
 };
 
 // Completion summary stored in Challenge.metadata when winners are picked
