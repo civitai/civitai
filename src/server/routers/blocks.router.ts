@@ -68,6 +68,8 @@ import {
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
+import type { BlockWorkflowBody } from '~/server/schema/blocks/workflow.schema';
+import type { Context } from '~/server/createContext';
 import {
   allowMatureContentForCeiling,
   sfwBrowsingLevelsFlag,
@@ -100,13 +102,27 @@ import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-dom
 import type { ResolveCanGenerateVersion } from '~/server/services/generation/generation.service';
 import {
   appBlockTag,
+  buildCustomComfyWorkflowInput,
   buildTextToImageInput,
+  createBlockCustomComfyStep,
   isPageLoraResource,
   projectAppWorkflow,
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '~/server/services/blocks/workflow.service';
+// App Blocks customComfy bridge (v1). The recipe registry is the code-reviewed
+// trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
+// never returns undefined for a schema-valid body (defensively re-checked).
+import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/recipes';
+// Post-paid SETTLE-TO-ACTUAL for customComfy (plan §5.3). `persist*` is awaited in
+// submit (after reserving the ceiling); `settle*` is a best-effort call on the
+// terminal poll/cancel hook. Static import (both are light) — the heavy
+// refundAppSpend it may call is itself dynamic-imported inside the service.
+import {
+  persistCustomComfySettle,
+  settleCustomComfySpend,
+} from '~/server/services/blocks/custom-comfy-settle.service';
 // G8 — per-app aggregate spend/velocity cap. Type-only import (erased at
 // runtime): the cap functions themselves are dynamic-imported in the submit
 // path (mirrors recordSpendAttribution / the dev-tunnel backstop), so this adds
@@ -2589,6 +2605,16 @@ export const blocksRouter = router({
         } catch {
           /* best-effort: a read-model write failure never breaks the poll */
         }
+        // customComfy post-paid SETTLE-TO-ACTUAL (plan §5.3): refund the reserved
+        // CEILING down to the workflow's REAL accrued cost on BOTH reservation
+        // keys. Self-scoping + idempotent (a settle record exists ONLY for a
+        // customComfy submit and is consumed once via GET+DEL), and best-effort
+        // (never throws) — so it is safe to call for ANY terminal workflow; a
+        // txt2img / already-settled workflow simply no-ops.
+        await settleCustomComfySpend({
+          workflowId: input.workflowId,
+          actualCost: snapshot.cost?.total ?? 0,
+        });
       }
       return { snapshot };
     }),
@@ -2688,7 +2714,17 @@ export const blocksRouter = router({
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      return { snapshot: snapshotFromWorkflow(workflow) };
+      const snapshot = snapshotFromWorkflow(workflow);
+      // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
+      // accrued cost (orchestrator-side, non-refundable), so settle refunds the
+      // reserved CEILING down to that accrued `cost.total` on BOTH reservation
+      // keys. Self-scoping + idempotent + best-effort — a txt2img / non-customComfy
+      // cancel has no settle record and no-ops.
+      await settleCustomComfySpend({
+        workflowId: input.workflowId,
+        actualCost: snapshot.cost?.total ?? 0,
+      });
+      return { snapshot };
     }),
 
   /**
@@ -3102,6 +3138,13 @@ export const blocksRouter = router({
       if (!claims.scopes.includes('ai:write:budgeted')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
+      // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
+      // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
+      // estimate. The textToImage path below stays byte-identical (we only ADD a
+      // branch). Everything customComfy-specific lives in the helper.
+      if (input.body.kind === 'customComfy') {
+        return await estimateCustomComfyWorkflow({ claims, body: input.body });
+      }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
       // lets the viewer pick a model, so the modelId match is SKIPPED and
@@ -3262,6 +3305,20 @@ export const blocksRouter = router({
       if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
       }
+      // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
+      // path. Branch to the dedicated handler (page-only guard + entitlement +
+      // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path
+      // below stays byte-identical (we only ADD a branch); after this early
+      // return `input.body` narrows to the textToImage member for the rest.
+      if (input.body.kind === 'customComfy') {
+        return await submitCustomComfyWorkflow({ ctx, claims, body: input.body });
+      }
+      // `input.body` is now the textToImage member. Capture it so the narrowing
+      // survives into the fire-and-forget spend-attribution CLOSURE below (TS
+      // drops discriminated-union property narrowing at nested-function
+      // boundaries — the synchronous txt2img code keeps using `input.body`
+      // byte-identically; only the closure reads this alias).
+      const textToImageBody = input.body;
       // Context binding. MODEL token → body.modelId must match ctx.modelId.
       // PAGE token (ctx.entityType==='none') → no model binding; skip the match
       // and enforce the pre-spend availability gate after the version read
@@ -3858,7 +3915,7 @@ export const blocksRouter = router({
             // behalf of. Passed through OPAQUE — the service resolves the author
             // SERVER-SIDE from the app's own shared storage (never trusts the
             // client). Omitted → unchanged app-owner-only attribution.
-            sharedContentKey: input.body.sharedContentKey ?? null,
+            sharedContentKey: textToImageBody.sharedContentKey ?? null,
           });
         })().catch(() => {
           /* best-effort: a failed attribution write never breaks submit */
@@ -5053,6 +5110,289 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
   return row as unknown as SessionUser;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks `customComfy` bridge (v1) — estimate + submit handlers.
+//
+// A `customComfy` body carries `{ kind, recipe, params }` — NO model binding,
+// NO whatIf-able cost (post-paid customComfy whatIfs to 0). These two handlers
+// are the second `kind` branch off estimateWorkflow / submitWorkflow; the
+// textToImage path stays byte-identical (the procs branch, they don't rewrite).
+// The load-bearing addition is the POST-PAID BUDGET BELT (plan §5.3): a static
+// `maxBuzz <= buzzBudget` gate + reserve-the-CEILING + settle-to-actual, since
+// the step `timeout` (stamped by createBlockCustomComfyStep) is the ONLY
+// deterministic per-job Buzz bound the orchestrator offers.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type BlockClaims = NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>>;
+type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
+
+/**
+ * Resolve the recipe from the (schema-gated) `recipe` id. The wire schema's
+ * `z.enum(REGISTERED_RECIPE_IDS)` already rejected any unregistered id at the
+ * union, so this never returns undefined for a schema-valid body — the guard is
+ * defense-in-depth against a registry/schema desync. Fail closed.
+ */
+function resolveCustomComfyRecipe(body: CustomComfyBody) {
+  const recipe = getRecipe(body.recipe);
+  if (!recipe) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown recipe' });
+  }
+  return recipe;
+}
+
+/**
+ * customComfy ESTIMATE (plan §4). Do NOT run a real whatIf (returns 0 for
+ * customComfy) — return the recipe's honest per-engine DISPLAY estimate. Same
+ * page-only + developer gates as submit, so a model token / non-developer can't
+ * even probe estimates. Fail-closed on an out-of-bounds param (ZodError).
+ */
+async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: CustomComfyBody }) {
+  const { claims, body } = opts;
+  // Page-only: a fixed server-authored recipe belongs to the page path (mirrors
+  // the model-token sourceImage/additionalResources rejection in the txt2img
+  // branch). Defense-in-depth even on estimate.
+  if (!isPageToken(claims)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'customComfy recipes are page-only' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'estimate requires authenticated viewer' });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  await assertViewerIsAppDeveloper(userId);
+  const recipe = resolveCustomComfyRecipe(body);
+  // Parse through the recipe's OWN `.strict()` schema so the engine (which drives
+  // the per-engine display estimate) is validated/bounded; an invalid param
+  // throws a ZodError → BAD_REQUEST, exactly as submit fails closed.
+  const params = recipe.paramSchema.parse(body.params);
+  return {
+    snapshot: {
+      // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
+      // snapshots. The block treats estimate as a cost quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total: recipe.estimateBuzz(params) },
+    },
+  };
+}
+
+/**
+ * customComfy SUBMIT (plan §4 + §5.3 — the crux). Order: page-only guard →
+ * developer gates → per-recipe param parse → entitlement gate over the recipe's
+ * pinned civitai versions → prompt audit → post-paid budget belt (static gate +
+ * reserve-the-ceiling on both caps) → build+submit the timeout-stamped step →
+ * persist the settle record. Over-cap / rejections return a failed-shape
+ * snapshot (recoverable by the block); a throw AFTER reserving refunds the
+ * ceiling on both keys.
+ */
+async function submitCustomComfyWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: CustomComfyBody;
+}) {
+  const { ctx, claims, body } = opts;
+
+  // ── Page-only guard (mirror the model-token sourceImage rejection ~:3294).
+  if (!isPageToken(claims)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'customComfy recipes are page-only' });
+  }
+  // The outer proc already gated this, but re-narrow here (defense-in-depth) so
+  // `buzzBudget` is a positive number the static gate can compare against.
+  if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'workflow submit requires authenticated viewer',
+    });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  await assertViewerIsAppDeveloper(userId);
+
+  const recipe = resolveCustomComfyRecipe(body);
+  // The recipe's OWN `.strict()` schema is the real param contract (the wire
+  // schema only gated `recipe`); an invalid param throws → fail-closed.
+  const params = recipe.paramSchema.parse(body.params);
+
+  const user = await getBlockSessionUser(userId);
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // Honor a money-page account pick (preferred-first, domain-clamped) as txt2img;
+  // absent → Auto.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, params.accountType);
+
+  // ── Entitlement gate (plan §6). A raw customComfy step submits its `resources`
+  // AIR array DIRECTLY, bypassing the generation-graph path's automatic
+  // resolveCanGenerateForVersions. Run the SAME belt the txt2img page branch uses
+  // over EVERY civitai version the recipe pins (v1 = fixed public LoRAs) BEFORE
+  // emitting the step — so the code-reviewed registry can't be quietly edited to
+  // point at a gated / early-access / Private / unpublished version without the
+  // belt catching it. The huggingface staticAirs carry no civitai entitlement
+  // (exempt-by-construction). checkpointPolicy:'pinned' → no user checkpoint in v1.
+  const versionIds = recipeCivitaiVersionIds(recipe);
+  if (versionIds.length > 0) {
+    const gates: ReturnType<typeof buildGateVersion>[] = [];
+    for (const versionId of versionIds) {
+      const resolvedVersion = await resolvePageResourceContext(versionId);
+      gates.push(buildGateVersion(resolvedVersion.gate));
+    }
+    await assertViewerCanGeneratePageResources({
+      gates,
+      viewer: { id: userId, isModerator: !!user.isModerator },
+      sfwOnly: allowMatureContent === false,
+      wildcardsEnabled: !!ctx.features.wildcards,
+    });
+  }
+
+  const token = await getOrchestratorToken(userId, ctx);
+
+  // ── Prompt audit (plan §7 seam 3). A server-owned graph earns NO moderation
+  // bypass — audit the RAW prompt (the recipe appends its trigger-word prefix +
+  // quality suffix only INSIDE the builder, AFTER this read) with the
+  // domain-derived isGreen strictness, exactly like txt2img, before any
+  // orchestrator call.
+  await auditPromptServer({
+    prompt: params.prompt,
+    negativePrompt: recipe.negativePrompt,
+    userId,
+    isGreen,
+    isModerator: !!user.isModerator,
+  });
+
+  // ── Post-paid budget belt (plan §5.3 — THE crux) ─────────────────────────
+  // `ceiling === recipe.maxBuzz === ceil(stepTimeoutSeconds)` (enforced at
+  // registry load): the step `timeout` physically caps the job at this many Buzz.
+  const ceiling = recipe.maxBuzz;
+
+  // (1) STATIC pre-submit gate — the post-paid analog of the txt2img whatIf
+  // `cost > buzzBudget` gate. Because the timeout caps the job at `maxBuzz` and we
+  // require `maxBuzz <= buzzBudget`, the per-call budget CANNOT be exceeded.
+  // Deterministic, no orchestrator round-trip.
+  if (ceiling > claims.buzzBudget) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error: `insufficient buzz budget: recipe ceiling ${ceiling} exceeds budget ${claims.buzzBudget}`,
+      },
+    };
+  }
+
+  // (2) Reserve the CEILING (not the 0 estimate) against the per-user daily cap so
+  // post-paid spend can't slip past the 50k/day ceiling counted at ~0.
+  const { total, key: buzzCapKey } = await reserveBlockBuzzSpend(userId, ceiling);
+  if (total > BLOCK_BUZZ_CAP_PER_DAY) {
+    await refundBlockBuzzSpend(buzzCapKey, ceiling);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: ceiling },
+        error:
+          `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
+          `across your installed apps, this generation may cost up to ${ceiling}, ` +
+          `daily cap is ${BLOCK_BUZZ_CAP_PER_DAY}`,
+      },
+    };
+  }
+
+  // (3) Reserve the CEILING against the per-app aggregate cap (G8). Skipped for
+  // DEV tokens (synthetic non-FK appBlockId) — matching the txt2img caps.
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, ceiling);
+    if (!appSpend.allowed) {
+      // Roll back the per-user reservation so a rejected submit doesn't burn the
+      // viewer's own daily ceiling for a spend that never happened.
+      await refundBlockBuzzSpend(buzzCapKey, ceiling);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: ceiling },
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: ceiling };
+  }
+
+  // ── Build + submit. `createBlockCustomComfyStep` stamps the recipe's aggressive
+  // `timeout` — the physical Buzz ceiling. On ANY throw AFTER reserving, refund
+  // the CEILING (not 0) on both keys and re-throw (refund-on-throw, plan §7).
+  let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  try {
+    const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
+    const step = createBlockCustomComfyStep(recipe, stepInput);
+    // Parameterized tags: emit the recipe id + 'customComfy' (NOT 'txt2img'),
+    // preserving the `app-block:*` provenance tags the subqueue read depends on.
+    const tags = buildWorkflowTags(claims, recipe.id, 'customComfy');
+    const submitted = await submitWorkflow({
+      token,
+      body: {
+        steps: [step],
+        tags,
+        currencies,
+        // Authoritative maturity clamp on the real submit — token-claim derived.
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+      },
+    });
+    snapshot = snapshotFromWorkflow(submitted);
+  } catch (e) {
+    await refundBlockBuzzSpend(buzzCapKey, ceiling);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    throw e;
+  }
+
+  // ── Persist the settle record (AWAITED — see custom-comfy-settle.service). The
+  // terminal poll/cancel hook reads it and refunds `ceiling - actual` on BOTH
+  // keys. Only for a REAL orchestrator id (never the failed/whatif sentinels).
+  if (
+    snapshot.workflowId &&
+    snapshot.workflowId !== 'failed' &&
+    snapshot.workflowId !== 'whatif'
+  ) {
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ceiling,
+    });
+    // G6 — persistent output queue (best-effort, non-dev). Same posture as
+    // txt2img so a customComfy gen rebuilds in listMyWorkflows on reload.
+    if (claims.dev !== true) {
+      const realWorkflowId = snapshot.workflowId;
+      void (async () => {
+        const { upsertBlockWorkflowOnSubmit } = await import(
+          '~/server/services/blocks/block-workflows.service'
+        );
+        await upsertBlockWorkflowOnSubmit({
+          workflowId: realWorkflowId,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          userId,
+          status: snapshot.status,
+        });
+      })().catch(() => {
+        /* best-effort: a failed queue write never breaks (or slows) submit */
+      });
+    }
+  }
+
+  return { snapshot };
+}
+
 /**
  * Workflow tags drive orchestrator-side filtering, billing attribution, and
  * the "submitted via app block" audit trail. Mirrors what createTextToImage
@@ -5061,12 +5401,19 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
  */
 function buildWorkflowTags(
   claims: { blockId: string; blockInstanceId: string; appId: string },
-  baseModel: string
+  baseModel: string,
+  // The workflow-TYPE tag (orchestrator-side filtering / billing attribution).
+  // Defaults to 'txt2img' so every existing txt2img call site (2-arg) emits the
+  // BYTE-IDENTICAL tag set it did before. The customComfy branch passes the
+  // recipe id here (with `baseModel` also the recipe id) so a customComfy job is
+  // NOT mislabeled 'txt2img' — while the `app-block:*` provenance tags below are
+  // preserved verbatim, so the per-app subqueue read (appBlockTag) is unaffected.
+  workflowType: string = 'txt2img'
 ): string[] {
   return [
     WORKFLOW_TAGS.GENERATION,
     WORKFLOW_TAGS.IMAGE,
-    'txt2img',
+    workflowType,
     baseModel,
     'app-block',
     // Per-app subqueue tag — the SAME helper `blocks.queryAppWorkflows` filters
