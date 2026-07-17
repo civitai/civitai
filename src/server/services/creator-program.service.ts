@@ -205,7 +205,9 @@ export async function flushBankedCache() {
 }
 
 export async function getCreatorRequirements(userId: number) {
-  const [status] = await dbWrite.$queryRaw<{ score: number; membership: UserTier }[]>`
+  const [status] = await dbWrite.$queryRaw<
+    { score: number; membership: UserTier; onboarding: number }[]
+  >`
     SELECT
     -- We are doing greatest in case the meta->'scores'->'total' is not properly computated.
     -- Noticed a few cases where it was different than the total sum (lower). Safeguard here.
@@ -224,10 +226,17 @@ export async function getCreatorRequirements(userId: number) {
       JOIN "Product" p ON p.id = cs."productId"
       WHERE status IN ('incomplete', 'active') AND cs."userId" = u.id
       LIMIT 1
-    ) as membership
+    ) as membership,
+    u.onboarding as onboarding
     FROM "User" u
     WHERE id = ${userId};
   `;
+
+  // A member whose subscription lapsed keeps the onboarding flag (we don't strip
+  // it), so surface a lapsed signal for the UI. Uses the same gate as the shop /
+  // banking so all three agree on what "active" means.
+  const joined = Flags.hasFlag(status.onboarding, OnboardingSteps.CreatorProgram);
+  const membershipLapsed = joined && !(await hasValidCreatorMembership(userId));
 
   return {
     score: {
@@ -238,6 +247,7 @@ export async function getCreatorRequirements(userId: number) {
     validMembership:
       // We will not support founder tier.
       status.membership !== 'free' && status.membership !== 'founder' ? status.membership : false,
+    membershipLapsed,
   };
 }
 
@@ -410,20 +420,12 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
     throw throwBadRequestError('User is banned from the Creator Program');
   }
 
-  // Check if user has active membership for this buzzType
-  const activeMembership = await dbWrite.customerSubscription.findFirst({
-    where: {
-      userId,
-      status: 'active',
-      currentPeriodEnd: {
-        gt: new Date(),
-      },
-    },
-  });
-
-  if (!activeMembership) {
-    throw throwBadRequestError(`Active membership required to bank ${buzzType} buzz`);
-  }
+  // Banking requires a valid Creator Program membership — same gate the shop
+  // uses, so bank and shop access stay in lockstep (honors any buzzType, excludes
+  // free/founder). Previously an inline yellow-agnostic active-sub check that
+  // could diverge from the shop gate.
+  if (!(await hasValidCreatorMembership(userId)))
+    throw throwBadRequestError('An active Creator Program membership is required to bank Buzz.');
 
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });

@@ -99,7 +99,8 @@ const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
 });
 
 const cardProps: HTMLProps<HTMLDivElement> = {
-  className: 'bg-gray-0 align-center flex flex-col rounded-lg border border-gray-2 p-4 dark:border-dark-4 dark:bg-dark-5',
+  className:
+    'bg-gray-0 align-center flex flex-col rounded-lg border border-gray-2 p-4 dark:border-dark-4 dark:bg-dark-5',
 };
 
 const DATE_FORMAT = 'MMM D, YYYY @ hA z';
@@ -108,6 +109,7 @@ const DATE_FORMAT = 'MMM D, YYYY @ hA z';
 export const CreatorProgramV2 = () => {
   const currentUser = useCurrentUser();
   const { phase, isLoading } = useCreatorProgramPhase();
+  const { requirements } = useCreatorProgramRequirements();
   const availability = getCreatorProgramAvailability(currentUser?.isModerator);
   useCreatorPoolListener();
 
@@ -125,6 +127,11 @@ export const CreatorProgramV2 = () => {
   if (isBanned) {
     return null;
   }
+
+  // Onboarded but their membership lapsed — keep the flag, but gate the
+  // earning actions and tell them to renew (withdrawing already-earned cash
+  // stays available).
+  const membershipLapsed = hasOnboardedInProgram && !!requirements?.membershipLapsed;
 
   return (
     <div className="mt-8 flex flex-col gap-5" id="creator-program">
@@ -145,14 +152,44 @@ export const CreatorProgramV2 = () => {
           <CompensationPoolCard />
         </div>
       )}
-      {hasOnboardedInProgram && (
-        <div className="flex flex-col gap-4 md:flex-row">
-          {phase === 'bank' && <BankBuzzCard />}
-          {phase === 'extraction' && <ExtractBuzzCard />}
-          <EstimatedEarningsCard />
-          {<WithdrawCashCard />}
-        </div>
-      )}
+      {hasOnboardedInProgram &&
+        (membershipLapsed ? (
+          <div className="flex flex-col gap-4 md:flex-row">
+            <MembershipLapsedCard />
+            <WithdrawCashCard />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4 md:flex-row">
+            {phase === 'bank' && <BankBuzzCard />}
+            {phase === 'extraction' && <ExtractBuzzCard />}
+            <EstimatedEarningsCard />
+            {<WithdrawCashCard />}
+          </div>
+        ))}
+    </div>
+  );
+};
+
+const MembershipLapsedCard = () => {
+  return (
+    <div {...cardProps}>
+      <div className="flex items-center gap-2">
+        <IconLock size={20} />
+        <Text className="font-bold">Membership lapsed</Text>
+      </div>
+      <Text size="sm" c="dimmed" className="mt-2">
+        Your Creator Program membership is no longer active, so banking and earning are paused.
+        Renew your membership to pick things back up. You can still withdraw any cash you&apos;ve
+        already earned.
+      </Text>
+      <Button
+        component="a"
+        href="/pricing"
+        className="mt-4"
+        leftSection={<IconPigMoney size={16} />}
+      >
+        Renew membership
+      </Button>
     </div>
   );
 };
@@ -357,11 +394,7 @@ export const CompensationPoolCard = () => {
         <div className="flex flex-col">
           <h3 className="my-0 text-center text-xl font-bold">Current Banked Buzz</h3>
           <div className="flex justify-center gap-1">
-            <CurrencyIcon
-              className="my-auto"
-              currency={Currency.BUZZ}
-              size={20}
-            />
+            <CurrencyIcon className="my-auto" currency={Currency.BUZZ} size={20} />
             <span className="text-2xl font-bold">
               {numberWithCommas(compensationPool?.size.current)}
             </span>
@@ -459,7 +492,9 @@ const BankBuzzCard = () => {
           <NumberInputWrapper
             label="Buzz"
             labelProps={{ className: 'hidden' }}
-            leftSection={<CurrencyIcon currency={Currency.BUZZ} type={selectedBuzzType} size={18} />}
+            leftSection={
+              <CurrencyIcon currency={Currency.BUZZ} type={selectedBuzzType} size={18} />
+            }
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
@@ -1185,11 +1220,7 @@ const ExtractBuzzCard = () => {
           <div className="flex items-center gap-2">
             <p>
               <span className="font-bold">Extraction Fee:</span>{' '}
-              <CurrencyIcon
-                currency={Currency.BUZZ}
-                size={14}
-                className="inline"
-              />
+              <CurrencyIcon currency={Currency.BUZZ} size={14} className="inline" />
               {numberWithCommas(extractionFee)}
             </p>
             <LegacyActionIcon
