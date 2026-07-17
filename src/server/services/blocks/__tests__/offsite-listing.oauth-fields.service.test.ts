@@ -2,16 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildListingPatchData,
-  submitConnectListing,
+  submitExternalListing,
   updateListing,
 } from '~/server/services/blocks/offsite-listing.service';
-import type { SubmitConnectListingInput } from '~/server/schema/blocks/offsite-listing.schema';
+import type { SubmitExternalListingInput } from '~/server/schema/blocks/offsite-listing.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * App Store Listings (W13) — OAuth-CONNECT submission SERVICE tests (PR2).
+ * App Store Listings (W13) — external-app submission SERVICE tests: the OAuth-client (connect) aspects of the MERGED submitExternalListing (re-homed from the standalone connect path).
  *
- * Covers `submitConnectListing` (DRAFT AppListing + pending request in one tx with
+ * Covers `submitExternalListing` (DRAFT AppListing + pending request in one tx with
  * the connect fields; owner-binding; app-block-client exclude; scope subset +
  * justification validation; slug/cap reuse) plus the edit path re-validation
  * (`buildListingPatchData` + `updateListing`). DB deps are mocked — no real Prisma.
@@ -64,7 +64,7 @@ const CLIENT_ID = 'oauth-client-1';
 // Ceiling: UserRead(1) | ModelsRead(4) | ModelsWrite(8) = 13.
 const CEILING = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.ModelsWrite;
 
-const baseInput: SubmitConnectListingInput = {
+const baseInput: SubmitExternalListingInput = {
   slug: 'connect-app',
   name: 'Connect App',
   connectClientId: CLIENT_ID,
@@ -100,9 +100,9 @@ beforeEach(() => {
     .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
 });
 
-describe('submitConnectListing', () => {
+describe('submitExternalListing', () => {
   it('happy path: creates a DRAFT connect AppListing + a pending request with the connect fields', async () => {
-    const res = await submitConnectListing({ input: baseInput, userId: CALLER });
+    const res = await submitExternalListing({ input: baseInput, userId: CALLER });
 
     expect(res.slug).toBe('connect-app');
     expect(res.listingId).toMatch(/^apl_test_/);
@@ -136,7 +136,7 @@ describe('submitConnectListing', () => {
   it('IDOR: the created rows carry the AUTHENTICATED caller as owner/submitter', async () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
     // caller OTHER owns the client → allowed; rows carry OTHER.
-    await submitConnectListing({ input: baseInput, userId: OTHER });
+    await submitExternalListing({ input: baseInput, userId: OTHER });
     const listingData = mockWrite.appListing.create.mock.calls[0][0].data as { userId: number };
     const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0]
       .data as { submittedByUserId: number };
@@ -146,7 +146,7 @@ describe('submitConnectListing', () => {
 
   it('ownership failure: a client owned by someone else → FORBIDDEN, no write', async () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
-    await expect(submitConnectListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
@@ -154,7 +154,7 @@ describe('submitConnectListing', () => {
 
   it('client not found → NOT_FOUND, no write', async () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(null);
-    await expect(submitConnectListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
@@ -162,7 +162,7 @@ describe('submitConnectListing', () => {
 
   it('app-block client → BAD_REQUEST (excluded up-front, no client lookup)', async () => {
     await expect(
-      submitConnectListing({
+      submitExternalListing({
         input: { ...baseInput, connectClientId: 'appblk-abc123' },
         userId: CALLER,
       })
@@ -173,7 +173,7 @@ describe('submitConnectListing', () => {
 
   it('requestedScopes NOT ⊆ allowedScopes → BAD_REQUEST, no write', async () => {
     await expect(
-      submitConnectListing({
+      submitExternalListing({
         input: {
           ...baseInput,
           // MediaWrite (64) is outside the ceiling (13).
@@ -208,14 +208,14 @@ describe('submitConnectListing', () => {
     ],
   ])('bad justification (%s) → BAD_REQUEST, no write', async (_label, patch) => {
     await expect(
-      submitConnectListing({ input: { ...baseInput, ...patch }, userId: CALLER })
+      submitExternalListing({ input: { ...baseInput, ...patch }, userId: CALLER })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('empty justification map ({}) is accepted (disclosure-only)', async () => {
     await expect(
-      submitConnectListing({
+      submitExternalListing({
         input: { ...baseInput, scopeJustifications: {} },
         userId: CALLER,
       })
@@ -224,7 +224,7 @@ describe('submitConnectListing', () => {
 
   it('slug already taken → friendly BAD_REQUEST, no tx', async () => {
     mockRead.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
-    await expect(submitConnectListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: expect.stringContaining('already taken'),
     });
@@ -233,7 +233,7 @@ describe('submitConnectListing', () => {
 
   it('per-user pending cap → TOO_MANY_REQUESTS, no tx', async () => {
     mockRead.appListingPublishRequest.count.mockResolvedValue(10);
-    await expect(submitConnectListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();

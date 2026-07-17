@@ -43,11 +43,13 @@ describe('validateOffsiteSubmitForm', () => {
     expect(isOffsiteSubmitFormValid(valid)).toBe(true);
   });
 
-  it('an empty form is invalid (slug + name + url required)', () => {
+  it('an empty form is invalid on slug + name (the homepage URL is now OPTIONAL)', () => {
     const errors = validateOffsiteSubmitForm(emptyOffsiteSubmitForm());
     expect(errors.slug).toBeDefined();
     expect(errors.name).toBeDefined();
-    expect(errors.externalUrl).toBeDefined();
+    // externalUrl is optional in the merged model — a blank URL is valid (only a
+    // PRESENT-but-malformed URL errors; see the non-https test below).
+    expect(errors.externalUrl).toBeUndefined();
   });
 
   it('rejects a non-https URL', () => {

@@ -15,7 +15,6 @@ import {
   OFFSITE_REJECTION_REASON_MIN,
   type OffsiteContentRating,
   type PersistListingAssetImageInput,
-  type SubmitConnectListingInput,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
@@ -116,12 +115,25 @@ export type SubmitExternalListingResult = {
 };
 
 /**
- * Create a DRAFT off-site listing + a pending publish request in one transaction.
+ * Create a DRAFT external-app off-site listing + a pending publish request in one
+ * transaction (the MERGED external+connect model — every external app IS an OAuth
+ * app, so this ONE path links the caller's OAuth client AND carries the optional
+ * homepage URL + display metadata + reviewed scopes).
  *
  * Owner-binding (IDOR): both the `AppListing.userId` and the
  * `AppListingPublishRequest.submittedByUserId` are set from the AUTHENTICATED
  * caller (`userId`) — the input carries NO owner field, so a caller can never
- * submit on another user's behalf.
+ * submit on another user's behalf. The linked OAuth client is ALSO ownership-checked
+ * (`loadConnectClientForListing`: exists / owned-by-caller / not an App-Block client).
+ *
+ * REQUIRES a `connectClientId` (the caller's own OAuth client) + a DISCLOSED
+ * `requestedScopes` subset (⊆ the client's `allowedScopes` ceiling) + per-scope
+ * `scopeJustifications`. `externalUrl` is now OPTIONAL (homepage / Visit link) — the
+ * https re-validation runs ONLY when a URL is provided; an omitted URL stores null.
+ *
+ * Disclosure/review-only: `connectRequestedScopes` is STORED + reviewed; it does NOT
+ * gate OAuth token issuance (the client's `allowedScopes` remains the runtime ceiling
+ * via the existing consent flow).
  *
  * Slug collision: pre-checked against BOTH `AppListing.slug` (unique across both
  * kinds) AND an existing `AppBlock.block_id` (an on-site slug), then backstopped
@@ -140,10 +152,11 @@ export async function submitExternalListing(opts: {
 }): Promise<SubmitExternalListingResult> {
   const { input, userId } = opts;
 
-  // Defense-in-depth: re-run the shared URL + surface validators (this fn is
-  // exported and unit-tested directly, not only reached through the schema).
-  const url = validateExternalUrl(input.externalUrl);
-  if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
+  // Defense-in-depth: re-run the shared URL validator — but ONLY when a URL is
+  // provided (externalUrl is now optional; a connect-only listing omits it). This fn
+  // is exported + unit-tested directly, not only reached through the schema.
+  const url = input.externalUrl != null ? validateExternalUrl(input.externalUrl) : null;
+  if (url && !url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
   const surface = assertNoOnPlatformSurface({
     page: input.page,
     targets: input.targets,
@@ -165,6 +178,16 @@ export async function submitExternalListing(opts: {
       message: `unknown content rating "${contentRating}"`,
     });
   }
+
+  // Load + gate the caller's OAuth client (exists / owned / not-app-block), then
+  // validate the requested-scope subset + per-scope justifications against the
+  // client's ceiling. REQUIRED for every external listing (the merged model).
+  const client = await loadConnectClientForListing(input.connectClientId, userId);
+  assertConnectScopesValid({
+    requestedScopes: input.requestedScopes,
+    scopeJustifications: input.scopeJustifications,
+    allowedScopes: client.allowedScopes,
+  });
 
   // Per-user pending-submission cap: bound the standing orphan-draft count (drafts
   // only clear on withdraw/reject, no TTL). At/over the cap → TOO_MANY_REQUESTS.
@@ -222,9 +245,13 @@ export async function submitExternalListing(opts: {
           // Author-declared, re-asserted against the enum above; defaults to SFW
           // so an omitted rating is never mature.
           contentRating,
-          externalUrl: url.url,
-          // External-link sub-kind only — the OAuth-connect seam stays inert.
-          connectClientId: null,
+          // OPTIONAL homepage / Visit link — canonicalized when provided, else null.
+          externalUrl: url && url.ok ? url.url : null,
+          // REQUIRED OAuth client link + the disclosed (review-only) scope subset +
+          // per-scope justifications.
+          connectClientId: input.connectClientId,
+          connectRequestedScopes: input.requestedScopes,
+          connectScopeJustifications: input.scopeJustifications,
           // A natively-created off-site listing has no backing AppBlock.
           appBlockId: null,
           userId,
@@ -253,20 +280,15 @@ export async function submitExternalListing(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// submitConnectListing (author) — OAuth-connect sub-kind (un-defers the seam).
+// OAuth-client link helpers — shared by the submit + edit paths of the merged
+// external-app listing flow (every external app links its own OAuth client).
 // ---------------------------------------------------------------------------
 
-export type SubmitConnectListingResult = {
-  listingId: string;
-  publishRequestId: string;
-  slug: string;
-};
-
 /**
- * Load the caller's OWN OAuth client and assert it is eligible to back a connect
+ * Load the caller's OWN OAuth client and assert it is eligible to back an external
  * listing: it must EXIST, be OWNED by `userId` (IDOR), and NOT be an App-Block
  * client (`isAppBlockOauthClientId` — those are managed by the App Blocks flow, not
- * hand-listed). Returns the client's `allowedScopes` ceiling. A connect listing does
+ * hand-listed). Returns the client's `allowedScopes` ceiling. An external listing does
  * NOT require the client to be `isVerified` (decision Q4). All failures are friendly
  * TRPCErrors (parity with `submitExternalListing`'s validation style).
  */
@@ -323,132 +345,6 @@ function assertConnectScopesValid(opts: {
   if (errors.length > 0) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: errors.join('; ') });
   }
-}
-
-/**
- * Create a DRAFT OAuth-CONNECT off-site listing + a pending publish request in one
- * transaction — the connect analog of {@link submitExternalListing}. Same B1
- * scaffold (draft listing for owner-gated asset CRUD, pending request, slug-squat
- * pre-check + P2002 backstop, per-user pending cap) but the sub-kind carries a
- * `connectClientId` (a client the caller OWNS + is NOT an App-Block client) and NO
- * `externalUrl`, plus the DISCLOSED `connectRequestedScopes` subset (⊆ the client's
- * `allowedScopes`) and per-scope `connectScopeJustifications`.
- *
- * Disclosure/review-only: `connectRequestedScopes` is STORED + reviewed; it does NOT
- * gate OAuth token issuance (the client's `allowedScopes` remains the runtime ceiling
- * via the existing consent flow).
- *
- * Owner-binding (IDOR) is identical to the external path — both `AppListing.userId`
- * and `AppListingPublishRequest.submittedByUserId` come from the authenticated
- * caller, and the client ownership is re-checked here.
- *
- * NOTE: connect-listing mod APPROVAL is completed in PR3 (which owns the review
- * side). Today `approveExternalRequest` / `applyApprovedRevision` re-validate the
- * stored `externalUrl`, which is `null` for a connect listing — PR3 skips that URL
- * re-validation for the connect sub-kind + adds the approve→live test. This submit
- * path (PR2) deliberately does not touch the approve path.
- */
-export async function submitConnectListing(opts: {
-  input: SubmitConnectListingInput;
-  userId: number;
-}): Promise<SubmitConnectListingResult> {
-  const { input, userId } = opts;
-
-  if (input.category != null && !isMarketplaceCategory(input.category)) {
-    throw new TRPCError({ code: 'BAD_REQUEST', message: `unknown category "${input.category}"` });
-  }
-  const contentRating = input.contentRating ?? 'g';
-  if (!(OFFSITE_CONTENT_RATINGS as readonly string[]).includes(contentRating)) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `unknown content rating "${contentRating}"`,
-    });
-  }
-
-  // Load + gate the OAuth client (exists / owned / not-app-block), then validate the
-  // requested-scope subset + justifications against the client's ceiling.
-  const client = await loadConnectClientForListing(input.connectClientId, userId);
-  assertConnectScopesValid({
-    requestedScopes: input.requestedScopes,
-    scopeJustifications: input.scopeJustifications,
-    allowedScopes: client.allowedScopes,
-  });
-
-  // Per-user pending-submission cap (shared with the external path — bounds standing
-  // orphan-draft accrual across BOTH offsite sub-kinds).
-  const pendingCount = await dbRead.appListingPublishRequest.count({
-    where: { submittedByUserId: userId, kind: 'offsite', status: 'pending' },
-  });
-  if (pendingCount >= MAX_PENDING_OFFSITE_SUBMISSIONS) {
-    throw new TRPCError({
-      code: 'TOO_MANY_REQUESTS',
-      message: `You have ${pendingCount} pending submissions (max ${MAX_PENDING_OFFSITE_SUBMISSIONS}). Withdraw one or wait for review before submitting another.`,
-    });
-  }
-
-  const slug = input.slug;
-
-  const existingListing = await dbRead.appListing.findUnique({
-    where: { slug },
-    select: { id: true },
-  });
-  if (existingListing) throw slugTakenError(slug);
-  const existingBlock = await dbRead.appBlock.findFirst({
-    where: { blockId: slug },
-    select: { id: true },
-  });
-  if (existingBlock) throw slugTakenError(slug);
-
-  const listingId = newAppListingId();
-  const publishRequestId = newAppListingPublishRequestId();
-
-  try {
-    await dbWrite.$transaction(async (tx) => {
-      const blockOnPrimary = await tx.appBlock.findFirst({
-        where: { blockId: slug },
-        select: { id: true },
-      });
-      if (blockOnPrimary) throw slugTakenError(slug);
-
-      await tx.appListing.create({
-        data: {
-          id: listingId,
-          kind: 'offsite',
-          status: 'draft',
-          slug,
-          name: input.name,
-          tagline: input.tagline ?? null,
-          description: input.description ?? null,
-          category: input.category ?? null,
-          contentRating,
-          // Connect sub-kind: no external URL; the app is a registered OAuth client.
-          externalUrl: null,
-          connectClientId: input.connectClientId,
-          // Disclosed, review-only scope subset + per-scope justifications.
-          connectRequestedScopes: input.requestedScopes,
-          connectScopeJustifications: input.scopeJustifications,
-          appBlockId: null,
-          userId,
-        },
-      });
-      await tx.appListingPublishRequest.create({
-        data: {
-          id: publishRequestId,
-          appListingId: listingId,
-          kind: 'offsite',
-          slug,
-          submittedByUserId: userId,
-          status: 'pending',
-          changelog: input.changelog ?? null,
-        },
-      });
-    });
-  } catch (err) {
-    if ((err as { code?: unknown })?.code === 'P2002') throw slugTakenError(slug);
-    throw err;
-  }
-
-  return { listingId, publishRequestId, slug };
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,12 +1082,26 @@ export async function submitListingRevision(opts: {
     coverId: shadow.coverId,
     screenshotCount,
   });
-  const url = validateExternalUrl(shadow.externalUrl);
-  if (!url.ok) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `stored externalUrl is invalid and cannot be submitted: ${url.error}`,
-    });
+  // Validate the stored externalUrl ONLY WHEN present — it's OPTIONAL in the merged
+  // model (a connect-only listing carries `externalUrl: null`). Gating this
+  // unconditionally made a no-homepage external app UN-REVISABLE: its material-edit
+  // shadow carries a null URL and `validateExternalUrl(null)` returns `{ok:false}`,
+  // so submitting the revision threw. Mirrors the submit / first-time-approve /
+  // revision-approve gates. A provided-but-invalid URL still blocks.
+  // Validate the stored externalUrl ONLY WHEN present — it's OPTIONAL in the merged
+  // model (a connect-only listing carries `externalUrl: null`). Gating this
+  // unconditionally made a no-homepage external app UN-REVISABLE: its material-edit
+  // shadow carries a null URL and `validateExternalUrl(null)` returns `{ok:false}`,
+  // so submitting the revision threw. Mirrors the submit / first-time-approve /
+  // revision-approve gates. A provided-but-invalid URL still blocks.
+  if (shadow.externalUrl != null) {
+    const url = validateExternalUrl(shadow.externalUrl);
+    if (!url.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `stored externalUrl is invalid and cannot be submitted: ${url.error}`,
+      });
+    }
   }
 
   // Guard a second concurrent pending revision: one open request per shadow.
@@ -1713,13 +1623,11 @@ export async function approveExternalRequest(opts: {
 
   // (4) Defense-in-depth: re-validate the STORED externalUrl before it can reach
   // the store (mirrors submit + the read-path `safeExternalUrl`). Also re-checked
-  // on the primary inside the tx. SKIPPED for a CONNECT listing (PR3): a connect
-  // listing has NO external URL (`externalUrl: null` by construction — the app is a
-  // registered OAuth client, not an off-site link), so the URL gate does not apply;
-  // running it unconditionally is exactly the PR2 audit gap that made connect
-  // listings unapprovable. External-link listings still require a valid https URL.
-  const isConnectListing = listing.connectClientId != null;
-  if (!isConnectListing) {
+  // on the primary inside the tx. In the MERGED model `externalUrl` is OPTIONAL for
+  // every listing, so the gate runs ONLY WHEN a URL is present — a provided URL must
+  // still be a valid https link; a null URL (connect-only, or a legacy row without a
+  // homepage) approves fine.
+  if (listing.externalUrl != null) {
     const url = validateExternalUrl(listing.externalUrl);
     if (!url.ok) {
       throw new TRPCError({
@@ -1729,8 +1637,9 @@ export async function approveExternalRequest(opts: {
     }
   }
 
-  // (4b) Connect sub-kind approval gate (PR3): every SENSITIVE requested scope must
-  // carry a non-empty justification before the app goes live. No-op for external-link.
+  // (4b) OAuth-scope approval gate: every SENSITIVE requested scope must carry a
+  // non-empty justification before the app goes live. No-op for a legacy URL-only
+  // row (`connectClientId == null`); runs for every OAuth-linked external listing.
   assertConnectSensitiveScopesJustified(listing);
 
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
@@ -1770,9 +1679,9 @@ export async function approveExternalRequest(opts: {
       coverId: primaryListing.coverId,
       screenshotCount: primaryScreenshotCount,
     });
-    // Skip the external-URL gate for a connect listing (no URL by construction);
-    // external-link listings still require a valid stored https URL. See step (4).
-    if (primaryListing.connectClientId == null) {
+    // Validate the stored externalUrl ONLY WHEN present (it's optional in the merged
+    // model); a null URL approves fine. See step (4).
+    if (primaryListing.externalUrl != null) {
       const primaryUrl = validateExternalUrl(primaryListing.externalUrl);
       if (!primaryUrl.ok) {
         throw new TRPCError({
@@ -1966,6 +1875,10 @@ async function applyApprovedRevision(opts: {
         connectClientId: true,
         connectRequestedScopes: true,
         connectScopeJustifications: true,
+        // The reviewed client's scope CEILING — re-asserted in-tx below so a client
+        // whose `allowedScopes` SHRANK between edit and revision-approve can't slip a
+        // now-out-of-ceiling scope past the mod (mirrors the first-time approve path).
+        connectClient: { select: { allowedScopes: true } },
         iconId: true,
         coverId: true,
       },
@@ -1984,10 +1897,9 @@ async function applyApprovedRevision(opts: {
       coverId: shadow.coverId,
       screenshotCount,
     });
-    // Skip the external-URL gate for a CONNECT revision (no URL by construction);
-    // external-link revisions still require a valid stored https URL. See the
-    // first-time approve path (step 4) for the same PR3 rationale.
-    if (shadow.connectClientId == null) {
+    // Validate the stored externalUrl ONLY WHEN present (optional in the merged
+    // model); a null URL is fine. See the first-time approve path (step 4).
+    if (shadow.externalUrl != null) {
       const url = validateExternalUrl(shadow.externalUrl);
       if (!url.ok) {
         throw new TRPCError({
@@ -1996,13 +1908,26 @@ async function applyApprovedRevision(opts: {
         });
       }
     }
-    // Connect approval gate (PR3): the revision carries the (possibly UPDATED) scope
+    // OAuth-scope approval gate: the revision carries the (possibly UPDATED) scope
     // set that will go live — every sensitive requested scope must be justified.
     assertConnectSensitiveScopesJustified({
       connectClientId: shadow.connectClientId,
       connectRequestedScopes: shadow.connectRequestedScopes,
       connectScopeJustifications: shadow.connectScopeJustifications,
     });
+    // Also re-assert subset-of-ceiling on the in-tx shadow (mirrors the first-time
+    // approve path): guards a client whose `allowedScopes` SHRANK after the revision
+    // was edited. Only for OAuth-linked listings (`connectClientId` non-null; a legacy
+    // URL-only revision carries no scopes). A null ceiling is treated as 0.
+    if (shadow.connectClientId != null) {
+      const allowedScopes = shadow.connectClient?.allowedScopes ?? 0;
+      if (!connectScopesSubsetOfCeiling(shadow.connectRequestedScopes ?? 0, allowedScopes)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'requested scopes exceed the OAuth client’s allowed scopes',
+        });
+      }
+    }
 
     // (2) Flip the request pending→approved AND re-point it at the PARENT.
     const req = await tx.appListingPublishRequest.updateMany({

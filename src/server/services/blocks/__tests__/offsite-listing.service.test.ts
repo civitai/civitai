@@ -58,6 +58,8 @@ type Client = {
     create: ReturnType<typeof vi.fn>;
     findFirst: ReturnType<typeof vi.fn>;
   };
+  // Merged model: submit REQUIRES an OAuth client (ownership + scope-ceiling checks).
+  oauthClient: { findUnique: ReturnType<typeof vi.fn> };
 };
 
 // `persistListingAssetImage` dynamically imports `createImage` from the image
@@ -95,6 +97,9 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
       create: vi.fn(async (args: { data: unknown }) => args.data),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    oauthClient: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
   });
   const mockRead = makeClient();
   // The PRIMARY client also owns `$transaction`; the interactive tx runs the
@@ -122,12 +127,26 @@ vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListing
 
 const CALLER = 42;
 const OTHER = 99;
+const CLIENT_ID = 'oauth-client-1';
+// Ceiling generous enough for the tests' requestedScopes (0 by default → subset of any).
+const CEILING = 0xffff;
+
+function ownedClient(
+  overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}
+) {
+  return { id: CLIENT_ID, userId: CALLER, allowedScopes: CEILING, ...overrides };
+}
 
 const validInput: SubmitExternalListingInput = {
   slug: 'cool-app',
   name: 'Cool App',
   externalUrl: 'https://cool.example.com/app',
   contentRating: 'g',
+  // Merged model: every external app links its own OAuth client. A zero requested-scope
+  // mask + empty justifications is the minimal valid disclosure.
+  connectClientId: CLIENT_ID,
+  requestedScopes: 0,
+  scopeJustifications: {},
 };
 
 function resetClient(c: Client) {
@@ -149,12 +168,17 @@ function resetClient(c: Client) {
     .mockReset()
     .mockImplementation(async (a: { data: unknown }) => a.data);
   c.appListingModerationEvent.findFirst.mockReset().mockResolvedValue(null);
+  c.oauthClient.findUnique.mockReset().mockResolvedValue(null);
 }
 
 beforeEach(() => {
   ids.n = 0;
   resetClient(mockRead as unknown as Client);
   resetClient(mockWrite as unknown as Client);
+  // Merged model: submit loads the caller's OAuth client from the REPLICA. Default to
+  // an owned client with a generous ceiling so the submit path proceeds; individual
+  // tests override for the ownership/not-found cases.
+  mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient());
   mockWrite.$transaction
     .mockReset()
     .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
@@ -181,7 +205,10 @@ describe('submitExternalListing', () => {
       status: 'draft',
       slug: 'cool-app',
       externalUrl: 'https://cool.example.com/app',
-      connectClientId: null,
+      // Merged model: the linked OAuth client + the (empty) disclosed scope set.
+      connectClientId: CLIENT_ID,
+      connectRequestedScopes: 0,
+      connectScopeJustifications: {},
       appBlockId: null,
       contentRating: 'g',
       userId: CALLER,
@@ -200,9 +227,30 @@ describe('submitExternalListing', () => {
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
   });
 
+  it('externalUrl is OPTIONAL: an omitted homepage URL stores null (connect-only listing)', async () => {
+    const { externalUrl, ...noUrl } = validInput;
+    await submitExternalListing({ input: noUrl, userId: CALLER });
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as {
+      externalUrl: string | null;
+      connectClientId: string;
+    };
+    expect(listingData.externalUrl).toBeNull();
+    expect(listingData.connectClientId).toBe(CLIENT_ID);
+  });
+
+  it('REQUIRES an OAuth client: a missing client → NOT_FOUND, no write', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(null);
+    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
+      { code: 'NOT_FOUND' }
+    );
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+
   it('IDOR: the created rows always carry the AUTHENTICATED caller as owner/submitter', async () => {
     // Even if the input somehow carried a foreign userId-like field, the service
     // reads only `userId` (the authenticated caller) — there is no owner input.
+    // The linked client must be owned by the acting caller (OTHER) to pass the gate.
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
     await submitExternalListing({ input: validInput, userId: OTHER });
     const listingData = mockWrite.appListing.create.mock.calls[0][0].data as { userId: number };
     const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0]
