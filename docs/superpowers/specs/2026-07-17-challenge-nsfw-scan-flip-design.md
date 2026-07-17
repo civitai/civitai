@@ -67,10 +67,15 @@ When a challenge's text scans as sexual content:
 
 ### A. Detection
 
-`scanUserChallenge` and `challengeModerationAdapter.submit` request labels **`['nsfw','suggestive','explicit']`**.
-The adapter's `isNsfw` becomes `triggeredLabels.length > 0` (any of the three) rather than an nsfw-only check.
+`scanUserChallenge` and `challengeModerationAdapter.submit` request labels **`['nsfw']`** (shared
+`CHALLENGE_MODERATION_LABELS`). The adapter's `isNsfw` is `triggeredLabels.length > 0`.
 
-Rationale: evidence-based, challenge-scoped (article scans keep their own label set), large trigger margin.
+> **Interim:** only the `nsfw` label is currently reliable in XGuard, so we scan for it alone.
+> `suggestive`/`explicit` (threshold 0.5) would catch borderline text like the 406 theme (nsfw scored
+> 0.6786, below the 0.75 threshold) with a large margin — but they're not yet trustworthy, so for now only
+> clearly-NSFW text (score ≥ 0.75) escalates. Re-add them, or apply a challenge-scoped threshold override,
+> once they're reliable. The change is one const (`CHALLENGE_MODERATION_LABELS`); no escalation logic depends
+> on which labels are requested.
 
 ### B. Escalation — `challengeModerationAdapter.applyResult`
 
