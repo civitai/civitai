@@ -114,7 +114,7 @@
       if (v) url.searchParams.set(k, v);
       else url.searchParams.delete(k);
     }
-    goto(url, { keepFocus: true, noScroll: true });
+    goto(url, { keepFocus: true, noScroll: true, replaceState: true });
   }
 
   // Search fires on Enter, on blur, and via the button — all no-op if the term is unchanged.
@@ -133,7 +133,7 @@
   let showBulkConfirm = $state(false);
   let bulkForm = $state<HTMLFormElement>();
 
-  // Leaving bulk mode (Done, browser back, or any URL change) discards a pending selection.
+  // Leaving bulk mode (Cancel, or any URL change that drops ?mode=bulk) discards a pending selection.
   $effect(() => {
     if (!bulkMode && selected.size > 0) selected = new Set();
   });
@@ -344,7 +344,9 @@
     <NativeSelectOption value="name">Name</NativeSelectOption>
   </NativeSelect>
   {#if data.canSetFee && data.total > 0 && !bulkMode}
-    <Button href="/models?mode=bulk" variant="outline" size="sm" class="ml-auto">Bulk edit fees</Button>
+    <Button href="/models?mode=bulk" data-sveltekit-replacestate variant="outline" size="sm" class="ml-auto">
+      Bulk edit fees
+    </Button>
   {/if}
 </div>
 
@@ -395,7 +397,7 @@
       >
         Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
       </Button>
-      <Button href="/models" variant="outline" size="sm">Cancel</Button>
+      <Button href="/models" data-sveltekit-replacestate variant="outline" size="sm">Cancel</Button>
       <span class="text-xs text-dark-1">Empty buzz clears the fee.</span>
     </form>
   </div>

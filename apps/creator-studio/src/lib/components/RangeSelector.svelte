@@ -26,11 +26,12 @@
 
   function onMonthChange(key: string) {
     const m = months.find((x) => x.key === key);
-    if (m) goto(hrefFor(m.range), { keepFocus: true, noScroll: true });
+    if (m) goto(hrefFor(m.range), { keepFocus: true, noScroll: true, replaceState: true });
   }
 </script>
 
-<div class="flex flex-wrap items-center gap-2">
+<!-- Range changes replace history rather than stacking an entry per click. -->
+<div class="flex flex-wrap items-center gap-2" data-sveltekit-replacestate>
   <ButtonGroup>
     {#each RANGE_PRESETS as p (p.key)}
       <Button
