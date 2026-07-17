@@ -20,10 +20,8 @@ import {
  *   - READ stays the format-sniffing UNION on EVERY slot (server input-read,
  *     client response-read, SSR hydrate), so a payload written by EITHER
  *     serializer decodes regardless of which peer wrote it.
- *   - Phase 3 (safe slice): the CLIENT now WRITES devalue on INPUTS. This is
- *     ungated and cannot break a stale peer because the server input read is the
- *     UNION sniffer — it decodes devalue (updated clients) AND superjson (stale
- *     clients) alike. The client's output READ stays the union too.
+ *   - the CLIENT always WRITES superjson (the browser bundle can't be per-pool
+ *     gated; the server union-reads its inputs anyway).
  *   - the SERVER write is `serverWriteSerialize` = superjson by DEFAULT (flag
  *     unset → wire byte-identical to Phase 1) and devalue only when the pool
  *     sets `TRPC_WRITE_DEVALUE=true`.
@@ -151,49 +149,16 @@ describe('serverWriteSerialize gate (TRPC_WRITE_DEVALUE, SERVER write only)', ()
   });
 });
 
-describe('clientTransformer (browser Phase 3 safe slice: devalue INPUT write, union READ)', () => {
+describe('clientTransformer (browser: superjson WRITE, union READ)', () => {
   const x = { when: new Date('2024-01-01T00:00:00.000Z'), cursor: 42n };
 
-  it('WRITES devalue on inputs (input.serialize output is a devalue STRING, not a superjson object)', () => {
+  it('WRITES superjson (input.serialize output is an OBJECT, not a devalue string)', () => {
     const written = clientTransformer.input.serialize(x);
-    // devalue.stringify ALWAYS returns a string; superjson.serialize returns an object.
-    expect(typeof written).toBe('string');
-    expect(written).toBe(devalueStringify(x));
-    // it is NOT the superjson object shape.
-    expect(written).not.toEqual(superjson.serialize(x));
+    expect(typeof written).not.toBe('string');
+    expect(written).toEqual(superjson.serialize(x));
   });
 
-  it('input the SERVER union-reads decodes the devalue-written input back for the rich types tRPC inputs carry', () => {
-    // The safe slice hinges on this: the server input.deserialize is `unionDeserialize`,
-    // so a devalue-written CLIENT input round-trips through the server read. Exercise the
-    // rich types that appear in real tRPC query/mutation inputs.
-    const input = {
-      cursor: 9007199254740993n, // top-level BigInt cursor
-      after: new Date('2024-01-02T03:04:05.678Z'), // Date filter
-      q: undefined as string | undefined, // present-but-undefined optional
-      ids: [1, 2, 3], // nested array
-      filters: { tags: ['a', 'b'], nsfw: false, nested: { min: 0, max: 10 } }, // nested object
-    };
-    const written = clientTransformer.input.serialize(input); // client WRITES devalue
-    expect(typeof written).toBe('string');
-    const readBack = unionDeserialize(written) as typeof input; // server READS union
-    expect(readBack.cursor).toBe(9007199254740993n);
-    expect(typeof readBack.cursor).toBe('bigint');
-    expect(readBack.after).toBeInstanceOf(Date);
-    expect(readBack.after.getTime()).toBe(input.after.getTime());
-    expect('q' in readBack).toBe(true);
-    expect(readBack.q).toBeUndefined();
-    expect(readBack.ids).toEqual([1, 2, 3]);
-    expect(readBack.filters).toEqual({ tags: ['a', 'b'], nsfw: false, nested: { min: 0, max: 10 } });
-  });
-
-  it('a STALE client (superjson-written input) is STILL server-readable — the ungated safety property', () => {
-    // A client that has not yet loaded the new bundle writes superjson; the server union
-    // read decodes it just the same → no gate, no breakage during the client rollout.
-    expect(unionDeserialize(superjson.serialize(x))).toEqual(x);
-  });
-
-  it('READS the union on output.deserialize (UNCHANGED — decodes BOTH a superjson and a devalue response)', () => {
+  it('READS the union on output.deserialize (decodes BOTH a superjson and a devalue response)', () => {
     // an un-flipped pool responds superjson…
     expect(clientTransformer.output.deserialize(superjson.serialize(x))).toEqual(x);
     // …and a TRPC_WRITE_DEVALUE=true pool responds devalue — client decodes both.

@@ -141,32 +141,19 @@ export function buildTransformer(
 export const unionTransformer: CombinedDataTransformer = buildTransformer();
 
 /**
- * The CLIENT (browser) transformer: devalue WRITE (inputs), union READ.
+ * The CLIENT (browser) transformer: superjson WRITE, union READ.
  *
- * Phase 3 (safe slice): `input.serialize` is `writeSerialize` (devalue), so the
- * client WRITES request inputs as devalue strings. This is UNGATED and cannot
- * break a stale peer: the SERVER's `input.deserialize` is the UNION sniffer, so
- * it reads devalue inputs from updated clients AND superjson inputs from stale
- * clients — both decode. The server therefore pays the cheaper `devalue.parse`
- * on inputs as clients update, and request bodies get slightly smaller. No env
- * gate is needed because the read side already accepts either format.
+ * The browser bundle is one-size-fits-all — it can't be per-pool gated — so the
+ * client always WRITES superjson request inputs (unchanged from Phase 1). The
+ * server union-READS those inputs, so the client does NOT need to write devalue
+ * for the per-pool server canary. `output.deserialize` stays the UNION sniffer,
+ * so the client decodes BOTH a superjson response (from an un-flipped pool) and
+ * a devalue response (from a `TRPC_WRITE_DEVALUE=true` pool) transparently.
  *
- * `output.deserialize` stays the UNION sniffer (UNCHANGED), so the client still
- * decodes BOTH a superjson response (from an un-flipped pool) and a devalue
- * response (from a `TRPC_WRITE_DEVALUE=true` pool) transparently. superjson stays
- * imported and available on the read path for that backward-compat + rollback.
- *
- * `output.serialize` is left as `superjson.serialize` only to complete the
- * object — the client never serializes a response, so it is never exercised
- * (minimal change; harmless either way).
+ * `output.serialize` is set to `superjson.serialize` only to complete the
+ * object — the client never serializes a response.
  */
 export const clientTransformer: CombinedDataTransformer = {
-  // FAIL-OPEN input write (mirrors the server's `writeSerializeWithFallback`,
-  // #3186): a non-POJO input (a class instance / Decimal / Error smuggled into
-  // an input) degrades to superjson for THAT request — which the server
-  // union-reads identically — instead of throwing strict-devalue in the browser
-  // and hard-failing the query (ungated, 100% of updated clients). Enforcement
-  // belongs in tests + telemetry, not user-facing failures.
-  input: { serialize: writeSerializeWithFallback, deserialize: unionDeserialize },
+  input: { serialize: superjson.serialize, deserialize: unionDeserialize },
   output: { serialize: superjson.serialize, deserialize: unionDeserialize },
 };

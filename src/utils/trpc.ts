@@ -11,8 +11,9 @@ import {
 import type { CreateTRPCNext } from '@trpc/next';
 import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
+import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
-import { clientTransformer, writeSerialize } from '~/shared/utils/trpc-union-transformer';
+import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { isDev } from '~/env/other';
 import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
@@ -43,10 +44,10 @@ const url = '/api/trpc';
 /**
  * Encoded-URL budget (percent-encoded chars) for a single query's input on the BATCH link.
  * Measured against the ACTUAL wire cost — `encodeURIComponent(JSON.stringify(
- * writeSerialize(input)))`, the same transform tRPC applies when building the GET URL —
+ * superjson.serialize(input)))`, the same transform tRPC applies when building the GET URL —
  * NOT a raw-char heuristic. It MUST use the same serializer the client actually writes with
- * (Phase 3 safe slice: the CLIENT now WRITES devalue inputs via `input.serialize =
- * writeSerialize` — the server union-reads them, so no gate is needed); sizing with a
+ * (the CLIENT stays superjson-write in Phase 2 — the per-pool devalue flip is SERVER-only,
+ * so the browser bundle keeps writing superjson via `input.serialize`); sizing with a
  * different serializer would let the GET/POST batching decision drift from the real wire
  * length. Sits ~280 under the batch link's
  * `maxURLLength: 2083` to absorb the path (`/api/trpc/<proc>`) + `?batch=1&input={"0":…}`
@@ -67,8 +68,8 @@ const URL_INPUT_BUDGET = 1800;
  * so it can never trip the "Input is too big for a single dispatch" throw.
  *
  * Measures the ACTUAL encoded wire cost — the exact `encodeURIComponent(JSON.stringify(
- * writeSerialize(input)))` tRPC builds the GET URL from — against `URL_INPUT_BUDGET`. Uses
- * the SAME serializer the client links write with (Phase 3 safe slice: the client now writes devalue),
+ * superjson.serialize(input)))` tRPC builds the GET URL from — against `URL_INPUT_BUDGET`. Uses
+ * the SAME serializer the client links write with (the client stays superjson-write in Phase 2),
  * so the sizer can't drift from the real URL. No length-based short-circuit: a byte/char-count proxy underestimates the
  * encoded length in the unsafe direction (a small-count input can encode large — the serializer
  * expands special types, and `encodeURIComponent` expands one non-ASCII UTF-16 unit to up to 9
@@ -79,7 +80,7 @@ const URL_INPUT_BUDGET = 1800;
 export function isTooLargeToBatch(op: { type: string; input: unknown }) {
   if (op.type !== 'query' || op.input == null) return false;
   try {
-    return encodeURIComponent(JSON.stringify(writeSerialize(op.input))).length > URL_INPUT_BUDGET;
+    return encodeURIComponent(JSON.stringify(superjson.serialize(op.input))).length > URL_INPUT_BUDGET;
   } catch {
     return false;
   }
@@ -411,8 +412,8 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
   },
   // v11: `createTRPCNext` requires the transformer at the top level of its options
   // (WithTRPCOptions intersects TransformerOptions). The link carries it too for the
-  // actual wire (de)serialization. Phase 3 (safe slice) CLIENT: union READ, devalue
-  // WRITE on inputs (the server union-reads them, so no gate — see trpc-union-transformer.ts).
+  // actual wire (de)serialization. Phase 2 CLIENT: union READ, superjson WRITE (the
+  // per-pool devalue write flip is SERVER-only — see trpc-union-transformer.ts).
   transformer: clientTransformer,
   ssr: false,
 });
