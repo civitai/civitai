@@ -373,6 +373,74 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     await openPlatformNav();
     await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
   });
+
+  // Security-adjacent consistency: the persisted `name` is publisher-controlled
+  // (laundered through localStorage) — the SAME untrusted source the host trust
+  // label sanitizes. The recents item must route it through sanitizeAppChromeName
+  // too, so a bidi-override / zero-width / oversized name can't render raw in the
+  // dropdown. Mutation-sanity: dropping the sanitizer call (rendering `r.name`
+  // raw) fails the "dangerous chars stripped" assertions below.
+  test('a hostile persisted name is rendered SANITIZED (bidi/zero-width stripped) + length-bounded', async () => {
+    // RLO override + zero-width space + a long tail well past APP_CHROME_NAME_MAX
+    // (64). sanitizeAppChromeName strips the bidi/format chars and caps length.
+    const rawName = 'Evil‮Hack​App' + 'X'.repeat(200);
+    recordRecentlyOpenedApp({ id: 'hostile', blockId: 'hostile-block', name: rawName });
+
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-hostile"
+        appBlockId="viewer"
+        appName="Viewer App"
+        slotId="app.page"
+      />
+    );
+    await openPlatformNav();
+
+    // The item is present and still links to its run route (blockId unaffected).
+    const item = page.getByTestId('app-recently-run-item').element() as HTMLElement;
+    expect(item.getAttribute('href')).toBe('/apps/run/hostile-block');
+
+    const text = item.textContent ?? '';
+    // The bidi RLO override + zero-width space must NOT survive into the DOM.
+    expect(text).not.toMatch(/[‮​]/);
+    // The legible characters are preserved (format chars removed, not the letters).
+    expect(text).toContain('EvilHackApp');
+    // Length is bounded by the sanitizer (rawName was 200+ chars; the rendered
+    // string must be far shorter — proves the length cap ran, not just a CSS clamp).
+    expect(text.length).toBeLessThan(rawName.length);
+    expect(text.length).toBeLessThanOrEqual(70); // APP_CHROME_NAME_MAX (64) + ellipsis slack
+  });
+
+  // Freshness: the store is read on mount AND re-read every time the menu opens,
+  // so a within-session client-nav (open app A → open app B, no full reload)
+  // shows the CURRENT recents — not a snapshot frozen at first mount.
+  test('re-reads the recents store on menu OPEN (fresh within an SPA session)', async () => {
+    // Mount with an EMPTY store — first open shows no recents section.
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-fresh"
+        appBlockId="viewer"
+        appName="Viewer App"
+        slotId="app.page"
+      />
+    );
+    await openPlatformNav();
+    await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
+
+    // Close the menu (Escape), then a NEW app is recorded mid-session (simulating
+    // the viewer running another app via client-nav elsewhere in the SPA).
+    await page.getByRole('button', { name: 'Apps menu' }).click();
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Apps home' }))
+      .not.toBeInTheDocument();
+    recordRecentlyOpenedApp({ id: 'fresh', blockId: 'fresh-block', name: 'Fresh App' });
+
+    // Re-open — the open-refresh read must surface the newly-recorded app.
+    await openPlatformNav();
+    await expect.element(page.getByTestId('app-recently-run')).toBeInTheDocument();
+    const item = page.getByRole('menuitem', { name: 'Fresh App' }).element() as HTMLElement;
+    expect(item.getAttribute('href')).toBe('/apps/run/fresh-block');
+  });
 });
 
 // Iframe-aware close (the reported bug): the run page is dominated by a

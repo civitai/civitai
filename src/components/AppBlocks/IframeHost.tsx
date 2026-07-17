@@ -208,14 +208,25 @@ export function AppBlockChrome({
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
-  // real list loads in an effect after mount. Excludes the app currently being
-  // viewed (matched by appBlockId — the store's stable id) and is capped to a
-  // short list for the compact dropdown.
+  // real list loads in an effect after mount AND is refreshed every time the
+  // menu opens (see handleMenuChange) so a within-session client-nav
+  // (app A → app B) shows the CURRENT list, not the list as of first mount.
+  // Excludes the app currently being viewed (matched by appBlockId — the store's
+  // stable id) and is capped to a short list for the compact dropdown.
   const [recents, setRecents] = useState<RecentApp[]>([]);
   useEffect(() => {
     setRecents(getRecentlyOpenedApps());
   }, []);
   const recentApps = recents.filter((r) => r.id !== appBlockId).slice(0, RECENTLY_RUN_LIMIT);
+
+  // Controlled-Menu change handler: mirror the open state AND re-read the recents
+  // store on the transition to open, so the "Recently run" list is fresh within
+  // an SPA session. Still SSR-safe — the read only happens on a user-driven open
+  // (never during render) and getRecentlyOpenedApps() self-guards `isClient`.
+  const handleMenuChange = useCallback((opened: boolean) => {
+    setMenuOpened(opened);
+    if (opened) setRecents(getRecentlyOpenedApps());
+  }, []);
   // The full-page run surface (`app.page`) has no model-page slot to hide the
   // block from — the page IS the block — so suppress the "Hide" item there.
   const isPage = slotId != null && isPageSlot(slotId);
@@ -275,7 +286,7 @@ export function AppBlockChrome({
           shadow="md"
           width={200}
           opened={menuOpened}
-          onChange={setMenuOpened}
+          onChange={handleMenuChange}
         >
           <Menu.Target>
             <ActionIcon
@@ -351,7 +362,17 @@ export function AppBlockChrome({
                       )
                     }
                   >
-                    {r.name ?? r.blockId}
+                    {/* The persisted `name` is the SAME publisher-controlled string
+                        the trust label above laundered through localStorage — so
+                        route it through the identical sanitizer (strips bidi
+                        RLO/LRO overrides, zero-width/format + control chars, caps
+                        Zalgo combining runs, bounds length). `||` (not `??`) so an
+                        empty/whitespace sanitized result falls back to the blockId
+                        handle. `lineClamp={1}` keeps a pathologically long name
+                        from blowing out the width={200} dropdown. */}
+                    <Text size="sm" lineClamp={1}>
+                      {sanitizeAppChromeName(r.name) || r.blockId}
+                    </Text>
                   </Menu.Item>
                 ))}
               </div>
