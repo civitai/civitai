@@ -110,4 +110,29 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
       'user:read:self': 'We greet the viewer by username.',
     });
   });
+
+  test('clearing all justification inputs submits an explicit empty object (not undefined) so stored rationale is overwritten', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    // BASE_MANIFEST seeds a justification for models:read:self — clear it.
+    const seededInput = page.getByRole('textbox', { name: 'models:read:self' });
+    await userEvent.clear(seededInput);
+
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    const arg = mocks.mutate.mock.calls[0][0] as {
+      patch: { scopeJustifications?: Record<string, string> };
+    };
+    // Explicit {} — NOT undefined — so the server merge overwrites/clears the
+    // previously-stored justifications instead of retaining stale rationale.
+    expect(arg.patch.scopeJustifications).toEqual({});
+    expect(arg.patch.scopeJustifications).not.toBeUndefined();
+  });
 });

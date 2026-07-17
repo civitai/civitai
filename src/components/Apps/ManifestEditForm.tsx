@@ -104,14 +104,28 @@ export function ManifestEditForm({
 
   function handleSave() {
     // Only submit justifications for currently-declared scopes, trimmed and
-    // non-empty. Omit the field entirely when there are none (keeps the manifest
-    // backward-compatible — the server rejects a justification for an undeclared
-    // scope, so filtering here also avoids a needless validation error).
+    // non-empty (the server rejects a justification for an undeclared scope, so
+    // filtering here also avoids a needless validation error).
     const scopeJustifications: Record<string, string> = {};
     for (const scope of scopes) {
       const j = (justifications[scope] ?? '').trim();
       if (j.length > 0) scopeJustifications[scope] = j;
     }
+    // Decide whether to SEND the map. Send an explicit (possibly EMPTY) object
+    // whenever there is something to write OR something to clear — i.e. the
+    // stored manifest already had justifications. If we sent `undefined` for the
+    // cleared case, superjson may drop the key in transit, so the server's
+    // `{...stored, ...patch}` merge would RETAIN the old justifications and keep
+    // showing stale rationale to the mod. `{}` overwrites/clears them (the
+    // validator treats a defined-but-empty map as a valid "no justifications"
+    // state). Only omit the field entirely when there were none before AND none
+    // now, keeping never-used manifests backward-compatible.
+    const storedHadJustifications =
+      !!manifest.scopeJustifications &&
+      typeof manifest.scopeJustifications === 'object' &&
+      Object.keys(manifest.scopeJustifications).length > 0;
+    const shouldSend =
+      Object.keys(scopeJustifications).length > 0 || storedHadJustifications;
     mutation.mutate({
       appBlockId,
       patch: {
@@ -120,8 +134,7 @@ export function ManifestEditForm({
         description: description.trim() || undefined,
         contentRating,
         scopes,
-        scopeJustifications:
-          Object.keys(scopeJustifications).length > 0 ? scopeJustifications : undefined,
+        scopeJustifications: shouldSend ? scopeJustifications : undefined,
         targets: selectedSlots.map((slotId) => ({ slotId })),
       },
     });
