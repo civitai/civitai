@@ -68,6 +68,15 @@ export const BLOCK_PUBLISHED_APP_ID_META_KEY = 'blockPublishedAppId' as const;
 const BLOCK_PUBLISH_MAX_BYTES = 40 * 1024 * 1024;
 
 /**
+ * Max redirect hops we follow when fetching a workflow output blob. The real
+ * orchestrator output url returns a `301` to a SAME-host content url (a relative
+ * `Location`), so we must follow at least one hop; the bound stops a redirect loop
+ * from stalling the request. Every hop's host is re-validated against
+ * {@link isAllowedOutputHost} BEFORE its socket opens.
+ */
+const MAX_OUTPUT_REDIRECTS = 3;
+
+/**
  * Is this a supported still-image by MAGIC BYTES (not by the url/extension or a
  * spoofable content-type header)? JPEG / PNG / GIF / WEBP. Returns the canonical
  * content-type so the store upload is labelled from the BYTES, not the response.
@@ -99,10 +108,13 @@ function sniffSupportedImage(b: Buffer): string | null {
  * workflow (`blockWorkflowOwnedByAppUser` + the orchestrator app-tag re-read)
  * and passes it here. The iframe only ever sent a `workflowId` + `imageIndexes`,
  * so it can never inject an arbitrary blob. The fetch is HARDENED: host-
- * allowlisted ({@link isAllowedOutputHost}), redirects DISABLED (`redirect:'error'`
- * — no fetch-then-follow to an off-allowlist host), byte-capped
- * ({@link BLOCK_PUBLISH_MAX_BYTES}), and magic-byte-validated
- * ({@link sniffSupportedImage} — a spoofed content-type can't smuggle a non-image).
+ * allowlisted ({@link isAllowedOutputHost}), redirects FOLLOWED MANUALLY up to
+ * {@link MAX_OUTPUT_REDIRECTS} hops with the host re-validated against
+ * {@link isAllowedOutputHost} BEFORE each hop's socket opens (a real output blob
+ * 301s to a same-host content url, so we must follow it, but a redirect can never
+ * reach an off-allowlist host), byte-capped ({@link BLOCK_PUBLISH_MAX_BYTES}), and
+ * magic-byte-validated ({@link sniffSupportedImage} — a spoofed content-type can't
+ * smuggle a non-image).
  *
  * The store re-upload uses {@link uploadImageBufferToStore} (the B2 image bucket
  * the edge URL + scanner resolve, with the uuid→backend registration awaited) —
@@ -127,23 +139,69 @@ export async function persistBlockWorkflowOutputImage(opts: {
 
   // HARDENED fetch of the orchestrator blob. A rejected host / failed fetch /
   // oversize / non-image is a client-correctable upstream problem — BAD_REQUEST.
-  if (!isAllowedOutputHost(imageUrl)) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'output url is not an allowed generation host',
-    });
-  }
+  //
+  // The real output blob url 301s to a SAME-host content url, so we FOLLOW
+  // redirects manually (up to MAX_OUTPUT_REDIRECTS hops) instead of the browser
+  // `redirect:'error'`/`'follow'`. `redirect:'manual'` in Node/undici exposes the
+  // REAL 3xx status + `location` header (unlike a browser's opaque redirect), and
+  // — critically — we re-validate the host against isAllowedOutputHost at the TOP
+  // of every hop, BEFORE the socket opens, so a redirect can never reach an
+  // off-allowlist host (the SSRF bound holds for every hop, not just the first).
   let response: Response;
-  try {
-    response = await fetch(imageUrl, {
-      redirect: 'error', // never follow a redirect off the allowlisted host
-      signal: AbortSignal.timeout(60_000),
-    });
-  } catch {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'could not fetch the generation output to publish',
-    });
+  let currentUrl = imageUrl;
+  let hops = 0;
+  for (;;) {
+    if (!isAllowedOutputHost(currentUrl)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'output url is not an allowed generation host',
+      });
+    }
+    let hopResponse: Response;
+    try {
+      hopResponse = await fetch(currentUrl, {
+        redirect: 'manual', // follow manually so we can re-validate each hop's host
+        signal: AbortSignal.timeout(60_000),
+      });
+    } catch {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'could not fetch the generation output to publish',
+      });
+    }
+    // A 3xx is the orchestrator's normal same-host content redirect — follow it,
+    // re-validating the resolved host on the next loop iteration.
+    if (hopResponse.status >= 300 && hopResponse.status < 400) {
+      if (hops >= MAX_OUTPUT_REDIRECTS) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'could not fetch the generation output to publish',
+        });
+      }
+      const location = hopResponse.headers.get('location');
+      if (!location) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'could not fetch the generation output to publish',
+        });
+      }
+      let resolved: URL;
+      try {
+        resolved = new URL(location, currentUrl); // resolve relative Location against the hop url
+      } catch {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'could not fetch the generation output to publish',
+        });
+      }
+      // Free the redirect response's socket before opening the next hop.
+      await hopResponse.body?.cancel().catch(() => undefined);
+      currentUrl = resolved.toString();
+      hops += 1;
+      continue;
+    }
+    response = hopResponse;
+    break;
   }
   if (!response.ok) {
     throw new TRPCError({
