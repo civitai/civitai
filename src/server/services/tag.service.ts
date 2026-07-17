@@ -11,7 +11,11 @@ import {
 import { CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { imageTagsCache, tagCache as basicTagCache } from '~/server/redis/caches';
+import {
+  imageTagsCache,
+  modelVotableTagsCache,
+  tagCache as basicTagCache,
+} from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
@@ -22,7 +26,6 @@ import type {
   GetVotableTagsSchema2,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
-import { modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getReplacedTagIds, getSystemTags } from '~/server/services/system-cache';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -349,12 +352,11 @@ export const getVotableTags = async ({
 }) => {
   let results: VotableTagModel[] = [];
   if (type === 'model') {
-    const tags = await dbRead.modelTag.findMany({
-      where: { modelId: id, score: { gt: 0 } },
-      select: modelTagCompositeSelect,
-      orderBy: { score: 'desc' },
-      // take,
-    });
+    // Static, user-independent read of the ModelTag composite view — cache-backed
+    // (mirrors the image path's imageTagsCache). The per-user vote is merged below,
+    // uncached, so nothing user-specific is cached here.
+    const cached = await modelVotableTagsCache.fetch([id]);
+    const tags = cached[id]?.tags ?? [];
     results.push(
       ...tags.map(({ tagId, tagName, tagType, ...tag }) => ({
         ...tag,
@@ -537,9 +539,11 @@ export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput)
 
   await clearCache(userId, type);
 
-  // Bust image tags cache if voting on images
+  // Bust the votable-tags cache for the affected entity
   if (type === 'image') {
     await imageTagsCache.bust(id);
+  } else if (type === 'model') {
+    await modelVotableTagsCache.bust(id);
   }
 };
 
@@ -596,9 +600,11 @@ export const addTagVotes = async ({
     if (count > 0) await clearCache(userId, type); // Clear cache if it is
   }
 
-  // Bust image tags cache if voting on images
+  // Bust the votable-tags cache for the affected entity
   if (type === 'image') {
     await imageTagsCache.bust(id);
+  } else if (type === 'model') {
+    await modelVotableTagsCache.bust(id);
   }
 };
 // #endregion
@@ -742,6 +748,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
       WHERE "modelId" = ANY(${entityIds}::int[])
         AND ${tagIdMatch('tagId')}
     `);
+    await modelVotableTagsCache.bust(entityIds);
   } else if (entityType === 'image') {
     const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
       SELECT "imageId", "tagId"

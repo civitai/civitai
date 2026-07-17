@@ -13,7 +13,12 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ProfileImage } from '~/server/selectors/image.selector';
-import { type ImageTagComposite, imageTagCompositeSelect } from '~/server/selectors/tag.selector';
+import {
+  type ImageTagComposite,
+  imageTagCompositeSelect,
+  type ModelTagComposite,
+  modelTagCompositeSelect,
+} from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
@@ -1506,6 +1511,46 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
     }, {} as Record<number, ImageTagsCacheItem>);
 
     return result;
+  },
+});
+
+type ModelVotableTagsCacheItem = {
+  modelId: number;
+  tags: ModelTagComposite[];
+};
+
+// Caches the STATIC, user-independent portion of `tag.getVotableTags` for models:
+// the `ModelTag` composite-view read (tagId/tagName/tagType/score/upVotes/downVotes
+// for a model's score>0 tags). This is the mirror of `imageTagsCache` for the model
+// path — the image path was already cache-backed, the model path hit the DB on every
+// call. The per-user vote (`tag.vote`) is merged UNCACHED by getVotableTags from
+// `tagsOnModelsVote`, so no per-user data lives in this cache. Busted on model tag
+// votes (addTagVotes/removeTagVotes) exactly like imageTagsCache. 1h TTL / no SWR to
+// match imageTagsCache semantics; the model tag taxonomy is edit-rare so brief
+// cross-pod aggregate staleness within the TTL is imperceptible.
+export const modelVotableTagsCache = createCachedObject<ModelVotableTagsCacheItem>({
+  key: REDIS_KEYS.CACHES.MODEL_VOTABLE_TAGS,
+  idKey: 'modelId',
+  ttl: CacheTTL.hour,
+  staleWhileRevalidate: false,
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+
+    const modelTags = await db.modelTag.findMany({
+      where: { modelId: { in: ids }, score: { gt: 0 } },
+      select: {
+        modelId: true,
+        ...modelTagCompositeSelect,
+      },
+      orderBy: { score: 'desc' },
+    });
+
+    return modelTags.reduce((acc, tag) => {
+      const { modelId, ...tagData } = tag;
+      acc[modelId] ??= { modelId, tags: [] };
+      acc[modelId].tags.push(tagData);
+      return acc;
+    }, {} as Record<number, ModelVotableTagsCacheItem>);
   },
 });
 
