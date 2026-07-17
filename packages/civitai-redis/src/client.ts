@@ -2044,6 +2044,12 @@ export const REDIS_KEYS = {
     CRYPTO_CONVERSION_RATE: 'packed:caches:crypto-conversion-rate',
     CRYPTO_MIN_AMOUNT: 'packed:caches:crypto-min-amount',
     TAG_PAGE_SEO: 'packed:caches:tag-page-seo',
+    // Per-tag-name lookup backing `tag.getTagWithModelCount` (the tag page's
+    // id/name/unfeatured resolve). ~2.5M calls/peak of a near-static citext row
+    // read; keyed by the lowercased tag name (mirrors citext case-insensitivity),
+    // positive results only (unknown names stay uncached so a new tag is findable
+    // immediately), busted on tag delete. See `getTagWithModelCount` in tag.service.
+    TAG_WITH_MODEL_COUNT: 'packed:caches:tag-with-model-count',
     // Total-creators count for the v1 /api/v1/creators pagination metadata. The
     // underlying dbRead.user.count scans the whole ~892k-row Model table on every
     // call (~1174ms in EXPLAIN ANALYZE); the total is a slowly-moving aggregate so

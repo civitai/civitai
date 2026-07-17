@@ -41,9 +41,23 @@ import { removeEmpty } from '~/utils/object-helpers';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
-export const getTagWithModelCount = ({ name }: { name: string }) => {
+type TagWithModelCount = { id: number; name: string; unfeatured: boolean; count: number };
+
+// Cache key for `getTagWithModelCount`. `Tag.name` is `citext` (case-insensitive), so
+// `WHERE "name" = $1` matches case-insensitively in the DB. We normalize the key to
+// lowercase so `"Anime"`/`"anime"` dedup to ONE entry (matching citext semantics) — but
+// we do NOT trim, because the DB WHERE is whitespace-SENSITIVE; trimming the key while
+// the query stays untrimmed would let `" anime"` collide with the real `"anime"` entry
+// and serve the wrong row. Mirrors `getTagPageSeoData`'s key normalization exactly.
+// (JS `toLowerCase` folds ASCII the same way the DB collation's citext `lower()` does;
+// exotic-Unicode case pairs could land in separate keys that each independently resolve
+// to the same tag — correct output, marginally weaker dedup.)
+const getTagWithModelCountCacheKey = (name: string) =>
+  `${REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${string}`;
+
+const queryTagWithModelCount = ({ name }: { name: string }) =>
   // No longer include count since we just have too many now...
-  return dbRead.$queryRaw<[{ id: number; name: string; unfeatured: boolean; count: number }]>`
+  dbRead.$queryRaw<[TagWithModelCount]>`
     SELECT "id",
            "name",
            "unfeatured",
@@ -53,6 +67,60 @@ export const getTagWithModelCount = ({ name }: { name: string }) => {
     GROUP BY "id", "name"
     LIMIT 1 OFFSET 0;
   `;
+
+// Read-through cache over the near-static tag-name → {id,name,unfeatured,count:0} lookup.
+// Output is byte-identical to the raw query (the cached `name` is the tag's ACTUAL
+// stored-case DB name, not the normalized key). Bucket A: DB total-exec-time / call-count
+// reduction only, no behaviour change — the DB runs ~4% CPU, so this is a pod-neutral
+// cost/margin win, NOT a capacity win.
+//
+// Fail-open like `fetchThroughCache`: on any Redis error we degrade to the origin query
+// (this is a hot path — ~2.5M calls/peak — so a Redis stall must not 500). No distributed
+// stampede lock: the origin is a single-row indexed citext lookup (~0.4ms warm) that at
+// worst runs once per name per TTL cluster-wide, so a brief cold-key stampede is trivially
+// cheap — not worth the lock's added Redis round-trips on the hot read.
+//
+// NEGATIVE RESULTS ARE NOT CACHED (decision (a)): an unknown name always re-hits the DB,
+// so a newly created/renamed tag becomes findable immediately (no create-then-view
+// staleness). This also shrinks the invalidation surface to writers that change an
+// EXISTING tag's cached shape — pure `tag.create` paths need no bust because a brand-new
+// name had no cached (positive) entry.
+export const getTagWithModelCount = async ({
+  name,
+}: {
+  name: string;
+}): Promise<TagWithModelCount[]> => {
+  const key = getTagWithModelCountCacheKey(name);
+
+  try {
+    const cached = await redis.packed.get<TagWithModelCount[]>(key);
+    if (cached) return cached;
+  } catch {
+    // Redis read degraded — fall through to the origin query (fail open).
+  }
+
+  const result = await queryTagWithModelCount({ name });
+
+  if (result.length > 0) {
+    try {
+      await redis.packed.set(key, result, { EX: CacheTTL.hour });
+    } catch {
+      // Best-effort cache write; a Redis stall here never fails the request.
+    }
+  }
+
+  return result;
+};
+
+// Bust a single tag-name key. Hard delete (not a staleness reset): because we never cache
+// negatives, deleting the key means the next read re-queries and (finding the tag gone)
+// leaves it uncached. Called by `deleteTags`.
+const bustTagWithModelCountCache = async (name: string) => {
+  try {
+    await redis.del(getTagWithModelCountCacheKey(name));
+  } catch {
+    // Best-effort bust; the TTL bounds any residual staleness.
+  }
 };
 
 export type TagPageSeoData = {
@@ -839,6 +907,14 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
     )
   `);
 
+  // Resolve the affected tag NAMES before deletion so we can bust the name-keyed
+  // getTagWithModelCount cache. deleteTags accepts ids OR names; reading the stored names
+  // here covers the id-input case and gives the exact stored case (the key is lowercased,
+  // so either form maps to the same key — but this is the correct, unambiguous source).
+  const affectedTags = await dbWrite.$queryRaw<{ name: string }[]>(Prisma.sql`
+    SELECT "name" FROM "Tag" WHERE ${tagMatch}
+  `);
+
   await dbWrite.$executeRaw(Prisma.sql`
     DELETE
     FROM "Tag"
@@ -855,6 +931,13 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   if (affectedModels.length > 0) {
     const modelIds = affectedModels.map((x) => x.modelId);
     await modelVotableTagsCache.bust(modelIds);
+  }
+
+  // Bust the per-name getTagWithModelCount cache for every deleted tag (its cached row now
+  // points at a gone tag). This is the ONLY app writer that mutates that cache's shape —
+  // no app path renames a tag or flips `unfeatured` (see the PR body's invalidation surface).
+  if (affectedTags.length > 0) {
+    await Promise.all(affectedTags.map((t) => bustTagWithModelCountCache(t.name)));
   }
 };
 
