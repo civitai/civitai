@@ -4,7 +4,7 @@
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
-  import { formatRange } from '$lib/date-range';
+  import { formatRange, rangeSpanDays, shiftIso } from '$lib/date-range';
   import {
     EARNINGS_SOURCES,
     SOURCE_LABEL,
@@ -72,36 +72,57 @@
   $effect(() => {
     shownSources = [...seriesSources];
   });
+  // The trend collapses the *selected* sources into one total-per-day line. The previous-period line sums the SAME
+  // selection (shifted by the range span, aligned by calendar correspondence) so the comparison is like-for-like.
   const chartData = $derived.by(() => {
     const series = data.series ?? [];
     const dates = [...new Set(series.map((p) => p.date))].sort();
-    const shown = seriesSources.filter((s) => shownSources.includes(s));
+    const shown = new Set<string>(seriesSources.filter((s) => shownSources.includes(s)));
+    const sumSelected = (rows: { date: string; source: string; total: number }[]) => {
+      const byDate = new Map<string, number>();
+      for (const p of rows) if (shown.has(p.source)) byDate.set(p.date, (byDate.get(p.date) ?? 0) + p.total);
+      return byDate;
+    };
+    const currentByDate = sumSelected(series);
+    const prevByDate = sumSelected(data.prevSeries ?? []);
+    const span = rangeSpanDays(data.range);
     return {
       labels: dates,
-      datasets: shown.map((s) => ({
-        label: SOURCE_LABEL[s],
-        data: dates.map((d) => series.find((p) => p.date === d && p.source === s)?.total ?? 0),
-        borderColor: SOURCE_COLOR[s],
-        backgroundColor: SOURCE_COLOR[s],
-        tension: 0.3,
-        fill: false,
-        pointRadius: dates.length > 45 ? 0 : 2,
-      })),
+      datasets: [
+        {
+          label: 'This period',
+          data: dates.map((d) => currentByDate.get(d) ?? 0),
+          borderColor: '#4dabf7',
+          backgroundColor: '#4dabf7',
+          tension: 0.3,
+          fill: false,
+          pointRadius: dates.length > 45 ? 0 : 2,
+        },
+        ...(data.prevSeries != null
+          ? [
+              {
+                label: 'Previous period',
+                data: dates.map((d) => prevByDate.get(shiftIso(d, -span)) ?? 0),
+                borderColor: '#868e96',
+                backgroundColor: '#868e96',
+                borderDash: [4, 4],
+                tension: 0.3,
+                fill: false,
+                pointRadius: 0,
+              },
+            ]
+          : []),
+      ],
     };
   });
 
-  // Line vs bar for the trend (bars match the Buzz Dashboard and read clearer per-day); bars stack by source.
-  let chartType = $state<'line' | 'bar'>('bar');
-  const chartOptions = $derived({
+  const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index' as const, intersect: false },
     plugins: { legend: { display: false } },
-    scales: {
-      x: { stacked: chartType === 'bar', ticks: { maxTicksLimit: 8, autoSkip: true } },
-      y: { stacked: chartType === 'bar' },
-    },
-  });
+    scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } },
+  };
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -169,32 +190,21 @@
 
   <div class="mb-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <div class="flex flex-wrap items-center gap-2">
-        <p class="text-sm text-dark-2">
-          Buzz earned by source over time <span class="text-xs text-dark-3">· cash shown in the panel above</span>
-        </p>
-        <div class="flex items-center gap-1 rounded-lg border border-dark-4 bg-dark-7 p-0.5">
-          <button
-            type="button"
-            onclick={() => (chartType = 'bar')}
-            class="cursor-pointer rounded px-2 py-0.5 text-xs {chartType === 'bar'
-              ? 'bg-blue-8 text-white'
-              : 'text-dark-2 hover:text-white'}"
-          >
-            Bars
-          </button>
-          <button
-            type="button"
-            onclick={() => (chartType = 'line')}
-            class="cursor-pointer rounded px-2 py-0.5 text-xs {chartType === 'line'
-              ? 'bg-blue-8 text-white'
-              : 'text-dark-2 hover:text-white'}"
-          >
-            Line
-          </button>
-        </div>
-      </div>
-      <ToggleGroup type="multiple" bind:value={shownSources} variant="outline" size="sm" spacing={1.5} class="flex-wrap">
+      <p class="text-sm text-dark-2">
+        Buzz earned over time
+        <span class="text-xs text-dark-3">· selected sources, this period vs the previous</span>
+      </p>
+      <ToggleGroup
+        type="multiple"
+        value={shownSources}
+        onValueChange={(v) => {
+          if (v.length) shownSources = v;
+        }}
+        variant="outline"
+        size="sm"
+        spacing={1.5}
+        class="flex-wrap"
+      >
         {#each seriesSources as s (s)}
           <ToggleGroupItem value={s} aria-label={SOURCE_LABEL[s]} class="gap-1.5 text-xs">
             <span
@@ -209,7 +219,7 @@
       </ToggleGroup>
     </div>
     <div class="h-72">
-      <Chart type={chartType} data={chartData} options={chartOptions} class="h-full" />
+      <Chart type="line" data={chartData} options={chartOptions} class="h-full" />
     </div>
   </div>
 

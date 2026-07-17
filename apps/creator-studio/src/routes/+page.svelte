@@ -16,6 +16,7 @@
     IconTrophy,
   } from '@tabler/icons-svelte';
   import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
+  import DeltaChip from '$lib/components/DeltaChip.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -26,11 +27,11 @@
   const activity = $derived(
     data.content
       ? [
-          { label: 'Reactions', value: data.content.reactions, icon: IconHeart, color: '#ff6b6b' },
-          { label: 'New followers', value: data.content.followers, icon: IconUserPlus, color: '#4dabf7' },
-          { label: 'Images posted', value: data.content.images, icon: IconPhoto, color: '#9775fa' },
-          { label: 'Posts published', value: data.content.posts, icon: IconArticle, color: '#3bc9db' },
-          { label: 'Profile views', value: data.content.profileViews, icon: IconEye, color: '#20c997' },
+          { label: 'Reactions', value: data.content.reactions, prev: data.contentPrev?.reactions ?? null, icon: IconHeart, color: '#ff6b6b' },
+          { label: 'New followers', value: data.content.followers, prev: data.contentPrev?.followers ?? null, icon: IconUserPlus, color: '#4dabf7' },
+          { label: 'Images posted', value: data.content.images, prev: data.contentPrev?.images ?? null, icon: IconPhoto, color: '#9775fa' },
+          { label: 'Posts published', value: data.content.posts, prev: data.contentPrev?.posts ?? null, icon: IconArticle, color: '#3bc9db' },
+          { label: 'Profile views', value: data.content.profileViews, prev: data.contentPrev?.profileViews ?? null, icon: IconEye, color: '#20c997' },
         ]
       : []
   );
@@ -39,6 +40,15 @@
   // number (all buzz, same unit); cash is separate. The /earnings page keeps every currency distinct.
   const sumWhere = (pred: (currency: string) => boolean) =>
     (data.earnings ?? []).filter((b) => pred(b.currency)).reduce((s, b) => s + b.total, 0);
+  // Buzz earned this period vs the previous one, for the "Buzz earned" delta chip.
+  const buzzNow = $derived(sumWhere((c) => currencyMeta(c).family === 'buzz'));
+  const buzzPrev = $derived(
+    data.earningsPrev
+      ? data.earningsPrev
+          .filter((b) => currencyMeta(b.currency).family === 'buzz')
+          .reduce((s, b) => s + b.total, 0)
+      : null
+  );
   // Cash is Creator-Program-only; hide those cards for non-members (they'd be a meaningless $0 — or a stuck
   // skeleton if the buzz service has no cash account for them).
   const cashStats = $derived(
@@ -128,7 +138,10 @@
               <Icon size={15} color={a.color} />
               <p class="text-xs uppercase tracking-wide text-dark-3">{a.label}</p>
             </div>
-            <p class="mt-1 text-xl font-semibold text-white">{num(a.value)}</p>
+            <div class="mt-1 flex items-baseline gap-2">
+              <p class="text-xl font-semibold text-white">{num(a.value)}</p>
+              <DeltaChip current={a.value} previous={a.prev} />
+            </div>
           </CardContent>
         </Card>
       {/each}
@@ -153,7 +166,10 @@
         </CardHeader>
         <CardContent>
           {#if stat.value != null}
-            <p class="text-xl font-semibold text-white">{stat.value}</p>
+            <div class="flex items-baseline gap-2">
+              <p class="text-xl font-semibold text-white">{stat.value}</p>
+              {#if stat.label === 'Buzz earned'}<DeltaChip current={buzzNow} previous={buzzPrev} />{/if}
+            </div>
           {:else if stat.pending}
             <p class="text-xl font-semibold text-dark-4">—</p>
           {:else}

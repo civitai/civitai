@@ -4,10 +4,11 @@
 
 export type DateRange = { from: string; to: string };
 
+// Short presets only; historical periods are chosen via the month picker (which gives a natural month-over-month
+// comparison, rather than a 90-day window that predates most accounts' earning history).
 export const RANGE_PRESETS = [
   { key: '7d', label: '7d', days: 7 },
   { key: '30d', label: '30d', days: 30 },
-  { key: '90d', label: '90d', days: 90 },
 ] as const;
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -47,6 +48,26 @@ export function recentMonths(n: number, today = new Date()): MonthOption[] {
     });
   }
   return out;
+}
+
+/** The equally-sized range immediately before `r` — e.g. the prior 30 days, for period-over-period comparison. */
+export function previousRange(r: DateRange): DateRange {
+  const span = rangeSpanDays(r);
+  const from = new Date(`${r.from}T00:00:00Z`);
+  return { from: iso(addDays(from, -span)), to: iso(addDays(from, -1)) };
+}
+
+/** Shift an ISO 'YYYY-MM-DD' by `days` (negative = earlier) — used to line a prior-period value up under the
+ *  current date it should compare against. */
+export function shiftIso(isoDate: string, days: number): string {
+  return iso(addDays(new Date(`${isoDate}T00:00:00Z`), days));
+}
+
+/** Percent change of `current` vs `previous`; null when there's no baseline (previous = 0) — "% of zero" is
+ *  undefined, so callers show a "new" badge instead. */
+export function pctChange(current: number, previous: number): number | null {
+  if (previous === 0) return null;
+  return ((current - previous) / previous) * 100;
 }
 
 /** Inclusive span in days. */

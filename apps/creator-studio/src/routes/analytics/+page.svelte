@@ -4,6 +4,7 @@
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
+  import DeltaChip from '$lib/components/DeltaChip.svelte';
   import {
     IconArrowUp,
     IconArrowDown,
@@ -14,7 +15,7 @@
     IconArticle,
     IconEye,
   } from '@tabler/icons-svelte';
-  import { formatRange } from '$lib/date-range';
+  import { formatRange, rangeSpanDays, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import type { PageData } from './$types';
@@ -42,7 +43,11 @@
     },
   };
 
-  function lineData(series: TimePoint[], label: string, colorIndex: number) {
+  function lineData(series: TimePoint[], label: string, colorIndex: number, prevSeries: TimePoint[] = []) {
+    // Prior-period overlay: a muted dashed line, each point aligned to the current date it compares against
+    // (current date − range span), so it's robust to sparse/uneven dates.
+    const span = rangeSpanDays(data.range);
+    const prevByDate = new Map(prevSeries.map((p) => [p.date, p.value]));
     return {
       labels: series.map((p) => mmdd(p.date)),
       datasets: [
@@ -55,6 +60,20 @@
           fill: false,
           pointRadius: series.length > 45 ? 0 : 2,
         },
+        ...(prevSeries.length
+          ? [
+              {
+                label: 'Previous period',
+                data: series.map((p) => prevByDate.get(shiftIso(p.date, -span)) ?? 0),
+                borderColor: '#868e96',
+                backgroundColor: '#868e96',
+                borderDash: [4, 4],
+                tension: 0.3,
+                fill: false,
+                pointRadius: 0,
+              },
+            ]
+          : []),
       ],
     };
   }
@@ -62,11 +81,11 @@
   const tiles = $derived(
     data.analytics
       ? [
-          { label: 'Reactions', value: data.analytics.totals.reactions, icon: IconHeart, color: '#ff6b6b' },
-          { label: 'New followers', value: data.analytics.totals.followers, icon: IconUserPlus, color: '#4dabf7' },
-          { label: 'Images posted', value: data.analytics.totals.images, icon: IconPhoto, color: '#9775fa' },
-          { label: 'Posts published', value: data.analytics.totals.posts, icon: IconArticle, color: '#3bc9db' },
-          { label: 'Profile views', value: data.analytics.totals.profileViews, icon: IconEye, color: '#20c997' },
+          { label: 'Reactions', value: data.analytics.totals.reactions, prev: data.analyticsPrev?.totals.reactions ?? null, icon: IconHeart, color: '#ff6b6b' },
+          { label: 'New followers', value: data.analytics.totals.followers, prev: data.analyticsPrev?.totals.followers ?? null, icon: IconUserPlus, color: '#4dabf7' },
+          { label: 'Images posted', value: data.analytics.totals.images, prev: data.analyticsPrev?.totals.images ?? null, icon: IconPhoto, color: '#9775fa' },
+          { label: 'Posts published', value: data.analytics.totals.posts, prev: data.analyticsPrev?.totals.posts ?? null, icon: IconArticle, color: '#3bc9db' },
+          { label: 'Profile views', value: data.analytics.totals.profileViews, prev: data.analyticsPrev?.totals.profileViews ?? null, icon: IconEye, color: '#20c997' },
         ]
       : []
   );
@@ -74,10 +93,10 @@
   const secondaryCharts = $derived(
     data.analytics
       ? [
-          { title: 'New followers', series: data.analytics.followers, color: 1 },
-          { title: 'Images posted', series: data.analytics.images, color: 2 },
-          { title: 'Posts published', series: data.analytics.posts, color: 3 },
-          { title: 'Profile views', series: data.analytics.profileViews, color: 4 },
+          { title: 'New followers', series: data.analytics.followers, prev: data.analyticsPrev?.followers, color: 1 },
+          { title: 'Images posted', series: data.analytics.images, prev: data.analyticsPrev?.images, color: 2 },
+          { title: 'Posts published', series: data.analytics.posts, prev: data.analyticsPrev?.posts, color: 3 },
+          { title: 'Profile views', series: data.analytics.profileViews, prev: data.analyticsPrev?.profileViews, color: 4 },
         ]
       : []
   );
@@ -155,7 +174,10 @@
             <Icon size={15} color={tile.color} />
             <p class="text-xs uppercase tracking-wide text-dark-3">{tile.label}</p>
           </div>
-          <p class="mt-1 text-xl font-semibold text-white">{num(tile.value)}</p>
+          <div class="mt-1 flex items-baseline gap-2">
+            <p class="text-xl font-semibold text-white">{num(tile.value)}</p>
+            <DeltaChip current={tile.value} previous={tile.prev} />
+          </div>
         </CardContent>
       </Card>
     {/each}
@@ -170,7 +192,7 @@
   <div class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
     <p class="mb-3 text-sm text-dark-2">Reactions received over time</p>
     <div class="h-64">
-      <Chart type="line" data={lineData(data.analytics.reactions, 'Reactions', 0)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+      <Chart type="line" data={lineData(data.analytics.reactions, 'Reactions', 0, data.analyticsPrev?.reactions)} options={commonOptions} plugins={[crosshair]} class="h-full" />
     </div>
   </div>
 
@@ -179,7 +201,7 @@
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
         <p class="mb-3 text-sm text-dark-2">{c.title}</p>
         <div class="h-48">
-          <Chart type="line" data={lineData(c.series, c.title, c.color)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+          <Chart type="line" data={lineData(c.series, c.title, c.color, c.prev)} options={commonOptions} plugins={[crosshair]} class="h-full" />
         </div>
       </div>
     {/each}

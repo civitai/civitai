@@ -191,3 +191,51 @@ public storefront; Models section (early-access prices).
   for v1 to avoid porting the whole storefront render.)
 - **Resell gallery:** kysely in-spoke vs. a read endpoint (the main app's `getPublicShopItems` has cursor pagination +
   filters worth reusing).
+
+---
+
+## 11. Dig-in findings — open questions resolved + corrections (2026-07-17)
+
+Validated the plan against current source via four read-only sweeps. Results:
+
+### Open questions (§10) — resolved
+
+1. **Feature-flag delivery — the spoke sees NO feature flags at all.** The shared session (`packages/civitai-auth/src/types.ts:11-47`, produced by `apps/auth/.../session-producer.ts`) has no `features` map; `creatorShop` lives only in the main app's per-request evaluator (`src/server/services/feature-flags.service.ts:289`, `availability:['mod']`, Flipt key `creator-shop`) and never reaches the spoke. **Decision:** gate the MVP on `user.isModerator` (the spoke already has it, and it exactly matches the flag's mod-only default) — no new flag infra. Widening to non-mod testers later needs either a Flipt client in the spoke or a `features` field added to the hub session (heavier, lockstep deploy).
+2. **CF image upload — no new endpoint needed; and it's not Cloudflare.** `useCFImageUpload` actually does an **S3 presigned PUT**: `POST /api/v1/image-upload` (plain REST, NextAuth **cookie** auth, `src/pages/api/v1/image-upload/index.ts`) → `{ id, uploadURL }` → browser `PUT`s the file bytes to `uploadURL` → the returned `id` (a uuid) is stored on the entity as `imageUrl`. No polling/confirm. The spoke can call this endpoint as-is with the forwarded `.civitai.com` cookie. **Do NOT** use the CF-Images `getUploadUrl` path — it's dead for browser uploads and CF ids 404 at scan time.
+3. **Preview scope — confirmed defer.** Link out to the existing public storefront; don't rebuild `getCreatorShop`'s render payload for v1.
+4. **Resell gallery — Phase 2.** `getPublicShopItemsForResale` (cursor + filters) is worth reusing; decide kysely-in-spoke vs. read endpoint when Phase 2 starts.
+
+### CP-membership gate is stricter than the spoke currently models
+The spoke's `isCreatorProgramMember` is only the onboarding bit `(onboarding & 16)` (`membership.ts:23`) — **no active-subscription check**. The main app's `assertCreatorProgramMember` (`creator-shop.service.ts:183`) requires the bit **AND** `hasValidCreatorMembership` (active sub whose tier ∉ {free, founder}, excluding canceled/past_due/unpaid/renewal-email-sent). **Decision:** the spoke uses its existing bit-based check only for nav/visibility (UX); the authoritative active-sub gate stays server-side in the write endpoints, whose errors the spoke surfaces. No need to replicate `getUserSubscription` in the spoke.
+
+### Corrections to the plan (drift found)
+- **Service fn names ≠ endpoint names.** `getManageItems`→`getCreatorShopManageItems` (`:470`); `getPublicShopItems`→`getPublicShopItemsForResale` (`:631`); `getShop`→`getCreatorShop` (`:483`). The short names are the tRPC endpoints; the service fns differ.
+- **Settings JSON fields** (`user.schema.ts:306-324`) are `enabled?, showModels?, featuredItemIds?, resoldItemIds?, description?, coverImageId?, sections?` — it's **`featuredItemIds`** (not `featured`), and the plan omitted **`showModels`** and **`coverImageId`**. `sections[]` items are `{ key: 'featured'|'cosmetics'|'resold'|'merch'|'models'; visible }`.
+- **`preArchiveStatus` is NOT in the typed `CosmeticShopItemMeta`** (`cosmetic-shop.schema.ts`) — it's read/written via inline cast. A typed port should add it to the meta schema.
+- **`meta.creatorId` is declared but never written** by submit; payout attribution runs off `cosmetic.createdById`. Don't read `meta.creatorId` in the spoke.
+- **`removeResoldItem` has no membership guard** (only `addResoldItem` does) — lets a lapsed creator delist.
+- **`getCreatorShopManageItems` returns raw (unsanitized) `meta`** (incl. `imageHash`, `submissionTxId`, `sellerShare`). Owner-only view, but the spoke's kysely read should `select` only the fields the table needs — never ship the raw meta blob to the browser.
+- Status enum `CosmeticShopItemStatus`: `Draft, PendingReview, Published, Rejected, RequestedChanges, Archived` (submit goes straight to `PendingReview`; `Draft` unused by this flow).
+- Manage "Updated" column actually renders `createdAt` (`manage.columns.tsx:164`) — replicate or fix intentionally.
+
+### Confirmed unchanged
+Constants (`COSMETIC_PRICE_FLOOR=500`, `CREATOR_SHOP_SUBMISSION_FEE=10000`, `CREATOR_SHOP_MAX_FEATURED=6`, `CREATOR_SHOP_CREATOR_SHARE=0.7`, `PRICE_REVIEW_THRESHOLD=0.25` in `creator-shop.schema.ts:10-16`); `addedById`=lister / `createdById`=original creator; all side effects (Buzz fee + refund-on-fail, `sharp` validate, sha256 dedup, ownership guard, `PendingReview` on submit, >±25% price change on Published → re-review, publish guard = active membership + ≥1 item). `computeCreatorShopSplit(price, sellerShare)` is pure and re-exportable for the split preview.
+
+### Per-type artwork requirements (for the client validator port, `creator-shop.schema.ts:47-89`)
+Badge 144×144 1:1 transparent; ProfileDecoration 120×120 1:1 transparent; ProfileBackground 450×144 25:9 (no transparency); ContentDecoration 256×256 1:1 transparent. Submit `Select` offers Badge / ProfileDecoration / ProfileBackground only. Format PNG/WebP; size ≤ `mediaUpload.maxImageFileSize`; ratio within 2% of target. `creator-shop.validation.ts` is pure and portable.
+
+### Phase-1 build order (concrete)
+**Main app (thin REST wrappers, mirror `api/v1/model-versions/early-access.ts`), under `src/pages/api/v1/creator-shop/`:**
+1. `POST items` → `submitCreatorShopItem` (schema `submitCreatorShopItemSchema`)
+2. `POST items/[id]` (update) → `updateCreatorShopItem` (`updateCreatorShopItemSchema`)
+3. `POST items/[id]/archive` + `.../unarchive` → `archive`/`unarchiveCreatorShopItem`
+4. `PUT settings` → `updateCreatorShopSettings` (`updateCreatorShopSettingsSchema`)
+
+**Spoke:**
+- Gate: `/shop` route + nav item shown only when `user.isModerator`; write actions additionally require `isCreatorProgramMember`; endpoints enforce the active-sub gate and the spoke surfaces the error.
+- Reads (kysely, owner-scoped, selective columns): manage items (`CosmeticShopItem WHERE addedById=me` ⋈ `Cosmetic`, compute `remaining`/`soldOut`); settings from `User.settings.creatorShop`.
+- Write client `lib/server/creator-shop.ts`: one fn per endpoint, forwards cookie, typed by shared schemas.
+- Primitives: **CF/S3 upload** (Svelte util → `POST /api/v1/image-upload` then `PUT`); port pure `creator-shop.validation.ts`.
+- UI (Svelte 5 + shadcn): manage page (header, stats, toolbar, items `Table`, empty state, draft/publish banner); submit/edit modal (artwork dropzone + checks panel + price/qty + split preview + 10k Buzz-fee confirm); settings modal (visibility toggle + description + publish guard).
+
+**Deferred to Phase 2+:** featured picker, resell gallery + reordering, section drag-and-drop (`svelte-dnd-action`), storefront preview, Models section, Merch (Shopify).

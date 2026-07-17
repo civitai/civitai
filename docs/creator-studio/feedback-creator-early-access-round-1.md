@@ -12,9 +12,9 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
 
 - [x] **1.1 — Differentiate fields with color/icons** ✅ — every dashboard tile now has a colored tabler icon so
       the eye can find a metric fast.
-- [ ] **1.2 — Show % vs last month / 3-mo average** 🟡 — raw numbers aren't meaningful without a reference. Needs a
-      shifted-window query per metric + a delta chip. **Shared with 3.1 / 4.2 — build the comparison once, reuse.**
-      This is the single most-repeated ask across the feedback.
+- [x] **1.2 — Show % vs last month / 3-mo average** ✅ — delta chips (`DeltaChip.svelte`) on every activity tile +
+      Buzz earned, showing % vs the previous 30 days (green up / red down / "new"). Built on the shared
+      `previousRange` mechanism reused by 3.1 / 4.2.
 
 ## 2. Licensing (was "Models")
 
@@ -29,8 +29,9 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
 
 ## 3. Earnings
 
-- [ ] **3.1 — Chart needs references (released models / prior-month overlay / 3-mo avg)** 🟡 — same comparison
-      infra as 1.2 / 4.2.
+- [x] **3.1 — Chart needs a prior-period reference** ✅ — the trend now collapses the *selected* sources into a
+      single "this period" line plus a dashed "previous period" line summing the same selection, aligned by
+      calendar correspondence. (Released-model markers not done — separate item.)
 - [ ] **3.2 — "The more I look at Earnings, the more confusing it becomes"** 💬 — vague; the concrete asks below
       (3.3–3.5) plus 3.1 are the actionable parts. Revisit overall IA after those land.
 - [ ] **3.3 — Option to see Green + Yellow Buzz combined** 🟢💬 — trivial to sum (both convert to cash), but it
@@ -38,13 +39,15 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
       a replacement. Needs a quick product yes/no.
 - [ ] **3.4 — Monthly performance table (this month vs others)** 🟡 — `GROUP BY month` on the owner-keyed
       `buzzTransactions`; the month-selector infra already landed (E3). Should combine Yellow+Green per 3.3.
-- [x] **3.5 — Bars instead of / in addition to the smooth line** ✅ — Bars/Line toggle added, defaults to bars
-      (stacked by source), matching the Buzz Dashboard they referenced.
+- [~] **3.5 — Bars instead of / in addition to the smooth line** — added then **removed**. Per-source bars conflict
+      with an in-chart period comparison (the prior period can't be a per-source bar too, and grouped bars +
+      selection got muddled). Resolved in favor of the 3.1 comparison line instead (creator's call).
 
 ## 4. Analytics
 
 - [x] **4.1 — Totals: color/icons** ✅ — same treatment as the dashboard tiles.
-- [ ] **4.2 — Daily graph needs comparison/reference** 🟡 — same comparison infra as 1.2 / 3.1.
+- [x] **4.2 — Daily graph needs comparison/reference** ✅ — every analytics trend chart now overlays a dashed
+      "previous period" line, and the totals tiles carry the same delta chips as the dashboard.
 - [x] **4.3 — Expand top images to 50/100** ✅ — server returns top 50; grid shows 12 with a "Show all 50" toggle.
 - [ ] **4.4 — Compare specific selected models** 🔴 — selection + comparison view; new build.
 - [ ] **4.5 — Within-model analytics across its versions** 🔴 — per-model drill-down comparing version performance.
