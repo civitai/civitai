@@ -193,6 +193,12 @@ export const unionTransformer: CombinedDataTransformer = buildTransformer();
  * object — the client never serializes a response.
  */
 export const clientTransformer: CombinedDataTransformer = {
-  input: { serialize: superjson.serialize, deserialize: unionDeserialize },
+  // THROWAWAY PREVIEW ONLY — re-enables the #3178 client devalue input-write on
+  // top of the #3198 unionDeserialize double-parse fix, so this preview
+  // reproduces the exact incident trigger (client writes devalue POST bodies)
+  // against the fixed server. Mutations must WORK here; if the fix were wrong
+  // they'd 500 like prod did. DO NOT MERGE — production keeps superjson writes
+  // until the fix is deployed + verified.
+  input: { serialize: writeSerializeWithFallback, deserialize: unionDeserialize },
   output: { serialize: superjson.serialize, deserialize: unionDeserialize },
 };
