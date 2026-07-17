@@ -343,3 +343,54 @@ export function validateConnectScopeJustifications(
   }
   return errors;
 }
+
+/**
+ * The SENSITIVE OAuth-scope taxonomy — the mask of scope bits a moderator must
+ * scrutinise (and, for a connect listing, that MUST carry a per-scope
+ * justification before approval; see `approveExternalRequest`).
+ *
+ * Principle — a scope is sensitive when granting it lets an app touch MONEY, read
+ * PRIVATE/identity data, or WRITE data OTHER users see (cross-user side effects):
+ *  - money:      `BuzzRead` (balance/history) + `SocialTip` (spend on tips) — and
+ *                every `*Write` that implicitly spends Buzz (`AIServicesWrite`,
+ *                `BountiesWrite`).
+ *  - private:    `UserRead` (profile, settings & EMAIL / PII).
+ *  - cross-user / destructive: every `*Write` + `*Delete` (they create, mutate or
+ *                remove content others can see, or edit the user's own account).
+ *
+ * Written as an EXPLICIT named-bit OR (not a computed "everything but reads") so a
+ * moderator can eyeball exactly which permissions are flagged, and adding a new
+ * scope bit never silently folds it in. Deliberately EXCLUDES the read-only scopes
+ * that expose only public data (`ModelsRead`/`MediaRead`/`ArticlesRead`/
+ * `BountiesRead`/`AIServicesRead`/`CollectionsRead`/`NotificationsRead`/`VaultRead`)
+ * and the opt-in App-Block scopes (`AppBlocksSubmit`/`AppBlocksDevTunnel`, never
+ * part of a connect ceiling). `NotificationsWrite`/`VaultWrite` are included as
+ * account-mutating writes even though they are self-scoped.
+ */
+export const SENSITIVE_TOKEN_SCOPES: number =
+  TokenScope.UserRead | // private: profile, settings & email (PII)
+  TokenScope.UserWrite | // mutates the account
+  TokenScope.ModelsWrite |
+  TokenScope.ModelsDelete |
+  TokenScope.MediaWrite |
+  TokenScope.MediaDelete |
+  TokenScope.ArticlesWrite |
+  TokenScope.ArticlesDelete |
+  TokenScope.BountiesWrite | // buzz spend (bounty creation)
+  TokenScope.BountiesDelete |
+  TokenScope.AIServicesWrite | // buzz spend (generation/training)
+  TokenScope.BuzzRead | // money: balance & history
+  TokenScope.CollectionsWrite |
+  TokenScope.SocialWrite | // cross-user: follow/react/comment/review
+  TokenScope.SocialTip | // money: tip other users
+  TokenScope.NotificationsWrite |
+  TokenScope.VaultWrite;
+
+/**
+ * True iff `bit` carries ANY sensitive scope bit (see {@link SENSITIVE_TOKEN_SCOPES}).
+ * Works for a single scope bit OR a multi-bit mask — a mask is sensitive when it
+ * intersects the sensitive set at all.
+ */
+export function isSensitiveTokenScope(bit: number): boolean {
+  return (bit & SENSITIVE_TOKEN_SCOPES) !== 0;
+}

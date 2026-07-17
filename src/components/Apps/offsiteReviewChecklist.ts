@@ -1,4 +1,8 @@
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import {
+  SENSITIVE_TOKEN_SCOPES,
+  tokenScopeMaskToList,
+} from '~/shared/constants/token-scope.constants';
 
 /**
  * App Store Listings (W13) — P3a kind-aware mod-review checklist (PURE view-model).
@@ -39,7 +43,33 @@ export type OffsiteChecklistData = {
   screenshotCount: number;
   category: string | null | undefined;
   description: string | null | undefined;
+  // OAuth-CONNECT sub-kind (PR3): present only for a connect listing. When
+  // `connectClientId` is set the checklist adds a "sensitive scopes justified" item
+  // that WARNS if any sensitive requested scope lacks a non-empty justification.
+  connectClientId?: string | null;
+  connectRequestedScopes?: number | null;
+  connectScopeJustifications?: Record<string, string> | null;
 };
+
+/**
+ * The enum-keys of the SENSITIVE requested scopes that have NO non-empty
+ * justification (used by the checklist + a shared surface for the mod UI). Empty
+ * for a non-connect listing or when every sensitive scope is justified.
+ */
+export function unjustifiedSensitiveScopeKeys(data: {
+  connectRequestedScopes?: number | null;
+  connectScopeJustifications?: Record<string, string> | null;
+}): string[] {
+  const sensitiveRequested = (data.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0) return [];
+  const justifications = data.connectScopeJustifications ?? {};
+  return tokenScopeMaskToList(sensitiveRequested)
+    .filter(({ key }) => {
+      const raw = justifications[key];
+      return !(typeof raw === 'string' && raw.trim().length > 0);
+    })
+    .map(({ key }) => key);
+}
 
 /**
  * The deep ON-SITE (App Block) review checklist. These items are STATIC reminders
@@ -92,6 +122,8 @@ export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChe
   const namePresent = typeof data.name === 'string' && data.name.trim().length > 0;
   const urlValid = validateExternalUrl(data.externalUrl).ok;
   const screenshotOk = data.screenshotCount >= 1;
+  const isConnect = data.connectClientId != null;
+  const unjustifiedSensitive = isConnect ? unjustifiedSensitiveScopeKeys(data) : [];
   return [
     {
       id: 'name',
@@ -135,6 +167,21 @@ export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChe
       hint: 'The declared category matches what the app actually does.',
       status: 'todo',
     },
+    // CONNECT sub-kind only (PR3): warn when a sensitive requested scope has no
+    // justification. Auto-`warn` if any is missing, `ok` when all are justified.
+    ...(isConnect
+      ? [
+          {
+            id: 'connect-sensitive-scopes',
+            label: 'Sensitive permissions justified',
+            hint:
+              unjustifiedSensitive.length > 0
+                ? `Missing a justification for: ${unjustifiedSensitive.join(', ')}. Approval is blocked until every sensitive scope is justified.`
+                : 'Every requested sensitive permission (money / private data / cross-user writes) carries a justification.',
+            status: unjustifiedSensitive.length > 0 ? ('warn' as const) : ('ok' as const),
+          },
+        ]
+      : []),
   ];
 }
 

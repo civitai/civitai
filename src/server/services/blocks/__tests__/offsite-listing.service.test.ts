@@ -640,7 +640,9 @@ describe('approveExternalRequest', () => {
     // through the PRIMARY client (`tx` === mockWrite) inside the transaction.
     expect(mockWrite.appListing.findUnique).toHaveBeenCalledWith({
       where: { id: 'apl_1' },
-      select: { externalUrl: true, iconId: true, coverId: true },
+      // `connectClientId` was added to the in-tx re-read so the URL gate can be
+      // skipped for a connect listing (PR3); external-link listings still validate.
+      select: { externalUrl: true, iconId: true, coverId: true, connectClientId: true },
     });
     expect(mockWrite.appListingScreenshot.count).toHaveBeenCalledWith({
       where: { appListingId: 'apl_1', imageId: { not: null } },

@@ -38,6 +38,7 @@ import {
   reasonMeetsMin,
 } from '~/components/Apps/ReasonGatedActionModal';
 import { getOffsiteReviewChecklist } from '~/components/Apps/offsiteReviewChecklist';
+import { ConnectScopesPanel } from '~/components/Apps/ConnectScopesPanel';
 import { getReportReasonLabel } from '~/components/Apps/appListingReportView';
 import {
   isDestructiveAction,
@@ -87,6 +88,14 @@ export type OffsitePendingRow = {
     externalUrl: string | null;
     category: string | null;
     contentRating: string | null;
+    // OAuth-CONNECT sub-kind (PR3). `connectClientId` is the discriminator: when set,
+    // the row is a connect listing and the review modal renders the requested-scope
+    // panel + the sensitive-justification checklist item. Null for an external-link
+    // listing. `connectScopeJustifications` is keyed by TokenScope enum-key.
+    connectClientId?: string | null;
+    connectRequestedScopes?: number | null;
+    connectScopeJustifications?: Record<string, string> | null;
+    connectClient?: { name: string | null } | null;
   } | null;
   submittedBy: OffsiteUser | null;
 };
@@ -325,6 +334,11 @@ export function OffsiteReviewModal({
     nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(declaredRating);
   const selectedRating: OffsiteContentRating = ratingOverride ?? derivedRating;
 
+  // OAuth-CONNECT sub-kind (PR3): render the requested-scope panel + the sensitive-
+  // justification checklist item only when the listing is a connect listing.
+  const connectClientId = request.appListing?.connectClientId ?? null;
+  const isConnect = connectClientId != null;
+
   const checklist = getOffsiteReviewChecklist({
     name: request.appListing?.name,
     externalUrl: request.appListing?.externalUrl,
@@ -333,6 +347,9 @@ export function OffsiteReviewModal({
     screenshotCount,
     category: request.appListing?.category,
     description: null,
+    connectClientId,
+    connectRequestedScopes: request.appListing?.connectRequestedScopes ?? null,
+    connectScopeJustifications: request.appListing?.connectScopeJustifications ?? null,
   });
 
   const assetsIncomplete = !assetsQuery.isLoading && (!hasIcon || !hasCover || screenshotCount < 1);
@@ -451,6 +468,14 @@ export function OffsiteReviewModal({
             )}
           </Stack>
         </Card>
+
+        {isConnect && (
+          <ConnectScopesPanel
+            connectClientName={request.appListing?.connectClient?.name ?? null}
+            requestedScopes={request.appListing?.connectRequestedScopes ?? 0}
+            justifications={request.appListing?.connectScopeJustifications ?? null}
+          />
+        )}
 
         <Stack gap={4}>
           <Text size="sm" fw={600}>
