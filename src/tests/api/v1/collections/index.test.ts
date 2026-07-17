@@ -3,42 +3,35 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
 
 const {
   mockGetAllCollections,
   mockGetCollectionItemCount,
-  mockGetUserCollectionsWithPermissions,
   mockGetUserCollectionPermissionsById,
   mockGetCollectionById,
   mockRateLimit,
-  mockIsAppBlocksAuthorEnabled,
+  mockGetRegion,
+  mockIsRegionRestricted,
 } = vi.hoisted(() => ({
   mockGetAllCollections: vi.fn(),
   mockGetCollectionItemCount: vi.fn(),
-  mockGetUserCollectionsWithPermissions: vi.fn(),
   mockGetUserCollectionPermissionsById: vi.fn(),
   mockGetCollectionById: vi.fn(),
   mockRateLimit: vi.fn(),
-  mockIsAppBlocksAuthorEnabled: vi.fn(),
+  mockGetRegion: vi.fn(),
+  mockIsRegionRestricted: vi.fn(),
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
   getAllCollections: mockGetAllCollections,
   getCollectionItemCount: mockGetCollectionItemCount,
-  getUserCollectionsWithPermissions: mockGetUserCollectionsWithPermissions,
   getUserCollectionPermissionsById: mockGetUserCollectionPermissionsById,
   getCollectionById: mockGetCollectionById,
 }));
 
 vi.mock('~/server/utils/public-api-rate-limit', () => ({
   checkPublicApiRateLimit: mockRateLimit,
-}));
-
-// The App Blocks author-cohort gate — mock it so tests never touch real Flipt.
-// Default: in-cohort (true) so the existing happy-path assertions still exercise
-// the handler body; the dark-404 tests flip it to false.
-vi.mock('~/server/services/app-blocks-flag', () => ({
-  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 
 vi.mock('~/client-utils/cf-images-utils', () => ({
@@ -65,9 +58,12 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   },
 }));
 
+// Region resolver kept deterministic — the maturity clamp is derived ONLY from
+// these helpers (never from the caller). Default: not restricted → PUBLIC flag.
+// Individual tests flip `mockIsRegionRestricted` to exercise the SFW narrowing.
 vi.mock('~/server/utils/region-blocking', () => ({
-  getRegion: () => ({}),
-  isRegionRestricted: () => false,
+  getRegion: mockGetRegion,
+  isRegionRestricted: mockIsRegionRestricted,
 }));
 
 import listHandler from '~/pages/api/v1/collections/index';
@@ -125,68 +121,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockRateLimit.mockResolvedValue({ allowed: true });
   mockGetCollectionItemCount.mockResolvedValue([]);
-  // Default: caller IS in the author cohort (mod / app-dev-tester) so the
-  // existing behavioural tests reach the handler body. Dark-404 tests override.
-  mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
-});
-
-const PREVIEW_MESSAGE =
-  'This API is in preview — access is restricted to Civitai moderators and app developers.';
-
-describe('GET /api/v1/collections — author-cohort gate (403 preview)', () => {
-  it('SECURITY: a non-cohort authed user gets a 403 + preview message and NEITHER the rate limiter NOR the service runs (list)', async () => {
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const { req, res } = createMocks({ query: {}, user: { id: 7, isModerator: false } });
-
-    await listHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
-    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: { id: 7, isModerator: false } });
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(mockGetAllCollections).not.toHaveBeenCalled();
-  });
-
-  it('SECURITY: an anonymous caller gets a 403 + preview message (list)', async () => {
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const { req, res } = createMocks({ query: {} });
-
-    await listHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
-    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: undefined });
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(mockGetAllCollections).not.toHaveBeenCalled();
-  });
-
-  it('SECURITY: a non-cohort authed user gets a 403 + preview message (detail)', async () => {
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const { req, res } = createMocks({ query: { id: '55' }, user: { id: 7, isModerator: false } });
-
-    await detailHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
-  });
-
-  it('SECURITY: an anonymous caller gets a 403 + preview message (detail)', async () => {
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const { req, res } = createMocks({ query: { id: '55' } });
-
-    await detailHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
-  });
+  mockGetRegion.mockReturnValue({});
+  mockIsRegionRestricted.mockReturnValue(false);
 });
 
 describe('GET /api/v1/collections (list)', () => {
-  it('public mode: queries getAllCollections with privacy pinned to [Public] and returns the envelope', async () => {
+  it('queries getAllCollections with privacy pinned to [Public], evaluated as anonymous (user: undefined), and returns the envelope', async () => {
     mockGetAllCollections.mockResolvedValue([
       {
         id: 10,
@@ -206,49 +146,47 @@ describe('GET /api/v1/collections (list)', () => {
 
     expect(res._getStatusCode()).toBe(200);
     const args = mockGetAllCollections.mock.calls[0][0];
-    // SECURITY: privacy forced to Public (service also re-clamps for non-mods).
+    // SECURITY: privacy forced to Public AND no session user passed → the service
+    // clamps to Public unconditionally (even a mod override can't widen).
     expect(args.input.privacy).toEqual([CollectionReadConfiguration.Public]);
+    expect(args.user).toBeUndefined();
     const body = res._getJSONData();
     expect(body.items[0]).toMatchObject({ id: 10, name: 'c', isPublic: true });
     expect(body).toHaveProperty('metadata');
   });
 
-  it('SECURITY: mine=true requires auth → 401 when unauthenticated, and the service is not called', async () => {
-    const { req, res } = createMocks({ query: { mine: 'true' } });
-
-    await listHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(401);
-    expect(mockGetUserCollectionsWithPermissions).not.toHaveBeenCalled();
-    expect(mockGetAllCollections).not.toHaveBeenCalled();
-  });
-
-  it('mine=true (authed): keys getUserCollectionsWithPermissions on the SESSION user id, never a client param', async () => {
-    mockGetUserCollectionsWithPermissions.mockResolvedValue([
+  it('CACHEABILITY: the response is caller-independent — an authed caller gets byte-identical data to an anonymous caller, and getAllCollections is called as anonymous (user: undefined) in BOTH cases', async () => {
+    mockGetAllCollections.mockResolvedValue([
       {
-        id: 20,
-        name: 'mine',
+        id: 10,
+        name: 'c',
         description: null,
-        read: CollectionReadConfiguration.Private,
+        read: CollectionReadConfiguration.Public,
         type: 'Image',
-        userId: 99,
-        image: undefined,
+        nsfwLevel: 1,
+        userId: 2,
+        user: { id: 2, username: 'bob' },
+        image: null,
       },
     ]);
-    const { req, res } = createMocks({
-      query: { mine: 'true', userId: '1' },
-      user: { id: 99, username: 'me' },
-    });
 
-    await listHandler(req, res);
+    const anon = createMocks({ query: { limit: '5' } });
+    await listHandler(anon.req, anon.res);
 
-    expect(res._getStatusCode()).toBe(200);
-    expect(mockGetUserCollectionsWithPermissions).toHaveBeenCalledWith({
-      input: { userId: 99, contributingOnly: true },
-    });
-    const body = res._getJSONData();
-    // Owner sees their OWN private collection in the mine listing.
-    expect(body.items[0]).toMatchObject({ id: 20, isPublic: false });
+    const authed = createMocks({ query: { limit: '5' }, user: { id: 42, username: 'me', isModerator: true } });
+    await listHandler(authed.req, authed.res);
+
+    expect(anon.res._getStatusCode()).toBe(200);
+    expect(authed.res._getStatusCode()).toBe(200);
+    // Same URL → byte-identical body regardless of caller identity.
+    expect(authed.res._getJSONData()).toEqual(anon.res._getJSONData());
+    // The service is invoked with identical, purely-public args (no session user)
+    // even for the authed moderator.
+    const anonArgs = mockGetAllCollections.mock.calls[0][0];
+    const authedArgs = mockGetAllCollections.mock.calls[1][0];
+    expect(anonArgs.user).toBeUndefined();
+    expect(authedArgs.user).toBeUndefined();
+    expect(authedArgs.input.privacy).toEqual([CollectionReadConfiguration.Public]);
   });
 
   it('PAGINATION: rejects a cursor combined with sort=Most Followers (id cursor is inconsistent with the contributor ordering)', async () => {
@@ -282,23 +220,28 @@ describe('GET /api/v1/collections (list)', () => {
 
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeader('Retry-After')).toBe('30');
+    // A 429 must NEVER be edge-cached (per-IP/per-user) — a cached public 429 would be served fleet-wide.
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
     expect(mockGetAllCollections).not.toHaveBeenCalled();
   });
 });
 
 describe('GET /api/v1/collections/[id] (detail)', () => {
-  it('SECURITY: no read permission → 404 and getCollectionById is NEVER called (private collection unreachable, no existence oracle)', async () => {
+  it('SECURITY: no read permission → 404 and getCollectionById is NEVER called (private collection unreachable, no existence oracle); permissions evaluated as anonymous', async () => {
     mockGetUserCollectionPermissionsById.mockResolvedValue({
       read: false,
       write: false,
       manage: false,
     });
-    const { req, res } = createMocks({ query: { id: '55' } });
+    // Even an authed caller is evaluated as anonymous — no owner/mod widening.
+    const { req, res } = createMocks({ query: { id: '55' }, user: { id: 7, isModerator: true } });
 
     await detailHandler(req, res);
 
     expect(res._getStatusCode()).toBe(404);
     expect(mockGetCollectionById).not.toHaveBeenCalled();
+    // Permission check never receives session identity.
+    expect(mockGetUserCollectionPermissionsById.mock.calls[0][0]).toEqual({ id: 55 });
   });
 
   it('returns the collection projection when read permission is granted', async () => {
@@ -335,6 +278,92 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
     });
   });
 
+  it('MATURITY: nulls the cover URL when the cover is above the region-narrowed PUBLIC ceiling (mature cover never leaked; NOT allBrowsingLevels)', async () => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({
+      read: true,
+      write: false,
+      manage: false,
+    });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'pub',
+      description: 'd',
+      type: 'Image',
+      nsfwLevel: NsfwLevel.R,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      user: { id: 2, username: 'bob' },
+      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.R },
+      tags: [],
+    });
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    // R does NOT intersect the PG-only public flag → cover URL nulled. Under the
+    // old `allBrowsingLevels` clamp this R cover would have leaked.
+    expect(res._getJSONData().coverImageUrl).toBeNull();
+  });
+
+  it('MATURITY/CACHEABILITY: the clamp reads NO per-user data — an authed (mod) caller gets byte-identical clamped output to an anon caller', async () => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({
+      read: true,
+      write: false,
+      manage: false,
+    });
+    mockGetCollectionById.mockImplementation(async () => ({
+      id: 55,
+      name: 'pub',
+      description: 'd',
+      type: 'Image',
+      nsfwLevel: NsfwLevel.R,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      user: { id: 2, username: 'bob' },
+      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.R },
+      tags: [],
+    }));
+
+    const anon = createMocks({ query: { id: '55' } });
+    await detailHandler(anon.req, anon.res);
+    const authed = createMocks({ query: { id: '55' }, user: { id: 7, isModerator: true } });
+    await detailHandler(authed.req, authed.res);
+
+    // Caller identity never feeds the clamp → identical output; mature cover
+    // nulled for BOTH.
+    expect(authed.res._getJSONData()).toEqual(anon.res._getJSONData());
+    expect(anon.res._getJSONData().coverImageUrl).toBeNull();
+  });
+
+  it('MATURITY: the clamp is REGION-derived — a restricted region uses the SFW ceiling (PG-13 cover retained where the public default would null it)', async () => {
+    mockIsRegionRestricted.mockReturnValue(true);
+    mockGetUserCollectionPermissionsById.mockResolvedValue({
+      read: true,
+      write: false,
+      manage: false,
+    });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'pub',
+      description: 'd',
+      type: 'Image',
+      nsfwLevel: NsfwLevel.PG13,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      user: { id: 2, username: 'bob' },
+      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.PG13 },
+      tags: [],
+    });
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    // Restricted → SFW ceiling (PG + PG-13) → the PG-13 cover survives, proving
+    // the clamp tracks the region helper (not a fixed max, not a per-user value).
+    expect(res._getJSONData().coverImageUrl).toBe('edge:img-key');
+  });
+
   it('404s (via handleEndpointError) when the collection row is gone despite a permission grant', async () => {
     mockGetUserCollectionPermissionsById.mockResolvedValue({
       read: true,
@@ -359,6 +388,7 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
 
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeader('Retry-After')).toBe('15');
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
     expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
   });
 });
