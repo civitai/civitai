@@ -52,8 +52,10 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
       "previous period" line, and the totals tiles carry the same delta chips as the dashboard.
 - [x] **4.3 — Expand top images to 50/100** ✅ — server returns top 50; grid shows 12 with a "Show all 50" toggle.
 - [ ] **4.4 — Compare specific selected models** 🔴 — selection + comparison view; new build.
-- [ ] **4.5 — Within-model analytics across its versions** 🔴 — per-model drill-down comparing version performance.
-      Data exists per `modelVersionId` (usage tables), so it's feasible but a new view.
+- [x] **4.5 — Within-model analytics across its versions** ✅ — drill-down route `/analytics/model/[modelId]`
+      (`getModelVersionAnalytics`, ownership-checked): generations / downloads / buzz per version over the selected
+      range (same 7d/30d + month selector as the rest), with **% deltas vs the previous period** on each metric.
+      A model-id input jumps to another model; reached by clicking a model in the per-model performance table.
 - [ ] **4.6 — Compare base models (creator-specific + Civitai-wide)** 🔴 — aggregate the creator's usage/earnings
       grouped by base model, plus a platform-wide trend. High value for "which base models to invest in," but large.
 

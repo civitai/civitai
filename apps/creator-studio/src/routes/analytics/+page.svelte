@@ -302,13 +302,8 @@
                 title="{m.modelName ?? `Model ${m.modelId}`}{m.versionName ? ` · ${m.versionName}` : ''}"
               >
                 {#if m.modelId}
-                  <!-- NSFW models link to civitai.red (mature domain), same split as the top-images grid -->
-                  <a
-                    href="https://civitai.{m.nsfw ? 'red' : 'com'}/models/{m.modelId}?modelVersionId={m.modelVersionId}"
-                    target="_blank"
-                    rel="noreferrer"
-                    class="text-dark-1 hover:text-white hover:underline"
-                  >
+                  <!-- Drill into this model's per-version analytics (feedback 4.5). -->
+                  <a href="/analytics/model/{m.modelId}" class="text-dark-1 hover:text-white hover:underline">
                     {m.modelName ?? `Model ${m.modelId}`}
                   </a>
                 {:else}

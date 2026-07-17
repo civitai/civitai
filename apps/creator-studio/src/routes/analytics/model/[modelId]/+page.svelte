@@ -1,0 +1,119 @@
+<script lang="ts">
+  import { goto } from '$app/navigation';
+  import * as Table from '@civitai/ui/components/ui/table/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { IconExternalLink, IconArrowLeft } from '@tabler/icons-svelte';
+  import RangeSelector from '$lib/components/RangeSelector.svelte';
+  import DeltaChip from '$lib/components/DeltaChip.svelte';
+  import { formatRange } from '$lib/date-range';
+  import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
+  import type { PageData } from './$types';
+
+  let { data }: { data: PageData } = $props();
+  const num = (n: number) => n.toLocaleString();
+  const periodLabel = $derived(`for ${formatRange(data.range)}`);
+
+  const versions = $derived(data.model.versions);
+  // One column per currency present across the model's versions (buzz colors + cash), kept split (B8).
+  const currencies = $derived(
+    [...new Set(versions.flatMap((v) => v.currencies.map((c) => c.currency)))].sort(currencySort)
+  );
+  const cell = (v: PageData['model']['versions'][number], currency: string) =>
+    v.currencies.find((c) => c.currency === currency) ?? { currency, total: 0, prev: 0 };
+
+  const civitaiUrl = $derived(
+    `https://civitai.${data.model.nsfw ? 'red' : 'com'}/models/${data.model.modelId}`
+  );
+
+  // "Put in a model id" — jump to another model's version analytics.
+  let lookupId = $state('');
+  function goToModel(e: Event) {
+    e.preventDefault();
+    const id = Number(lookupId);
+    if (Number.isInteger(id) && id > 0) goto(`/analytics/model/${id}`);
+  }
+</script>
+
+<header class="page-header flex flex-wrap items-start gap-3">
+  <div>
+    <a href="/analytics" class="mb-1 inline-flex items-center gap-1 text-xs text-dark-2 hover:text-white">
+      <IconArrowLeft size={13} /> Analytics
+    </a>
+    <h1 class="flex items-center gap-2">
+      {data.model.modelName ?? `Model ${data.model.modelId}`}
+      <a href={civitaiUrl} target="_blank" rel="noreferrer" class="text-dark-3 hover:text-white" aria-label="View on Civitai">
+        <IconExternalLink size={16} />
+      </a>
+    </h1>
+    <p>Per-version performance {periodLabel}.</p>
+  </div>
+  <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+    <form onsubmit={goToModel} class="flex items-center gap-1">
+      <input
+        type="text"
+        inputmode="numeric"
+        bind:value={lookupId}
+        placeholder="Model ID"
+        class="w-24 rounded-lg border border-dark-4 bg-dark-6 px-2.5 py-1 text-sm text-white placeholder:text-dark-3"
+      />
+      <Button type="submit" size="sm" variant="secondary">View</Button>
+    </form>
+    <RangeSelector range={data.range} />
+  </div>
+</header>
+
+{#if versions.length === 0}
+  <div class="placeholder">This model has no versions.</div>
+{:else}
+  <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
+    <Table.Root>
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>Version</Table.Head>
+          <Table.Head>Base model</Table.Head>
+          <Table.Head class="text-right">Generations</Table.Head>
+          <Table.Head class="text-right">Downloads</Table.Head>
+          {#each currencies as c (c)}
+            <Table.Head class="text-right">{currencyMeta(c).label}</Table.Head>
+          {/each}
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {#each versions as v (v.versionId)}
+          <Table.Row>
+            <Table.Cell class="align-top text-dark-1">{v.versionName ?? `Version ${v.versionId}`}</Table.Cell>
+            <Table.Cell class="align-top text-dark-2">{v.baseModel ?? '—'}</Table.Cell>
+            <Table.Cell class="align-top text-right">
+              <div class="tabular-nums {v.generations ? 'text-white' : 'text-dark-4'}">
+                {v.generations ? num(v.generations) : '—'}
+              </div>
+              {#if v.generations}
+                <div class="mt-0.5"><DeltaChip current={v.generations} previous={v.prevGenerations} /></div>
+              {/if}
+            </Table.Cell>
+            <Table.Cell class="align-top text-right">
+              <div class="tabular-nums {v.downloads ? 'text-white' : 'text-dark-4'}">
+                {v.downloads ? num(v.downloads) : '—'}
+              </div>
+              {#if v.downloads}
+                <div class="mt-0.5"><DeltaChip current={v.downloads} previous={v.prevDownloads} /></div>
+              {/if}
+            </Table.Cell>
+            {#each currencies as c (c)}
+              {@const cc = cell(v, c)}
+              {@const show = hasDisplayValue(cc.total, c)}
+              <Table.Cell class="align-top text-right">
+                <div class="tabular-nums {show ? 'font-medium text-white' : 'text-dark-4'}">
+                  {show ? formatAmount(cc.total, c) : '—'}
+                </div>
+                {#if show}
+                  <div class="mt-0.5"><DeltaChip current={cc.total} previous={cc.prev} /></div>
+                {/if}
+              </Table.Cell>
+            {/each}
+          </Table.Row>
+        {/each}
+      </Table.Body>
+    </Table.Root>
+  </div>
+{/if}
