@@ -1,22 +1,18 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { pack, unpack } from 'msgpackr';
 
-// Backing store for the fake Redis so cache hit/miss semantics are REAL (a Map), letting
-// us assert exactly when the origin DB query is re-run.
-const { store, dbReadQueryRaw, redisPackedGet, redisPackedSet, redisDel } = vi.hoisted(() => {
-  const store = new Map<string, unknown>();
-  return {
-    store,
-    dbReadQueryRaw: vi.fn(),
-    redisPackedGet: vi.fn(async (key: string) => (store.has(key) ? store.get(key) : null)),
-    redisPackedSet: vi.fn(async (key: string, value: unknown) => {
-      store.set(key, value);
-    }),
-    redisDel: vi.fn(async (key: string) => {
-      store.delete(key);
-      return 1;
-    }),
-  };
-});
+// Backing store for the fake Redis. Values are stored as msgpackr-PACKED Buffers and
+// unpacked on read — the SAME codec the real `redis.packed` client uses (set -> pack(value),
+// get -> unpack(buffer)) — so the byte-identical claim is exercised through the real
+// serializer end-to-end, not a pass-through fake. Cache hit/miss semantics stay real (a
+// Map), letting us assert exactly when the origin DB query is re-run.
+const { store, dbReadQueryRaw, redisPackedGet, redisPackedSet, redisDel } = vi.hoisted(() => ({
+  store: new Map<string, Buffer>(),
+  dbReadQueryRaw: vi.fn(),
+  redisPackedGet: vi.fn(),
+  redisPackedSet: vi.fn(),
+  redisDel: vi.fn(),
+}));
 
 vi.mock('~/server/db/client', () => ({
   dbRead: { $queryRaw: dbReadQueryRaw },
@@ -44,11 +40,19 @@ const ANIME_ROW = { id: 7, name: 'Anime', unfeatured: false, count: 0 };
 beforeEach(() => {
   vi.clearAllMocks();
   store.clear();
-  redisPackedGet.mockImplementation(async (key: string) =>
-    store.has(key) ? store.get(key) : null
-  );
+  // Real msgpackr round-trip: set packs to a Buffer, get unpacks — mirrors the production
+  // redis.packed codec so serializer fidelity (stored-case string, `count:0` int, boolean,
+  // array shape) is actually under test on the hit path.
+  redisPackedGet.mockImplementation(async (key: string) => {
+    const buf = store.get(key);
+    return buf ? unpack(buf) : null;
+  });
   redisPackedSet.mockImplementation(async (key: string, value: unknown) => {
-    store.set(key, value);
+    store.set(key, pack(value));
+  });
+  redisDel.mockImplementation(async (key: string) => {
+    store.delete(key);
+    return 1;
   });
 });
 
@@ -71,8 +75,32 @@ describe('getTagWithModelCount — read-through cache', () => {
 
     // Shape + values match {id,name,unfeatured,count:0}; `name` is the DB stored case.
     expect(result).toEqual([{ id: 7, name: 'Anime', unfeatured: false, count: 0 }]);
-    // What we cached is exactly what we returned (no transformation of the DB row).
-    expect(store.get(`${KEY_PREFIX}:anime`)).toEqual([ANIME_ROW]);
+
+    // Prove byte-identity THROUGH the real msgpackr codec: unpack the actual stored Buffer
+    // and assert every field survives the serializer — stored-case string, `count:0` int,
+    // `unfeatured` boolean, single-element array shape.
+    const storedBuffer = store.get(`${KEY_PREFIX}:anime`);
+    expect(Buffer.isBuffer(storedBuffer)).toBe(true);
+    const roundTripped = unpack(storedBuffer!) as typeof ANIME_ROW[];
+    expect(roundTripped).toEqual([ANIME_ROW]);
+    expect(roundTripped).toHaveLength(1);
+    expect(roundTripped[0].name).toBe('Anime');
+    expect(roundTripped[0].count).toBe(0);
+    expect(roundTripped[0].unfeatured).toBe(false);
+  });
+
+  it('serves a msgpackr-codec round-tripped result on the cache HIT path', async () => {
+    // First call populates the cache (packed Buffer); the second is served purely from the
+    // unpacked Buffer — this asserts the HIT path itself is byte-identical post-serializer.
+    dbReadQueryRaw.mockResolvedValue([ANIME_ROW]);
+    await getTagWithModelCount({ name: 'Anime' }); // populate
+
+    const hit = await getTagWithModelCount({ name: 'Anime' }); // served from unpack(Buffer)
+    expect(dbReadQueryRaw).toHaveBeenCalledTimes(1);
+    expect(hit).toEqual([{ id: 7, name: 'Anime', unfeatured: false, count: 0 }]);
+    expect(hit[0].name).toBe('Anime'); // stored case survived pack -> unpack
+    expect(hit[0].count).toBe(0);
+    expect(hit[0].unfeatured).toBe(false);
   });
 
   it('keys by lowercased name: "Anime" and "anime" share ONE entry (one DB hit)', async () => {
@@ -128,5 +156,17 @@ describe('getTagWithModelCount — read-through cache', () => {
 
     const result = await getTagWithModelCount({ name: 'Anime' });
     expect(result).toEqual([ANIME_ROW]); // degraded to origin, correct result
+  });
+
+  it('still returns the DB result when the Redis WRITE (populate) throws', async () => {
+    // Cache miss -> origin query succeeds -> the best-effort cache SET fails. The SET catch
+    // must swallow it so a Redis write outage never breaks the request.
+    redisPackedGet.mockResolvedValueOnce(null); // miss
+    redisPackedSet.mockRejectedValueOnce(new Error('redis write down'));
+    dbReadQueryRaw.mockResolvedValue([ANIME_ROW]);
+
+    const result = await getTagWithModelCount({ name: 'Anime' });
+    expect(result).toEqual([ANIME_ROW]); // request succeeds despite the write failure
+    expect(redisPackedSet).toHaveBeenCalledTimes(1); // it was attempted
   });
 });
