@@ -35,6 +35,22 @@ export function getMinUserChallengeStartsAt(from: Date = new Date()): Date {
   return new Date(from.getTime() + CHALLENGE_MIN_START_LEAD_HOURS * 60 * 60 * 1000);
 }
 
+/** Minimum user-challenge duration — a shorter challenge can't realistically collect entries. */
+export const CHALLENGE_MIN_DURATION_HOURS = 24;
+export const CHALLENGE_MIN_DURATION_MS = CHALLENGE_MIN_DURATION_HOURS * 60 * 60 * 1000;
+
+/** Maximum user-challenge duration — bounds how long one occupies a concurrent-challenge slot. */
+export const CHALLENGE_MAX_DURATION_DAYS = 30;
+export const CHALLENGE_MAX_DURATION_MS = CHALLENGE_MAX_DURATION_DAYS * 24 * 60 * 60 * 1000;
+
+/** Max lead time between now and a user challenge's startsAt — blocks far-future squatting. */
+export const CHALLENGE_MAX_START_LEAD_DAYS = 30;
+
+/** Latest allowed startsAt for a user challenge (now + CHALLENGE_MAX_START_LEAD_DAYS). */
+export function getMaxUserChallengeStartsAt(from: Date = new Date()): Date {
+  return new Date(from.getTime() + CHALLENGE_MAX_START_LEAD_DAYS * 24 * 60 * 60 * 1000);
+}
+
 /** Max simultaneously Scheduled+Active user-created challenges, by membership tier.
  * (fib: free 1, bronze 2, silver 3, gold 5; founder treated as bronze.) */
 export const CHALLENGE_TIER_ACTIVE_LIMITS: Record<string, number> = {
