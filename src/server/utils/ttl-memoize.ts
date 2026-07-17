@@ -58,3 +58,43 @@ export function createTtlMemo<T>(
 
   return memo;
 }
+
+// Keyed variant of createTtlMemo for a GLOBAL-per-key async fetcher — i.e. a
+// fetcher whose result depends ONLY on a small, bounded key (not on the
+// user/session), e.g. the per-domain "latest bug/changelog" timestamp. Each
+// distinct key gets its own independent single-slot TTL memo (same fail-open
+// semantics: only a resolved value is cached, a rejection propagates uncached).
+//
+// 🔴 The key space MUST be bounded (an enum, a domain list, …). This holds one
+// slot per distinct key forever, so a per-user / unbounded key would both leak
+// memory AND — because a slot is user-independent by contract — is still only
+// safe for values that don't depend on the request/user beyond the key itself.
+export type KeyedTtlMemo<T> = ((key: string) => Promise<T>) & {
+  /** Drop one key's cached value, or (no arg) every key's. */
+  clear: (key?: string) => void;
+};
+
+export function createKeyedTtlMemo<T>(
+  fetcher: (key: string) => Promise<T>,
+  ttlMs: number,
+  now: () => number = Date.now,
+  opts: { freeze?: boolean } = {}
+): KeyedTtlMemo<T> {
+  const slots = new Map<string, TtlMemo<T>>();
+
+  const keyed = ((key: string) => {
+    let slot = slots.get(key);
+    if (!slot) {
+      slot = createTtlMemo(() => fetcher(key), ttlMs, now, opts);
+      slots.set(key, slot);
+    }
+    return slot();
+  }) as KeyedTtlMemo<T>;
+
+  keyed.clear = (key?: string) => {
+    if (key === undefined) slots.clear();
+    else slots.get(key)?.clear();
+  };
+
+  return keyed;
+}

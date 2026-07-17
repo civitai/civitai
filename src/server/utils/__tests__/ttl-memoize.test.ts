@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createTtlMemo } from '../ttl-memoize';
+import { createKeyedTtlMemo, createTtlMemo } from '../ttl-memoize';
 
 // A controllable clock so the tests are deterministic and never rely on
 // wall-clock sleeps.
@@ -133,5 +133,80 @@ describe('createTtlMemo', () => {
     expect(await memo()).toBeNull();
     expect(await memo()).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createKeyedTtlMemo', () => {
+  it('memoizes per key: each distinct key hits the fetcher once within the TTL', async () => {
+    const clock = makeClock();
+    const fetcher = vi.fn(async (key: string) => `value-for-${key}`);
+    const memo = createKeyedTtlMemo(fetcher, 30_000, clock.now);
+
+    // First touch of each key fetches once; repeats within the TTL are cached.
+    expect(await memo('all')).toBe('value-for-all');
+    expect(await memo('red')).toBe('value-for-red');
+    clock.advance(10_000); // still inside the 30s TTL
+    expect(await memo('all')).toBe('value-for-all');
+    expect(await memo('red')).toBe('value-for-red');
+
+    // One fetch per DISTINCT key, not per call.
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledWith('all');
+    expect(fetcher).toHaveBeenCalledWith('red');
+  });
+
+  it('keys are independent — expiring/refetching one key does not disturb another', async () => {
+    const clock = makeClock();
+    const counters: Record<string, number> = {};
+    const fetcher = vi.fn(async (key: string) => {
+      counters[key] = (counters[key] ?? 0) + 1;
+      return `${key}-${counters[key]}`;
+    });
+    const memo = createKeyedTtlMemo(fetcher, 30_000, clock.now);
+
+    expect(await memo('all')).toBe('all-1');
+    expect(await memo('red')).toBe('red-1');
+
+    clock.advance(30_001); // both keys' TTL windows expire together
+    expect(await memo('all')).toBe('all-2'); // refetched independently
+    expect(await memo('red')).toBe('red-2');
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
+  it('fail-open per key: a rejected fetch is not cached and the next call refetches that key', async () => {
+    const clock = makeClock();
+    const outcomes: Record<string, Array<() => Promise<string>>> = {
+      all: [() => Promise.reject(new Error('db down')), () => Promise.resolve('recovered')],
+    };
+    const idx: Record<string, number> = { all: 0 };
+    const fetcher = vi.fn((key: string) => outcomes[key][idx[key]++]());
+    const memo = createKeyedTtlMemo(fetcher, 30_000, clock.now);
+
+    await expect(memo('all')).rejects.toThrow('db down');
+    // Immediately (within the TTL) the next call re-invokes rather than serving a
+    // cached error / poisoned value — preserving the resolver's fail-open path.
+    expect(await memo('all')).toBe('recovered');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('clear(key) drops just that key; clear() drops all', async () => {
+    const clock = makeClock();
+    const counters: Record<string, number> = {};
+    const fetcher = vi.fn(async (key: string) => {
+      counters[key] = (counters[key] ?? 0) + 1;
+      return `${key}-${counters[key]}`;
+    });
+    const memo = createKeyedTtlMemo(fetcher, 30_000, clock.now);
+
+    expect(await memo('all')).toBe('all-1');
+    expect(await memo('red')).toBe('red-1');
+
+    memo.clear('all'); // only 'all' is dropped
+    expect(await memo('all')).toBe('all-2'); // refetched
+    expect(await memo('red')).toBe('red-1'); // untouched, still cached
+
+    memo.clear(); // drops everything
+    expect(await memo('all')).toBe('all-3');
+    expect(await memo('red')).toBe('red-2');
   });
 });
