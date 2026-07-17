@@ -33,11 +33,24 @@ export const auditImageMeta = async (meta: ImageMetaProps | undefined, nsfw: boo
   return { blockedFor: !auditResult?.success ? auditResult?.blockedFor : undefined };
 };
 
-async function isAnimatedWebP(file: File) {
-  const buffer = await file.slice(0, 4096).arrayBuffer(); // Read first few KB
-  const bytes = new Uint8Array(buffer);
+// latin1 so binary bytes map 1:1 and the ASCII chunk fourcc survives intact.
+async function scanHeader(file: File, marker: string) {
+  const buffer = await file.slice(0, 4096).arrayBuffer();
+  const str = new TextDecoder('latin1').decode(new Uint8Array(buffer));
+  return str.includes(marker);
+}
 
-  // Look for 'ANIM' chunk in WebP file
-  const str = new TextDecoder().decode(bytes);
-  return str.includes('ANIM');
+async function isAnimatedWebP(file: File) {
+  return scanHeader(file, 'ANIM');
+}
+
+// APNG advertises itself with an 'acTL' chunk that precedes the first frame.
+async function isAnimatedPng(file: File) {
+  return scanHeader(file, 'acTL');
+}
+
+export async function isAnimatedImage(file: File) {
+  if (file.type === 'image/webp') return isAnimatedWebP(file);
+  if (file.type === 'image/png' || file.type === 'image/apng') return isAnimatedPng(file);
+  return false;
 }

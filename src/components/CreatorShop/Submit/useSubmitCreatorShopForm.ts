@@ -18,6 +18,7 @@ import {
   CREATOR_SHOP_SUBMISSION_FEE,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
+import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
 
 // Owns the submit/edit form: local field state, the derived readiness/affordability
@@ -97,7 +98,8 @@ export function useSubmitCreatorShopForm({
     const result = await validateCosmeticImage(file, type, maxSize);
     setChecks(result.checks);
     if (!result.allRequiredPassed) return;
-    const uploaded = await uploadToCF(file);
+    const uploaded = await uploadToCF(file, undefined, { allowAnimatedWebP: supportsAnimated });
+    setAnimated(supportsAnimated && (await isAnimatedImage(file)));
     setImageId(uploaded.id);
   };
 
