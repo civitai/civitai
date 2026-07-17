@@ -2,8 +2,6 @@ import type { PageServerLoad } from './$types';
 import { getContentAnalytics, getAllTimeTotals } from '$lib/server/analytics';
 import { parseRange, previousRange } from '$lib/date-range';
 
-// Overview tab — content activity (userId-keyed ClickHouse) + the previous-period comparison + all-time totals.
-// Range comes from the shared layout; images/models/base-models live on their own tabs.
 export const load: PageServerLoad = async ({ locals, url }) => {
   const range = parseRange(url.searchParams.get('from'), url.searchParams.get('to'), 30);
   const prev = previousRange(range);

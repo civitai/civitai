@@ -3,7 +3,6 @@
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { IconExternalLink, IconArrowLeft } from '@tabler/icons-svelte';
-  import RangeSelector from '$lib/components/RangeSelector.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import { formatRange } from '$lib/date-range';
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
@@ -14,7 +13,6 @@
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
 
   const versions = $derived(data.model.versions);
-  // One column per currency present across the model's versions (buzz colors + cash), kept split (B8).
   const currencies = $derived(
     [...new Set(versions.flatMap((v) => v.currencies.map((c) => c.currency)))].sort(currencySort)
   );
@@ -25,42 +23,38 @@
     `https://civitai.${data.model.nsfw ? 'red' : 'com'}/models/${data.model.modelId}`
   );
 
-  // "Put in a model id" — jump to another model's version analytics.
   let lookupId = $state('');
   function goToModel(e: Event) {
     e.preventDefault();
     const id = Number(lookupId);
-    if (Number.isInteger(id) && id > 0) goto(`/analytics/model/${id}`);
+    if (Number.isInteger(id) && id > 0) goto(`/analytics/models/${id}`);
   }
 </script>
 
-<header class="page-header flex flex-wrap items-start gap-3">
+<div class="mb-4 flex flex-wrap items-start gap-3">
   <div>
-    <a href="/analytics" class="mb-1 inline-flex items-center gap-1 text-xs text-dark-2 hover:text-white">
-      <IconArrowLeft size={13} /> Analytics
+    <a href="/analytics/models" class="mb-1 inline-flex items-center gap-1 text-xs text-dark-2 hover:text-white">
+      <IconArrowLeft size={13} /> All models
     </a>
-    <h1 class="flex items-center gap-2">
+    <h2 class="flex items-center gap-2 text-xl font-semibold text-white">
       {data.model.modelName ?? `Model ${data.model.modelId}`}
       <a href={civitaiUrl} target="_blank" rel="noreferrer" class="text-dark-3 hover:text-white" aria-label="View on Civitai">
         <IconExternalLink size={16} />
       </a>
-    </h1>
-    <p>Per-version performance {periodLabel}.</p>
+    </h2>
+    <p class="text-sm text-dark-3">Per-version performance {periodLabel}.</p>
   </div>
-  <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
-    <form onsubmit={goToModel} class="flex items-center gap-1">
-      <input
-        type="text"
-        inputmode="numeric"
-        bind:value={lookupId}
-        placeholder="Model ID"
-        class="w-24 rounded-lg border border-dark-4 bg-dark-6 px-2.5 py-1 text-sm text-white placeholder:text-dark-3"
-      />
-      <Button type="submit" size="sm" variant="secondary">View</Button>
-    </form>
-    <RangeSelector range={data.range} />
-  </div>
-</header>
+  <form onsubmit={goToModel} class="ml-auto flex items-center gap-1">
+    <input
+      type="text"
+      inputmode="numeric"
+      bind:value={lookupId}
+      placeholder="Model ID"
+      class="w-24 rounded-lg border border-dark-4 bg-dark-6 px-2.5 py-1 text-sm text-white placeholder:text-dark-3"
+    />
+    <Button type="submit" size="sm" variant="secondary">View</Button>
+  </form>
+</div>
 
 {#if versions.length === 0}
   <div class="placeholder">This model has no versions.</div>

@@ -47,6 +47,10 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
 
 ## 4. Analytics
 
+> **Restructured into tabs** (2026-07-17): `/analytics` is now a shared layout (tab nav + one range selector) over
+> sub-routes — **Overview · Images · Videos · Models · Base models · Audience** — each with its own loader, so a URL
+> change only refetches the active tab. The per-version drill-down moved to `/analytics/models/[modelId]`.
+
 - [x] **4.1 — Totals: color/icons** ✅ — same treatment as the dashboard tiles.
 - [x] **4.2 — Daily graph needs comparison/reference** ✅ — every analytics trend chart now overlays a dashed
       "previous period" line, and the totals tiles carry the same delta chips as the dashboard.
@@ -56,8 +60,9 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
       (`getModelVersionAnalytics`, ownership-checked): generations / downloads / buzz per version over the selected
       range (same 7d/30d + month selector as the rest), with **% deltas vs the previous period** on each metric.
       A model-id input jumps to another model; reached by clicking a model in the per-model performance table.
-- [ ] **4.6 — Compare base models (creator-specific + Civitai-wide)** 🔴 — aggregate the creator's usage/earnings
-      grouped by base model, plus a platform-wide trend. High value for "which base models to invest in," but large.
+- [x] **4.6 — Compare base models (creator-specific)** ✅ — `/analytics/base-models` tab (`getBaseModelPerformance`):
+      the creator's generations / downloads / buzz grouped by base model, with % deltas + model counts. The
+      **Civitai-wide** base-model trend (platform usage) is still open — needs a global, non-owner-scoped query.
 
 ## 5. Generic
 

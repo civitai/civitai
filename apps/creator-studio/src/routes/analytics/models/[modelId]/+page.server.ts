@@ -10,5 +10,5 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   // Ownership is enforced inside the read (returns null for a model that isn't the caller's).
   const model = await getModelVersionAnalytics({ userId: locals.user.id, modelId, ...range });
   if (!model) throw error(404, 'Model not found, or not yours');
-  return { model, range };
+  return { model };
 };

@@ -14,6 +14,9 @@
     SidebarMenu,
     SidebarMenuItem,
     SidebarMenuButton,
+    SidebarMenuSub,
+    SidebarMenuSubItem,
+    SidebarMenuSubButton,
     SidebarFooter,
     SidebarInset,
     SidebarTrigger,
@@ -21,7 +24,7 @@
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
   import { NativeSelect, NativeSelectOption } from '@civitai/ui/components/ui/native-select/index.js';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
-  import { activeNavHref, navForMember } from '$lib/nav';
+  import { activeNavHref, isNavChildActive, navForMember } from '$lib/nav';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -35,6 +38,8 @@
   const isNavigating = $derived(!!navigating.to);
   // Exactly one active item — longest matching href wins so a parent doesn't also light up on a child route.
   const activeHref = $derived(activeNavHref(page.url.pathname));
+  // Preserve the range (from/to) when switching between a section's sub-pages.
+  const qs = $derived(page.url.search);
 
   // Moderator-only membership simulator. The `cs-test-membership` cookie is read (mod-gated) by the server
   // resolver in $lib/server/membership; here we just set/clear it and re-run the loads.
@@ -105,6 +110,27 @@
                     </a>
                   {/snippet}
                 </SidebarMenuButton>
+                {#if item.children && item.href === activeHref}
+                  <SidebarMenuSub>
+                    {#each item.children as sub (sub.href)}
+                      {@const active = isNavChildActive(sub.href, page.url.pathname)}
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton isActive={active}>
+                          {#snippet child({ props })}
+                            <a
+                              href="{sub.href}{qs}"
+                              {...props}
+                              data-active={active ? true : undefined}
+                              class={`${props.class ?? ''} text-sidebar-foreground data-active:text-sidebar-accent-foreground`}
+                            >
+                              <span>{sub.label}</span>
+                            </a>
+                          {/snippet}
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    {/each}
+                  </SidebarMenuSub>
+                {/if}
               </SidebarMenuItem>
             {/each}
           </SidebarMenu>

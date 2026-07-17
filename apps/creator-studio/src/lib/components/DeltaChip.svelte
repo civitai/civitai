@@ -2,9 +2,9 @@
   import { IconArrowUpRight, IconArrowDownRight } from '@tabler/icons-svelte';
   import { pctChange } from '$lib/date-range';
 
-  // Period-over-period change chip. `previous` null/undefined (no prior data loaded) renders nothing, so a failed
-  // comparison fetch just hides the chip rather than breaking the tile. Higher is treated as better (green up) —
-  // valid for every metric we attach this to (counts, buzz earned).
+  // Period-over-period change chip. Renders nothing when there's no baseline to compare against — `previous`
+  // null/undefined (comparison not loaded) OR 0 (no activity in the prior period): "% of zero" is undefined, so
+  // we omit it rather than show a misleading badge. Higher is treated as better (green up).
   let {
     current,
     previous,
@@ -23,6 +23,4 @@
     {#if up}<IconArrowUpRight size={12} />{:else}<IconArrowDownRight size={12} />{/if}
     {Math.abs(Math.round(pct))}%
   </span>
-{:else if previous === 0 && current > 0}
-  <span class="text-xs font-medium text-green-5" title="No activity in the previous period">new</span>
 {/if}

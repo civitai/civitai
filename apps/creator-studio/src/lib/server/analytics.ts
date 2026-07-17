@@ -32,7 +32,6 @@ export type ContentAnalytics = {
   posts: TimePoint[];
   profileViews: TimePoint[];
   totals: ContentTotals;
-  topImages: TopImage[];
 };
 
 // All-time reactions + comments on the creator's images, from the per-creator `image_metrics_user` rollup (a cheap
@@ -52,6 +51,14 @@ export const getContentTotals = createCache({
   name: 'analytics:totals',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchContentTotals(userId, from, to),
+  ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
+}).get;
+
+// Top reacted media over the range (images + videos, split by `type` on each page).
+export const getTopMedia = createCache({
+  name: 'analytics:top-media',
+  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
+    fetchTopMedia(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
@@ -96,7 +103,7 @@ async function fetchContentAnalytics(
     return rows.map((r) => ({ date: String(r.date), value: Number(r.value) }));
   };
 
-  const [reactions, followers, images, posts, profileViews, topImagesRaw] = await Promise.all([
+  const [reactions, followers, images, posts, profileViews] = await Promise.all([
     series(
       seriesSql(
         'reactions',
@@ -112,9 +119,6 @@ async function fetchContentAnalytics(
     series(seriesSql('images_created', 'createdAt', `userId = ${uid}`, from, to)),
     series(seriesSql('posts', 'time', `userId = ${uid} AND type = 'Publish'`, from, to)),
     series(seriesSql('views', 'time', `entityType = 'User' AND entityId = ${uid}`, from, to)),
-    ch.$query<{ imageId: number | string; reactions: number | string }>(
-      `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId ORDER BY reactions DESC LIMIT 50`
-    ),
   ]);
 
   const sum = (s: TimePoint[]) => s.reduce((acc, p) => acc + p.value, 0);
@@ -131,8 +135,18 @@ async function fetchContentAnalytics(
       posts: sum(posts),
       profileViews: sum(profileViews),
     },
-    topImages: await enrichTopImages(topImagesRaw),
   };
+}
+
+// Top reacted media (images + videos) over the range — the /analytics/images and /videos grids each filter this by
+// `type`. We rank the creator's most-reacted image-entities in ClickHouse, then enrich via Postgres (which is where
+// the media type lives), so the two pages share one fetch. 100 gives each type a reasonable list.
+async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
+  const uid = Number(userId);
+  const raw = await getClickhouse().$query<{ imageId: number | string; reactions: number | string }>(
+    `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId ORDER BY reactions DESC LIMIT 100`
+  );
+  return enrichTopImages(raw);
 }
 
 // Look up the CF url + nsfwLevel for the top images (Postgres, by primary key) so the analytics grid can show real

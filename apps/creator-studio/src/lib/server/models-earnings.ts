@@ -12,7 +12,9 @@ import { currencyMeta } from '$lib/earnings';
 // vocabulary. Currencies are never converted or merged across families (B8). Rationale + schema:
 // docs/creator-studio/licensing-fee-owner-stamping.md (in the main app).
 
-export type ModelCurrencyTotal = { currency: string; total: number };
+// `prev` = the same currency's total in the previous equal-length period (for delta chips); set by
+// getModelPerformance / getModelVersionAnalytics, left undefined by getModelEarnings.
+export type ModelCurrencyTotal = { currency: string; total: number; prev?: number };
 export type ModelEarning = {
   modelVersionId: number;
   versionName: string | null;
@@ -33,7 +35,13 @@ export type ModelEarning = {
 // `orchestration.daily_resource_generation_counts` (the live, full-volume table; the `default.*` MV copy
 // undercounts ~200x); downloads from `default.daily_downloads`. Both carry garbage future-dated rows, so the
 // window is capped at today().
-export type ModelPerformance = ModelEarning & { generations: number; downloads: number };
+export type ModelPerformance = ModelEarning & {
+  generations: number;
+  prevGenerations: number;
+  downloads: number;
+  prevDownloads: number;
+  prevBuzzTotal: number;
+};
 
 // Cap on versions resolved + returned; bounds the Postgres enrichment and the table length.
 const TOP_N = 100;
@@ -173,24 +181,37 @@ async function fetchModelPerformance({
   if (!versions.length) return [];
   const idList = versions.map((v) => Number(v.versionId)).join(',');
 
+  const prev = previousRange({ from, to });
   const ch = getClickhouse();
+  // Each query sums the current + previous window (for the delta chips); `to` also fences out garbage future rows.
   const [earnRows, genRows, dlRows] = await Promise.all([
-    ch.$query<{ modelVersionId: number | string; accountType: string; total: number | string }>(
-      `SELECT modelVersionId, accountType, sum(amount) AS total
+    ch.$query<{
+      modelVersionId: number | string;
+      accountType: string;
+      cur: number | string;
+      prev: number | string;
+    }>(
+      `SELECT modelVersionId, accountType,
+         sumIf(amount, date BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
+         sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.resourceCompensations
-       WHERE userId = ${uid} AND date >= toDate('${from}') AND date <= toDate('${to}') AND ${CORRUPT_FILTER}
+       WHERE userId = ${uid} AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
        GROUP BY modelVersionId, accountType`
     ),
-    ch.$query<{ modelVersionId: number | string; count: number | string }>(
-      `SELECT modelVersionId, sum(count) AS count
+    ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
+      `SELECT modelVersionId,
+         sumIf(count, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
+         sumIf(count, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.daily_resource_generation_counts
-       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${from}') AND toDate('${to}')
+       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
        GROUP BY modelVersionId`
     ),
-    ch.$query<{ modelVersionId: number | string; downloads: number | string }>(
-      `SELECT modelVersionId, sum(downloads) AS downloads
+    ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
+      `SELECT modelVersionId,
+         sumIf(downloads, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
+         sumIf(downloads, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM default.daily_downloads
-       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${from}') AND toDate('${to}')
+       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
        GROUP BY modelVersionId`
     ),
   ]);
@@ -206,29 +227,42 @@ async function fetchModelPerformance({
       nsfw: !!v.nsfw,
       currencies: [],
       buzzTotal: 0,
+      prevBuzzTotal: 0,
       generations: 0,
+      prevGenerations: 0,
       downloads: 0,
+      prevDownloads: 0,
     });
   }
   for (const r of earnRows) {
     const e = byId.get(Number(r.modelVersionId));
     if (!e) continue;
     const currency = lowerFirst(r.accountType);
-    const total = Number(r.total);
-    e.currencies.push({ currency, total });
-    if (currencyMeta(currency).family === 'buzz') e.buzzTotal += total;
+    const total = Number(r.cur);
+    const prevTotal = Number(r.prev);
+    e.currencies.push({ currency, total, prev: prevTotal });
+    if (currencyMeta(currency).family === 'buzz') {
+      e.buzzTotal += total;
+      e.prevBuzzTotal += prevTotal;
+    }
   }
   for (const r of genRows) {
     const e = byId.get(Number(r.modelVersionId));
-    if (e) e.generations = Number(r.count);
+    if (e) {
+      e.generations = Number(r.cur);
+      e.prevGenerations = Number(r.prev);
+    }
   }
   for (const r of dlRows) {
     const e = byId.get(Number(r.modelVersionId));
-    if (e) e.downloads = Number(r.downloads);
+    if (e) {
+      e.downloads = Number(r.cur);
+      e.prevDownloads = Number(r.prev);
+    }
   }
 
   const active = [...byId.values()].filter(
-    (m) => m.currencies.length > 0 || m.generations > 0 || m.downloads > 0
+    (m) => m.generations > 0 || m.downloads > 0 || m.currencies.some((c) => c.total > 0)
   );
   // Rank by usage first (this is a performance view), then earnings — so a popular free model still surfaces.
   active.sort(
@@ -238,7 +272,8 @@ async function fetchModelPerformance({
   for (const m of active) {
     m.currencies.sort((a, b) => currencyMeta(a.currency).order - currencyMeta(b.currency).order);
   }
-  return active.slice(0, TOP_N);
+  // No cap — the /analytics/models table paginates client-side over the full set.
+  return active;
 }
 
 // Per-model performance (earnings + usage) for the /analytics table. Earnings are owner-keyed; usage is scoped by
@@ -392,5 +427,152 @@ async function fetchModelVersionAnalytics({
 export const getModelVersionAnalytics = createCache({
   name: 'analytics:model-versions',
   fetch: fetchModelVersionAnalytics,
+  ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
+}).get;
+
+// Performance grouped by base model (feedback 4.6) — which ecosystems drive the creator's generations / downloads /
+// buzz, with % deltas vs the previous period. Same per-version reads as getModelPerformance, aggregated by the
+// version's baseModel (resolved from Postgres).
+export type BaseModelPerformance = {
+  baseModel: string;
+  modelCount: number;
+  generations: number;
+  prevGenerations: number;
+  downloads: number;
+  prevDownloads: number;
+  currencies: ModelCurrencyTotal[];
+  buzzTotal: number;
+  prevBuzzTotal: number;
+};
+
+async function fetchBaseModelPerformance({
+  userId,
+  from,
+  to,
+}: {
+  userId: number;
+  from: string;
+  to: string;
+}): Promise<BaseModelPerformance[]> {
+  const uid = Number(userId);
+  const versions = await dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .where('m.userId', '=', uid)
+    .select(['mv.id as versionId', 'mv.baseModel as baseModel', 'mv.modelId as modelId'])
+    .execute();
+  if (!versions.length) return [];
+
+  const prev = previousRange({ from, to });
+  const idList = versions.map((v) => Number(v.versionId)).join(',');
+  const ch = getClickhouse();
+  const [earnRows, genRows, dlRows] = await Promise.all([
+    ch.$query<{
+      modelVersionId: number | string;
+      accountType: string;
+      cur: number | string;
+      prev: number | string;
+    }>(
+      `SELECT modelVersionId, accountType,
+         sumIf(amount, date BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
+         sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
+       FROM orchestration.resourceCompensations
+       WHERE userId = ${uid} AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
+       GROUP BY modelVersionId, accountType`
+    ),
+    ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
+      `SELECT modelVersionId,
+         sumIf(count, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
+         sumIf(count, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
+       FROM orchestration.daily_resource_generation_counts
+       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
+       GROUP BY modelVersionId`
+    ),
+    ch.$query<{ modelVersionId: number | string; cur: number | string; prev: number | string }>(
+      `SELECT modelVersionId,
+         sumIf(downloads, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
+         sumIf(downloads, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
+       FROM default.daily_downloads
+       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
+       GROUP BY modelVersionId`
+    ),
+  ]);
+
+  const genBy = new Map<number, { cur: number; prev: number }>();
+  for (const r of genRows) genBy.set(Number(r.modelVersionId), { cur: Number(r.cur), prev: Number(r.prev) });
+  const dlBy = new Map<number, { cur: number; prev: number }>();
+  for (const r of dlRows) dlBy.set(Number(r.modelVersionId), { cur: Number(r.cur), prev: Number(r.prev) });
+  const earnBy = new Map<number, { currency: string; cur: number; prev: number }[]>();
+  for (const r of earnRows) {
+    const vid = Number(r.modelVersionId);
+    const arr = earnBy.get(vid) ?? [];
+    arr.push({ currency: lowerFirst(r.accountType), cur: Number(r.cur), prev: Number(r.prev) });
+    earnBy.set(vid, arr);
+  }
+
+  const byBase = new Map<string, BaseModelPerformance>();
+  const modelsByBase = new Map<string, Set<number>>();
+  const currByBase = new Map<string, Map<string, { total: number; prev: number }>>();
+  for (const v of versions) {
+    const baseModel = v.baseModel ?? 'Unknown';
+    let e = byBase.get(baseModel);
+    if (!e) {
+      e = {
+        baseModel,
+        modelCount: 0,
+        generations: 0,
+        prevGenerations: 0,
+        downloads: 0,
+        prevDownloads: 0,
+        currencies: [],
+        buzzTotal: 0,
+        prevBuzzTotal: 0,
+      };
+      byBase.set(baseModel, e);
+      modelsByBase.set(baseModel, new Set());
+      currByBase.set(baseModel, new Map());
+    }
+    modelsByBase.get(baseModel)!.add(Number(v.modelId));
+    const vid = Number(v.versionId);
+    const g = genBy.get(vid);
+    if (g) {
+      e.generations += g.cur;
+      e.prevGenerations += g.prev;
+    }
+    const d = dlBy.get(vid);
+    if (d) {
+      e.downloads += d.cur;
+      e.prevDownloads += d.prev;
+    }
+    const cm = currByBase.get(baseModel)!;
+    for (const c of earnBy.get(vid) ?? []) {
+      const acc = cm.get(c.currency) ?? { total: 0, prev: 0 };
+      acc.total += c.cur;
+      acc.prev += c.prev;
+      cm.set(c.currency, acc);
+      if (currencyMeta(c.currency).family === 'buzz') {
+        e.buzzTotal += c.cur;
+        e.prevBuzzTotal += c.prev;
+      }
+    }
+  }
+  for (const [baseModel, e] of byBase) {
+    e.modelCount = modelsByBase.get(baseModel)!.size;
+    e.currencies = [...currByBase.get(baseModel)!.entries()]
+      .map(([currency, v]) => ({ currency, total: v.total, prev: v.prev }))
+      .sort((a, b) => currencyMeta(a.currency).order - currencyMeta(b.currency).order);
+  }
+  const active = [...byBase.values()].filter(
+    (b) => b.generations > 0 || b.downloads > 0 || b.currencies.some((c) => c.total > 0)
+  );
+  active.sort(
+    (a, b) => b.generations - a.generations || b.downloads - a.downloads || b.buzzTotal - a.buzzTotal
+  );
+  return active;
+}
+
+export const getBaseModelPerformance = createCache({
+  name: 'analytics:base-models',
+  fetch: fetchBaseModelPerformance,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
