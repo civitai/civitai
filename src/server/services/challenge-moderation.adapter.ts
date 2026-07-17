@@ -17,7 +17,8 @@ import { ChallengeIngestionStatus } from '~/shared/utils/prisma/enums';
 //
 // Result resolution (same shape as articles):
 //   - `blocked`  → ToS violation: hide the challenge (ingestion Blocked) + notify the creator.
-//   - `nsfw` (not blocked) → keep visible but floor nsfwLevel to R so it drops out of safe feeds.
+//   - not blocked → routed to `applyChallengeNsfwEscalation`, which on an NSFW verdict raises the
+//     challenge to R and flips a green USER challenge to yellow (refunding its green initial prize).
 //   - clean      → visible at the creator's declared level.
 // Unlike articles, a challenge's nsfwLevel isn't image-derived, so the R floor is written directly
 // rather than recomputed from a SQL aggregate.

@@ -48,8 +48,12 @@ export async function applyChallengeNsfwEscalation({
   // Refund first (idempotent) so a crash before the update re-runs the refund instead of stranding
   // the green charge once the row is flipped to yellow.
   if (escalation.refundInitialPrize) {
+    // No currency suffix: ledger ids are immutable, so pre-deploy charges are still
+    // `-creator` (no `-green`/`-yellow`) — the broad prefix matches both (mirrors
+    // `refundUserChallengeFunds`). Safe here because the flip only runs on a STORED
+    // green challenge, which never holds a `-creator-yellow` charge to collide with.
     await refundMultiAccountTransaction({
-      externalTransactionIdPrefix: `challenge-initial-prize-${entityId}-creator-green`,
+      externalTransactionIdPrefix: `challenge-initial-prize-${entityId}-creator`,
       description: 'Challenge flipped to adult site — initial prize refund',
       details: { challengeId: entityId },
     });
@@ -73,7 +77,7 @@ export async function applyChallengeNsfwEscalation({
       where: { id: challenge.collectionId },
       select: { metadata: true },
     });
-    await dbWrite.collection.update({
+    await dbWrite.collection.updateMany({
       where: { id: challenge.collectionId },
       data: {
         metadata: {

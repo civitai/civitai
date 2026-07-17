@@ -12,7 +12,7 @@ const {
   },
   mockDbWrite: {
     challenge: { update: vi.fn() },
-    collection: { update: vi.fn() },
+    collection: { updateMany: vi.fn() },
   },
   mockRefundMultiAccountTransaction: vi.fn(),
   mockCreateNotification: vi.fn(),
@@ -46,7 +46,7 @@ function greenChallenge(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.challenge.update.mockResolvedValue({});
-  mockDbWrite.collection.update.mockResolvedValue({});
+  mockDbWrite.collection.updateMany.mockResolvedValue({ count: 1 });
   mockDbRead.collection.findUnique.mockResolvedValue({ metadata: { forcedBrowsingLevel: PG_PG13 } });
   mockRefundMultiAccountTransaction.mockResolvedValue({ refundedTransactions: [{}] });
   mockCreateNotification.mockResolvedValue(undefined);
@@ -63,7 +63,7 @@ describe('applyChallengeNsfwEscalation', () => {
     expect(data.allowedNsfwLevel).toBe(PG_PG13);
     expect(data.buzzType).toBeUndefined();
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
-    expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.collection.updateMany).not.toHaveBeenCalled();
   });
 
   it('green + nsfw + prize: refunds BEFORE update, flips, zeroes pool, raises level, updates collection, notifies', async () => {
@@ -83,7 +83,7 @@ describe('applyChallengeNsfwEscalation', () => {
     expect(order).toEqual(['refund', 'update']);
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
-        externalTransactionIdPrefix: 'challenge-initial-prize-42-creator-green',
+        externalTransactionIdPrefix: 'challenge-initial-prize-42-creator',
       })
     );
     const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
@@ -94,7 +94,7 @@ describe('applyChallengeNsfwEscalation', () => {
     expect(data.prizePool).toBe(0);
     expect(data.ingestion).toBe('Scanned');
 
-    const colData = mockDbWrite.collection.update.mock.calls[0][0].data;
+    const colData = mockDbWrite.collection.updateMany.mock.calls[0][0].data;
     expect(colData.metadata.forcedBrowsingLevel).toBe(PG_PG13 | R);
     expect(mockCreateNotification).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'challenge-nsfw-flipped-42' })
