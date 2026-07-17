@@ -147,5 +147,28 @@ describe('image-infinite-wire', () => {
       const out = stripImageForInfiniteWire({ id: 1, url: 'x', tagIds: [9] });
       expect(out).toEqual({ id: 1, url: 'x', tagIds: [9] });
     });
+
+    it('removes the keys even when present as explicit null (the getAllImagesIndex shape)', () => {
+      // The Meili/BitDex tRPC path (`getAllImagesIndex`) builds each item as an
+      // object literal that sets `scannedAt`/`mimeType`/`postTitle` to `null`
+      // explicitly. Those props SERIALIZE unless removed. Assert the strip deletes
+      // the KEYS (not merely nulls them) so they leave the wire entirely.
+      const indexShaped = {
+        id: 7,
+        url: 'y.jpeg',
+        availability: 'Public', // kept (BidModelButton reads it)
+        index: 3, // kept (as-posts Newest sort reads it)
+        scannedAt: null,
+        mimeType: null,
+        postTitle: null,
+        hideMeta: false,
+        acceptableMinor: false,
+      };
+      const out = stripImageForInfiniteWire(indexShaped);
+      for (const field of IMAGE_INFINITE_DROPPED_FIELDS) {
+        expect(out).not.toHaveProperty(field); // key gone, not just null
+      }
+      expect(out).toEqual({ id: 7, url: 'y.jpeg', availability: 'Public', index: 3 });
+    });
   });
 });

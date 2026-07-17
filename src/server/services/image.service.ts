@@ -2522,7 +2522,14 @@ export const getAllImagesIndex = async (
 
   return {
     nextCursor,
-    items: mergedData,
+    // Always-on wire trim on the DOMINANT tRPC Meili/BitDex feed path: the item
+    // literal above emits `scannedAt`/`mimeType`/`postTitle` as explicit `null`
+    // props (plus any of IMAGE_INFINITE_DROPPED_FIELDS carried on `...sr`), which
+    // still SERIALIZE even though the return type is narrowed to `Omit<...>` (a
+    // `const` object literal → no excess-property check strips them). Map through
+    // `stripImageForInfiniteWire` so they are actually removed from the payload,
+    // matching the DB `getAllImages` path. See `~/server/utils/image-infinite-wire.ts`.
+    items: mergedData.map(stripImageForInfiniteWire),
     ...(searchSource && { source: searchSource }),
   };
 };
