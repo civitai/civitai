@@ -1,7 +1,11 @@
-# Challenge NSFW text-scan escalation & green→yellow flip
+# Challenge NSFW text-scan escalation & green-challenge cancel
 
 **Date:** 2026-07-17
 **Status:** Approved (design)
+
+> Earlier drafts of this spec flipped a green NSFW challenge to yellow; the final design **cancels** it
+> (void + refund) instead. See the "Design note (why cancel, not flip)" under Goal. The file slug retains
+> `-flip` for link stability.
 
 ## Problem
 

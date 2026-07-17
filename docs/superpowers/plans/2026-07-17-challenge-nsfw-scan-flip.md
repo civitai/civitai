@@ -1,5 +1,12 @@
 # Challenge NSFW Scan Escalation & Flip Implementation Plan
 
+> **⚠️ Superseded in part — design pivoted after execution.** This plan was written and executed for a
+> green→yellow **flip** (buzzType flip + green-prize refund + pool-zeroing). Tasks 3–4 below describe that
+> original approach. The shipped design **cancels** a green NSFW user challenge via `voidChallenge` instead
+> (yellow challenges still raise to R). The authoritative behavior is the spec
+> (`docs/superpowers/specs/2026-07-17-challenge-nsfw-scan-flip-design.md`) and the code — read those, not
+> Tasks 3–4's flip code, when reasoning about current behavior. Tasks 1, 2, 5 are unchanged.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** When a user challenge's text scans as sexual content, escalate its rating to R and flip a green (safe-site) challenge to yellow so the domain-currency gate moves it off civitai.com onto civitai.red — refunding the green initial prize so the pool currency stays consistent.

@@ -55,6 +55,9 @@ export const challengeModerationAdapter: ModerationAdapter = {
         where: { id: entityId },
         select: { createdById: true },
       });
+      // Deleted between submit and this webhook — nothing to hide or notify (a bare update would
+      // throw P2025 and fail the moderation callback).
+      if (!challenge) return;
       await dbWrite.challenge.update({
         where: { id: entityId },
         data: { ingestion: ChallengeIngestionStatus.Blocked, scannedAt: new Date() },
