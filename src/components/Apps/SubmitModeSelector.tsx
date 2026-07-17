@@ -1,5 +1,5 @@
 import { Card, SimpleGrid, Stack, Text, ThemeIcon, UnstyledButton } from '@mantine/core';
-import { IconExternalLink, IconTerminal2 } from '@tabler/icons-react';
+import { IconExternalLink, IconPlugConnected, IconTerminal2 } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 
 /**
@@ -15,11 +15,11 @@ import type { ReactNode } from 'react';
  * The internal mode id keeps the historical `block` value for the on-platform
  * app — only the label/copy is "App"; the code id is never renamed.
  */
-export type SubmitMode = 'block' | 'external';
+export type SubmitMode = 'block' | 'external' | 'connect';
 
 export function SubmitModeSelector({ onSelect }: { onSelect: (mode: SubmitMode) => void }) {
   return (
-    <SimpleGrid cols={{ base: 1, xs: 2 }} spacing="md" data-testid="apps-submit-mode-selector">
+    <SimpleGrid cols={{ base: 1, xs: 3 }} spacing="md" data-testid="apps-submit-mode-selector">
       <ModeCard
         icon={<IconTerminal2 size={22} />}
         title="App"
@@ -33,6 +33,13 @@ export function SubmitModeSelector({ onSelect }: { onSelect: (mode: SubmitMode) 
         description="A marketplace card for an app hosted off-site. Users get a Visit ↗ button that opens your https link in a new tab — no bundle, no install."
         onSelect={() => onSelect('external')}
         testId="apps-submit-mode-card-external"
+      />
+      <ModeCard
+        icon={<IconPlugConnected size={22} />}
+        title="Connect an app"
+        description="Link your registered OAuth app so users can grant it access. Disclose the scopes your app requests and why — a moderator reviews before it appears."
+        onSelect={() => onSelect('connect')}
+        testId="apps-submit-mode-card-connect"
       />
     </SimpleGrid>
   );

@@ -11,6 +11,7 @@ import {
   OFFSITE_MOD_REASON_MIN,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '~/shared/constants/token-scope.constants';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE (external-link) submission schemas.
@@ -109,6 +110,42 @@ export const submitExternalListingSchema = z
 
 export type SubmitExternalListingInput = z.infer<typeof submitExternalListingSchema>;
 
+/**
+ * Author submit input for an OAuth-CONNECT off-site listing (W13 — the un-deferred
+ * connect sub-kind). Mirrors {@link submitExternalListingSchema}'s display metadata
+ * (name/tagline/description/category/contentRating/changelog bounds) but DROPS
+ * `externalUrl` (a connect listing links to a registered OAuth client, not a URL)
+ * and adds:
+ *   - `connectClientId`  — the id of the caller's OWN OAuth client (ownership,
+ *     not-app-block, and the scope-ceiling checks are enforced in the SERVICE, which
+ *     has the client row; the schema only bounds the shape).
+ *   - `requestedScopes`  — a `TokenScope` bitmask the listing DISCLOSES it will
+ *     request (review-only; it does NOT gate token issuance — the client's
+ *     `allowedScopes` stays the runtime ceiling). The service asserts it is a subset
+ *     of the client's ceiling.
+ *   - `scopeJustifications` — `{ TokenScope-enum-key: rationale ≤SCOPE_JUSTIFICATION_MAX_LENGTH }`.
+ *     Per-value length is bounded here; the key-validity / keys-⊆-requested / non-empty
+ *     rules are enforced by the shared `validateConnectScopeJustifications` in the
+ *     service (single source with the App Blocks manifest validator).
+ */
+export const submitConnectListingSchema = z.object({
+  slug: z.string().min(3).max(40).regex(SLUG_REGEX),
+  name: z.string().min(1).max(OFFSITE_NAME_MAX),
+  connectClientId: z.string().min(1).max(64),
+  // Non-negative bitmask; the subset-of-ceiling check lives in the service (needs
+  // the client's `allowedScopes`).
+  requestedScopes: z.number().int().nonnegative(),
+  // Per-value length bound only; full key/subset validation is in the service.
+  scopeJustifications: z.record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH)),
+  tagline: z.string().max(OFFSITE_TAGLINE_MAX).optional(),
+  description: z.string().max(OFFSITE_DESCRIPTION_MAX).optional(),
+  category: z.enum(MARKETPLACE_CATEGORIES).optional(),
+  contentRating: z.enum(OFFSITE_CONTENT_RATINGS).default('g'),
+  changelog: z.string().max(OFFSITE_CHANGELOG_MAX).optional(),
+});
+
+export type SubmitConnectListingInput = z.infer<typeof submitConnectListingSchema>;
+
 /** Withdraw one of the caller's own pending off-site requests (IDOR-checked in the service). */
 export const withdrawExternalRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
@@ -138,6 +175,14 @@ export const updateListingPatchSchema = z
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).nullable().optional(),
     category: z.enum(MARKETPLACE_CATEGORIES).nullable().optional(),
     contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
+    // OAuth-connect scope disclosure edit (connect sub-kind only). The two travel
+    // as a pair: the SERVICE re-runs the subset-of-ceiling + justification checks
+    // (needs the listing's client `allowedScopes`) and rejects justifications
+    // without a `requestedScopes` mask, so a scope change re-enters mod review.
+    requestedScopes: z.number().int().nonnegative().optional(),
+    scopeJustifications: z
+      .record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH))
+      .optional(),
   })
   .refine((p) => Object.values(p).some((v) => v !== undefined), {
     message: 'patch must change at least one field',
