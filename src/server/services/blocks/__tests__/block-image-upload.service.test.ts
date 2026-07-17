@@ -61,7 +61,11 @@ function imageResponse(
     status: 200,
     ok: true,
     headers: { get: (k: string) => lower[k.toLowerCase()] ?? null },
-    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    arrayBuffer: async () => {
+      const ab = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(ab).set(bytes);
+      return ab;
+    },
     body: null,
   };
 }
