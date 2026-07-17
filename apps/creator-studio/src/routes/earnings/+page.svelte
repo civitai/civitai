@@ -90,13 +90,18 @@
     };
   });
 
-  const chartOptions = {
+  // Line vs bar for the trend (bars match the Buzz Dashboard and read clearer per-day); bars stack by source.
+  let chartType = $state<'line' | 'bar'>('bar');
+  const chartOptions = $derived({
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index' as const, intersect: false },
     plugins: { legend: { display: false } },
-    scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } },
-  };
+    scales: {
+      x: { stacked: chartType === 'bar', ticks: { maxTicksLimit: 8, autoSkip: true } },
+      y: { stacked: chartType === 'bar' },
+    },
+  });
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -164,9 +169,31 @@
 
   <div class="mb-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-dark-2">
-        Buzz earned by source over time <span class="text-xs text-dark-3">· cash shown in the panel above</span>
-      </p>
+      <div class="flex flex-wrap items-center gap-2">
+        <p class="text-sm text-dark-2">
+          Buzz earned by source over time <span class="text-xs text-dark-3">· cash shown in the panel above</span>
+        </p>
+        <div class="flex items-center gap-1 rounded-lg border border-dark-4 bg-dark-7 p-0.5">
+          <button
+            type="button"
+            onclick={() => (chartType = 'bar')}
+            class="cursor-pointer rounded px-2 py-0.5 text-xs {chartType === 'bar'
+              ? 'bg-blue-8 text-white'
+              : 'text-dark-2 hover:text-white'}"
+          >
+            Bars
+          </button>
+          <button
+            type="button"
+            onclick={() => (chartType = 'line')}
+            class="cursor-pointer rounded px-2 py-0.5 text-xs {chartType === 'line'
+              ? 'bg-blue-8 text-white'
+              : 'text-dark-2 hover:text-white'}"
+          >
+            Line
+          </button>
+        </div>
+      </div>
       <ToggleGroup type="multiple" bind:value={shownSources} variant="outline" size="sm" spacing={1.5} class="flex-wrap">
         {#each seriesSources as s (s)}
           <ToggleGroupItem value={s} aria-label={SOURCE_LABEL[s]} class="gap-1.5 text-xs">
@@ -182,7 +209,7 @@
       </ToggleGroup>
     </div>
     <div class="h-72">
-      <Chart type="line" data={chartData} options={chartOptions} class="h-full" />
+      <Chart type={chartType} data={chartData} options={chartOptions} class="h-full" />
     </div>
   </div>
 

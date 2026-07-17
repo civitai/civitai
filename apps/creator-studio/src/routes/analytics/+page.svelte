@@ -4,7 +4,16 @@
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
-  import { IconArrowUp, IconArrowDown, IconArrowsSort } from '@tabler/icons-svelte';
+  import {
+    IconArrowUp,
+    IconArrowDown,
+    IconArrowsSort,
+    IconHeart,
+    IconUserPlus,
+    IconPhoto,
+    IconArticle,
+    IconEye,
+  } from '@tabler/icons-svelte';
   import { formatRange } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
@@ -53,11 +62,11 @@
   const tiles = $derived(
     data.analytics
       ? [
-          { label: 'Reactions', value: data.analytics.totals.reactions },
-          { label: 'New followers', value: data.analytics.totals.followers },
-          { label: 'Images posted', value: data.analytics.totals.images },
-          { label: 'Posts published', value: data.analytics.totals.posts },
-          { label: 'Profile views', value: data.analytics.totals.profileViews },
+          { label: 'Reactions', value: data.analytics.totals.reactions, icon: IconHeart, color: '#ff6b6b' },
+          { label: 'New followers', value: data.analytics.totals.followers, icon: IconUserPlus, color: '#4dabf7' },
+          { label: 'Images posted', value: data.analytics.totals.images, icon: IconPhoto, color: '#9775fa' },
+          { label: 'Posts published', value: data.analytics.totals.posts, icon: IconArticle, color: '#3bc9db' },
+          { label: 'Profile views', value: data.analytics.totals.profileViews, icon: IconEye, color: '#20c997' },
         ]
       : []
   );
@@ -107,6 +116,16 @@
     const dir = sortDir === 'desc' ? -1 : 1;
     return rows.sort((a, b) => dir * (sortValue(a, sortKey) - sortValue(b, sortKey)));
   });
+
+  // Top images: the server returns up to 50; show a first tranche and let the creator expand to all.
+  let showAllImages = $state(false);
+  const shownImages = $derived(
+    data.analytics
+      ? showAllImages
+        ? data.analytics.topImages
+        : data.analytics.topImages.slice(0, 12)
+      : []
+  );
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -129,9 +148,13 @@
   <p class="mb-2 text-xs text-dark-3">Totals {periodLabel}</p>
   <section class="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
     {#each tiles as tile (tile.label)}
+      {@const Icon = tile.icon}
       <Card>
         <CardContent>
-          <p class="text-xs uppercase tracking-wide text-dark-3">{tile.label}</p>
+          <div class="flex items-center gap-1.5">
+            <Icon size={15} color={tile.color} />
+            <p class="text-xs uppercase tracking-wide text-dark-3">{tile.label}</p>
+          </div>
           <p class="mt-1 text-xl font-semibold text-white">{num(tile.value)}</p>
         </CardContent>
       </Card>
@@ -168,7 +191,7 @@
         Top images by reactions <span class="text-xs text-dark-3">{periodLabel}</span>
       </p>
       <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-5">
-        {#each data.analytics.topImages as img, i (img.imageId)}
+        {#each shownImages as img, i (img.imageId)}
           <!-- mature (nsfwLevel > 3) links to civitai.red; deleted images are filtered out server-side -->
           <a
             href="https://civitai.{img.nsfwLevel > 3 ? 'red' : 'com'}/images/{img.imageId}"
@@ -196,6 +219,15 @@
           </a>
         {/each}
       </div>
+      {#if data.analytics.topImages.length > 12}
+        <button
+          type="button"
+          onclick={() => (showAllImages = !showAllImages)}
+          class="mt-3 cursor-pointer text-xs text-dark-2 hover:text-white"
+        >
+          {showAllImages ? 'Show less' : `Show all ${data.analytics.topImages.length}`}
+        </button>
+      {/if}
     </div>
   {/if}
 {/if}

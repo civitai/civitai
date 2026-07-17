@@ -1,6 +1,6 @@
 import {
   IconLayoutDashboard,
-  IconBox,
+  IconLicense,
   IconCoin,
   IconChartBar,
   IconSettings,
@@ -23,7 +23,7 @@ export type NavItem = {
 
 export const NAV: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: IconLayoutDashboard },
-  { href: '/models', label: 'Models', icon: IconBox, memberOnly: true },
+  { href: '/models', label: 'Licensing', icon: IconLicense, memberOnly: true },
   { href: '/earnings', label: 'Earnings', icon: IconCoin },
   { href: '/analytics', label: 'Analytics', icon: IconChartBar },
   { href: '/settings', label: 'Settings', icon: IconSettings },

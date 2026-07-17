@@ -113,7 +113,7 @@ async function fetchContentAnalytics(
     series(seriesSql('posts', 'time', `userId = ${uid} AND type = 'Publish'`, from, to)),
     series(seriesSql('views', 'time', `entityType = 'User' AND entityId = ${uid}`, from, to)),
     ch.$query<{ imageId: number | string; reactions: number | string }>(
-      `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId ORDER BY reactions DESC LIMIT 10`
+      `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId ORDER BY reactions DESC LIMIT 50`
     ),
   ]);
 

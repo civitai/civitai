@@ -228,7 +228,7 @@
 </script>
 
 <header class="page-header">
-  <h1>Models</h1>
+  <h1>Licensing</h1>
   <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
 </header>
 

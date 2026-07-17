@@ -2,7 +2,19 @@
   import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import { Skeleton } from '@civitai/ui/components/ui/skeleton/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { IconArrowRight } from '@tabler/icons-svelte';
+  import {
+    IconArrowRight,
+    IconHeart,
+    IconUserPlus,
+    IconPhoto,
+    IconArticle,
+    IconEye,
+    IconBolt,
+    IconCash,
+    IconClock,
+    IconBuildingBank,
+    IconTrophy,
+  } from '@tabler/icons-svelte';
   import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
   import type { PageData } from './$types';
 
@@ -14,11 +26,11 @@
   const activity = $derived(
     data.content
       ? [
-          { label: 'Reactions', value: data.content.reactions },
-          { label: 'New followers', value: data.content.followers },
-          { label: 'Images posted', value: data.content.images },
-          { label: 'Posts published', value: data.content.posts },
-          { label: 'Profile views', value: data.content.profileViews },
+          { label: 'Reactions', value: data.content.reactions, icon: IconHeart, color: '#ff6b6b' },
+          { label: 'New followers', value: data.content.followers, icon: IconUserPlus, color: '#4dabf7' },
+          { label: 'Images posted', value: data.content.images, icon: IconPhoto, color: '#9775fa' },
+          { label: 'Posts published', value: data.content.posts, icon: IconArticle, color: '#3bc9db' },
+          { label: 'Profile views', value: data.content.profileViews, icon: IconEye, color: '#20c997' },
         ]
       : []
   );
@@ -37,18 +49,24 @@
             value: data.cash ? formatAmount(data.cash.pending, 'cashPending') : null,
             pending: false,
             hint: 'Pending settlement',
+            icon: IconClock,
+            color: '#63e6be',
           },
           {
             label: 'Cash settled',
             value: data.cash ? formatAmount(data.cash.settled, 'cashSettled') : null,
             pending: false,
             hint: 'Available to withdraw',
+            icon: IconCash,
+            color: '#12b886',
           },
           {
             label: 'Withdrawn',
             value: data.cash ? formatAmount(data.cash.withdrawn, 'cashSettled') : null,
             pending: false,
             hint: 'Paid out to date',
+            icon: IconBuildingBank,
+            color: '#868e96',
           },
         ]
       : []
@@ -60,6 +78,8 @@
       value: data.earnings ? formatBuzz(sumWhere((c) => currencyMeta(c).family === 'buzz')) : null,
       pending: false,
       hint: 'Yellow, blue & green — last 30 days',
+      icon: IconBolt,
+      color: '#f59f00',
     },
     ...cashStats,
     {
@@ -68,11 +88,13 @@
       // Loaded-but-empty shows the em dash; a failed load (null) falls through to the skeleton.
       pending: data.topModels != null && !topModel,
       hint: topModel ? `${formatBuzz(topModel.buzzTotal)} — last 30 days` : 'No model earnings yet',
+      icon: IconTrophy,
+      color: '#ff922b',
     },
   ]);
 
   const sections = [
-    { href: '/models', title: 'Models', body: 'Set licensing fees, manage access, sell indefinitely.' },
+    { href: '/models', title: 'Licensing', body: 'Set licensing fees, manage access, sell indefinitely.' },
     { href: '/earnings', title: 'Earnings', body: 'Your earnings broken down by source.' },
     { href: '/analytics', title: 'Analytics', body: 'Usage that drives your fees.' },
     { href: '/settings', title: 'Settings', body: 'Payout status, membership, defaults.' },
@@ -99,9 +121,13 @@
   {#if data.content}
     <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
       {#each activity as a (a.label)}
+        {@const Icon = a.icon}
         <Card>
           <CardContent>
-            <p class="text-xs uppercase tracking-wide text-dark-3">{a.label}</p>
+            <div class="flex items-center gap-1.5">
+              <Icon size={15} color={a.color} />
+              <p class="text-xs uppercase tracking-wide text-dark-3">{a.label}</p>
+            </div>
             <p class="mt-1 text-xl font-semibold text-white">{num(a.value)}</p>
           </CardContent>
         </Card>
@@ -119,8 +145,10 @@
   </div>
   <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
     {#each stats as stat (stat.label)}
+      {@const Icon = stat.icon}
       <Card>
-        <CardHeader>
+        <CardHeader class="flex flex-row items-center gap-1.5 space-y-0">
+          <Icon size={15} color={stat.color} />
           <CardTitle class="text-sm font-medium text-dark-2">{stat.label}</CardTitle>
         </CardHeader>
         <CardContent>
