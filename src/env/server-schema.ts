@@ -753,6 +753,14 @@ export const serverSchema = z
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
+    // How long the review-build callback waits for a freshly-deployed review
+    // preview's PUBLIC host to become reachable before giving up and marking the
+    // preview failed. The dominant lag is the per-host DNS record's creation +
+    // public propagation (the DNS sync loop runs on ~a 60s cycle), NOT the
+    // deploy — so the default is set to ~3× that (180s) to tolerate a backed-up
+    // sync without spuriously failing a healthy preview. Tunable per-environment
+    // without a code change. See waitForReviewHostReachable.
+    REVIEW_HOST_REACHABLE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(180000),
     // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
     // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.

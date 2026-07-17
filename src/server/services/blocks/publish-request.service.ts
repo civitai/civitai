@@ -2938,12 +2938,30 @@ export function parseReviewDetail(raw: string | null | undefined): ReviewPreview
  * status='pending') is NOT resurrected by a late callback write. The initial
  * `preview-building` mark from previewRequest must NOT set this (it transitions
  * from null / preview-failed → preview-building).
+ *
+ * Pass `expectedSha` for a stale-watcher guard on the apply watcher's advancing
+ * writes. `requireActivePreview` proves *some* preview is active, but is sha-
+ * BLIND — it can't tell whether the active preview is the one THIS watcher owns.
+ * Because the reachability wait keeps a watcher alive for up to a few minutes, a
+ * mod can tear down preview A mid-wait and re-preview (build B) within that
+ * window; without a sha check, watcher A's late live/failed write matches B's
+ * active row and clobbers it (marking a live B failed, or — worse — stamping B
+ * `preview-live` with A's host/url so the mod reviews the WRONG code). When set,
+ * the write additionally requires the row's CURRENT `deployDetail` to still
+ * carry this build's sha, so a superseded watcher's write affects 0 rows.
+ * `deployDetail` is a stringified-JSON `String` column (not a Prisma `Json`
+ * column), so this matches the serialized `"sha":"<sha>"` fragment via
+ * `contains` — a single atomic UPDATE…WHERE, no read-then-write race. The sha is
+ * a 40-char hex the callback validates against /^[0-9a-f]{40}$/, so it's a safe,
+ * collision-free literal to embed. Only the WATCHER's advancing writes pass this;
+ * the initial `previewRequest`/`preview-building` write must NOT (it is
+ * establishing the new preview, whose sha isn't yet on the row).
  */
 export async function markReviewPreviewState(
   publishRequestId: string,
   state: ReviewPreviewState,
   detail: ReviewPreviewDetail,
-  opts?: { requireActivePreview?: boolean }
+  opts?: { requireActivePreview?: boolean; expectedSha?: string }
 ): Promise<void> {
   try {
     const { dbWrite } = await import('~/server/db/client');
@@ -2954,6 +2972,11 @@ export async function markReviewPreviewState(
         // Only advance a row that is STILL an active preview (torn-down rows have
         // deployState=null → excluded → no resurrection).
         ...(opts?.requireActivePreview ? { deployState: { startsWith: 'preview-' } } : {}),
+        // Stale-watcher guard: only advance if the row's current detail still
+        // belongs to this build's sha (the serialized `"sha":"<sha>"` fragment).
+        ...(opts?.expectedSha
+          ? { deployDetail: { contains: `"sha":"${opts.expectedSha}"` } }
+          : {}),
       },
       data: {
         deployState: state,
