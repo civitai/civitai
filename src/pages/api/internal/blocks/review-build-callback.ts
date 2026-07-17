@@ -5,7 +5,11 @@ import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
-import { triggerApplyReview, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  triggerApplyReview,
+  waitForApplyJob,
+  waitForReviewHostReachable,
+} from '~/server/services/blocks/apps-pipeline.service';
 import {
   markReviewPreviewState,
   parseReviewDetail,
@@ -323,7 +327,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   });
 });
 
-async function watchReviewApplyJob(args: {
+// Exported for the watcher unit tests (the handler returns 200 to Tekton before
+// this runs fire-and-forget, so it can't be observed through the HTTP response).
+export async function watchReviewApplyJob(args: {
   publishRequestId: string;
   sha: string;
   jobName: string;
@@ -332,9 +338,36 @@ async function watchReviewApplyJob(args: {
   try {
     const outcome = await waitForApplyJob(args.jobName);
     if (outcome === 'succeeded') {
-      await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail, {
-        requireActivePreview: true,
-      });
+      // The apply Job succeeded — but the preview's PUBLIC host DNS record is
+      // created lazily and can lag the deploy by up to ~a minute before it
+      // resolves publicly. Marking the preview "live" the instant the Job
+      // finishes races that propagation, so the mod clicks through and hits
+      // ERR_NAME_NOT_RESOLVED. Gate "live" on a real reachability probe: stay on
+      // "deploying…" until the host actually answers, so the link is never dead.
+      const host = args.baseDetail.host;
+      const reachable = host ? await waitForReviewHostReachable(host) : true;
+      if (reachable) {
+        await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail, {
+          requireActivePreview: true,
+        });
+      } else {
+        // Deploy is healthy but its host never became publicly reachable within
+        // the budget (DNS propagation stall, or a genuinely-broken route). Do
+        // NOT mark it live — that's the whole point. Free the replay-dedup slot
+        // (mirror the failed branch below) so a same-sha rebuild isn't
+        // suppressed within the TTL window.
+        await clearReviewApplyMark(args.publishRequestId, args.sha);
+        await markReviewPreviewState(
+          args.publishRequestId,
+          'preview-failed',
+          {
+            ...args.baseDetail,
+            error:
+              'Preview deployed but its host did not become reachable in time (DNS propagation). Rebuild to retry.',
+          },
+          { requireActivePreview: true }
+        );
+      }
     } else {
       // On a DEFINITIVE failure free the replay-dedup slot so a same-sha retry
       // isn't suppressed within the TTL window; on a 'timeout' leave it (the Job

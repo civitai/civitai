@@ -177,6 +177,75 @@ export function reviewHost(sha: string, appsDomain: string): string {
   return `review-${reviewHostSha(sha)}.${appsDomain}`;
 }
 
+/**
+ * Poll the PUBLIC review host until it answers ANY HTTP response, or give up
+ * after `timeoutMs`.
+ *
+ * WHY: the per-host DNS record for a review preview (`review-<sha16>.<domain>`)
+ * is created lazily when the preview's route is applied, and can take up to ~a
+ * minute to propagate publicly — noticeably longer than the deploy itself. If
+ * the UI marks the preview "live" the instant the apply Job succeeds, a mod who
+ * clicks through races that propagation and hits ERR_NAME_NOT_RESOLVED. Gating
+ * "live" on a real reachability probe keeps the UI on "deploying…" until the
+ * host genuinely loads.
+ *
+ * "Reachable" = we got back ANY HTTP status. A 401/403 from the mod-gate
+ * forward-auth, a redirect, or a 200 all prove the name resolved and the edge is
+ * routing — that's exactly what the mod's browser needs. We deliberately do NOT
+ * authenticate; a thrown fetch (DNS not-found, connection refused/reset, or the
+ * per-attempt timeout) is treated as "not ready yet" and retried.
+ *
+ * Pure + fully injectable (fetchImpl / now / sleep / per-attempt signal) so it
+ * unit-tests without real network or wall-clock waits.
+ */
+export async function waitForReviewHostReachable(
+  host: string,
+  opts: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    attemptTimeoutMs?: number;
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    // Per-attempt abort signal factory; defaults to AbortSignal.timeout so one
+    // hung connection can't consume the whole budget. Overridable in tests to
+    // avoid scheduling real timers.
+    signalFactory?: (ms: number) => AbortSignal | undefined;
+  } = {}
+): Promise<boolean> {
+  // Generous default: the dominant lag is DNS-record creation + public
+  // propagation (~1 min), not the deploy. 120s covers the common case with
+  // margin while still bounding a genuinely-broken deploy to a definite failure.
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const intervalMs = opts.intervalMs ?? 4_000;
+  const attemptTimeoutMs = opts.attemptTimeoutMs ?? 10_000;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const now = opts.now ?? (() => Date.now());
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const signalFactory =
+    opts.signalFactory ?? ((ms: number) => AbortSignal.timeout(ms));
+
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    try {
+      // HEAD + manual redirect: we only care that SOMETHING answered, not the
+      // body or where a redirect points.
+      await doFetch(`https://${host}/`, {
+        method: 'HEAD',
+        redirect: 'manual',
+        signal: signalFactory(attemptTimeoutMs),
+      });
+      // Any resolved response (any status) → DNS + routing are up → reachable.
+      return true;
+    } catch {
+      // Not resolvable / not routing yet — wait and retry until the budget runs out.
+    }
+    if (now() >= deadline) return false;
+    await sleep(intervalMs);
+    if (now() >= deadline) return false;
+  }
+}
+
 /** The review image for a (slug, sha). DISTINCT from the production image
  *  (`app-block-<slug>`) so a review build can never overwrite the live tag.
  *  The review-build pipeline builds + pushes exactly this ref and the
