@@ -23,9 +23,48 @@ import superjson from 'superjson';
  * always decode a superjson payload written by a stale (pre-migration) peer AND
  * a devalue payload written by an up-to-date one. READ stays UNION on every slot
  * in Phase 2 — only the SERVER response write is (env-)flipped, never the read.
+ *
+ * DOUBLE-PARSE RECOVERY (the generateFromGraph / all-mutations 500 incident):
+ * on the Next.js **pages-router** adapter a devalue INPUT that arrives in the
+ * POST BODY is JSON-parsed twice before it reaches us — once by Next's
+ * `bodyParser` (`req.body` becomes the bare devalue STRING) and again by tRPC's
+ * `createBody` short-circuit (`typeof req.body === 'string'` returns it un-re-
+ * quoted) + `req.json()`. The single JSON-string quoting that `getBody` put
+ * around the devalue payload is gone, so `req.json()` parses the devalue string
+ * itself (a JSON array, e.g. `[{…},…]`) into an ARRAY. The `typeof === 'string'`
+ * sniff then misses, `superjson.deserialize(array)` returns `undefined`, and the
+ * resolver receives `undefined` input (500 on procedures that destructure it,
+ * BAD_REQUEST on zod-validated ones). Superjson inputs are unaffected — their
+ * `{ json, meta }` object survives `createBody`'s re-`JSON.stringify`. GET/query
+ * inputs are unaffected — they ride the URL, not the body. Batched inputs are
+ * unaffected — the devalue string is nested inside the batch `{ "0": … }` object,
+ * which `createBody` re-stringifies intact.
+ *
+ * Recovery: `superjson.serialize` ALWAYS emits a `{ json, meta? }` OBJECT
+ * envelope, whereas a double-parsed devalue payload is an ARRAY (or a bare
+ * primitive) — never such an envelope — so the two never collide. Any non-string,
+ * non-null value that is NOT a superjson envelope is a double-parsed devalue
+ * payload: re-`JSON.stringify` it (this exactly reconstructs devalue's canonical
+ * JSON string) and hand it to `devalue.parse`. This makes the SERVER robust to
+ * already-cached clients that still WRITE devalue inputs, independent of the
+ * client write format, so those clients recover without a bundle refresh.
  */
+function isSuperjsonEnvelope(object: unknown): object is { json: unknown; meta?: unknown } {
+  return (
+    typeof object === 'object' &&
+    object !== null &&
+    !Array.isArray(object) &&
+    'json' in (object as Record<string, unknown>)
+  );
+}
+
 export function unionDeserialize(object: unknown): any {
-  return typeof object === 'string' ? devalueParse(object) : superjson.deserialize(object as any);
+  if (typeof object === 'string') return devalueParse(object);
+  if (object == null) return superjson.deserialize(object as any);
+  if (isSuperjsonEnvelope(object)) return superjson.deserialize(object as any);
+  // A devalue payload double-parsed out of its JSON-string quoting on the
+  // pages-router POST-body path (see the DOUBLE-PARSE RECOVERY note above).
+  return devalueParse(JSON.stringify(object));
 }
 
 /**
