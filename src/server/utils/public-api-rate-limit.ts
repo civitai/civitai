@@ -53,7 +53,23 @@ export type PublicApiRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
 
-function resolveClientIp(req: NextApiRequest): string {
+/**
+ * Resolve the rate-limit client IP.
+ *
+ * PREFER Cloudflare's `CF-Connecting-IP` (Next lowercases header keys →
+ * `cf-connecting-ip`): CF sets it to the real client IP and — unlike the raw
+ * `X-Forwarded-For` chain — a caller CANNOT spoof it through Cloudflare, so it
+ * can't be rotated to escape the per-IP bucket. Fall back to
+ * `requestIp.getClientIp` (which reads XFF/socket) only for non-CF / local
+ * requests that never traversed Cloudflare. Same header the bot-detection
+ * middleware and region-blocking trust.
+ *
+ * Exported for unit testing.
+ */
+export function resolveClientIp(req: NextApiRequest): string {
+  const cfip = req.headers['cf-connecting-ip'];
+  const cf = Array.isArray(cfip) ? cfip[0] : cfip;
+  if (cf && cf.trim()) return cf.trim();
   return requestIp.getClientIp(req) ?? 'unknown';
 }
 

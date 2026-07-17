@@ -118,6 +118,10 @@ export default MixedAuthEndpoint(async function handler(
       browsingLevel,
       sessionUser: user,
       include: [],
+      // Public scriptable surface: NEVER expand to `availability = Private`
+      // articles, even when `?username=` is set (which normally lifts the
+      // private-drop for owner self-views). Conservative-by-default.
+      forceHidePrivate: true,
     });
 
     const nextCursorStr = nextCursor ? `${nextCursor.v}|${nextCursor.id}` : undefined;

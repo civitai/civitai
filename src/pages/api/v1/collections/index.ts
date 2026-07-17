@@ -163,10 +163,25 @@ export default MixedAuthEndpoint(async function handler(
         .json({ items, metadata: { nextCursor: nextCursor ?? undefined, nextPage } });
     }
 
-    // Public discovery. Over-fetch so the maturity clamp can't under-fill the page
-    // and terminate pagination early; walk (createdAt DESC) rows collecting visible
-    // ones until the page is full, then resume the keyset from the first fetched row
-    // we did NOT consume (getAllCollections' cursor is inclusive).
+    // Public discovery. The keyset cursor is id-based, which only tracks the
+    // default `createdAt DESC` ordering. Under `sort=MostContributors`
+    // `getAllCollections` orders by contributor `_count` — an id cursor there
+    // positions Prisma at an arbitrary point in that ordering, silently
+    // skipping/duplicating rows across pages. Rather than return corrupt pages,
+    // reject the unsupported combination explicitly. (First-page reads with
+    // `MostContributors` and NO cursor are still fine.)
+    if (sort === CollectionSort.MostContributors && cursor !== undefined) {
+      return res.status(400).json({
+        error:
+          'Cursor pagination is only supported for the default (Newest) sort. ' +
+          'Omit `sort=Most Followers` when paginating with a cursor, or request the first page without a cursor.',
+      });
+    }
+
+    // Over-fetch so the maturity clamp can't under-fill the page and terminate
+    // pagination early; walk (createdAt DESC) rows collecting visible ones until
+    // the page is full, then resume the keyset from the first fetched row we did
+    // NOT consume (getAllCollections' cursor is inclusive).
     const OVERFETCH = limit * 4 + 1;
     const rows = await getAllCollections({
       input: {

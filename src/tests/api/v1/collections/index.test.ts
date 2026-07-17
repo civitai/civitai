@@ -184,6 +184,29 @@ describe('GET /api/v1/collections (list)', () => {
     expect(body.items[0]).toMatchObject({ id: 20, isPublic: false });
   });
 
+  it('PAGINATION: rejects a cursor combined with sort=Most Followers (id cursor is inconsistent with the contributor ordering)', async () => {
+    const { req, res } = createMocks({
+      query: { sort: 'Most Followers', cursor: '10' },
+    });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(400);
+    expect(mockGetAllCollections).not.toHaveBeenCalled();
+    expect(res._getJSONData().error).toMatch(/cursor/i);
+  });
+
+  it('PAGINATION: sort=Most Followers WITHOUT a cursor (first page) is allowed', async () => {
+    mockGetAllCollections.mockResolvedValue([]);
+    const { req, res } = createMocks({ query: { sort: 'Most Followers' } });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockGetAllCollections).toHaveBeenCalled();
+    expect(mockGetAllCollections.mock.calls[0][0].input.sort).toBe('Most Followers');
+  });
+
   it('RATE LIMIT: 429 + Retry-After, no service call', async () => {
     mockRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 30 });
     const { req, res } = createMocks({ query: {} });

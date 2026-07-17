@@ -144,6 +144,22 @@ describe('GET /api/v1/articles (list)', () => {
     expect(args.hidden).toBe(false);
   });
 
+  it('SECURITY: anon ?username=X forces forceHidePrivate=true so private-availability articles are never listed', async () => {
+    mockGetArticles.mockResolvedValue({ items: [], nextCursor: undefined });
+    const { req, res } = createMocks({ query: { username: 'someUser' } });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    const args = mockGetArticles.mock.calls[0][0];
+    // Even with a username filter (which normally lifts the private-drop for an
+    // owner self-view), the REST surface pins forceHidePrivate → the service
+    // ALWAYS drops availability=Private articles.
+    expect(args.username).toBe('someUser');
+    expect(args.forceHidePrivate).toBe(true);
+    expect(args.sessionUser).toBeUndefined();
+  });
+
   it('401s when an unauthenticated caller requests favorites/hidden (own-engagement, authed-only)', async () => {
     const { req, res } = createMocks({ query: { favorites: 'true' } });
 
