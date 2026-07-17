@@ -1545,9 +1545,15 @@ async function resolveApprovalContentRating(
  * `SENSITIVE_TOKEN_SCOPES` (money / private / cross-user writes) is the flagged set;
  * a non-sensitive requested scope need not be justified. No-op for an external-link
  * listing (`connectClientId == null`) or a connect listing requesting no sensitive
- * scope. Throws `BAD_REQUEST` listing the offending scope keys otherwise. Read-only
- * — call it BEFORE opening the approve tx (the connect fields are immutable across
- * the approve flow, so a pre-tx check is row-consistent enough).
+ * scope. Throws `BAD_REQUEST` listing the offending scope keys otherwise. Read-only.
+ *
+ * 🔴 The connect fields are NOT immutable across the approve flow — an owner can edit
+ * `connectRequestedScopes`/`connectScopeJustifications` in place while the request
+ * sits draft/pending. A pre-tx call on the replica is therefore only a FAST-FAIL; the
+ * AUTHORITATIVE gate runs on the in-tx re-read of the row (row-consistent with the
+ * status flip) so a concurrent scope-broadening can't slip an unjustified sensitive
+ * scope past a mod approval (TOCTOU). Both the first-time approve and the revision
+ * approve paths re-invoke this on their in-tx `tx`-read row before flipping status.
  */
 function assertConnectSensitiveScopesJustified(listing: {
   connectClientId: string | null;
@@ -1740,7 +1746,18 @@ export async function approveExternalRequest(opts: {
     // any failure rolls the whole tx back BEFORE anything is flipped.
     const primaryListing = await tx.appListing.findUnique({
       where: { id: appListingId },
-      select: { externalUrl: true, iconId: true, coverId: true, connectClientId: true },
+      select: {
+        externalUrl: true,
+        iconId: true,
+        coverId: true,
+        connectClientId: true,
+        // Connect sub-kind (PR3): re-read the reviewed scope disclosure on the PRIMARY
+        // so the sensitive-must-justify + subset-of-ceiling gates below are authoritative
+        // (row-consistent with the flip), not merely checked pre-tx on the replica.
+        connectRequestedScopes: true,
+        connectScopeJustifications: true,
+        connectClient: { select: { allowedScopes: true } },
+      },
     });
     if (!primaryListing) {
       throw new OffsiteRequestError('NOT_FOUND', `draft listing ${appListingId} not found`);
@@ -1761,6 +1778,34 @@ export async function approveExternalRequest(opts: {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: `stored externalUrl is invalid and cannot be approved: ${primaryUrl.error}`,
+        });
+      }
+    }
+
+    // AUTHORITATIVE connect-scope gate — re-run on the PRIMARY read (row-consistent
+    // with the flip). The pre-tx gate in (4b) is a REPLICA fail-fast: the connect
+    // fields are owner-editable in-place while the request sits pending (draft/pending
+    // in-place edit), so an owner could broaden `connectRequestedScopes` to sensitive
+    // bits (with an empty justification map) AFTER the mod's pre-tx gate passed but
+    // BEFORE this flip — a mod-approved listing would then go live with unjustified
+    // sensitive scopes. Re-asserting on the in-tx row closes that TOCTOU. Mirrors the
+    // revision path's in-tx re-gate. Only for connect listings (`connectClientId`
+    // non-null here; external-link listings carry no scopes).
+    if (primaryListing.connectClientId != null) {
+      assertConnectSensitiveScopesJustified({
+        connectClientId: primaryListing.connectClientId,
+        connectRequestedScopes: primaryListing.connectRequestedScopes,
+        connectScopeJustifications: primaryListing.connectScopeJustifications,
+      });
+      // Also re-assert subset-of-ceiling on the primary: guards a client whose
+      // `allowedScopes` SHRANK after submit (the pre-tx subset check happened at
+      // submit/edit time). A connect listing always has a `connectClient` row here
+      // (FK-backed by the non-null `connectClientId`); treat a null ceiling as 0.
+      const allowedScopes = primaryListing.connectClient?.allowedScopes ?? 0;
+      if (!connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'requested scopes exceed the OAuth client’s allowed scopes',
         });
       }
     }

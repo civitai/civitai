@@ -642,7 +642,18 @@ describe('approveExternalRequest', () => {
       where: { id: 'apl_1' },
       // `connectClientId` was added to the in-tx re-read so the URL gate can be
       // skipped for a connect listing (PR3); external-link listings still validate.
-      select: { externalUrl: true, iconId: true, coverId: true, connectClientId: true },
+      // The reviewed scope disclosure + client ceiling are ALSO re-read on the primary
+      // so the sensitive-must-justify + subset-of-ceiling gates are authoritative
+      // (race-safe) rather than pre-tx-replica-only.
+      select: {
+        externalUrl: true,
+        iconId: true,
+        coverId: true,
+        connectClientId: true,
+        connectRequestedScopes: true,
+        connectScopeJustifications: true,
+        connectClient: { select: { allowedScopes: true } },
+      },
     });
     expect(mockWrite.appListingScreenshot.count).toHaveBeenCalledWith({
       where: { appListingId: 'apl_1', imageId: { not: null } },
