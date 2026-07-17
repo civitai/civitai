@@ -5,17 +5,18 @@ import {
   type ChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-currency';
 import { createNotification } from '~/server/services/notification.service';
-import { refundMultiAccountTransaction } from '~/server/services/buzz.service';
+import { voidChallenge } from '~/server/services/challenge.service';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { ChallengeIngestionStatus, ChallengeSource } from '~/shared/utils/prisma/enums';
 
-// Applies the scan verdict to a challenge: marks it Scanned, and on an NSFW verdict raises the
-// rating to R, flips a green USER challenge to yellow (moving it off the safe site via the
-// domain-currency gate), refunds its green initial prize, and notifies the creator.
+// Applies the scan verdict to a challenge. A green USER challenge whose text is NSFW is cancelled
+// (green must be SFW): void it (Cancelled + collection closed + initial prize refunded, all idempotent),
+// mark the scan resolved, and notify the creator to recreate on civitai.red. A yellow/non-user challenge
+// stays live but has its rating raised to R. A clean scan just marks it Scanned.
 //
-// Idempotent: the flip is gated on the STORED buzzType === 'green', so a retried callback (already
-// yellow) skips the flip + refund. The refund runs BEFORE the challenge update so a crash between
-// them re-reads a still-green row and re-attempts the (idempotent) refund rather than stranding it.
+// Idempotent: the cancel path relies on voidChallenge's own idempotency (a retried callback re-runs the
+// no-op refund on the already-Cancelled row) plus a deterministic notification key. buzzType is never
+// changed, so the cancel decision is stable across retries.
 export async function applyChallengeNsfwEscalation({
   entityId,
   isNsfw,
@@ -29,7 +30,6 @@ export async function applyChallengeNsfwEscalation({
       allowedNsfwLevel: true,
       buzzType: true,
       source: true,
-      basePrizePool: true,
       createdById: true,
       collectionId: true,
     },
@@ -41,22 +41,32 @@ export async function applyChallengeNsfwEscalation({
     allowedNsfwLevel: challenge.allowedNsfwLevel,
     buzzType,
     source: challenge.source,
-    basePrizePool: challenge.basePrizePool,
     isNsfw,
   });
 
-  // Refund first (idempotent) so a crash before the update re-runs the refund instead of stranding
-  // the green charge once the row is flipped to yellow.
-  if (escalation.refundInitialPrize) {
-    // No currency suffix: ledger ids are immutable, so pre-deploy charges are still
-    // `-creator` (no `-green`/`-yellow`) — the broad prefix matches both (mirrors
-    // `refundUserChallengeFunds`). Safe here because the flip only runs on a STORED
-    // green challenge, which never holds a `-creator-yellow` charge to collide with.
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix: `challenge-initial-prize-${entityId}-creator`,
-      description: 'Challenge flipped to adult site — initial prize refund',
-      details: { challengeId: entityId },
+  if (escalation.cancel) {
+    // Void FIRST (Cancelled + collection closed + prize refunded, idempotent) so a crash before the
+    // scan-state write leaves the challenge Cancelled/hidden — never a Scanned-and-therefore-visible
+    // green NSFW challenge. Then resolve the moderation state.
+    await voidChallenge(entityId);
+    await dbWrite.challenge.update({
+      where: { id: entityId },
+      data: { ingestion: ChallengeIngestionStatus.Scanned, scannedAt: new Date() },
     });
+    if (challenge.createdById) {
+      await createNotification({
+        userId: challenge.createdById,
+        category: NotificationCategory.System,
+        type: 'system-message',
+        key: `challenge-nsfw-cancelled-${entityId}`,
+        details: {
+          message:
+            'Your challenge was cancelled because its text was flagged as adult content — green challenges must be safe-for-work. Any prize you funded has been refunded; you can recreate it on civitai.red.',
+          url: `/challenges/${entityId}`,
+        },
+      });
+    }
+    return;
   }
 
   await dbWrite.challenge.update({
@@ -66,12 +76,11 @@ export async function applyChallengeNsfwEscalation({
       scannedAt: new Date(),
       nsfwLevel: escalation.nsfwLevel,
       allowedNsfwLevel: escalation.allowedNsfwLevel,
-      ...(escalation.flip && { buzzType: 'yellow' }),
-      ...(escalation.refundInitialPrize && { basePrizePool: 0, prizePool: 0 }),
     },
   });
 
-  // Keep the collection's entry-gating level in step with the raised allowed level.
+  // Keep the collection's entry-gating level in step with the raised allowed level. updateMany (not
+  // update) so a deleted collection no-ops instead of throwing P2025 on webhook retries.
   if (isNsfw && challenge.collectionId) {
     const collection = await dbRead.collection.findUnique({
       where: { id: challenge.collectionId },
@@ -88,22 +97,11 @@ export async function applyChallengeNsfwEscalation({
     });
   }
 
-  if (!challenge.createdById) return;
-
-  if (escalation.flip) {
-    await createNotification({
-      userId: challenge.createdById,
-      category: NotificationCategory.System,
-      type: 'system-message',
-      key: `challenge-nsfw-flipped-${entityId}`,
-      details: {
-        message: escalation.refundInitialPrize
-          ? "Your challenge's text was flagged as adult content, so it was moved to the adult site (civitai.red) and its rating raised to R. Your initial prize was refunded."
-          : "Your challenge's text was flagged as adult content, so it was moved to the adult site (civitai.red) and its rating raised to R.",
-        url: `/challenges/${entityId}`,
-      },
-    });
-  } else if (isNsfw && escalation.nsfwLevel > deriveBase(challenge.allowedNsfwLevel)) {
+  if (
+    isNsfw &&
+    challenge.createdById &&
+    escalation.nsfwLevel > deriveBase(challenge.allowedNsfwLevel)
+  ) {
     await createNotification({
       userId: challenge.createdById,
       category: NotificationCategory.System,
@@ -118,13 +116,12 @@ export async function applyChallengeNsfwEscalation({
   }
 }
 
-// Local helper: the display level implied by the ORIGINAL allowed mask, to detect an actual raise.
+// The display level implied by the ORIGINAL allowed mask, to detect an actual raise before notifying.
 function deriveBase(allowedNsfwLevel: number): number {
   return computeNsfwEscalation({
     allowedNsfwLevel,
     buzzType: 'yellow',
     source: ChallengeSource.User,
-    basePrizePool: 0,
     isNsfw: false,
   }).nsfwLevel;
 }
