@@ -69,6 +69,7 @@ import {
   registerCounterWithLabels,
 } from '~/server/prom/client';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
+import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
 import {
   getBaseModelFromResources,
   getUserFollows,
@@ -1210,6 +1211,11 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   // correlation. Built upstream via buildSearchActor().
   actor?: string;
 };
+// Derived from `getAllImages`' return type, which applies `stripImageForInfiniteWire`
+// to each item — so this shape is already narrowed to
+// `Omit<..., IMAGE_INFINITE_DROPPED_FIELDS>`. Any consumer that reads a dropped field
+// (client component or internal server caller) is a compile error. See
+// `~/server/utils/image-infinite-wire.ts`.
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 
 // Per-call ceiling for the image-feed raw query. The `civitai` postgres role
@@ -2172,7 +2178,11 @@ export const getAllImages = async (
 
   return {
     nextCursor,
-    items: images,
+    // Always-on wire trim: drop the grep-proven-unread fields no `image.getInfinite`
+    // consumer reads. Narrows `ImagesInfiniteModel` (defined from this return type) to
+    // `Omit<..., IMAGE_INFINITE_DROPPED_FIELDS>`, so tsc/`next build` flags any reader.
+    // See `~/server/utils/image-infinite-wire.ts` for the traced consumer graph.
+    items: images.map(stripImageForInfiniteWire),
   };
 };
 
@@ -3017,7 +3027,10 @@ export async function getImagesFromFeedSearch(
 
     return {
       nextCursor: feedResult.nextCursor,
-      items: transformedItems,
+      // Mirror the DB path's wire trim so both `image.getInfinite` backends ship the
+      // identical narrowed shape (drops any of IMAGE_INFINITE_DROPPED_FIELDS still
+      // carried on the ImageDocument rest).
+      items: transformedItems.map(stripImageForInfiniteWire),
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
