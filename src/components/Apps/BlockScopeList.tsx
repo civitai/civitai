@@ -1,4 +1,6 @@
 import { Badge, Group, Stack, Text } from '@mantine/core';
+import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 
 /**
@@ -27,11 +29,13 @@ export function BlockScopeList({
     <Stack gap={4}>
       {scopes.map((scope) => {
         const desc = SCOPE_DESCRIPTIONS[scope];
+        const sensitive = isSensitiveBlockScope(scope);
         return (
           <Group key={scope} gap="xs" wrap="nowrap" align="flex-start">
-            <Badge size="sm" variant="light">
+            <Badge size="sm" variant="light" color={sensitive ? 'orange' : undefined}>
               {scope}
             </Badge>
+            {sensitive && <SensitiveScopeBadge size="sm" />}
             {desc ? (
               <Text size="xs" c="dimmed">
                 {desc}

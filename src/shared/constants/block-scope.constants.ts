@@ -122,6 +122,40 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
 }
 
 /**
+ * SENSITIVE block scopes — the subset of the vocabulary that carries elevated
+ * privacy/financial risk to the VIEWER, and therefore warrants distinct,
+ * warning-styled emphasis wherever scopes are surfaced (the mod review modal,
+ * the consent/grant prompt, and the per-app "granted permissions" panels).
+ *
+ * A scope is sensitive when granting it lets the app do one of:
+ *   - spend the viewer's Buzz          (`ai:write:budgeted`, `social:tip:self`)
+ *   - read the viewer's Buzz balance   (`buzz:read:self`)
+ *   - read the viewer's PRIVATE data   (`collections:read:private`)
+ *   - write data OTHER users see       (`apps:storage:shared:write`)
+ *
+ * This is a PRESENTATION classification only — it changes how a scope is
+ * displayed, never whether it is granted/enforced (that stays with the
+ * server-side per-op gates + consent grant). Keeping it a set (not a per-scope
+ * flag on the map) keeps the enforcement map and the UI emphasis decoupled.
+ *
+ * INVARIANT (guarded by a test): every entry must be a currently-known scope in
+ * `BLOCK_SCOPE_TO_OAUTH_BIT`. If a scope is renamed/removed (as
+ * `media:read:owned` / `block:settings:*` were in #3212) it must be updated
+ * here too, so a sensitive scope can never silently drop out of the set.
+ */
+export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
+  'ai:write:budgeted',
+  'social:tip:self',
+  'buzz:read:self',
+  'collections:read:private',
+  'apps:storage:shared:write',
+]);
+
+export function isSensitiveBlockScope(scope: string): boolean {
+  return SENSITIVE_BLOCK_SCOPES.has(scope);
+}
+
+/**
  * Validates that every requested block scope either declares no OAuth-bit
  * requirement (SKIP_OAUTH_CHECK) or has its OAuth bit set in the
  * OauthClient.allowedScopes bitmask.
