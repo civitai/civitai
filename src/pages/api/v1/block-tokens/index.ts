@@ -741,6 +741,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // 403ing the whole request. (Without this pre-filter, an unknown scope would
   // be flagged by `validateBlockScopesAgainstOauthClient` and hard-fail the
   // mint.) The capability-bearing (known) scopes are still fully gated below.
+  //
+  // INTENTIONAL: if the manifest declared ONLY removed/unknown scopes this
+  // filters to an EMPTY set and we go on to sign a valid ZERO-scope token (not
+  // an error). That is correct — the app simply has no capabilities, and every
+  // scope-gated endpoint fails closed at the deny-by-default runtime gate. A
+  // useless-but-valid token is the right graceful outcome, not a 403.
   const knownManifestScopes = rawManifestScopes.filter(isKnownBlockScope);
 
   const oauthAllowed = block.app?.allowedScopes ?? 0;
