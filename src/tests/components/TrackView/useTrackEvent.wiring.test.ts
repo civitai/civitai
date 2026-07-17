@@ -1,11 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import type { act as actType } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
 
-// React 18.3 exposes `act` on the `react` export; borrow the typed signature.
-const act = (React as unknown as { act: typeof actType }).act;
+// React 18.3 exposes `act` on the `react` export, but @types/react doesn't
+// declare it yet; augment the module so we can use it without a cast.
+declare module 'react' {
+  export function act(callback: () => void): void;
+}
+
+const act = React.act;
 
 /**
  * INTEGRATION coverage for the `useTrackEvent` -> `enqueueTrackEvent` wiring
