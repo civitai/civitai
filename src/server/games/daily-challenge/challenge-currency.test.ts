@@ -113,4 +113,17 @@ describe('computeNsfwEscalation', () => {
     expect(r.allowedNsfwLevel).toBe(PG_PG13 | NsfwLevel.R);
     expect(r.nsfwLevel).toBe(NsfwLevel.R);
   });
+
+  it('yellow challenge already at R + nsfw: idempotent, stays at R (no cancel)', () => {
+    const alreadyR = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R; // 7
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: alreadyR,
+      buzzType: 'yellow',
+      source: ChallengeSource.User,
+      isNsfw: true,
+    });
+    expect(r.cancel).toBe(false);
+    expect(r.allowedNsfwLevel).toBe(alreadyR);
+    expect(r.nsfwLevel).toBe(NsfwLevel.R);
+  });
 });
