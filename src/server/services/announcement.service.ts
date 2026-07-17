@@ -101,7 +101,10 @@ export async function getCurrentAnnouncements({
 // caches are redis.del-invalidated on upsert/delete, so the in-proc memo adds at
 // most this TTL of per-pod propagation on top of that del; announcements are also
 // start/end-time gated downstream, so a few seconds is invisible. Keyed by
-// `domain ?? ''` (empty string = the no-domain default cache).
+// `domain ?? ''` (empty string = the no-domain default cache). The only consumer
+// (getCurrentAnnouncements) reads it via .filter() into a new array, so it opts
+// into { freeze: true } to structurally reject a future in-place mutation of the
+// shared per-domain array.
 const ANNOUNCEMENTS_INPROC_TTL_MS = 30_000;
 
 const getAnnouncementsCachedMemo = createKeyedTtlMemo<AnnouncementDTO[]>(
@@ -122,7 +125,9 @@ const getAnnouncementsCachedMemo = createKeyedTtlMemo<AnnouncementDTO[]>(
 
     return announcements;
   },
-  ANNOUNCEMENTS_INPROC_TTL_MS
+  ANNOUNCEMENTS_INPROC_TTL_MS,
+  undefined,
+  { freeze: true }
 );
 
 async function getAnnouncementsCached(domain?: DomainColor) {

@@ -802,7 +802,10 @@ async function mapWithConcurrency<T, R>(
 // CACHE_KEY. An in-proc memo in front of it collapses the frequent
 // redis.packed.get + msgpackr decode into ~1 read / TTL / pod. TTL is longer than
 // the system-cache blobs (this list barely moves) but still bounded so an admin
-// CACHE_KEY refresh propagates within a minute per pod.
+// CACHE_KEY refresh propagates within a minute per pod. The result is served
+// straight to serialization (no mutation — verified), so it opts into
+// { freeze: true } to structurally reject a future in-place mutation of the
+// shared array.
 const SUPPORTED_CURRENCIES_INPROC_TTL_MS = 60_000;
 
 // Sentinel so the public getter can distinguish "upstream NowPayments returned no
@@ -885,7 +888,7 @@ const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(async
   await redis.packed.set(CACHE_KEY, result, { EX: CacheTTL.hour * 3 });
 
   return result;
-}, SUPPORTED_CURRENCIES_INPROC_TTL_MS);
+}, SUPPORTED_CURRENCIES_INPROC_TTL_MS, undefined, { freeze: true });
 
 export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]> => {
   try {
