@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
+import { ActionIcon, Avatar, Box, Group, Menu, Text } from '@mantine/core';
 import {
   IconApps,
   IconDots,
@@ -12,6 +12,10 @@ import {
   IconUpload,
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  getRecentlyOpenedApps,
+  type RecentApp,
+} from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
@@ -82,6 +86,12 @@ const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 // A malicious or buggy block sending {height: 1e9} on RESIZE_IFRAME would
 // otherwise OOM the tab. 8000px is well above any legitimate block.
 const HARD_HEIGHT_CEILING = 8_000;
+
+// Max "Recently run" entries shown in the app-chrome platform-nav dropdown.
+// Kept short so the compact menu doesn't grow unbounded (the store itself caps
+// at MAX_RECENTS; this is the additional display cap after excluding the
+// current app).
+const RECENTLY_RUN_LIMIT = 5;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
 
@@ -177,6 +187,35 @@ export function AppBlockChrome({
   // Per-app "Permissions & activity" drawer open state (only reachable when
   // appBlockId was threaded through).
   const [permsOpen, setPermsOpen] = useState(false);
+
+  // The platform-nav ("Civitai Apps") Menu is CONTROLLED so we can close it when
+  // the user clicks INTO the cross-origin app iframe. Mantine's default
+  // outside-click close CAN'T detect that: the iframe swallows the mousedown, so
+  // the parent document never sees it and Mantine can't tell the click was
+  // "outside" the dropdown — the menu appears stuck open (the reported bug).
+  // The fix is iframe-aware: while the menu is open, listen for the window
+  // `blur` event, which DOES fire when focus/pointer moves into a cross-origin
+  // iframe, and close on it. Normal same-document outside-clicks + item-clicks
+  // still close via Mantine's untouched defaults (closeOnClickOutside /
+  // closeOnItemClick).
+  const [menuOpened, setMenuOpened] = useState(false);
+  useEffect(() => {
+    if (!menuOpened) return;
+    const onBlur = () => setMenuOpened(false);
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, [menuOpened]);
+
+  // Recently-run apps (client-only personalisation from localStorage). Seeded
+  // empty so SSR + the first client render match (no hydration mismatch); the
+  // real list loads in an effect after mount. Excludes the app currently being
+  // viewed (matched by appBlockId — the store's stable id) and is capped to a
+  // short list for the compact dropdown.
+  const [recents, setRecents] = useState<RecentApp[]>([]);
+  useEffect(() => {
+    setRecents(getRecentlyOpenedApps());
+  }, []);
+  const recentApps = recents.filter((r) => r.id !== appBlockId).slice(0, RECENTLY_RUN_LIMIT);
   // The full-page run surface (`app.page`) has no model-page slot to hide the
   // block from — the page IS the block — so suppress the "Hide" item there.
   const isPage = slotId != null && isPageSlot(slotId);
@@ -231,7 +270,13 @@ export function AppBlockChrome({
             (role="img" + aria-label "App") — required so a bare tabler <svg>'s
             label is announced; on the fallback the visible "App" Text carries
             provenance instead, so the icon is marked decorative there. */}
-        <Menu position="bottom-start" shadow="md" width={200}>
+        <Menu
+          position="bottom-start"
+          shadow="md"
+          width={200}
+          opened={menuOpened}
+          onChange={setMenuOpened}
+        >
           <Menu.Target>
             <ActionIcon
               variant="subtle"
@@ -281,6 +326,35 @@ export function AppBlockChrome({
               >
                 Review
               </Menu.Item>
+            )}
+            {/* "Recently run" — a 1-click return to apps the viewer recently ran,
+                sourced from the client-only localStorage recents store (read
+                after mount so SSR + first client render match). Excludes the app
+                currently being viewed and the whole label+section is omitted when
+                there's nothing else to show (a first-time / single-app viewer).
+                Each item shows the app icon (persisted `iconUrl`, else a generic
+                app icon) + name, linking to the full-page run route. */}
+            {recentApps.length > 0 && (
+              <div data-testid="app-recently-run">
+                <Menu.Label>Recently run</Menu.Label>
+                {recentApps.map((r) => (
+                  <Menu.Item
+                    key={r.id}
+                    component={Link}
+                    href={`/apps/run/${r.blockId}`}
+                    data-testid="app-recently-run-item"
+                    leftSection={
+                      r.iconUrl ? (
+                        <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
+                      ) : (
+                        <IconApps size={14} stroke={1.5} />
+                      )
+                    }
+                  >
+                    {r.name ?? r.blockId}
+                  </Menu.Item>
+                ))}
+              </div>
             )}
           </Menu.Dropdown>
         </Menu>
