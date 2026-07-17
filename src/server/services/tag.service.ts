@@ -628,6 +628,10 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       WHERE m."id" = ANY(${entityIds}::int[])
       ON CONFLICT DO NOTHING
     `);
+    // The ModelTag view gives every TagsOnModels row a base score of 5 (independent
+    // of votes), so a freshly-applied tag is immediately score>0 and would appear in
+    // getVotableTags — bust so the votable-tags cache reflects it within the TTL.
+    await modelVotableTagsCache.bust(entityIds);
   } else if (entityType === 'image') {
     const result = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
       SELECT i."id" AS "imageId",  t."id" AS "tagId"
@@ -748,6 +752,9 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
       WHERE "modelId" = ANY(${entityIds}::int[])
         AND ${tagIdMatch('tagId')}
     `);
+    // Precautionary: the ModelTag view does NOT currently filter on `disabled`, so this
+    // has no effect on getVotableTags output today — but bust to stay correct if the
+    // view ever starts honoring `disabled`, and to keep model mutations uniformly busting.
     await modelVotableTagsCache.bust(entityIds);
   } else if (entityType === 'image') {
     const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
@@ -821,6 +828,17 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
     )
   `);
 
+  // Get affected models before deletion — the ModelTag view JOINs Tag, so deleting the
+  // Tag row (cascading its TagsOnModels/TagsOnModelsVote rows) removes it from a model's
+  // votable list. Read the view directly (mirrors the ImageTag query above).
+  const affectedModels = await dbWrite.$queryRaw<{ modelId: number }[]>(Prisma.sql`
+    SELECT DISTINCT "modelId"
+    FROM "ModelTag"
+    WHERE "tagId" IN (
+      SELECT id FROM "Tag" WHERE ${tagMatch}
+    )
+  `);
+
   await dbWrite.$executeRaw(Prisma.sql`
     DELETE
     FROM "Tag"
@@ -831,6 +849,12 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   if (affectedImages.length > 0) {
     const imageIds = affectedImages.map((x) => x.imageId);
     await imageTagsCache.bust(imageIds);
+  }
+
+  // Bust cache for affected models
+  if (affectedModels.length > 0) {
+    const modelIds = affectedModels.map((x) => x.modelId);
+    await modelVotableTagsCache.bust(modelIds);
   }
 };
 

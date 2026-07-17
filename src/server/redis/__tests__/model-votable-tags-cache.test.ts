@@ -46,14 +46,24 @@ vi.mock('~/server/prom/client', () => ({
 
 import { createCachedObject } from '~/server/utils/cache-helpers';
 
-type ModelVotableTagsCacheItem = {
-  modelId: number;
-  tags: { tagId: number; tagName: string; tagType: string; score: number }[];
+type ModelTagComposite = {
+  tagId: number;
+  tagName: string;
+  tagType: string;
+  score: number;
+  upVotes: number;
+  downVotes: number;
 };
+type ModelVotableTagsCacheItem = { modelId: number; tags: ModelTagComposite[] };
 
 // db double: mirrors dbRead.modelTag.findMany({ where: { modelId: { in }, score: { gt: 0 } } }).
 const modelTagFindMany = vi.fn();
 
+// DIVERGENCE RISK: importing the real `modelVotableTagsCache` from caches.ts would drag in
+// its env/clickhouse/orchestrator import graph, so this replicates its lookupFn. Keep this a
+// FAITHFUL mirror of caches.ts `modelVotableTagsCache.lookupFn` — same select fields
+// (modelId + modelTagCompositeSelect: tagId/tagName/tagType/score/upVotes/downVotes), same
+// `orderBy: { score: 'desc' }`, same reduce/keying. If you change one, change both.
 function buildCache() {
   return createCachedObject<ModelVotableTagsCacheItem>({
     key: 'test:model-votable-tags' as never,
@@ -63,11 +73,21 @@ function buildCache() {
     lookupFn: async (ids) => {
       const modelTags = await modelTagFindMany({
         where: { modelId: { in: ids }, score: { gt: 0 } },
+        select: {
+          modelId: true,
+          tagId: true,
+          tagName: true,
+          tagType: true,
+          score: true,
+          upVotes: true,
+          downVotes: true,
+        },
+        orderBy: { score: 'desc' },
       });
-      return (modelTags as { modelId: number; [k: string]: unknown }[]).reduce((acc, tag) => {
+      return (modelTags as (ModelTagComposite & { modelId: number })[]).reduce((acc, tag) => {
         const { modelId, ...tagData } = tag;
         acc[modelId] ??= { modelId, tags: [] };
-        acc[modelId].tags.push(tagData as ModelVotableTagsCacheItem['tags'][number]);
+        acc[modelId].tags.push(tagData);
         return acc;
       }, {} as Record<number, ModelVotableTagsCacheItem>);
     },
@@ -86,10 +106,18 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('modelVotableTagsCache dedup', () => {
+  const row = (modelId: number, tagId: number, tagName: string, score: number) => ({
+    modelId,
+    tagId,
+    tagName,
+    tagType: 'UserGenerated',
+    score,
+    upVotes: score,
+    downVotes: 0,
+  });
+
   it('hits the DB once, then serves the second fetch of the same model from cache', async () => {
-    modelTagFindMany.mockResolvedValue([
-      { modelId: 7, tagId: 304, tagName: 'nude', tagType: 'UserGenerated', score: 5 },
-    ]);
+    modelTagFindMany.mockResolvedValue([row(7, 304, 'nude', 5)]);
     const cache = buildCache();
 
     const first = await cache.fetch([7]);
@@ -97,24 +125,36 @@ describe('modelVotableTagsCache dedup', () => {
 
     // The expensive static read is issued exactly once across two fetches.
     expect(modelTagFindMany).toHaveBeenCalledTimes(1);
-    expect(first[7].tags.map((t) => t.tagId)).toEqual([304]);
-    expect(second[7].tags.map((t) => t.tagId)).toEqual([304]);
+    expect(first[7].tags).toEqual([
+      { tagId: 304, tagName: 'nude', tagType: 'UserGenerated', score: 5, upVotes: 5, downVotes: 0 },
+    ]);
+    expect(second[7].tags).toEqual(first[7].tags);
   });
 
   it('dedups duplicate ids within a single fetch and groups rows by modelId', async () => {
     modelTagFindMany.mockResolvedValue([
-      { modelId: 7, tagId: 304, tagName: 'nude', tagType: 'UserGenerated', score: 9 },
-      { modelId: 7, tagId: 5, tagName: 'anime', tagType: 'UserGenerated', score: 3 },
-      { modelId: 8, tagId: 6, tagName: 'realistic', tagType: 'UserGenerated', score: 1 },
+      row(7, 304, 'nude', 9),
+      row(7, 5, 'anime', 3),
+      row(8, 6, 'realistic', 1),
     ]);
     const cache = buildCache();
 
     const res = await cache.fetch([7, 7, 8]);
 
     expect(modelTagFindMany).toHaveBeenCalledTimes(1);
-    // Distinct ids only reach the DB lookup.
+    // Distinct ids only reach the DB lookup, with the full composite select + score-desc order.
     expect(modelTagFindMany).toHaveBeenCalledWith({
       where: { modelId: { in: [7, 8] }, score: { gt: 0 } },
+      select: {
+        modelId: true,
+        tagId: true,
+        tagName: true,
+        tagType: true,
+        score: true,
+        upVotes: true,
+        downVotes: true,
+      },
+      orderBy: { score: 'desc' },
     });
     expect(res[7].tags.map((t) => t.tagId).sort((a, b) => a - b)).toEqual([5, 304]);
     expect(res[8].tags.map((t) => t.tagId)).toEqual([6]);
