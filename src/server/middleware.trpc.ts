@@ -5,7 +5,7 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { hSetWithTTL } from '~/server/redis/atomic';
+import { hSetWithTTL, sAddWithExpireGe } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
@@ -92,12 +92,15 @@ export function cacheIt<TInput extends object>({
 
       if (cacheTags) {
         await Promise.all(
-          cacheTags
-            .map((tag) => {
-              const key = `${REDIS_KEYS.CACHES.TAGGED_CACHE}:${tag}` as const;
-              return [redis.sAdd(key, cacheKey), redis.expire(key, ttl)];
-            })
-            .flat()
+          cacheTags.map((tag) => {
+            const key = `${REDIS_KEYS.CACHES.TAGGED_CACHE}:${tag}` as const;
+            // One atomic EVAL per tag: SADD the member AND floor the set's TTL to
+            // `ttl` only when it's below it — replaces the racy `sAdd` + always-on
+            // `expire` pair, dropping the separate per-write EXPIRE command while
+            // preserving the "tag-set outlives its members" invariant (never
+            // shortens a longer-TTL set). See sAddWithExpireGe.
+            return sAddWithExpireGe(redis, key, cacheKey, ttl);
+          })
         );
       }
     }
