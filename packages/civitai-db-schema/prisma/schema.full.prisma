@@ -3202,7 +3202,21 @@ model BlockScopeInvocation {
   /// `local-<slug>` / `pending-<pubreqId>`) for a PRE-APPROVAL dev-tunnel spend —
   /// the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
   syntheticAppId   String?  @map("synthetic_app_id")
-  blockInstanceId  String   @map("block_instance_id")
+  /// NULLABLE: an EXTERNAL OAuth invocation (`source = 'external-oauth'`) has no
+  /// block instance — the acting app is a pure OauthClient with no App Block. A
+  /// block-token row always sets this.
+  blockInstanceId  String?  @map("block_instance_id")
+  /// The acting OauthClient id for an EXTERNAL OAuth invocation (`source =
+  /// 'external-oauth'`) — the "which app" for external OAuth API usage, mirroring
+  /// what `appBlockId` is for a block-token row. NULL for a block-token row.
+  /// Intentionally FK-LESS text so the audit row SURVIVES deletion of the
+  /// OauthClient it references (an audit trail must outlive the app).
+  oauthClientId    String?  @map("oauth_client_id")
+  /// Discriminates the token population that made the call: `'app-block'` (an App
+  /// Block block-token, the historical default) vs `'external-oauth'` (a standard
+  /// external OAuth access token verified at `enforceTokenScope`). Additive:
+  /// existing rows backfill to `'app-block'`.
+  source           String   @default("app-block")
   scope            String
   endpoint         String
   statusCode       Int      @map("status_code") @db.SmallInt
@@ -3220,6 +3234,7 @@ model BlockScopeInvocation {
   @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
   @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
   @@index([syntheticAppId, invokedAt(sort: Desc)], map: "bsi_synthetic_app_invoked_idx")
+  @@index([oauthClientId, invokedAt(sort: Desc)], map: "bsi_oauth_client_invoked_idx")
   @@map("block_scope_invocations")
 }
 
