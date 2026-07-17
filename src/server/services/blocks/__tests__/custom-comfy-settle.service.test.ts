@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * assert the exact GET+DEL idempotency claim and the exact decrBy deltas.
  */
 
-const { mockSysRedis, mockRefundAppSpend } = vi.hoisted(() => ({
+const { mockSysRedis, mockRefundAppSpend, mockRefundDevSessionBuzz } = vi.hoisted(() => ({
   mockSysRedis: {
     get: vi.fn(async () => null as string | null),
     set: vi.fn(async () => undefined),
@@ -19,6 +19,10 @@ const { mockSysRedis, mockRefundAppSpend } = vi.hoisted(() => ({
     decrBy: vi.fn(async () => 0),
   },
   mockRefundAppSpend: vi.fn(async () => undefined),
+  // F4 — the dev-session refund leg dynamic-imports refundDevSessionBuzz. Mock the
+  // (heavy, k8s-client-pulling) dev-tunnel module at its boundary so the settle's
+  // third refund is assertable without loading the real service.
+  mockRefundDevSessionBuzz: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/redis/client', () => ({
@@ -27,6 +31,9 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
   refundAppSpend: (...a: unknown[]) => mockRefundAppSpend(...(a as [])),
+}));
+vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
+  refundDevSessionBuzz: (...a: unknown[]) => mockRefundDevSessionBuzz(...(a as [])),
 }));
 
 import {
@@ -45,6 +52,7 @@ beforeEach(() => {
     mockSysRedis.del,
     mockSysRedis.decrBy,
     mockRefundAppSpend,
+    mockRefundDevSessionBuzz,
   ]) {
     fn.mockReset();
   }
@@ -54,9 +62,19 @@ beforeEach(() => {
   mockSysRedis.del.mockResolvedValue(1);
   mockSysRedis.decrBy.mockResolvedValue(0);
   mockRefundAppSpend.mockResolvedValue(undefined);
+  mockRefundDevSessionBuzz.mockResolvedValue(undefined);
 });
 
-function seedRecord(over: Partial<{ buzzCapKey: string; appSpendKey: string | null; ceiling: number }> = {}) {
+const DEV_SESSION_ID = 'bki_dev_session';
+
+function seedRecord(
+  over: Partial<{
+    buzzCapKey: string;
+    appSpendKey: string | null;
+    devSessionId: string | null;
+    ceiling: number;
+  }> = {}
+) {
   const record = { buzzCapKey: BUZZ_KEY, appSpendKey: APP_KEY, ceiling: 180, ...over };
   mockSysRedis.get.mockResolvedValue(JSON.stringify(record));
   return record;
@@ -75,6 +93,37 @@ describe('persistCustomComfySettle', () => {
     expect(key).toBe(`${SETTLE_PREFIX}:wf_1`);
     expect(JSON.parse(value)).toEqual({ buzzCapKey: BUZZ_KEY, appSpendKey: APP_KEY, ceiling: 180 });
     expect(opts.EX).toBe(25 * 60 * 60);
+  });
+
+  it('F4: persists the dev-session id when a dev tunnel reserved the ceiling', async () => {
+    await persistCustomComfySettle({
+      workflowId: 'wf_1',
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: null, // dev token → no per-app reserve
+      devSessionId: DEV_SESSION_ID,
+      ceiling: 180,
+    });
+    const [, value] = mockSysRedis.set.mock.calls[0] as [string, string, { EX: number }];
+    expect(JSON.parse(value)).toEqual({
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: null,
+      devSessionId: DEV_SESSION_ID,
+      ceiling: 180,
+    });
+  });
+
+  it('F4: a non-dev submit persists the SAME record shape as before (NO devSessionId field)', async () => {
+    await persistCustomComfySettle({
+      workflowId: 'wf_1',
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      // devSessionId omitted → non-dev submit
+      ceiling: 180,
+    });
+    const [, value] = mockSysRedis.set.mock.calls[0] as [string, string, { EX: number }];
+    const parsed = JSON.parse(value);
+    expect(parsed).not.toHaveProperty('devSessionId');
+    expect(parsed).toEqual({ buzzCapKey: BUZZ_KEY, appSpendKey: APP_KEY, ceiling: 180 });
   });
 
   it('no-ops on an empty workflowId (never writes)', async () => {
@@ -147,6 +196,40 @@ describe('settleCustomComfySpend', () => {
     await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
     expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
     expect(mockRefundAppSpend).not.toHaveBeenCalled();
+  });
+
+  it('F4: refunds `ceiling - actual` on the dev-session cap too when a devSessionId is present', async () => {
+    seedRecord({ appSpendKey: null, devSessionId: DEV_SESSION_ID, ceiling: 180 });
+    await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
+    // Same over-reservation (180 - 30 = 150) refunded on the per-user daily key…
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+    // …and on the dev-tunnel SESSION cap (by session id — refundDevSessionBuzz
+    // derives the spend key itself).
+    expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith(DEV_SESSION_ID, 150);
+    // dev token → no per-app leg.
+    expect(mockRefundAppSpend).not.toHaveBeenCalled();
+  });
+
+  it('F4: refunds all THREE keys for a non-dev submit that also had an active dev tunnel', async () => {
+    seedRecord({ devSessionId: DEV_SESSION_ID, ceiling: 180 });
+    await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+    expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+    expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith(DEV_SESSION_ID, 150);
+  });
+
+  it('F4: a record WITHOUT a devSessionId (non-dev submit) never touches the dev-session cap', async () => {
+    seedRecord({ ceiling: 180 }); // no devSessionId
+    await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+    expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+    expect(mockRefundDevSessionBuzz).not.toHaveBeenCalled();
+  });
+
+  it('F4: a full-ceiling spend refunds NOTHING on the dev-session cap either', async () => {
+    seedRecord({ devSessionId: DEV_SESSION_ID, ceiling: 180 });
+    await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 200 });
+    expect(mockRefundDevSessionBuzz).not.toHaveBeenCalled();
   });
 
   it('never throws when the GET fails (leaves the ceiling reserved — stricter)', async () => {

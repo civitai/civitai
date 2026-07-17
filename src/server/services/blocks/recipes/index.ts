@@ -55,6 +55,41 @@ export type RecipeCivitaiResource = {
   baseModelGroup?: string;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 RESOURCE INVARIANT (read before pinning ANY civitai model version below)
+//
+// A customComfy recipe MAY ONLY pin FULLY-PUBLIC, Published, NON-early-access,
+// NON-Private model versions in its `resourceAllowlist` (checkpoints + loras).
+//
+// WHY this is a hard invariant and not just a preference: a raw customComfy step
+// submits its `input.resources` AIR array DIRECTLY to the orchestrator, which
+// BYPASSES `getGenerationResourceData`'s early-access / Private belt — that belt
+// only runs over generation-GRAPH steps (textToImage/comfy), never over a
+// hand-authored customComfy `resources` array. The router-side gate the belt
+// leans on (`resolveCanGenerateForVersions` → `assertViewerCanGeneratePageResources`
+// in blocks.router.ts `submitCustomComfyWorkflow`) covers baseline generatability
+// (usageControl / covered / NSFW-tier) but does NOT currently cover early-access
+// `hasAccess` NOR Private-model subscription entitlement. So a pinned early-access
+// or Private version would run for viewers who have NOT paid for / been granted it
+// — an entitlement bypass. Keep every pinned version Public + Published +
+// non-early-access until that gate exists.
+//
+// v1 (`seamless-pano-360`): the pinned 360Redmond LoRA versions (model 118025) are
+// verified Public / Published / non-early-access / non-Private — safe under this
+// invariant.
+//
+// This is a DOC-INVARIANT, enforced by CODE REVIEW of each new recipe PR — NOT a
+// module-load DB check (there is no DB in this module; the registry loads at
+// import time, before any request context). A robust router-side early-access /
+// Private / hasAccess gate for customComfy-resolved versions is separate pre-GA
+// hardening.
+//
+// TODO(app-blocks customComfy pre-GA): add an early-access `hasAccess` +
+// Private-subscription entitlement gate over `recipeCivitaiVersionIds(recipe)` in
+// `submitCustomComfyWorkflow` (blocks.router.ts) so the invariant is ENFORCED at
+// submit, not merely asserted by review — then this comment can relax to "prefer".
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * The recipe contract (server-side, NEVER on the wire). `P` is the recipe's
  * bounded param type (inferred from `paramSchema`).

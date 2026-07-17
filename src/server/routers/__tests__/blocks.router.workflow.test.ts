@@ -4693,6 +4693,102 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     });
   });
 
+  // ── F4: dev-tunnel per-session spend backstop on the customComfy branch. Same
+  // semantics as the txt2img F4 backstop, but reserves the CEILING (recipe.maxBuzz)
+  // and is SETTLED at terminal (the session id rides the settle record), so it is
+  // safe to add over the post-paid path.
+  describe('submitWorkflow — dev-session backstop (F4)', () => {
+    it('a dev-token submit with an active tunnel reserves the CEILING on the session cap + persists the session id', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ dev: true }));
+      happyCcResources();
+      happySubmit();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 180 });
+
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(result.snapshot.workflowId).toBe('wf_cc_1');
+      // Reserved the CEILING (180), not the 0 estimate, against the session cap.
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 180, 5000);
+      // Dev token → NO per-app reserve, but the settle record carries the session
+      // id (so terminal settle refunds ceiling-actual on the session cap too).
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith({
+        workflowId: 'wf_cc_1',
+        buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        appSpendKey: null,
+        devSessionId: 'bki_dev',
+        ceiling: 180,
+      });
+    });
+
+    it('a NON-dev token WITH an active tunnel reserves BOTH the app cap and the session cap', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims()); // non-dev token
+      happyCcResources();
+      happySubmit();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 180 });
+
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 180);
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 180, 5000);
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith({
+        workflowId: 'wf_cc_1',
+        buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        appSpendKey: 'system:blocks:app-spend-cap:apb_test:day',
+        devSessionId: 'bki_dev',
+        ceiling: 180,
+      });
+    });
+
+    it('over the session ceiling → failed snapshot + refund of the reserved CEILING, NO submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ dev: true }));
+      happyCcResources();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 100 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: false, total: 100 });
+
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
+      expect(result.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
+      // The per-user daily CEILING reservation was rolled back.
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        180
+      );
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+    });
+
+    it('refund-on-throw ALSO refunds the dev-session CEILING when the submit throws', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ dev: true }));
+      happyCcResources();
+      mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 180 });
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: ccBody() })
+      ).rejects.toThrow(/orchestrator down/);
+      // Daily + dev-session ceiling both refunded on the throw.
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        180
+      );
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 180);
+      expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+    });
+
+    it('is INERT for a normal (no-tunnel) submit — reserve never called, NO session id persisted', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      // default mockGetActiveDevTunnel → null
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(mockReserveDevSessionBuzz).not.toHaveBeenCalled();
+      const persistArg = mockPersistCustomComfySettle.mock.calls[0][0];
+      expect(persistArg).not.toHaveProperty('devSessionId');
+    });
+  });
+
   describe('submitWorkflow — security seams', () => {
     it('page-only guard: a MODEL token is rejected fail-closed BEFORE any spend', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 500 })); // model token

@@ -5325,9 +5325,65 @@ async function submitCustomComfyWorkflow(opts: {
     if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: ceiling };
   }
 
+  // ── (4) APP DEV TUNNEL per-session spend backstop (F4) — mirror the txt2img
+  // path (~:3596). When the caller has an ACTIVE dev tunnel for THIS block, bound
+  // cumulative spend within that ONE dev session (a backstop OVER the per-call
+  // budget + the per-user daily cap + the per-app cap) so a runaway LOCAL submit
+  // loop can't drain Buzz. Resolved SERVER-SIDE from (userId, blockId) — a single
+  // Redis GET that misses (and no-ops) for every non-dev submit. Same fail-open
+  // LOOKUP / fail-closed ENFORCEMENT posture as txt2img (safe because the
+  // fail-closed daily-cap reserve above has already run and throws on any Redis
+  // error before this lookup executes).
+  //
+  // UNLIKE txt2img (which reserves the whatIf estimate PERMANENTLY), customComfy
+  // is post-paid: this reservation is the CEILING and is SETTLED (ceiling-actual
+  // refunded) at terminal alongside the daily + app keys — so its session id is
+  // persisted in the settle record below. This is what makes adding the third
+  // reservation safe (it can't over-count the session for the 25h TTL).
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        ceiling,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        // Over the session ceiling → refund the per-user daily reservation made
+        // above (the session reserve rolled ITSELF back on deny) and the G8
+        // per-app reservation (present only for non-dev tokens; a token with
+        // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
+        await refundBlockBuzzSpend(buzzCapKey, ceiling);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import(
+            '~/server/services/blocks/app-spend-cap.service'
+          );
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: ceiling },
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this generation may cost up to ${Math.ceil(ceiling)}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: Math.ceil(ceiling) };
+    }
+  }
+
   // ── Build + submit. `createBlockCustomComfyStep` stamps the recipe's aggressive
   // `timeout` — the physical Buzz ceiling. On ANY throw AFTER reserving, refund
-  // the CEILING (not 0) on both keys and re-throw (refund-on-throw, plan §7).
+  // the CEILING (not 0) on ALL reservation keys and re-throw (refund-on-throw,
+  // plan §7).
   let snapshot: ReturnType<typeof snapshotFromWorkflow>;
   try {
     const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
@@ -5352,12 +5408,24 @@ async function submitCustomComfyWorkflow(opts: {
       const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
       await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
     }
+    // F4 — mirror the daily/app refund for the dev-session reservation so a failed
+    // submit doesn't permanently burn the session ceiling. Best-effort; present
+    // only when an active dev tunnel was reserved above.
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import(
+        '~/server/services/blocks/dev-tunnel.service'
+      );
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
     throw e;
   }
 
   // ── Persist the settle record (AWAITED — see custom-comfy-settle.service). The
-  // terminal poll/cancel hook reads it and refunds `ceiling - actual` on BOTH
-  // keys. Only for a REAL orchestrator id (never the failed/whatif sentinels).
+  // terminal poll/cancel hook reads it and refunds `ceiling - actual` on the
+  // per-user daily + per-app + (when present) dev-session keys. Only for a REAL
+  // orchestrator id (never the failed/whatif sentinels). The dev-session id is
+  // included ONLY when a dev tunnel was reserved above (spread) — so a non-dev
+  // submit persists the SAME record shape it did before (settle no-ops that leg).
   if (
     snapshot.workflowId &&
     snapshot.workflowId !== 'failed' &&
@@ -5367,6 +5435,7 @@ async function submitCustomComfyWorkflow(opts: {
       workflowId: snapshot.workflowId,
       buzzCapKey,
       appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
       ceiling,
     });
     // G6 — persistent output queue (best-effort, non-dev). Same posture as

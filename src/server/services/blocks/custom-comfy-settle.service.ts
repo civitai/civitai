@@ -10,8 +10,9 @@ import type { AppSpendDailyKey } from '~/server/services/blocks/app-spend-cap.se
 // submit — keeping those caps honest against a spend the orchestrator only
 // realizes at runtime. When the job reaches a TERMINAL status (observed by
 // `pollWorkflow` / `cancelWorkflow`) we refund the over-reservation
-// (`ceiling - actual`) back to BOTH reservation counters, so the caps converge on
-// the REAL accrued cost.
+// (`ceiling - actual`) back to EACH reservation counter (per-user daily, per-app
+// aggregate, and — when the submit came from an active on-site dev tunnel — the
+// per-dev-session cap), so every cap converges on the REAL accrued cost.
 //
 // This module owns the small durable link between the two: a per-workflow Redis
 // record of the exact reservation keys + the ceiling, written at submit and
@@ -49,13 +50,23 @@ type SettleRecord = {
   buzzCapKey: string;
   /** The per-app aggregate daily key; null for dev tokens (no per-app reserve). */
   appSpendKey: string | null;
+  /**
+   * The dev-tunnel SESSION id the ceiling was ALSO reserved against, when the
+   * submit came from an active on-site dev tunnel (F4). Absent for every non-dev
+   * submit — so the dev-session refund leg no-ops (a plain reserve-without-a-third
+   * key, byte-identical to the pre-F4 record). Stored as the opaque `bki_<ulid>`
+   * session id (not a raw Redis key) so the settle reuses `refundDevSessionBuzz`,
+   * which derives the session spend key itself.
+   */
+  devSessionId?: string | null;
   /** The declared per-job ceiling that was reserved (recipe.maxBuzz). */
   ceiling: number;
 };
 
 /**
  * Persist the settle record at submit, AFTER the ceiling has been reserved
- * against both caps. Awaited (not fire-and-forget) so the record is durably
+ * against the caps (per-user daily + per-app + optional dev-session). Awaited
+ * (not fire-and-forget) so the record is durably
  * written before the router hands the workflowId back to the block — otherwise a
  * very fast terminal poll could race the write and miss the settle. Best-effort:
  * a Redis error is swallowed (degrades to reserve-without-settle, the R5
@@ -65,11 +76,15 @@ export async function persistCustomComfySettle(input: {
   workflowId: string;
   buzzCapKey: string;
   appSpendKey: string | null;
+  devSessionId?: string | null;
   ceiling: number;
 }): Promise<void> {
-  const { workflowId, buzzCapKey, appSpendKey, ceiling } = input;
+  const { workflowId, buzzCapKey, appSpendKey, devSessionId = null, ceiling } = input;
   if (!workflowId) return;
   const record: SettleRecord = { buzzCapKey, appSpendKey, ceiling };
+  // Include the dev-session id ONLY when present, so a non-dev submit persists the
+  // exact record shape it did before F4 (the dev-session refund leg then no-ops).
+  if (devSessionId) record.devSessionId = devSessionId;
   try {
     await sysRedis.set(settleKey(workflowId), JSON.stringify(record), {
       EX: SETTLE_TTL_SECONDS,
@@ -138,5 +153,15 @@ export async function settleCustomComfySpend(input: {
   if (record.appSpendKey) {
     const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
     await refundAppSpend(record.appSpendKey as AppSpendDailyKey, refund);
+  }
+
+  // Dev-tunnel SESSION cap (F4): present ONLY when the submit came from an active
+  // on-site dev tunnel, which reserved the same CEILING against the per-session
+  // cumulative cap. Refund the SAME over-reservation there so the session cap
+  // converges on the real accrued cost like the other two. `refundDevSessionBuzz`
+  // is itself best-effort (a lost refund over-counts — stricter) and never throws.
+  if (record.devSessionId) {
+    const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+    await refundDevSessionBuzz(record.devSessionId, refund);
   }
 }
