@@ -237,3 +237,109 @@ export function getScopeLabel(tokenScope: number | null | undefined): string {
   if (tokenScope === TokenScopePresets.AIServices) return 'AI Services';
   return 'Custom';
 }
+
+// ---------------------------------------------------------------------------
+// OAuth-connect scope review (W13) — shared, pure helpers + validator.
+//
+// Dark groundwork: nothing references these at runtime yet. They back the
+// per-scope justification/review that the OAuth-connect app-listing authoring
+// (PR2) and mod-review (PR3) flows will use. Kept here — next to the scope
+// vocab — so the bitmask, the justification-key mapping, and the length bound
+// have a SINGLE source of truth. Still env/DOM-free and client-safe.
+// ---------------------------------------------------------------------------
+
+/**
+ * Max length of a single per-scope justification string. SINGLE SOURCE — the
+ * App Blocks manifest validator (`block-manifest-validator.service.ts`) and the
+ * OAuth-connect validator below both import this so the bound can never drift.
+ * Also mirrors the published App Block manifest schema's
+ * `scopeJustifications.additionalProperties.maxLength`.
+ */
+export const SCOPE_JUSTIFICATION_MAX_LENGTH = 500;
+
+/**
+ * Every SINGLE-BIT scope in the enum, as `{ bit, key }`, sorted by bit ascending.
+ * Excludes the aggregate/sentinel members `None` (0) and `Full` (an OR of many
+ * bits) via the power-of-two test — so it can never accidentally list a
+ * composite value, and never drifts behind a newly-added bit.
+ */
+const TOKEN_SCOPE_BITS: { bit: number; key: string }[] = Object.entries(TokenScope)
+  .filter(([, value]) => value !== 0 && (value & (value - 1)) === 0) // power of two
+  .map(([key, value]) => ({ bit: value as number, key }))
+  .sort((a, b) => a.bit - b.bit);
+
+/** bit → enum-key reverse lookup for the single-bit scopes. */
+const BIT_TO_SCOPE_KEY: Map<number, string> = new Map(
+  TOKEN_SCOPE_BITS.map(({ bit, key }) => [bit, key])
+);
+
+/** The enum-key (e.g. "ModelsRead") for a single scope bit, or undefined if the
+ * value is not a defined single-bit scope. */
+export function tokenScopeKeyByBit(bit: number): string | undefined {
+  return BIT_TO_SCOPE_KEY.get(bit);
+}
+
+/**
+ * Expand a tokenScope bitmask into the set of scopes it carries, each as
+ * `{ bit, key, label }` (label from `tokenScopeLabels`, '' if none), sorted by
+ * bit ascending. Mirrors `Flags.hasFlag(mask, bit)` with an inlined bit test so
+ * this stays a dependency-free leaf module. Empty mask (0) ⇒ [].
+ */
+export function tokenScopeMaskToList(
+  mask: number
+): { bit: number; key: string; label: string }[] {
+  return TOKEN_SCOPE_BITS.filter(({ bit }) => (mask & bit) === bit).map(({ bit, key }) => ({
+    bit,
+    key,
+    label: tokenScopeLabels[bit] ?? '',
+  }));
+}
+
+/**
+ * True iff `requested` is a subset of the `allowedScopes` ceiling — i.e. carries
+ * no bit outside it. `(requested & ~allowedScopes) === 0`.
+ */
+export function connectScopesSubsetOfCeiling(requested: number, allowedScopes: number): boolean {
+  return (requested & ~allowedScopes) === 0;
+}
+
+/**
+ * Validate an OAuth-connect listing's per-scope justifications against its
+ * requested-scope mask. Returns an array of human-readable error strings (empty
+ * ⇒ valid). Mirrors the App Blocks manifest justification loop
+ * (`block-manifest-validator.service.ts`): every key must be a valid single-bit
+ * `TokenScope` enum-key, every key's bit must be set in `requestedScopes` (keys
+ * ⊆ requested), and every value must be a non-empty string
+ * ≤ SCOPE_JUSTIFICATION_MAX_LENGTH. An empty map (`{}`) is valid — this only
+ * CAPTURES the dev's stated rationale, it does not verify it. Justifications for
+ * scopes NOT requested are rejected so no dangling rationale reaches the mod.
+ */
+export function validateConnectScopeJustifications(
+  requestedScopes: number,
+  justifications: Record<string, string>
+): string[] {
+  const errors: string[] = [];
+  for (const [key, value] of Object.entries(justifications)) {
+    const bit = (TokenScope as Record<string, number>)[key];
+    // Unknown key, or an aggregate/sentinel member (None/Full) that is not a
+    // single justifiable scope.
+    if (bit === undefined || bit === 0 || (bit & (bit - 1)) !== 0) {
+      errors.push(`scopeJustifications references "${key}" which is not a valid scope`);
+      continue;
+    }
+    if ((requestedScopes & bit) !== bit) {
+      errors.push(
+        `scopeJustifications["${key}"] is not among the requested scopes`
+      );
+      continue;
+    }
+    if (typeof value !== 'string' || value.length === 0) {
+      errors.push(`scopeJustifications["${key}"] must be a non-empty string`);
+    } else if (value.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+      errors.push(
+        `scopeJustifications["${key}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`
+      );
+    }
+  }
+  return errors;
+}
