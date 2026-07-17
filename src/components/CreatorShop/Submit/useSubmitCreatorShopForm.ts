@@ -103,12 +103,15 @@ export function useSubmitCreatorShopForm({
       setAnimated(supportsAnimated && (await isAnimatedImage(file)));
       setImageId(uploaded.id);
     } catch (error) {
-      // Without this the failure only hit the console and the creator was left
-      // staring at a preview that never finished uploading.
-      showErrorNotification({
-        title: 'Upload failed',
-        error: error instanceof Error ? error : new Error('Could not upload your artwork'),
-      });
+      // Clear the stuck tracked file so `uploading` flips back to false —
+      // otherwise the preview spins forever and Replace stays disabled. Keeps
+      // localUrl so the creator still sees their pick and can re-drop.
+      resetFiles();
+      const err = error instanceof Error ? error : new Error('Could not upload your artwork');
+      // getDataFromFile already toasts its own preprocess failures (then returns
+      // null → this generic throw), so don't double-notify for those.
+      if (err.message !== 'Failed to process file before upload')
+        showErrorNotification({ title: 'Upload failed', error: err });
     }
   };
 
