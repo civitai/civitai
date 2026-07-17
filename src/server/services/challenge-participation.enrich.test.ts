@@ -22,7 +22,7 @@ const baseCard = {
   modelVersionIds: [],
   createdBy: { id: 1, username: 'CivBot', image: null, profilePicture: null, cosmetics: null, deletedAt: null },
 } as any;
-const img = { id: 99, url: 'u', nsfwLevel: 1, hash: 'h', width: 512, height: 512, type: 'image' };
+const img = { id: 99, url: 'u', nsfwLevel: 1, hash: 'h', width: 512, height: 512, type: 'image' as const };
 
 describe('enrichParticipatedCards', () => {
   it('attaches entry image, place, derived result, entered-at', () => {
