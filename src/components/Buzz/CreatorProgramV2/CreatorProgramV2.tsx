@@ -157,7 +157,7 @@ export const CreatorProgramV2 = () => {
       )}
       {hasOnboardedInProgram &&
         (membershipLapsed ? (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 md:flex-row">
             <MembershipLapsedCard />
             <WithdrawCashCard />
           </div>
@@ -196,7 +196,7 @@ const MembershipLapsedCard = () => {
   }, []);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-2 bg-gray-0 dark:border-dark-4 dark:bg-dark-5">
+    <div className="flex-1 overflow-hidden rounded-lg border border-gray-2 bg-gray-0 dark:border-dark-4 dark:bg-dark-5">
       <div className="grid grid-cols-1 sm:grid-cols-2">
         {/* Left — status */}
         <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
