@@ -157,11 +157,16 @@ const {
   mockRefundAppSpend,
   mockUpsertBlockWorkflow,
   mockListMyBlockWorkflows,
+  mockUpdateBlockWorkflowStatus,
 } = vi.hoisted(() => ({
   mockReserveAppSpend: vi.fn(),
   mockRefundAppSpend: vi.fn(async () => undefined),
   mockUpsertBlockWorkflow: vi.fn(async () => undefined),
   mockListMyBlockWorkflows: vi.fn(),
+  // G6 — the read-model terminal flip pollWorkflow fires best-effort when it
+  // observes a terminal orchestrator status. Mocked at the module boundary so
+  // we assert exact (server-derived) args + that a throw here never breaks poll.
+  mockUpdateBlockWorkflowStatus: vi.fn(async () => 1),
 }));
 vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
   reserveAppSpend: (...a: unknown[]) => mockReserveAppSpend(...(a as [])),
@@ -170,6 +175,7 @@ vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
 vi.mock('~/server/services/blocks/block-workflows.service', () => ({
   upsertBlockWorkflowOnSubmit: (...a: unknown[]) => mockUpsertBlockWorkflow(...(a as [])),
   listMyBlockWorkflows: (...a: unknown[]) => mockListMyBlockWorkflows(...(a as [])),
+  updateBlockWorkflowStatus: (...a: unknown[]) => mockUpdateBlockWorkflowStatus(...(a as [])),
 }));
 // submitWorkflow fires recordScopeInvocation (detached) which dynamic-imports the
 // REAL, heavy user-app-surface.service. That first-time real import serializes the
@@ -453,6 +459,7 @@ beforeEach(() => {
     mockRefundAppSpend,
     mockUpsertBlockWorkflow,
     mockListMyBlockWorkflows,
+    mockUpdateBlockWorkflowStatus,
   ]) {
     fn.mockReset();
   }
@@ -468,6 +475,9 @@ beforeEach(() => {
   mockRefundAppSpend.mockResolvedValue(undefined);
   mockUpsertBlockWorkflow.mockResolvedValue(undefined);
   mockListMyBlockWorkflows.mockResolvedValue({ items: [], nextCursor: null });
+  // G6 read-model flip: default to a resolved 1-row UPDATE. Tests exercising the
+  // non-terminal (never-called) + best-effort (rejects) paths override this.
+  mockUpdateBlockWorkflowStatus.mockResolvedValue(1);
   // F4 defaults: no active dev tunnel (getActiveDevTunnel → null) so the dev
   // spend backstop is inert for every non-dev test. The F4 tests override these.
   mockGetActiveDevTunnel.mockResolvedValue(null);
@@ -621,6 +631,91 @@ describe('blocks.pollWorkflow', () => {
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  // ---- G6: read-model terminal flip -------------------------------------
+  //
+  // The orchestrator completion callback is unregistered, so `block_workflows`
+  // rows never advance past `pending`. pollWorkflow (which page apps already
+  // poll to terminal) mirrors an observed TERMINAL status into the read-model so
+  // `listMyWorkflows` rebuilds a correct queue on reload. The flip is
+  // best-effort and must never fail the poll.
+  describe('read-model terminal flip (G6)', () => {
+    function pollTerminal(status: 'succeeded' | 'failed' | 'expired' | 'canceled') {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetWorkflow.mockResolvedValue({
+        id: 'wf_1',
+        status, // orchestrator terminal status → same block-contract status
+        cost: { total: 10 },
+        steps: [],
+      });
+      return blocksRouter.createCaller(fakeCtx() as never);
+    }
+
+    it('flips the read-model once on a SUCCEEDED poll and still returns the snapshot', async () => {
+      const caller = pollTerminal('succeeded');
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      expect(result.snapshot.status).toBe('succeeded');
+      expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledTimes(1);
+      expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledWith({
+        workflowId: 'wf_1',
+        status: 'succeeded',
+      });
+    });
+
+    it('flips the read-model on a FAILED poll', async () => {
+      const caller = pollTerminal('failed');
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      expect(result.snapshot.status).toBe('failed');
+      expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledWith({
+        workflowId: 'wf_1',
+        status: 'failed',
+      });
+    });
+
+    it('does NOT flip on a non-terminal (processing) poll — no DB write on intermediate polls', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetWorkflow.mockResolvedValue({
+        id: 'wf_1',
+        status: 'processing',
+        cost: { total: 10 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      expect(result.snapshot.status).toBe('processing');
+      expect(mockUpdateBlockWorkflowStatus).not.toHaveBeenCalled();
+    });
+
+    it('does NOT flip on a still-queued (unassigned → pending) poll', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      mockGetWorkflow.mockResolvedValue({
+        id: 'wf_1',
+        status: 'unassigned', // maps to the non-terminal block-contract `pending`
+        cost: { total: 10 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      expect(result.snapshot.status).toBe('pending');
+      expect(mockUpdateBlockWorkflowStatus).not.toHaveBeenCalled();
+    });
+
+    it('a read-model write failure NEVER breaks the poll (still returns the snapshot)', async () => {
+      const caller = pollTerminal('succeeded');
+      mockUpdateBlockWorkflowStatus.mockRejectedValue(new Error('db down'));
+      const result = await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      // The poll's contract is to return the snapshot — the flip is best-effort.
+      expect(result.snapshot.status).toBe('succeeded');
+    });
+
+    it('is idempotent across repeated terminal polls (safe to flip each time)', async () => {
+      const caller = pollTerminal('succeeded');
+      await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      await caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+      // Fired on each terminal poll — harmless, the UPDATE is an idempotent set.
+      expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledTimes(2);
+    });
   });
 });
 

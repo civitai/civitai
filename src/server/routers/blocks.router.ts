@@ -112,6 +112,10 @@ import {
 // path (mirrors recordSpendAttribution / the dev-tunnel backstop), so this adds
 // no import-time cost and nothing to mock beyond the dynamic module.
 import type { AppSpendDailyKey } from '~/server/services/blocks/app-spend-cap.service';
+// G6 — persistent block-workflow read-model. Type-only import (erased at runtime):
+// `updateBlockWorkflowStatus` is dynamic-imported in pollWorkflow (mirrors
+// listMyBlockWorkflows), so nothing beyond the dynamic module needs mocking.
+import type { BlockWorkflowStatus } from '~/server/services/blocks/block-workflows.service';
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
@@ -148,6 +152,17 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
+
+// G6 — the terminal orchestrator states (as mapped onto the block-contract
+// status by snapshotFromWorkflow). A block-workflow read-model row only ever
+// advances to one of these; `pending`/`processing` are still in-flight. Typed
+// against BlockWorkflowStatus so it can't drift from BLOCK_WORKFLOW_STATUSES.
+const TERMINAL_BLOCK_WORKFLOW_STATUSES = new Set<BlockWorkflowStatus>([
+  'succeeded',
+  'failed',
+  'expired',
+  'canceled',
+]);
 
 /**
  * H-2: every blocks router procedure gates on the Flipt flag. When the
@@ -2551,7 +2566,31 @@ export const blocksRouter = router({
       await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      return { snapshot: snapshotFromWorkflow(workflow) };
+      const snapshot = snapshotFromWorkflow(workflow);
+      // G6 — mirror an observed TERMINAL status into the durable read-model.
+      // The orchestrator completion callback (`workflow-completed.ts`) is not
+      // wired to fire, so `block_workflows` rows otherwise stay `pending`
+      // forever. Page apps already poll this proc to terminal, so the queue that
+      // `listMyWorkflows` rebuilds on reload converges as a side effect of the
+      // poll. Fires ~once (only on a terminal status, not on 2s intermediate
+      // polls), page-shape-agnostic (keyed on workflowId), and BEST-EFFORT: a
+      // read-model write failure must NEVER fail the poll (its contract is to
+      // return the snapshot). `updateBlockWorkflowStatus` is an indexed UPDATE
+      // that no-ops (0 rows) when the row was never recorded (dev:live tokens).
+      if (TERMINAL_BLOCK_WORKFLOW_STATUSES.has(snapshot.status)) {
+        try {
+          const { updateBlockWorkflowStatus } = await import(
+            '~/server/services/blocks/block-workflows.service'
+          );
+          await updateBlockWorkflowStatus({
+            workflowId: input.workflowId,
+            status: snapshot.status,
+          });
+        } catch {
+          /* best-effort: a read-model write failure never breaks the poll */
+        }
+      }
+      return { snapshot };
     }),
 
   /**
