@@ -41,10 +41,18 @@ import { booleanString } from '~/utils/zod-helpers';
  *     Both are required here, so the loop is explicit and ordered. The keyset
  *     shape (id-range windows, cancellableQuery) is retained from the original.
  *
+ * Cost per batch: each row the UPDATE actually writes fires the live BitDex Image
+ * trigger, which runs ~6 Post PK subselects to rebuild the row's fan-out payload.
+ * So a batch's true cost scales with rows CHANGED (not rows scanned) times that
+ * per-row trigger work — another reason batchSize is capped modestly (200k) and
+ * the skip-correct guard matters: unchanged rows pay neither the write nor the
+ * trigger.
+ *
  * Pacing / safety for a 105M-row table:
  *   - `sleepMs` between batches.
- *   - After each batch, wait for the read replicas to catch up (checkNotUpToDate)
- *     before issuing the next write, bounding replica lag. Capped by maxLagWaitMs.
+ *   - After each batch, wait for the read replicas to replay THIS batch's own
+ *     write (checkNotUpToDate on the post-UPDATE LSN) before the next write,
+ *     bounding replica lag. Capped by maxLagWaitMs.
  *   - Resumable: the last completed cursor is persisted in KeyValue under
  *     `PROGRESS_KEY`; a re-run with resume=true (default) continues from there.
  *
@@ -63,8 +71,10 @@ const PROGRESS_KEY = 'backfill:image-sortat:v2';
 
 const schema = z.object({
   dryRun: booleanString().default(true),
-  // id-range width per batch (keyset window, not a row count).
-  batchSize: z.coerce.number().min(1).max(5_000_000).default(50_000),
+  // id-range width per batch (keyset window, not a row count). Capped at 200k:
+  // the write is a single transaction and each CHANGED row also pays ~6 Post PK
+  // subselects in the live BitDex Image trigger, so a wide window is a footgun.
+  batchSize: z.coerce.number().min(1).max(200_000).default(50_000),
   // Milliseconds to sleep between batches (throttle write pressure).
   sleepMs: z.coerce.number().min(0).max(60_000).default(250),
   // Explicit lower bound. Omitted + resume=true → continue from saved cursor.
@@ -123,11 +133,14 @@ async function run(req: NextApiRequest) {
       totalScanned += hi - lo;
       totalUpdated += Number(rows[0]?.would ?? 0);
     } else {
-      const lsnBefore = await getCurrentLSN();
       const { result } = await pgDbWrite.cancellableQuery<{ id: number }>(updateSql(lo, hi));
       const rows = await result();
       totalScanned += hi - lo;
       totalUpdated += rows.length; // RETURNING i.id → one row per write
+
+      // Capture the LSN AFTER this batch commits so the gate below waits for THIS
+      // batch's own write to replay — not the previous one.
+      const lsnAfter = await getCurrentLSN();
 
       // Persist progress after each committed batch so a crash/kill resumes here.
       await dbKV.set<Progress>(PROGRESS_KEY, {
@@ -139,10 +152,10 @@ async function run(req: NextApiRequest) {
 
       // Bound replica lag: don't start the next write until the replicas have
       // replayed this one (or we hit the cap).
-      if (params.lagCheck && lsnBefore) {
+      if (params.lagCheck && lsnAfter) {
         const waitStart = Date.now();
         while (
-          (await checkNotUpToDate(lsnBefore)) &&
+          (await checkNotUpToDate(lsnAfter)) &&
           Date.now() - waitStart < params.maxLagWaitMs
         ) {
           await sleep(500);
