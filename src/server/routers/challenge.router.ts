@@ -7,6 +7,7 @@ import {
   getCompletedChallengesWithWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
+  getMyParticipatedSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
   getUserUnjudgedEntriesSchema,
@@ -47,6 +48,7 @@ import {
   getDailyChallenges,
   getInfiniteChallenges,
   getModeratorChallenges,
+  getMyParticipated,
   getUpcomingThemes,
   getUserChallengeForEdit,
   getUserEntryCount,
@@ -92,6 +94,15 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
     .query(() => getDailyChallenges()),
+
+  // Current user's recently participated-in challenges (entered or won), recent-first.
+  getMyParticipated: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getMyParticipatedSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input, ctx }) =>
+      getMyParticipated({ ...input, userId: ctx.user.id, isGreen: ctx.features.isGreen })
+    ),
 
   // Get single challenge by ID (public — sensitive fields stripped)
   getById: publicProcedure
