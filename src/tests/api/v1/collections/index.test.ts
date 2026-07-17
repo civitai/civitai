@@ -185,6 +185,60 @@ describe('GET /api/v1/collections — author-cohort gate (403 preview)', () => {
   });
 });
 
+describe('CACHE: gated responses must be no-store (never edge-cached/cross-served)', () => {
+  it('403 gate denial sets Cache-Control: no-store (list)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: {} });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+  });
+
+  it('200 success sets Cache-Control: no-store (list)', async () => {
+    mockGetAllCollections.mockResolvedValue([]);
+    const { req, res } = createMocks({ query: {}, user: { id: 7, isModerator: true } });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+  });
+
+  it('403 gate denial sets Cache-Control: no-store (detail)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+  });
+
+  it('200 success sets Cache-Control: no-store (detail)', async () => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true, write: false, manage: false });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'pub',
+      description: 'd',
+      type: 'Image',
+      nsfwLevel: 1,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      user: { id: 2, username: 'bob' },
+      image: null,
+      tags: [],
+    });
+    const { req, res } = createMocks({ query: { id: '55' }, user: { id: 7, isModerator: true } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+  });
+});
+
 describe('GET /api/v1/collections (list)', () => {
   it('public mode: queries getAllCollections with privacy pinned to [Public] and returns the envelope', async () => {
     mockGetAllCollections.mockResolvedValue([

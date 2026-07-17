@@ -40,6 +40,15 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
+  // This response VARIES by user: the appBlocksAuthor cohort gate AND per-user
+  // visibility (owner/contributor/mod can read a private collection). It must NEVER be
+  // shared/edge-cached — unlike the fully-public models/images which are safely
+  // `public`-cached. Override the `public, s-maxage=…` header MixedAuthEndpoint sets
+  // for anonymous callers with `no-store` up front, so EVERY response path (403 gate,
+  // 429, 400, 200, 404) is uncacheable and Cloudflare can't cross-serve one user's
+  // response to another.
+  res.setHeader('Cache-Control', 'no-store');
+
   // App Blocks author-cohort gate — preview, cohort-only (mods + the
   // `app-blocks-author` Flipt cohort). Anonymous / non-cohort → 403 with a clear
   // preview message (invited-cohort DX: explain the restriction rather than an

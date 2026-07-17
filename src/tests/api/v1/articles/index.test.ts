@@ -173,6 +173,48 @@ describe('GET /api/v1/articles — author-cohort gate (403 preview)', () => {
   });
 });
 
+describe('CACHE: gated responses must be no-store (never edge-cached/cross-served)', () => {
+  it('403 gate denial sets Cache-Control: no-store (list)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: {} });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+  });
+
+  it('200 success sets Cache-Control: no-store (list)', async () => {
+    mockGetArticles.mockResolvedValue({ items: [{ id: 1 }], nextCursor: undefined });
+    const { req, res } = createMocks({ query: {}, user: { id: 7, isModerator: true } });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+  });
+
+  it('403 gate denial sets Cache-Control: no-store (detail)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: { id: '3' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+  });
+
+  it('200 success sets Cache-Control: no-store (detail)', async () => {
+    mockGetArticleById.mockResolvedValue({ id: 3, title: 't', moderatorNsfwLevel: 8, nsfwLevel: 1 });
+    const { req, res } = createMocks({ query: { id: '3' }, user: { id: 7, isModerator: true } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getHeader('Cache-Control')).toBe('no-store');
+  });
+});
+
 describe('GET /api/v1/articles (list)', () => {
   it('returns the { items, metadata } envelope and serializes the composite cursor', async () => {
     mockGetArticles.mockResolvedValue({
