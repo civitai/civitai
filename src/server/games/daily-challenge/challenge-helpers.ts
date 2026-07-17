@@ -33,6 +33,12 @@ import {
 // DB/Redis into client bundles)
 export { computeDynamicPool, distributePrizes } from './challenge-pool';
 
+// Labels requested for the challenge text scan. Only `nsfw` is currently reliable in XGuard, so we
+// scan for it alone; `suggestive`/`explicit` are omitted until they're trustworthy. Trade-off: nsfw's
+// 0.75 threshold misses borderline sexual text (a theme scoring ~0.68 slips through) — only clearly
+// NSFW text escalates for now. Any triggered label counts as NSFW downstream.
+export const CHALLENGE_MODERATION_LABELS = ['nsfw'] as const;
+
 // Author-supplied text sent to the text-moderation scan. Description is RTE HTML, so tags are
 // stripped.
 export function buildChallengeModerationText(challenge: {

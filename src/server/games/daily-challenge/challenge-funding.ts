@@ -72,9 +72,12 @@ export async function chargeInitialPrize({
     type: TransactionType.Purchase,
     amount,
     description: 'Challenge initial prize pool',
-    // Trailing non-numeric token keeps the completion refund's startsWith prefix match unambiguous
-    // vs other challenge ids (challenge 5 would otherwise prefix-match 50, 51, ...).
-    externalTransactionId: `challenge-initial-prize-${challengeId}-creator`,
+    // Trailing `-creator` keeps prefix matches unambiguous vs other challenge ids (challenge 5 would
+    // otherwise prefix-match 50, 51, ...). The currency suffix scopes the id per wallet: a refunded
+    // green charge leaves its id occupied in the ledger, so a later yellow re-charge on a shared id
+    // would be silently dropped (createBuzzTransaction dedups on externalTransactionId) — leaving an
+    // unfunded pool. `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
+    externalTransactionId: `challenge-initial-prize-${challengeId}-creator-${fromAccountType}`,
     details: { challengeId },
   });
   log(`Escrowed ${amount} buzz initial prize for challenge ${challengeId}`);

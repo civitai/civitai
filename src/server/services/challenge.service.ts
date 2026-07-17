@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  CHALLENGE_MODERATION_LABELS,
   claimChallengeForCompletion,
   buildChallengeModerationText,
   closeChallengeCollection,
@@ -1751,7 +1752,7 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
         ...challenge,
         themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
       }),
-      labels: ['nsfw'],
+      labels: [...CHALLENGE_MODERATION_LABELS],
       priority: 'low',
     });
   } catch (e) {
