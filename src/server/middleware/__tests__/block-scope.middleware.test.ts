@@ -87,15 +87,22 @@ describe('enforceContextBinding', () => {
     expect(() => enforceContextBinding(authed, fakeReq({}))).not.toThrow();
   });
 
-  it('block:settings:* binds to blockInstanceId in query', () => {
-    const claims = fakeClaims({ scopes: ['block:settings:read'], blockInstanceId: 'bki_A' });
-    expect(() =>
-      enforceContextBinding(claims, fakeReq({ blockInstanceId: 'bki_A' }))
-    ).not.toThrow();
-    expect(() =>
-      enforceContextBinding(claims, fakeReq({ blockInstanceId: 'bki_B' }))
-    ).toThrow();
-    expect(() => enforceContextBinding(claims, fakeReq({}))).toThrow();
+  it('rejects the removed decorative scopes (no longer known → deny-by-default)', () => {
+    // media:read:owned / block:settings:read / block:settings:write were removed
+    // from the known vocabulary (decorative — no runtime capability checked them).
+    // A token still carrying one is now an UNKNOWN scope → denied at the runtime
+    // gate before any binding case runs, EVEN for an authenticated subject with a
+    // matching blockInstanceId (which used to satisfy the old block:settings case).
+    for (const removed of ['media:read:owned', 'block:settings:read', 'block:settings:write']) {
+      const claims = fakeClaims({
+        sub: 'user:42',
+        scopes: [removed],
+        blockInstanceId: 'bki_A',
+      });
+      expect(() =>
+        enforceContextBinding(claims, fakeReq({ blockInstanceId: 'bki_A' }))
+      ).toThrow();
+    }
   });
 
   it('rejects unknown scopes outright (deny-by-default at runtime)', () => {

@@ -55,13 +55,11 @@ export const FORCED_SFW_CEILING = domainBrowsingCeiling(null);
 /**
  * The BEARER dev-token allowlist (scope doc §4.1): read/catalog scopes + the page
  * spend scope + per-app storage. Used by `/api/v1/blocks/dev-token` only.
- * DELIBERATELY EXCLUDES `social:tip:self` (real money OUT) and
- * `block:settings:read` / `block:settings:write` (installer-only). A requested /
+ * DELIBERATELY EXCLUDES `social:tip:self` (real money OUT). A requested /
  * approved scope outside this set is STRIPPED (defense-in-depth).
  */
 export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'models:read:self',
-  'media:read:owned',
   'user:read:self',
   'ai:write:budgeted',
   'apps:storage:read',
@@ -110,7 +108,6 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
  */
 export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'models:read:self',
-  'media:read:owned',
   'user:read:self',
   'ai:write:budgeted',
   // collections:* — INCLUDED here too (see DEV_TOKEN_SCOPE_ALLOWLIST rationale):
@@ -136,7 +133,6 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  *
  * KEEP (render-only survivors, all self-bound reads):
  *   - `models:read:self`   the caller's own models (self-bound)
- *   - `media:read:owned`   the caller's own media
  *   - `user:read:self`     the caller's own identity (also force-granted post-clamp)
  *   - `collections:read:self` own-PUBLIC + any PUBLIC collection (no per-app namespace)
  *
@@ -159,7 +155,6 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  */
 export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'models:read:self',
-  'media:read:owned',
   'user:read:self',
   'collections:read:self',
 ]);
@@ -169,8 +164,8 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  * Start from `scopeSource` (the app's approved snapshot, an owned pending request's
  * un-reviewed `manifest.scopes`, or the caller's self-declared body scopes) and:
  *   a) keep only KNOWN block scopes,
- *   b) keep only scopes within `allowlist` (excludes social:tip:self +
- *      block:settings:* always; for the tunnel allowlist also apps:storage:*),
+ *   b) keep only scopes within `allowlist` (excludes social:tip:self always;
+ *      for the tunnel allowlist also apps:storage:*),
  *   c) keep only scopes within the app's OAuth ceiling (approved path only —
  *      `oauthAllowed !== null`); OMITTED for a pending / no-row / ephemeral app
  *      (no OauthClient — passing 0 would WRONGLY strip every non-skip scope),
