@@ -117,8 +117,8 @@ const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 // Anything else — extra args, flags, shell metacharacters, multiple commands —
 // is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
 // so the rejection reason is explicit when a metachar is what tripped it.
-const BUILD_COMMAND_MAX_LENGTH = 128;
-const BUILD_COMMAND_RE =
+export const BUILD_COMMAND_MAX_LENGTH = 128;
+export const BUILD_COMMAND_RE =
   /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
 // Shell metacharacters that must never appear in a buildCommand. Checked first
 // so the error is specific ("contains shell metacharacters") rather than the

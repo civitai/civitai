@@ -93,16 +93,22 @@
     },
     "buildCommand": {
       "type": "string",
-      "description": "Config-as-code: command the platform runs to build the static bundle (e.g. \"npm run build\"). Omit for no-build (static) apps. When set, outputDir must also be set.",
+      "description": "Config-as-code: command the platform runs to build the static bundle. Must be one of an allowlisted set of build invocations (defense-in-depth against shell injection): \"npm run <script>\", \"pnpm run <script>\", \"yarn run <script>\" (where <script> is a package.json script name), \"vite build\", or \"npx vite build\". Omit for no-build (static) apps. When set, outputDir must also be set. The pattern and max length are kept in lockstep with BUILD_COMMAND_RE / BUILD_COMMAND_MAX_LENGTH in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality).",
       "minLength": 1,
-      "maxLength": 256
+      "maxLength": 128,
+      "pattern": "^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$"
     },
     "outputDir": {
       "type": "string",
-      "description": "Config-as-code: directory (relative to the project root) the buildCommand emits static files into (e.g. \"dist\"). Required when buildCommand is set.",
+      "description": "Config-as-code: directory (relative to the project root) the buildCommand emits static files into (e.g. \"dist\"). Must be a safe relative path \u2014 no leading \"/\", no \"..\" path traversal, no backslash separators, and no Windows drive prefix (e.g. C:). Required when buildCommand is set. Kept in lockstep with the outputDir checks in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality). (The server additionally rejects a NUL byte; that impossible-in-a-manifest case is intentionally omitted here for RE2 regex portability.)",
       "minLength": 1,
       "maxLength": 256,
-      "pattern": "^[^/].*"
+      "allOf": [
+        { "$comment": "no leading '/' (absolute path)", "not": { "pattern": "^/" } },
+        { "$comment": "no backslash separators (Windows / '\\..' traversal)", "not": { "pattern": "\\\\" } },
+        { "$comment": "no '..' path-traversal segment", "not": { "pattern": "(^|/)\\.\\.(/|$)" } },
+        { "$comment": "no Windows drive prefix (e.g. C:)", "not": { "pattern": "^[A-Za-z]:" } }
+      ]
     },
     "publicSettingsKeys": {
       "type": "array",
