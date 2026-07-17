@@ -86,11 +86,14 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  // App Blocks author-cohort gate — DARK preview, cohort-only (mods + the
-  // `app-blocks-author` Flipt cohort). Anonymous / non-cohort → bare 404 (no
-  // existence oracle), evaluated before the rate limit + service.
+  // App Blocks author-cohort gate — preview, cohort-only (mods + the
+  // `app-blocks-author` Flipt cohort). Anonymous / non-cohort → 403 with a clear
+  // preview message (invited-cohort DX: explain the restriction rather than an
+  // opaque 404), evaluated before the rate limit + service.
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    return res.status(404).json({ error: 'Not found' });
+    return res.status(403).json({
+      error: 'This API is in preview — access is restricted to Civitai moderators and app developers.',
+    });
   }
 
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'collections', userId: user?.id });

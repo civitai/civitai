@@ -130,52 +130,56 @@ beforeEach(() => {
   mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
 });
 
-describe('GET /api/v1/collections — author-cohort gate (dark 404)', () => {
-  it('SECURITY: a non-cohort authed user gets a bare 404 and NEITHER the rate limiter NOR the service runs (list)', async () => {
+const PREVIEW_MESSAGE =
+  'This API is in preview — access is restricted to Civitai moderators and app developers.';
+
+describe('GET /api/v1/collections — author-cohort gate (403 preview)', () => {
+  it('SECURITY: a non-cohort authed user gets a 403 + preview message and NEITHER the rate limiter NOR the service runs (list)', async () => {
     mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
     const { req, res } = createMocks({ query: {}, user: { id: 7, isModerator: false } });
 
     await listHandler(req, res);
 
-    expect(res._getStatusCode()).toBe(404);
-    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
     expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: { id: 7, isModerator: false } });
     expect(mockRateLimit).not.toHaveBeenCalled();
     expect(mockGetAllCollections).not.toHaveBeenCalled();
   });
 
-  it('SECURITY: an anonymous caller gets a bare 404 (list)', async () => {
+  it('SECURITY: an anonymous caller gets a 403 + preview message (list)', async () => {
     mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
     const { req, res } = createMocks({ query: {} });
 
     await listHandler(req, res);
 
-    expect(res._getStatusCode()).toBe(404);
-    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
     expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: undefined });
     expect(mockRateLimit).not.toHaveBeenCalled();
     expect(mockGetAllCollections).not.toHaveBeenCalled();
   });
 
-  it('SECURITY: a non-cohort authed user gets a bare 404 (detail)', async () => {
+  it('SECURITY: a non-cohort authed user gets a 403 + preview message (detail)', async () => {
     mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
     const { req, res } = createMocks({ query: { id: '55' }, user: { id: 7, isModerator: false } });
 
     await detailHandler(req, res);
 
-    expect(res._getStatusCode()).toBe(404);
-    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
     expect(mockRateLimit).not.toHaveBeenCalled();
     expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
   });
 
-  it('SECURITY: an anonymous caller gets a bare 404 (detail)', async () => {
+  it('SECURITY: an anonymous caller gets a 403 + preview message (detail)', async () => {
     mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
     const { req, res } = createMocks({ query: { id: '55' } });
 
     await detailHandler(req, res);
 
-    expect(res._getStatusCode()).toBe(404);
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
     expect(mockRateLimit).not.toHaveBeenCalled();
     expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
   });

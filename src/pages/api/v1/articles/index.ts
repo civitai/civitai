@@ -77,14 +77,18 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  // App Blocks author-cohort gate — this endpoint is a DARK preview, reachable
-  // ONLY by the `appBlocksAuthor` cohort (mods via the static floor + the
+  // App Blocks author-cohort gate — this endpoint is a preview, reachable ONLY by
+  // the `appBlocksAuthor` cohort (mods via the static floor + the
   // `app-blocks-author` Flipt cohort). Everyone else — INCLUDING anonymous (no
-  // user → not in cohort) — gets a bare 404, indistinguishable from a
-  // non-existent route (no existence oracle). Evaluated FIRST, before the rate
-  // limit + service, so no work leaks to a non-cohort caller.
+  // user → not in cohort) — gets a 403 with a clear preview message: a deliberate
+  // DX choice for an invited cohort, so a caller who's been invited but isn't yet
+  // provisioned understands WHY they're blocked instead of hitting an opaque 404.
+  // Evaluated FIRST, before the rate limit + service, so no work leaks to a
+  // non-cohort caller.
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    return res.status(404).json({ error: 'Not found' });
+    return res.status(403).json({
+      error: 'This API is in preview — access is restricted to Civitai moderators and app developers.',
+    });
   }
 
   // Conservative per-client rate limit (before the expensive service call).
