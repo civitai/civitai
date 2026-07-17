@@ -16,6 +16,7 @@ import {
   resolveImageUploadRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
+  resolveUngrantableConsentScopes,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -38,6 +39,7 @@ import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { showNotification } from '@mantine/notifications';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -506,7 +508,7 @@ export function PageBlockHost({
   // but never ported this handler from IframeHost, so REQUEST_CONSENT fired into
   // the void and the block hung on "confirm in the Civitai dialog".
   useEffect(() => {
-    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', () => {
+    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', (payload) => {
       // reviewMode: a consent grant re-mints the token with WIDER scopes — never
       // let untrusted review code pop a permission modal at the mod. Fire-and-
       // forget ⇒ dropping it never hangs the block.
@@ -518,24 +520,55 @@ export function PageBlockHost({
       // to a non-ready sentinel before delegating — semantics are unchanged (it
       // would return null either way), this just satisfies the union type.
       const gateStatus = status === 'error' ? 'no_token' : status;
+      // Only act on a post-handshake request; a pre-handshake block never gets a
+      // modal OR a toast (same posture as the consent gate itself).
+      if (gateStatus !== 'ready') return;
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
-      if (scopesToGrant == null) return; // not ready, or nothing missing — drop
-      dialogStore.trigger({
-        component: BlockConsentModal,
-        props: {
-          appBlockId,
-          // PageBlockHost surfaces the app name as `appName` (the model host
-          // uses `install.manifest.name`).
-          blockName: appName,
-          missingScopes: scopesToGrant,
-          onGranted: () => {
-            onConsentGranted?.();
+      if (scopesToGrant != null) {
+        dialogStore.trigger({
+          component: BlockConsentModal,
+          props: {
+            appBlockId,
+            // PageBlockHost surfaces the app name as `appName` (the model host
+            // uses `install.manifest.name`).
+            blockName: appName,
+            missingScopes: scopesToGrant,
+            onGranted: () => {
+              onConsentGranted?.();
+            },
           },
-        },
+        });
+        return;
+      }
+      // Issue B — nothing is grantable-via-consent. Distinguish the BENIGN case
+      // (the block re-requested a scope it ALREADY holds → keep the silent no-op)
+      // from the UN-GRANTABLE case (a requested scope was clamped/withheld at mint
+      // and can never be added via consent here — e.g. a dev-tunnel preview token
+      // that doesn't carry it). Only the latter, proven from the block's advisory
+      // `scopes` hint, surfaces a message so the app doesn't silently look dead.
+      const ungrantable = resolveUngrantableConsentScopes(
+        payload?.scopes,
+        grantedScopes,
+        missingScopes
+      );
+      if (ungrantable.length === 0) return; // already-granted or no hint — drop
+      showNotification({
+        color: 'yellow',
+        title: 'Permission unavailable',
+        message: 'This app requested a permission that isn’t available in this preview.',
       });
     });
     return off;
-  }, [onMessage, status, missingScopes, appBlockId, appName, onConsentGranted, reviewMode]);
+  }, [
+    onMessage,
+    status,
+    missingScopes,
+    grantedScopes,
+    appBlockId,
+    appName,
+    onConsentGranted,
+    reviewMode,
+  ]);
 
   // Deep-link bridge — block requests in-page navigation. The block may push a
   // new sub-path WITHIN its own page space; we constrain it to the page route so

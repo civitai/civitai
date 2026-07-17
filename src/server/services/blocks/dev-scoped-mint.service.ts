@@ -84,6 +84,18 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'collections:read:self',
   'collections:write:self',
   'collections:read:private',
+  // buzz:read:self (own ledger / balance / earnings) is included in BOTH dev
+  // allowlists (this bearer path + the tunnel path below). In prod it's
+  // consent-gated, but the dev-mint path is self-bound to the dev's OWN account
+  // (the token `sub` is the authenticated dev via the mint's subject-user
+  // resolution; the buzz-read bridge derives userId off `claims.sub`, never body
+  // input), so it reads ONLY the dev's own ledger — no third-party financial data
+  // and no consent round-trip. It's a pure READ (no money moves); the money-OUT
+  // scope `social:tip:self` stays EXCLUDED everywhere. Consistent with these dev
+  // allowlists ALREADY granting `ai:write:budgeted` (real Buzz SPEND) and
+  // `collections:read:private` — forbidding a dev from READING their own balance
+  // while permitting SPENDING it is incoherent.
+  'buzz:read:self',
 ]);
 
 /**
@@ -108,6 +120,12 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   'collections:read:self',
   'collections:write:self',
   'collections:read:private',
+  // buzz:read:self — INCLUDED here too (see DEV_TOKEN_SCOPE_ALLOWLIST rationale):
+  // self-bound to the dev's OWN ledger via the token subject, a pure READ, no
+  // consent round-trip needed in the author's own dev-tunnel preview. Deliberately
+  // WITHHELD from the mod-review sandbox below (a mod previewing another author's
+  // app must not leak the mod's own balance).
+  'buzz:read:self',
 ]);
 
 /**

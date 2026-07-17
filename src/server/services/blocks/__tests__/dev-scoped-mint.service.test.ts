@@ -53,8 +53,8 @@ const FULL_SOURCE = [
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
-  'social:tip:self', // PAGE_FORBIDDEN
-  'buzz:read:self', // PAGE_FORBIDDEN
+  'social:tip:self', // money-OUT — in NO allowlist, always stripped
+  'buzz:read:self', // own-ledger READ — in both dev allowlists, NOT the review one
   'block:settings:read', // not in either dev allowlist
   'totally:fake:scope', // unknown
 ];
@@ -69,6 +69,7 @@ describe('clampDevScopes', () => {
     });
     expect(granted).toEqual([
       'ai:write:budgeted',
+      'buzz:read:self',
       'media:read:owned',
       'models:read:self',
       'user:read:self',
@@ -76,6 +77,9 @@ describe('clampDevScopes', () => {
     // App Storage never survives the tunnel clamp.
     expect(granted).not.toContain('apps:storage:read');
     expect(granted).not.toContain('apps:storage:write');
+    // buzz:read:self (own-ledger read) survives; social:tip:self (money OUT) never does.
+    expect(granted).toContain('buzz:read:self');
+    expect(granted).not.toContain('social:tip:self');
   });
 
   it('DEV (bearer) allowlist KEEPS apps:storage:* — the tunnel-vs-bearer difference is exactly storage', () => {
@@ -87,9 +91,10 @@ describe('clampDevScopes', () => {
     });
     expect(granted).toContain('apps:storage:read');
     expect(granted).toContain('apps:storage:write');
-    // Still drops forbidden/unknown/out-of-allowlist.
+    // buzz:read:self (own-ledger read) is in the bearer dev allowlist too.
+    expect(granted).toContain('buzz:read:self');
+    // Still drops money-OUT/unknown/out-of-allowlist.
     expect(granted).not.toContain('social:tip:self');
-    expect(granted).not.toContain('buzz:read:self');
     expect(granted).not.toContain('block:settings:read');
     expect(granted).not.toContain('totally:fake:scope');
   });
@@ -153,6 +158,43 @@ describe('clampDevScopes', () => {
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(dedup).toEqual(['models:read:self', 'user:read:self']);
+  });
+});
+
+describe('buzz:read:self allowlist membership (own-ledger read, self-bound)', () => {
+  it('is in BOTH dev allowlists but NOT the mod-review sandbox allowlist', () => {
+    expect(DEV_TOKEN_SCOPE_ALLOWLIST.has('buzz:read:self')).toBe(true);
+    expect(TUNNEL_HOST_MINT_SCOPE_ALLOWLIST.has('buzz:read:self')).toBe(true);
+    expect(REVIEW_MINT_SCOPE_ALLOWLIST.has('buzz:read:self')).toBe(false);
+  });
+
+  it('the money-OUT scope social:tip:self is in NONE of the allowlists', () => {
+    expect(DEV_TOKEN_SCOPE_ALLOWLIST.has('social:tip:self')).toBe(false);
+    expect(TUNNEL_HOST_MINT_SCOPE_ALLOWLIST.has('social:tip:self')).toBe(false);
+    expect(REVIEW_MINT_SCOPE_ALLOWLIST.has('social:tip:self')).toBe(false);
+  });
+
+  it('a dev-tunnel manifest requesting buzz:read:self KEEPS the scope through the clamp (consent works)', () => {
+    const granted = clampDevScopes({
+      scopeSource: ['buzz:read:self', 'models:read:self'],
+      oauthAllowed: null, // pre-approval dev tunnel — no OauthClient
+      keyCanSpend: true,
+      allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+    });
+    // The scope survives → the block's REQUEST_CONSENT resolves a real
+    // missingScope instead of an empty set (the reported "dead button" bug).
+    expect(granted).toContain('buzz:read:self');
+    expect(granted).toEqual(['buzz:read:self', 'models:read:self', 'user:read:self']);
+  });
+
+  it('the mod-review sandbox STRIPS buzz:read:self even when the pending manifest declares it', () => {
+    const granted = clampDevScopes({
+      scopeSource: ['buzz:read:self', 'models:read:self'],
+      oauthAllowed: null,
+      keyCanSpend: false,
+      allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).not.toContain('buzz:read:self');
   });
 });
 
