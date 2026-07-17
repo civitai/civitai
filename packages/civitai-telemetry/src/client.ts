@@ -227,6 +227,31 @@ export const imagesFeedWithoutIndexCounter = registerCounter({
   help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
 });
 
+// BitDex publish re-emitter job (reemit-bitdex-ops). The job re-asserts the
+// per-image publish + sortAt ops for recently-published posts so a dropped/
+// missed BitDex write self-heals within one lookback window. `runs` is the
+// liveness signal; `images_emitted / runs` tracks emission volume against the
+// sizing estimate and alarms on a rate spike or stuck cursor; the duration
+// histogram guards against the single INSERT...SELECT becoming slow/lock-heavy.
+// See docs/design/publish-reemitter.md §6.3 (in the bitdex-v2 repo).
+export const reemitRunsCounter = registerCounter({
+  name: 'reemit_runs_total',
+  help: 'BitDex publish re-emitter runs that executed the emit (past the enabled gate)',
+});
+export const reemitPostsScannedCounter = registerCounter({
+  name: 'reemit_posts_scanned_total',
+  help: 'Distinct posts scanned by the BitDex publish re-emitter across all runs',
+});
+export const reemitImagesEmittedCounter = registerCounter({
+  name: 'reemit_images_emitted_total',
+  help: 'BitdexOps rows (per-image ops) written by the BitDex publish re-emitter across all runs',
+});
+export const reemitRunDurationHistogram = registerHistogram({
+  name: 'reemit_run_duration_seconds',
+  help: 'Wall-clock duration of the BitDex publish re-emitter INSERT...SELECT emit statement',
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+});
+
 // Creator compensation metrics
 export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
   name: 'creator_comp_creators_paid_total',

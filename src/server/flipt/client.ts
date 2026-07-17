@@ -43,6 +43,11 @@ export enum FLIPT_FEATURE_FLAGS {
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
   BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
+  // Gates the reemit-bitdex-ops job (the BitDex publish re-emitter safety net).
+  // DEFAULT-OFF: the job is registered/scheduled but no-ops every run until this
+  // flag is flipped ON for the W4 shadow window — flipping needs no redeploy.
+  // See docs/design/publish-reemitter.md (bitdex-v2 repo).
+  BITDEX_PUBLISH_REEMITTER = 'bitdex-publish-reemitter',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
