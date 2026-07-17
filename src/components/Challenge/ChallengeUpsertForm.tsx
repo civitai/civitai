@@ -60,12 +60,18 @@ import CategoryWeights from '~/components/Challenge/CategoryWeights';
 import {
   type CategoryWeightRow,
   CHALLENGE_ENTRY_HOUSE_CUT,
+  CHALLENGE_MAX_DURATION_DAYS,
+  CHALLENGE_MAX_DURATION_MS,
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
+  CHALLENGE_MAX_START_LEAD_DAYS,
+  CHALLENGE_MIN_DURATION_HOURS,
+  CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
   CHALLENGE_MIN_START_LEAD_HOURS,
   DEFAULT_CATEGORY_ROWS,
   getEntryPoolContribution,
+  getMaxUserChallengeStartsAt,
   getMinUserChallengeStartsAt,
   getUserChallengeVisibleAt,
 } from '~/shared/constants/challenge.constants';
@@ -389,12 +395,34 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         return;
       }
 
-      // Start must be >= 3h out. Mirrors the server: always on create, on edit only when the
-      // start date actually moved (so an unrelated edit near start time isn't blocked).
+      // Duration bounds mirror the server (and zod schema): intrinsic to the payload, so they
+      // apply on create and edit alike.
+      const durationMs = endsAt.getTime() - startsAt.getTime();
+      if (durationMs < CHALLENGE_MIN_DURATION_MS) {
+        form.setError('endsAt', {
+          message: `Challenge must run for at least ${CHALLENGE_MIN_DURATION_HOURS} hours.`,
+        });
+        return;
+      }
+      if (durationMs > CHALLENGE_MAX_DURATION_MS) {
+        form.setError('endsAt', {
+          message: `Challenge cannot run longer than ${CHALLENGE_MAX_DURATION_DAYS} days.`,
+        });
+        return;
+      }
+
+      // Start must be >= 3h and <= 30d out. Mirrors the server: always on create, on edit only
+      // when the start date actually moved (so an unrelated edit near start time isn't blocked).
       const startMoved = !challenge || startsAt.getTime() !== challenge.startsAt.getTime();
       if (startMoved && startsAt < getMinUserChallengeStartsAt()) {
         form.setError('startsAt', {
           message: `Challenge must start at least ${CHALLENGE_MIN_START_LEAD_HOURS} hours from now.`,
+        });
+        return;
+      }
+      if (startMoved && startsAt > getMaxUserChallengeStartsAt()) {
+        form.setError('startsAt', {
+          message: `Challenge cannot start more than ${CHALLENGE_MAX_START_LEAD_DAYS} days from now.`,
         });
         return;
       }
