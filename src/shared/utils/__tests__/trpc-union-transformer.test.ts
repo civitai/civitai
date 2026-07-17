@@ -169,6 +169,30 @@ describe('unionDeserialize — pages-router POST-body double-parse recovery (mut
     }
   });
 
+  // Contract pin #1: devalue encodes these as BARE negative-int markers
+  // (undefined→-1, NaN→-3, Infinity→-4, -Infinity→-5, -0→-6), so after the
+  // double-parse they arrive as bare NUMBERS, not arrays. They must not collide
+  // with isSuperjsonEnvelope and must round-trip losslessly. Guards the
+  // "devalue top-level is array-or-negative-number" contract the fix rests on.
+  it('recovers double-parsed devalue SPECIAL primitives (bare marker numbers)', () => {
+    expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(undefined)))).toBeUndefined();
+    expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(NaN)))).toBeNaN();
+    expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(Infinity)))).toBe(Infinity);
+    expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(-Infinity)))).toBe(-Infinity);
+    // -0 must survive as -0 (devalue emits the -6 marker, not a raw -0).
+    expect(Object.is(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(-0))), -0)).toBe(true);
+  });
+
+  // Contract pin #2: a user input literally shaped like a superjson envelope
+  // ({ json, ... }) must NOT be mistaken for one. devalue flattens any top-level
+  // object to an ARRAY, so isSuperjsonEnvelope never matches it. Guards the
+  // "superjson-envelope sniff can't be spoofed by user data" contract.
+  it('recovers a devalue input literally shaped like a { json, ... } superjson envelope', () => {
+    for (const x of [{ json: 5 }, { json: 5, meta: 6 }, { json: { nested: true }, extra: 'x' }]) {
+      expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(x)))).toEqual(x);
+    }
+  });
+
   it('still routes a superjson envelope (its object survives createBody re-stringify) to superjson', () => {
     const x = sample();
     // Superjson path: createBody re-JSON.stringify's the object, so req.json()
