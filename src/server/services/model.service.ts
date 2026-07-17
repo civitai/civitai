@@ -1591,6 +1591,28 @@ export const deleteModelById = async ({
   // never cached, so the base-row gap is benign on this path.)
   const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
   await preventModelVersionLagBatch(id, deletedVersionIds);
+  // Drop the deleted model's post images from the image search index — parity
+  // with unpublishModelById / permaDeleteModelById. The image index doesn't
+  // filter on model status, so without this a soft-deleted model's images keep
+  // surfacing in Meili-backed feeds even though the DB feed already hides them.
+  // dbWrite to dodge replica lag on the just-committed txn (same as unpublish).
+  if (deletedModel && deletedVersionIds.length) {
+    const deletedPosts = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: deletedVersionIds }, userId: deletedModel.userId },
+      select: { id: true },
+    });
+    if (deletedPosts.length) {
+      const deletedImages = await dbWrite.image.findMany({
+        where: { postId: { in: deletedPosts.map((p) => p.id) } },
+        select: { id: true },
+      });
+      if (deletedImages.length)
+        await queueImageSearchIndexUpdate({
+          ids: deletedImages.map((i) => i.id),
+          action: SearchIndexUpdateQueueAction.Delete,
+        });
+    }
+  }
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
