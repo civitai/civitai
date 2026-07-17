@@ -13,6 +13,9 @@ const {
   dbWriteQueryRaw,
   dbReadQueryRaw,
   modelFindFirst,
+  redisDel,
+  redisPackedGet,
+  redisPackedSet,
 } = vi.hoisted(() => ({
   imageTagsFetch: vi.fn(),
   imageTagsBust: vi.fn(),
@@ -26,6 +29,9 @@ const {
   dbWriteQueryRaw: vi.fn().mockResolvedValue([]),
   dbReadQueryRaw: vi.fn().mockResolvedValue([{ count: 0 }]),
   modelFindFirst: vi.fn().mockResolvedValue({ userId: 999 }),
+  redisDel: vi.fn().mockResolvedValue(1),
+  redisPackedGet: vi.fn().mockResolvedValue(null),
+  redisPackedSet: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -35,6 +41,19 @@ vi.mock('~/server/redis/caches', () => ({
   modelVotableTagsCache: { fetch: modelVotableTagsFetch, bust: modelVotableTagsBust },
   tagCache: { fetch: tagCacheFetch },
 }));
+// deleteTags now busts the per-name getTagWithModelCount cache via redis.del; stub the
+// redis client so the mutation never reaches a real connection. Keep the real REDIS_KEYS
+// so the key assertions verify the actual constant.
+vi.mock('~/server/redis/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/redis/client')>();
+  return {
+    ...actual,
+    redis: {
+      del: redisDel,
+      packed: { get: redisPackedGet, set: redisPackedSet },
+    },
+  };
+});
 vi.mock('~/server/db/client', () => ({
   dbRead: {
     tagsOnImageVote: { findMany: imageVotes },
@@ -262,14 +281,30 @@ describe('getVotableTags — model votable-tags cache invalidation contract', ()
   });
 
   it('deleteTags busts the model cache for models resolved from the ModelTag view', async () => {
-    // deleteTags reads affected images (1st $queryRaw) then affected models (2nd) before
-    // deleting the Tag row.
+    // deleteTags reads affected images (1st $queryRaw), affected models (2nd), then
+    // affected tag names (3rd) before deleting the Tag row.
     dbWriteQueryRaw.mockReset();
     dbWriteQueryRaw
       .mockResolvedValueOnce([]) // affected images
-      .mockResolvedValueOnce([{ modelId: 5 }, { modelId: 6 }]); // affected models
+      .mockResolvedValueOnce([{ modelId: 5 }, { modelId: 6 }]) // affected models
+      .mockResolvedValueOnce([{ name: 'nude' }]); // affected tag names
     await deleteTags({ tags: [304] });
     expect(modelVotableTagsBust).toHaveBeenCalledWith([5, 6]);
+  });
+
+  it('deleteTags busts the per-name getTagWithModelCount cache for the deleted names', async () => {
+    // Even when deleteTags is called by ID, the affected NAMES are resolved from the DB
+    // (3rd $queryRaw) so the name-keyed cache is busted with the exact stored names. Both
+    // are busted regardless of input case — the key is lowercased.
+    dbWriteQueryRaw.mockReset();
+    dbWriteQueryRaw
+      .mockResolvedValueOnce([]) // affected images
+      .mockResolvedValueOnce([]) // affected models
+      .mockResolvedValueOnce([{ name: 'Anime' }, { name: 'nude' }]); // affected tag names
+    await deleteTags({ tags: [304, 305] });
+    expect(redisDel).toHaveBeenCalledWith('packed:caches:tag-with-model-count:anime');
+    expect(redisDel).toHaveBeenCalledWith('packed:caches:tag-with-model-count:nude');
+    expect(redisDel).toHaveBeenCalledTimes(2);
   });
 
   it('a vote on an IMAGE does not bust the model cache', async () => {
