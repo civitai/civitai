@@ -3701,6 +3701,61 @@ export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }
 
+// Mod-only read of a model's moderation state — surfaces why a model is
+// locked / marked nsfw / hidden so mods can self-triage instead of escalating
+// (auto-actions like the profanity nsfw-lock are otherwise invisible to them).
+export async function getModelModerationDetail({ id }: { id: number }) {
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      nsfw: true,
+      nsfwLevel: true,
+      status: true,
+      availability: true,
+      minor: true,
+      poi: true,
+      lockedProperties: true,
+      deletedAt: true,
+      deletedBy: true,
+      meta: true,
+    },
+  });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+  const meta = (model.meta ?? {}) as ModelMeta;
+  return {
+    id: model.id,
+    name: model.name,
+    nsfw: model.nsfw,
+    nsfwLevel: model.nsfwLevel,
+    status: model.status,
+    availability: model.availability,
+    minor: model.minor,
+    poi: model.poi,
+    lockedProperties: model.lockedProperties ?? [],
+    cannotPromote: meta.cannotPromote ?? false,
+    cannotPublish: meta.cannotPublish ?? false,
+    commentsLocked: meta.commentsLocked ?? false,
+    deletedAt: model.deletedAt,
+    deletedBy: model.deletedBy,
+    profanity: meta.profanityMatches?.length
+      ? {
+          matches: meta.profanityMatches,
+          reason: meta.profanityEvaluation?.reason ?? null,
+          metrics: meta.profanityEvaluation?.metrics ?? null,
+        }
+      : null,
+    unpublishedAt: meta.unpublishedAt ?? null,
+    unpublishedBy: meta.unpublishedBy ?? null,
+    unpublishedReason: meta.unpublishedReason ?? null,
+    takenDownAt: meta.takenDownAt ?? null,
+    takenDownBy: meta.takenDownBy ?? null,
+    needsReview: meta.needsReview ?? false,
+  };
+}
+
 export async function getModelModRules() {
   const modRules = await fetchThroughCache(
     REDIS_KEYS.CACHES.MOD_RULES.MODELS,

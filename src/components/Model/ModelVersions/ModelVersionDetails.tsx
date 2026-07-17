@@ -83,6 +83,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { ModelModerationCard } from '~/components/Model/ModelVersions/ModelModerationCard';
 import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
@@ -364,8 +365,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     staleTime: 60 * 1000, // 1 minute - avoid refetching on every model view
   });
   const isNotificationOn =
-    (followingUsers.includes(model.user.id) || isModelEngaged('Notify')) &&
-    !isModelEngaged('Mute');
+    (followingUsers.includes(model.user.id) || isModelEngaged('Notify')) && !isModelEngaged('Mute');
   const toggleNotifyModelMutation = trpc.user.toggleNotifyModel.useMutation({
     onMutate() {
       // Optimistic store update + snapshot for rollback.
@@ -878,6 +878,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </div>
                 </Stack>
               </Card>
+              {user?.isModerator && <ModelModerationCard modelId={model.id} />}
               {/* Component-only model message */}
               {isComponentOnlyModel && (
                 <AlertWithIcon
@@ -1400,7 +1401,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <span className={classes.detailLabel}>Generation License Fee</span>
                       <Group gap={4} wrap="nowrap">
                         <CurrencyIcon currency="BUZZ" size={16} />
-                        <Text size="sm">{numberWithCommas(Number(version.licensingFee))} / image</Text>
+                        <Text size="sm">
+                          {numberWithCommas(Number(version.licensingFee))} / image
+                        </Text>
                         <Popover
                           width={260}
                           shadow="md"
