@@ -9,6 +9,7 @@ import {
 } from '~/server/services/buzz.service';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { updateModelEarlyAccessDeadline } from '~/server/services/model.service';
+import { logToAxiom } from '~/server/logging/client';
 
 export const donationGoalById = async ({
   id,
@@ -182,10 +183,28 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
   }
 
   // Eagerly bust the public donation-goals cache so a donor sees the updated total (and any
-  // now-inactive completed goal) immediately rather than after the ≤60s TTL. This runs on
-  // every donation (donateToGoal → checkDonationGoalComplete) and on early-access completion.
+  // now-inactive completed goal) immediately rather than after the ≤60s TTL. Runs on every
+  // donation (donateToGoal → checkDonationGoalComplete) and on early-access completion.
+  //
+  // MUST be fail-open: `bust` does an un-wrapped `redis.packed.set` that REJECTS on any redis
+  // error, and this function runs INSIDE donateToGoal's try AFTER `donation.create` has already
+  // committed — that catch refunds the buzz and throws "Failed to create donation" on ANY
+  // throw. So a redis blip here must NEVER propagate, or the donor is refunded for a persisted
+  // donation and retries → double donation. On failure the cache just serves a ≤60s-stale
+  // total, which is acceptable. (Guarding here protects BOTH callers of
+  // checkDonationGoalComplete.)
   if (goal.modelVersionId != null) {
-    await modelVersionPublicDonationGoalsCache.bust(goal.modelVersionId);
+    try {
+      await modelVersionPublicDonationGoalsCache.bust(goal.modelVersionId);
+    } catch (error) {
+      logToAxiom({
+        type: 'warning',
+        name: 'donation-goal-public-cache-bust-failed',
+        error,
+        donationGoalId,
+        modelVersionId: goal.modelVersionId,
+      }).catch(() => undefined);
+    }
   }
 
   return goal;

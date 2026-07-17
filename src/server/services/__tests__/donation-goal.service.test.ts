@@ -14,7 +14,10 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
     mockDbWrite: { donationGoal: mk(), $queryRaw: vi.fn(), $executeRaw: vi.fn() },
   };
 });
-const { mockDonationGoalsBust } = vi.hoisted(() => ({ mockDonationGoalsBust: vi.fn() }));
+const { mockDonationGoalsBust, mockLogToAxiom } = vi.hoisted(() => ({
+  mockDonationGoalsBust: vi.fn(),
+  mockLogToAxiom: vi.fn(),
+}));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/redis/caches', () => ({
@@ -27,6 +30,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({ updateModelEarlyAccessDeadline: vi.fn() }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
 
@@ -45,6 +49,7 @@ const goal = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockLogToAxiom.mockResolvedValue(undefined);
 });
 
 describe('checkDonationGoalComplete — public cache bust', () => {
@@ -66,5 +71,23 @@ describe('checkDonationGoalComplete — public cache bust', () => {
     await checkDonationGoalComplete({ donationGoalId: 10 });
 
     expect(mockDonationGoalsBust).not.toHaveBeenCalled();
+  });
+
+  it('is FAIL-OPEN: a rejecting bust does NOT reject (never poisons the donation/refund path)', async () => {
+    // A redis blip during the bust must not propagate — checkDonationGoalComplete runs inside
+    // donateToGoal's try after donation.create has committed; a throw there refunds the buzz and
+    // tells the donor it failed → they retry → double donation.
+    mockDbWrite.donationGoal.findUniqueOrThrow.mockResolvedValueOnce(goal());
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ total: 100 }]);
+    mockDonationGoalsBust.mockRejectedValueOnce(new Error('redis down'));
+
+    const result = await checkDonationGoalComplete({ donationGoalId: 10 });
+
+    // Resolves normally with the goal (donation/total logic unaffected) and logs the failure.
+    expect(result).toMatchObject({ id: 10, total: 100 });
+    expect(mockDonationGoalsBust).toHaveBeenCalledWith(5);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'donation-goal-public-cache-bust-failed' })
+    );
   });
 });

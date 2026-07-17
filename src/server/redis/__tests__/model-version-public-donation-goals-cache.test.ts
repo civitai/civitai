@@ -1,24 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Mechanism contract for `modelVersionPublicDonationGoalsCache` — the DB-load-reduction lever
- * behind `model-version.donationGoals` on the public path.
+ * Mechanism + lookup contract for `modelVersionPublicDonationGoalsCache` — the DB-load-reduction
+ * lever behind `model-version.donationGoals` on the public path.
  *
- * The cache is a `createCachedObject` keyed by modelVersionId with a 60s TTL and
- * `cacheNotFound: false`. This test exercises the REAL cache mechanism against an in-memory
- * packed-redis double + mocked db doubles and pins:
+ * This exercises the REAL lookupFn (`publicDonationGoalsLookupFn` from the light
+ * `donation-goals-cache` module — the exact function `caches.ts` wires into the cache) against
+ * an in-memory packed-redis double + mocked db doubles. No hand-copied mirror: if someone drops
+ * the security-relevant `active: true` public filter (the single guard keeping inactive/draft
+ * goals out of the shared public key), the `active: true` assertion below fails.
+ *
+ * Pins:
+ *   - the PUBLIC `active: true` goal filter is present on the real query (security invariant);
  *   - dedup/TTL: a second fetch of the same id within the TTL does NOT re-issue the DB lookup;
- *   - existence: an existing version with zero public goals yields an EMPTY entry (caller
- *     returns []), while a genuinely-missing version yields NO entry (caller 404s) and is NOT
- *     negatively cached (re-looked-up next time, per `cacheNotFound: false`);
- *   - the public early-access filter and the summed totals shape.
- *
- * DIVERGENCE RISK: importing the real `modelVersionPublicDonationGoalsCache` from caches.ts
- * would drag in its env/clickhouse/orchestrator import graph, so this replicates its lookupFn.
- * Keep this a FAITHFUL mirror of caches.ts `modelVersionPublicDonationGoalsCache.lookupFn` —
- * same existence + primary-fallback, same `active: true` public filter, same early-access
- * filter, same totals map, same "seed an empty entry per existing version". Change one, change
- * both.
+ *   - existence: an existing version with zero public goals yields an EMPTY entry (caller → []),
+ *     while a genuinely-missing version yields NO entry (caller → 404) and is NOT negatively
+ *     cached (re-looked-up next time, per `cacheNotFound: false`);
+ *   - the per-version early-access filter and the summed totals shape.
  */
 
 const store = new Map<string, unknown>();
@@ -41,7 +39,6 @@ vi.mock('~/server/redis/client', () => ({
   sysRedis: {},
   REDIS_KEYS: { CACHE_LOCKS: 'caches:lock' },
 }));
-
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/prom/client', () => ({
   cacheHitCounter: { inc: vi.fn() },
@@ -49,83 +46,38 @@ vi.mock('~/server/prom/client', () => ({
   cacheRevalidateCounter: { inc: vi.fn() },
   cacheFailOpenDegradedCounter: { inc: vi.fn() },
   cacheFailOpenOriginFetchCounter: { inc: vi.fn() },
+  dbReadFallbackCounter: { inc: vi.fn() },
 }));
 
+const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
+  const mk = () => ({
+    modelVersion: { findMany: vi.fn() },
+    donationGoal: { findMany: vi.fn() },
+    $queryRaw: vi.fn(),
+  });
+  return { mockDbRead: mk(), mockDbWrite: mk() };
+});
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import {
+  publicDonationGoalsLookupFn,
+  type ModelVersionPublicDonationGoalsCacheItem,
+} from '~/server/redis/donation-goals-cache';
 
-type GoalRow = {
-  id: number;
-  goalAmount: number;
-  title: string;
-  active: boolean;
-  isEarlyAccess: boolean;
-  userId: number;
-  createdAt: Date;
-  description: string | null;
-  modelVersionId: number | null;
-};
-type Item = { modelVersionId: number; goals: Array<Omit<GoalRow, 'modelVersionId'> & { total: number }> };
-
-// db doubles.
-const mvReadFindMany = vi.fn(); // dbRead.modelVersion.findMany
-const mvWriteFindMany = vi.fn(); // dbWrite.modelVersion.findMany (primary fallback)
-const dgFindMany = vi.fn(); // db.donationGoal.findMany
-const donationTotals = vi.fn(); // $queryRaw totals
-const fallbackInc = vi.fn();
-
-// FAITHFUL mirror of caches.ts `modelVersionPublicDonationGoalsCache.lookupFn`.
+// The REAL lookupFn, wired into createCachedObject exactly as caches.ts does.
 function buildCache() {
-  return createCachedObject<Item>({
+  return createCachedObject<ModelVersionPublicDonationGoalsCacheItem>({
     key: 'test:mv-public-donation-goals' as never,
     idKey: 'modelVersionId',
     ttl: 60,
     staleWhileRevalidate: false,
     cacheNotFound: false,
-    lookupFn: async (ids, fromWrite) => {
-      let versions: { id: number; earlyAccessEndsAt: Date | null }[] = await mvReadFindMany({
-        where: { id: { in: ids } },
-        select: { id: true, earlyAccessEndsAt: true },
-      });
-      if (!fromWrite && versions.length < ids.length) {
-        const found = new Set(versions.map((v) => v.id));
-        const missing = ids.filter((id) => !found.has(id));
-        if (missing.length > 0) {
-          fallbackInc();
-          const fromPrimary = await mvWriteFindMany({
-            where: { id: { in: missing } },
-            select: { id: true, earlyAccessEndsAt: true },
-          });
-          versions = versions.concat(fromPrimary);
-        }
-      }
-      if (versions.length === 0) return {};
-
-      const earlyAccessById = new Map(versions.map((v) => [v.id, v.earlyAccessEndsAt]));
-      const goals: GoalRow[] = await dgFindMany({
-        where: { modelVersionId: { in: versions.map((v) => v.id) }, active: true },
-      });
-
-      const totalByGoalId = new Map<number, number>();
-      const goalIds = goals.map((g) => g.id);
-      if (goalIds.length > 0) {
-        const totals: { donationGoalId: number; total: number }[] = await donationTotals(goalIds);
-        for (const t of totals) totalByGoalId.set(t.donationGoalId, t.total);
-      }
-
-      const result: Record<number, Item> = {};
-      for (const v of versions) result[v.id] = { modelVersionId: v.id, goals: [] };
-      for (const goal of goals) {
-        const { modelVersionId, ...rest } = goal;
-        if (modelVersionId == null) continue;
-        if (goal.isEarlyAccess && !earlyAccessById.get(modelVersionId)) continue;
-        result[modelVersionId].goals.push({ ...rest, total: totalByGoalId.get(goal.id) ?? 0 });
-      }
-      return result;
-    },
+    lookupFn: publicDonationGoalsLookupFn,
   });
 }
 
-const row = (over: Partial<GoalRow> = {}): GoalRow => ({
+const row = (over: Record<string, unknown> = {}) => ({
   id: 10,
   goalAmount: 1000,
   title: 'Goal',
@@ -144,27 +96,43 @@ beforeEach(() => {
   setMock.mockClear();
   delMock.mockClear();
   setNxMock.mockClear().mockResolvedValue(true);
-  mvReadFindMany.mockReset();
-  mvWriteFindMany.mockReset();
-  dgFindMany.mockReset();
-  donationTotals.mockReset();
-  fallbackInc.mockReset();
+  mockDbRead.modelVersion.findMany.mockReset();
+  mockDbRead.donationGoal.findMany.mockReset();
+  mockDbRead.$queryRaw.mockReset();
+  mockDbWrite.modelVersion.findMany.mockReset();
+  mockDbWrite.donationGoal.findMany.mockReset();
+  mockDbWrite.$queryRaw.mockReset();
 });
 
 afterEach(() => vi.restoreAllMocks());
 
+describe('publicDonationGoalsLookupFn — security invariant', () => {
+  it('queries donation goals with the PUBLIC active:true filter (keeps drafts out)', async () => {
+    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
+    mockDbRead.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]);
+
+    await publicDonationGoalsLookupFn([5]);
+
+    const call = mockDbRead.donationGoal.findMany.mock.calls[0][0];
+    // The one guard that keeps inactive/draft goals out of the shared public key.
+    expect(call.where.active).toBe(true);
+    expect(call.where.modelVersionId).toEqual({ in: [5] });
+  });
+});
+
 describe('modelVersionPublicDonationGoalsCache', () => {
   it('hits the DB once, then serves the second fetch of the same version from cache', async () => {
-    mvReadFindMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
-    dgFindMany.mockResolvedValue([row()]);
-    donationTotals.mockResolvedValue([{ donationGoalId: 10, total: 250 }]);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
+    mockDbRead.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]);
     const cache = buildCache();
 
     const first = await cache.fetch([5]);
     const second = await cache.fetch([5]);
 
-    expect(mvReadFindMany).toHaveBeenCalledTimes(1);
-    expect(dgFindMany).toHaveBeenCalledTimes(1);
+    expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(1);
+    expect(mockDbRead.donationGoal.findMany).toHaveBeenCalledTimes(1);
     expect(first[5].goals).toEqual([
       {
         id: 10,
@@ -182,22 +150,21 @@ describe('modelVersionPublicDonationGoalsCache', () => {
   });
 
   it('caches an EMPTY entry for an existing version with no public goals (returns [], not 404)', async () => {
-    mvReadFindMany.mockResolvedValue([{ id: 8, earlyAccessEndsAt: null }]);
-    dgFindMany.mockResolvedValue([]);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 8, earlyAccessEndsAt: null }]);
+    mockDbRead.donationGoal.findMany.mockResolvedValue([]);
     const cache = buildCache();
 
     const first = await cache.fetch([8]);
     const second = await cache.fetch([8]);
 
     expect(first[8]).toEqual({ modelVersionId: 8, goals: [] });
-    // Positive (empty) entry is cached — no re-lookup on the second fetch.
-    expect(mvReadFindMany).toHaveBeenCalledTimes(1);
+    expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(1); // positive entry cached
     expect(second[8].goals).toEqual([]);
   });
 
   it('yields NO entry for a missing version and does not negatively cache it (cacheNotFound: false)', async () => {
-    mvReadFindMany.mockResolvedValue([]); // replica miss
-    mvWriteFindMany.mockResolvedValue([]); // primary miss too → genuinely gone
+    mockDbRead.modelVersion.findMany.mockResolvedValue([]); // replica miss
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([]); // primary miss too → genuinely gone
     const cache = buildCache();
 
     const first = await cache.fetch([999]);
@@ -205,26 +172,23 @@ describe('modelVersionPublicDonationGoalsCache', () => {
 
     expect(first[999]).toBeUndefined(); // caller maps absent entry → NOT_FOUND
     // Not negatively cached → the lookup (incl. primary fallback) re-runs each time.
-    expect(mvReadFindMany).toHaveBeenCalledTimes(2);
-    expect(mvWriteFindMany).toHaveBeenCalledTimes(2);
-    expect(fallbackInc).toHaveBeenCalledTimes(2);
+    expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(2);
+    expect(mockDbWrite.modelVersion.findMany).toHaveBeenCalledTimes(2);
     expect(second[999]).toBeUndefined();
   });
 
   it('applies the public early-access filter per version', async () => {
-    // Version 5: no earlyAccessEndsAt → early-access goals are hidden.
-    // Version 9: earlyAccessEndsAt set → early-access goals are shown.
-    mvReadFindMany.mockResolvedValue([
-      { id: 5, earlyAccessEndsAt: null },
-      { id: 9, earlyAccessEndsAt: new Date('2099-01-01T00:00:00.000Z') },
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
+      { id: 5, earlyAccessEndsAt: null }, // EA goals hidden
+      { id: 9, earlyAccessEndsAt: new Date('2099-01-01T00:00:00.000Z') }, // EA goals shown
     ]);
-    dgFindMany.mockResolvedValue([
+    mockDbRead.donationGoal.findMany.mockResolvedValue([
       row({ id: 10, isEarlyAccess: false, modelVersionId: 5 }),
       row({ id: 11, isEarlyAccess: true, modelVersionId: 5 }),
       row({ id: 20, isEarlyAccess: false, modelVersionId: 9 }),
       row({ id: 21, isEarlyAccess: true, modelVersionId: 9 }),
     ]);
-    donationTotals.mockResolvedValue([]); // all totals default to 0
+    mockDbRead.$queryRaw.mockResolvedValue([]); // all totals default to 0
     const cache = buildCache();
 
     const res = await cache.fetch([5, 9]);

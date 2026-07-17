@@ -9,7 +9,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
-import { dbReadFallbackCounter } from '~/server/prom/client';
+import {
+  publicDonationGoalsLookupFn,
+  type ModelVersionPublicDonationGoalsCacheItem,
+} from '~/server/redis/donation-goals-cache';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -1555,25 +1558,10 @@ export const modelVotableTagsCache = createCachedObject<ModelVotableTagsCacheIte
   },
 });
 
-// A single public (non-owner, non-moderator) donation goal, shaped byte-identically to
-// `modelVersionDonationGoals`' output element: the DonationGoal row fields it selects plus
-// the summed `total`. Privileged (owner/mod) responses can include unpublished/draft goals
-// and MUST NOT enter this shared cache — see `modelVersionDonationGoals` for the gate.
-export type ModelVersionPublicDonationGoal = {
-  id: number;
-  goalAmount: number;
-  title: string;
-  active: boolean;
-  isEarlyAccess: boolean;
-  userId: number;
-  createdAt: Date;
-  description: string | null;
-  total: number;
-};
-export type ModelVersionPublicDonationGoalsCacheItem = {
-  modelVersionId: number;
-  goals: ModelVersionPublicDonationGoal[];
-};
+export type {
+  ModelVersionPublicDonationGoal,
+  ModelVersionPublicDonationGoalsCacheItem,
+} from '~/server/redis/donation-goals-cache';
 
 /**
  * Read-through cache for the PUBLIC variant of a model version's donation goals, keyed by
@@ -1591,6 +1579,10 @@ export type ModelVersionPublicDonationGoalsCacheItem = {
  *
  * `cacheNotFound: false` — a missing version is never negative-cached, so the caller always
  * 404s fresh (matching the uncached read→primary-fallback→NOT_FOUND behavior).
+ *
+ * The lookupFn — including the security-relevant `active: true` public filter — lives in the
+ * light `donation-goals-cache` module so it can be tested against the REAL function (no mirror
+ * divergence).
  */
 export const modelVersionPublicDonationGoalsCache =
   createCachedObject<ModelVersionPublicDonationGoalsCacheItem>({
@@ -1599,84 +1591,7 @@ export const modelVersionPublicDonationGoalsCache =
     ttl: CacheTTL.xs,
     staleWhileRevalidate: false,
     cacheNotFound: false,
-    lookupFn: async (ids, fromWrite) => {
-      const versionSelect = { id: true, earlyAccessEndsAt: true } as const;
-
-      // Existence + earlyAccessEndsAt. Mirror the uncached path's replica→primary fallback:
-      // any id the replica misses is retried against the primary so replica lag on a
-      // just-created version does not read as NOT_FOUND.
-      let versions = await dbRead.modelVersion.findMany({
-        where: { id: { in: ids } },
-        select: versionSelect,
-      });
-      if (!fromWrite && versions.length < ids.length) {
-        const found = new Set(versions.map((v) => v.id));
-        const missing = ids.filter((id) => !found.has(id));
-        if (missing.length > 0) {
-          dbReadFallbackCounter.inc({
-            entity: 'modelVersion',
-            caller: 'modelVersionPublicDonationGoalsCache',
-          });
-          const fromPrimary = await dbWrite.modelVersion.findMany({
-            where: { id: { in: missing } },
-            select: versionSelect,
-          });
-          versions = versions.concat(fromPrimary);
-        }
-      }
-      if (versions.length === 0) return {};
-
-      const earlyAccessById = new Map(versions.map((v) => [v.id, v.earlyAccessEndsAt]));
-      const db = fromWrite ? dbWrite : dbRead;
-
-      // PUBLIC filter: only active goals (draft/inactive goals are owner/mod-only).
-      const goals = await db.donationGoal.findMany({
-        where: { modelVersionId: { in: versions.map((v) => v.id) }, active: true },
-        select: {
-          id: true,
-          goalAmount: true,
-          title: true,
-          active: true,
-          isEarlyAccess: true,
-          userId: true,
-          createdAt: true,
-          description: true,
-          modelVersionId: true,
-        },
-      });
-
-      const totalByGoalId = new Map<number, number>();
-      const goalIds = goals.map((g) => g.id);
-      if (goalIds.length > 0) {
-        const totals = await db.$queryRaw<{ donationGoalId: number; total: number }[]>`
-          SELECT
-            "donationGoalId",
-            SUM("amount")::int as total
-          FROM "Donation"
-          WHERE "donationGoalId" IN (${Prisma.join(goalIds)})
-          GROUP BY "donationGoalId"
-        `;
-        for (const t of totals) totalByGoalId.set(t.donationGoalId, t.total);
-      }
-
-      const result: Record<number, ModelVersionPublicDonationGoalsCacheItem> = {};
-      // Seed an entry for EVERY existing version (even with zero goals) so the caller can
-      // distinguish "exists, no goals" (return []) from "does not exist" (404). Missing
-      // versions get no entry.
-      for (const v of versions) result[v.id] = { modelVersionId: v.id, goals: [] };
-
-      for (const goal of goals) {
-        const { modelVersionId, ...rest } = goal;
-        if (modelVersionId == null) continue;
-        // Public early-access filter, byte-identical to the uncached query's
-        // `isEarlyAccess: version.earlyAccessEndsAt ? undefined : false`: early-access goals
-        // are only shown publicly while the version still has an earlyAccessEndsAt set.
-        if (goal.isEarlyAccess && !earlyAccessById.get(modelVersionId)) continue;
-        result[modelVersionId].goals.push({ ...rest, total: totalByGoalId.get(goal.id) ?? 0 });
-      }
-
-      return result;
-    },
+    lookupFn: publicDonationGoalsLookupFn,
   });
 
 type ModelTagCacheItem = {
