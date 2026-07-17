@@ -5,7 +5,6 @@ import * as z from 'zod';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ArticleSort } from '~/server/common/enums';
 import { getArticles } from '~/server/services/article.service';
-import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -18,15 +17,19 @@ import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 /**
- * GET /api/v1/articles — public list/search over articles.
+ * GET /api/v1/articles — public, edge-cacheable list/search over articles.
  *
  * Wraps the EXISTING `getArticles` service (the same function that powers the
- * website's article feed via `articleRouter.getInfinite`). Visibility is enforced
- * server-side by that service: for a non-owner / non-moderator caller it returns
- * ONLY `status = Published` + `ingestion = Scanned` articles and drops
- * `availability = Private` ones. This endpoint NEVER passes a client-supplied
- * userId — ownership is derived solely from the authenticated session (`user`),
- * so an unauthenticated caller can only ever see published, public articles.
+ * website's article feed via `articleRouter.getInfinite`). This endpoint serves
+ * PUBLIC data only: it ALWAYS evaluates as anonymous (`sessionUser: undefined`)
+ * and pins `forceHidePrivate: true`, so the article SET is a pure function of the
+ * URL (+ region) — an anonymous caller and any authenticated caller hitting the
+ * same URL get byte-identical data. That caller-independence is what makes the
+ * `MixedAuthEndpoint` wrapper's `public, s-maxage=300` edge caching safe (no
+ * cross-user leak). Nothing here widens or per-user-filters the result:
+ * `favorites`/`hidden` (own-engagement) and any owner self-view are NOT accepted.
+ * Visibility (published + scanned + non-private) is enforced server-side by the
+ * service for the anonymous evaluation.
  *
  * Pagination: composite keyset cursor (the article feed can't use offset paging —
  * ranked sorts need the `(sortValue, id)` tiebreaker). The opaque `cursor` string
@@ -41,11 +44,6 @@ export const config = {
   },
 };
 
-// favorites/hidden surface the CALLER's OWN engagement — meaningless (and gated
-// inside getArticles behind `if (sessionUser)`) without a session, so we 401 if
-// an unauthenticated caller requests them (mirrors models/index.ts).
-const authedOnlyOptions = ['favorites', 'hidden'] as const;
-
 const articlesEndpointSchema = z.object({
   limit: z.preprocess((val) => Number(val), z.number().min(1).max(100)).default(100),
   cursor: z.string().max(100).optional(),
@@ -53,8 +51,6 @@ const articlesEndpointSchema = z.object({
   sort: z.enum(ArticleSort).optional(),
   tags: commaDelimitedNumberArray().optional(),
   username: z.string().optional(),
-  favorites: booleanString().optional().default(false),
-  hidden: booleanString().optional().default(false),
   nsfw: booleanString().optional(),
 });
 
@@ -77,21 +73,9 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  // App Blocks author-cohort gate — this endpoint is a preview, reachable ONLY by
-  // the `appBlocksAuthor` cohort (mods via the static floor + the
-  // `app-blocks-author` Flipt cohort). Everyone else — INCLUDING anonymous (no
-  // user → not in cohort) — gets a 403 with a clear preview message: a deliberate
-  // DX choice for an invited cohort, so a caller who's been invited but isn't yet
-  // provisioned understands WHY they're blocked instead of hitting an opaque 404.
-  // Evaluated FIRST, before the rate limit + service, so no work leaks to a
-  // non-cohort caller.
-  if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    return res.status(403).json({
-      error: 'This API is in preview — access is restricted to Civitai moderators and app developers.',
-    });
-  }
-
-  // Conservative per-client rate limit (before the expensive service call).
+  // Conservative per-client rate limit (before the expensive service call). The
+  // limiter keys on CF-Connecting-IP / userId — it only guards the cache-MISS
+  // path (varied-query scraping); the response body itself never varies by user.
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'articles', userId: user?.id });
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
@@ -99,18 +83,16 @@ export default MixedAuthEndpoint(async function handler(
     return res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
   }
 
-  if (Object.keys(req.query).some((key) => (authedOnlyOptions as readonly string[]).includes(key)) && !user)
-    return res.status(401).json({ error: 'Unauthorized' });
-
   const parsedParams = articlesEndpointSchema.safeParse(req.query);
   if (!parsedParams.success) return res.status(400).json({ error: parsedParams.error });
 
-  const { limit, cursor, query, sort, tags, username, favorites, hidden, nsfw } = parsedParams.data;
+  const { limit, cursor, query, sort, tags, username, nsfw } = parsedParams.data;
 
   const parsedCursor = parseArticleCursor(cursor);
   if (parsedCursor === null) return res.status(400).json({ error: 'Invalid cursor' });
 
-  // Maturity/region ceiling — identical derivation to models/index.ts.
+  // Maturity/region ceiling — identical derivation to models/index.ts. This is
+  // the ONE legitimate response variation (region-derived); the CDN keys on it.
   const region = getRegion(req);
   let browsingLevel = !nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
@@ -122,8 +104,6 @@ export default MixedAuthEndpoint(async function handler(
       query,
       tags,
       username,
-      favorites,
-      hidden,
       // AllTime + published: getArticles requires a defined period/periodMode; this
       // pins the extra `publishedAt IS NOT NULL AND status = Published` guard on top
       // of the service's own non-owner visibility gate.
@@ -131,7 +111,11 @@ export default MixedAuthEndpoint(async function handler(
       periodMode: 'published',
       sort: sort ?? ArticleSort.Newest,
       browsingLevel,
-      sessionUser: user,
+      // Always evaluate as anonymous so the article SET is a pure function of the
+      // URL (+ region) — auth can never widen or per-user-filter it. Combined with
+      // `forceHidePrivate` this yields published + scanned + non-private for
+      // everyone, making the response safe to `public`-cache at the edge.
+      sessionUser: undefined,
       include: [],
       // Public scriptable surface: NEVER expand to `availability = Private`
       // articles, even when `?username=` is set (which normally lifts the

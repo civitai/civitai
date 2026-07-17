@@ -7,9 +7,7 @@ import { CollectionSort } from '~/server/common/enums';
 import {
   getAllCollections,
   getCollectionItemCount,
-  getUserCollectionsWithPermissions,
 } from '~/server/services/collection.service';
-import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -28,19 +26,21 @@ import { booleanString } from '~/utils/zod-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 /**
- * GET /api/v1/collections — public list/search over collections.
+ * GET /api/v1/collections — public, edge-cacheable list/search over collections.
  *
- * Two modes, both wrapping EXISTING services (no reimplemented business logic):
- *   - default (public): `getAllCollections`, whose privacy is PINNED to
- *     `[Public]` for any non-moderator caller (the service forces this itself),
- *     so an unauthenticated caller only ever sees Public collections.
- *   - `mine=true` (authenticated only → 401 otherwise): the caller's OWN
- *     collections via `getUserCollectionsWithPermissions`, keyed on the SESSION
- *     user id — never a client-supplied userId.
+ * Wraps the EXISTING `getAllCollections` service (no reimplemented business
+ * logic). This endpoint serves PUBLIC data only: privacy is pinned to `[Public]`
+ * AND the caller identity is dropped (`user: undefined`), so the service's own
+ * clamp forces Public UNCONDITIONALLY — an anonymous caller and any authenticated
+ * caller hitting the same URL get byte-identical data. That caller-independence is
+ * what makes the `MixedAuthEndpoint` wrapper's `public, s-maxage=300` edge caching
+ * safe (no cross-user leak). There is NO `mine=` mode here — own-collection
+ * discovery is inherently per-user (uncacheable + authoring), not public
+ * discovery. A private collection is therefore unreachable here.
  *
- * A private collection is therefore unreachable here for a non-owner. Maturity is
- * clamped to the region-narrowed browsing ceiling (a collection / cover above the
- * ceiling is dropped or its cover nulled), matching the other public endpoints.
+ * Maturity is clamped to the region-narrowed browsing ceiling (a collection /
+ * cover above the ceiling is dropped or its cover nulled), matching the other
+ * public endpoints — the one legitimate region-derived response variation.
  *
  * Envelope: `{ items, metadata: { nextCursor, nextPage } }` (keyset cursor on the
  * collection id, id DESC), consistent with the other public v1 endpoints.
@@ -57,7 +57,6 @@ const collectionsEndpointSchema = z.object({
   cursor: z.coerce.number().int().positive().optional(),
   query: z.string().trim().max(100).optional(),
   sort: z.enum(CollectionSort).optional(),
-  mine: booleanString().optional().default(false),
   nsfw: booleanString().optional(),
 });
 
@@ -86,16 +85,9 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  // App Blocks author-cohort gate — preview, cohort-only (mods + the
-  // `app-blocks-author` Flipt cohort). Anonymous / non-cohort → 403 with a clear
-  // preview message (invited-cohort DX: explain the restriction rather than an
-  // opaque 404), evaluated before the rate limit + service.
-  if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    return res.status(403).json({
-      error: 'This API is in preview — access is restricted to Civitai moderators and app developers.',
-    });
-  }
-
+  // Conservative per-client rate limit (before the expensive service call). The
+  // limiter keys on CF-Connecting-IP / userId — it only guards the cache-MISS
+  // path (varied-query scraping); the response body itself never varies by user.
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'collections', userId: user?.id });
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
@@ -106,9 +98,7 @@ export default MixedAuthEndpoint(async function handler(
   const parsedParams = collectionsEndpointSchema.safeParse(req.query);
   if (!parsedParams.success) return res.status(400).json({ error: parsedParams.error });
 
-  const { limit, cursor, query, sort, mine, nsfw } = parsedParams.data;
-
-  if (mine && !user) return res.status(401).json({ error: 'Unauthorized' });
+  const { limit, cursor, query, sort, nsfw } = parsedParams.data;
 
   const region = getRegion(req);
   let browsingLevel = !nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
@@ -122,58 +112,6 @@ export default MixedAuthEndpoint(async function handler(
       : null;
 
   try {
-    if (mine && user) {
-      // Own collections. The service returns the full owned set (no DB paging);
-      // apply the name filter + keyset (id DESC) slice in-memory. A user's own
-      // collection set is bounded.
-      const owned = await getUserCollectionsWithPermissions({
-        input: { userId: user.id, contributingOnly: true },
-      });
-
-      const needle = query?.toLowerCase();
-      const filtered = owned
-        .filter((c) => (needle ? c.name.toLowerCase().includes(needle) : true))
-        .filter((c) => (cursor ? c.id < cursor : true))
-        .sort((a, b) => b.id - a.id);
-
-      let page = filtered;
-      let nextCursor: number | undefined;
-      if (page.length > limit) {
-        page = page.slice(0, limit);
-        nextCursor = page[page.length - 1]?.id;
-      }
-
-      const ids = page.map((c) => c.id);
-      const countRows = await getCollectionItemCount({
-        collectionIds: ids,
-        status: CollectionItemStatus.ACCEPTED,
-      });
-      const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
-
-      const items: CollectionListItem[] = page.map((c) => ({
-        id: c.id,
-        name: c.name,
-        description: c.description ?? null,
-        type: c.type ?? null,
-        nsfwLevel: null,
-        read: c.read,
-        isPublic: c.read === CollectionReadConfiguration.Public,
-        itemCount: countMap.get(c.id) ?? 0,
-        coverImageUrl: coverUrl(
-          c.image
-            ? { url: c.image.url, type: c.image.type, nsfwLevel: c.image.nsfwLevel }
-            : null
-        ),
-        user: { id: user.id, username: user.username ?? null },
-      }));
-
-      const nextCursorStr = nextCursor !== undefined ? String(nextCursor) : undefined;
-      const { nextPage } = getNextPage({ req, nextCursor: nextCursorStr });
-      return res
-        .status(200)
-        .json({ items, metadata: { nextCursor: nextCursor ?? undefined, nextPage } });
-    }
-
     // Public discovery. The keyset cursor is id-based, which only tracks the
     // default `createdAt DESC` ordering. Under `sort=MostContributors`
     // `getAllCollections` orders by contributor `_count` — an id cursor there
@@ -202,7 +140,11 @@ export default MixedAuthEndpoint(async function handler(
         sort,
         privacy: [CollectionReadConfiguration.Public],
       },
-      user,
+      // Evaluate as anonymous — NEVER pass the session user. Combined with the
+      // explicit `privacy: [Public]`, the service's own clamp forces Public
+      // UNCONDITIONALLY (even the moderator override can't widen), so the result
+      // set is caller-independent and edge-cacheable.
+      user: undefined,
       select: {
         id: true,
         name: true,

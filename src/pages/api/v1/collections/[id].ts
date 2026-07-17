@@ -7,7 +7,6 @@ import {
   getCollectionById,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
 import {
@@ -19,16 +18,18 @@ import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 /**
- * GET /api/v1/collections/[id] — public collection detail.
+ * GET /api/v1/collections/[id] — public, edge-cacheable collection detail.
  *
  * VISIBILITY (existence-leak-safe): the read decision reuses the EXISTING
- * `getUserCollectionPermissionsById` (the same authority `getCollectionByIdHandler`
- * uses) — `read` is true for Public/Unlisted collections and for the
- * owner/contributor/moderator of a private one. A caller without read permission,
- * OR a non-existent collection, gets the SAME bare 404, so this is not a
- * private-collection existence oracle. `getCollectionById` itself does NO gating,
- * so this permission check is REQUIRED before calling it. Ownership comes solely
- * from the authenticated session — never a client param.
+ * `getUserCollectionPermissionsById`, evaluated as ANONYMOUS (no `userId`/
+ * `isModerator`), so `read` is true ONLY for a Public/Unlisted collection — for
+ * EVERY caller, authed or not. A private collection, OR a non-existent one, gets
+ * the SAME bare 404, so this is not a private-collection existence oracle. Because
+ * the permission decision never depends on WHO calls, the response is a pure
+ * function of the id (+ region) — byte-identical for anonymous and authenticated
+ * callers — which makes the `MixedAuthEndpoint` wrapper's `public, s-maxage=300`
+ * edge caching safe. `getCollectionById` itself does NO gating, so this permission
+ * check is REQUIRED before calling it.
  *
  * Maturity: the cover image is clamped to the region-narrowed browsing ceiling.
  */
@@ -40,16 +41,9 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
-  // App Blocks author-cohort gate — preview, cohort-only (mods + the
-  // `app-blocks-author` Flipt cohort). Anonymous / non-cohort → 403 with a clear
-  // preview message (invited-cohort DX: explain the restriction rather than an
-  // opaque 404), evaluated before the rate limit + service.
-  if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    return res.status(403).json({
-      error: 'This API is in preview — access is restricted to Civitai moderators and app developers.',
-    });
-  }
-
+  // Conservative per-client rate limit (before the service call). Keys on
+  // CF-Connecting-IP / userId — guards only the cache-MISS path; the response
+  // body itself never varies by user.
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'collections', userId: user?.id });
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
@@ -69,13 +63,11 @@ export default MixedAuthEndpoint(async function handler(
     : allBrowsingLevelsFlag;
 
   try {
-    // VISIBILITY gate. No read permission → 404 (indistinguishable from a
-    // non-existent collection — no existence oracle).
-    const permissions = await getUserCollectionPermissionsById({
-      id,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    // VISIBILITY gate, evaluated as ANONYMOUS — NEVER pass the session
+    // userId/isModerator. `read` is true only for Public/Unlisted, so a private
+    // collection → 404 for EVERY caller (indistinguishable from a non-existent
+    // one — no existence oracle), and the decision is caller-independent.
+    const permissions = await getUserCollectionPermissionsById({ id });
     if (!permissions.read) return res.status(404).json({ error: `No collection with id ${id}` });
 
     // getCollectionById throws NOT_FOUND when the row is gone → handleEndpointError

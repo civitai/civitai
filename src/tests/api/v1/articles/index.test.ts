@@ -4,14 +4,12 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
-// Hoisted mocks for the wrapped service + the rate limiter + the author-cohort gate.
-const { mockGetArticles, mockGetArticleById, mockRateLimit, mockIsAppBlocksAuthorEnabled } =
-  vi.hoisted(() => ({
-    mockGetArticles: vi.fn(),
-    mockGetArticleById: vi.fn(),
-    mockRateLimit: vi.fn(),
-    mockIsAppBlocksAuthorEnabled: vi.fn(),
-  }));
+// Hoisted mocks for the wrapped service + the rate limiter.
+const { mockGetArticles, mockGetArticleById, mockRateLimit } = vi.hoisted(() => ({
+  mockGetArticles: vi.fn(),
+  mockGetArticleById: vi.fn(),
+  mockRateLimit: vi.fn(),
+}));
 
 vi.mock('~/server/services/article.service', () => ({
   getArticles: mockGetArticles,
@@ -20,13 +18,6 @@ vi.mock('~/server/services/article.service', () => ({
 
 vi.mock('~/server/utils/public-api-rate-limit', () => ({
   checkPublicApiRateLimit: mockRateLimit,
-}));
-
-// The App Blocks author-cohort gate — mock it so tests never touch real Flipt.
-// Default: in-cohort (true) so the existing happy-path assertions still exercise
-// the handler body; the dark-404 tests flip it to false.
-vi.mock('~/server/services/app-blocks-flag', () => ({
-  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 
 // MixedAuthEndpoint → passthrough that injects the test session user (req.user).
@@ -113,64 +104,6 @@ function createMocks({
 beforeEach(() => {
   vi.clearAllMocks();
   mockRateLimit.mockResolvedValue({ allowed: true });
-  // Default: caller IS in the author cohort (mod / app-dev-tester) so the
-  // existing behavioural tests reach the handler body. Dark-404 tests override.
-  mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
-});
-
-const PREVIEW_MESSAGE =
-  'This API is in preview — access is restricted to Civitai moderators and app developers.';
-
-describe('GET /api/v1/articles — author-cohort gate (403 preview)', () => {
-  it('SECURITY: a non-cohort authed user gets a 403 + preview message and NEITHER the rate limiter NOR the service runs (list)', async () => {
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const { req, res } = createMocks({ query: {}, user: { id: 7, isModerator: false } });
-
-    await listHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
-    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: { id: 7, isModerator: false } });
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(mockGetArticles).not.toHaveBeenCalled();
-  });
-
-  it('SECURITY: an anonymous caller gets a 403 + preview message (list)', async () => {
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const { req, res } = createMocks({ query: {} });
-
-    await listHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
-    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: undefined });
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(mockGetArticles).not.toHaveBeenCalled();
-  });
-
-  it('SECURITY: a non-cohort authed user gets a 403 + preview message (detail)', async () => {
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const { req, res } = createMocks({ query: { id: '3' }, user: { id: 7, isModerator: false } });
-
-    await detailHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(mockGetArticleById).not.toHaveBeenCalled();
-  });
-
-  it('SECURITY: an anonymous caller gets a 403 + preview message (detail)', async () => {
-    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
-    const { req, res } = createMocks({ query: { id: '3' } });
-
-    await detailHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).toEqual({ error: PREVIEW_MESSAGE });
-    expect(mockRateLimit).not.toHaveBeenCalled();
-    expect(mockGetArticleById).not.toHaveBeenCalled();
-  });
 });
 
 describe('GET /api/v1/articles (list)', () => {
@@ -190,50 +123,62 @@ describe('GET /api/v1/articles (list)', () => {
     expect(body.metadata.nextPage).toContain('cursor=123.5%7C7');
   });
 
-  it('SECURITY: unauthenticated call passes sessionUser=undefined and NEVER a client-supplied userId (visibility delegated to the gated service)', async () => {
+  it('CACHEABILITY: the response is caller-independent — an authed caller gets byte-identical data to an anonymous caller for the same URL, and the service is called as anonymous in BOTH cases', async () => {
+    mockGetArticles.mockResolvedValue({
+      items: [{ id: 1, title: 'a' }],
+      nextCursor: undefined,
+    });
+
+    const anon = createMocks({ query: { limit: '5' } });
+    await listHandler(anon.req, anon.res);
+
+    const authed = createMocks({ query: { limit: '5' }, user: { id: 42, username: 'me', isModerator: true } });
+    await listHandler(authed.req, authed.res);
+
+    // Same URL → byte-identical response body regardless of caller identity.
+    expect(anon.res._getStatusCode()).toBe(200);
+    expect(authed.res._getStatusCode()).toBe(200);
+    expect(authed.res._getJSONData()).toEqual(anon.res._getJSONData());
+
+    // The service is invoked with identical, PURELY-PUBLIC args in both calls —
+    // no per-user widening (sessionUser is undefined even for the authed mod).
+    const anonArgs = mockGetArticles.mock.calls[0][0];
+    const authedArgs = mockGetArticles.mock.calls[1][0];
+    expect(anonArgs.sessionUser).toBeUndefined();
+    expect(authedArgs.sessionUser).toBeUndefined();
+    expect(authedArgs).toEqual(anonArgs);
+  });
+
+  it('SECURITY: passes sessionUser=undefined + forceHidePrivate=true and NEVER a client-supplied userId/favorites/hidden (visibility evaluated as anonymous)', async () => {
     mockGetArticles.mockResolvedValue({ items: [], nextCursor: undefined });
-    // A client tries to inject userId — the endpoint schema doesn't expose it.
-    const { req, res } = createMocks({ query: { userId: '5', userIds: '5,6' } });
+    // A client tries to inject per-user / owner-widening params — the endpoint
+    // schema doesn't expose any of them, so they can't reach the service.
+    const { req, res } = createMocks({
+      query: { userId: '5', userIds: '5,6', favorites: 'true', hidden: 'true', username: 'someUser' },
+      user: { id: 5, username: 'someUser' },
+    });
 
     await listHandler(req, res);
 
     expect(res._getStatusCode()).toBe(200);
     const args = mockGetArticles.mock.calls[0][0];
+    // Anonymous evaluation — no session identity flows to the service.
     expect(args.sessionUser).toBeUndefined();
     expect(args.userIds).toBeUndefined();
     expect(args.userId).toBeUndefined();
+    // Own-engagement filters are NOT accepted (removed from the public surface).
+    expect(args.favorites).toBeUndefined();
+    expect(args.hidden).toBeUndefined();
+    // Even with a username filter (which normally lifts the private-drop for an
+    // owner self-view), forceHidePrivate is pinned → availability=Private always
+    // dropped, for EVERY caller.
+    expect(args.username).toBe('someUser');
+    expect(args.forceHidePrivate).toBe(true);
     // Non-nsfw + non-restricted region → public browsing ceiling.
     expect(args.browsingLevel).toBe(publicBrowsingLevelsFlag);
     // published-only guard pinned on top of the service's own gate.
     expect(args.period).toBe('AllTime');
     expect(args.periodMode).toBe('published');
-    expect(args.favorites).toBe(false);
-    expect(args.hidden).toBe(false);
-  });
-
-  it('SECURITY: anon ?username=X forces forceHidePrivate=true so private-availability articles are never listed', async () => {
-    mockGetArticles.mockResolvedValue({ items: [], nextCursor: undefined });
-    const { req, res } = createMocks({ query: { username: 'someUser' } });
-
-    await listHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(200);
-    const args = mockGetArticles.mock.calls[0][0];
-    // Even with a username filter (which normally lifts the private-drop for an
-    // owner self-view), the REST surface pins forceHidePrivate → the service
-    // ALWAYS drops availability=Private articles.
-    expect(args.username).toBe('someUser');
-    expect(args.forceHidePrivate).toBe(true);
-    expect(args.sessionUser).toBeUndefined();
-  });
-
-  it('401s when an unauthenticated caller requests favorites/hidden (own-engagement, authed-only)', async () => {
-    const { req, res } = createMocks({ query: { favorites: 'true' } });
-
-    await listHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(401);
-    expect(mockGetArticles).not.toHaveBeenCalled();
   });
 
   it('400s on a malformed cursor', async () => {
@@ -253,20 +198,20 @@ describe('GET /api/v1/articles (list)', () => {
 
     expect(res._getStatusCode()).toBe(429);
     expect(res._getHeader('Retry-After')).toBe('42');
-    expect(res._getHeader('Cache-Control')).toBe('no-store');
     expect(mockGetArticles).not.toHaveBeenCalled();
   });
 });
 
 describe('GET /api/v1/articles/[id] (detail)', () => {
-  it('strips moderatorNsfwLevel and returns the article; passes session identity (undefined when unauthed)', async () => {
+  it('strips moderatorNsfwLevel and evaluates as anonymous (NEVER passes session userId/isModerator)', async () => {
     mockGetArticleById.mockResolvedValue({
       id: 3,
       title: 't',
       moderatorNsfwLevel: 8,
       nsfwLevel: 1,
     });
-    const { req, res } = createMocks({ query: { id: '3' } });
+    // Even an authed moderator caller must be evaluated as anonymous.
+    const { req, res } = createMocks({ query: { id: '3' }, user: { id: 9, isModerator: true } });
 
     await detailHandler(req, res);
 
@@ -274,11 +219,14 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
     const body = res._getJSONData();
     expect(body).toEqual({ id: 3, title: 't', nsfwLevel: 1 });
     expect(body.moderatorNsfwLevel).toBeUndefined();
+    // No session identity reaches the service → published-only visibility for all.
     const args = mockGetArticleById.mock.calls[0][0];
-    expect(args).toMatchObject({ id: 3, userId: undefined, isModerator: undefined });
+    expect(args).toEqual({ id: 3 });
+    expect(args.userId).toBeUndefined();
+    expect(args.isModerator).toBeUndefined();
   });
 
-  it('SECURITY: a private/unpublished article (service throws NOT_FOUND for a non-owner) 404s', async () => {
+  it('SECURITY: a private/unpublished article (service throws NOT_FOUND) 404s for an anonymous caller', async () => {
     mockGetArticleById.mockRejectedValue(
       new TRPCError({ code: 'NOT_FOUND', message: 'No article with id 99' })
     );
@@ -287,6 +235,20 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
     await detailHandler(req, res);
 
     expect(res._getStatusCode()).toBe(404);
+  });
+
+  it('SECURITY: a private/unpublished article 404s IDENTICALLY for an authed caller (no owner-draft branch)', async () => {
+    mockGetArticleById.mockRejectedValue(
+      new TRPCError({ code: 'NOT_FOUND', message: 'No article with id 99' })
+    );
+    // An authed user who might be the owner still gets a 404 — the endpoint never
+    // passes their identity, so the owner-draft self-view branch cannot fire.
+    const { req, res } = createMocks({ query: { id: '99' }, user: { id: 5, isModerator: false } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(mockGetArticleById.mock.calls[0][0]).toEqual({ id: 99 });
   });
 
   it('400s on a non-numeric / out-of-range id', async () => {
