@@ -6,6 +6,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { AppsSubmitEditView } from '~/components/Apps/AppsSubmitEditView';
 import { CliSubmitCta } from '~/components/Apps/CliSubmitCta';
+import { ConnectSubmitForm } from '~/components/Apps/ConnectSubmitForm';
 import { ExternalSubmitForm } from '~/components/Apps/ExternalSubmitForm';
 import {
   SubmitModeSelector,
@@ -83,7 +84,15 @@ export default function SubmitAppPage() {
               every submission before it appears.
             </>
           ) : (
-            <>Submitting {mode === 'external' ? 'an External link' : 'an App'}.</>
+            <>
+              Submitting{' '}
+              {mode === 'external'
+                ? 'an External link'
+                : mode === 'connect'
+                ? 'a Connect app'
+                : 'an App'}
+              .
+            </>
           )
         }
       >
@@ -104,7 +113,13 @@ export default function SubmitAppPage() {
               </Group>
             </UnstyledButton>
 
-            {mode === 'external' ? <ExternalSubmitForm /> : <CliSubmitCta />}
+            {mode === 'external' ? (
+              <ExternalSubmitForm />
+            ) : mode === 'connect' ? (
+              <ConnectSubmitForm />
+            ) : (
+              <CliSubmitCta />
+            )}
           </Stack>
         )}
       </AppsPageLayout>

@@ -28,6 +28,7 @@ import {
   listOffsiteRequestsSchema,
   persistListingAssetImageSchema,
   rejectExternalRequestSchema,
+  submitConnectListingSchema,
   submitExternalListingSchema,
   submitListingRevisionSchema,
   updateListingSchema,
@@ -320,6 +321,32 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       return submitExternalListing({ input, userId: ctx.user.id });
+    }),
+
+  /**
+   * AUTHOR: submit an OAuth-CONNECT off-site app — link a registered OAuth client
+   * the caller OWNS (and that is NOT an App-Block client) so users can grant it
+   * access. Creates a DRAFT `AppListing(connectClientId set)` + a `pending` request
+   * (B1), carrying the DISCLOSED requested-scope subset (⊆ the client's
+   * `allowedScopes`) + per-scope justifications (review-only — does NOT gate token
+   * issuance). Owner-bound to the caller; the same `appDeveloperProcedure` author
+   * gate + submit-rate limit as the external path keeps it DARK until launch.
+   */
+  submitConnectListing: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 10,
+        period: 3600,
+        errorMessage: 'Too many submissions — slow down.',
+      })
+    )
+    .input(submitConnectListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { submitConnectListing } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      return submitConnectListing({ input, userId: ctx.user.id });
     }),
 
   /**
