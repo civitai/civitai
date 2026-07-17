@@ -3,27 +3,31 @@ import {
   enqueueTrackEvent,
   __trackBufferTestHooks as hooks,
 } from '~/components/TrackView/trackEventBuffer';
-import { isHighValueTrackEvent } from '~/server/schema/track.schema';
-import type { TrackActionInput } from '~/server/schema/track.schema';
+import { isImmediateFlushTrackEvent } from '~/server/schema/track.schema';
+import type { TrackActionInput, TrackBatchEvent } from '~/server/schema/track.schema';
 
 /**
  * Coverage for the client telemetry coalescing buffer (Load-reduction B1).
  *
  * The buffer replaces one-tRPC-call-per-event for trackSearch/addAction with a
- * coalesced batch flushed to /api/track/batch. These tests verify the four flush
- * triggers and the no-loss-on-unload guarantee:
+ * coalesced batch flushed to /api/track/batch. These tests verify the flush
+ * triggers, the no-loss guarantees, and the oversized-batch handling:
  *   - interval flush (timer),
  *   - size-cap flush,
+ *   - immediate flush for money/conversion + compliance (CSAM) events,
  *   - visibilitychange:hidden flush via sendBeacon,
  *   - pagehide flush via sendBeacon (nothing buffered is lost on navigation),
  *   - order + payload preservation (transport changes, recorded shape does not),
- *   - fail-open: a failed flush re-queues events for the next flush (bounded).
+ *   - fail-open: a failed flush (incl. a failed immediate high-value flush)
+ *     re-queues events for the next flush (bounded),
+ *   - sendBeacon returning false (over the ~64KB cap) falls back to keepalive
+ *     fetch instead of dropping, and oversized batches are split into sub-batches.
  *
  * Runs in the node env with a hand-rolled fake DOM so the flush triggers are fully
  * deterministic (no reliance on a headless browser or jsdom event quirks).
  */
 
-const { FLUSH_INTERVAL_MS, FLUSH_AT_SIZE, HARD_CAP } = hooks.constants;
+const { FLUSH_INTERVAL_MS, FLUSH_AT_SIZE, HARD_CAP, MAX_BEACON_BYTES } = hooks.constants;
 
 function makeFakeDom() {
   const listeners: Record<string, Array<(e?: unknown) => void>> = {};
@@ -231,6 +235,93 @@ describe('trackEventBuffer', () => {
     expect(hooks.pendingCount()).toBe(1);
   });
 
+  it('immediately flushes the compliance-critical CSAM_Help_Triggered event', async () => {
+    // Child-safety signal — must never sit buffered or be crash-losable.
+    enqueueTrackEvent({
+      kind: 'action',
+      data: { type: 'CSAM_Help_Triggered', details: { query: 'redacted' } },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(hooks.pendingCount()).toBe(0);
+    expect(await lastFetchBody()).toEqual([
+      { kind: 'action', data: { type: 'CSAM_Help_Triggered', details: { query: 'redacted' } } },
+    ]);
+  });
+
+  it('re-queues a FAILED high-value immediate flush (conversion event not lost)', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false }); // the immediate flush is rejected
+    enqueueTrackEvent({
+      kind: 'action',
+      data: { type: 'Generator_Submit', details: { fromAction: 'create' } },
+    });
+    // Let the immediate flush's post + re-queue microtask settle.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The conversion event was re-queued, not dropped.
+    expect(hooks.pendingCount()).toBe(1);
+
+    // The re-queue armed the interval timer; next flush (fetch ok) delivers it.
+    vi.advanceTimersByTime(FLUSH_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await lastFetchBody()).toEqual([
+      { kind: 'action', data: { type: 'Generator_Submit', details: { fromAction: 'create' } } },
+    ]);
+    expect(hooks.pendingCount()).toBe(0);
+  });
+
+  it('handles sendBeacon returning false on unload by falling back to keepalive fetch (no silent loss)', async () => {
+    sendBeacon.mockReturnValue(false); // beacon refused (e.g. over the ~64KB cap)
+    enqueueTrackEvent({ kind: 'search', data: { query: 'q', index: 'models' } });
+
+    dom.fire('pagehide');
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Beacon was attempted, refused, then the keepalive fetch fallback carried it.
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).keepalive).toBe(true);
+    expect(await lastFetchBody()).toEqual([{ kind: 'search', data: { query: 'q', index: 'models' } }]);
+    expect(hooks.pendingCount()).toBe(0);
+  });
+
+  it('splits a batch larger than the beacon cap into multiple sub-batch sends', async () => {
+    // Two events each ~ half the cap in size -> two chunks -> two beacons on unload,
+    // each under the cap. Proves oversized batches aren't sent as one over-cap blob.
+    const big = 'x'.repeat(Math.floor(MAX_BEACON_BYTES * 0.7));
+    enqueueTrackEvent({ kind: 'search', data: { query: big, index: 'models' } });
+    enqueueTrackEvent({ kind: 'search', data: { query: big, index: 'models' } });
+
+    dom.fire('pagehide');
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Two separate beacon sends (one per chunk), not one over-cap request.
+    expect(sendBeacon).toHaveBeenCalledTimes(2);
+    for (const call of sendBeacon.mock.calls) {
+      const blob = call[1] as Blob;
+      expect(blob.size).toBeLessThanOrEqual(MAX_BEACON_BYTES);
+      const parsed = JSON.parse(await blob.text());
+      expect(parsed).toHaveLength(1);
+    }
+    expect(hooks.pendingCount()).toBe(0);
+  });
+
+  it('chunkEvents keeps each chunk within the byte cap and preserves order', () => {
+    const big = 'y'.repeat(Math.floor(MAX_BEACON_BYTES * 0.6));
+    const events: TrackBatchEvent[] = [
+      { kind: 'search', data: { query: `${big}1`, index: 'models' } },
+      { kind: 'search', data: { query: `${big}2`, index: 'models' } },
+      { kind: 'search', data: { query: `${big}3`, index: 'models' } },
+    ];
+    const chunks = hooks.chunkEvents(events);
+    expect(chunks.length).toBeGreaterThan(1);
+    // Order preserved across the flattened chunks.
+    expect(chunks.flat()).toEqual(events);
+    for (const chunk of chunks) {
+      expect(JSON.stringify(chunk).length).toBeLessThanOrEqual(MAX_BEACON_BYTES);
+    }
+  });
+
   it('bounds re-queued events to the hard cap (drops oldest overflow, never grows unbounded)', async () => {
     // Force every flush to fail so events accumulate, and keep enqueuing past the
     // hard cap. The buffer must never exceed HARD_CAP.
@@ -243,12 +334,13 @@ describe('trackEventBuffer', () => {
   });
 });
 
-describe('isHighValueTrackEvent classification', () => {
+describe('isImmediateFlushTrackEvent classification', () => {
   const action = (type: TrackActionInput['type']) =>
     ({ kind: 'action', data: { type } } as any);
 
-  it('classifies conversion/monetization action types as high-value (immediate)', () => {
-    const highValue: TrackActionInput['type'][] = [
+  it('classifies money/conversion AND compliance action types as immediate-flush', () => {
+    const immediate: TrackActionInput['type'][] = [
+      // money / conversion
       'Generator_Submit',
       'PurchaseFunds_Confirm',
       'PurchaseFunds_Cancel',
@@ -258,31 +350,32 @@ describe('isHighValueTrackEvent classification', () => {
       'AwardBounty_Confirm',
       'Membership_Cancel',
       'Membership_Downgrade',
+      // compliance / safety
+      'CSAM_Help_Triggered',
     ];
-    for (const type of highValue) {
-      expect(isHighValueTrackEvent(action(type))).toBe(true);
+    for (const type of immediate) {
+      expect(isImmediateFlushTrackEvent(action(type))).toBe(true);
     }
   });
 
-  it('classifies high-volume/non-monetization action types as low-value (batched)', () => {
-    const lowValue: TrackActionInput['type'][] = [
+  it('classifies high-volume/non-critical action types as batched (not immediate)', () => {
+    const batched: TrackActionInput['type'][] = [
       'AddToBounty_Click',
       'AwardBounty_Click',
       'Tip_Click',
       'TipInteractive_Click',
       'TipInteractive_Cancel',
       'LoginRedirect',
-      'CSAM_Help_Triggered',
       'ProfanitySearch',
       'Model_Create_Click',
       'Image_Remix_Click',
     ];
-    for (const type of lowValue) {
-      expect(isHighValueTrackEvent(action(type))).toBe(false);
+    for (const type of batched) {
+      expect(isImmediateFlushTrackEvent(action(type))).toBe(false);
     }
   });
 
-  it('never classifies a search event as high-value', () => {
-    expect(isHighValueTrackEvent({ kind: 'search', data: { query: 'x', index: 'models' } })).toBe(false);
+  it('never classifies a search event as immediate-flush', () => {
+    expect(isImmediateFlushTrackEvent({ kind: 'search', data: { query: 'x', index: 'models' } })).toBe(false);
   });
 });

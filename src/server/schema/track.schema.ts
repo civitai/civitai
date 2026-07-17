@@ -502,15 +502,16 @@ export type TrackBatchEvent = z.infer<typeof trackBatchEventSchema>;
 export const trackBatchSchema = z.array(trackBatchEventSchema).min(1).max(TRACK_BATCH_MAX);
 export type TrackBatchInput = z.infer<typeof trackBatchSchema>;
 
-// Conversion/monetization-critical `addAction` kinds that must NOT be held in the
-// coalescing buffer — enqueueing one triggers an immediate flush so a browser
-// crash (which sendBeacon can't cover — it only fires on navigation/tab-hide)
-// can't lose it. Everything else (all searches + the high-VOLUME top-of-funnel
-// clicks) batches on the interval/size/unload triggers, which is where the load
-// win lives (these confirms are low-volume).
+// `addAction` kinds that must NOT be held in the coalescing buffer — enqueueing
+// one triggers an immediate flush so a browser crash (which sendBeacon can't
+// cover — it only fires on navigation/tab-hide) can't lose it. Everything else
+// (all searches + the high-VOLUME top-of-funnel clicks) batches on the
+// interval/size/unload triggers, which is where the load win lives (these
+// immediate kinds are low-volume).
 //
-// Selection is deliberately CONSERVATIVE — when in doubt an event is treated as
-// high-value (immediate). Included:
+// Two categories qualify, selected CONSERVATIVELY (when in doubt → immediate):
+//
+//   MONEY / CONVERSION-critical:
 //   - Generator_Submit      — anchors the generation→revenue funnel (externalId join)
 //   - PurchaseFunds_Confirm — buzz purchase completion (real money)
 //   - PurchaseFunds_Cancel  — checkout-funnel drop-off (purchase funnel)
@@ -520,11 +521,16 @@ export type TrackBatchInput = z.infer<typeof trackBatchSchema>;
 //   - AwardBounty_Confirm   — buzz awarded from a bounty
 //   - Membership_Cancel     — subscription churn
 //   - Membership_Downgrade  — subscription downgrade
-// Batched (low-value, high-volume or non-monetization): the *_Click intents,
+//
+//   COMPLIANCE / SAFETY-critical:
+//   - CSAM_Help_Triggered   — child-safety signal; must never be buffered/crash-lost
+//
+// Batched (low-value, high-volume or non-critical): the *_Click intents,
 // TipInteractive_Click/_Cancel (pre-confirm/cancel UI steps — the money move is
-// Tip_Confirm), LoginRedirect, ProfanitySearch, CSAM_Help_Triggered,
-// Model_Create_Click, Image_Remix_Click, and every trackSearch event.
-export const HIGH_VALUE_ACTION_TYPES = new Set<TrackActionInput['type']>([
+// Tip_Confirm), LoginRedirect, ProfanitySearch, Model_Create_Click,
+// Image_Remix_Click, and every trackSearch event.
+export const IMMEDIATE_FLUSH_ACTION_TYPES = new Set<TrackActionInput['type']>([
+  // money / conversion
   'Generator_Submit',
   'PurchaseFunds_Confirm',
   'PurchaseFunds_Cancel',
@@ -534,11 +540,13 @@ export const HIGH_VALUE_ACTION_TYPES = new Set<TrackActionInput['type']>([
   'AwardBounty_Confirm',
   'Membership_Cancel',
   'Membership_Downgrade',
+  // compliance / safety
+  'CSAM_Help_Triggered',
 ]);
 
-// A batch event is high-value only when it's an `action` whose type is in the set
-// above. Searches are never high-value (they're the bulk of the volume → always
-// batched). Used by the client buffer to decide immediate-flush vs coalesce.
-export function isHighValueTrackEvent(event: TrackBatchEvent): boolean {
-  return event.kind === 'action' && HIGH_VALUE_ACTION_TYPES.has(event.data.type);
+// A batch event flushes immediately only when it's an `action` whose type is in
+// the set above. Searches are never immediate (they're the bulk of the volume →
+// always batched). Used by the client buffer to decide immediate-flush vs coalesce.
+export function isImmediateFlushTrackEvent(event: TrackBatchEvent): boolean {
+  return event.kind === 'action' && IMMEDIATE_FLUSH_ACTION_TYPES.has(event.data.type);
 }
