@@ -346,6 +346,8 @@ export type AppListing = {
   content_rating: string | null;
   external_url: string | null;
   connect_client_id: string | null;
+  connect_requested_scopes: number | null;
+  connect_scope_justifications: unknown | null;
   app_block_id: string | null;
   revision_of_id: string | null;
   featured: Generated<boolean>;
@@ -775,7 +777,27 @@ export type BlockScopeInvocation = {
    * the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
    */
   synthetic_app_id: string | null;
-  block_instance_id: string;
+  /**
+   * NULLABLE: an EXTERNAL OAuth invocation (`source = 'external-oauth'`) has no
+   * block instance — the acting app is a pure OauthClient with no App Block. A
+   * block-token row always sets this.
+   */
+  block_instance_id: string | null;
+  /**
+   * The acting OauthClient id for an EXTERNAL OAuth invocation (`source =
+   * 'external-oauth'`) — the "which app" for external OAuth API usage, mirroring
+   * what `appBlockId` is for a block-token row. NULL for a block-token row.
+   * Intentionally FK-LESS text so the audit row SURVIVES deletion of the
+   * OauthClient it references (an audit trail must outlive the app).
+   */
+  oauth_client_id: string | null;
+  /**
+   * Discriminates the token population that made the call: `'app-block'` (an App
+   * Block block-token, the historical default) vs `'external-oauth'` (a standard
+   * external OAuth access token verified at `enforceTokenScope`). Additive:
+   * existing rows backfill to `'app-block'`.
+   */
+  source: Generated<string>;
   scope: string;
   endpoint: string;
   status_code: number;

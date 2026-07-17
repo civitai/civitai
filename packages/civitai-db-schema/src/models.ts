@@ -1890,6 +1890,8 @@ export interface AppListing {
   externalUrl: string | null;
   connectClientId: string | null;
   connectClient?: OauthClient | null;
+  connectRequestedScopes: number | null;
+  connectScopeJustifications: JsonValue | null;
   appBlockId: string | null;
   appBlock?: AppBlock | null;
   revisionOfId: string | null;
@@ -2169,7 +2171,9 @@ export interface BlockScopeInvocation {
   appBlockId: string | null;
   appBlock?: AppBlock | null;
   syntheticAppId: string | null;
-  blockInstanceId: string;
+  blockInstanceId: string | null;
+  oauthClientId: string | null;
+  source: string;
   scope: string;
   endpoint: string;
   statusCode: number;
