@@ -209,4 +209,15 @@ describe('createKeyedTtlMemo', () => {
     expect(await memo('all')).toBe('all-3');
     expect(await memo('red')).toBe('red-2');
   });
+
+  it('freeze option is applied per key', async () => {
+    const clock = makeClock();
+    const memo = createKeyedTtlMemo<{ id: number }[]>(async () => [{ id: 1 }], 30_000, clock.now, {
+      freeze: true,
+    });
+
+    const arr = await memo('a');
+    expect(Object.isFrozen(arr)).toBe(true);
+    expect(() => arr.push({ id: 2 })).toThrow();
+  });
 });

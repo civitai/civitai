@@ -16,6 +16,7 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import {
   getChainConfig,
   getChainForNetworkWithFallback,
@@ -796,7 +797,21 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]> => {
+// The supported-currency list is GLOBAL (identical for every user) and changes
+// rarely — it is already redis-cached for 3h and refreshed via an admin `del` of
+// CACHE_KEY. An in-proc memo in front of it collapses the frequent
+// redis.packed.get + msgpackr decode into ~1 read / TTL / pod. TTL is longer than
+// the system-cache blobs (this list barely moves) but still bounded so an admin
+// CACHE_KEY refresh propagates within a minute per pod.
+const SUPPORTED_CURRENCIES_INPROC_TTL_MS = 60_000;
+
+// Sentinel so the public getter can distinguish "upstream NowPayments returned no
+// data" (→ fail open to []) from a real infra error (→ propagate). Thrown instead
+// of returning [] so createTtlMemo does NOT memoize the empty fallback — the next
+// call retries the upstream fetch immediately, preserving the original semantics.
+class NowPaymentsCurrencyUnavailableError extends Error {}
+
+const getSupportedCurrenciesMemo = createTtlMemo<SupportedCurrencyGroup[]>(async () => {
   // Check cache first
   const cached = await redis.packed.get<SupportedCurrencyGroup[]>(CACHE_KEY);
   if (cached) return cached;
@@ -812,7 +827,7 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
       hasMerchantCoins: !!merchantCoins,
       hasFullCurrencies: !!fullCurrencies,
     });
-    return [];
+    throw new NowPaymentsCurrencyUnavailableError('Failed to fetch currency data from NowPayments');
   }
 
   const selectedCodes = new Set(merchantCoins.selectedCurrencies.map((c) => c.toLowerCase()));
@@ -870,6 +885,17 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
   await redis.packed.set(CACHE_KEY, result, { EX: CacheTTL.hour * 3 });
 
   return result;
+}, SUPPORTED_CURRENCIES_INPROC_TTL_MS);
+
+export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]> => {
+  try {
+    return await getSupportedCurrenciesMemo();
+  } catch (e) {
+    // Preserve the original fail-open: an upstream NowPayments miss yields [];
+    // any other (infra) error propagates unchanged — and neither is memoized.
+    if (e instanceof NowPaymentsCurrencyUnavailableError) return [];
+    throw e;
+  }
 };
 
 /**

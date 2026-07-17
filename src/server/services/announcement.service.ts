@@ -9,6 +9,7 @@ import type {
 } from '~/server/schema/announcement.schema';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { DomainColor } from '~/shared/utils/prisma/enums';
+import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 
 const domainColors = Object.values(DomainColor);
 const announcementRedisKeys = ['', ...domainColors].map((domain) =>
@@ -93,21 +94,39 @@ export async function getCurrentAnnouncements({
   });
 }
 
+// This redis read is GLOBAL per domain — the per-user (targetAudience) + active
+// time-window filter is applied by getCurrentAnnouncements AFTER this, in JS — so
+// it is safe to memoize per domain (a bounded DomainColor set). Collapses the
+// frequent redis.get + JSON.parse into ~1 read / TTL / pod. The announcement
+// caches are redis.del-invalidated on upsert/delete, so the in-proc memo adds at
+// most this TTL of per-pod propagation on top of that del; announcements are also
+// start/end-time gated downstream, so a few seconds is invisible. Keyed by
+// `domain ?? ''` (empty string = the no-domain default cache).
+const ANNOUNCEMENTS_INPROC_TTL_MS = 30_000;
+
+const getAnnouncementsCachedMemo = createKeyedTtlMemo<AnnouncementDTO[]>(
+  async (domainKey) => {
+    const domain = (domainKey || undefined) as DomainColor | undefined;
+    const cacheKey: RedisKeyTemplateCache = domain
+      ? `${REDIS_KEYS.CACHES.ANNOUNCEMENTS}:${domain as string}`
+      : REDIS_KEYS.CACHES.ANNOUNCEMENTS;
+
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as AnnouncementDTO[];
+
+    const announcements = await getAnnouncements(domain);
+
+    await redis.set(cacheKey, JSON.stringify(announcements), {
+      EX: CacheTTL.day,
+    });
+
+    return announcements;
+  },
+  ANNOUNCEMENTS_INPROC_TTL_MS
+);
+
 async function getAnnouncementsCached(domain?: DomainColor) {
-  const cacheKey: RedisKeyTemplateCache = domain
-    ? `${REDIS_KEYS.CACHES.ANNOUNCEMENTS}:${domain as string}`
-    : REDIS_KEYS.CACHES.ANNOUNCEMENTS;
-
-  const cached = await redis.get(cacheKey);
-  if (cached) return JSON.parse(cached) as AnnouncementDTO[];
-
-  const announcements = await getAnnouncements(domain);
-
-  await redis.set(cacheKey, JSON.stringify(announcements), {
-    EX: CacheTTL.day,
-  });
-
-  return announcements;
+  return getAnnouncementsCachedMemo(domain ?? '');
 }
 
 export type AnnouncementDTO = Awaited<ReturnType<typeof getAnnouncements>>[number];
