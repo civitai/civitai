@@ -11,7 +11,10 @@ import {
   OFFSITE_MOD_REASON_MIN,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
-import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '~/shared/constants/token-scope.constants';
+import {
+  ALL_SCOPES,
+  SCOPE_JUSTIFICATION_MAX_LENGTH,
+} from '~/shared/constants/token-scope.constants';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE (external-link) submission schemas.
@@ -132,9 +135,17 @@ export const submitConnectListingSchema = z.object({
   slug: z.string().min(3).max(40).regex(SLUG_REGEX),
   name: z.string().min(1).max(OFFSITE_NAME_MAX),
   connectClientId: z.string().min(1).max(64),
-  // Non-negative bitmask; the subset-of-ceiling check lives in the service (needs
-  // the client's `allowedScopes`).
-  requestedScopes: z.number().int().nonnegative(),
+  // Non-negative bitmask, UPPER-BOUNDED at the full defined scope set (`ALL_SCOPES`,
+  // the OR of every TokenScope bit). Without the max, a crafted value beyond int4
+  // (e.g. 2**32, or 2**32 + a real bit) survives the subset check — JS bitwise ToInt32
+  // in `connectScopesSubsetOfCeiling` truncates it away — then the int4 INSERT raises
+  // Postgres 22003, which the service's P2002-only catch surfaces as a raw 500. The
+  // `.max` rejects it at the schema boundary (400) instead. `ALL_SCOPES` (not
+  // `TokenScope.Full`) is the correct ceiling: Full excludes the AppBlocksSubmit /
+  // AppBlocksDevTunnel bits, which a client's `allowedScopes` MAY legitimately carry,
+  // so bounding at Full could reject a valid subset. The per-client subset check still
+  // lives in the service (it needs the client's `allowedScopes`).
+  requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES),
   // Per-value length bound only; full key/subset validation is in the service.
   scopeJustifications: z.record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH)),
   tagline: z.string().max(OFFSITE_TAGLINE_MAX).optional(),
@@ -179,7 +190,9 @@ export const updateListingPatchSchema = z
     // as a pair: the SERVICE re-runs the subset-of-ceiling + justification checks
     // (needs the listing's client `allowedScopes`) and rejects justifications
     // without a `requestedScopes` mask, so a scope change re-enters mod review.
-    requestedScopes: z.number().int().nonnegative().optional(),
+    // Upper-bounded at `ALL_SCOPES` for the same int4-overflow reason as the submit
+    // schema (a value beyond int4 would 500 on the UPDATE, not 400 at the boundary).
+    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES).optional(),
     scopeJustifications: z
       .record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH))
       .optional(),

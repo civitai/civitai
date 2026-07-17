@@ -339,6 +339,12 @@ function assertConnectScopesValid(opts: {
  * Owner-binding (IDOR) is identical to the external path — both `AppListing.userId`
  * and `AppListingPublishRequest.submittedByUserId` come from the authenticated
  * caller, and the client ownership is re-checked here.
+ *
+ * NOTE: connect-listing mod APPROVAL is completed in PR3 (which owns the review
+ * side). Today `approveExternalRequest` / `applyApprovedRevision` re-validate the
+ * stored `externalUrl`, which is `null` for a connect listing — PR3 skips that URL
+ * re-validation for the connect sub-kind + adds the approve→live test. This submit
+ * path (PR2) deliberately does not touch the approve path.
  */
 export async function submitConnectListing(opts: {
   input: SubmitConnectListingInput;
@@ -889,10 +895,22 @@ export async function updateListing(opts: {
     }
     const client = await dbRead.oauthClient.findUnique({
       where: { id: listing.connectClientId },
-      select: { allowedScopes: true },
+      select: { userId: true, allowedScopes: true },
     });
     if (!client) {
       throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
+    }
+    // Defense in depth: re-assert the caller still OWNS the client (mirrors
+    // `loadConnectClientForListing`'s submit-time check). `connectClientId` is
+    // immutable on edit, so this is safe today — but if the client were transferred
+    // to another user after submit, the original listing owner must NOT be able to
+    // edit disclosed scopes against the new owner's ceiling. `userId` here is the
+    // authenticated caller (the listing was already owner-bound above).
+    if (client.userId !== userId) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'you can only list an OAuth client you own',
+      });
     }
     connectAllowedScopes = client.allowedScopes;
     // Validate the scope edit UP-FRONT (before any shadow is opened) so an invalid

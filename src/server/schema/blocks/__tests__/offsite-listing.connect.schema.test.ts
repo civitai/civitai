@@ -4,7 +4,11 @@ import {
   submitConnectListingSchema,
   updateListingPatchSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
-import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '~/shared/constants/token-scope.constants';
+import {
+  ALL_SCOPES,
+  SCOPE_JUSTIFICATION_MAX_LENGTH,
+  TokenScope,
+} from '~/shared/constants/token-scope.constants';
 
 /**
  * W13 OAuth-connect submit + patch schema tests (PR2). The schema bounds the SHAPE
@@ -55,6 +59,41 @@ describe('submitConnectListingSchema', () => {
     );
   });
 
+  // int4-overflow hardening: a value beyond the full defined scope set must be
+  // rejected at the schema boundary (400), NOT survive the JS-ToInt32 subset check
+  // and 500 on the int4 INSERT. These FAIL without the `.max(ALL_SCOPES)` bound.
+  it.each([
+    ['2**32', 2 ** 32],
+    ['2**32 + a real bit', 2 ** 32 + TokenScope.ModelsRead],
+  ])('rejects an over-int4 requestedScopes (%s)', (_label, requestedScopes) => {
+    expect(
+      submitConnectListingSchema.safeParse({ ...valid, requestedScopes, scopeJustifications: {} })
+        .success
+    ).toBe(false);
+  });
+
+  it('accepts requestedScopes at exactly ALL_SCOPES (the max bound)', () => {
+    expect(
+      submitConnectListingSchema.safeParse({
+        ...valid,
+        requestedScopes: ALL_SCOPES,
+        scopeJustifications: {},
+      }).success
+    ).toBe(true);
+  });
+
+  it('accepts an app-block bit within ALL_SCOPES (Full would have been too strict)', () => {
+    // AppBlocksSubmit (bit 25) is EXCLUDED from TokenScope.Full but included in
+    // ALL_SCOPES — a client whose allowedScopes carries it can request it.
+    expect(
+      submitConnectListingSchema.safeParse({
+        ...valid,
+        requestedScopes: TokenScope.AppBlocksSubmit,
+        scopeJustifications: {},
+      }).success
+    ).toBe(true);
+  });
+
   it('rejects a justification value over the max length', () => {
     const parsed = submitConnectListingSchema.safeParse({
       ...valid,
@@ -88,5 +127,18 @@ describe('updateListingPatchSchema (connect fields)', () => {
         scopeJustifications: { ModelsRead: 'x'.repeat(SCOPE_JUSTIFICATION_MAX_LENGTH + 1) },
       }).success
     ).toBe(false);
+  });
+
+  it('rejects an over-int4 requestedScopes in a patch', () => {
+    expect(
+      updateListingPatchSchema.safeParse({ requestedScopes: 2 ** 32, scopeJustifications: {} })
+        .success
+    ).toBe(false);
+  });
+
+  it('accepts requestedScopes at ALL_SCOPES in a patch', () => {
+    expect(
+      updateListingPatchSchema.safeParse({ requestedScopes: ALL_SCOPES }).success
+    ).toBe(true);
   });
 });

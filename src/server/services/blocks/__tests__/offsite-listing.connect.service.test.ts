@@ -314,6 +314,21 @@ describe('updateListing (connect scope edit re-validation)', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
+  it('re-asserts client OWNERSHIP on edit: a client transferred to another user → FORBIDDEN, no shadow write', async () => {
+    // The listing is owned by CALLER, but the OAuth client now belongs to OTHER
+    // (transferred after submit). A scope edit must be refused before any shadow.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedConnectListing);
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    await expect(
+      updateListing({
+        listingId: 'apl_live',
+        userId: CALLER,
+        patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: {} },
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
   it('a valid scope change on an approved listing is MATERIAL → stages a shadow (requiresReview)', async () => {
     // loadOwnedEditableListing reads the live parent; beginListingRevision then
     // reads it again (approved, no existing shadow) and creates the shadow.
