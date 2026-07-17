@@ -4,12 +4,14 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
-// Hoisted mocks for the wrapped service + the rate limiter.
-const { mockGetArticles, mockGetArticleById, mockRateLimit } = vi.hoisted(() => ({
-  mockGetArticles: vi.fn(),
-  mockGetArticleById: vi.fn(),
-  mockRateLimit: vi.fn(),
-}));
+// Hoisted mocks for the wrapped service + the rate limiter + the author-cohort gate.
+const { mockGetArticles, mockGetArticleById, mockRateLimit, mockIsAppBlocksAuthorEnabled } =
+  vi.hoisted(() => ({
+    mockGetArticles: vi.fn(),
+    mockGetArticleById: vi.fn(),
+    mockRateLimit: vi.fn(),
+    mockIsAppBlocksAuthorEnabled: vi.fn(),
+  }));
 
 vi.mock('~/server/services/article.service', () => ({
   getArticles: mockGetArticles,
@@ -18,6 +20,13 @@ vi.mock('~/server/services/article.service', () => ({
 
 vi.mock('~/server/utils/public-api-rate-limit', () => ({
   checkPublicApiRateLimit: mockRateLimit,
+}));
+
+// The App Blocks author-cohort gate — mock it so tests never touch real Flipt.
+// Default: in-cohort (true) so the existing happy-path assertions still exercise
+// the handler body; the dark-404 tests flip it to false.
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 
 // MixedAuthEndpoint → passthrough that injects the test session user (req.user).
@@ -104,6 +113,60 @@ function createMocks({
 beforeEach(() => {
   vi.clearAllMocks();
   mockRateLimit.mockResolvedValue({ allowed: true });
+  // Default: caller IS in the author cohort (mod / app-dev-tester) so the
+  // existing behavioural tests reach the handler body. Dark-404 tests override.
+  mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
+});
+
+describe('GET /api/v1/articles — author-cohort gate (dark 404)', () => {
+  it('SECURITY: a non-cohort authed user gets a bare 404 and NEITHER the rate limiter NOR the service runs (list)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: {}, user: { id: 7, isModerator: false } });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: { id: 7, isModerator: false } });
+    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockGetArticles).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: an anonymous caller gets a bare 404 (list)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: {} });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: undefined });
+    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockGetArticles).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: a non-cohort authed user gets a bare 404 (detail)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: { id: '3' }, user: { id: 7, isModerator: false } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockGetArticleById).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: an anonymous caller gets a bare 404 (detail)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: { id: '3' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockGetArticleById).not.toHaveBeenCalled();
+  });
 });
 
 describe('GET /api/v1/articles (list)', () => {

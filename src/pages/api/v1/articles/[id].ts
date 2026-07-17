@@ -3,6 +3,7 @@ import type { Session } from '~/types/session';
 import * as z from 'zod';
 
 import { getArticleById } from '~/server/services/article.service';
+import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
 
@@ -29,6 +30,13 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
+  // App Blocks author-cohort gate — DARK preview, cohort-only (mods + the
+  // `app-blocks-author` Flipt cohort). Anonymous / non-cohort → bare 404 (no
+  // existence oracle), evaluated before the rate limit + service.
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'articles', userId: user?.id });
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));

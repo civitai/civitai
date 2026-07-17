@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ArticleSort } from '~/server/common/enums';
 import { getArticles } from '~/server/services/article.service';
+import { isAppBlocksAuthorEnabled } from '~/server/services/app-blocks-flag';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -76,6 +77,16 @@ export default MixedAuthEndpoint(async function handler(
   res: NextApiResponse,
   user: Session['user'] | undefined
 ) {
+  // App Blocks author-cohort gate — this endpoint is a DARK preview, reachable
+  // ONLY by the `appBlocksAuthor` cohort (mods via the static floor + the
+  // `app-blocks-author` Flipt cohort). Everyone else — INCLUDING anonymous (no
+  // user → not in cohort) — gets a bare 404, indistinguishable from a
+  // non-existent route (no existence oracle). Evaluated FIRST, before the rate
+  // limit + service, so no work leaks to a non-cohort caller.
+  if (!(await isAppBlocksAuthorEnabled({ user }))) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
   // Conservative per-client rate limit (before the expensive service call).
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'articles', userId: user?.id });
   if (!rateLimit.allowed) {

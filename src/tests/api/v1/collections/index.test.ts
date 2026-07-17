@@ -11,6 +11,7 @@ const {
   mockGetUserCollectionPermissionsById,
   mockGetCollectionById,
   mockRateLimit,
+  mockIsAppBlocksAuthorEnabled,
 } = vi.hoisted(() => ({
   mockGetAllCollections: vi.fn(),
   mockGetCollectionItemCount: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockGetUserCollectionPermissionsById: vi.fn(),
   mockGetCollectionById: vi.fn(),
   mockRateLimit: vi.fn(),
+  mockIsAppBlocksAuthorEnabled: vi.fn(),
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
@@ -30,6 +32,13 @@ vi.mock('~/server/services/collection.service', () => ({
 
 vi.mock('~/server/utils/public-api-rate-limit', () => ({
   checkPublicApiRateLimit: mockRateLimit,
+}));
+
+// The App Blocks author-cohort gate — mock it so tests never touch real Flipt.
+// Default: in-cohort (true) so the existing happy-path assertions still exercise
+// the handler body; the dark-404 tests flip it to false.
+vi.mock('~/server/services/app-blocks-flag', () => ({
+  isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 
 vi.mock('~/client-utils/cf-images-utils', () => ({
@@ -116,6 +125,60 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockRateLimit.mockResolvedValue({ allowed: true });
   mockGetCollectionItemCount.mockResolvedValue([]);
+  // Default: caller IS in the author cohort (mod / app-dev-tester) so the
+  // existing behavioural tests reach the handler body. Dark-404 tests override.
+  mockIsAppBlocksAuthorEnabled.mockResolvedValue(true);
+});
+
+describe('GET /api/v1/collections — author-cohort gate (dark 404)', () => {
+  it('SECURITY: a non-cohort authed user gets a bare 404 and NEITHER the rate limiter NOR the service runs (list)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: {}, user: { id: 7, isModerator: false } });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: { id: 7, isModerator: false } });
+    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockGetAllCollections).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: an anonymous caller gets a bare 404 (list)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: {} });
+
+    await listHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: undefined });
+    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockGetAllCollections).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: a non-cohort authed user gets a bare 404 (detail)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: { id: '55' }, user: { id: 7, isModerator: false } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(res._getJSONData()).toEqual({ error: 'Not found' });
+    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
+  });
+
+  it('SECURITY: an anonymous caller gets a bare 404 (detail)', async () => {
+    mockIsAppBlocksAuthorEnabled.mockResolvedValue(false);
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+    expect(mockRateLimit).not.toHaveBeenCalled();
+    expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
+  });
 });
 
 describe('GET /api/v1/collections (list)', () => {
