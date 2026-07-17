@@ -1597,20 +1597,31 @@ export const deleteModelById = async ({
   // surfacing in Meili-backed feeds even though the DB feed already hides them.
   // dbWrite to dodge replica lag on the just-committed txn (same as unpublish).
   if (deletedModel && deletedVersionIds.length) {
-    const deletedPosts = await dbWrite.post.findMany({
-      where: { modelVersionId: { in: deletedVersionIds }, userId: deletedModel.userId },
-      select: { id: true },
-    });
-    if (deletedPosts.length) {
-      const deletedImages = await dbWrite.image.findMany({
-        where: { postId: { in: deletedPosts.map((p) => p.id) } },
+    try {
+      const deletedPosts = await dbWrite.post.findMany({
+        where: { modelVersionId: { in: deletedVersionIds }, userId: deletedModel.userId },
         select: { id: true },
       });
-      if (deletedImages.length)
-        await queueImageSearchIndexUpdate({
-          ids: deletedImages.map((i) => i.id),
-          action: SearchIndexUpdateQueueAction.Delete,
+      if (deletedPosts.length) {
+        const deletedImages = await dbWrite.image.findMany({
+          where: { postId: { in: deletedPosts.map((p) => p.id) } },
+          select: { id: true },
         });
+        if (deletedImages.length)
+          await queueImageSearchIndexUpdate({
+            ids: deletedImages.map((i) => i.id),
+            action: SearchIndexUpdateQueueAction.Delete,
+          });
+      }
+    } catch (error) {
+      // Best-effort: the model is already committed-deleted, so an index-queue
+      // hiccup must not throw to the caller and skip the trailing cache busts.
+      logToAxiom({
+        type: 'error',
+        name: 'model-delete-image-search-index',
+        message: `Failed to queue image search index update for model ${id}`,
+        error,
+      });
     }
   }
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
@@ -2456,22 +2467,33 @@ export const unpublishModelById = async ({
   // Use dbWrite for the search-index lookups for the same reason as
   // publishModelById — the replica may not yet reflect the txn we just
   // committed.
-  const posts = await dbWrite.post.findMany({
-    where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
-    select: { id: true },
-  });
-  const images = await dbWrite.image.findMany({
-    where: { postId: { in: posts.map((x) => x.id) } },
-    select: { id: true },
-  });
+  try {
+    const posts = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
+      select: { id: true },
+    });
+    const images = await dbWrite.image.findMany({
+      where: { postId: { in: posts.map((x) => x.id) } },
+      select: { id: true },
+    });
 
-  // Remove this model from search index as it's been unpublished.
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  // Remove all affected images from search index
-  await queueImageSearchIndexUpdate({
-    ids: images.map((x) => x.id),
-    action: SearchIndexUpdateQueueAction.Delete,
-  });
+    // Remove this model from search index as it's been unpublished.
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    // Remove all affected images from search index
+    await queueImageSearchIndexUpdate({
+      ids: images.map((x) => x.id),
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  } catch (error) {
+    // Best-effort: the unpublish txn is already committed, so an index-queue
+    // hiccup must not throw to the caller and skip the trailing bid cleanup.
+    logToAxiom({
+      type: 'error',
+      name: 'model-unpublish-image-search-index',
+      message: `Failed to queue search index update for model ${id}`,
+      error,
+    });
+  }
 
   await deleteBidsForModel({ modelId: id });
 
