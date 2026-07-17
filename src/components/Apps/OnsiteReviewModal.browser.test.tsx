@@ -222,6 +222,61 @@ describe('OnsiteReviewModal — per-scope justifications shown to the mod', () =
   });
 });
 
+describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the mod', () => {
+  test('a mix of sensitive + normal scopes renders a "Sensitive permissions" group (first) and the normal "Permissions" group with per-group counts', async () => {
+    const withSensitive = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-sensitive',
+      slug: 'sensitive-block',
+      manifest: {
+        ...ONSITE_PENDING.manifest,
+        // 2 sensitive (spends/reads Buzz) + 1 normal.
+        scopes: ['ai:write:budgeted', 'buzz:read:self', 'models:read:self'],
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: withSensitive, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    // Sensitive group header with the sensitive-only count.
+    await expect.element(page.getByText('Sensitive permissions (2)')).toBeInTheDocument();
+    // Normal group header counts ONLY the non-sensitive scopes.
+    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    // The sensitive scopes carry the reusable "Sensitive" indicator; the two
+    // sensitive scopes each get one badge (the normal scope does not).
+    expect(page.getByTestId('sensitive-scope-badge').elements()).toHaveLength(2);
+    // The sensitive + normal scope badges all render.
+    await expect.element(page.getByText('ai:write:budgeted')).toBeInTheDocument();
+    await expect.element(page.getByText('buzz:read:self')).toBeInTheDocument();
+    await expect.element(page.getByText('models:read:self')).toBeInTheDocument();
+  });
+
+  test('a manifest with ONLY normal scopes renders NO "Sensitive permissions" header', async () => {
+    const normalOnly = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-normal',
+      slug: 'normal-block',
+      manifest: {
+        ...ONSITE_PENDING.manifest,
+        scopes: ['models:read:self', 'user:read:self'],
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: normalOnly, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    // The normal group still shows all of them.
+    await expect.element(page.getByText('Permissions (2)')).toBeInTheDocument();
+    // No sensitive header and no sensitive badge when nothing is sensitive.
+    expect(page.getByText(/Sensitive permissions/).elements()).toHaveLength(0);
+    expect(page.getByTestId('sensitive-scope-badge').elements()).toHaveLength(0);
+  });
+});
+
 describe('OnsiteReviewModal — live preview links to the full-page route (not the raw host)', () => {
   test('a live preview renders the "Open full-page preview" link (internal same-origin route, new tab) and NOT the old raw-host button', async () => {
     // Flip the shared getReviewStatus poll into the live state. previewUrl carries

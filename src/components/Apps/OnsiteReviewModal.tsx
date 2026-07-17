@@ -33,6 +33,7 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
+import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import {
   FileDiffEntry,
@@ -46,6 +47,7 @@ import {
   reasonMeetsMin,
 } from '~/components/Apps/ReasonGatedActionModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import {
   MARKETPLACE_CATEGORIES,
@@ -1143,6 +1145,52 @@ function trustColor(tier: string): string {
   }
 }
 
+function ManifestScopeRow({
+  scope,
+  justifications,
+}: {
+  scope: string;
+  justifications: Record<string, unknown>;
+}) {
+  const desc = SCOPE_DESCRIPTIONS[scope];
+  const known = !!desc;
+  const sensitive = isSensitiveBlockScope(scope);
+  const rawJustification = justifications[scope];
+  const justification =
+    typeof rawJustification === 'string' && rawJustification.trim().length > 0
+      ? rawJustification.trim()
+      : null;
+  return (
+    <Stack gap={2}>
+      <Group gap={8} align="flex-start" wrap="nowrap">
+        <Badge
+          variant={known ? 'light' : 'outline'}
+          color={known ? (sensitive ? 'orange' : 'blue') : 'red'}
+          style={{ fontFamily: 'ui-monospace, monospace' }}
+        >
+          {scope}
+        </Badge>
+        {sensitive && <SensitiveScopeBadge />}
+        <Text size="xs" c={known ? 'dimmed' : 'red'}>
+          {desc ?? 'Unknown scope — would fail at token issuance.'}
+        </Text>
+      </Group>
+      {justification ? (
+        <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+          <Text span fw={600} c="dimmed">
+            Why:{' '}
+          </Text>
+          {justification}
+        </Text>
+      ) : (
+        <Text size="xs" c="dimmed" fs="italic">
+          No justification provided
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
 function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const scopes = Array.isArray(manifest.scopes)
     ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
@@ -1157,69 +1205,87 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
     !Array.isArray(manifest.scopeJustifications)
       ? (manifest.scopeJustifications as Record<string, unknown>)
       : {};
+  // Split the declared scopes into a SENSITIVE group (elevated-risk — rendered
+  // first with warning emphasis) and the normal group. Each group keeps the
+  // existing "(N)" count semantics for its own members.
+  const sensitiveScopes = scopes.filter((s) => isSensitiveBlockScope(s));
+  const normalScopes = scopes.filter((s) => !isSensitiveBlockScope(s));
   return (
     <Card withBorder p="sm">
       <Stack gap="xs">
-        <Group gap={6}>
-          <IconKey size={14} />
-          <Text size="sm" fw={600}>
-            Permissions ({scopes.length})
-          </Text>
-          <Tooltip
-            multiline
-            w={280}
-            label="Permissions the block requests. They are encoded as scopes in the app's signed block-token JWT (distinct from OAuth scopes) and enforced per-operation server-side: every capability re-verifies the token and checks the required scope before it runs."
-          >
-            <ThemeIcon size="xs" variant="subtle" color="gray">
-              <IconInfoCircle size={13} />
-            </ThemeIcon>
-          </Tooltip>
-        </Group>
         {scopes.length === 0 ? (
-          <Text size="xs" c="dimmed" fs="italic">
-            No permissions requested — block can only consume host postMessage
-            data, no scope-gated platform APIs.
-          </Text>
+          <>
+            <Group gap={6}>
+              <IconKey size={14} />
+              <Text size="sm" fw={600}>
+                Permissions (0)
+              </Text>
+              <Tooltip
+                multiline
+                w={280}
+                label="Permissions the block requests. They are encoded as scopes in the app's signed block-token JWT (distinct from OAuth scopes) and enforced per-operation server-side: every capability re-verifies the token and checks the required scope before it runs."
+              >
+                <ThemeIcon size="xs" variant="subtle" color="gray">
+                  <IconInfoCircle size={13} />
+                </ThemeIcon>
+              </Tooltip>
+            </Group>
+            <Text size="xs" c="dimmed" fs="italic">
+              No permissions requested — block can only consume host postMessage
+              data, no scope-gated platform APIs.
+            </Text>
+          </>
         ) : (
-          <Stack gap={8}>
-            {scopes.map((s) => {
-              const desc = SCOPE_DESCRIPTIONS[s];
-              const known = !!desc;
-              const rawJustification = justifications[s];
-              const justification =
-                typeof rawJustification === 'string' && rawJustification.trim().length > 0
-                  ? rawJustification.trim()
-                  : null;
-              return (
-                <Stack key={s} gap={2}>
-                  <Group gap={8} align="flex-start" wrap="nowrap">
-                    <Badge
-                      variant={known ? 'light' : 'outline'}
-                      color={known ? 'blue' : 'red'}
-                      style={{ fontFamily: 'ui-monospace, monospace' }}
-                    >
-                      {s}
-                    </Badge>
-                    <Text size="xs" c={known ? 'dimmed' : 'red'}>
-                      {desc ?? 'Unknown scope — would fail at token issuance.'}
-                    </Text>
-                  </Group>
-                  {justification ? (
-                    <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
-                      <Text span fw={600} c="dimmed">
-                        Why:{' '}
-                      </Text>
-                      {justification}
-                    </Text>
-                  ) : (
-                    <Text size="xs" c="dimmed" fs="italic">
-                      No justification provided
-                    </Text>
-                  )}
-                </Stack>
-              );
-            })}
-          </Stack>
+          <>
+            {sensitiveScopes.length > 0 && (
+              <Stack gap={8}>
+                <Group gap={6}>
+                  <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
+                  <Text size="sm" fw={600} c="orange">
+                    Sensitive permissions ({sensitiveScopes.length})
+                  </Text>
+                  <Tooltip
+                    multiline
+                    w={280}
+                    label="Elevated-risk permissions — these let the app spend the viewer's Buzz, read the viewer's Buzz balance or private data, or write data other users see. Review the justification for each carefully."
+                  >
+                    <ThemeIcon size="xs" variant="subtle" color="orange">
+                      <IconInfoCircle size={13} />
+                    </ThemeIcon>
+                  </Tooltip>
+                </Group>
+                {sensitiveScopes.map((s) => (
+                  <ManifestScopeRow key={s} scope={s} justifications={justifications} />
+                ))}
+              </Stack>
+            )}
+            <Group gap={6}>
+              <IconKey size={14} />
+              <Text size="sm" fw={600}>
+                Permissions ({normalScopes.length})
+              </Text>
+              <Tooltip
+                multiline
+                w={280}
+                label="Permissions the block requests. They are encoded as scopes in the app's signed block-token JWT (distinct from OAuth scopes) and enforced per-operation server-side: every capability re-verifies the token and checks the required scope before it runs."
+              >
+                <ThemeIcon size="xs" variant="subtle" color="gray">
+                  <IconInfoCircle size={13} />
+                </ThemeIcon>
+              </Tooltip>
+            </Group>
+            {normalScopes.length === 0 ? (
+              <Text size="xs" c="dimmed" fs="italic">
+                No non-sensitive permissions requested.
+              </Text>
+            ) : (
+              <Stack gap={8}>
+                {normalScopes.map((s) => (
+                  <ManifestScopeRow key={s} scope={s} justifications={justifications} />
+                ))}
+              </Stack>
+            )}
+          </>
         )}
       </Stack>
     </Card>

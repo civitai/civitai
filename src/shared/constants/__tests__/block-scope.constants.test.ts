@@ -5,6 +5,8 @@ import {
   deriveOauthBitmaskFromBlockScopes,
   isAppBlockOauthClientId,
   isKnownBlockScope,
+  isSensitiveBlockScope,
+  SENSITIVE_BLOCK_SCOPES,
   SKIP_OAUTH_CHECK,
   validateBlockScopesAgainstOauthClient,
 } from '../block-scope.constants';
@@ -43,6 +45,51 @@ describe('block-scope.constants', () => {
   it('isKnownBlockScope rejects unknown strings', () => {
     expect(isKnownBlockScope('models:read:self')).toBe(true);
     expect(isKnownBlockScope('not:a:scope')).toBe(false);
+  });
+
+  describe('SENSITIVE_BLOCK_SCOPES / isSensitiveBlockScope', () => {
+    const EXPECTED_SENSITIVE = [
+      'ai:write:budgeted',
+      'social:tip:self',
+      'buzz:read:self',
+      'collections:read:private',
+      'apps:storage:shared:write',
+    ];
+
+    it('flags exactly the 5 designated sensitive scopes', () => {
+      expect([...SENSITIVE_BLOCK_SCOPES].sort()).toEqual([...EXPECTED_SENSITIVE].sort());
+      for (const scope of EXPECTED_SENSITIVE) {
+        expect(isSensitiveBlockScope(scope)).toBe(true);
+      }
+    });
+
+    it('does NOT flag normal (non-sensitive) known scopes', () => {
+      for (const scope of [
+        'models:read:self',
+        'user:read:self',
+        'apps:storage:read',
+        'apps:storage:write',
+        'apps:storage:shared:read',
+        'collections:read:self',
+        'collections:write:self',
+      ]) {
+        expect(isSensitiveBlockScope(scope)).toBe(false);
+      }
+    });
+
+    it('does NOT flag unknown / removed scopes', () => {
+      expect(isSensitiveBlockScope('not:a:scope')).toBe(false);
+      expect(isSensitiveBlockScope('media:read:owned')).toBe(false);
+    });
+
+    it('every sensitive scope is a currently-known scope (rename/removal guard)', () => {
+      // If a scope is renamed/removed from the enforcement map, this guard fails
+      // loudly so the sensitive set can never silently reference a dead scope.
+      for (const scope of SENSITIVE_BLOCK_SCOPES) {
+        expect(isKnownBlockScope(scope)).toBe(true);
+        expect(scope in BLOCK_SCOPE_TO_OAUTH_BIT).toBe(true);
+      }
+    });
   });
 
   describe('validateBlockScopesAgainstOauthClient', () => {
