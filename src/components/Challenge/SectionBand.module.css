@@ -1,0 +1,12 @@
+.alt {
+  background: light-dark(
+    color-mix(in srgb, var(--mantine-color-gray-0), black 1%),
+    var(--mantine-color-dark-8)
+  );
+}
+.your {
+  background: light-dark(
+    color-mix(in srgb, var(--mantine-color-gray-0), var(--mantine-color-grape-6) 4%),
+    color-mix(in srgb, var(--mantine-color-dark-8), var(--mantine-color-grape-9) 12%)
+  );
+}
