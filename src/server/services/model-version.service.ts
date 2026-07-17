@@ -107,7 +107,7 @@ import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
-import { deregisterFileLocations } from '~/utils/storage-resolver';
+import { deregisterFileLocations, deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -2823,6 +2823,24 @@ export const mergeVersions = async ({
         error,
       });
     }
+  }
+
+  // Post-commit: deregister storage-resolver file_locations for the deleted
+  // source versions. Files were re-pointed to the target in step 2, but any
+  // file_locations rows keyed to a source version survive the cascade and keep
+  // their backend objects whitelisted against the dereference-quarantine sweep.
+  // Best-effort + never throws.
+  try {
+    await deregisterFileLocationsBatch(sourceVersionIds);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-merge-deregister-file-locations',
+      message: `Failed to deregister file locations for merged source versions ${sourceVersionIds.join(
+        ', '
+      )}`,
+      error,
+    });
   }
 };
 

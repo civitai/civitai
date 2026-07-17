@@ -153,6 +153,7 @@ import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
+import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetAssociatedResourcesInput,
@@ -1645,6 +1646,9 @@ export const permaDeleteModelById = async ({
 }) => {
   // Populated inside the tx so the snapshot is consistent with the cascade.
   let modelFileUrls: string[] = [];
+  // Version ids captured inside the tx (before the cascade removes them) so the
+  // post-commit storage-resolver deregister can reach every reaped version.
+  let versionIds: number[] = [];
 
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
@@ -1666,6 +1670,8 @@ export const permaDeleteModelById = async ({
         },
       });
       if (!model) return { deletedModel: null, imagesToDelete: [] };
+
+      versionIds = model.modelVersions.map(({ id }) => id);
 
       // Get posts to find associated images
       const posts = await tx.post.findMany({
@@ -1756,6 +1762,23 @@ export const permaDeleteModelById = async ({
           type: 'error',
           name: 'model-perma-delete-s3-objects',
           message: `Failed to delete S3 objects for model ${id}`,
+          error,
+        });
+      }
+    }
+    // Post-commit: deregister storage-resolver file_locations for every version
+    // this model owned. For a tiered file the real backend object is keyed by
+    // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
+    // the surviving row keeps that object whitelisted against the dereference-
+    // quarantine sweep — a permanent leak. Best-effort + never throws.
+    if (versionIds.length > 0) {
+      try {
+        await deregisterFileLocationsBatch(versionIds);
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'model-perma-delete-deregister-file-locations',
+          message: `Failed to deregister file locations for model ${id}`,
           error,
         });
       }
