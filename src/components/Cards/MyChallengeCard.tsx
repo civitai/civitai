@@ -45,7 +45,7 @@ export const MyChallengeCard = memo(function MyChallengeCard({
 }: {
   data: MyParticipatedChallengeItem;
 }) {
-  const { id, title, theme, myEntryImage, myResult, myPlace, isLive, endsAt, nsfwLevel } = data;
+  const { id, title, theme, myEntryImage, myResult, myPlace, isLive, endsAt } = data;
   const badge = getMyChallengeBadge(myResult, myPlace);
   const cta = getMyChallengeCta(myResult, isLive);
   const BadgeIcon = badgeIcons[badge.icon];
@@ -57,7 +57,7 @@ export const MyChallengeCard = memo(function MyChallengeCard({
         type: myEntryImage.type,
         width: myEntryImage.width ?? 512,
         height: myEntryImage.height ?? 512,
-        nsfwLevel,
+        nsfwLevel: myEntryImage.nsfwLevel,
         hash: myEntryImage.hash,
         metadata: null,
       }
