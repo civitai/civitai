@@ -218,6 +218,8 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
           connectClientId: CLIENT_ID,
           connectRequestedScopes: UPDATED,
           connectScopeJustifications: UPDATED_JUST,
+          // The in-tx subset re-assert (N2) reads the client ceiling; UPDATED ⊆ CEILING.
+          connectClient: { allowedScopes: CEILING },
           iconId: 1,
           coverId: 2,
         };
@@ -239,6 +241,75 @@ describe('approveExternalRequest — CONNECT revision copies updated scopes to l
       connectRequestedScopes: UPDATED,
       connectScopeJustifications: UPDATED_JUST,
     });
+  });
+
+  it('in-tx subset-of-ceiling on the REVISION: a shadow requesting a scope beyond the (shrunk) client ceiling → REJECT inside the tx, NO copy', async () => {
+    // N2: mirror the first-time approve's in-tx subset re-assert on the revision path.
+    // The revision's scopes are all justified, so this is caught ONLY by the
+    // subset-of-ceiling re-assert (the client's `allowedScopes` shrank after edit).
+    const REQ = TokenScope.ModelsWrite | TokenScope.ModelsRead; // superset of the shrunk ceiling
+    const JUST = { ModelsWrite: 'still editing models' }; // sensitive scope IS justified
+    mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+      id: 'alpr_r',
+      status: 'pending',
+      kind: 'offsite',
+      slug: 'parent-slug',
+      appListingId: 'apl_shadow',
+    });
+    mockRead.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
+      if (args.where.id === 'apl_shadow') {
+        return {
+          id: 'apl_shadow',
+          status: 'draft',
+          externalUrl: null,
+          iconId: 1,
+          coverId: 2,
+          revisionOfId: 'apl_parent',
+          connectClientId: CLIENT_ID,
+          connectRequestedScopes: REQ,
+          connectScopeJustifications: JUST,
+          userId: CALLER,
+          name: 'Connect App',
+          slug: 'parent-slug',
+        };
+      }
+      if (args.where.id === 'apl_parent') {
+        return { id: 'apl_parent', slug: 'parent-slug', status: 'approved' };
+      }
+      return null;
+    });
+    // In-tx (PRIMARY) shadow re-read: same scopes, but the client ceiling SHRANK to
+    // ModelsRead only → ModelsWrite is now out of ceiling.
+    mockWrite.appListing.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
+      if (args.where.id === 'apl_shadow') {
+        return {
+          id: 'apl_shadow',
+          status: 'draft',
+          revisionOfId: 'apl_parent',
+          name: 'Connect App',
+          tagline: null,
+          description: null,
+          category: 'utility',
+          contentRating: 'g',
+          externalUrl: null,
+          connectClientId: CLIENT_ID,
+          connectRequestedScopes: REQ,
+          connectScopeJustifications: JUST,
+          connectClient: { allowedScopes: TokenScope.ModelsRead }, // ceiling shrank
+          iconId: 1,
+          coverId: 2,
+        };
+      }
+      return null;
+    });
+
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('exceed') });
+    // The tx opened (the authoritative gate runs inside it) but bailed BEFORE the copy.
+    expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
   });
 });
 

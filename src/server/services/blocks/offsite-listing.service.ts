@@ -1082,12 +1082,26 @@ export async function submitListingRevision(opts: {
     coverId: shadow.coverId,
     screenshotCount,
   });
-  const url = validateExternalUrl(shadow.externalUrl);
-  if (!url.ok) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `stored externalUrl is invalid and cannot be submitted: ${url.error}`,
-    });
+  // Validate the stored externalUrl ONLY WHEN present — it's OPTIONAL in the merged
+  // model (a connect-only listing carries `externalUrl: null`). Gating this
+  // unconditionally made a no-homepage external app UN-REVISABLE: its material-edit
+  // shadow carries a null URL and `validateExternalUrl(null)` returns `{ok:false}`,
+  // so submitting the revision threw. Mirrors the submit / first-time-approve /
+  // revision-approve gates. A provided-but-invalid URL still blocks.
+  // Validate the stored externalUrl ONLY WHEN present — it's OPTIONAL in the merged
+  // model (a connect-only listing carries `externalUrl: null`). Gating this
+  // unconditionally made a no-homepage external app UN-REVISABLE: its material-edit
+  // shadow carries a null URL and `validateExternalUrl(null)` returns `{ok:false}`,
+  // so submitting the revision threw. Mirrors the submit / first-time-approve /
+  // revision-approve gates. A provided-but-invalid URL still blocks.
+  if (shadow.externalUrl != null) {
+    const url = validateExternalUrl(shadow.externalUrl);
+    if (!url.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `stored externalUrl is invalid and cannot be submitted: ${url.error}`,
+      });
+    }
   }
 
   // Guard a second concurrent pending revision: one open request per shadow.
@@ -1861,6 +1875,10 @@ async function applyApprovedRevision(opts: {
         connectClientId: true,
         connectRequestedScopes: true,
         connectScopeJustifications: true,
+        // The reviewed client's scope CEILING — re-asserted in-tx below so a client
+        // whose `allowedScopes` SHRANK between edit and revision-approve can't slip a
+        // now-out-of-ceiling scope past the mod (mirrors the first-time approve path).
+        connectClient: { select: { allowedScopes: true } },
         iconId: true,
         coverId: true,
       },
@@ -1897,6 +1915,19 @@ async function applyApprovedRevision(opts: {
       connectRequestedScopes: shadow.connectRequestedScopes,
       connectScopeJustifications: shadow.connectScopeJustifications,
     });
+    // Also re-assert subset-of-ceiling on the in-tx shadow (mirrors the first-time
+    // approve path): guards a client whose `allowedScopes` SHRANK after the revision
+    // was edited. Only for OAuth-linked listings (`connectClientId` non-null; a legacy
+    // URL-only revision carries no scopes). A null ceiling is treated as 0.
+    if (shadow.connectClientId != null) {
+      const allowedScopes = shadow.connectClient?.allowedScopes ?? 0;
+      if (!connectScopesSubsetOfCeiling(shadow.connectRequestedScopes ?? 0, allowedScopes)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'requested scopes exceed the OAuth client’s allowed scopes',
+        });
+      }
+    }
 
     // (2) Flip the request pending→approved AND re-point it at the PARENT.
     const req = await tx.appListingPublishRequest.updateMany({
