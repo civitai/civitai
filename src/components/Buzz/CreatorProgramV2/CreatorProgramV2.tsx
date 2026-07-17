@@ -8,6 +8,7 @@ import {
   Modal,
   Table,
   Text,
+  ThemeIcon,
   Tooltip,
   NumberInput,
   useCombobox,
@@ -30,7 +31,7 @@ import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { capitalize } from 'lodash-es';
 import type { HTMLProps } from 'react';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   useBankedBuzz,
   useCompensationPool,
@@ -61,6 +62,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -99,7 +102,8 @@ const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), {
 });
 
 const cardProps: HTMLProps<HTMLDivElement> = {
-  className: 'bg-gray-0 align-center flex flex-col rounded-lg border border-gray-2 p-4 dark:border-dark-4 dark:bg-dark-5',
+  className:
+    'bg-gray-0 align-center flex flex-col rounded-lg border border-gray-2 p-4 dark:border-dark-4 dark:bg-dark-5',
 };
 
 const DATE_FORMAT = 'MMM D, YYYY @ hA z';
@@ -108,6 +112,7 @@ const DATE_FORMAT = 'MMM D, YYYY @ hA z';
 export const CreatorProgramV2 = () => {
   const currentUser = useCurrentUser();
   const { phase, isLoading } = useCreatorProgramPhase();
+  const { requirements } = useCreatorProgramRequirements();
   const availability = getCreatorProgramAvailability(currentUser?.isModerator);
   useCreatorPoolListener();
 
@@ -125,6 +130,11 @@ export const CreatorProgramV2 = () => {
   if (isBanned) {
     return null;
   }
+
+  // Onboarded but their membership lapsed — keep the flag, but gate the
+  // earning actions and tell them to renew (withdrawing already-earned cash
+  // stays available).
+  const membershipLapsed = hasOnboardedInProgram && !!requirements?.membershipLapsed;
 
   return (
     <div className="mt-8 flex flex-col gap-5" id="creator-program">
@@ -145,17 +155,118 @@ export const CreatorProgramV2 = () => {
           <CompensationPoolCard />
         </div>
       )}
-      {hasOnboardedInProgram && (
-        <div className="flex flex-col gap-4 md:flex-row">
-          {phase === 'bank' && <BankBuzzCard />}
-          {phase === 'extraction' && <ExtractBuzzCard />}
-          <EstimatedEarningsCard />
-          {<WithdrawCashCard />}
-        </div>
-      )}
+      {hasOnboardedInProgram &&
+        (membershipLapsed ? (
+          <div className="flex flex-col gap-4 md:flex-row">
+            {/* Extraction stays available: extractBuzz doesn't require an active
+                membership, so a lapsed member can still reclaim Buzz they banked. */}
+            {phase === 'extraction' && <ExtractBuzzCard />}
+            <MembershipLapsedCard />
+            <WithdrawCashCard />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4 md:flex-row">
+            {phase === 'bank' && <BankBuzzCard />}
+            {phase === 'extraction' && <ExtractBuzzCard />}
+            <EstimatedEarningsCard />
+            {<WithdrawCashCard />}
+          </div>
+        ))}
     </div>
   );
 };
+
+const MembershipLapsedCard = () => {
+  const serverDomains = useServerDomains();
+  // Memberships are only purchasable on the green domain; sync-login carries the
+  // session across when the current domain differs.
+  const renewUrl = syncAccount(`//${serverDomains.green}/pricing`);
+
+  // Spotlight effect — refs + direct DOM writes to avoid re-renders on mouse move.
+  const spotlightRef = useRef<HTMLDivElement>(null);
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = spotlightRef.current;
+    if (!el) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    el.style.background = `radial-gradient(400px circle at ${x}px ${y}px, light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04)), transparent 70%)`;
+    el.style.opacity = '1';
+  }, []);
+  const handleMouseLeave = useCallback(() => {
+    const el = spotlightRef.current;
+    if (el) el.style.opacity = '0';
+  }, []);
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-gray-2 bg-gray-0 dark:border-dark-4 dark:bg-dark-5 sm:flex-row">
+      {/* Left — status */}
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <ThemeIcon size={48} variant="light" color="gray" radius="xl">
+          <IconLock size={24} />
+        </ThemeIcon>
+        <Text fw={700} size="lg">
+          Membership lapsed
+        </Text>
+        <Text size="sm" c="dimmed" maw={320}>
+          Your Creator Program membership isn&apos;t active, so banking and earning are paused. You
+          can still withdraw any cash you&apos;ve already earned.
+        </Text>
+      </div>
+
+      {/* Right — renew pitch with gradient background + accent border + spotlight */}
+      <div
+        className="relative flex-1 overflow-hidden border-t border-gray-200 bg-gradient-to-br from-green-500/5 to-yellow-500/5 dark:border-white/5 dark:from-green-500/[0.06] dark:to-yellow-500/[0.06] sm:border-l sm:border-t-0"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
+        <div
+          ref={spotlightRef}
+          className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+          style={{ opacity: 0 }}
+        />
+        <div className="absolute bottom-[10%] left-0 top-[10%] hidden w-[3px] rounded-sm bg-gradient-to-b from-green-500 to-yellow-500 sm:block" />
+
+        <div className="relative z-[1] flex h-full flex-col justify-center gap-4 p-6 pl-8">
+          <div className="flex flex-col gap-1">
+            <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
+              Pick up where you left off
+            </Text>
+            <Text fw={600}>Renew to unlock the Creator Program</Text>
+          </div>
+
+          <div className="flex flex-col gap-2.5">
+            <LapsedBenefitRow text="Bank Buzz toward the monthly creator pool" />
+            <LapsedBenefitRow text="Re-open your creator shop" />
+            <LapsedBenefitRow text="Earn real cash from your creations" />
+          </div>
+
+          <Button
+            component="a"
+            href={renewUrl}
+            variant="filled"
+            size="sm"
+            leftSection={<IconPigMoney size={16} />}
+            className="w-fit"
+          >
+            Renew membership
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function LapsedBenefitRow({ text }: { text: string }) {
+  return (
+    <div className="flex items-start gap-2">
+      <IconCircleCheck size={16} className="mt-0.5 shrink-0 text-green-500" />
+      <Text size="xs" c="dimmed">
+        {text}
+      </Text>
+    </div>
+  );
+}
 
 const JoinCreatorProgramCard = () => {
   const [domainBuzzType] = useAvailableBuzz();
@@ -357,11 +468,7 @@ export const CompensationPoolCard = () => {
         <div className="flex flex-col">
           <h3 className="my-0 text-center text-xl font-bold">Current Banked Buzz</h3>
           <div className="flex justify-center gap-1">
-            <CurrencyIcon
-              className="my-auto"
-              currency={Currency.BUZZ}
-              size={20}
-            />
+            <CurrencyIcon className="my-auto" currency={Currency.BUZZ} size={20} />
             <span className="text-2xl font-bold">
               {numberWithCommas(compensationPool?.size.current)}
             </span>
@@ -459,7 +566,9 @@ const BankBuzzCard = () => {
           <NumberInputWrapper
             label="Buzz"
             labelProps={{ className: 'hidden' }}
-            leftSection={<CurrencyIcon currency={Currency.BUZZ} type={selectedBuzzType} size={18} />}
+            leftSection={
+              <CurrencyIcon currency={Currency.BUZZ} type={selectedBuzzType} size={18} />
+            }
             value={toBank ? toBank : undefined}
             min={10000}
             max={maxBankable}
@@ -1185,11 +1294,7 @@ const ExtractBuzzCard = () => {
           <div className="flex items-center gap-2">
             <p>
               <span className="font-bold">Extraction Fee:</span>{' '}
-              <CurrencyIcon
-                currency={Currency.BUZZ}
-                size={14}
-                className="inline"
-              />
+              <CurrencyIcon currency={Currency.BUZZ} size={14} className="inline" />
               {numberWithCommas(extractionFee)}
             </p>
             <LegacyActionIcon
