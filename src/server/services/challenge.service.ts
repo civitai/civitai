@@ -85,7 +85,14 @@ import {
   type ChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-currency';
 import {
+  CHALLENGE_MAX_DURATION_DAYS,
+  CHALLENGE_MAX_DURATION_MS,
+  CHALLENGE_MAX_START_LEAD_DAYS,
+  CHALLENGE_MIN_DURATION_HOURS,
+  CHALLENGE_MIN_DURATION_MS,
+  CHALLENGE_MIN_START_LEAD_HOURS,
   getEntryPoolContribution,
+  getMaxUserChallengeStartsAt,
   getMinUserChallengeStartsAt,
   getUserChallengeVisibleAt,
 } from '~/shared/constants/challenge.constants';
@@ -1380,14 +1387,38 @@ export async function upsertUserChallenge({
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'End date must be after start date' });
   }
 
-  // Start must be at least CHALLENGE_MIN_START_LEAD_HOURS out — no "starts right now" challenges.
-  // On create this always applies; on edit it's only re-checked when the start date actually moves
-  // (guarded below, against the stored startsAt), so an unrelated edit near start time isn't blocked.
+  // Duration bounds are intrinsic to the payload (also validated by the Zod schema), so they
+  // apply on create and edit alike.
+  const durationMs = rest.endsAt.getTime() - rest.startsAt.getTime();
+  if (durationMs < CHALLENGE_MIN_DURATION_MS) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Challenge must run for at least ${CHALLENGE_MIN_DURATION_HOURS} hours.`,
+    });
+  }
+  if (durationMs > CHALLENGE_MAX_DURATION_MS) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Challenge cannot run longer than ${CHALLENGE_MAX_DURATION_DAYS} days.`,
+    });
+  }
+
+  // Start must be at least CHALLENGE_MIN_START_LEAD_HOURS out (no "starts right now") and at
+  // most CHALLENGE_MAX_START_LEAD_DAYS out (no far-future squatting). On create these always
+  // apply; on edit they're only re-checked when the start date actually moves (guarded below,
+  // against the stored startsAt), so an unrelated edit near start time isn't blocked.
   const minStartsAt = getMinUserChallengeStartsAt();
+  const maxStartsAt = getMaxUserChallengeStartsAt();
   if (!id && rest.startsAt < minStartsAt) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
-      message: 'Challenge must start at least 3 hours from now.',
+      message: `Challenge must start at least ${CHALLENGE_MIN_START_LEAD_HOURS} hours from now.`,
+    });
+  }
+  if (!id && rest.startsAt > maxStartsAt) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Challenge cannot start more than ${CHALLENGE_MAX_START_LEAD_DAYS} days from now.`,
     });
   }
 
@@ -1529,7 +1560,12 @@ export async function upsertUserChallenge({
     if (startChanged && rest.startsAt < minStartsAt)
       throw new TRPCError({
         code: 'BAD_REQUEST',
-        message: 'Challenge must start at least 3 hours from now.',
+        message: `Challenge must start at least ${CHALLENGE_MIN_START_LEAD_HOURS} hours from now.`,
+      });
+    if (startChanged && rest.startsAt > maxStartsAt)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Challenge cannot start more than ${CHALLENGE_MAX_START_LEAD_DAYS} days from now.`,
       });
 
     // Only reset the scan verdict when the moderated text actually changed. Resetting on every
