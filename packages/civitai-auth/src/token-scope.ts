@@ -354,18 +354,22 @@ export function validateConnectScopeJustifications(
  *  - money:      `BuzzRead` (balance/history) + `SocialTip` (spend on tips) — and
  *                every `*Write` that implicitly spends Buzz (`AIServicesWrite`,
  *                `BountiesWrite`).
- *  - private:    `UserRead` (profile, settings & EMAIL / PII).
+ *  - private:    `UserRead` (profile, settings & EMAIL / PII) + the private-data
+ *                reads `NotificationsRead` (a user's personal notifications) and
+ *                `VaultRead` (the user's PRIVATE model vault). Mirrors the App Blocks
+ *                sensitivity principle where private-data reads (e.g.
+ *                `collections:read:private`) are sensitive.
  *  - cross-user / destructive: every `*Write` + `*Delete` (they create, mutate or
  *                remove content others can see, or edit the user's own account).
  *
  * Written as an EXPLICIT named-bit OR (not a computed "everything but reads") so a
  * moderator can eyeball exactly which permissions are flagged, and adding a new
  * scope bit never silently folds it in. Deliberately EXCLUDES the read-only scopes
- * that expose only public data (`ModelsRead`/`MediaRead`/`ArticlesRead`/
- * `BountiesRead`/`AIServicesRead`/`CollectionsRead`/`NotificationsRead`/`VaultRead`)
- * and the opt-in App-Block scopes (`AppBlocksSubmit`/`AppBlocksDevTunnel`, never
- * part of a connect ceiling). `NotificationsWrite`/`VaultWrite` are included as
- * account-mutating writes even though they are self-scoped.
+ * that expose only PUBLIC data (`ModelsRead`/`MediaRead`/`ArticlesRead`/
+ * `BountiesRead`/`AIServicesRead`/`CollectionsRead`) and the opt-in App-Block
+ * scopes (`AppBlocksSubmit`/`AppBlocksDevTunnel`, never part of a connect ceiling).
+ * `NotificationsWrite`/`VaultWrite` are included as account-mutating writes even
+ * though they are self-scoped.
  */
 export const SENSITIVE_TOKEN_SCOPES: number =
   TokenScope.UserRead | // private: profile, settings & email (PII)
@@ -383,7 +387,9 @@ export const SENSITIVE_TOKEN_SCOPES: number =
   TokenScope.CollectionsWrite |
   TokenScope.SocialWrite | // cross-user: follow/react/comment/review
   TokenScope.SocialTip | // money: tip other users
+  TokenScope.NotificationsRead | // private: a user's personal notifications (mentions/alerts/transaction notices)
   TokenScope.NotificationsWrite |
+  TokenScope.VaultRead | // private: the user's PRIVATE model vault (what private models they've stored)
   TokenScope.VaultWrite;
 
 /**
