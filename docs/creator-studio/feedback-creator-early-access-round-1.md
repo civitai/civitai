@@ -37,8 +37,10 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
 - [ ] **3.3 — Option to see Green + Yellow Buzz combined** 🟢💬 — trivial to sum (both convert to cash), but it
       revisits the deliberate "never merge currencies" decision (B8). Plan: add an **optional combined toggle**, not
       a replacement. Needs a quick product yes/no.
-- [ ] **3.4 — Monthly performance table (this month vs others)** 🟡 — `GROUP BY month` on the owner-keyed
-      `buzzTransactions`; the month-selector infra already landed (E3). Should combine Yellow+Green per 3.3.
+- [x] **3.4 — Monthly performance table (this month vs others)** ✅ — last-12-months table on `/earnings`
+      (`getMonthlyEarnings`, `GROUP BY month` on owner-keyed `buzzTransactions`), currencies split, current month
+      highlighted, each cell showing a % delta vs the same currency the month before. Independent of the range
+      selector. (A combined Yellow+Green column still waits on 3.3.)
 - [~] **3.5 — Bars instead of / in addition to the smooth line** — added then **removed**. Per-source bars conflict
       with an in-chart period comparison (the prior period can't be a per-source bar too, and grouped bars +
       selection got muddled). Resolved in favor of the 3.1 comparison line instead (creator's call).
@@ -63,8 +65,8 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
 ## Suggested order
 
 1. ✅ **Easy batch** (1.1, 4.1, 2.1, 3.5, 4.3) — done.
-2. 💬 **3.3 combined-buzz toggle** — pending a product yes/no (quick once decided).
-3. 🟡 **Period-over-period comparison** (1.2 + 3.1 + 4.2) — one mechanism, three payoffs; the feedback's biggest
-   theme. Then **3.4 monthly table** on top of it.
+2. ✅ **Period-over-period comparison** (1.2 + 3.1 + 4.2) + **3.4 monthly table** — done.
+3. 💬 **3.3 combined-buzz toggle** — pending a product yes/no (quick once decided; also adds a combined column to
+   the 3.4 table).
 4. 🔴 **Bulk licensing spreadsheet** (2.2 / 2.3) — the 381-model creator's core burden; highest-value large item.
 5. 🔴 Analytics deep-dives (4.4 / 4.5 / 4.6) and 5 as capacity allows.

@@ -4,6 +4,7 @@
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
+  import DeltaChip from '$lib/components/DeltaChip.svelte';
   import { formatRange, rangeSpanDays, shiftIso } from '$lib/date-range';
   import {
     EARNINGS_SOURCES,
@@ -23,6 +24,20 @@
   const BUZZ_DASHBOARD_URL = 'https://civitai.com/user/buzz-dashboard';
 
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
+
+  // Monthly performance table (feedback 3.4) — last 12 months, most recent first, currencies split (B8). Each cell
+  // carries a % delta vs the same currency the month before, so "is this month doing well?" is answerable at a
+  // glance. Independent of the selected range above.
+  const monthlyMonths = $derived(
+    data.monthly ? [...new Set(data.monthly.map((m) => m.month))].sort().reverse() : []
+  );
+  const monthlyCurrencies = $derived(
+    data.monthly ? [...new Set(data.monthly.map((m) => m.currency))].sort(currencySort) : []
+  );
+  const monthlyCell = (month: string, currency: string) =>
+    data.monthly?.find((m) => m.month === month && m.currency === currency)?.total ?? 0;
+  const monthFmt = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const formatMonth = (m: string) => monthFmt.format(Date.parse(`${m}T00:00:00Z`));
 
   // ClickHouse earnings are the buzz flow by source; cash is deliberately excluded here and shown from the buzz
   // service instead (below), since CH cash figures are a period flow and can drift from the real balance.
@@ -243,6 +258,46 @@
               {@const show = hasDisplayValue(v, c)}
               <Table.Cell class="text-right {show ? 'font-medium text-white' : 'text-dark-4'}">
                 {show ? formatAmount(v, c) : '—'}
+              </Table.Cell>
+            {/each}
+          </Table.Row>
+        {/each}
+      </Table.Body>
+    </Table.Root>
+  </div>
+{/if}
+
+{#if monthlyMonths.length}
+  <div class="mt-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
+    <p class="mb-3 text-sm text-dark-2">
+      Monthly performance <span class="text-xs text-dark-3">· buzz, last 12 months</span>
+    </p>
+    <Table.Root>
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>Month</Table.Head>
+          {#each monthlyCurrencies as c (c)}
+            <Table.Head class="text-right">{currencyMeta(c).label}</Table.Head>
+          {/each}
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {#each monthlyMonths as month, i (month)}
+          {@const prevMonth = monthlyMonths[i + 1]}
+          <Table.Row class={i === 0 ? 'bg-dark-5/30' : ''}>
+            <Table.Cell class="align-top text-dark-1">{formatMonth(month)}</Table.Cell>
+            {#each monthlyCurrencies as c (c)}
+              {@const v = monthlyCell(month, c)}
+              {@const show = hasDisplayValue(v, c)}
+              <Table.Cell class="align-top text-right">
+                <div class="tabular-nums {show ? 'font-medium text-white' : 'text-dark-4'}">
+                  {show ? formatAmount(v, c) : '—'}
+                </div>
+                {#if prevMonth && show}
+                  <div class="mt-0.5">
+                    <DeltaChip current={v} previous={monthlyCell(prevMonth, c)} label="vs previous month" />
+                  </div>
+                {/if}
               </Table.Cell>
             {/each}
           </Table.Row>

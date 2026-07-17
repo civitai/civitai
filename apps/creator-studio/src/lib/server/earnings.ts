@@ -25,10 +25,12 @@ export type EarningsPoint = { date: string; source: EarningsSource; total: numbe
 
 // Only the creator's *receiving* rows count as earnings: tip / compensation / licenseFee (+ the `'27'` mislabel) /
 // cosmetic `sell`, plus `purchase` rows that are early-access sales (a bare `purchase` is mostly the creator
-// topping up their own buzz — see handoff doc §gotchas). `from`/`to` are validated ISO dates (parseRange), so
-// they're interpolated directly; the upper bound is exclusive-next-day so it's inclusive of the whole `to` day.
+// topping up their own buzz — see handoff doc §gotchas).
+const RECEIVING_TYPES = `(type IN ('tip','compensation','licenseFee','27','sell') OR (type = 'purchase' AND externalTransactionId LIKE 'early-access-%'))`;
+// `from`/`to` are validated ISO dates (parseRange), so they're interpolated directly; the upper bound is
+// exclusive-next-day so it's inclusive of the whole `to` day.
 const whereClause = (uid: number, from: string, to: string) =>
-  `toAccountId = ${uid} AND date >= toDate('${from}') AND date < toDate('${to}') + 1 AND (type IN ('tip','compensation','licenseFee','27','sell') OR (type = 'purchase' AND externalTransactionId LIKE 'early-access-%'))`;
+  `toAccountId = ${uid} AND date >= toDate('${from}') AND date < toDate('${to}') + 1 AND ${RECEIVING_TYPES}`;
 
 const SOURCE_EXPR = `multiIf(type = 'tip', 'tip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
 
@@ -98,4 +100,34 @@ export const getEarningsSeries = createCache({
   name: 'earnings:series',
   fetch: fetchSeries,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
+}).get;
+
+// Monthly buzz earnings for the last 12 months — the /earnings "monthly performance" table (feedback 3.4). Buzz
+// only (cash lives in its own panel); currencies kept split (B8). Independent of the page's selected range, so a
+// creator can always see this-month-vs-prior-months. `month` is the first-of-month ISO date.
+export type MonthlyEarning = { month: string; currency: string; total: number };
+
+async function fetchMonthly({ userId }: { userId: number }): Promise<MonthlyEarning[]> {
+  const uid = Number(userId);
+  const rows = await getClickhouse().$query<{
+    month: string;
+    currency: string;
+    total: number | string;
+  }>(
+    `SELECT toString(toStartOfMonth(date)) AS month, toAccountType AS currency, sum(amount) AS total
+     FROM default.buzzTransactions
+     WHERE toAccountId = ${uid}
+       AND date >= toStartOfMonth(today() - INTERVAL 11 MONTH)
+       AND toAccountType IN ('yellow','blue','green','club')
+       AND ${RECEIVING_TYPES}
+     GROUP BY month, currency
+     ORDER BY month DESC`
+  );
+  return rows.map((r) => ({ month: String(r.month), currency: r.currency, total: Number(r.total) }));
+}
+
+export const getMonthlyEarnings = createCache({
+  name: 'earnings:monthly',
+  fetch: fetchMonthly,
+  ttlSeconds: 3600,
 }).get;
