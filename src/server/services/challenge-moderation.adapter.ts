@@ -1,4 +1,4 @@
-import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -8,7 +8,7 @@ import {
   CHALLENGE_MODERATION_LABELS,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
-import { deriveChallengeNsfwLevel } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { applyChallengeNsfwEscalation } from '~/server/games/daily-challenge/challenge-nsfw-escalation';
 import { ChallengeIngestionStatus } from '~/shared/utils/prisma/enums';
 
 // Challenge-side hooks for the EntityModeration pipeline, mirroring the Article adapter. The
@@ -48,18 +48,16 @@ export const challengeModerationAdapter: ModerationAdapter = {
     }),
 
   applyResult: async ({ entityId, blocked, triggeredLabels }) => {
-    const challenge = await dbRead.challenge.findUnique({
-      where: { id: entityId },
-      select: { allowedNsfwLevel: true, createdById: true },
-    });
-    if (!challenge) return;
-
     if (blocked) {
+      const challenge = await dbRead.challenge.findUnique({
+        where: { id: entityId },
+        select: { createdById: true },
+      });
       await dbWrite.challenge.update({
         where: { id: entityId },
         data: { ingestion: ChallengeIngestionStatus.Blocked, scannedAt: new Date() },
       });
-      if (challenge.createdById) {
+      if (challenge?.createdById) {
         await createNotification({
           userId: challenge.createdById,
           category: NotificationCategory.System,
@@ -74,28 +72,8 @@ export const challengeModerationAdapter: ModerationAdapter = {
       return;
     }
 
-    const base = deriveChallengeNsfwLevel(challenge.allowedNsfwLevel);
-    const isNsfw = triggeredLabels.some((label) => label.toLowerCase() === 'nsfw');
-    const nsfwLevel = isNsfw ? Math.max(base, NsfwLevel.R) : base;
-
-    await dbWrite.challenge.update({
-      where: { id: entityId },
-      data: { ingestion: ChallengeIngestionStatus.Scanned, scannedAt: new Date(), nsfwLevel },
-    });
-
-    if (isNsfw && nsfwLevel > base && challenge.createdById) {
-      await createNotification({
-        userId: challenge.createdById,
-        category: NotificationCategory.System,
-        type: 'system-message',
-        key: `challenge-nsfw-raised-${entityId}`,
-        details: {
-          message:
-            "Your challenge's rating was raised to R based on its text, so it won't appear in safe-mode feeds.",
-          url: `/challenges/${entityId}`,
-        },
-      });
-    }
+    // Any of nsfw / suggestive / explicit crossing threshold escalates the challenge.
+    await applyChallengeNsfwEscalation({ entityId, isNsfw: triggeredLabels.length > 0 });
   },
 
   // Terminal scan failure: mark retryable Error (the scan gate keeps the challenge hidden). The
