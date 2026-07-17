@@ -11,7 +11,7 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  */
 export function BlockScopeList({
   scopes,
-  emptyLabel = "This app doesn't claim any JWT scopes — it only consumes data from the host-bridge postMessage protocol.",
+  emptyLabel = "This app doesn't request any permissions — it only consumes data from the host-bridge postMessage protocol.",
 }: {
   scopes: string[];
   emptyLabel?: string;

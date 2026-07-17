@@ -86,6 +86,15 @@
         ]
       }
     },
+    "scopeJustifications": {
+      "type": "object",
+      "description": "OPTIONAL per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. Backward-compatible — omit it and the manifest stays valid; `scopes` is unchanged. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. NOTE: this captures the developer's STATED rationale only; the platform does not verify the claims.",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
     "minApiVersion": {
       "type": "string",
       "description": "Minimum App SDK API version the block targets (informational).",

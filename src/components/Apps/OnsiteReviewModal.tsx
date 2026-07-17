@@ -15,6 +15,7 @@ import {
   Switch,
   Text,
   Textarea,
+  ThemeIcon,
   Tooltip,
 } from '@mantine/core';
 import {
@@ -23,6 +24,7 @@ import {
   IconCheck,
   IconCode,
   IconExternalLink,
+  IconInfoCircle,
   IconKey,
   IconLayoutGrid,
   IconShieldLock,
@@ -1145,38 +1147,76 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const scopes = Array.isArray(manifest.scopes)
     ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
+  // Optional dev-supplied per-scope justification (scope-id → rationale). Shown
+  // to the moderator so they can weigh WHY the app requested each permission.
+  // NOTE: these are the developer's STATED rationale — the platform does not (yet)
+  // verify the claims; this surface only DISPLAYS them.
+  const justifications =
+    manifest.scopeJustifications &&
+    typeof manifest.scopeJustifications === 'object' &&
+    !Array.isArray(manifest.scopeJustifications)
+      ? (manifest.scopeJustifications as Record<string, unknown>)
+      : {};
   return (
     <Card withBorder p="sm">
       <Stack gap="xs">
         <Group gap={6}>
           <IconKey size={14} />
           <Text size="sm" fw={600}>
-            JWT scopes ({scopes.length})
+            Permissions ({scopes.length})
           </Text>
+          <Tooltip
+            multiline
+            w={280}
+            label="Permissions the block requests. They are encoded as scopes in the app's signed block-token JWT (distinct from OAuth scopes) and enforced at token issuance."
+          >
+            <ThemeIcon size="xs" variant="subtle" color="gray">
+              <IconInfoCircle size={13} />
+            </ThemeIcon>
+          </Tooltip>
         </Group>
         {scopes.length === 0 ? (
           <Text size="xs" c="dimmed" fs="italic">
-            No scopes requested — block can only consume host postMessage
+            No permissions requested — block can only consume host postMessage
             data, no scope-gated platform APIs.
           </Text>
         ) : (
-          <Stack gap={4}>
+          <Stack gap={8}>
             {scopes.map((s) => {
               const desc = SCOPE_DESCRIPTIONS[s];
               const known = !!desc;
+              const rawJustification = justifications[s];
+              const justification =
+                typeof rawJustification === 'string' && rawJustification.trim().length > 0
+                  ? rawJustification.trim()
+                  : null;
               return (
-                <Group key={s} gap={8} align="flex-start" wrap="nowrap">
-                  <Badge
-                    variant={known ? 'light' : 'outline'}
-                    color={known ? 'blue' : 'red'}
-                    style={{ fontFamily: 'ui-monospace, monospace' }}
-                  >
-                    {s}
-                  </Badge>
-                  <Text size="xs" c={known ? 'dimmed' : 'red'}>
-                    {desc ?? 'Unknown scope — would fail at token issuance.'}
-                  </Text>
-                </Group>
+                <Stack key={s} gap={2}>
+                  <Group gap={8} align="flex-start" wrap="nowrap">
+                    <Badge
+                      variant={known ? 'light' : 'outline'}
+                      color={known ? 'blue' : 'red'}
+                      style={{ fontFamily: 'ui-monospace, monospace' }}
+                    >
+                      {s}
+                    </Badge>
+                    <Text size="xs" c={known ? 'dimmed' : 'red'}>
+                      {desc ?? 'Unknown scope — would fail at token issuance.'}
+                    </Text>
+                  </Group>
+                  {justification ? (
+                    <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+                      <Text span fw={600} c="dimmed">
+                        Why:{' '}
+                      </Text>
+                      {justification}
+                    </Text>
+                  ) : (
+                    <Text size="xs" c="dimmed" fs="italic">
+                      No justification provided
+                    </Text>
+                  )}
+                </Stack>
               );
             })}
           </Stack>

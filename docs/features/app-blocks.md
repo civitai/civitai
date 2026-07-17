@@ -299,6 +299,28 @@ A submitted ZIP needs only **`block.manifest.json`** at the root plus your app
 platform-owned recipe and ignores (and drops) any tenant-supplied build files
 (audit A8/BUILD-1 Phase 2). Shipping them is harmless but inert.
 
+### Per-scope justifications (optional)
+
+A manifest MAY include an optional `scopeJustifications` object — a map of
+scope-id → free-text rationale explaining WHY the app needs each requested
+permission. It is surfaced to the moderator during review (`/apps/review`).
+
+```jsonc
+"scopes": ["models:read:self", "user:read:self"],
+"scopeJustifications": {
+  "models:read:self": "We render the page model in a comparison widget.",
+  "user:read:self": "We greet the returning viewer by username."
+}
+```
+
+Rules (enforced by `BlockManifestValidator` + the published schema): backward-
+compatible (omit it and the manifest stays valid; `scopes` is unchanged); every
+key MUST be a scope also listed in `scopes` (a justification for an un-requested
+scope is rejected); each value is a non-empty string ≤500 chars. Authors can set
+it in the submitted `block.manifest.json` or via the web manifest editor
+(`/apps/<id>/edit-manifest`). NOTE: this only CAPTURES the developer's stated
+rationale — the platform does not (yet) verify the claims.
+
 ## Known gaps before a moderator suspend/deprecate tool ships
 
 The moderator review workflow itself has shipped (see "Publish / review /

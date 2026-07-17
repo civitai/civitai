@@ -38,8 +38,12 @@ type StoredManifest = Record<string, unknown> & {
   description?: string;
   contentRating?: string;
   scopes?: string[];
+  scopeJustifications?: Record<string, string>;
   targets?: Array<{ slotId?: string }>;
 };
+
+/** Max length of a single per-scope justification (mirrors the server validator). */
+const SCOPE_JUSTIFICATION_MAX_LENGTH = 500;
 
 export function ManifestEditForm({
   appBlockId,
@@ -59,6 +63,16 @@ export function ManifestEditForm({
   const [contentRating, setContentRating] = useState<string>(manifest.contentRating ?? 'g');
   const [version, setVersion] = useState<string>(bumpPatch(currentVersion));
   const [scopesText, setScopesText] = useState<string>((manifest.scopes ?? []).join('\n'));
+  // Per-scope justification the dev supplies for the moderator (scope-id →
+  // rationale). Kept as a superset map keyed by scope; only justifications for
+  // currently-declared scopes are submitted (see handleSave). Editing a scope out
+  // of the textarea therefore hides its input but preserves any text if it's added
+  // back before saving.
+  const [justifications, setJustifications] = useState<Record<string, string>>(
+    manifest.scopeJustifications && typeof manifest.scopeJustifications === 'object'
+      ? { ...manifest.scopeJustifications }
+      : {}
+  );
   const [selectedSlots, setSelectedSlots] = useState<string[]>(
     (manifest.targets ?? []).map((t) => t?.slotId).filter((s): s is string => !!s)
   );
@@ -89,6 +103,15 @@ export function ManifestEditForm({
   });
 
   function handleSave() {
+    // Only submit justifications for currently-declared scopes, trimmed and
+    // non-empty. Omit the field entirely when there are none (keeps the manifest
+    // backward-compatible — the server rejects a justification for an undeclared
+    // scope, so filtering here also avoids a needless validation error).
+    const scopeJustifications: Record<string, string> = {};
+    for (const scope of scopes) {
+      const j = (justifications[scope] ?? '').trim();
+      if (j.length > 0) scopeJustifications[scope] = j;
+    }
     mutation.mutate({
       appBlockId,
       patch: {
@@ -97,6 +120,8 @@ export function ManifestEditForm({
         description: description.trim() || undefined,
         contentRating,
         scopes,
+        scopeJustifications:
+          Object.keys(scopeJustifications).length > 0 ? scopeJustifications : undefined,
         targets: selectedSlots.map((slotId) => ({ slotId })),
       },
     });
@@ -164,6 +189,37 @@ export function ManifestEditForm({
         value={scopesText}
         onChange={(e) => setScopesText(e.currentTarget.value)}
       />
+
+      {scopes.length > 0 && (
+        <Stack gap={4}>
+          <Text size="sm" fw={500}>
+            Permission justifications
+          </Text>
+          <Text size="xs" c="dimmed">
+            Optional. Explain why your app needs each requested permission — a
+            moderator sees this during review. (These are shown as-is and are not
+            automatically verified.)
+          </Text>
+          <Stack gap="xs" mt={4}>
+            {scopes.map((scope) => (
+              <Textarea
+                key={scope}
+                label={scope}
+                placeholder={`Why does this app need "${scope}"?`}
+                autosize
+                minRows={1}
+                maxRows={4}
+                maxLength={SCOPE_JUSTIFICATION_MAX_LENGTH}
+                value={justifications[scope] ?? ''}
+                onChange={(e) =>
+                  setJustifications((prev) => ({ ...prev, [scope]: e.currentTarget.value }))
+                }
+                styles={{ label: { fontFamily: 'ui-monospace, monospace', fontWeight: 400 } }}
+              />
+            ))}
+          </Stack>
+        </Stack>
+      )}
 
       <Stack gap={4}>
         <Text size="sm" fw={500}>
