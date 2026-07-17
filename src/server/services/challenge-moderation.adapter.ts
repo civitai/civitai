@@ -3,7 +3,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { buildChallengeModerationText } from '~/server/games/daily-challenge/challenge-helpers';
+import {
+  buildChallengeModerationText,
+  CHALLENGE_MODERATION_LABELS,
+} from '~/server/games/daily-challenge/challenge-helpers';
 import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { deriveChallengeNsfwLevel } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { ChallengeIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -40,7 +43,7 @@ export const challengeModerationAdapter: ModerationAdapter = {
       entityType: 'Challenge',
       entityId,
       content,
-      labels: ['nsfw'],
+      labels: [...CHALLENGE_MODERATION_LABELS],
       priority: 'low',
     }),
 

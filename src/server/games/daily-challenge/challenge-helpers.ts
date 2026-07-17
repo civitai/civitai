@@ -33,6 +33,11 @@ import {
 // DB/Redis into client bundles)
 export { computeDynamicPool, distributePrizes } from './challenge-pool';
 
+// Labels requested for the challenge text scan. `nsfw` alone (threshold 0.75) misses crude sexual
+// themes that score below it; `suggestive` and `explicit` (threshold 0.5) catch sexually-charged
+// text on a green/SFW challenge with a large margin. Any triggered label escalates the challenge.
+export const CHALLENGE_MODERATION_LABELS = ['nsfw', 'suggestive', 'explicit'] as const;
+
 // Author-supplied text sent to the text-moderation scan. Description is RTE HTML, so tags are
 // stripped.
 export function buildChallengeModerationText(challenge: {
