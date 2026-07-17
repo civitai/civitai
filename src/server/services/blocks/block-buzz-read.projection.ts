@@ -55,27 +55,37 @@ import type { getUserBuzzTransactions } from '~/server/services/buzz.service';
  *      reward (reactor/collector identity); reactions are anonymous on the
  *      site, so the block must not see it either.
  *
- *  (B) `externalTransactionId` leak class — the field is DUAL-USE and
- *      TransactionType does NOT cleanly separate the two uses (an evidence-based
- *      sweep of every `externalTransactionId` assignment in the buzz + payment
- *      services). It holds a raw payment-processor / external-financial
- *      reference on the money-movement types, and a civitai-internal
- *      prize/reward classifier elsewhere:
- *        • Purchase   – every external buy-in lands here via grantBuzzPurchase /
- *                       completeStripeBuzzPurchase: Stripe paymentIntent.id +
- *                       invoice.id, Paddle transaction.id, `PAYPAL_ORDER:<id>`,
- *                       NOWPayments/Coinbase/EmerchantPay order ids, subscription
- *                       payment refs.
- *        • Refund     – a PayPal reversal stores the BARE PayPal transaction id
- *                       (paypal.service) with no distinguishing prefix, so the
- *                       whole type is nulled.
- *        • ChargeBack / Withdrawal – payment-dispute / cash-out financial-movement
- *                       types; nulled defensively (no dashboard classifier need;
- *                       future processor/bank refs land here by convention).
- *      Plus the ONE cross-type value: merch grants a Shopify order id under type
- *      *Reward* as `merchPurchase:<shopifyOrderId>` (merch.service), nulled by
- *      prefix. Every OTHER row keeps its classifier (challenge-entry/winner
- *      prizes, `referral-reward:*`, generic reward-event ids, bounty/comp tags).
+ *  (B) `externalTransactionId` leak class — DEFAULT-DENY. The field is dual-use
+ *      and TransactionType does NOT cleanly separate the uses (an evidence-based
+ *      sweep of every `externalTransactionId` writer in the buzz + payment +
+ *      rewards services), and — critically — NEITHER use is block-safe:
+ *        • money-movement rows carry a raw payment-processor / bank reference:
+ *          Purchase (Stripe paymentIntent.id + invoice.id, Paddle transaction.id,
+ *          `PAYPAL_ORDER:<id>`, NOWPayments/Coinbase/EmerchantPay order ids,
+ *          subscription refs), Refund (bare PayPal transaction id), ChargeBack,
+ *          Withdrawal (processor/bank cash-out refs).
+ *        • reward rows carry a civitai-internal classifier that EMBEDS
+ *          COUNTERPARTY IDENTITY. `sendAward` (rewards/base.reward.ts) writes
+ *          EVERY reward row's ext-id as
+ *          `${eventType}:${forId}-${toUserId}-${byUserId}` — the reactor /
+ *          collector `byUserId` — or, for referral rows (`userReferred` /
+ *          `refereeCreated`), `${eventType}:${forId}-${ip}` — an IP. The
+ *          `details` allowlist in (A) deliberately DROPS `details.byUserId`
+ *          (reactions are anonymous on-site and must not reach an untrusted
+ *          block), so exposing this ext-id would be a REDACTION BYPASS of that
+ *          very defense. Other reward/prize ext-ids (`challenge-*`,
+ *          `referral-reward:*`, `bounty-award-*`, comp/settlement tags) embed the
+ *          row-owner's own id and are of no dashboard use.
+ *      The block dashboard sources its income/attribution classifier from the
+ *      allowlisted `details.type` / `forId` (leak-class A), NEVER from ext-id.
+ *      So the projection nulls `externalTransactionId` for EVERY row unless its
+ *      value is on an explicit safe-value allowlist below — which is currently
+ *      EMPTY. This mirrors leak-class (A): exposure is only ever an explicit,
+ *      tested allowlist addition, and no identity-bearing ext-id — reward
+ *      counterparty/IP today, or any future writer under ANY TransactionType —
+ *      can leak by omission (the field is default-ALLOW no longer). The SDK
+ *      already types `externalTransactionId: string | null` and its mock host
+ *      nulls it, so nulling it here is contract-safe.
  */
 
 /**
@@ -103,30 +113,30 @@ export function isDashboardClassifierType(type: unknown): type is string {
   return DASHBOARD_CLASSIFIER_TYPE_PREFIXES.some((p) => type.startsWith(p));
 }
 
-const EXTERNAL_TXN_ID_SENSITIVE_TYPES = new Set<TransactionType>([
-  TransactionType.Purchase,
-  TransactionType.Refund,
-  TransactionType.ChargeBack,
-  TransactionType.Withdrawal,
-]);
-const EXTERNAL_TXN_ID_SENSITIVE_VALUE_PREFIXES = ['merchPurchase:'];
+/**
+ * Safe-value allowlist for `externalTransactionId` — value shapes PROVEN to be
+ * non-identity classifiers the block dashboard needs (matched by prefix). It is
+ * deliberately EMPTY: the dashboard reads its income/attribution classifier from
+ * the allowlisted `details.type` / `forId` (leak-class A), never from ext-id,
+ * and every reward-row ext-id embeds counterparty/IP identity (base.reward.ts).
+ * Adding a shape here is an explicit, tested decision — see leak-class (B) above.
+ */
+const EXTERNAL_TXN_ID_SAFE_VALUE_PREFIXES: readonly string[] = [];
 
 /**
- * Null `externalTransactionId` wherever it holds a payment-processor /
- * external-financial reference (money-movement types + the merch Shopify value);
- * pass it through where it is a civitai-internal prize/reward classifier.
+ * Block-safe projection of `externalTransactionId`: DEFAULT-DENY (see leak-class
+ * (B) above). Returns the value only if it is on the safe-value allowlist;
+ * otherwise `null`. Type-agnostic on purpose — the field is unsafe on money
+ * types (processor refs) AND on reward types (counterparty/IP identity), so
+ * nothing is exposed by omission.
  */
 export function projectExternalTransactionId(
-  type: TransactionType,
   externalTransactionId: string | null | undefined
 ): string | null {
-  if (EXTERNAL_TXN_ID_SENSITIVE_TYPES.has(type)) return null;
-  if (
-    externalTransactionId != null &&
-    EXTERNAL_TXN_ID_SENSITIVE_VALUE_PREFIXES.some((p) => externalTransactionId.startsWith(p))
-  )
-    return null;
-  return externalTransactionId ?? null;
+  if (externalTransactionId == null) return null;
+  return EXTERNAL_TXN_ID_SAFE_VALUE_PREFIXES.some((p) => externalTransactionId.startsWith(p))
+    ? externalTransactionId
+    : null;
 }
 
 type BlockBuzzTransactionRow = Awaited<
@@ -139,7 +149,7 @@ type BlockBuzzTransactionRow = Awaited<
  *  - `details` allowlisted to the entity-attribution + classifier fields (drop
  *    passthrough, incl. `stripePaymentIntentId` and `byUserId`; `forId` only
  *    when numeric — the adWatched token guard)
- *  - `externalTransactionId` stripped for processor-reference rows (see above)
+ *  - `externalTransactionId` nulled by default (safe-value allowlist; see (B))
  *  - counterparties projected to `{ id, username }` (no other `getUsers` fields)
  */
 export function projectBlockBuzzTransaction(row: BlockBuzzTransactionRow) {
@@ -174,7 +184,7 @@ export function projectBlockBuzzTransaction(row: BlockBuzzTransactionRow) {
               : undefined,
         }
       : d,
-    externalTransactionId: projectExternalTransactionId(t.type, externalTransactionId),
+    externalTransactionId: projectExternalTransactionId(externalTransactionId),
     toUser: toUser ? { id: toUser.id, username: toUser.username } : undefined,
     fromUser: fromUser ? { id: fromUser.id, username: fromUser.username } : undefined,
   };

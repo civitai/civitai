@@ -3899,7 +3899,8 @@ export const blocksRouter = router({
    * Response rows carry the SECURITY-HARDENED projection
    * (projectBlockBuzzTransaction): `details` allowlisted to entity-attribution
    * only (no passthrough / no stripePaymentIntentId), `externalTransactionId`
-   * nulled for payment-processor-reference rows, counterparties stripped to
+   * nulled by default (default-deny — processor refs AND reward rows whose
+   * ext-id embeds counterparty/IP identity), counterparties stripped to
    * `{ id, username }`, `type` serialized as its name.
    */
   getMyBuzzTransactions: publicProcedure
