@@ -42,6 +42,7 @@ import { withSpan } from '~/server/utils/otel-helpers';
 import {
   dataForModelsCache,
   modelTagCache,
+  modelVotableTagsCache,
   userBasicCache,
   userModelCountCache,
 } from '~/server/redis/caches';
@@ -1982,6 +1983,8 @@ export const upsertModel = async (
     }
 
     await modelTagCache.refresh(result.id);
+    // Model tag set changed → the votable-tags list (score>0 ModelTag rows) changed too.
+    await modelVotableTagsCache.bust(result.id);
     await preventReplicationLag('model', result.id);
     if (data.uploadType === ModelUploadType.Trained) {
       // getTrainingModelsByUserId filters by userId — flag that path so the
@@ -2077,6 +2080,7 @@ export const upsertModel = async (
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
       await modelTagCache.refresh(result.id);
+      if (tagsOnModels) await modelVotableTagsCache.bust(result.id);
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
@@ -2948,6 +2952,8 @@ export const setModelsCategory = async ({
     `;
 
     await modelTagCache.refresh(modelIds);
+    // Applied tags land as score>0 ModelTag rows → refresh the votable-tags cache too.
+    await modelVotableTagsCache.bust(modelIds);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

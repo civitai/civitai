@@ -2018,6 +2018,7 @@ export const REDIS_KEYS = {
     POST_STATS: 'packed:caches:post-stats',
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
+    MODEL_VOTABLE_TAGS: 'packed:caches:model-votable-tags',
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     TENSOR_METADATA: 'packed:caches:tensor-metadata',
