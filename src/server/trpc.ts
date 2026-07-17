@@ -31,7 +31,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { runEnforceTokenScope } from '~/server/services/oauth/enforce-token-scope';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { Context } from './createContext';
 
@@ -247,33 +247,12 @@ const applyDomainFeature = t.middleware(async (options) => {
  *   request regardless of scope. Used for buzz-spending operations that the
  *   orchestrator owns; tokens have no business spending buzz on Civitai's side.
  */
-const enforceTokenScope = t.middleware(({ ctx, meta, next }) => {
-  // blockApiKeys: deny any token-based request, regardless of scope. Session
-  // auth (apiKeyId === null) is unaffected.
-  if (meta?.blockApiKeys && ctx.apiKeyId != null) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'This action cannot be performed via API key or OAuth token.',
-    });
-  }
-
-  // Session auth (cookies) and full-access API keys pass through scope check
-  if (ctx.tokenScope === TokenScope.Full) {
-    return next();
-  }
-
-  // Default unannotated endpoints to requiring Full scope
-  const requiredScope = meta?.requiredScope ?? TokenScope.Full;
-
-  if (!Flags.hasFlag(ctx.tokenScope, requiredScope)) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Your API key does not have the required scope for this action',
-    });
-  }
-
-  return next();
-});
+// `enforceTokenScope`'s body lives in a light standalone module so the OAuth
+// scope-verification + unified scope-usage audit wiring is unit-testable without
+// booting this heavy module. tRPC just wraps it.
+const enforceTokenScope = t.middleware(({ ctx, meta, path, next }) =>
+  runEnforceTokenScope({ ctx, meta, path, next })
+);
 
 // Time every procedure by path (full chain + resolver) so heavy-pool isolation
 // candidates can be ranked by P99 x rate — the criterion behind the image-feed

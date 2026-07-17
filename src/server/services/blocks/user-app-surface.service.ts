@@ -390,10 +390,29 @@ export async function listMyScopeInvocations(opts: {
     appBlock: { blockId: string; manifest: unknown } | null;
   };
   const rows = (await dbRead.blockScopeInvocation.findMany({
+    // This is the BLOCK-token activity feed (/apps/installed). Unified scope-usage
+    // audit: EXTERNAL-OAuth invocations now share this table but carry a NULL
+    // `appBlockId` (+ `source = 'external-oauth'`); exclude them here so they don't
+    // leak into a block-semantic UI. But NOT every null-`appBlockId` row is
+    // external-OAuth: a PRE-APPROVAL App-Dev-Tunnel spend also writes `appBlockId:
+    // null` with `syntheticAppId` set (see the synthetic-retry path below) and MUST
+    // stay in the dev's own audit feed. So the GLOBAL feed keeps `app-block` AND
+    // synthetic rows and excludes only external-OAuth: `appBlockId IS NOT NULL OR
+    // syntheticAppId IS NOT NULL`. Both are PRE-EXISTING columns, so this read is
+    // safe whether or not the `source`/`oauth_client_id` migration has been applied
+    // (external-OAuth rows can't even exist pre-migration — they're naturally
+    // absent then, and `syntheticAppId IS NOT NULL` excludes exactly the
+    // external-OAuth population post-migration). Deliberately NOT filtering on the
+    // new `source`/`oauthClientId` columns keeps this pre-migration-safe. External
+    // usage is captured (queryable by `oauth_client_id`) for a future dedicated
+    // OAuth-app activity view. Cast: the nullable filters need the nullable-column
+    // client types (CI-regenerated; may lag locally).
     where: {
       userId: opts.userId,
-      ...(opts.appBlockId ? { appBlockId: opts.appBlockId } : {}),
-    },
+      ...(opts.appBlockId
+        ? { appBlockId: opts.appBlockId }
+        : { OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }] }),
+    } as unknown as Prisma.BlockScopeInvocationWhereInput,
     orderBy: [{ invokedAt: 'desc' }, { id: 'desc' }],
     take: cappedLimit + 1,
     ...(cursorBigInt != null ? { cursor: { id: cursorBigInt }, skip: 1 } : {}),
@@ -451,8 +470,33 @@ export async function listMyScopeInvocations(opts: {
  */
 export async function recordScopeInvocation(opts: {
   userId: number;
-  appBlockId: string;
-  blockInstanceId: string;
+  /**
+   * The App Block whose block-token made the call. Present for an `'app-block'`
+   * invocation; OMITTED (undefined) for an `'external-oauth'` invocation, which
+   * has no App Block — the acting app is captured in `oauthClientId` instead.
+   */
+  appBlockId?: string;
+  /**
+   * The block instance. Present for an `'app-block'` invocation; OMITTED for an
+   * `'external-oauth'` invocation (a pure OauthClient has no block instance).
+   */
+  blockInstanceId?: string;
+  /**
+   * Unified scope-usage audit — the acting OauthClient id for an
+   * `'external-oauth'` invocation (an external OAuth access token verified at
+   * `enforceTokenScope`). This is the "which app" for external OAuth API usage,
+   * mirroring what `appBlockId` is for a block-token row. OMITTED for a
+   * block-token row.
+   */
+  oauthClientId?: string;
+  /**
+   * Which token population made the call: `'app-block'` (block-token — the
+   * default when omitted, preserving every existing block-token record) or
+   * `'external-oauth'` (a standard external OAuth access token). Consumers filter
+   * on this. Omitting it lets the DB column DEFAULT ('app-block') apply, so the
+   * existing block-token call sites write a byte-identical row.
+   */
+  source?: 'app-block' | 'external-oauth';
   scope: string;
   endpoint: string;
   statusCode: number;
@@ -486,19 +530,27 @@ export async function recordScopeInvocation(opts: {
     ? (opts.detail as unknown as Prisma.InputJsonValue)
     : undefined;
   try {
-    await dbWrite.blockScopeInvocation.create({
-      data: {
-        userId: opts.userId,
-        appBlockId: opts.appBlockId,
-        blockInstanceId: opts.blockInstanceId,
-        scope: opts.scope,
-        // Endpoint string is bounded by middleware-side normalisation but
-        // belt-and-braces clamp here so a runaway path can't blow the row.
-        endpoint: opts.endpoint.slice(0, 512),
-        statusCode: opts.statusCode,
-        ...(detailData !== undefined ? { detail: detailData } : {}),
-      },
-    });
+    // Build the row conditionally so an `'app-block'` call site writes a
+    // BYTE-IDENTICAL row to the pre-unification shape (no `oauthClientId` /
+    // `source` keys — `source` falls to the DB DEFAULT 'app-block'), while an
+    // `'external-oauth'` call site adds only the fields it carries. Bridge-cast
+    // once: the locally-generated Prisma client may pre-date the `oauth_client_id`
+    // / `source` columns (the NixOS dev env can't run `prisma generate`); CI
+    // regenerates from schema.full.prisma. Field names mirror the schema exactly.
+    const data = {
+      userId: opts.userId,
+      appBlockId: opts.appBlockId,
+      blockInstanceId: opts.blockInstanceId,
+      ...(opts.oauthClientId !== undefined ? { oauthClientId: opts.oauthClientId } : {}),
+      ...(opts.source !== undefined ? { source: opts.source } : {}),
+      scope: opts.scope,
+      // Endpoint string is bounded by middleware-side normalisation but
+      // belt-and-braces clamp here so a runaway path can't blow the row.
+      endpoint: opts.endpoint.slice(0, 512),
+      statusCode: opts.statusCode,
+      ...(detailData !== undefined ? { detail: detailData } : {}),
+    } as unknown as Parameters<typeof dbWrite.blockScopeInvocation.create>[0]['data'];
+    await dbWrite.blockScopeInvocation.create({ data });
   } catch (err) {
     // App Dev Tunnel Phase 2: a DEV token with a SYNTHETIC (non-resolving)
     // appBlockId FK-fails here. Retry with `appBlockId: null` + `syntheticAppId`
@@ -515,7 +567,7 @@ export async function recordScopeInvocation(opts: {
     // deleted between mint and spend — that FK-fails too, but it is NOT synthetic,
     // so it must keep the historical "log, no row" behaviour (never mislabelled
     // `synthetic_app_id = <real id>`). Only a genuine synthetic namespace retries.
-    if (opts.dev && isFkViolation && isSyntheticAppBlockId(opts.appBlockId)) {
+    if (opts.dev && isFkViolation && opts.appBlockId != null && isSyntheticAppBlockId(opts.appBlockId)) {
       try {
         // `appBlockId: null` + `syntheticAppId` require the schema change in this
         // PR (BlockScopeInvocation.appBlockId → nullable, + synthetic_app_id).
