@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -21,6 +22,24 @@ const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzS
 // as a NEW discriminated-union `kind` here, which must also (a) extend the
 // discriminator in blocks.router workflow procedures, (b) be exposed by
 // @civitai/app-sdk's useBuzzWorkflow contract.
+//
+// `customComfy` is the second `kind` (App Blocks customComfy bridge, v1). Unlike
+// `textToImage` (which maps a bounded body onto a generation GRAPH the server
+// builds), a `customComfy` body carries only a server-side `recipe` id + opaque
+// `params` — the server owns the ComfyUI graph in full (a fixed, code-reviewed
+// recipe from `~/server/services/blocks/recipes`). The wire schema does only the
+// COARSE fail-closed gate here: `recipe` MUST be a registered id
+// (REGISTERED_RECIPE_IDS, derived from the recipe registry keys) and `params` is
+// an opaque record; the per-recipe `.strict()` param schema is applied in the
+// TRANSLATOR (workflow.service `buildCustomComfyWorkflowInput`), not here, so the
+// wire surface stays recipe-agnostic. Mirrors `@civitai/app-sdk`'s
+// `WorkflowBodyCustomComfy` (civitai-app-starters PR #171) — keep the two in
+// lockstep.
+//
+// INERT/DARK: blocks.router still handles ONLY `textToImage` — the submit /
+// estimate branch on `kind==='customComfy'` (+ the post-paid budget belt) is the
+// separate PR6. This member only widens the accepted wire shape; no live code
+// path reads it yet.
 //
 // Caps are intentionally tighter than the platform-wide generateImageSchema —
 // blocks run in untrusted iframes and the token issuer caps per-call buzz at
@@ -164,8 +183,28 @@ const blockTextToImageBodySchema = z.object({
   }),
 });
 
+// App Blocks customComfy bridge (v1). Coarse fail-closed wire gate only:
+//  - `recipe` MUST be a REGISTERED recipe id (derived from the recipe registry
+//    keys) — an unregistered id is rejected at the union, before any translator
+//    or orchestrator call.
+//  - `params` is an opaque `Record<string, unknown>` here; the per-recipe
+//    `.strict()` param schema (prompt/seed/engine/accountType bounds) is applied
+//    in the translator (`buildCustomComfyWorkflowInput`), which is the single
+//    place a recipe's real param contract lives.
+//  - `.strict()` rejects any extra top-level field on the body.
+export const blockCustomComfyBodySchema = z
+  .object({
+    kind: z.literal('customComfy'),
+    recipe: z.enum(REGISTERED_RECIPE_IDS),
+    params: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
-export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [blockTextToImageBodySchema]);
+export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
+  blockTextToImageBodySchema,
+  blockCustomComfyBodySchema,
+]);
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
 // Keep field names in lockstep — this is the wire contract the iframe consumes.

@@ -18,9 +18,12 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 
 import {
   appBlockTag,
+  buildCustomComfyWorkflowInput,
   buildImageWorkflowInput,
   buildTextToImageInput,
+  BLOCK_CUSTOM_COMFY_STEP_NAME,
   BLOCK_IMAGE_WORKFLOW_TYPES,
+  createBlockCustomComfyStep,
   isPageLoraResource,
   projectAppWorkflow,
   resolveBlockImageWorkflowType,
@@ -29,6 +32,7 @@ import {
   snapshotFromWorkflow,
 } from '../workflow.service';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
+import { getRecipe, REGISTERED_RECIPE_IDS } from '../recipes';
 // REAL param-building path (no mocks): the generation graph validator and the
 // step-metadata snapshot fn are the exact functions the orchestrator's
 // `createWorkflowStepsFromGraph` runs to derive `workflowMetadata.params`. Both
@@ -1421,5 +1425,138 @@ describe('blockWorkflowBodySchema sourceImage bound (SSRF / arbitrary-URL guard)
         sourceImage: { url: 'https://image.civitai.com/a.jpeg', width: 99999, height: 1024 },
       }).success
     ).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// customComfy bridge (App Blocks customComfy bridge, v1) — INERT building blocks.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('blockWorkflowBodySchema: customComfy member', () => {
+  it('accepts a registered recipe with opaque params', () => {
+    const r = blockWorkflowBodySchema.safeParse({
+      kind: 'customComfy',
+      recipe: REGISTERED_RECIPE_IDS[0],
+      params: { prompt: 'an icy lake', engine: 'zimage-turbo' },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects an unregistered recipe id at the wire schema (fail-closed)', () => {
+    const r = blockWorkflowBodySchema.safeParse({
+      kind: 'customComfy',
+      recipe: 'not-a-real-recipe',
+      params: {},
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects an extra top-level field (.strict())', () => {
+    const r = blockWorkflowBodySchema.safeParse({
+      kind: 'customComfy',
+      recipe: REGISTERED_RECIPE_IDS[0],
+      params: {},
+      sneaky: 1,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('still parses an existing textToImage body (union widened, not replaced)', () => {
+    const r = blockWorkflowBodySchema.safeParse({
+      kind: 'textToImage',
+      modelId: 1,
+      modelVersionId: 2,
+      params: { prompt: 'hi' },
+    });
+    expect(r.success).toBe(true);
+  });
+});
+
+describe('buildCustomComfyWorkflowInput (translator)', () => {
+  const recipe = getRecipe('seamless-pano-360')!;
+
+  it('applies the recipe param schema then runs its pure builder', () => {
+    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1, engine: 'zimage-turbo' });
+    expect(input.trace).toBe('binary');
+    expect(input.resources[0]).toContain('z_image_turbo');
+    expect(input.workflow['1'].class_type).toBe('UNETLoader');
+    // seed threaded into the KSampler leaf
+    expect(input.workflow['9'].inputs).toMatchObject({ seed: 1 });
+  });
+
+  it('throws (fail-closed) on an out-of-bounds param the coarse wire schema let through', () => {
+    // `params: Record<string,unknown>` would accept these; the recipe schema rejects them.
+    expect(() => buildCustomComfyWorkflowInput(recipe, { prompt: 'x'.repeat(2000) })).toThrow();
+    expect(() => buildCustomComfyWorkflowInput(recipe, { prompt: 'x', engine: 'sdxl' })).toThrow();
+    expect(() => buildCustomComfyWorkflowInput(recipe, { prompt: 'x', checkpoint: {} })).toThrow();
+  });
+});
+
+describe('createBlockCustomComfyStep (step wrapper)', () => {
+  const recipe = getRecipe('seamless-pano-360')!;
+
+  it('wraps the input as a customComfy step and stamps the recipe timeout (HH:MM:SS)', () => {
+    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
+    const step = createBlockCustomComfyStep(recipe, input);
+    expect(step.$type).toBe('customComfy');
+    expect(step.name).toBe(BLOCK_CUSTOM_COMFY_STEP_NAME);
+    // 180s ceiling → 00:03:00 (NOT the reference's loose 01:00:00).
+    expect(step.timeout).toBe('00:03:00');
+    expect(step.input).toBe(input);
+  });
+});
+
+describe('snapshotFromWorkflow: customComfy blobs', () => {
+  it('surfaces available blob urls from a customComfy step (output.blobs, not .images)', () => {
+    const wf = fakeWorkflow({
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'customComfy',
+          name: 'block-custom-comfy',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [
+              { id: 'p1', type: 'image', url: 'https://cdn/pano.png', available: true },
+              { id: 'p2', type: 'image', url: 'https://pending/', available: false },
+            ],
+          },
+        },
+      ],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toEqual(['https://cdn/pano.png']);
+  });
+});
+
+describe('projectAppWorkflow: customComfy blobs', () => {
+  it('projects blobs to images (null width/height, nsfwLevel mapped from rating)', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_cc',
+      createdAt: '2026-07-17T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 47 },
+      steps: [
+        {
+          $type: 'customComfy',
+          name: 'block-custom-comfy',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [
+              { id: 'p1', type: 'image', url: 'https://cdn/pano.png', available: true, nsfwLevel: 'pg' },
+              { id: 'p2', type: 'image', url: 'https://blocked/', available: false },
+            ],
+          },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never)).toEqual({
+      workflowId: 'wf_cc',
+      status: 'succeeded',
+      images: [{ url: 'https://cdn/pano.png', width: null, height: null, nsfwLevel: 1 }],
+      cost: 47,
+      createdAt: '2026-07-17T00:00:00.000Z',
+    });
   });
 });

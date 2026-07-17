@@ -1703,6 +1703,21 @@ export const REDIS_SYS_KEYS = {
      * the approved/owned path is unaffected (only the ephemeral branch increments).
      */
     DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
+    /**
+     * App Blocks `customComfy` bridge — per-workflow SETTLE record so a
+     * post-paid customComfy job's terminal poll/cancel can refund the
+     * declared `maxBuzz` CEILING down to the workflow's REAL accrued cost
+     * against BOTH the per-user daily and per-app aggregate reservations.
+     * Keyed `${CUSTOM_COMFY_SETTLE}:<workflowId>`, JSON value
+     * `{ buzzCapKey, appSpendKey|null, ceiling }`, hard-TTL EX ~25h so it
+     * self-expires with the reservation window. Written at submit (after
+     * reserving the ceiling), consumed once via GET+DEL at the FIRST terminal
+     * observation (idempotent settle). On `sysRedis`, like the sibling BLOCKS
+     * caps/limiters. DEV/live-harness tokens still get a per-user daily
+     * reservation + settle; the per-app reservation (and its settle key) is
+     * absent for them (synthetic appBlockId), matching the txt2img caps.
+     */
+    CUSTOM_COMFY_SETTLE: 'system:blocks:custom-comfy-settle',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
