@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Chart } from '@civitai/ui/components/ui/chart/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import * as Table from '@civitai/ui/components/ui/table/index.js';
+  import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
   import { formatRange } from '$lib/date-range';
   import {
@@ -63,11 +65,16 @@
 
   // Trend is a buzz-only per-source line chart (cash is USD + lumpy → lives in the panel). Chips toggle sources.
   const seriesSources = $derived(EARNINGS_SOURCES.filter((s) => (data.series ?? []).some((p) => p.source === s)));
-  const hiddenSources = $state<Record<string, boolean>>({});
+  // Visible sources (ToggleGroup value). Default every present source on; resync when the range — and thus the
+  // set of sources — changes.
+  let shownSources = $state<string[]>([]);
+  $effect(() => {
+    shownSources = [...seriesSources];
+  });
   const chartData = $derived.by(() => {
     const series = data.series ?? [];
     const dates = [...new Set(series.map((p) => p.date))].sort();
-    const shown = seriesSources.filter((s) => !hiddenSources[s]);
+    const shown = seriesSources.filter((s) => shownSources.includes(s));
     return {
       labels: dates,
       datasets: shown.map((s) => ({
@@ -159,27 +166,19 @@
       <p class="text-sm text-dark-2">
         Buzz earned by source over time <span class="text-xs text-dark-3">· cash shown in the panel above</span>
       </p>
-      <div class="flex flex-wrap gap-1.5">
+      <ToggleGroup type="multiple" bind:value={shownSources} variant="outline" size="sm" spacing={1.5} class="flex-wrap">
         {#each seriesSources as s (s)}
-          <button
-            type="button"
-            onclick={() => (hiddenSources[s] = !hiddenSources[s])}
-            class="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors {hiddenSources[
-              s
-            ]
-              ? 'border-dark-4 text-dark-3'
-              : 'border-dark-3 text-white'}"
-          >
+          <ToggleGroupItem value={s} aria-label={SOURCE_LABEL[s]} class="gap-1.5 text-xs">
             <span
               class="inline-block h-2 w-2 rounded-full"
-              style="background:{hiddenSources[s] ? 'transparent' : SOURCE_COLOR[s]};border:1px solid {SOURCE_COLOR[
-                s
-              ]}"
+              style="background:{shownSources.includes(s)
+                ? SOURCE_COLOR[s]
+                : 'transparent'};border:1px solid {SOURCE_COLOR[s]}"
             ></span>
             {SOURCE_LABEL[s]}
-          </button>
+          </ToggleGroupItem>
         {/each}
-      </div>
+      </ToggleGroup>
     </div>
     <div class="h-72">
       <Chart type="line" data={chartData} options={chartOptions} class="h-full" />
@@ -188,31 +187,29 @@
 
   <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
     <p class="mb-3 text-sm text-dark-2">By source <span class="text-xs text-dark-3">{periodLabel}</span></p>
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wide text-dark-3">
-            <th class="py-2 pr-4 font-medium">Source</th>
-            {#each currencies as c (c)}
-              <th class="py-2 pl-4 text-right font-medium">{currencyMeta(c).label}</th>
-            {/each}
-          </tr>
-        </thead>
-        <tbody>
-          {#each sources as s (s)}
-            <tr class="border-b border-dark-6">
-              <td class="py-2 pr-4 text-dark-1">{SOURCE_LABEL[s]}</td>
-              {#each currencies as c (c)}
-                {@const v = cell(s, c)}
-                <td class="py-2 pl-4 text-right {v ? 'font-medium text-white' : 'text-dark-4'}">
-                  {v ? formatAmount(v, c) : '—'}
-                </td>
-              {/each}
-            </tr>
+    <Table.Root>
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>Source</Table.Head>
+          {#each currencies as c (c)}
+            <Table.Head class="text-right">{currencyMeta(c).label}</Table.Head>
           {/each}
-        </tbody>
-      </table>
-    </div>
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {#each sources as s (s)}
+          <Table.Row>
+            <Table.Cell class="text-dark-1">{SOURCE_LABEL[s]}</Table.Cell>
+            {#each currencies as c (c)}
+              {@const v = cell(s, c)}
+              <Table.Cell class="text-right {v ? 'font-medium text-white' : 'text-dark-4'}">
+                {v ? formatAmount(v, c) : '—'}
+              </Table.Cell>
+            {/each}
+          </Table.Row>
+        {/each}
+      </Table.Body>
+    </Table.Root>
   </div>
 {/if}
 

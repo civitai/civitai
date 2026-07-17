@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Chart, chartColor, createSyncedCrosshair } from '@civitai/ui/components/ui/chart/index.js';
+  import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
+  import * as Table from '@civitai/ui/components/ui/table/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
   import { formatRange } from '$lib/date-range';
@@ -107,10 +109,12 @@
   <p class="mb-2 text-xs text-dark-3">Totals {periodLabel}</p>
   <section class="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
     {#each tiles as tile (tile.label)}
-      <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
-        <p class="text-xs uppercase tracking-wide text-dark-3">{tile.label}</p>
-        <p class="mt-1 text-xl font-semibold text-white">{num(tile.value)}</p>
-      </div>
+      <Card>
+        <CardContent>
+          <p class="text-xs uppercase tracking-wide text-dark-3">{tile.label}</p>
+          <p class="mt-1 text-xl font-semibold text-white">{num(tile.value)}</p>
+        </CardContent>
+      </Card>
     {/each}
   </section>
   {#if data.allTime}
@@ -181,56 +185,54 @@
     <p class="mb-3 text-sm text-dark-2">
       Per-model performance <span class="text-xs text-dark-3">{periodLabel} · ranked by generations</span>
     </p>
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wide text-dark-3">
-            <th class="py-2 pr-4 font-medium">Model</th>
-            <th class="py-2 pr-4 font-medium">Type</th>
-            <th class="py-2 pl-4 text-right font-medium">Generations</th>
-            <th class="py-2 pl-4 text-right font-medium">Downloads</th>
-            {#each modelCurrencies as c (c)}
-              <th class="py-2 pl-4 text-right font-medium">{currencyMeta(c).label}</th>
-            {/each}
-          </tr>
-        </thead>
-        <tbody>
-          {#each data.modelPerformance as m (m.modelVersionId)}
-            <tr class="border-b border-dark-6">
-              <td class="py-2 pr-4">
-                {#if m.modelId}
-                  <!-- NSFW models link to civitai.red (mature domain), same split as the top-images grid -->
-                  <a
-                    href="https://civitai.{m.nsfw ? 'red' : 'com'}/models/{m.modelId}?modelVersionId={m.modelVersionId}"
-                    target="_blank"
-                    rel="noreferrer"
-                    class="text-dark-1 hover:text-white hover:underline"
-                  >
-                    {m.modelName ?? `Model ${m.modelId}`}
-                  </a>
-                {:else}
-                  <span class="text-dark-2">Version {m.modelVersionId}</span>
-                {/if}
-                {#if m.versionName}<span class="text-dark-3"> · {m.versionName}</span>{/if}
-              </td>
-              <td class="py-2 pr-4 text-dark-2">{m.modelType ?? '—'}</td>
-              <td class="py-2 pl-4 text-right {m.generations ? 'text-white' : 'text-dark-4'}">
-                {m.generations ? num(m.generations) : '—'}
-              </td>
-              <td class="py-2 pl-4 text-right {m.downloads ? 'text-white' : 'text-dark-4'}">
-                {m.downloads ? num(m.downloads) : '—'}
-              </td>
-              {#each modelCurrencies as c (c)}
-                {@const v = modelCell(m, c)}
-                <td class="py-2 pl-4 text-right {v ? 'font-medium text-white' : 'text-dark-4'}">
-                  {v ? formatAmount(v, c) : '—'}
-                </td>
-              {/each}
-            </tr>
+    <Table.Root>
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>Model</Table.Head>
+          <Table.Head>Type</Table.Head>
+          <Table.Head class="text-right">Generations</Table.Head>
+          <Table.Head class="text-right">Downloads</Table.Head>
+          {#each modelCurrencies as c (c)}
+            <Table.Head class="text-right">{currencyMeta(c).label}</Table.Head>
           {/each}
-        </tbody>
-      </table>
-    </div>
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {#each data.modelPerformance as m (m.modelVersionId)}
+          <Table.Row>
+            <Table.Cell>
+              {#if m.modelId}
+                <!-- NSFW models link to civitai.red (mature domain), same split as the top-images grid -->
+                <a
+                  href="https://civitai.{m.nsfw ? 'red' : 'com'}/models/{m.modelId}?modelVersionId={m.modelVersionId}"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="text-dark-1 hover:text-white hover:underline"
+                >
+                  {m.modelName ?? `Model ${m.modelId}`}
+                </a>
+              {:else}
+                <span class="text-dark-2">Version {m.modelVersionId}</span>
+              {/if}
+              {#if m.versionName}<span class="text-dark-3"> · {m.versionName}</span>{/if}
+            </Table.Cell>
+            <Table.Cell class="text-dark-2">{m.modelType ?? '—'}</Table.Cell>
+            <Table.Cell class="text-right {m.generations ? 'text-white' : 'text-dark-4'}">
+              {m.generations ? num(m.generations) : '—'}
+            </Table.Cell>
+            <Table.Cell class="text-right {m.downloads ? 'text-white' : 'text-dark-4'}">
+              {m.downloads ? num(m.downloads) : '—'}
+            </Table.Cell>
+            {#each modelCurrencies as c (c)}
+              {@const v = modelCell(m, c)}
+              <Table.Cell class="text-right {v ? 'font-medium text-white' : 'text-dark-4'}">
+                {v ? formatAmount(v, c) : '—'}
+              </Table.Cell>
+            {/each}
+          </Table.Row>
+        {/each}
+      </Table.Body>
+    </Table.Root>
   </div>
 {:else if data.modelPerformance === null}
   <div class="placeholder mt-4">Per-model performance is temporarily unavailable — please try again shortly.</div>

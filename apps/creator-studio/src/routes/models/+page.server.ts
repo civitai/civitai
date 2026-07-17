@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import { getCreatorModels } from '$lib/server/models';
+import { getCreatorModels, MODELS_PER_PAGE } from '$lib/server/models';
 import {
   resolveMembership,
   canSetLicensingFee,
@@ -65,6 +65,7 @@ export const load: PageServerLoad = async ({ locals, parent, url }) => {
   ]);
   return {
     ...result,
+    perPage: MODELS_PER_PAGE,
     canSetFee: canSetLicensingFee(membership),
     maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
     query: {

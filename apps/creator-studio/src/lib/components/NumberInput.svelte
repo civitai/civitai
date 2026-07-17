@@ -1,11 +1,11 @@
 <script lang="ts" generics="T extends number | null | undefined">
   import type { HTMLInputAttributes } from 'svelte/elements';
-  import { cn } from '@civitai/ui/utils.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
 
-  // Studio number input: whole-number guard + snap-to-max, with the shared field styling.
+  // Studio number input: whole-number guard + snap-to-max on top of the shared shadcn Input.
   // Generic + bindable so it drops into both `bind:value` editor forms and one-way / form-submit
   // fields; clamping runs against the bound value so it survives conditional re-renders.
-  type Props = Omit<HTMLInputAttributes, 'type' | 'min' | 'max' | 'value'> & {
+  type Props = Omit<HTMLInputAttributes, 'type' | 'min' | 'max' | 'value' | 'files'> & {
     value?: T;
     min?: number;
     max?: number;
@@ -36,7 +36,7 @@
   }
 </script>
 
-<input
+<Input
   {...rest}
   type="number"
   {min}
@@ -46,5 +46,5 @@
   onbeforeinput={handleBeforeInput}
   oninput={handleInput}
   bind:value
-  class={cn('rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-sm text-white', className)}
+  class={className}
 />

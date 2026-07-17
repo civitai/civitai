@@ -19,6 +19,7 @@
     SidebarTrigger,
   } from '@civitai/ui/components/ui/sidebar/index.js';
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
+  import { NativeSelect, NativeSelectOption } from '@civitai/ui/components/ui/native-select/index.js';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import { activeNavHref, navForMember } from '$lib/nav';
   import type { LayoutData } from './$types';
@@ -120,16 +121,16 @@
           >
             Simulate membership (test)
           </label>
-          <select
+          <NativeSelect
             id="cs-sim-membership"
             value={data.testMembership ?? ''}
             onchange={(e) => setTestMembership(e.currentTarget.value)}
-            class="w-full rounded border border-dark-4 bg-dark-7 px-2 py-1 text-xs text-white"
+            class="h-auto py-1 text-xs"
           >
             {#each membershipOptions as opt (opt.value)}
-              <option value={opt.value}>{opt.label}</option>
+              <NativeSelectOption value={opt.value}>{opt.label}</NativeSelectOption>
             {/each}
-          </select>
+          </NativeSelect>
         </div>
       {/if}
       <div class="flex items-center gap-2 px-1 py-1">

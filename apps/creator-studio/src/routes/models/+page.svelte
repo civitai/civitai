@@ -24,6 +24,13 @@
     SheetFooter,
   } from '@civitai/ui/components/ui/sheet/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
+  import * as Pagination from '@civitai/ui/components/ui/pagination/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
+  import { NativeSelect, NativeSelectOption } from '@civitai/ui/components/ui/native-select/index.js';
   import {
     MIN_DOWNLOAD_PRICE,
     MIN_GENERATION_PRICE,
@@ -41,7 +48,6 @@
   import {
     IconSearch,
     IconFilter,
-    IconArrowsSort,
     IconChevronRight,
     IconExternalLink,
   } from '@tabler/icons-svelte';
@@ -115,22 +121,6 @@
     const q = String(raw ?? '').trim();
     if (q === (data.query.q ?? '')) return;
     navigate({ q: q || null, page: null });
-  }
-
-  // Windowed page numbers (M1): always the first + last page, plus a ±2 window around the current one, with 'gap'
-  // markers collapsed to an ellipsis. So a creator with many pages can jump anywhere, not just one at a time.
-  function pageNumbers(current: number, count: number): (number | 'gap')[] {
-    const keep = new Set<number>([1, count]);
-    for (let i = current - 2; i <= current + 2; i++) if (i >= 1 && i <= count) keep.add(i);
-    const nums = [...keep].sort((a, b) => a - b);
-    const out: (number | 'gap')[] = [];
-    let prev = 0;
-    for (const n of nums) {
-      if (prev && n - prev > 1) out.push('gap');
-      out.push(n);
-      prev = n;
-    }
-    return out;
   }
 
   // --- Bulk mode ---
@@ -257,21 +247,16 @@
       runSearch(new FormData(e.currentTarget).get('q'));
     }}
   >
-    <input
+    <Input
       name="q"
       value={data.query.q}
       placeholder="Search models…"
       onblur={(e) => runSearch(e.currentTarget.value)}
-      class="w-56 rounded border border-dark-4 bg-dark-7 px-2 py-1.5 text-sm text-white"
+      class="w-56"
     />
-    <button
-      type="submit"
-      aria-label="Search"
-      title="Search"
-      class="flex items-center justify-center rounded border border-dark-4 bg-dark-6 px-2.5 py-2 text-white hover:border-dark-3"
-    >
+    <Button type="submit" variant="outline" size="icon" aria-label="Search" title="Search">
       <IconSearch size={16} />
-    </button>
+    </Button>
   </form>
   <Popover.Root>
     <Popover.Trigger
@@ -280,90 +265,85 @@
       <IconFilter size={16} class="text-dark-3" />
       Filters
       {#if activeFilterCount > 0}
-        <span class="rounded-full bg-blue-8 px-1.5 text-xs font-medium text-white">{activeFilterCount}</span>
+        <Badge class="px-1.5">{activeFilterCount}</Badge>
       {/if}
     </Popover.Trigger>
     <Popover.Content class="w-64 space-y-4 border-dark-4 bg-dark-7 p-4 text-sm text-white">
-      <fieldset class="space-y-1.5">
-        <legend class="mb-1 text-xs font-medium uppercase tracking-wide text-dark-3">Status</legend>
-        {#each statusOptions as opt (opt.value)}
-          <label class="flex cursor-pointer items-center gap-2">
-            <input
-              type="radio"
-              name="status"
-              checked={(data.query.status ?? '') === opt.value}
-              onchange={() => navigate({ status: opt.value || null, page: null })}
-            />
-            {opt.label}
-          </label>
-        {/each}
+      <fieldset>
+        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-3">Status</legend>
+        <RadioGroup
+          value={data.query.status ?? ''}
+          onValueChange={(v) => navigate({ status: v || null, page: null })}
+        >
+          {#each statusOptions as opt (opt.value)}
+            {@const id = `status-${opt.value || 'active'}`}
+            <div class="flex items-center gap-2">
+              <RadioGroupItem value={opt.value} {id} />
+              <Label for={id} class="cursor-pointer font-normal">{opt.label}</Label>
+            </div>
+          {/each}
+        </RadioGroup>
       </fieldset>
-      <div class="space-y-1">
-        <label for="filter-bm" class="text-xs font-medium uppercase tracking-wide text-dark-3">Base model</label>
-        <select
+      <div class="space-y-1.5">
+        <Label for="filter-bm" class="text-xs font-medium uppercase tracking-wide text-dark-3">
+          Base model
+        </Label>
+        <NativeSelect
           id="filter-bm"
           value={data.query.bm}
           onchange={(e) => navigate({ bm: e.currentTarget.value || null, page: null })}
-          class="w-full rounded border border-dark-4 bg-dark-6 px-2 py-1.5 text-sm text-white [&>option]:bg-dark-7"
         >
-          <option value="">All base models</option>
+          <NativeSelectOption value="">All base models</NativeSelectOption>
           {#each data.baseModels as bm (bm)}
-            <option value={bm}>{bm}</option>
+            <NativeSelectOption value={bm}>{bm}</NativeSelectOption>
           {/each}
-        </select>
+        </NativeSelect>
       </div>
-      <label class="flex cursor-pointer items-center gap-2">
-        <input
-          type="checkbox"
+      <div class="flex items-center gap-2">
+        <Checkbox
+          id="filter-access"
           checked={data.query.access}
-          onchange={(e) => navigate({ access: e.currentTarget.checked ? '1' : null, page: null })}
+          onCheckedChange={(c) => navigate({ access: c ? '1' : null, page: null })}
         />
-        Has early / paid access
-      </label>
-      <fieldset class="space-y-1.5">
-        <legend class="mb-1 text-xs font-medium uppercase tracking-wide text-dark-3">Licensing fee</legend>
-        {#each feeOptions as opt (opt.value)}
-          <label class="flex cursor-pointer items-center gap-2">
-            <input
-              type="radio"
-              name="fee"
-              checked={(data.query.fee ?? '') === opt.value}
-              onchange={() => navigate({ fee: opt.value || null, page: null })}
-            />
-            {opt.label}
-          </label>
-        {/each}
+        <Label for="filter-access" class="cursor-pointer font-normal">Has early / paid access</Label>
+      </div>
+      <fieldset>
+        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-3">Licensing fee</legend>
+        <RadioGroup
+          value={data.query.fee ?? ''}
+          onValueChange={(v) => navigate({ fee: v || null, page: null })}
+        >
+          {#each feeOptions as opt (opt.value)}
+            {@const id = `fee-${opt.value || 'all'}`}
+            <div class="flex items-center gap-2">
+              <RadioGroupItem value={opt.value} {id} />
+              <Label for={id} class="cursor-pointer font-normal">{opt.label}</Label>
+            </div>
+          {/each}
+        </RadioGroup>
       </fieldset>
       {#if activeFilterCount > 0}
-        <button
-          type="button"
+        <Button
+          variant="link"
+          size="sm"
+          class="h-auto p-0 text-xs"
           onclick={() => navigate({ status: null, bm: null, access: null, fee: null, page: null })}
-          class="text-xs text-blue-4 hover:underline"
         >
           Clear filters
-        </button>
+        </Button>
       {/if}
     </Popover.Content>
   </Popover.Root>
-  <div class="flex items-center gap-1 rounded border border-dark-4 bg-dark-7 pl-2" title="Sort">
-    <IconArrowsSort size={16} class="text-dark-3" />
-    <select
-      aria-label="Sort"
-      value={data.query.sort}
-      onchange={(e) => navigate({ sort: e.currentTarget.value, page: null })}
-      class="bg-transparent py-1.5 pr-2 text-sm text-white outline-none [&>option]:bg-dark-7 [&>option]:text-white"
-    >
-      <option value="recent">Recently updated</option>
-      <option value="name">Name</option>
-    </select>
-  </div>
+  <NativeSelect
+    aria-label="Sort"
+    value={data.query.sort}
+    onchange={(e) => navigate({ sort: e.currentTarget.value, page: null })}
+  >
+    <NativeSelectOption value="recent">Recently updated</NativeSelectOption>
+    <NativeSelectOption value="name">Name</NativeSelectOption>
+  </NativeSelect>
   {#if data.canSetFee && data.total > 0 && !bulkMode}
-    <a
-      href="/models?mode=bulk"
-      class="ml-auto rounded-md border border-dark-4 bg-dark-6 px-3 py-1.5 text-sm text-white hover:border-dark-3"
-    >
-      Bulk edit fees
-    </a>
+    <Button href="/models?mode=bulk" variant="outline" size="sm" class="ml-auto">Bulk edit fees</Button>
   {/if}
 </div>
 
@@ -377,23 +357,17 @@
       {selected.size > 0 ? `${selected.size} selected` : 'Select versions to edit'}
     </span>
     {#if data.matchingVersionIds.length > 0}
-      <button
-        type="button"
+      <Button
+        variant="outline"
+        size="xs"
         onclick={() => (selected = new Set(data.matchingVersionIds))}
         title="Select every version matching the current filters (all pages)"
-        class="rounded border border-dark-4 px-2 py-1 text-xs text-white hover:border-dark-3"
       >
         Select all {data.matchingVersionIds.length}
-      </button>
+      </Button>
     {/if}
     {#if selected.size > 0}
-      <button
-        type="button"
-        onclick={() => (selected = new Set())}
-        class="rounded border border-dark-4 px-2 py-1 text-xs text-white hover:border-dark-3"
-      >
-        Clear
-      </button>
+      <Button variant="outline" size="xs" onclick={() => (selected = new Set())}>Clear</Button>
     {/if}
     <form bind:this={bulkForm} method="POST" action="?/bulkSetFee" use:enhance={bulkEnhance} class="contents">
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
@@ -404,34 +378,23 @@
         placeholder="Buzz"
         aria-label="Buzz (leave empty to clear the fee)"
         title="Leave empty to clear the fee"
-        class="w-20 py-1"
+        class="w-20"
       />
       <span class="text-sm text-dark-1">⚡ per</span>
-      <select
-        name="images"
-        bind:value={bulkImages}
-        aria-label="Images"
-        class="rounded border border-dark-4 bg-dark-7 px-1.5 py-1 text-sm text-white [&>option]:bg-dark-7 [&>option]:text-white"
-      >
+      <NativeSelect name="images" bind:value={bulkImages} aria-label="Images">
         {#each FEE_IMAGE_OPTIONS as opt (opt)}
-          <option value={String(opt)}>{opt}</option>
+          <NativeSelectOption value={String(opt)}>{opt}</NativeSelectOption>
         {/each}
-      </select>
+      </NativeSelect>
       <span class="text-sm text-dark-1">images</span>
-      <button
-        type="button"
+      <Button
+        size="sm"
         disabled={selected.size === 0}
         onclick={() => (showBulkConfirm = true)}
-        class="rounded bg-blue-8 px-3 py-1 text-sm font-medium text-white hover:bg-blue-7 disabled:cursor-not-allowed disabled:opacity-40"
       >
         Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
-      </button>
-      <a
-        href="/models"
-        class="inline-flex items-center rounded border border-dark-4 px-3 py-1 text-sm text-white hover:border-dark-3"
-      >
-        Cancel
-      </a>
+      </Button>
+      <Button href="/models" variant="outline" size="sm">Cancel</Button>
       <span class="text-xs text-dark-1">Empty buzz clears the fee.</span>
     </form>
   </div>
@@ -455,19 +418,13 @@
         <CardHeader>
           <div class="flex items-center gap-3">
             {#if bulkMode && model.versions.length > 0}
-              <label class="flex cursor-pointer items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={allSelected(model)}
-                  onchange={() => toggleModel(model)}
-                  aria-label="Select all versions of {model.name}"
-                  class="size-4"
-                />
-                <CardTitle class="text-base text-white">{model.name}</CardTitle>
-              </label>
-            {:else}
-              <CardTitle class="text-base text-white">{model.name}</CardTitle>
+              <Checkbox
+                checked={allSelected(model)}
+                onCheckedChange={() => toggleModel(model)}
+                aria-label="Select all versions of {model.name}"
+              />
             {/if}
+            <CardTitle class="text-base text-white">{model.name}</CardTitle>
             <Badge variant="secondary">{model.type}</Badge>
             <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
               {model.status}
@@ -495,35 +452,24 @@
                 {@const chip = feeChip(version.licensingFee)}
                 <li>
                   {#if bulkMode}
-                    <label class="flex w-full cursor-pointer items-center gap-3 px-5 py-3">
-                      <input
-                        type="checkbox"
+                    {@const cbId = `v-${version.id}`}
+                    <div class="flex w-full items-center gap-3 px-5 py-3">
+                      <Checkbox
+                        id={cbId}
                         checked={selected.has(version.id)}
-                        onchange={() => toggleVersion(version.id)}
+                        onCheckedChange={() => toggleVersion(version.id)}
                         aria-label="Select {version.name}"
-                        class="size-4 shrink-0"
+                        class="shrink-0"
                       />
-                      <span class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <Label for={cbId} class="flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-2 font-normal">
                         <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <span
-                          class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide {statusBadgeCls(
-                            version.status
-                          )}"
-                        >
+                        <Badge variant="outline" class="{statusBadgeCls(version.status)} text-[10px] uppercase tracking-wide">
                           {version.status}
-                        </span>
-                        <span
-                          class="shrink-0 rounded border border-dark-4 bg-dark-6 px-1.5 py-0.5 text-[10px] font-medium text-dark-2"
-                        >
-                          {version.baseModel}
-                        </span>
-                      </span>
-                      <span
-                        class="shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium {chip.cls}"
-                      >
-                        {chip.label}
-                      </span>
-                    </label>
+                        </Badge>
+                        <Badge variant="secondary" class="text-[10px]">{version.baseModel}</Badge>
+                      </Label>
+                      <Badge variant="outline" class="{chip.cls} shrink-0">{chip.label}</Badge>
+                    </div>
                   {:else}
                     <button
                       type="button"
@@ -532,31 +478,18 @@
                     >
                       <span class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <span
-                          class="shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide {statusBadgeCls(
-                            version.status
-                          )}"
-                        >
+                        <Badge variant="outline" class="{statusBadgeCls(version.status)} text-[10px] uppercase tracking-wide">
                           {version.status}
-                        </span>
-                        <span
-                          class="shrink-0 rounded border border-dark-4 bg-dark-6 px-1.5 py-0.5 text-[10px] font-medium text-dark-2"
-                        >
-                          {version.baseModel}
-                        </span>
+                        </Badge>
+                        <Badge variant="secondary" class="text-[10px]">{version.baseModel}</Badge>
                       </span>
                       <span class="flex shrink-0 items-center gap-2">
                         {#if version.hasEarlyAccess}
-                          <span
-                            title="Early access is on"
-                            class="rounded-full border px-2 py-0.5 text-xs font-medium {eaChipCls}"
-                          >
+                          <Badge variant="outline" class={eaChipCls} title="Early access is on">
                             Early access
-                          </span>
+                          </Badge>
                         {/if}
-                        <span class="rounded-full border px-2 py-0.5 text-xs font-medium {chip.cls}">
-                          {chip.label}
-                        </span>
+                        <Badge variant="outline" class={chip.cls}>{chip.label}</Badge>
                         <IconChevronRight size={16} class="text-dark-3" />
                       </span>
                     </button>
@@ -571,53 +504,37 @@
   </div>
 
   {#if data.pageCount > 1}
-    {@const btn =
-      'flex h-8 min-w-8 items-center justify-center rounded border border-dark-4 px-2 text-white hover:border-dark-3 disabled:cursor-not-allowed disabled:opacity-40'}
-    <nav class="mt-6 flex items-center justify-center gap-1 text-sm" aria-label="Pagination">
-      <button disabled={data.page <= 1} onclick={() => navigate({ page: '1' })} class={btn} aria-label="First page">
-        «
-      </button>
-      <button
-        disabled={data.page <= 1}
-        onclick={() => navigate({ page: String(data.page - 1) })}
-        class={btn}
-        aria-label="Previous page"
-      >
-        ‹
-      </button>
-      {#each pageNumbers(data.page, data.pageCount) as p, i (p === 'gap' ? `gap-${i}` : p)}
-        {#if p === 'gap'}
-          <span class="px-1 text-dark-3">…</span>
-        {:else}
-          <button
-            onclick={() => navigate({ page: String(p) })}
-            aria-label="Page {p}"
-            aria-current={p === data.page ? 'page' : undefined}
-            class="flex h-8 min-w-8 items-center justify-center rounded border px-2 {p === data.page
-              ? 'border-blue-8 bg-blue-8 font-medium text-white'
-              : 'border-dark-4 text-white hover:border-dark-3'}"
-          >
-            {p}
-          </button>
-        {/if}
-      {/each}
-      <button
-        disabled={data.page >= data.pageCount}
-        onclick={() => navigate({ page: String(data.page + 1) })}
-        class={btn}
-        aria-label="Next page"
-      >
-        ›
-      </button>
-      <button
-        disabled={data.page >= data.pageCount}
-        onclick={() => navigate({ page: String(data.pageCount) })}
-        class={btn}
-        aria-label="Last page"
-      >
-        »
-      </button>
-    </nav>
+    <Pagination.Root
+      count={data.total}
+      perPage={data.perPage}
+      page={data.page}
+      onPageChange={(p) => navigate({ page: String(p) })}
+      class="mt-6"
+    >
+      {#snippet children({ pages, currentPage })}
+        <Pagination.Content>
+          <Pagination.Item>
+            <Pagination.PrevButton />
+          </Pagination.Item>
+          {#each pages as p (p.key)}
+            {#if p.type === 'ellipsis'}
+              <Pagination.Item>
+                <Pagination.Ellipsis />
+              </Pagination.Item>
+            {:else}
+              <Pagination.Item>
+                <Pagination.Link page={p} isActive={currentPage === p.value}>
+                  {p.value}
+                </Pagination.Link>
+              </Pagination.Item>
+            {/if}
+          {/each}
+          <Pagination.Item>
+            <Pagination.NextButton />
+          </Pagination.Item>
+        </Pagination.Content>
+      {/snippet}
+    </Pagination.Root>
   {/if}
 {/if}
 
@@ -670,23 +587,13 @@
                 class="w-16 py-1"
               />
               <span class="text-xs text-dark-3">⚡ per</span>
-              <select
-                name="images"
-                value={String(ratio.images)}
-                aria-label="Images for {editing.name}"
-                class="rounded border border-dark-4 bg-dark-7 px-1.5 py-1 text-sm text-white"
-              >
+              <NativeSelect name="images" value={String(ratio.images)} aria-label="Images for {editing.name}">
                 {#each FEE_IMAGE_OPTIONS as opt (opt)}
-                  <option value={String(opt)}>{opt}</option>
+                  <NativeSelectOption value={String(opt)}>{opt}</NativeSelectOption>
                 {/each}
-              </select>
+              </NativeSelect>
               <span class="text-xs text-dark-3">images</span>
-              <button
-                type="submit"
-                class="ml-auto rounded bg-blue-8 px-3 py-1 text-sm font-medium text-white hover:bg-blue-7"
-              >
-                Save fee
-              </button>
+              <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
               <span class="w-full text-xs text-dark-3">Leave empty to clear the fee.</span>
             </form>
           {:else}
@@ -726,10 +633,10 @@
               </label>
 
               <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-                <label class="flex items-center gap-2 text-sm text-white">
-                  <input type="checkbox" name="chargeForDownload" bind:checked={ea.chargeForDownload} class="size-4" />
-                  Charge to download
-                </label>
+                <div class="flex items-center gap-2">
+                  <Checkbox id="ea-cd" name="chargeForDownload" bind:checked={ea.chargeForDownload} />
+                  <Label for="ea-cd" class="cursor-pointer text-sm font-normal text-white">Charge to download</Label>
+                </div>
                 {#if ea.chargeForDownload}
                   <label class="flex flex-col gap-1 text-sm">
                     <span class="text-dark-2">Download price (⚡, min {MIN_DOWNLOAD_PRICE})</span>
@@ -744,10 +651,10 @@
               </div>
 
               <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-                <label class="flex items-center gap-2 text-sm text-white">
-                  <input type="checkbox" name="chargeForGeneration" bind:checked={ea.chargeForGeneration} class="size-4" />
-                  Charge to generate
-                </label>
+                <div class="flex items-center gap-2">
+                  <Checkbox id="ea-cg" name="chargeForGeneration" bind:checked={ea.chargeForGeneration} />
+                  <Label for="ea-cg" class="cursor-pointer text-sm font-normal text-white">Charge to generate</Label>
+                </div>
                 {#if ea.chargeForGeneration}
                   <label class="flex flex-col gap-1 text-sm">
                     <span class="text-dark-2">Generation price (⚡, min {MIN_GENERATION_PRICE})</span>
@@ -768,18 +675,18 @@
                       class="w-32"
                     />
                   </label>
-                  <label class="flex items-center gap-2 text-sm text-white">
-                    <input type="checkbox" name="freeGeneration" bind:checked={ea.freeGeneration} class="size-4" />
-                    Allow free generation
-                  </label>
+                  <div class="flex items-center gap-2">
+                    <Checkbox id="ea-fg" name="freeGeneration" bind:checked={ea.freeGeneration} />
+                    <Label for="ea-fg" class="cursor-pointer text-sm font-normal text-white">Allow free generation</Label>
+                  </div>
                 {/if}
               </div>
 
               <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-                <label class="flex items-center gap-2 text-sm text-white">
-                  <input type="checkbox" name="donationGoalEnabled" bind:checked={ea.donationGoalEnabled} class="size-4" />
-                  Enable a donation goal
-                </label>
+                <div class="flex items-center gap-2">
+                  <Checkbox id="ea-dg" name="donationGoalEnabled" bind:checked={ea.donationGoalEnabled} />
+                  <Label for="ea-dg" class="cursor-pointer text-sm font-normal text-white">Enable a donation goal</Label>
+                </div>
                 {#if ea.donationGoalEnabled}
                   <label class="flex flex-col gap-1 text-sm">
                     <span class="text-dark-2">Goal amount (⚡)</span>
@@ -795,21 +702,11 @@
               {/if}
 
               <SheetFooter class="flex-col gap-2 p-0">
-                <button
-                  type="submit"
-                  class="rounded bg-blue-8 px-3 py-2 text-sm font-medium text-white hover:bg-blue-7"
-                >
-                  Save early access
-                </button>
+                <Button type="submit">Save early access</Button>
                 {#if editing.earlyAccessConfig}
-                  <button
-                    type="submit"
-                    name="clear"
-                    value="true"
-                    class="rounded border border-dark-4 px-3 py-2 text-sm text-white hover:border-dark-3"
-                  >
+                  <Button type="submit" name="clear" value="true" variant="outline">
                     Turn off early access
-                  </button>
+                  </Button>
                 {/if}
               </SheetFooter>
             </form>
