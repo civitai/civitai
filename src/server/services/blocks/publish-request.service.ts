@@ -20,6 +20,11 @@ import {
 import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+// Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
+// the notifications client in its body). approve/reject call it POST-COMMIT to notify
+// the submitting developer of the moderator decision — best-effort, wrapped in a
+// try/catch at each call site so a notification failure can never fail the decision.
+import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-notify';
 // Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
 // approveRequest copies a validated manifest `category` onto AppBlock.category.
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -2680,6 +2685,32 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // 'building'), so the common no-preview approve does zero extra DB/k8s work.
   if (hadReviewPreview) void teardownReviewForRequest(request.id);
 
+  // POST-COMMIT, best-effort — notify the submitting developer their block was
+  // approved (and is now building/deploying). This runs AFTER the status flip to
+  // 'approved' + the build trigger have both succeeded (a failed approve throws
+  // above and never reaches here → no notification for a rolled-back approve). The
+  // whole call is wrapped so a notification failure can NEVER fail or roll back the
+  // approve — the decision is already durable. Keyed by the request id for
+  // idempotency (a re-approve of the same request notifies once).
+  try {
+    await notifyAppBlockSubmitter({
+      type: 'app-block-approved',
+      userId: request.submittedByUserId,
+      key: `app-block-approved:${params.publishRequestId}`,
+      details: {
+        slug: request.slug,
+        name: typeof manifest.name === 'string' ? manifest.name : null,
+        version: request.version,
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] submitter notification failed (id=${params.publishRequestId}); ` +
+        `approve stands: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
   return {
     publishRequestId: request.id,
     appBlockId,
@@ -3717,7 +3748,17 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
     // deployState (#2831): only fire the review teardown if a preview was started.
-    select: { id: true, status: true, deployState: true },
+    // slug/version/manifest/submittedByUserId feed the POST-COMMIT submitter
+    // notification (best-effort; see below).
+    select: {
+      id: true,
+      status: true,
+      deployState: true,
+      slug: true,
+      version: true,
+      manifest: true,
+      submittedByUserId: true,
+    },
   });
   if (!row) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (row.status !== 'pending') {
@@ -3741,4 +3782,34 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   // must never affect the outcome. Gated on a preview actually having been
   // started so the common no-preview reject does zero extra work.
   if (hadReviewPreview) void teardownReviewForRequest(row.id);
+
+  // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
+  // approved, carrying the (already-trimmed) moderator reason so it shows inline on
+  // /apps/my-submissions. Runs AFTER the status flip to 'rejected' commits (a reject
+  // that throws above — bad reason length, non-pending row — never reaches here → no
+  // notification). Wrapped so a notification failure can NEVER fail the reject.
+  // Keyed by the request id for idempotency.
+  const rejectManifest =
+    row.manifest && typeof row.manifest === 'object'
+      ? (row.manifest as Record<string, unknown>)
+      : {};
+  try {
+    await notifyAppBlockSubmitter({
+      type: 'app-block-rejected',
+      userId: row.submittedByUserId,
+      key: `app-block-rejected:${params.publishRequestId}`,
+      details: {
+        slug: row.slug,
+        name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
+        version: row.version,
+        reason,
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[rejectRequest] submitter notification failed (id=${params.publishRequestId}); ` +
+        `reject stands: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
