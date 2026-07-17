@@ -1634,7 +1634,9 @@ const duplicateImageColumns = [
   'nsfwLevelLocked',
   'aiNsfwLevel',
   'aiModel',
-  'sortAt',
+  // sortAt intentionally omitted: the image_sort_at_before trigger authors it
+  // from the copied scannedAt/createdAt (postId is not copied → postless), so
+  // copying the source's sortAt would be inert. Do not re-add it.
   'pHash',
 ];
 async function duplicateImage(imageId: number, userId: number) {

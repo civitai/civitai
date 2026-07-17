@@ -1700,7 +1700,7 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
-  sortAt            DateTime                @default(now())
+  sortAt            DateTime                @default(dbgenerated()) // authored by image_post_triggers (set_image_sort_at BEFORE INSERT/UPDATE); no client/DB literal default — keeps the field client-optional while the trigger owns the value
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
