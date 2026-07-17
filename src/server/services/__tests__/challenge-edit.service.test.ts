@@ -443,4 +443,16 @@ describe('upsertUserChallenge — schedule limits', () => {
       } as never)
     ).rejects.toThrow('Challenge cannot start more than 30 days from now.');
   });
+
+  it('rejects an edit with a duration over the maximum', async () => {
+    const startsAt = new Date(Date.now() + 5 * DAY);
+    await expect(
+      upsertUserChallenge({
+        ...baseInput,
+        id: 42,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 31 * DAY),
+      } as never)
+    ).rejects.toThrow('Challenge cannot run longer than 30 days.');
+  });
 });
