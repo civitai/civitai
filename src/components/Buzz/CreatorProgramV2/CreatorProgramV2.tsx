@@ -8,6 +8,7 @@ import {
   Modal,
   Table,
   Text,
+  ThemeIcon,
   Tooltip,
   NumberInput,
   useCombobox,
@@ -30,7 +31,7 @@ import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { capitalize } from 'lodash-es';
 import type { HTMLProps } from 'react';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   useBankedBuzz,
   useCompensationPool,
@@ -156,7 +157,7 @@ export const CreatorProgramV2 = () => {
       )}
       {hasOnboardedInProgram &&
         (membershipLapsed ? (
-          <div className="flex flex-col gap-4 md:flex-row">
+          <div className="flex flex-col gap-4">
             <MembershipLapsedCard />
             <WithdrawCashCard />
           </div>
@@ -177,28 +178,100 @@ const MembershipLapsedCard = () => {
   // Memberships are only purchasable on the green domain; sync-login carries the
   // session across when the current domain differs.
   const renewUrl = syncAccount(`//${serverDomains.green}/pricing`);
+
+  // Spotlight effect — refs + direct DOM writes to avoid re-renders on mouse move.
+  const spotlightRef = useRef<HTMLDivElement>(null);
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = spotlightRef.current;
+    if (!el) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    el.style.background = `radial-gradient(400px circle at ${x}px ${y}px, light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04)), transparent 70%)`;
+    el.style.opacity = '1';
+  }, []);
+  const handleMouseLeave = useCallback(() => {
+    const el = spotlightRef.current;
+    if (el) el.style.opacity = '0';
+  }, []);
+
   return (
-    <div {...cardProps}>
-      <div className="flex items-center gap-2">
-        <IconLock size={20} />
-        <Text className="font-bold">Membership lapsed</Text>
+    <div className="overflow-hidden rounded-lg border border-gray-2 bg-gray-0 dark:border-dark-4 dark:bg-dark-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2">
+        {/* Left — status */}
+        <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
+          <ThemeIcon size={48} variant="light" color="gray" radius="xl">
+            <IconLock size={24} />
+          </ThemeIcon>
+          <Text fw={700} size="lg">
+            Membership lapsed
+          </Text>
+          <Text size="sm" c="dimmed" maw={320}>
+            Your Creator Program membership isn&apos;t active, so banking and earning are paused.
+            You can still withdraw any cash you&apos;ve already earned.
+          </Text>
+        </div>
+
+        {/* Right — renew pitch with gradient background + accent border + spotlight */}
+        <div
+          className="relative overflow-hidden border-t border-gray-200 bg-gradient-to-br from-green-500/5 to-yellow-500/5 dark:border-white/5 dark:from-green-500/[0.06] dark:to-yellow-500/[0.06] sm:border-l sm:border-t-0"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        >
+          <div
+            ref={spotlightRef}
+            className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+            style={{ opacity: 0 }}
+          />
+          <div className="absolute bottom-[10%] left-0 top-[10%] hidden w-[3px] rounded-sm bg-gradient-to-b from-green-500 to-yellow-500 sm:block" />
+
+          <div className="relative z-[1] flex h-full flex-col justify-center gap-4 p-6 pl-8">
+            <div className="flex flex-col gap-1">
+              <Text
+                size="xs"
+                c="dimmed"
+                tt="uppercase"
+                fw={600}
+                style={{ letterSpacing: '0.08em' }}
+              >
+                Pick up where you left off
+              </Text>
+              <Text fw={600}>Renew to unlock the Creator Program</Text>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <LapsedBenefitRow text="Bank Buzz toward the monthly creator pool" />
+              <LapsedBenefitRow text="Re-open your creator shop" />
+              <LapsedBenefitRow text="Earn real cash from your creations" />
+            </div>
+
+            <Button
+              component="a"
+              href={renewUrl}
+              variant="filled"
+              size="sm"
+              leftSection={<IconPigMoney size={16} />}
+              className="w-fit"
+            >
+              Renew membership
+            </Button>
+          </div>
+        </div>
       </div>
-      <Text size="sm" c="dimmed" className="mt-2">
-        Your Creator Program membership is no longer active, so banking and earning are paused.
-        Renew your membership to pick things back up. You can still withdraw any cash you&apos;ve
-        already earned.
-      </Text>
-      <Button
-        component="a"
-        href={renewUrl}
-        className="mt-4"
-        leftSection={<IconPigMoney size={16} />}
-      >
-        Renew membership
-      </Button>
     </div>
   );
 };
+
+function LapsedBenefitRow({ text }: { text: string }) {
+  return (
+    <div className="flex items-start gap-2">
+      <IconCircleCheck size={16} className="mt-0.5 shrink-0 text-green-500" />
+      <Text size="xs" c="dimmed">
+        {text}
+      </Text>
+    </div>
+  );
+}
 
 const JoinCreatorProgramCard = () => {
   const [domainBuzzType] = useAvailableBuzz();
