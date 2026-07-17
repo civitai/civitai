@@ -42,6 +42,8 @@ import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getClientStripe } from '~/utils/get-client-stripe';
+import { OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
@@ -322,6 +324,7 @@ export const CancelMembershipBenefitsModal = () => {
   const features = useFeatureFlags();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
+  const currentUser = useCurrentUser();
   const [mainBuzzType] = useAvailableBuzz();
   const { vault, isLoading: vaultLoading } = useQueryVault();
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
@@ -333,6 +336,8 @@ export const CancelMembershipBenefitsModal = () => {
   const details = product ? getPlanDetails(product, features) : null;
   const benefits = details?.benefits ?? [];
   const hasUsedVaultStorage = !!vault && vault.usedStorageKb > 0;
+  const isInCreatorProgram =
+    !!currentUser && Flags.hasFlag(currentUser.onboarding, OnboardingSteps.CreatorProgram);
 
   return (
     <Modal
@@ -361,6 +366,18 @@ export const CancelMembershipBenefitsModal = () => {
                 />
               )}
             </Paper>
+          )}
+          {isInCreatorProgram && (
+            <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
+              <Stack gap={4}>
+                <Text fw="bold">You&rsquo;re a Creator Program member</Text>
+                <Text size="sm">
+                  Canceling ends your Creator Program membership: you won&rsquo;t be able to bank
+                  Buzz and your creator shop will be hidden until you renew. You can still withdraw
+                  any cash you&rsquo;ve already earned.
+                </Text>
+              </Stack>
+            </AlertWithIcon>
           )}
           <Group grow>
             {subscriptionPaymentProvider === PaymentProvider.Stripe && (
