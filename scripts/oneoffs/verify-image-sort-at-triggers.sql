@@ -1,18 +1,21 @@
 -- Manual verification for the Image.sortAt triggers
--- (migration 20260716130000_image_sort_at_triggers /
+-- (migrations 20260716130000_image_sort_at_triggers +
+--  20260716140000_sortat_trigger_all_updates /
 --  programmability/image_post_triggers.sql).
 --
--- Self-contained and NON-DESTRUCTIVE: everything runs inside a transaction that
--- ROLLs BACK at the end, so it can be run against any environment that already
--- has the triggers installed. It borrows one real User id (FK requirement) but
--- writes no permanent rows.
+-- Runs inside a transaction that ROLLs BACK at the end. It borrows one real User
+-- id (FK requirement) but writes no permanent rows.
+--
+-- DEV-ONLY: creates a tx-scoped audit trigger on "Image" and (CASE 11) briefly
+-- DISABLEs/ENABLEs the sortAt trigger to inject a stale value. Never run against
+-- prod.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f verify-image-sort-at-triggers.sql
 --
 -- Every case ASSERTs the expected sortAt; a failure aborts with the case name.
 -- sortAt = GREATEST(post.publishedAt, image.scannedAt, image.createdAt), with
 -- GREATEST ignoring NULLs (draft/unpublished/postless -> GREATEST(scannedAt,
--- createdAt)).
+-- createdAt)). The BEFORE trigger fires on EVERY Image write (all-updates).
 
 BEGIN;
 
@@ -35,6 +38,8 @@ DECLARE
   audit_img    int;
   reg_post     int;
   reg_img      int;
+  stale_post   int;
+  stale_img    int;
   n            bigint;
   created      timestamptz := '2024-01-01 00:00:00Z';
   scanned      timestamptz := '2024-02-01 00:00:00Z';  -- > createdAt
@@ -112,10 +117,10 @@ BEGIN
   ASSERT got = publish_past, format('CASE 8 postId move to published: got %s, want %s', got, publish_past);
 
   -- CASE 9 — recursion / double-write non-fire. Publish a fresh single-image
-  -- draft and assert the fan-out touched that image EXACTLY once. The Post
-  -- fan-out UPDATE writes {sortAt, updatedAt}; the Image BEFORE trigger fires
-  -- only on {scannedAt, postId}, so it must NOT re-fire here — a second audit
-  -- row would mean a cascade.
+  -- draft and assert the fan-out produced EXACTLY one Image row-version. The Post
+  -- fan-out UPDATE now DOES re-fire the all-updates BEFORE trigger, but a BEFORE
+  -- trigger only mutates NEW in place (no new UPDATE), so it must not add a second
+  -- row-version — a count > 1 would mean a real cascade.
   INSERT INTO "Post" ("userId", "publishedAt", "createdAt", "updatedAt")
     VALUES (uid, NULL, created, now()) RETURNING id INTO other_post;
   INSERT INTO "Image" ("url", "userId", "postId", "scannedAt", "createdAt", "updatedAt")
@@ -139,13 +144,32 @@ BEGIN
     VALUES ('v', uid, reg_post, scanned_late, created, now()) RETURNING id INTO reg_img;
   ASSERT (SELECT "sortAt" FROM "Image" WHERE id = reg_img) = scanned_late,
     'CASE 10 setup: sortAt should be scanned_late';
-  UPDATE "Image" SET "updatedAt" = sentinel_upd WHERE id = reg_img;  -- BEFORE trigger not fired (updatedAt not in its column list)
+  UPDATE "Image" SET "updatedAt" = sentinel_upd WHERE id = reg_img;  -- BEFORE trigger re-fires, recomputes same sortAt (scanned_late is the max)
   UPDATE "Post" SET "publishedAt" = NULL WHERE id = reg_post;        -- unpublish; sortAt stays scanned_late
   SELECT "sortAt", "updatedAt" INTO got, got_upd FROM "Image" WHERE id = reg_img;
   ASSERT got = scanned_late, format('CASE 10 sortAt should be unchanged: got %s, want %s', got, scanned_late);
   ASSERT got_upd <> sentinel_upd, 'CASE 10 REGRESSION: updatedAt not bumped on sortAt-unchanged unpublish (Meili would miss it)';
 
-  RAISE NOTICE 'ALL 10 CASES PASSED';
+  -- CASE 11 — ALL-UPDATES repair of a STALE sortAt (the ~92M no-backfill rows).
+  -- Simulate a pre-existing stale row by injecting a bogus sortAt with the BEFORE
+  -- trigger disabled, then prove an UNRELATED column edit (nsfwLevel) recomputes
+  -- it correct-on-write. A column-listed {scannedAt,postId} trigger would leave it
+  -- stale, and the downstream sync trigger would emit the garbage value.
+  INSERT INTO "Post" ("userId", "publishedAt", "createdAt", "updatedAt")
+    VALUES (uid, publish_past, created, now()) RETURNING id INTO stale_post;
+  INSERT INTO "Image" ("url", "userId", "postId", "scannedAt", "createdAt", "updatedAt")
+    VALUES ('v', uid, stale_post, scanned, created, now()) RETURNING id INTO stale_img;
+  ALTER TABLE "Image" DISABLE TRIGGER image_sort_at_before;
+  UPDATE "Image" SET "sortAt" = '1999-01-01Z' WHERE id = stale_img;   -- inject stale value
+  ALTER TABLE "Image" ENABLE TRIGGER image_sort_at_before;
+  ASSERT (SELECT "sortAt" FROM "Image" WHERE id = stale_img) = '1999-01-01Z'::timestamptz,
+    'CASE 11 setup: stale sortAt not injected';
+  UPDATE "Image" SET "nsfwLevel" = 5 WHERE id = stale_img;            -- unrelated edit, no sortAt/scannedAt/postId
+  SELECT "sortAt" INTO got FROM "Image" WHERE id = stale_img;
+  ASSERT got = publish_past,
+    format('CASE 11 stale repair: unrelated edit left sortAt %s, want %s (all-updates recompute)', got, publish_past);
+
+  RAISE NOTICE 'ALL 11 CASES PASSED';
 END $$;
 
 ROLLBACK;

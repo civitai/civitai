@@ -6,15 +6,35 @@
 -- index (and Meili) already use — there is no sentinel, and visibility is still
 -- gated elsewhere; this only fixes the sort *position*.
 --
--- Two authors, deliberately disjoint so they never fight and never recurse:
---   1. set_image_sort_at()   BEFORE INSERT OR UPDATE OF scannedAt, postId ON Image
---      — owns changes that originate on the Image row itself.
+-- Two authors:
+--   1. set_image_sort_at()   BEFORE INSERT OR UPDATE ON Image (ALL columns)
+--      — recomputes NEW.sortAt on EVERY image write from the current Post +
+--        NEW.scannedAt/createdAt. Correct-on-write: any touch of a row fixes its
+--        sortAt before anything downstream reads it.
 --   2. update_image_sort_at() AFTER UPDATE OF publishedAt ON Post
 --      — fans a publishedAt move out to every image on the post.
--- The Post fan-out writes only "sortAt"/"updatedAt"; the Image BEFORE trigger
--- fires only on {scannedAt, postId}. Because those column sets are disjoint, the
--- fan-out's UPDATE does not re-fire the BEFORE trigger (no recursion), and even
--- if it did both paths compute the identical GREATEST value (idempotent).
+--
+-- Why the BEFORE trigger fires on ALL updates, not just {scannedAt, postId}:
+-- there is deliberately NO backfill of the ~92M historical rows still holding a
+-- stale default-now() sortAt (Zuri, 2026-07-16: 88.1% mismatch ⇒ ~92M-row
+-- rewrite, 200-400GB WAL — cancelled). The sortAt column is NOT NULL, so a
+-- COALESCE(NEW.sortAt, …) belt in the downstream bitdex sync trigger cannot fall
+-- back — it would read and emit the stale value. Recomputing on every write means
+-- an unrelated UPDATE (e.g. an nsfwLevel-only edit) repairs the row's sortAt
+-- before the sync trigger's emission expression reads it. A column-listed trigger
+-- would leave those rows stale until they happened to receive a scannedAt/postId
+-- write.
+--
+-- Fight / recursion: the Post fan-out's UPDATE (sortAt, updatedAt) now DOES fire
+-- the BEFORE trigger. No fight — at fan-out time the Post row already holds the
+-- new publishedAt (AFTER trigger), so set_image_sort_at recomputes the IDENTICAL
+-- GREATEST value the fan-out's SET clause used, and leaves updatedAt untouched. No
+-- recursion — a BEFORE trigger only mutates NEW in place; it issues no new UPDATE.
+-- The fan-out still WRITES sortAt (rather than only bumping updatedAt and letting
+-- the BEFORE trigger compute it) because the bitdex sync trigger detects publish
+-- changes via OLD≠NEW on the stored column; a purely-computed emission expression
+-- would evaluate the Post subselect identically for OLD and NEW at fire time and
+-- MISS the publish (rejected alternative).
 
 -- Retire the 2024 predecessors (migration 20240719172747). Back then two authors
 -- wrote sortAt: update_image_sort_at() (Post side, later neutered by this file to
@@ -30,9 +50,9 @@ DROP TRIGGER IF EXISTS new_image_sort_at ON "Image";
 ---
 DROP FUNCTION IF EXISTS update_new_image_sort_at();
 ---
--- 1. Per-row author. Reads the parent Post's publishedAt directly, so a fresh
---    insert, a scan completing (scannedAt bump), or an image moving between
---    posts (postId change) all restamp sortAt from the correct post.
+-- 1. Per-row author. Reads the parent Post's publishedAt directly and restamps
+--    sortAt on every image write — insert, scan completion, postId move, or any
+--    other column edit (see the all-updates rationale in the header).
 CREATE OR REPLACE FUNCTION set_image_sort_at()
   RETURNS TRIGGER AS
 $$
@@ -50,16 +70,17 @@ END;
 $$ LANGUAGE plpgsql;
 ---
 CREATE OR REPLACE TRIGGER image_sort_at_before
-  BEFORE INSERT OR UPDATE OF "scannedAt", "postId"
+  BEFORE INSERT OR UPDATE
   ON "Image"
   FOR EACH ROW
 EXECUTE FUNCTION set_image_sort_at();
 ---
 -- 2. Fan-out author. A Post's publishedAt moving (publish, schedule, reschedule,
 --    unpublish — including the model/version publish/unpublish flows, which all
---    rewrite Post.publishedAt) restamps every image on that post. Computed
---    inline once here (not a bare touch) because the Image BEFORE trigger does
---    NOT fire on a sortAt-only UPDATE — its column list is {scannedAt, postId}.
+--    rewrite Post.publishedAt) restamps every image on that post. It WRITES sortAt
+--    (not a bare updatedAt touch) so the bitdex sync trigger sees OLD≠NEW on the
+--    column and emits the publish change (see header). The BEFORE trigger re-fires
+--    on this UPDATE and recomputes the same value — harmless.
 --    UNCONDITIONAL (no IS DISTINCT FROM guard): every image on the post gets its
 --    "updatedAt" bumped even when sortAt is unchanged. Meili's incremental image
 --    sync selects `WHERE updatedAt > lastUpdate` (images.search-index.ts:298-304),
