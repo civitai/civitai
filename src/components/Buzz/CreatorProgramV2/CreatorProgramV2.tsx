@@ -196,66 +196,58 @@ const MembershipLapsedCard = () => {
   }, []);
 
   return (
-    <div className="flex-1 overflow-hidden rounded-lg border border-gray-2 bg-gray-0 dark:border-dark-4 dark:bg-dark-5">
-      <div className="grid grid-cols-1 sm:grid-cols-2">
-        {/* Left — status */}
-        <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
-          <ThemeIcon size={48} variant="light" color="gray" radius="xl">
-            <IconLock size={24} />
-          </ThemeIcon>
-          <Text fw={700} size="lg">
-            Membership lapsed
-          </Text>
-          <Text size="sm" c="dimmed" maw={320}>
-            Your Creator Program membership isn&apos;t active, so banking and earning are paused.
-            You can still withdraw any cash you&apos;ve already earned.
-          </Text>
-        </div>
+    <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-gray-2 bg-gray-0 dark:border-dark-4 dark:bg-dark-5 sm:flex-row">
+      {/* Left — status */}
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <ThemeIcon size={48} variant="light" color="gray" radius="xl">
+          <IconLock size={24} />
+        </ThemeIcon>
+        <Text fw={700} size="lg">
+          Membership lapsed
+        </Text>
+        <Text size="sm" c="dimmed" maw={320}>
+          Your Creator Program membership isn&apos;t active, so banking and earning are paused. You
+          can still withdraw any cash you&apos;ve already earned.
+        </Text>
+      </div>
 
-        {/* Right — renew pitch with gradient background + accent border + spotlight */}
+      {/* Right — renew pitch with gradient background + accent border + spotlight */}
+      <div
+        className="relative flex-1 overflow-hidden border-t border-gray-200 bg-gradient-to-br from-green-500/5 to-yellow-500/5 dark:border-white/5 dark:from-green-500/[0.06] dark:to-yellow-500/[0.06] sm:border-l sm:border-t-0"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
         <div
-          className="relative overflow-hidden border-t border-gray-200 bg-gradient-to-br from-green-500/5 to-yellow-500/5 dark:border-white/5 dark:from-green-500/[0.06] dark:to-yellow-500/[0.06] sm:border-l sm:border-t-0"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-        >
-          <div
-            ref={spotlightRef}
-            className="pointer-events-none absolute inset-0 transition-opacity duration-500"
-            style={{ opacity: 0 }}
-          />
-          <div className="absolute bottom-[10%] left-0 top-[10%] hidden w-[3px] rounded-sm bg-gradient-to-b from-green-500 to-yellow-500 sm:block" />
+          ref={spotlightRef}
+          className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+          style={{ opacity: 0 }}
+        />
+        <div className="absolute bottom-[10%] left-0 top-[10%] hidden w-[3px] rounded-sm bg-gradient-to-b from-green-500 to-yellow-500 sm:block" />
 
-          <div className="relative z-[1] flex h-full flex-col justify-center gap-4 p-6 pl-8">
-            <div className="flex flex-col gap-1">
-              <Text
-                size="xs"
-                c="dimmed"
-                tt="uppercase"
-                fw={600}
-                style={{ letterSpacing: '0.08em' }}
-              >
-                Pick up where you left off
-              </Text>
-              <Text fw={600}>Renew to unlock the Creator Program</Text>
-            </div>
-
-            <div className="flex flex-col gap-2.5">
-              <LapsedBenefitRow text="Bank Buzz toward the monthly creator pool" />
-              <LapsedBenefitRow text="Re-open your creator shop" />
-              <LapsedBenefitRow text="Earn real cash from your creations" />
-            </div>
-
-            <Button
-              component="a"
-              href={renewUrl}
-              variant="filled"
-              size="sm"
-              leftSection={<IconPigMoney size={16} />}
-              className="w-fit"
-            >
-              Renew membership
-            </Button>
+        <div className="relative z-[1] flex h-full flex-col justify-center gap-4 p-6 pl-8">
+          <div className="flex flex-col gap-1">
+            <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
+              Pick up where you left off
+            </Text>
+            <Text fw={600}>Renew to unlock the Creator Program</Text>
           </div>
+
+          <div className="flex flex-col gap-2.5">
+            <LapsedBenefitRow text="Bank Buzz toward the monthly creator pool" />
+            <LapsedBenefitRow text="Re-open your creator shop" />
+            <LapsedBenefitRow text="Earn real cash from your creations" />
+          </div>
+
+          <Button
+            component="a"
+            href={renewUrl}
+            variant="filled"
+            size="sm"
+            leftSection={<IconPigMoney size={16} />}
+            className="w-fit"
+          >
+            Renew membership
+          </Button>
         </div>
       </div>
     </div>
