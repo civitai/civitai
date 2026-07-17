@@ -147,8 +147,9 @@ describe('validateConnectScopeJustifications', () => {
 
 describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
   // The auditable expected set — money (BuzzRead/SocialTip + buzz-spending writes),
-  // private (UserRead), and every cross-user/account write+delete. Reads of public
-  // data and the opt-in App-Block scopes are NOT sensitive.
+  // private-data reads (UserRead PII, NotificationsRead, VaultRead), and every
+  // cross-user/account write+delete. Reads of PUBLIC data and the opt-in App-Block
+  // scopes are NOT sensitive.
   const EXPECTED_SENSITIVE =
     TokenScope.UserRead |
     TokenScope.UserWrite |
@@ -165,7 +166,9 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     TokenScope.CollectionsWrite |
     TokenScope.SocialWrite |
     TokenScope.SocialTip |
+    TokenScope.NotificationsRead |
     TokenScope.NotificationsWrite |
+    TokenScope.VaultRead |
     TokenScope.VaultWrite;
 
   it('is EXACTLY the expected sensitive bitmask', () => {
@@ -187,7 +190,9 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
       'CollectionsWrite',
       'SocialWrite',
       'SocialTip',
+      'NotificationsRead',
       'NotificationsWrite',
+      'VaultRead',
       'VaultWrite',
     ]);
   });
@@ -202,6 +207,8 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
   });
 
   it('EXCLUDES the public-read + opt-in App-Block scopes', () => {
+    // NotificationsRead/VaultRead are NO LONGER here — they are private-data reads
+    // and were promoted into SENSITIVE_TOKEN_SCOPES.
     for (const bit of [
       TokenScope.ModelsRead,
       TokenScope.MediaRead,
@@ -209,8 +216,6 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
       TokenScope.BountiesRead,
       TokenScope.AIServicesRead,
       TokenScope.CollectionsRead,
-      TokenScope.NotificationsRead,
-      TokenScope.VaultRead,
       TokenScope.AppBlocksSubmit,
       TokenScope.AppBlocksDevTunnel,
     ]) {
@@ -223,6 +228,10 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     expect(isSensitiveTokenScope(TokenScope.UserRead)).toBe(true);
     expect(isSensitiveTokenScope(TokenScope.BuzzRead)).toBe(true);
     expect(isSensitiveTokenScope(TokenScope.SocialTip)).toBe(true);
+    // Private-data reads are sensitive.
+    expect(isSensitiveTokenScope(TokenScope.NotificationsRead)).toBe(true);
+    expect(isSensitiveTokenScope(TokenScope.VaultRead)).toBe(true);
+    // Public-data reads stay non-sensitive.
     expect(isSensitiveTokenScope(TokenScope.ModelsRead)).toBe(false);
     expect(isSensitiveTokenScope(TokenScope.MediaRead)).toBe(false);
     expect(isSensitiveTokenScope(TokenScope.AppBlocksSubmit)).toBe(false);
