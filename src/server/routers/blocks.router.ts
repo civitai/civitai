@@ -4625,6 +4625,11 @@ export const blocksRouter = router({
             trustTier: z.string().min(1).max(16).optional(),
             description: z.string().max(5000).optional(),
             scopes: z.array(z.string().min(1).max(128)).max(64).optional(),
+            // Optional per-scope justification map (scope-id → rationale). The
+            // BlockManifestValidator re-checks it below (keys must be declared
+            // scopes, values non-empty ≤500 chars) — this bound is just a coarse
+            // request-size guard.
+            scopeJustifications: z.record(z.string().min(1).max(128), z.string().max(500)).optional(),
             publicSettingsKeys: z.array(z.string().min(1).max(64)).max(32).optional(),
             targets: z
               .array(z.object({ slotId: z.string().min(1).max(64) }).passthrough())

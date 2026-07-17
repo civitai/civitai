@@ -649,4 +649,92 @@ describe('BlockManifestValidator', () => {
       }
     });
   });
+
+  // Per-scope justifications — OPTIONAL, backward-compatible dev-supplied map of
+  // scope-id → rationale (captured for mod review; NOT verified by the platform).
+  describe('scopeJustifications (optional per-scope rationale)', () => {
+    it('accepts a manifest with NO scopeJustifications (optional, backward-compatible)', () => {
+      // VALID_MANIFEST declares no scopeJustifications.
+      expect(BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a justification keyed by a declared scope', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopeJustifications: { 'models:read:self': 'We render the page model in a comparison widget.' },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts an empty scopeJustifications object', () => {
+      const manifest = { ...VALID_MANIFEST, scopeJustifications: {} };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a justification at the max length boundary (500 chars)', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopeJustifications: { 'models:read:self': 'a'.repeat(500) },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('rejects a justification for a scope NOT in the manifest scopes', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        // user:read:self is a real block scope but is NOT declared in scopes here.
+        scopeJustifications: { 'user:read:self': 'reason' },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+        ).toBe(true);
+      }
+    });
+
+    it('rejects a justification longer than 500 chars', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopeJustifications: { 'models:read:self': 'a'.repeat(501) },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('≤500 chars'))).toBe(true);
+      }
+    });
+
+    it.each([
+      ['', 'empty string'],
+      [42, 'non-string'],
+      [null, 'null'],
+    ])('rejects a %j (%s) justification value', (value) => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopeJustifications: { 'models:read:self': value },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('models:read:self'))).toBe(true);
+      }
+    });
+
+    it.each([
+      [['models:read:self'], 'an array'],
+      [null, 'null'],
+      ['reason', 'a string'],
+    ])('rejects scopeJustifications that is %s (not a plain object)', (scopeJustifications) => {
+      const manifest = { ...VALID_MANIFEST, scopeJustifications };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e.startsWith('scopeJustifications must be an object'))
+        ).toBe(true);
+      }
+    });
+  });
 });

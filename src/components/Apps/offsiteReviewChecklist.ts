@@ -69,7 +69,7 @@ export function getOnsiteReviewChecklist(): ReviewChecklistItem[] {
     },
     {
       id: 'scopes',
-      label: 'Requested JWT scopes justified',
+      label: 'Requested permissions justified',
       hint: 'Every requested scope is needed for the stated functionality.',
       status: 'todo',
     },

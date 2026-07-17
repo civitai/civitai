@@ -172,7 +172,7 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     await expect.element(page.getByText('Review preview')).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Start preview' })).toBeInTheDocument();
     // Structured manifest render (scopes + slot targets), not a raw JSON dump.
-    await expect.element(page.getByText('JWT scopes (1)')).toBeInTheDocument();
+    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
     await expect.element(page.getByText('model.sidebar_top')).toBeInTheDocument();
     // A first-version submission shows the full-manifest note (no diff).
     await expect
@@ -181,6 +181,44 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     // Both action entry points are present on a pending request.
     await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
+  });
+});
+
+describe('OnsiteReviewModal — per-scope justifications shown to the mod', () => {
+  test('renders each declared permission with its dev-supplied justification, and a "No justification provided" fallback when absent', async () => {
+    const withJustifications = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-justify',
+      slug: 'justify-block',
+      manifest: {
+        ...ONSITE_PENDING.manifest,
+        scopes: ['models:read:self', 'user:read:self'],
+        // Only the first scope carries a justification — the second must fall back.
+        scopeJustifications: {
+          'models:read:self': 'We render the page model in a side-by-side comparison widget.',
+        },
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: withJustifications, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    // Header uses the renamed "Permissions" copy with the count.
+    await expect.element(page.getByText('Permissions (2)')).toBeInTheDocument();
+    // The supplied justification is surfaced verbatim under its badge, prefixed
+    // with the "Why:" label. Exact match on the full paragraph disambiguates from
+    // the raw manifest-JSON panel (which contains the string but not "Why:").
+    await expect
+      .element(
+        page.getByText('Why: We render the page model in a side-by-side comparison widget.', {
+          exact: true,
+        })
+      )
+      .toBeInTheDocument();
+    // The scope with no justification shows the muted fallback.
+    await expect.element(page.getByText('No justification provided')).toBeInTheDocument();
   });
 });
 
