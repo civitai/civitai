@@ -28,7 +28,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import {
   bustFetchThroughCache,
@@ -242,11 +242,13 @@ export async function getCreatorRequirements(userId: number) {
 }
 
 // Whether a user currently holds a valid Creator Program membership — an active,
-// good-standing subscription on a supported tier. Delegates to
-// getUserSubscription (which already excludes canceled/expired/past-due/etc.) so
-// this stays in sync with how membership is determined everywhere else.
+// good-standing subscription on a supported tier. Uses getHighestTierSubscription
+// so it honors membership on ANY buzzType (yellow/green/blue paid + referral
+// grants), matching how session-user resolves tier. Checking a single buzzType
+// here would lock out .green/.red members and referral-granted members whose paid
+// sub isn't yellow.
 export async function hasValidCreatorMembership(userId: number) {
-  const subscription = await getUserSubscription({ userId });
+  const subscription = await getHighestTierSubscription(userId);
   const tier = subscription?.tier;
   return !!tier && tier !== 'free' && tier !== 'founder';
 }
