@@ -117,7 +117,7 @@ describe('app-block v1 schema ⇄ block-manifest-validator drift guard (buildCom
     ['x'.repeat(129), false], // over maxLength
   ];
 
-  it.each(BUILD_COMMAND_CASES)('buildCommand %j → schema/validator agree (accept=%s)', (value, expected) => {
+  it.each(BUILD_COMMAND_CASES)('buildCommand %j → schema/validator agree (accept=%s)', (value: string, expected: boolean) => {
     expect(schemaAcceptsBuildCommand(value)).toBe(expected);
     expect(validatorAcceptsBuildCommand(value)).toBe(expected);
     expect(schemaAcceptsBuildCommand(value)).toBe(validatorAcceptsBuildCommand(value));
@@ -156,7 +156,7 @@ describe('app-block v1 schema ⇄ block-manifest-validator drift guard (buildCom
     ['c:foo', false], // Windows drive prefix
   ];
 
-  it.each(OUTPUT_DIR_CASES)('outputDir %j → schema/validator agree (accept=%s)', (value, expected) => {
+  it.each(OUTPUT_DIR_CASES)('outputDir %j → schema/validator agree (accept=%s)', (value: string, expected: boolean) => {
     expect(schemaAcceptsOutputDir(value)).toBe(expected);
     expect(validatorAcceptsOutputDir(value)).toBe(expected);
     expect(schemaAcceptsOutputDir(value)).toBe(validatorAcceptsOutputDir(value));
