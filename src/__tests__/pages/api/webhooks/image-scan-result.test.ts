@@ -22,24 +22,94 @@ const {
     { id: 1004, name: 'x', nsfwLevel: 8 },
     { id: 1005, name: 'xxx', nsfwLevel: 16 },
   ];
+  // Auto-stubbing Prisma-client mock.
+  //
+  // This suite has broken THREE times (identically) when a new side-effect was added to the
+  // webhook's success path that calls a db model/method the hand-listed mock didn't stub
+  // (e.g. `dbRead.model3D.findMany` #3051). The call threw `x is not a function`, so
+  // `handleSuccess` never reached `res.status(200)` and the 4 pipeline tests failed with
+  // `expected vi.fn() to be called with [200]`.
+  //
+  // Instead of enumerating every model/method, this returns a Proxy that LAZILY creates and
+  // caches a `vi.fn()` per (model, method) with a benign default (finders → []/null, mutators →
+  // {}/{count:0}, raw-queries → []). A brand-new dependency reference therefore returns a
+  // callable stub instead of `undefined`, so a newly-added success-path dep can no longer break
+  // the suite. Tests still reach in and override specific methods
+  // (`mockDbWrite.image.findUnique.mockImplementation(...)`) exactly as before — the cached fn
+  // they configure is the same one production code invokes.
+  const createDbMock = () => {
+    const benignFor = (method: string) => {
+      const fn = vi.fn();
+      if (
+        method === 'findUnique' ||
+        method === 'findFirst' ||
+        method === 'findUniqueOrThrow' ||
+        method === 'findFirstOrThrow'
+      )
+        fn.mockResolvedValue(null);
+      else if (
+        method === 'findMany' ||
+        method === 'aggregate' ||
+        method === 'groupBy' ||
+        method === 'findRaw' ||
+        method === 'aggregateRaw'
+      )
+        fn.mockResolvedValue([]);
+      else if (method === 'count') fn.mockResolvedValue(0);
+      else if (method === 'createMany' || method === 'updateMany' || method === 'deleteMany')
+        fn.mockResolvedValue({ count: 0 });
+      // create / update / upsert / delete / connectOrCreate / …
+      else fn.mockResolvedValue({});
+      return fn;
+    };
+
+    const makeModelProxy = () => {
+      const methods = new Map<string, ReturnType<typeof vi.fn>>();
+      return new Proxy(
+        {},
+        {
+          get(_t, method) {
+            if (typeof method !== 'string' || method === 'then') return undefined;
+            if (!methods.has(method)) methods.set(method, benignFor(method));
+            return methods.get(method);
+          },
+        }
+      );
+    };
+
+    const models = new Map<string, unknown>();
+    const rootFns = new Map<string, ReturnType<typeof vi.fn>>();
+
+    const db: any = new Proxy(
+      {},
+      {
+        get(_t, prop) {
+          if (typeof prop !== 'string' || prop === 'then') return undefined;
+          // Prisma client top-level helpers: $queryRaw, $queryRawUnsafe, $executeRaw(Unsafe),
+          // $transaction, $connect, …
+          if (prop.startsWith('$')) {
+            if (!rootFns.has(prop)) {
+              const fn = vi.fn();
+              if (prop === '$transaction')
+                fn.mockImplementation(async (arg: any) =>
+                  typeof arg === 'function' ? arg(db) : Promise.all(arg ?? [])
+                );
+              else fn.mockResolvedValue([]); // $queryRaw* / $executeRaw* → benign empty rowset
+              rootFns.set(prop, fn);
+            }
+            return rootFns.get(prop);
+          }
+          if (!models.has(prop)) models.set(prop, makeModelProxy());
+          return models.get(prop);
+        },
+      }
+    );
+    return db;
+  };
+
   return {
     tagsDb,
-    mockDbWrite: {
-      image: {
-        findUnique: vi.fn(),
-        update: vi.fn(),
-        updateMany: vi.fn(),
-      },
-      tag: {
-        findMany: vi.fn(),
-        createMany: vi.fn(),
-      },
-      model3D: {
-        findMany: vi.fn().mockResolvedValue([]),
-      },
-      $queryRawUnsafe: vi.fn(),
-      $queryRaw: vi.fn(),
-    },
+    mockDbWrite: createDbMock(),
     mockInsertTagsOnImageNew: vi.fn().mockResolvedValue(undefined),
     mockUpsertTagsOnImageNew: vi.fn().mockResolvedValue(undefined),
     mockLogToAxiom: vi.fn().mockImplementation((args) => {
@@ -98,27 +168,50 @@ vi.mock('~/server/services/system-cache', () => ({
   getTagRules: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('~/server/redis/caches', () => ({
-  tagIdsForImagesCache: {
-    refresh: vi.fn().mockResolvedValue(undefined),
-  },
-  // updateImage() busts the per-user image/video count cache on the success path;
-  // without this export the mocked module throws and handleSuccess never reaches res.status(200).
-  userImageVideoCountCaches: {
-    bust: vi.fn().mockResolvedValue(undefined),
-    refresh: vi.fn().mockResolvedValue(undefined),
-  },
-  tagCache: {
-    bust: vi.fn().mockResolvedValue(undefined),
-  },
-  tagCacheByName: {
-    fetch: vi.fn().mockImplementation(async (names) => {
-      return { found: new Map(), missing: names };
+// Auto-stubbing `~/server/redis/caches` mock.
+//
+// The success path busts/refreshes several redis caches (`userImageVideoCountCaches.bust`,
+// `tagIdsForImagesCache.refresh`, …). This module was previously hand-listed export-by-export,
+// which is how `userImageVideoCountCaches` was MISSED (#3191): accessing a not-listed export
+// yields `undefined`, the `.bust()` call throws, and `handleSuccess` never reaches
+// `res.status(200)`. Here any accessed export resolves to a benign cache-shaped stub whose every
+// method is a `vi.fn()` resolving `undefined`, so a newly-referenced cache export can no longer
+// break the suite. Specific behaviours the tests rely on (`tagCacheByName.fetch`) are preserved
+// as explicit overrides.
+vi.mock('~/server/redis/caches', () => {
+  const makeCacheStub = (overrides: Record<string, unknown> = {}) => {
+    const methods = new Map<string, unknown>(Object.entries(overrides));
+    return new Proxy(
+      {},
+      {
+        get(_t, prop) {
+          if (typeof prop !== 'string' || prop === 'then') return undefined;
+          if (!methods.has(prop)) methods.set(prop, vi.fn().mockResolvedValue(undefined));
+          return methods.get(prop);
+        },
+      }
+    );
+  };
+
+  const known: Record<string, unknown> = {
+    tagCacheByName: makeCacheStub({
+      fetch: vi.fn().mockImplementation(async (names: string[]) => ({
+        found: new Map(),
+        missing: names,
+      })),
     }),
-    setMany: vi.fn().mockResolvedValue(undefined),
-    bust: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+  };
+
+  // Namespace proxy: known exports return their specific stub; any other accessed export
+  // lazily gets a benign cache-shaped stub.
+  return new Proxy(known, {
+    get(target, prop) {
+      if (typeof prop !== 'string' || prop === 'then' || prop === '__esModule') return undefined;
+      if (!(prop in target)) target[prop] = makeCacheStub();
+      return target[prop];
+    },
+  });
+});
 
 vi.mock('~/utils/signal-client', () => ({
   signalClient: {
