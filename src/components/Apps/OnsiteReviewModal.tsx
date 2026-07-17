@@ -1168,7 +1168,7 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
           <Tooltip
             multiline
             w={280}
-            label="Permissions the block requests. They are encoded as scopes in the app's signed block-token JWT (distinct from OAuth scopes) and enforced at token issuance."
+            label="Permissions the block requests. They are encoded as scopes in the app's signed block-token JWT (distinct from OAuth scopes) and enforced per-operation server-side: every capability re-verifies the token and checks the required scope before it runs."
           >
             <ThemeIcon size="xs" variant="subtle" color="gray">
               <IconInfoCircle size={13} />

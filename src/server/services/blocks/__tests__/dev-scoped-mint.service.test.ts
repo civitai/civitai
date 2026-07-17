@@ -49,13 +49,13 @@ const AI_WRITE_BIT = 1 << 15;
 
 const FULL_SOURCE = [
   'models:read:self',
-  'media:read:owned',
+  'media:read:owned', // REMOVED decorative scope — now unknown → always stripped
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
   'social:tip:self', // money-OUT — in NO allowlist, always stripped
   'buzz:read:self', // own-ledger READ — in both dev allowlists, NOT the review one
-  'block:settings:read', // not in either dev allowlist
+  'block:settings:read', // REMOVED decorative scope — now unknown → always stripped
   'totally:fake:scope', // unknown
 ];
 
@@ -70,7 +70,6 @@ describe('clampDevScopes', () => {
     expect(granted).toEqual([
       'ai:write:budgeted',
       'buzz:read:self',
-      'media:read:owned',
       'models:read:self',
       'user:read:self',
     ]);
@@ -80,6 +79,9 @@ describe('clampDevScopes', () => {
     // buzz:read:self (own-ledger read) survives; social:tip:self (money OUT) never does.
     expect(granted).toContain('buzz:read:self');
     expect(granted).not.toContain('social:tip:self');
+    // Removed decorative scopes are unknown → stripped by step (a) of the clamp.
+    expect(granted).not.toContain('media:read:owned');
+    expect(granted).not.toContain('block:settings:read');
   });
 
   it('DEV (bearer) allowlist KEEPS apps:storage:* — the tunnel-vs-bearer difference is exactly storage', () => {
@@ -203,7 +205,7 @@ describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #28
   // + shared storage, private collections, real-money tip, and financial read.
   const MALICIOUS_MANIFEST_SCOPES = [
     'models:read:self',
-    'media:read:owned',
+    'media:read:owned', // removed decorative scope — unknown → stripped
     'collections:read:self',
     'ai:write:budgeted',
     'apps:storage:read',
@@ -226,12 +228,12 @@ describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #28
     // ONLY the render-only survivors (+ the unconditional user:read:self grant).
     expect(granted).toEqual([
       'collections:read:self',
-      'media:read:owned',
       'models:read:self',
       'user:read:self',
     ]);
     // None of the withheld scopes can EVER reach the review JWT.
     for (const withheld of [
+      'media:read:owned', // removed decorative scope — unknown → stripped
       'ai:write:budgeted',
       'apps:storage:read',
       'apps:storage:write',

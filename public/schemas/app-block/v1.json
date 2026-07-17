@@ -69,12 +69,9 @@
         "type": "string",
         "enum": [
           "models:read:self",
-          "media:read:owned",
           "user:read:self",
           "ai:write:budgeted",
           "buzz:read:self",
-          "block:settings:read",
-          "block:settings:write",
           "social:tip:self",
           "apps:storage:read",
           "apps:storage:write",

@@ -588,12 +588,10 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  * Enforces context binding per scope type. Each scope can require
  * additional request-shape checks beyond having-the-scope:
  *   - models:read:self   → query.id ≡ claims.ctx.modelId (integer match)
- *   - media:read:owned   → claims.sub != 'anon'
  *   - buzz:read:self     → claims.sub != 'anon'
  *   - social:tip:self    → claims.sub != 'anon'
  *   - user:read:self     → claims.sub != 'anon'
  *   - ai:write:budgeted  → claims.buzzBudget > 0
- *   - block:settings:*   → query.blockInstanceId ≡ claims.blockInstanceId
  *
  * Throws ForbiddenError on mismatch.
  */
@@ -633,12 +631,11 @@ export function enforceContextBinding(
         }
         break;
       }
-      case 'media:read:owned':
       case 'buzz:read:self':
       case 'social:tip:self':
       case 'user:read:self': {
         // Every :self scope requires an authenticated subject — there's no
-        // anonymous "self" to read/own/tip. user:read:self joined this set
+        // anonymous "self" to read/tip. user:read:self joined this set
         // when /api/v1/blocks/me switched off buzz:read:self (audit I3).
         if (claims.sub === 'anon') {
           throw forbidden(`${scope} requires authenticated subject`);
@@ -648,14 +645,6 @@ export function enforceContextBinding(
       case 'ai:write:budgeted': {
         if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
           throw forbidden('ai:write:budgeted requires positive buzzBudget claim');
-        }
-        break;
-      }
-      case 'block:settings:read':
-      case 'block:settings:write': {
-        const requested = readBoundQueryString(req, 'blockInstanceId');
-        if (!requested || requested !== claims.blockInstanceId) {
-          throw forbidden(`${scope} bound to different blockInstanceId`);
         }
         break;
       }

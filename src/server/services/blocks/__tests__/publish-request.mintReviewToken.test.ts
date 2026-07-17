@@ -106,11 +106,11 @@ describe('mintReviewBlockToken', () => {
     const scopes = arg.scopes as string[];
     expect(scopes).toEqual([
       'collections:read:self',
-      'media:read:owned',
       'models:read:self',
       'user:read:self',
     ]);
     for (const withheld of [
+      'media:read:owned', // removed decorative scope — unknown → stripped
       'ai:write:budgeted',
       'apps:storage:read',
       'apps:storage:write',

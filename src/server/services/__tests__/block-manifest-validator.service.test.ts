@@ -245,6 +245,26 @@ describe('BlockManifestValidator', () => {
     }
   });
 
+  // Deprecation: the removed decorative scopes are now UNKNOWN, so a NEW/edited
+  // manifest declaring one is rejected at registration/edit time (intended — an
+  // existing approved app that historically declared one degrades gracefully at
+  // MINT instead; see the block-tokens mint graceful-drop test).
+  it.each([['media:read:owned'], ['block:settings:read'], ['block:settings:write']])(
+    'rejects a manifest declaring the removed decorative scope %s',
+    (removed) => {
+      const manifest = { ...VALID_MANIFEST, scopes: [removed] };
+      const result = BlockManifestValidator.validate(manifest, TokenScope.Full);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some(
+            (e) => e.includes('not a known block scope') && e.includes(removed)
+          )
+        ).toBe(true);
+      }
+    }
+  );
+
   it('accepts the known SKIP_OAUTH_CHECK scope apps:storage:read', () => {
     // apps:storage:read maps to SKIP_OAUTH_CHECK, so it passes the OAuth-bit gate
     // regardless of the client bitmask — but it must still be a KNOWN scope.

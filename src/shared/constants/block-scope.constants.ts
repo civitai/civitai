@@ -11,15 +11,15 @@
  *      to defend against post-approval manifest swaps (audit H-1 + C2).
  *
  * Block JWT scopes are a different concept from the underlying OAuth bits:
- * they're per-block-instance and short-lived (15min / 5min for settings).
- * The OAuth bit on the publisher's app is the policy ceiling. A scope
- * with `SKIP_OAUTH_CHECK` (e.g. block:settings:*) gates elsewhere — see
- * the issuance-time caller-is-installer check.
+ * they're per-block-instance and short-lived (15min). The OAuth bit on the
+ * publisher's app is the policy ceiling. A scope with `SKIP_OAUTH_CHECK`
+ * (e.g. apps:storage:*) gates elsewhere — see the per-op server-side checks
+ * (resolveStorageContext / resolveSharedContext).
  *
  * Forward-extensibility contract:
  *   - New block scopes MUST be added here with their OAuth-bit relationship.
  *   - A scope that intentionally has no bitmask requirement (e.g.
- *     block:settings:*) uses the `SKIP_OAUTH_CHECK` sentinel — NOT a 0
+ *     apps:storage:*) uses the `SKIP_OAUTH_CHECK` sentinel — NOT a 0
  *     value. The sentinel is explicit so a future maintainer doesn't
  *     accidentally type 0 and get OAuth-allowlist bypass by surprise.
  */
@@ -29,7 +29,7 @@ import { TokenScope } from './token-scope.constants';
 /**
  * Sentinel value for scopes that intentionally do not require an OAuth-bitmask
  * bit. The validator treats this as "approval gate elsewhere" (e.g. the
- * issuance-time caller-is-installer check for block:settings:*).
+ * per-op server-side checks for apps:storage:*).
  */
 export const SKIP_OAUTH_CHECK = Symbol('SKIP_OAUTH_CHECK');
 export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
@@ -45,14 +45,22 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // declarable+grantable scope added friction (Go CLI manifest validator + each
   // app's OauthClient.allowedScopes bit) with no security value, since the
   // catalog is strictly MORE restricted than the public /api/v1/models.
-  'media:read:owned': TokenScope.MediaRead,
+  // NOTE: there is intentionally NO `media:read:owned` block scope. It was
+  // declared/validated/mintable but had NO runtime consumer that ever checked
+  // it (no block-token endpoint gated on it), so it was purely decorative and
+  // was removed as part of the "every declared block scope is actually
+  // enforced" hygiene pass. The underlying OAuth `TokenScope.MediaRead` bit is
+  // UNCHANGED — it still backs ~80 tRPC media routes (image/post/comment/…) via
+  // `requiredScope`; it simply no longer maps to a block scope.
   'user:read:self': TokenScope.UserRead,
   'ai:write:budgeted': TokenScope.AIServicesWrite,
   'buzz:read:self': TokenScope.BuzzRead,
-  // block:settings:* relies on the issuance-time caller-is-installer gate
-  // (audit C8) instead of an OAuth bit. SKIP_OAUTH_CHECK makes that explicit.
-  'block:settings:read': SKIP_OAUTH_CHECK,
-  'block:settings:write': SKIP_OAUTH_CHECK,
+  // NOTE: there is intentionally NO `block:settings:read` / `block:settings:write`
+  // block scope. Both were declared/validated/mintable but NO runtime capability
+  // ever verified them (the per-install settings read/write paths authorize on
+  // valid-token + app-developer + installer-resolution, not on a token scope), so
+  // they were purely decorative and were removed in the same hygiene pass. There is
+  // no OAuth bit to orphan — they used SKIP_OAUTH_CHECK, not a TokenScope bit.
   'social:tip:self': TokenScope.SocialTip,
   // apps:storage:* — the W4 KV datastore. There is no OAuth bitmask bit for
   // per-app storage (it never touches the user's civitai resources via the
@@ -169,7 +177,7 @@ export function isAppBlockOauthClientId(clientId: string | null | undefined): bo
  * inert (any manifest scope was always within the all-bits ceiling).
  *
  * The bitmask is the OR of the OAuth bits each known scope maps to. Scopes
- * with `SKIP_OAUTH_CHECK` (block:settings:*, apps:storage:*) and unknown
+ * with `SKIP_OAUTH_CHECK` (apps:storage:*) and unknown
  * scopes contribute nothing — they are gated by other mechanisms, not the
  * OAuth bitmask. Result is therefore the *intersection* of the manifest with
  * the OAuth-eligible scope set, exactly what the validator / token-mint path

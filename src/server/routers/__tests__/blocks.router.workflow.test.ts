@@ -4464,10 +4464,16 @@ describe('blocks.updateUserSettings — W13 action detail', () => {
     expect(BlockRegistry.upsertUserSettings).toHaveBeenCalled();
 
     await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
-    expect(vi.mocked(recordScopeInvocation).mock.calls[0][0]).toMatchObject({
-      scope: 'block:settings:write',
+    // The audit row must NOT assert `block:settings:write` — that scope was
+    // decorative/unenforced (never checked here) and has been removed. The row
+    // labels the action itself (matching `endpoint`) instead of lying about a
+    // token scope that was never verified.
+    const auditArg = vi.mocked(recordScopeInvocation).mock.calls[0][0];
+    expect(auditArg).toMatchObject({
+      scope: 'user-settings:write',
       endpoint: 'user-settings:write',
       detail: { action: 'settings.update', outcome: 'ok' },
     });
+    expect(auditArg.scope).not.toBe('block:settings:write');
   });
 });

@@ -14,8 +14,7 @@ describe('block-scope.constants', () => {
   it('maps known scopes to the right bits', () => {
     expect(BLOCK_SCOPE_TO_OAUTH_BIT['models:read:self']).toBe(TokenScope.ModelsRead);
     expect(BLOCK_SCOPE_TO_OAUTH_BIT['ai:write:budgeted']).toBe(TokenScope.AIServicesWrite);
-    // settings + storage scopes intentionally have no OAuth bit (SKIP sentinel).
-    expect(BLOCK_SCOPE_TO_OAUTH_BIT['block:settings:read']).toBe(SKIP_OAUTH_CHECK);
+    // storage scopes intentionally have no OAuth bit (SKIP sentinel).
     expect(BLOCK_SCOPE_TO_OAUTH_BIT['apps:storage:read']).toBe(SKIP_OAUTH_CHECK);
     expect(BLOCK_SCOPE_TO_OAUTH_BIT['apps:storage:write']).toBe(SKIP_OAUTH_CHECK);
   });
@@ -27,6 +26,20 @@ describe('block-scope.constants', () => {
     expect(isKnownBlockScope('apps:storage:write')).toBe(true);
   });
 
+  it('the removed decorative scopes are no longer known (deprecated)', () => {
+    // media:read:owned / block:settings:read / block:settings:write were
+    // declared/validated/mintable but had NO runtime capability that checked
+    // them (purely decorative), so they were removed from the vocabulary. A
+    // manifest declaring them now fails validation, and a token carrying one is
+    // denied at the runtime gate — see the middleware + validator tests.
+    expect(isKnownBlockScope('media:read:owned')).toBe(false);
+    expect(isKnownBlockScope('block:settings:read')).toBe(false);
+    expect(isKnownBlockScope('block:settings:write')).toBe(false);
+    expect('media:read:owned' in BLOCK_SCOPE_TO_OAUTH_BIT).toBe(false);
+    expect('block:settings:read' in BLOCK_SCOPE_TO_OAUTH_BIT).toBe(false);
+    expect('block:settings:write' in BLOCK_SCOPE_TO_OAUTH_BIT).toBe(false);
+  });
+
   it('isKnownBlockScope rejects unknown strings', () => {
     expect(isKnownBlockScope('models:read:self')).toBe(true);
     expect(isKnownBlockScope('not:a:scope')).toBe(false);
@@ -34,9 +47,9 @@ describe('block-scope.constants', () => {
 
   describe('validateBlockScopesAgainstOauthClient', () => {
     it('passes when every requested scope has its bit', () => {
-      const allowed = TokenScope.ModelsRead | TokenScope.MediaRead;
+      const allowed = TokenScope.ModelsRead | TokenScope.UserRead;
       const result = validateBlockScopesAgainstOauthClient(
-        ['models:read:self', 'media:read:owned'],
+        ['models:read:self', 'user:read:self'],
         allowed
       );
       expect(result.valid).toBe(true);
@@ -55,8 +68,20 @@ describe('block-scope.constants', () => {
     });
 
     it('accepts no-bit scopes regardless of bitmask', () => {
-      const result = validateBlockScopesAgainstOauthClient(['block:settings:read'], 0);
+      const result = validateBlockScopesAgainstOauthClient(['apps:storage:read'], 0);
       expect(result.valid).toBe(true);
+    });
+
+    it('rejects the removed decorative scopes as unknown', () => {
+      for (const removed of [
+        'media:read:owned',
+        'block:settings:read',
+        'block:settings:write',
+      ]) {
+        const result = validateBlockScopesAgainstOauthClient([removed], TokenScope.Full);
+        expect(result.valid).toBe(false);
+        expect(result.rejectedScopes).toEqual([removed]);
+      }
     });
 
     it('rejects unknown scopes outright', () => {
@@ -99,10 +124,10 @@ describe('block-scope.constants', () => {
     });
 
     it('SKIP_OAUTH_CHECK scopes contribute no bits', () => {
-      // block:settings:* + apps:storage:* are gated elsewhere, not via the bit.
+      // apps:storage:* are gated elsewhere (per-op server-side), not via the bit.
       expect(
         deriveOauthBitmaskFromBlockScopes([
-          'block:settings:read',
+          'apps:storage:read',
           'apps:storage:write',
         ])
       ).toBe(0);

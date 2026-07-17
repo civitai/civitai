@@ -4303,7 +4303,12 @@ export const blocksRouter = router({
           userId,
           appBlockId: claims.appBlockId,
           blockInstanceId: claims.blockInstanceId,
-          scope: 'block:settings:write',
+          // This write is authorized by valid-token + app-developer + installer
+          // resolution above — NOT by a token block-scope. The audit row must not
+          // assert a scope that was never checked, so it labels the ACTION itself
+          // (matching `endpoint`) rather than claiming a `block:settings:write`
+          // scope (that scope was decorative/unenforced and has been removed).
+          scope: 'user-settings:write',
           endpoint: 'user-settings:write',
           statusCode: 200,
           // W13 richer detail — structured code for the render-time sentence.
