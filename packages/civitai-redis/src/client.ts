@@ -2055,6 +2055,16 @@ export const REDIS_KEYS = {
     // call (~1174ms in EXPLAIN ANALYZE); the total is a slowly-moving aggregate so
     // a few-minutes-stale value in totalItems/totalPages is harmless.
     CREATORS_COUNT: 'packed:caches:creators-count',
+    // The user-independent active-auction list backing `auction.getAll` (~21.8
+    // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
+    // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
+    // one global key serves everyone. Short TTL (30s), no bust: the set is time-
+    // windowed (startAt<=now<endAt, transitions bounded to <=30s) and the frequently-
+    // mutating input is bids (each shifts lowestBidRequired) — busting per-bid at
+    // ~21/s would defeat the cache, and a slightly-stale lowestBidRequired is display-
+    // only (bid submission re-validates the true minimum server-side). See
+    // `getAllAuctions` in auction.service.
+    ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
