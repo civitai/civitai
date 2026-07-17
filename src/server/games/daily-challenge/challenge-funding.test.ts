@@ -251,6 +251,25 @@ describe('chargeInitialPrize fromAccountType', () => {
   });
 });
 
+describe('chargeInitialPrize externalTransactionId', () => {
+  beforeEach(() => {
+    mockCreateBuzzTransaction.mockReset();
+    mockCreateBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+  });
+
+  it('scopes the externalTransactionId by currency (green)', async () => {
+    await chargeInitialPrize({ challengeId: 42, userId: 7, amount: 100, fromAccountType: 'green' });
+    const [arg] = mockCreateBuzzTransaction.mock.calls[0];
+    expect(arg.externalTransactionId).toBe('challenge-initial-prize-42-creator-green');
+  });
+
+  it('scopes the externalTransactionId by currency (yellow)', async () => {
+    await chargeInitialPrize({ challengeId: 42, userId: 7, amount: 100, fromAccountType: 'yellow' });
+    const [arg] = mockCreateBuzzTransaction.mock.calls[0];
+    expect(arg.externalTransactionId).toBe('challenge-initial-prize-42-creator-yellow');
+  });
+});
+
 describe('chargeEntryFees fromAccountType', () => {
   it('forwards fromAccountType to both house and pool legs', async () => {
     mockCreateBuzzTransactionMany
