@@ -1,4 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
@@ -284,8 +285,8 @@ const getCreatorProgramUsers = async ({
               JOIN "Product" p ON p.id = cs."productId"
               WHERE cs."userId" = u.id
                 AND cs.status NOT IN ('canceled', 'incomplete_expired', 'past_due', 'unpaid')
-                AND COALESCE((cs.metadata->>'renewalEmailSent')::boolean, false) = false
-                AND p.metadata->>'tier' NOT IN ('free', 'founder')
+                AND COALESCE(cs.metadata->>'renewalEmailSent', '') <> 'true'
+                AND p.metadata->>${env.TIER_METADATA_KEY} NOT IN ('free', 'founder')
             )`
           : Prisma.empty
       }

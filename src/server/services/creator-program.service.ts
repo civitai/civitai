@@ -29,6 +29,7 @@ import {
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import {
   bustFetchThroughCache,
@@ -420,11 +421,20 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
     throw throwBadRequestError('User is banned from the Creator Program');
   }
 
-  // Banking requires a valid Creator Program membership — same gate the shop
-  // uses, so bank and shop access stay in lockstep (honors any buzzType, excludes
-  // free/founder). Previously an inline yellow-agnostic active-sub check that
-  // could diverge from the shop gate.
-  if (!(await hasValidCreatorMembership(userId)))
+  // Banking claims real pool money, so it requires a confirmed, unexpired paid
+  // membership — stricter than the shop's hasValidCreatorMembership, which also
+  // accepts incomplete/renewing subs. Like the shop gate it is buzzType-agnostic
+  // (any buzzType) but rejects free/founder tiers.
+  const activeMembership = await dbWrite.customerSubscription.findFirst({
+    where: { userId, status: 'active', currentPeriodEnd: { gt: new Date() } },
+    select: { product: { select: { metadata: true } } },
+  });
+  const membershipTier = activeMembership
+    ? subscriptionProductMetadataSchema.parse(activeMembership.product.metadata)?.[
+        env.TIER_METADATA_KEY
+      ]
+    : undefined;
+  if (!membershipTier || membershipTier === 'free' || membershipTier === 'founder')
     throw throwBadRequestError('An active Creator Program membership is required to bank Buzz.');
 
   // TODO: Remove flip when we're ready to go live

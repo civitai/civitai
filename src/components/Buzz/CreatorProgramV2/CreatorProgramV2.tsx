@@ -61,6 +61,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -171,6 +173,10 @@ export const CreatorProgramV2 = () => {
 };
 
 const MembershipLapsedCard = () => {
+  const serverDomains = useServerDomains();
+  // Memberships are only purchasable on the green domain; sync-login carries the
+  // session across when the current domain differs.
+  const renewUrl = syncAccount(`//${serverDomains.green}/pricing`);
   return (
     <div {...cardProps}>
       <div className="flex items-center gap-2">
@@ -184,7 +190,7 @@ const MembershipLapsedCard = () => {
       </Text>
       <Button
         component="a"
-        href="/pricing"
+        href={renewUrl}
         className="mt-4"
         leftSection={<IconPigMoney size={16} />}
       >
