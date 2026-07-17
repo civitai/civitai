@@ -161,6 +161,12 @@ export const unionTransformer: CombinedDataTransformer = buildTransformer();
  * (minimal change; harmless either way).
  */
 export const clientTransformer: CombinedDataTransformer = {
-  input: { serialize: writeSerialize, deserialize: unionDeserialize },
+  // FAIL-OPEN input write (mirrors the server's `writeSerializeWithFallback`,
+  // #3186): a non-POJO input (a class instance / Decimal / Error smuggled into
+  // an input) degrades to superjson for THAT request — which the server
+  // union-reads identically — instead of throwing strict-devalue in the browser
+  // and hard-failing the query (ungated, 100% of updated clients). Enforcement
+  // belongs in tests + telemetry, not user-facing failures.
+  input: { serialize: writeSerializeWithFallback, deserialize: unionDeserialize },
   output: { serialize: superjson.serialize, deserialize: unionDeserialize },
 };
