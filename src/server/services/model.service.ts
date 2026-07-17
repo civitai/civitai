@@ -1562,8 +1562,10 @@ export const deleteModelById = async ({
         UPDATE "Post"
         SET "metadata" = "metadata" || jsonb_build_object(
           'unpublishedAt', ${new Date().toISOString()},
-          'unpublishedBy', ${userId}
-                                       )
+          'unpublishedBy', ${userId},
+          'prevPublishedAt', "publishedAt"
+                                       ),
+            "publishedAt" = NULL
         WHERE
             "publishedAt" IS NOT NULL
         AND "userId" = ${model.userId}
