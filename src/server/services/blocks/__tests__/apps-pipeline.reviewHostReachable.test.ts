@@ -12,7 +12,9 @@ import { describe, expect, it, vi } from 'vitest';
  * A fake clock drives the timeout so there's no real network or wall-clock wait.
  */
 
-vi.mock('~/env/server', () => ({ env: {} }));
+// The helper's DEFAULT timeout reads from env.REVIEW_HOST_REACHABLE_TIMEOUT_MS
+// (180s in the real schema). Provide it so the default path has a finite budget.
+vi.mock('~/env/server', () => ({ env: { REVIEW_HOST_REACHABLE_TIMEOUT_MS: 180_000 } }));
 
 import { waitForReviewHostReachable } from '~/server/services/blocks/apps-pipeline.service';
 
@@ -121,6 +123,25 @@ describe('waitForReviewHostReachable', () => {
     // short-circuit before a pointless 31st fetch.
     expect(fetchImpl).toHaveBeenCalledTimes(30);
     expect(clock.sleep).toHaveBeenCalledTimes(30);
+  });
+
+  it('defaults the overall budget to env.REVIEW_HOST_REACHABLE_TIMEOUT_MS (env-tunable)', async () => {
+    // env mock supplies 180_000; with a 4s interval that's 45 sleeps before the
+    // deadline trips (180000/4000). Proves the default is env-driven, not a
+    // hard-coded literal — so ops can raise it without a code change.
+    const fetchImpl = vi.fn().mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      // no timeoutMs → falls back to env default (180s)
+      intervalMs: 4_000,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(false);
+    expect(clock.sleep).toHaveBeenCalledTimes(45);
+    expect(fetchImpl).toHaveBeenCalledTimes(45);
   });
 
   it('treats a per-attempt timeout (thrown AbortError) as not-ready, not reachable', async () => {

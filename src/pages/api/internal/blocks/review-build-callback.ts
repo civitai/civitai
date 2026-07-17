@@ -335,6 +335,13 @@ export async function watchReviewApplyJob(args: {
   jobName: string;
   baseDetail: ReturnType<typeof parseReviewDetail>;
 }): Promise<void> {
+  // Every write below is a WATCHER advancing write — it must only ever touch the
+  // preview THIS watcher owns. The reachability wait can keep this watcher alive
+  // for a few minutes, so a mod could tear down this preview and re-preview a new
+  // build (different sha) within that window. Sha-scope all of them so a
+  // superseded watcher's late write can't clobber the newer preview (see
+  // markReviewPreviewState's expectedSha guard).
+  const guard = { requireActivePreview: true as const, expectedSha: args.sha };
   try {
     const outcome = await waitForApplyJob(args.jobName);
     if (outcome === 'succeeded') {
@@ -347,9 +354,7 @@ export async function watchReviewApplyJob(args: {
       const host = args.baseDetail.host;
       const reachable = host ? await waitForReviewHostReachable(host) : true;
       if (reachable) {
-        await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail, {
-          requireActivePreview: true,
-        });
+        await markReviewPreviewState(args.publishRequestId, 'preview-live', args.baseDetail, guard);
       } else {
         // Deploy is healthy but its host never became publicly reachable within
         // the budget (DNS propagation stall, or a genuinely-broken route). Do
@@ -365,7 +370,7 @@ export async function watchReviewApplyJob(args: {
             error:
               'Preview deployed but its host did not become reachable in time (DNS propagation). Rebuild to retry.',
           },
-          { requireActivePreview: true }
+          guard
         );
       }
     } else {
@@ -383,7 +388,7 @@ export async function watchReviewApplyJob(args: {
           ...args.baseDetail,
           error: outcome === 'timeout' ? 'review deploy timed out' : 'review deploy failed',
         },
-        { requireActivePreview: true }
+        guard
       );
     }
   } catch (err) {

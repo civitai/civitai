@@ -337,7 +337,7 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       PUBREQ,
       'preview-live',
       baseDetail,
-      { requireActivePreview: true }
+      { requireActivePreview: true, expectedSha: SHA }
     );
     // Not marked failed, and the dedup slot is NOT freed on the happy path.
     expect(mockMarkPreview).toHaveBeenCalledTimes(1);
@@ -363,7 +363,7 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       PUBREQ,
       'preview-failed',
       expect.objectContaining({ error: expect.stringContaining('DNS propagation') }),
-      { requireActivePreview: true }
+      { requireActivePreview: true, expectedSha: SHA }
     );
     // Dedup slot freed (mirrors the other definitive-failed path) so a same-sha
     // rebuild isn't suppressed within the TTL window.
@@ -400,7 +400,7 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       PUBREQ,
       'preview-failed',
       expect.objectContaining({ error: 'review deploy failed' }),
-      { requireActivePreview: true }
+      { requireActivePreview: true, expectedSha: SHA }
     );
     expect(mockRedisDel).toHaveBeenCalledTimes(1);
   });
@@ -418,7 +418,7 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       PUBREQ,
       'preview-failed',
       expect.objectContaining({ error: 'review deploy timed out' }),
-      { requireActivePreview: true }
+      { requireActivePreview: true, expectedSha: SHA }
     );
     // 'timeout' leaves the dedup slot for the TTL (the Job may still run).
     expect(mockRedisDel).not.toHaveBeenCalled();
@@ -436,7 +436,7 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       PUBREQ,
       'preview-live',
       { sha: SHA },
-      { requireActivePreview: true }
+      { requireActivePreview: true, expectedSha: SHA }
     );
   });
 });

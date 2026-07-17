@@ -214,9 +214,11 @@ export async function waitForReviewHostReachable(
   } = {}
 ): Promise<boolean> {
   // Generous default: the dominant lag is DNS-record creation + public
-  // propagation (~1 min), not the deploy. 120s covers the common case with
-  // margin while still bounding a genuinely-broken deploy to a definite failure.
-  const timeoutMs = opts.timeoutMs ?? 120_000;
+  // propagation (the DNS sync loop runs on ~a 60s cycle), not the deploy. Default
+  // to ~3× that (env REVIEW_HOST_REACHABLE_TIMEOUT_MS, 180s) so a backed-up sync
+  // can't spuriously fail a healthy preview, while still bounding a
+  // genuinely-broken deploy to a definite failure. Tunable without a code change.
+  const timeoutMs = opts.timeoutMs ?? env.REVIEW_HOST_REACHABLE_TIMEOUT_MS;
   const intervalMs = opts.intervalMs ?? 4_000;
   const attemptTimeoutMs = opts.attemptTimeoutMs ?? 10_000;
   const doFetch = opts.fetchImpl ?? fetch;
