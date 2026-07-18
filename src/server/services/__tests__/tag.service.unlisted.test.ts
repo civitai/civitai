@@ -16,6 +16,7 @@ const {
   redisDel,
   redisPackedGet,
   redisPackedSet,
+  bustCacheTagSpy,
 } = vi.hoisted(() => ({
   imageTagsFetch: vi.fn(),
   imageTagsBust: vi.fn(),
@@ -32,6 +33,14 @@ const {
   redisDel: vi.fn().mockResolvedValue(1),
   redisPackedGet: vi.fn().mockResolvedValue(null),
   redisPackedSet: vi.fn().mockResolvedValue(undefined),
+  bustCacheTagSpy: vi.fn().mockResolvedValue(undefined),
+}));
+
+// deleteTags now also busts the static getTags listing cache via bustCacheTag('getTags').
+// Spy only that helper; keep the rest of cache-helpers real so no other read-through breaks.
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/utils/cache-helpers')>()),
+  bustCacheTag: bustCacheTagSpy,
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -311,5 +320,20 @@ describe('getVotableTags — model votable-tags cache invalidation contract', ()
     await addTagVotes({ userId: 111, type: 'image', id: 42, tags: [304], vote: 1 });
     expect(modelVotableTagsBust).not.toHaveBeenCalled();
     expect(imageTagsBust).toHaveBeenCalledWith(42);
+  });
+
+  it('deleteTags also busts the static getTags listing cache', async () => {
+    dbWriteQueryRaw.mockReset();
+    dbWriteQueryRaw
+      .mockResolvedValueOnce([]) // affected images
+      .mockResolvedValueOnce([]) // affected models
+      .mockResolvedValueOnce([]); // affected tag names
+    await deleteTags({ tags: [304] });
+    expect(bustCacheTagSpy).toHaveBeenCalledWith('getTags');
+  });
+
+  it('a model vote does NOT bust the getTags listing cache (join-table only)', async () => {
+    await addTagVotes({ userId: 111, type: 'model', id: 1, tags: [304], vote: 1 });
+    expect(bustCacheTagSpy).not.toHaveBeenCalledWith('getTags');
   });
 });

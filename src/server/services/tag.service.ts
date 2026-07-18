@@ -36,10 +36,19 @@ import {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
-import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
+
+// Read-through cache for the static, user-independent `getTags` listing hierarchy
+// — the expensive `TagsOnTags EXISTS` isCategory + nsfwLevel-rollup subqueries that
+// dominate this procedure's DB total-exec-time. Keyed by a hash of the full query
+// SQL (so every param variation is a distinct key). Busted on every writer that
+// changes the `Tag` taxonomy or the `TagsOnTags` hierarchy (see `bustGetTagsCache`).
+export const GET_TAGS_CACHE_TAG = 'getTags';
+const getTagsListingCache = queryCache(dbRead, 'getTags', 'v1');
+export const bustGetTagsCache = () => bustCacheTag(GET_TAGS_CACHE_TAG);
 
 type TagWithModelCount = { id: number; name: string; unfeatured: boolean; count: number };
 
@@ -346,9 +355,9 @@ export const getTags = async ({
       t."nsfwLevel") "nsfwLevel"`
     : Prisma.sql``;
 
-  const tagsRaw = await dbRead.$queryRaw<
-    { id: number; name: string; isCategory?: boolean; nsfwLevel?: number }[]
-  >`
+  type TagsRawRow = { id: number; name: string; isCategory?: boolean; nsfwLevel?: number };
+
+  const tagsRawQuery = Prisma.sql`
     SELECT t."id",
            t."name"
            ${isCategory}
@@ -363,6 +372,26 @@ export const getTags = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
   `;
+
+  // Cache only the bounded-key-space listings — the ~28 calls/s category/trending
+  // hierarchy reads that dominate this procedure. Bypass the cache for the
+  // high-cardinality dimensions so the Redis key space can't explode:
+  //   - `query`:          free-text `name LIKE` search — effectively unbounded.
+  //   - `modelId`:        per-model `TagsOnModels EXISTS` filter (huge id space, and
+  //                       would pull `TagsOnModels` into the invalidation surface).
+  //   - `excludedTagIds`: caller-supplied id arrays (rare admin/form paths).
+  // The cacheable path is user-INDEPENDENT: every input (incl. `includeAdminTags`,
+  // which toggles the `adminOnly = false` clause) is baked into `tagsRawQuery`, so
+  // the query hash IS the full param key — no per-user data, no admin-tag leak to
+  // non-admins. It depends only on `Tag` + `TagsOnTags` + `TagMetric`.
+  const cacheableListing = !query && !modelId && !(excludedTagIds && excludedTagIds.length);
+
+  const tagsRaw = cacheableListing
+    ? await getTagsListingCache<TagsRawRow[]>(tagsRawQuery, {
+        ttl: CacheTTL.hour,
+        tag: GET_TAGS_CACHE_TAG,
+      })
+    : await dbRead.$queryRaw<TagsRawRow[]>(tagsRawQuery);
 
   const models: Record<number, number[]> = {};
   // if (withModels) {
@@ -760,6 +789,10 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
         await redis.del(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${tag.name.replace(' category', '')}`);
       } catch {}
     }
+
+    // Adding a TagsOnTags edge changes category membership + the nsfwLevel rollup
+    // that the cached `getTags` listings compute — bust the listing cache.
+    await bustGetTagsCache();
   }
 };
 
@@ -845,6 +878,10 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
 
     // Bust cache for tag rules (since we can't easily check the type)
     await redis.del(REDIS_KEYS.SYSTEM.TAG_RULES);
+
+    // Removing a TagsOnTags edge changes category membership + the nsfwLevel rollup
+    // that the cached `getTags` listings compute — bust the listing cache.
+    await bustGetTagsCache();
   }
 };
 
@@ -939,6 +976,10 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   if (affectedTags.length > 0) {
     await Promise.all(affectedTags.map((t) => bustTagWithModelCountCache(t.name)));
   }
+
+  // Deleting a Tag removes it from the cached `getTags` listings (and cascades its
+  // TagsOnTags edges, changing category membership / nsfwLevel rollup) — bust.
+  await bustGetTagsCache();
 };
 
 // unused
