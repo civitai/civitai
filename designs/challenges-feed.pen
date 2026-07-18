@@ -6667,6 +6667,2331 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "MrENA",
+      "x": 1720,
+      "y": 3217,
+      "name": "V4 — Homepage Bands (Desktop)",
+      "clip": true,
+      "width": 1280,
+      "fill": "$bg-page",
+      "layout": "vertical",
+      "children": [
+        {
+          "id": "e1gE7F",
+          "type": "ref",
+          "ref": "k3m5y3",
+          "name": "TopNav",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "D1kuu",
+          "name": "FeaturedBand",
+          "width": "fill_container",
+          "fill": "$bg-page",
+          "layout": "vertical",
+          "padding": [
+            26,
+            64
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "B9o0E",
+              "name": "FeaturedHero",
+              "clip": true,
+              "width": "fill_container",
+              "height": 210,
+              "fill": [
+                {
+                  "type": "gradient",
+                  "gradientType": "linear",
+                  "enabled": true,
+                  "rotation": 135,
+                  "size": {
+                    "height": 1
+                  },
+                  "colors": [
+                    {
+                      "color": "#5f3dc4",
+                      "position": 0
+                    },
+                    {
+                      "color": "#1971c2",
+                      "position": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "gradient",
+                  "gradientType": "linear",
+                  "enabled": true,
+                  "rotation": 180,
+                  "size": {
+                    "height": 1
+                  },
+                  "colors": [
+                    {
+                      "color": "#00000000",
+                      "position": 0
+                    },
+                    {
+                      "color": "#00000099",
+                      "position": 0.5
+                    },
+                    {
+                      "color": "#000000f2",
+                      "position": 1
+                    }
+                  ]
+                }
+              ],
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": 26,
+              "justifyContent": "space_between",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "mQrBz",
+                  "name": "FTop",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "evaaR",
+                      "name": "FeatTag",
+                      "fill": "#00000066",
+                      "cornerRadius": 20,
+                      "gap": 5,
+                      "padding": [
+                        4,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "SiaXh",
+                          "name": "Star",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "star",
+                          "library": "lucide",
+                          "fill": "$yellow"
+                        },
+                        {
+                          "type": "text",
+                          "id": "j3Fr0s",
+                          "name": "T",
+                          "fill": "#ffffff",
+                          "content": "FEATURED EVENT",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "800",
+                          "letterSpacing": 1
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "k1tvL",
+                      "name": "LiveChip",
+                      "fill": "$green",
+                      "cornerRadius": 20,
+                      "padding": [
+                        4,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "fct3h",
+                          "name": "T",
+                          "fill": "#ffffff",
+                          "content": "● LIVE · 12 DAYS LEFT",
+                          "fontFamily": "$font",
+                          "fontSize": 11,
+                          "fontWeight": "800"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "T2D1Dz",
+                  "name": "FBottom",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "C4RxWp",
+                      "name": "FText",
+                      "width": 600,
+                      "layout": "vertical",
+                      "gap": 4,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "zGosm",
+                          "name": "FTitle",
+                          "fill": "#ffffff",
+                          "content": "Civitai Summer Art Festival",
+                          "fontFamily": "$font",
+                          "fontSize": 30,
+                          "fontWeight": "800"
+                        },
+                        {
+                          "type": "text",
+                          "id": "kbu9k",
+                          "name": "FSub",
+                          "fill": "#dee2e6",
+                          "content": "12 themed challenges · 500K Buzz prize pool · community-judged",
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "F8O3zv",
+                      "name": "FCta",
+                      "fill": "#ffffff",
+                      "cornerRadius": 8,
+                      "gap": 6,
+                      "padding": [
+                        10,
+                        18
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "L4QWTg",
+                          "name": "L",
+                          "fill": "#1a1b1e",
+                          "content": "Explore event",
+                          "fontFamily": "$font",
+                          "fontSize": 14,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "JpkCV",
+                          "name": "Arr",
+                          "width": 15,
+                          "height": 15,
+                          "icon": "arrow-right",
+                          "library": "lucide",
+                          "fill": "#1a1b1e"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "P9zPo",
+          "name": "YourBand",
+          "width": "fill_container",
+          "fill": "$grape-tint",
+          "layout": "vertical",
+          "gap": 22,
+          "padding": [
+            30,
+            64
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "WwuYt",
+              "name": "YHead",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "r3jkl",
+                  "name": "YHL",
+                  "gap": 9,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "lk8gn",
+                      "name": "I",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "swords",
+                      "library": "lucide",
+                      "fill": "$grape"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "rO1Mi",
+                      "name": "YHT",
+                      "layout": "vertical",
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ZXFCU",
+                          "name": "ST",
+                          "fill": "$text",
+                          "content": "Your Challenges",
+                          "fontFamily": "$font",
+                          "fontSize": 20,
+                          "fontWeight": "800"
+                        },
+                        {
+                          "type": "text",
+                          "id": "I4ReGa",
+                          "name": "Sub",
+                          "fill": "$text-dim",
+                          "content": "Challenges you've recently entered",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "uetpA",
+                  "name": "SeeAll",
+                  "gap": 3,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "C6oxS",
+                      "name": "L",
+                      "fill": "$blue",
+                      "content": "See all",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "V0hr6",
+                      "name": "C",
+                      "width": 15,
+                      "height": 15,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$blue"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "yhYHW",
+              "name": "YourRow",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "id": "nCj4Y",
+                  "type": "ref",
+                  "ref": "ztj8y",
+                  "name": "My-Pineapple Fantasy",
+                  "width": "fill_container",
+                  "height": 276,
+                  "descendants": {
+                    "MFCGO": {
+                      "fill": "$yellow"
+                    },
+                    "MsWdw": {
+                      "icon": "trophy",
+                      "fill": "#1a1b1e"
+                    },
+                    "mfPim": {
+                      "content": "Won",
+                      "fill": "#1a1b1e"
+                    },
+                    "l35eB": {
+                      "content": "Ended 2d ago"
+                    },
+                    "kEZLL": {
+                      "content": "Theme: Pineapple Fantasy"
+                    },
+                    "mg62i": {
+                      "content": "Unleash Your Pineapple Power!"
+                    },
+                    "zZUZ8": {
+                      "fill": "#ffffff"
+                    },
+                    "EMANP": {
+                      "content": "View results",
+                      "fill": "#1a1b1e"
+                    },
+                    "R4Zzg4": {
+                      "icon": "arrow-right",
+                      "fill": "#1a1b1e"
+                    }
+                  }
+                },
+                {
+                  "id": "r5RCi",
+                  "type": "ref",
+                  "ref": "ztj8y",
+                  "name": "My-Colorful Creatures",
+                  "width": "fill_container",
+                  "height": 276,
+                  "descendants": {
+                    "MFCGO": {
+                      "fill": "#343a40"
+                    },
+                    "MsWdw": {
+                      "icon": "medal",
+                      "fill": "#ffffff"
+                    },
+                    "mfPim": {
+                      "content": "#2 Placed",
+                      "fill": "#ffffff"
+                    },
+                    "l35eB": {
+                      "content": "Ended 5d ago"
+                    },
+                    "kEZLL": {
+                      "content": "Theme: Colorful Creatures"
+                    },
+                    "mg62i": {
+                      "content": "Unleash Your Inner Peacock Today!"
+                    },
+                    "zZUZ8": {
+                      "fill": "#ffffff"
+                    },
+                    "EMANP": {
+                      "content": "View results",
+                      "fill": "#1a1b1e"
+                    },
+                    "R4Zzg4": {
+                      "icon": "arrow-right",
+                      "fill": "#1a1b1e"
+                    }
+                  }
+                },
+                {
+                  "id": "o0UdGe",
+                  "type": "ref",
+                  "ref": "ztj8y",
+                  "name": "My-Sparkle & Shine",
+                  "width": "fill_container",
+                  "height": 276,
+                  "descendants": {
+                    "MFCGO": {
+                      "fill": "$blue-solid"
+                    },
+                    "MsWdw": {
+                      "icon": "hourglass",
+                      "fill": "#ffffff"
+                    },
+                    "mfPim": {
+                      "content": "Judging",
+                      "fill": "#ffffff"
+                    },
+                    "l35eB": {
+                      "content": "Judging ends in 4h"
+                    },
+                    "kEZLL": {
+                      "content": "Theme: Sparkle & Shine"
+                    },
+                    "mg62i": {
+                      "content": "Sparkle Up for a Shiny Challenge!"
+                    },
+                    "zZUZ8": {
+                      "fill": "#ffffff"
+                    },
+                    "EMANP": {
+                      "content": "View entry",
+                      "fill": "#1a1b1e"
+                    },
+                    "R4Zzg4": {
+                      "icon": "arrow-right",
+                      "fill": "#1a1b1e"
+                    }
+                  }
+                },
+                {
+                  "id": "tBkzM",
+                  "type": "ref",
+                  "ref": "ztj8y",
+                  "name": "My-Crystal Creations",
+                  "width": "fill_container",
+                  "height": 276,
+                  "descendants": {
+                    "MFCGO": {
+                      "fill": "$green"
+                    },
+                    "MsWdw": {
+                      "icon": "check",
+                      "fill": "#ffffff"
+                    },
+                    "mfPim": {
+                      "content": "Entered",
+                      "fill": "#ffffff"
+                    },
+                    "l35eB": {
+                      "content": "5h left · Live"
+                    },
+                    "kEZLL": {
+                      "content": "Theme: Crystal Creations"
+                    },
+                    "mg62i": {
+                      "content": "Transform into Crystal Wonders!"
+                    },
+                    "zZUZ8": {
+                      "fill": "$blue-solid"
+                    },
+                    "EMANP": {
+                      "content": "Add another entry",
+                      "fill": "#ffffff"
+                    },
+                    "R4Zzg4": {
+                      "icon": "plus",
+                      "fill": "#ffffff"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "KgCfl",
+          "name": "DailyBand",
+          "width": "fill_container",
+          "fill": "$band-alt",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": [
+            30,
+            64
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "mdAXr",
+              "name": "DHead",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "yzJOx",
+                  "name": "DHL",
+                  "gap": 9,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ouUQB",
+                      "name": "I",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "calendar-days",
+                      "library": "lucide",
+                      "fill": "$blue"
+                    },
+                    {
+                      "type": "text",
+                      "id": "oqGih",
+                      "name": "ST",
+                      "fill": "$text",
+                      "content": "Daily Challenges",
+                      "fontFamily": "$font",
+                      "fontSize": 20,
+                      "fontWeight": "800"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "A7kYY",
+                  "name": "SeeAll",
+                  "gap": 3,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "mDuQs",
+                      "name": "L",
+                      "fill": "$blue",
+                      "content": "Winners",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "oiT4s",
+                      "name": "C",
+                      "width": 15,
+                      "height": 15,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$blue"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "SwwuP",
+              "name": "DailyRow",
+              "width": "fill_container",
+              "gap": 16,
+              "children": [
+                {
+                  "id": "fwkRO",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "Daily-Crystal Creations",
+                  "width": "fill_container",
+                  "height": 276,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$green"
+                    },
+                    "rMCVk": {
+                      "icon": "sparkles",
+                      "enabled": true
+                    },
+                    "pshsH": {
+                      "content": "Live",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": true
+                    },
+                    "mK36V": {
+                      "content": "5 Hours"
+                    },
+                    "xkIH5": {
+                      "content": "CivBot"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Crystal Creations"
+                    },
+                    "jDDYz": {
+                      "content": "Transform the World into Crystal Wonders!"
+                    },
+                    "x2uGBl": {
+                      "content": "9,000 BUZZ"
+                    },
+                    "T2m9HC": {
+                      "content": "5"
+                    },
+                    "BGtHH": {
+                      "content": "2.3K"
+                    }
+                  }
+                },
+                {
+                  "id": "mqQTk",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "Daily-Sparkle & Shine",
+                  "width": "fill_container",
+                  "height": 276,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$blue-solid"
+                    },
+                    "rMCVk": {
+                      "enabled": false
+                    },
+                    "pshsH": {
+                      "content": "Upcoming",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": false
+                    },
+                    "mK36V": {
+                      "content": ""
+                    },
+                    "xkIH5": {
+                      "content": "CivBot"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Sparkle & Shine"
+                    },
+                    "jDDYz": {
+                      "content": "Sparkle Up for a Shiny Challenge!"
+                    },
+                    "x2uGBl": {
+                      "content": "9,000 BUZZ"
+                    },
+                    "pUe1s": {
+                      "enabled": false
+                    },
+                    "BGtHH": {
+                      "content": "0"
+                    }
+                  }
+                },
+                {
+                  "id": "TwA4Q",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "Daily-Colorful Creatures",
+                  "width": "fill_container",
+                  "height": 276,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$blue-solid"
+                    },
+                    "rMCVk": {
+                      "enabled": false
+                    },
+                    "pshsH": {
+                      "content": "Upcoming",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": false
+                    },
+                    "mK36V": {
+                      "content": ""
+                    },
+                    "xkIH5": {
+                      "content": "CivBot"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Colorful Creatures"
+                    },
+                    "jDDYz": {
+                      "content": "Unleash Your Inner Peacock Today!"
+                    },
+                    "x2uGBl": {
+                      "content": "9,000 BUZZ"
+                    },
+                    "pUe1s": {
+                      "enabled": false
+                    },
+                    "BGtHH": {
+                      "content": "0"
+                    }
+                  }
+                },
+                {
+                  "id": "UaTT5",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "Daily-Pineapple Fantasy",
+                  "width": "fill_container",
+                  "height": 276,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$blue-solid"
+                    },
+                    "rMCVk": {
+                      "enabled": false
+                    },
+                    "pshsH": {
+                      "content": "Upcoming",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": false
+                    },
+                    "mK36V": {
+                      "content": ""
+                    },
+                    "xkIH5": {
+                      "content": "CivBot"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Pineapple Fantasy"
+                    },
+                    "jDDYz": {
+                      "content": "Unleash Your Pineapple Power!"
+                    },
+                    "x2uGBl": {
+                      "content": "9,000 BUZZ"
+                    },
+                    "pUe1s": {
+                      "enabled": false
+                    },
+                    "BGtHH": {
+                      "content": "0"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "S8y1C",
+          "name": "CommunityBand",
+          "width": "fill_container",
+          "fill": "$bg-page",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": [
+            30,
+            64,
+            40,
+            64
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "JZma4",
+              "name": "CommHead",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "E6f50V",
+                  "name": "CL",
+                  "gap": 9,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "xJvgI",
+                      "name": "I",
+                      "width": 20,
+                      "height": 20,
+                      "icon": "users",
+                      "library": "lucide",
+                      "fill": "$cyan"
+                    },
+                    {
+                      "type": "text",
+                      "id": "a3c7C",
+                      "name": "ST",
+                      "fill": "$text",
+                      "content": "Community Challenges",
+                      "fontFamily": "$font",
+                      "fontSize": 20,
+                      "fontWeight": "800"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JZXK7",
+                      "name": "Count",
+                      "fill": "$surface",
+                      "cornerRadius": 20,
+                      "padding": [
+                        3,
+                        9
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "GJNPE",
+                          "name": "L",
+                          "fill": "$text-dim",
+                          "content": "128 active",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "700"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "lfE6I",
+                  "name": "Controls",
+                  "gap": 8,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "JlKNc",
+                      "name": "Pill-Newest",
+                      "fill": "$surface",
+                      "cornerRadius": 8,
+                      "gap": 5,
+                      "padding": [
+                        7,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "dv6NG",
+                          "name": "I",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "arrow-down-up",
+                          "library": "lucide",
+                          "fill": "$text-dim"
+                        },
+                        {
+                          "type": "text",
+                          "id": "vpn7X",
+                          "name": "L",
+                          "fill": "$text",
+                          "content": "Newest",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "Z8MmT",
+                          "name": "C",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "$text-dim"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "A7pOot",
+                      "name": "Pill-Filters",
+                      "fill": "$surface",
+                      "cornerRadius": 8,
+                      "gap": 5,
+                      "padding": [
+                        7,
+                        12
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "PN38f",
+                          "name": "I",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "sliders-horizontal",
+                          "library": "lucide",
+                          "fill": "$text-dim"
+                        },
+                        {
+                          "type": "text",
+                          "id": "w0fitP",
+                          "name": "L",
+                          "fill": "$text",
+                          "content": "Filters",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "g66vyj",
+                          "name": "C",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "chevron-down",
+                          "library": "lucide",
+                          "fill": "$text-dim"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "PdTPw",
+              "name": "CommGrid",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Sm4zu",
+                  "name": "GridRow0",
+                  "width": "fill_container",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "id": "LrLyA",
+                      "type": "ref",
+                      "ref": "E0RTe",
+                      "name": "Comm-Neon Nights",
+                      "width": "fill_container",
+                      "height": 276,
+                      "descendants": {
+                        "B0SXHI": {
+                          "fill": "$blue-solid"
+                        },
+                        "rMCVk": {
+                          "enabled": false
+                        },
+                        "pshsH": {
+                          "content": "Upcoming",
+                          "fill": "#ffffff"
+                        },
+                        "tSz93": {
+                          "enabled": false
+                        },
+                        "mK36V": {
+                          "content": ""
+                        },
+                        "xkIH5": {
+                          "content": "manuelurenah"
+                        },
+                        "c5jy1Z": {
+                          "content": "Theme: Neon Nights"
+                        },
+                        "jDDYz": {
+                          "content": "Glow Up: Neon Cat Challenge"
+                        },
+                        "x2uGBl": {
+                          "content": "5,000 BUZZ"
+                        },
+                        "pUe1s": {
+                          "enabled": false
+                        },
+                        "BGtHH": {
+                          "content": "0"
+                        }
+                      }
+                    },
+                    {
+                      "id": "rB420",
+                      "type": "ref",
+                      "ref": "E0RTe",
+                      "name": "Comm-Retro Futurism",
+                      "width": "fill_container",
+                      "height": 276,
+                      "descendants": {
+                        "B0SXHI": {
+                          "fill": "$green"
+                        },
+                        "rMCVk": {
+                          "icon": "sparkles",
+                          "enabled": true
+                        },
+                        "pshsH": {
+                          "content": "Live",
+                          "fill": "#ffffff"
+                        },
+                        "tSz93": {
+                          "enabled": true
+                        },
+                        "mK36V": {
+                          "content": "2 Days"
+                        },
+                        "xkIH5": {
+                          "content": "aiartist"
+                        },
+                        "c5jy1Z": {
+                          "content": "Theme: Retro Futurism"
+                        },
+                        "jDDYz": {
+                          "content": "Synthwave City Skylines"
+                        },
+                        "x2uGBl": {
+                          "content": "7,500 BUZZ"
+                        },
+                        "T2m9HC": {
+                          "content": "14"
+                        },
+                        "BGtHH": {
+                          "content": "88"
+                        }
+                      }
+                    },
+                    {
+                      "id": "gXddx",
+                      "type": "ref",
+                      "ref": "E0RTe",
+                      "name": "Comm-Underwater Worlds",
+                      "width": "fill_container",
+                      "height": 276,
+                      "descendants": {
+                        "B0SXHI": {
+                          "fill": "$green"
+                        },
+                        "rMCVk": {
+                          "icon": "sparkles",
+                          "enabled": true
+                        },
+                        "pshsH": {
+                          "content": "Live",
+                          "fill": "#ffffff"
+                        },
+                        "tSz93": {
+                          "enabled": true
+                        },
+                        "mK36V": {
+                          "content": "6 Hours"
+                        },
+                        "xkIH5": {
+                          "content": "deepdive"
+                        },
+                        "c5jy1Z": {
+                          "content": "Theme: Underwater Worlds"
+                        },
+                        "jDDYz": {
+                          "content": "Deep Sea Dreamscapes"
+                        },
+                        "x2uGBl": {
+                          "content": "6,000 BUZZ"
+                        },
+                        "T2m9HC": {
+                          "content": "9"
+                        },
+                        "BGtHH": {
+                          "content": "210"
+                        }
+                      }
+                    },
+                    {
+                      "id": "uOWqO",
+                      "type": "ref",
+                      "ref": "E0RTe",
+                      "name": "Comm-Cosmic Horror",
+                      "width": "fill_container",
+                      "height": 276,
+                      "descendants": {
+                        "B0SXHI": {
+                          "fill": "$blue-solid"
+                        },
+                        "rMCVk": {
+                          "enabled": false
+                        },
+                        "pshsH": {
+                          "content": "Upcoming",
+                          "fill": "#ffffff"
+                        },
+                        "tSz93": {
+                          "enabled": false
+                        },
+                        "mK36V": {
+                          "content": ""
+                        },
+                        "xkIH5": {
+                          "content": "lovecraftfan"
+                        },
+                        "c5jy1Z": {
+                          "content": "Theme: Cosmic Horror"
+                        },
+                        "jDDYz": {
+                          "content": "Eldritch Encounters"
+                        },
+                        "x2uGBl": {
+                          "content": "10,000 BUZZ"
+                        },
+                        "pUe1s": {
+                          "enabled": false
+                        },
+                        "BGtHH": {
+                          "content": "0"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "csxLA",
+                  "name": "GridRow1",
+                  "width": "fill_container",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "id": "CklPf",
+                      "type": "ref",
+                      "ref": "E0RTe",
+                      "name": "Comm-Autumn Vibes",
+                      "width": "fill_container",
+                      "height": 276,
+                      "descendants": {
+                        "B0SXHI": {
+                          "fill": "$green"
+                        },
+                        "rMCVk": {
+                          "icon": "sparkles",
+                          "enabled": true
+                        },
+                        "pshsH": {
+                          "content": "Live",
+                          "fill": "#ffffff"
+                        },
+                        "tSz93": {
+                          "enabled": true
+                        },
+                        "mK36V": {
+                          "content": "3 Days"
+                        },
+                        "xkIH5": {
+                          "content": "fallleaves"
+                        },
+                        "c5jy1Z": {
+                          "content": "Theme: Autumn Vibes"
+                        },
+                        "jDDYz": {
+                          "content": "Golden Hour Forests"
+                        },
+                        "x2uGBl": {
+                          "content": "4,500 BUZZ"
+                        },
+                        "T2m9HC": {
+                          "content": "6"
+                        },
+                        "BGtHH": {
+                          "content": "152"
+                        }
+                      }
+                    },
+                    {
+                      "id": "H6oOg",
+                      "type": "ref",
+                      "ref": "E0RTe",
+                      "name": "Comm-Cyberpunk",
+                      "width": "fill_container",
+                      "height": 276,
+                      "descendants": {
+                        "B0SXHI": {
+                          "fill": "$blue-solid"
+                        },
+                        "rMCVk": {
+                          "enabled": false
+                        },
+                        "pshsH": {
+                          "content": "Upcoming",
+                          "fill": "#ffffff"
+                        },
+                        "tSz93": {
+                          "enabled": false
+                        },
+                        "mK36V": {
+                          "content": ""
+                        },
+                        "xkIH5": {
+                          "content": "blade2049"
+                        },
+                        "c5jy1Z": {
+                          "content": "Theme: Cyberpunk"
+                        },
+                        "jDDYz": {
+                          "content": "Rainy Night Ronin"
+                        },
+                        "x2uGBl": {
+                          "content": "8,000 BUZZ"
+                        },
+                        "pUe1s": {
+                          "enabled": false
+                        },
+                        "BGtHH": {
+                          "content": "0"
+                        }
+                      }
+                    },
+                    {
+                      "id": "jmnNl",
+                      "type": "ref",
+                      "ref": "E0RTe",
+                      "name": "Comm-Dreamcore",
+                      "width": "fill_container",
+                      "height": 276,
+                      "descendants": {
+                        "B0SXHI": {
+                          "fill": "$green"
+                        },
+                        "rMCVk": {
+                          "icon": "sparkles",
+                          "enabled": true
+                        },
+                        "pshsH": {
+                          "content": "Live",
+                          "fill": "#ffffff"
+                        },
+                        "tSz93": {
+                          "enabled": true
+                        },
+                        "mK36V": {
+                          "content": "1 Day"
+                        },
+                        "xkIH5": {
+                          "content": "weirdcore"
+                        },
+                        "c5jy1Z": {
+                          "content": "Theme: Dreamcore"
+                        },
+                        "jDDYz": {
+                          "content": "Liminal Spaces"
+                        },
+                        "x2uGBl": {
+                          "content": "5,500 BUZZ"
+                        },
+                        "T2m9HC": {
+                          "content": "3"
+                        },
+                        "BGtHH": {
+                          "content": "64"
+                        }
+                      }
+                    },
+                    {
+                      "id": "M1Ec4",
+                      "type": "ref",
+                      "ref": "E0RTe",
+                      "name": "Comm-Botanical",
+                      "width": "fill_container",
+                      "height": 276,
+                      "descendants": {
+                        "B0SXHI": {
+                          "fill": "$blue-solid"
+                        },
+                        "rMCVk": {
+                          "enabled": false
+                        },
+                        "pshsH": {
+                          "content": "Upcoming",
+                          "fill": "#ffffff"
+                        },
+                        "tSz93": {
+                          "enabled": false
+                        },
+                        "mK36V": {
+                          "content": ""
+                        },
+                        "xkIH5": {
+                          "content": "greenthumb"
+                        },
+                        "c5jy1Z": {
+                          "content": "Theme: Botanical"
+                        },
+                        "jDDYz": {
+                          "content": "Impossible Gardens"
+                        },
+                        "x2uGBl": {
+                          "content": "6,500 BUZZ"
+                        },
+                        "pUe1s": {
+                          "enabled": false
+                        },
+                        "BGtHH": {
+                          "content": "0"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "BfCDo",
+      "x": 3140,
+      "y": 3217,
+      "name": "V4 — Mobile (Bands)",
+      "clip": true,
+      "width": 390,
+      "fill": "$bg-page",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "fcHG8",
+          "name": "TopBar",
+          "width": "fill_container",
+          "height": 52,
+          "fill": "$bg-header",
+          "padding": [
+            0,
+            16
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "Hiquz",
+              "name": "TL",
+              "gap": 12,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "zt1To",
+                  "name": "Menu",
+                  "width": 22,
+                  "height": 22,
+                  "icon": "menu",
+                  "library": "lucide",
+                  "fill": "$text"
+                },
+                {
+                  "type": "text",
+                  "id": "DwIGw",
+                  "name": "Wordmark",
+                  "fill": "$text",
+                  "content": "CIVITAI",
+                  "fontFamily": "$font",
+                  "fontSize": 18,
+                  "fontWeight": "800",
+                  "letterSpacing": 1
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "yfpXK",
+              "name": "TR",
+              "gap": 14,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "KJw3k",
+                  "name": "Search",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "search",
+                  "library": "lucide",
+                  "fill": "$text-dim"
+                },
+                {
+                  "type": "icon",
+                  "id": "gARjQ",
+                  "name": "Bell",
+                  "width": 20,
+                  "height": 20,
+                  "icon": "bell",
+                  "library": "lucide",
+                  "fill": "$text-dim"
+                },
+                {
+                  "type": "ellipse",
+                  "id": "r1l9R",
+                  "name": "Avatar",
+                  "fill": "#4263eb",
+                  "width": 28,
+                  "height": 28
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "roUMZ",
+          "name": "FeaturedBand",
+          "width": "fill_container",
+          "fill": "$bg-page",
+          "layout": "vertical",
+          "padding": [
+            18,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "QaGJN",
+              "name": "FeaturedHero",
+              "clip": true,
+              "width": "fill_container",
+              "height": 150,
+              "fill": [
+                {
+                  "type": "gradient",
+                  "gradientType": "linear",
+                  "enabled": true,
+                  "rotation": 135,
+                  "size": {
+                    "height": 1
+                  },
+                  "colors": [
+                    {
+                      "color": "#5f3dc4",
+                      "position": 0
+                    },
+                    {
+                      "color": "#1971c2",
+                      "position": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "gradient",
+                  "gradientType": "linear",
+                  "enabled": true,
+                  "rotation": 180,
+                  "size": {
+                    "height": 1
+                  },
+                  "colors": [
+                    {
+                      "color": "#00000000",
+                      "position": 0
+                    },
+                    {
+                      "color": "#00000099",
+                      "position": 0.5
+                    },
+                    {
+                      "color": "#000000f2",
+                      "position": 1
+                    }
+                  ]
+                }
+              ],
+              "cornerRadius": 14,
+              "layout": "vertical",
+              "padding": 16,
+              "justifyContent": "space_between",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "V6GDN",
+                  "name": "FTag",
+                  "fill": "#00000066",
+                  "cornerRadius": 20,
+                  "gap": 4,
+                  "padding": [
+                    3,
+                    9
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "RTkBf",
+                      "name": "S",
+                      "width": 11,
+                      "height": 11,
+                      "icon": "star",
+                      "library": "lucide",
+                      "fill": "$yellow"
+                    },
+                    {
+                      "type": "text",
+                      "id": "bexH9",
+                      "name": "T",
+                      "fill": "#ffffff",
+                      "content": "FEATURED EVENT · LIVE",
+                      "fontFamily": "$font",
+                      "fontSize": 10,
+                      "fontWeight": "800",
+                      "letterSpacing": 1
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "U8k3B",
+                  "name": "FB",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "A0jOJD",
+                      "name": "FT",
+                      "fill": "#ffffff",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "content": "Civitai Summer Art Festival",
+                      "lineHeight": 1.1,
+                      "fontFamily": "$font",
+                      "fontSize": 22,
+                      "fontWeight": "800"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "t9Shty",
+                      "name": "FCta",
+                      "fill": "#ffffff",
+                      "cornerRadius": 8,
+                      "gap": 5,
+                      "padding": [
+                        8,
+                        14
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "yOqpb",
+                          "name": "L",
+                          "fill": "#1a1b1e",
+                          "content": "Explore event",
+                          "fontFamily": "$font",
+                          "fontSize": 13,
+                          "fontWeight": "700"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "fn1n4",
+                          "name": "A",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "arrow-right",
+                          "library": "lucide",
+                          "fill": "#1a1b1e"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "C4y2j",
+          "name": "YourBand",
+          "clip": true,
+          "width": "fill_container",
+          "fill": "$grape-tint",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": [
+            22,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "lNcvn",
+              "name": "SH",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "YTFQ0",
+                  "name": "HL",
+                  "gap": 7,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "y40ngC",
+                      "name": "I",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "swords",
+                      "library": "lucide",
+                      "fill": "$grape"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Wy3Sw",
+                      "name": "T",
+                      "fill": "$text",
+                      "content": "Your Challenges",
+                      "fontFamily": "$font",
+                      "fontSize": 17,
+                      "fontWeight": "800"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "DAUFX",
+                  "name": "A",
+                  "gap": 2,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "yRn6o",
+                      "name": "L",
+                      "fill": "$blue",
+                      "content": "See all",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "VRbZp",
+                      "name": "C",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$blue"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "auOUx",
+              "name": "YourScroll",
+              "gap": 12,
+              "children": [
+                {
+                  "id": "G92mns",
+                  "type": "ref",
+                  "ref": "ztj8y",
+                  "name": "Y-Pineapple Fantasy",
+                  "width": 230,
+                  "height": 230,
+                  "descendants": {
+                    "MFCGO": {
+                      "fill": "$yellow"
+                    },
+                    "MsWdw": {
+                      "icon": "trophy",
+                      "fill": "#1a1b1e"
+                    },
+                    "mfPim": {
+                      "content": "Won",
+                      "fill": "#1a1b1e"
+                    },
+                    "l35eB": {
+                      "content": "Ended 2d ago"
+                    },
+                    "kEZLL": {
+                      "content": "Theme: Pineapple Fantasy"
+                    },
+                    "mg62i": {
+                      "content": "Unleash Your Pineapple Power!"
+                    },
+                    "zZUZ8": {
+                      "fill": "#ffffff"
+                    },
+                    "EMANP": {
+                      "content": "View results",
+                      "fill": "#1a1b1e"
+                    },
+                    "R4Zzg4": {
+                      "icon": "arrow-right",
+                      "fill": "#1a1b1e"
+                    }
+                  }
+                },
+                {
+                  "id": "zenle",
+                  "type": "ref",
+                  "ref": "ztj8y",
+                  "name": "Y-Colorful Creatures",
+                  "width": 230,
+                  "height": 230,
+                  "descendants": {
+                    "MFCGO": {
+                      "fill": "#343a40"
+                    },
+                    "MsWdw": {
+                      "icon": "medal",
+                      "fill": "#ffffff"
+                    },
+                    "mfPim": {
+                      "content": "#2 Placed",
+                      "fill": "#ffffff"
+                    },
+                    "l35eB": {
+                      "content": "Ended 5d ago"
+                    },
+                    "kEZLL": {
+                      "content": "Theme: Colorful Creatures"
+                    },
+                    "mg62i": {
+                      "content": "Unleash Your Inner Peacock!"
+                    },
+                    "zZUZ8": {
+                      "fill": "#ffffff"
+                    },
+                    "EMANP": {
+                      "content": "View results",
+                      "fill": "#1a1b1e"
+                    },
+                    "R4Zzg4": {
+                      "icon": "arrow-right",
+                      "fill": "#1a1b1e"
+                    }
+                  }
+                },
+                {
+                  "id": "c1tL2f",
+                  "type": "ref",
+                  "ref": "ztj8y",
+                  "name": "Y-Sparkle & Shine",
+                  "width": 230,
+                  "height": 230,
+                  "descendants": {
+                    "MFCGO": {
+                      "fill": "$blue-solid"
+                    },
+                    "MsWdw": {
+                      "icon": "hourglass",
+                      "fill": "#ffffff"
+                    },
+                    "mfPim": {
+                      "content": "Judging",
+                      "fill": "#ffffff"
+                    },
+                    "l35eB": {
+                      "content": "Judging ends 4h"
+                    },
+                    "kEZLL": {
+                      "content": "Theme: Sparkle & Shine"
+                    },
+                    "mg62i": {
+                      "content": "Sparkle Up for a Shiny Challenge!"
+                    },
+                    "zZUZ8": {
+                      "fill": "#ffffff"
+                    },
+                    "EMANP": {
+                      "content": "View entry",
+                      "fill": "#1a1b1e"
+                    },
+                    "R4Zzg4": {
+                      "icon": "arrow-right",
+                      "fill": "#1a1b1e"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "LWZxM",
+          "name": "DailyBand",
+          "clip": true,
+          "width": "fill_container",
+          "fill": "$band-alt",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": [
+            22,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "S032xt",
+              "name": "SH",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "nUgsv",
+                  "name": "HL",
+                  "gap": 7,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "MVlOa",
+                      "name": "I",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "calendar-days",
+                      "library": "lucide",
+                      "fill": "$blue"
+                    },
+                    {
+                      "type": "text",
+                      "id": "PS0tS",
+                      "name": "T",
+                      "fill": "$text",
+                      "content": "Daily Challenges",
+                      "fontFamily": "$font",
+                      "fontSize": 17,
+                      "fontWeight": "800"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "HEsXI",
+                  "name": "A",
+                  "gap": 2,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "VZ9jt",
+                      "name": "L",
+                      "fill": "$blue",
+                      "content": "Winners",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "IDnCJ",
+                      "name": "C",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$blue"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "OENjo",
+              "name": "DailyScroll",
+              "gap": 12,
+              "children": [
+                {
+                  "id": "oLFOY",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "D-Crystal Creations",
+                  "width": 210,
+                  "height": 210,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$green"
+                    },
+                    "rMCVk": {
+                      "icon": "sparkles",
+                      "enabled": true
+                    },
+                    "pshsH": {
+                      "content": "Live",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": true
+                    },
+                    "mK36V": {
+                      "content": "5h"
+                    },
+                    "xkIH5": {
+                      "content": "CivBot"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Crystal Creations"
+                    },
+                    "jDDYz": {
+                      "content": "Transform into Crystal Wonders!"
+                    },
+                    "x2uGBl": {
+                      "content": "9,000"
+                    },
+                    "T2m9HC": {
+                      "content": "5"
+                    },
+                    "BGtHH": {
+                      "content": "2.3K"
+                    }
+                  }
+                },
+                {
+                  "id": "bUCap",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "D-Sparkle & Shine",
+                  "width": 210,
+                  "height": 210,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$blue-solid"
+                    },
+                    "rMCVk": {
+                      "enabled": false
+                    },
+                    "pshsH": {
+                      "content": "Upcoming",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": false
+                    },
+                    "mK36V": {
+                      "content": ""
+                    },
+                    "xkIH5": {
+                      "content": "CivBot"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Sparkle & Shine"
+                    },
+                    "jDDYz": {
+                      "content": "Sparkle Up for a Shiny Challenge!"
+                    },
+                    "x2uGBl": {
+                      "content": "9,000"
+                    },
+                    "pUe1s": {
+                      "enabled": false
+                    },
+                    "BGtHH": {
+                      "content": "0"
+                    }
+                  }
+                },
+                {
+                  "id": "iqsZI",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "D-Colorful Creatures",
+                  "width": 210,
+                  "height": 210,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$blue-solid"
+                    },
+                    "rMCVk": {
+                      "enabled": false
+                    },
+                    "pshsH": {
+                      "content": "Upcoming",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": false
+                    },
+                    "mK36V": {
+                      "content": ""
+                    },
+                    "xkIH5": {
+                      "content": "CivBot"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Colorful Creatures"
+                    },
+                    "jDDYz": {
+                      "content": "Unleash Your Inner Peacock!"
+                    },
+                    "x2uGBl": {
+                      "content": "9,000"
+                    },
+                    "pUe1s": {
+                      "enabled": false
+                    },
+                    "BGtHH": {
+                      "content": "0"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "Kpw9n",
+          "name": "CommunityBand",
+          "width": "fill_container",
+          "fill": "$bg-page",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": [
+            22,
+            16,
+            32,
+            16
+          ],
+          "children": [
+            {
+              "type": "frame",
+              "id": "VdVg9",
+              "name": "CHead",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "cNF5Z",
+                  "name": "CHL",
+                  "gap": 7,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "cJ7Wy",
+                      "name": "I",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "users",
+                      "library": "lucide",
+                      "fill": "$cyan"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Oyaqv",
+                      "name": "T",
+                      "fill": "$text",
+                      "content": "Community Challenges",
+                      "fontFamily": "$font",
+                      "fontSize": 17,
+                      "fontWeight": "800"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "t4eDF1",
+                  "name": "FiltersPill",
+                  "fill": "$surface",
+                  "cornerRadius": 8,
+                  "gap": 5,
+                  "padding": [
+                    6,
+                    11
+                  ],
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "stFy1",
+                      "name": "I",
+                      "width": 13,
+                      "height": 13,
+                      "icon": "sliders-horizontal",
+                      "library": "lucide",
+                      "fill": "$text-dim"
+                    },
+                    {
+                      "type": "text",
+                      "id": "wGEQR",
+                      "name": "L",
+                      "fill": "$text",
+                      "content": "Filters",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "v3Ir9i",
+              "name": "CommGrid",
+              "width": "fill_container",
+              "layout": "vertical",
+              "gap": 12,
+              "children": [
+                {
+                  "id": "RNZct",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "C-Retro Futurism",
+                  "width": "fill_container",
+                  "height": 300,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$green"
+                    },
+                    "rMCVk": {
+                      "icon": "sparkles",
+                      "enabled": true
+                    },
+                    "pshsH": {
+                      "content": "Live",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": true
+                    },
+                    "mK36V": {
+                      "content": "2 Days"
+                    },
+                    "xkIH5": {
+                      "content": "aiartist"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Retro Futurism"
+                    },
+                    "jDDYz": {
+                      "content": "Synthwave City Skylines"
+                    },
+                    "x2uGBl": {
+                      "content": "7,500 BUZZ"
+                    },
+                    "T2m9HC": {
+                      "content": "14"
+                    },
+                    "BGtHH": {
+                      "content": "88"
+                    }
+                  }
+                },
+                {
+                  "id": "KVOdR",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "C-Underwater Worlds",
+                  "width": "fill_container",
+                  "height": 300,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$green"
+                    },
+                    "rMCVk": {
+                      "icon": "sparkles",
+                      "enabled": true
+                    },
+                    "pshsH": {
+                      "content": "Live",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": true
+                    },
+                    "mK36V": {
+                      "content": "6 Hours"
+                    },
+                    "xkIH5": {
+                      "content": "deepdive"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Underwater Worlds"
+                    },
+                    "jDDYz": {
+                      "content": "Deep Sea Dreamscapes"
+                    },
+                    "x2uGBl": {
+                      "content": "6,000 BUZZ"
+                    },
+                    "T2m9HC": {
+                      "content": "9"
+                    },
+                    "BGtHH": {
+                      "content": "210"
+                    }
+                  }
+                },
+                {
+                  "id": "zhcnz",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "C-Cosmic Horror",
+                  "width": "fill_container",
+                  "height": 300,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$blue-solid"
+                    },
+                    "rMCVk": {
+                      "enabled": false
+                    },
+                    "pshsH": {
+                      "content": "Upcoming",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": false
+                    },
+                    "mK36V": {
+                      "content": ""
+                    },
+                    "xkIH5": {
+                      "content": "lovecraftfan"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Cosmic Horror"
+                    },
+                    "jDDYz": {
+                      "content": "Eldritch Encounters"
+                    },
+                    "x2uGBl": {
+                      "content": "10,000 BUZZ"
+                    },
+                    "pUe1s": {
+                      "enabled": false
+                    },
+                    "BGtHH": {
+                      "content": "0"
+                    }
+                  }
+                },
+                {
+                  "id": "In8GN",
+                  "type": "ref",
+                  "ref": "E0RTe",
+                  "name": "C-Autumn Vibes",
+                  "width": "fill_container",
+                  "height": 300,
+                  "descendants": {
+                    "B0SXHI": {
+                      "fill": "$green"
+                    },
+                    "rMCVk": {
+                      "icon": "sparkles",
+                      "enabled": true
+                    },
+                    "pshsH": {
+                      "content": "Live",
+                      "fill": "#ffffff"
+                    },
+                    "tSz93": {
+                      "enabled": true
+                    },
+                    "mK36V": {
+                      "content": "3 Days"
+                    },
+                    "xkIH5": {
+                      "content": "fallleaves"
+                    },
+                    "c5jy1Z": {
+                      "content": "Theme: Autumn Vibes"
+                    },
+                    "jDDYz": {
+                      "content": "Golden Hour Forests"
+                    },
+                    "x2uGBl": {
+                      "content": "4,500 BUZZ"
+                    },
+                    "T2m9HC": {
+                      "content": "6"
+                    },
+                    "BGtHH": {
+                      "content": "152"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {
@@ -6741,6 +9066,14 @@
     "font": {
       "type": "string",
       "value": "Inter"
+    },
+    "band-alt": {
+      "type": "color",
+      "value": "#202127"
+    },
+    "grape-tint": {
+      "type": "color",
+      "value": "#1e1a24"
     }
   },
   "fileToken": "b4c65bad-9d62-4ea3-9474-e9b4c9396c06"
