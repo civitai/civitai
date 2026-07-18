@@ -56,7 +56,10 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 
 // Keep the heavy service/search-index graph out of the test module graph.
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
-vi.mock('~/server/redis/caches', () => ({}));
+vi.mock('~/server/redis/caches', () => ({
+  // Privileged (moderator) reads below never touch this cache; stub it so the import resolves.
+  modelVersionPublicDonationGoalsCache: { fetch: vi.fn(), bust: vi.fn() },
+}));
 vi.mock('~/server/redis/client', async () => {
   const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
   // The `redis`/`sysRedis` client instances live on the app shim, NOT the
@@ -103,14 +106,17 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // Fix 2 — modelVersionDonationGoals → 404 when truly not found
 // ---------------------------------------------------------------------------
-describe('modelVersionDonationGoals', () => {
+// The privileged (owner/moderator) path is uncached and still runs the findFirstOrThrow
+// read→primary-fallback→404 resolution. (The anonymous / non-owner public path is served from
+// the shared cache — covered in model-version.donation-goals-cache.service.test.ts.)
+describe('modelVersionDonationGoals (privileged path)', () => {
   it('throws NOT_FOUND (404) when the version is missing on both read and write', async () => {
     mockDbRead.modelVersion.findFirstOrThrow.mockRejectedValueOnce(p2025());
     mockDbWrite.modelVersion.findFirstOrThrow.mockRejectedValueOnce(p2025());
 
     let caught: unknown;
     try {
-      await modelVersionDonationGoals({ id: 999 });
+      await modelVersionDonationGoals({ id: 999, isModerator: true });
     } catch (e) {
       caught = e;
     }
@@ -128,7 +134,7 @@ describe('modelVersionDonationGoals', () => {
     });
     mockDbRead.donationGoal.findMany.mockResolvedValueOnce([]);
 
-    const result = await modelVersionDonationGoals({ id: 1 });
+    const result = await modelVersionDonationGoals({ id: 1, isModerator: true });
     expect(result).toEqual([]);
     expect(mockDbWrite.modelVersion.findFirstOrThrow).toHaveBeenCalledTimes(1);
   });

@@ -9,6 +9,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS, redis, type RedisKeyTemplateCache } from '~/server/redis/client';
+import {
+  publicDonationGoalsLookupFn,
+  type ModelVersionPublicDonationGoalsCacheItem,
+} from '~/server/redis/donation-goals-cache';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -1553,6 +1557,42 @@ export const modelVotableTagsCache = createCachedObject<ModelVotableTagsCacheIte
     }, {} as Record<number, ModelVotableTagsCacheItem>);
   },
 });
+
+export type {
+  ModelVersionPublicDonationGoal,
+  ModelVersionPublicDonationGoalsCacheItem,
+} from '~/server/redis/donation-goals-cache';
+
+/**
+ * Read-through cache for the PUBLIC variant of a model version's donation goals, keyed by
+ * `modelVersionId`. The public variant is fully determined by the model version id (it does
+ * NOT vary by viewer), so a single shared entry is correct for every anonymous / non-owner /
+ * non-moderator caller. The privileged (owner/mod) variant — which additionally exposes
+ * inactive/draft goals — is computed fresh and NEVER routed through this cache (see
+ * `modelVersionDonationGoals`), so a draft-inclusive payload can never leak into the shared
+ * key and a cached public payload can never be served to a privileged viewer.
+ *
+ * TTL is short (CacheTTL.xs, 60s): a newly created goal or an updated donation total lags at
+ * most 60s, acceptable for a donation-progress display. Donation/goal-completion writes also
+ * bust the key eagerly (see `donation-goal.service.ts`), so the TTL only bounds the rare
+ * publish-time goal-create path.
+ *
+ * `cacheNotFound: false` — a missing version is never negative-cached, so the caller always
+ * 404s fresh (matching the uncached read→primary-fallback→NOT_FOUND behavior).
+ *
+ * The lookupFn — including the security-relevant `active: true` public filter — lives in the
+ * light `donation-goals-cache` module so it can be tested against the REAL function (no mirror
+ * divergence).
+ */
+export const modelVersionPublicDonationGoalsCache =
+  createCachedObject<ModelVersionPublicDonationGoalsCacheItem>({
+    key: REDIS_KEYS.CACHES.MODEL_VERSION_PUBLIC_DONATION_GOALS,
+    idKey: 'modelVersionId',
+    ttl: CacheTTL.xs,
+    staleWhileRevalidate: false,
+    cacheNotFound: false,
+    lookupFn: publicDonationGoalsLookupFn,
+  });
 
 type ModelTagCacheItem = {
   modelId: number;
