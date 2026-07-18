@@ -284,7 +284,7 @@
     "sanitize-html": "2.12.1",
     "sass": "^1.82.0",
     "semver": "^7.6.0",
-    "sharp": "^0.32.6",
+    "sharp": "^0.34.5",
     "slate": "^0.94.1",
     "slate-history": "^0.93.0",
     "slate-react": "^0.95.0",
