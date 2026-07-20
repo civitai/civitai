@@ -4,10 +4,11 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { exportUserBuzzTransactionsSchema } from '~/server/schema/buzz.schema';
 import {
   assertValidTransactionRange,
-  getTransactionRangeMonths,
+  countTransactionRows,
   getTransactionExportFilename,
   streamUserBuzzTransactionsCsv,
 } from '~/server/services/buzz.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -16,11 +17,11 @@ export const config = {
   api: { responseLimit: false },
 };
 
-// Cost-weighted rather than a flat request count: one month of history is one
-// pair of projection-backed queries, an all-time export is thirty-odd. The
-// budget is spent in month-units so a wide range costs proportionally more,
-// and a user pulling single months isn't punished for the shape of someone
-// else's request. 60 units ~= sixty one-month exports, or two all-time ones.
+// Cost-weighted by ROWS, not by months of range. Those diverge wildly and in
+// the wrong direction: one month of the densest account is 575K rows while an
+// all-time export of a normal one is 288K, so charging per month would bill the
+// cheaper request 34x more and leave the expensive one effectively unlimited.
+const ROWS_PER_BUDGET_UNIT = 25_000;
 const EXPORT_BUDGET_PER_HOUR = 60;
 const RATE_LIMIT_WINDOW_SECONDS = 3600;
 
@@ -53,6 +54,10 @@ async function exportBudgetSpent(userId: number) {
 async function chargeExportBudget(userId: number, cost: number) {
   const key = budgetKey(userId);
   try {
+    // Checked before charging: incrementing first would bill a refused request
+    // its full cost, so a user could be locked out having downloaded nothing.
+    if ((Number(await redis.get(key as never)) || 0) + cost > EXPORT_BUDGET_PER_HOUR) return false;
+
     const count = await redis.incrBy(key as never, cost);
     // The window must stay fixed: refreshing the TTL on every request would let
     // a user who retries through their 429s hold the counter open forever.
@@ -69,6 +74,12 @@ async function chargeExportBudget(userId: number, cost: number) {
 
 export default AuthedEndpoint(
   async function downloadUserTransactions(req: NextApiRequest, res: NextApiResponse, user) {
+    // Kill switch: flipping `buzz-transaction-export` off in Flipt closes the
+    // endpoint as well as the button, so a client holding a stale page or a
+    // bookmarked URL can't keep the load coming.
+    if (!getFeatureFlags({ user, req }).buzzTransactionExport)
+      return res.status(404).json({ error: 'Not found' });
+
     const parsed = querySchema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: 'Invalid parameters' });
 
@@ -82,22 +93,28 @@ export default AuthedEndpoint(
       return res.status(400).json({ error: (error as Error).message });
     }
 
-    const months = getTransactionRangeMonths(input.data);
-
-    const overBudget = `You've exported a lot of history in the past hour. Wait a bit, or pick a narrower date range — this one covers ${months} month${
-      months === 1 ? '' : 's'
-    }.`;
-
-    // A download triggered by <a download> has no way to show the user a server
-    // error, so the UI probes first. The probe spends nothing and only predicts.
-    if (req.query.probe) {
-      if ((await exportBudgetSpent(user.id)) + months > EXPORT_BUDGET_PER_HOUR)
-        return res.status(429).json({ error: overBudget });
-
-      return res.status(200).json({ ok: true, months });
+    // Counting up front is cheap and projection-backed, and it's the only honest
+    // basis for both the price and the probe's answer.
+    let rows: number;
+    try {
+      rows = await countTransactionRows({ ...input.data, accountId: user.id });
+    } catch {
+      return res.status(500).json({ error: 'Could not export transactions right now.' });
     }
 
-    if (!(await chargeExportBudget(user.id, months)))
+    const cost = Math.max(1, Math.ceil(rows / ROWS_PER_BUDGET_UNIT));
+    const overBudget = `You've exported a lot of history in the past hour. Wait a bit, or pick a narrower date range — this one covers ${rows.toLocaleString()} transactions.`;
+
+    // A browser-driven download can't show the user a server error, so the UI
+    // probes first. The probe spends nothing and only predicts.
+    if (req.query.probe) {
+      if ((await exportBudgetSpent(user.id)) + cost > EXPORT_BUDGET_PER_HOUR)
+        return res.status(429).json({ error: overBudget });
+
+      return res.status(200).json({ ok: true, rows });
+    }
+
+    if (!(await chargeExportBudget(user.id, cost)))
       return res.status(429).json({ error: overBudget });
 
     const filename = getTransactionExportFilename(input.data);

@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { createBuzzClient } from '@civitai/buzz';
+import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { v4 as uuid } from 'uuid';
 import { env } from '~/env/server';
@@ -378,6 +379,16 @@ function buildBranchQuery({
   `;
 }
 
+function buildBranchCountQuery(params: TransactionQueryParams & { direction: 'from' | 'to' }) {
+  const rows = buildBranchQuery({ ...params, ordered: false, limit: undefined });
+  return `SELECT count() AS count FROM (${rows})`;
+}
+
+async function queryTransactionCount(query: string) {
+  const [result] = await queryCounts(query);
+  return Number(result?.count ?? 0);
+}
+
 type TransactionQueryParams = {
   accountId: number;
   accountTypes: BuzzSpendType[];
@@ -392,17 +403,18 @@ type TransactionQueryParams = {
   ordered?: boolean;
 };
 
+// The cost budget is what actually bounds a wide request, but it fails OPEN on a
+// Redis error — correct for a read-only export, and it would otherwise leave
+// nothing at all bounding range width during an outage. A 200-year range walks
+// 2,400 empty slices. This is a sanity ceiling, not a product limit.
+const MAX_TRANSACTION_RANGE_YEARS = 10;
+
 export function assertValidTransactionRange({ start, end }: { start: Date; end: Date }) {
   if (end < start) throw throwBadRequestError('The end date must be after the start date');
-}
-
-// Each month of a requested range is one pair of projection-backed queries, so
-// the span is a direct proxy for what an export costs. An all-time export for
-// the busiest account on record (148K transactions back to 2023) measured 288K
-// rows read and 2.5 MiB across the whole walk — cheap enough that the range
-// itself needs no ceiling, only a budget that scales with it.
-export function getTransactionRangeMonths({ start, end }: { start: Date; end: Date }) {
-  return Math.max(1, Math.ceil(dayjs(end).diff(start, 'month', true)));
+  if (dayjs(end).diff(start, 'year', true) > MAX_TRANSACTION_RANGE_YEARS)
+    throw throwBadRequestError(
+      `Date ranges are limited to ${MAX_TRANSACTION_RANGE_YEARS} years. Narrow the range and try again.`
+    );
 }
 
 // Sorted the same way ClickHouse sorts them, so a cursor built from the last row
@@ -456,6 +468,23 @@ async function queryTransactions(query: string) {
   }
 }
 
+async function queryCounts(query: string) {
+  try {
+    return await clickhouse!.$query<{ count: number }>(query);
+  } catch (error) {
+    logToAxiom({
+      name: 'buzz-transactions-count',
+      type: 'error',
+      message: (error as Error).message,
+      stack: (error as Error).stack,
+    }).catch(() => undefined);
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Could not load transactions right now. Please try again shortly.',
+    });
+  }
+}
+
 async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId: number) {
   const counterpartyIds = new Set<number>();
   for (const row of rows) {
@@ -492,35 +521,82 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
   });
 }
 
+// The busiest real account-month is ~575K rows (account 4882089, 2025-02, of
+// 9.9M transactions all-time), so a calendar month is NOT a safe unit on its
+// own. A slice over this is bisected in time rather than refused — density
+// degrades gracefully instead of hitting a wall the user cannot act on, since
+// narrowing a date range can never make a month smaller.
+const MAX_SLICE_ROWS = 100_000;
+
+// Below this a slice can't usefully be split further, so it is fetched whatever
+// its size. A single second holding 100K transactions is not a real shape.
+const MIN_SLICE_SECONDS = 1;
+
+export async function countTransactionRows(params: TransactionQueryParams) {
+  const [to, from] = await Promise.all([
+    queryTransactionCount(buildBranchCountQuery({ ...params, direction: 'to' })),
+    queryTransactionCount(buildBranchCountQuery({ ...params, direction: 'from' })),
+  ]);
+
+  return to + from;
+}
+
+// Yields the rows for [start, end] newest-first, bisecting until each fetched
+// chunk is small enough to hold in memory. Counting first is cheap (~400ms even
+// on the densest month) and projection-backed, so it costs far less than
+// materializing a slice to discover it was too big.
+async function* emitSliceRows(
+  params: TransactionQueryParams,
+  start: Dayjs,
+  end: Dayjs
+): AsyncGenerator<ClickhouseBuzzTransaction[]> {
+  const count = await countTransactionRows({
+    ...params,
+    start: start.toDate(),
+    end: end.toDate(),
+  });
+  if (!count) return;
+
+  if (count > MAX_SLICE_ROWS && end.diff(start, 'second') > MIN_SLICE_SECONDS) {
+    const mid = start.add(end.diff(start) / 2, 'millisecond');
+    // Newer half first — the whole walk is descending.
+    yield* emitSliceRows(params, mid.add(1, 'second'), end);
+    yield* emitSliceRows(params, start, mid);
+    return;
+  }
+
+  const rows = await fetchTransactionBranches({
+    ...params,
+    start: start.toDate(),
+    end: end.toDate(),
+    ordered: false,
+    limit: undefined,
+  });
+
+  if (rows.length) yield rows;
+}
+
 // Walks the range one calendar month at a time, newest first. Each slice is
 // fetched unordered so ClickHouse can use the byFromAccount / byToAccount
 // projections, then sorted in-process. Slices are strictly ordered relative to
 // one another, so concatenating them yields a globally descending sequence.
 async function* walkTransactionSlices(params: TransactionQueryParams) {
   const rangeStart = dayjs(params.start);
+  // The UI's default `end` is the end of the current month, so without this every
+  // default export walks a wholly empty future slice and is charged for it.
+  const rangeEnd = dayjs.min(dayjs(params.end), dayjs());
   // Seeded from the cursor rather than the range end: the cursor only filters
   // rows, so without this every deep page re-walks each earlier month and pays
   // two empty queries per month above it.
-  const cursorDate = params.cursor ? dayjs(`${params.cursor.split('|')[0]}Z`) : null;
-  let sliceEnd =
-    cursorDate?.isValid() && cursorDate.isBefore(params.end) ? cursorDate : dayjs(params.end);
+  const cursorDate = params.cursor
+    ? dayjs(`${params.cursor.split('|')[0].replace(' ', 'T')}Z`)
+    : null;
+  let sliceEnd = cursorDate?.isValid() && cursorDate.isBefore(rangeEnd) ? cursorDate : rangeEnd;
 
   while (!sliceEnd.isBefore(rangeStart)) {
     const sliceStart = dayjs.max(sliceEnd.subtract(1, 'month'), rangeStart);
-    const rows = await fetchTransactionBranches({
-      ...params,
-      start: sliceStart.toDate(),
-      end: sliceEnd.toDate(),
-      ordered: false,
-      limit: undefined,
-    });
 
-    if (rows.length > MAX_SLICE_ROWS)
-      throw throwBadRequestError(
-        'Too many transactions in a single month to process. Narrow the date range and try again.'
-      );
-
-    if (rows.length) yield rows;
+    yield* emitSliceRows(params, sliceStart, sliceEnd);
     if (sliceStart.isSame(rangeStart)) return;
 
     // Exclusive upper bound on the next slice so a transaction landing exactly
@@ -528,12 +604,6 @@ async function* walkTransactionSlices(params: TransactionQueryParams) {
     sliceEnd = sliceStart.subtract(1, 'second');
   }
 }
-
-// The busiest account-month on record is ~105K rows. This guards against a
-// future high-volume account materializing something unbounded; it is not a
-// limit any real user should meet. Kept under V8's ~125K argument ceiling so a
-// slice can still be spread into a call before the guard would catch it.
-const MAX_SLICE_ROWS = 120_000;
 
 export async function getUserBuzzTransactionsMulti({
   accountId,

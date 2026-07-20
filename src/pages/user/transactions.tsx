@@ -23,6 +23,7 @@ import { useRouter } from 'next/router';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -53,11 +54,14 @@ const transactionTypes = [
   TransactionType[TransactionType.Redeemable],
 ];
 
-const defaultFilters = {
+// Built per-mount, not at module scope: dayjs() there is evaluated once per
+// process, so a long-lived pod would serve last month's defaults and cap the
+// "To" picker below the current month.
+const buildDefaultFilters = () => ({
   accountTypes: ['yellow'] as BuzzSpendType[],
   start: dayjs().subtract(1, 'month').startOf('month').startOf('day').toDate(),
   end: dayjs().endOf('month').endOf('day').toDate(),
-};
+});
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -70,6 +74,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function UserTransactions() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
 
   // Get account type from query parameter
@@ -77,8 +82,9 @@ export default function UserTransactions() {
   const initialAccountTypes =
     queryAccountType && buzzSpendTypes.includes(queryAccountType)
       ? [queryAccountType]
-      : defaultFilters.accountTypes;
+      : (['yellow'] as BuzzSpendType[]);
 
+  const [defaultFilters] = useState(buildDefaultFilters);
   const [filters, setFilters] = useState<GetUserBuzzTransactionsMultiSchema>({
     ...defaultFilters,
     accountTypes: initialAccountTypes,
@@ -128,7 +134,14 @@ export default function UserTransactions() {
         });
         return;
       }
-      window.location.assign(exportUrl);
+      // A hidden iframe rather than a navigation: if the real request is refused
+      // between the probe and here (a second tab, a double-click), the JSON error
+      // renders inside the iframe instead of replacing this page with it.
+      const frame = document.createElement('iframe');
+      frame.style.display = 'none';
+      frame.src = exportUrl;
+      document.body.appendChild(frame);
+      window.setTimeout(() => frame.remove(), 60_000);
     } catch {
       showErrorNotification({
         title: 'Export unavailable',
@@ -161,14 +174,16 @@ export default function UserTransactions() {
               ))}
             </Group>
           </Chip.Group>
-          <Button
-            variant="light"
-            loading={exporting}
-            onClick={handleExport}
-            leftSection={<IconDownload size={16} />}
-          >
-            Export CSV
-          </Button>
+          {features.buzzTransactionExport && (
+            <Button
+              variant="light"
+              loading={exporting}
+              onClick={handleExport}
+              leftSection={<IconDownload size={16} />}
+            >
+              Export CSV
+            </Button>
+          )}
         </Group>
         <Group gap="sm" grow align="flex-start">
           <DatePickerInput
