@@ -52,10 +52,13 @@ export type GetPriorAgentReportArgs = {
  *
  * "Most recent" is resolved on the VERSION axis (the greatest version still
  * older than the target), which is the authoritative ordering for the chain;
- * ties (same version re-reviewed) break on `startedAt` desc. Only a handful of
- * versions exist per app, so the candidate set is fetched and compared in-app
- * (the `version` column is a lexical index — not semver-ordered — so the
- * ordering can't be pushed into SQL correctly).
+ * ties (same version re-reviewed) break on `startedAt` desc. The DB does NOT
+ * drive this selection: the `(app_key, version)` index only narrows rows to one
+ * app; `status='complete'` is a WHERE filter and the semver ordering is applied
+ * IN-APP (the `version` column is lexically, not semver-, ordered, so the
+ * ordering can't be pushed into SQL correctly). Only a handful of versions exist
+ * per app, and the fetch is recency-bounded (see the `take` below), so the
+ * candidate set stays small.
  */
 export async function getPriorAgentReport(
   args: GetPriorAgentReportArgs
@@ -65,7 +68,9 @@ export async function getPriorAgentReport(
   const hasBlock = appBlockId != null && appBlockId !== '';
   const hasClient = oauthClientId != null && oauthClientId !== '';
   if (hasBlock === hasClient) {
-    // Enforce the "exactly one app key" invariant the column pair encodes.
+    // Fail fast on the "exactly one app key" invariant. The DB also enforces it
+    // via the app_key_xor CHECK on the table; this is the friendly caller-side
+    // guard so a bad arg errors here rather than at write time.
     throw new Error(
       'getPriorAgentReport requires exactly one of { appBlockId, oauthClientId }'
     );
@@ -78,7 +83,16 @@ export async function getPriorAgentReport(
     ? { appBlockId, status: 'complete' as const }
     : { oauthClientId, status: 'complete' as const };
 
-  const candidates = await dbRead.appReviewAgentReport.findMany({ where });
+  // Recency-bounded superset of the semver answer: take the N most recently
+  // started complete reports. The true semver-latest-older report is always
+  // within the most-recent slice for any real app (only a handful of versions
+  // exist), so bounding by recency keeps the in-app semver sort below correct
+  // while capping the fetch for a pathologically re-reviewed app.
+  const candidates = await dbRead.appReviewAgentReport.findMany({
+    where,
+    orderBy: { startedAt: 'desc' },
+    take: 100,
+  });
 
   const prior = candidates
     // Only reports strictly older (by semver) than the version under review.
