@@ -100,8 +100,8 @@ export default function UserTransactions() {
     setFilters((current) => ({ ...current, [name]: value }));
   };
 
-  // The export streams as a file download rather than a JSON response, so it's a
-  // plain link \u2014 the browser writes it to disk without buffering the CSV.
+  // The export streams as a file download rather than a JSON response, so the
+  // browser can write it to disk without buffering the CSV.
   const exportUrl = useMemo(() => {
     const params = new URLSearchParams({
       accountTypes: filters.accountTypes.join(','),

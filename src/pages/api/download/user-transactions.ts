@@ -78,6 +78,10 @@ export default AuthedEndpoint(
           res.setHeader('Content-Type', 'text/csv; charset=utf-8');
           res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
           res.setHeader('Cache-Control', 'private, no-store');
+          // Chunked with no Content-Length: proxies and Chrome's download manager
+          // both behave better when the headers are committed up front rather
+          // than riding along with the first body write.
+          res.flushHeaders();
           // Excel reads a UTF-8 CSV as the system codepage without a BOM.
           res.write('\ufeff');
         }
