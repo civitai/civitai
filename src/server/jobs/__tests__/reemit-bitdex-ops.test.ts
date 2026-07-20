@@ -49,7 +49,7 @@ afterEach(() => {
   delete process.env.REEMIT_SETTLE_SECS;
 });
 
-describe('buildReemitQuery — the fence + belt', () => {
+describe('buildReemitQuery', () => {
   const sql = () => buildReemitQuery({ lookbackSecs: 900, settleSecs: 10 }).sql;
 
   it('calls BOTH shared PG functions and concatenates them (shape parity)', () => {
@@ -59,7 +59,7 @@ describe('buildReemitQuery — the fence + belt', () => {
     expect(sql()).toMatch(/bitdex_post_fanout_ops\(p\)\s*\|\|\s*bitdex_image_sortat_ops\(i\)/);
   });
 
-  it('is a single INSERT ... SELECT emission (the [PR-M3] fence)', () => {
+  it('is a single INSERT ... SELECT emission', () => {
     const text = sql();
     // Exactly one INSERT — a per-row emit loop would reintroduce the ghost race.
     expect(text.match(/INSERT INTO "BitdexOps"/g)).toHaveLength(1);

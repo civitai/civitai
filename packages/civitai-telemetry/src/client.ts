@@ -227,13 +227,9 @@ export const imagesFeedWithoutIndexCounter = registerCounter({
   help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
 });
 
-// BitDex publish re-emitter job (reemit-bitdex-ops). The job re-asserts the
-// per-image publish + sortAt ops for recently-published posts so a dropped/
-// missed BitDex write self-heals within one lookback window. `runs` is the
-// liveness signal; `images_emitted / runs` tracks emission volume against the
-// sizing estimate and alarms on a rate spike or stuck cursor; the duration
-// histogram guards against the single INSERT...SELECT becoming slow/lock-heavy.
-// See docs/design/publish-reemitter.md §6.3 (in the bitdex-v2 repo).
+// Metrics for the BitDex publish re-emitter job (reemit-bitdex-ops): runs is the
+// liveness signal, images_emitted/runs tracks emission volume, and the duration
+// histogram guards the emit statement against getting slow.
 export const reemitAttemptsCounter = registerCounter({
   name: 'reemit_attempts_total',
   help: 'BitDex publish re-emitter runs that passed the enabled gate and attempted the emit (incremented before the emit — counts erroring runs too)',

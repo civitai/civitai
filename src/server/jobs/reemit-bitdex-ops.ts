@@ -12,31 +12,15 @@ import {
 } from '~/server/prom/client';
 import { createJob } from './job';
 
-// BitDex publish re-emitter — the safety net under engine-driven activation.
-//
-// Every <cadence> it re-asserts, for every image whose parent Post was published
-// in the trailing <lookback> window, the per-image publish values AND the ingested
-// sortAt, by calling the SAME two shared PG functions the W1-1 sync triggers call
-// (bitdex_post_fanout_ops + bitdex_image_sortat_ops). When BitDex already holds the
-// right values the ops are no-ops (the >=99% success case); when a write was missed
-// (dropped op / activation miss / reschedule straggler / silent sortAt recompute
-// failure) the re-emit heals it from PG's authoritative values within one window.
-//
-// Correctness rests on TWO structural properties — do not weaken either:
-//   1. SINGLE-STATEMENT emission (§3.1, the [PR-M3] fence). The INSERT and its
-//      selection share one MVCC snapshot and the BitdexOps BIGSERIAL id is
-//      allocated inside that statement, which is what keeps a concurrent unpublish
-//      from being re-ordered into a ghost re-publish. Splitting this into a
-//      per-row emit loop takes a fresh snapshot per row and REINTRODUCES the ghost.
-//   2. Shape parity via the SHARED functions. The re-emit's op shape cannot drift
-//      from the triggers' because it calls the identical functions; that is what
-//      preserves the "no-op = success" signal. Never re-spell the op JSON here.
-//
-// See docs/design/publish-reemitter.md (bitdex-v2 repo) for the full argument.
+// BitDex publish re-emitter: a periodic job that re-asserts the per-image publish
+// values and ingested sortAt for every image whose parent Post was published in the
+// trailing lookback window, by calling the same two shared PG functions the sync
+// triggers use. When BitDex already holds the right values the ops are no-ops; when
+// a write was missed, the re-emit heals it from PG within one window.
 
-const DEFAULT_LOOKBACK_SECS = 15 * 60; // §4: dominates poller/WAL lag by >10x.
-const DEFAULT_SETTLE_SECS = 10; // §3.3: unpublish-race belt; must be << lookback.
-const CADENCE_CRON = '*/5 * * * *'; // §6.1: cadence < lookback → ~3 heal attempts.
+const DEFAULT_LOOKBACK_SECS = 15 * 60;
+const DEFAULT_SETTLE_SECS = 10; // must stay << lookback
+const CADENCE_CRON = '*/5 * * * *';
 
 function parsePositiveSecs(raw: string | undefined, fallback: number): number {
   const n = parseInt(raw ?? '', 10);
@@ -45,8 +29,7 @@ function parsePositiveSecs(raw: string | undefined, fallback: number): number {
 
 export type ReemitConfig = { lookbackSecs: number; settleSecs: number };
 
-// Config knobs (§8 item 6). Env-overridable so the window can be retuned without a
-// code change; the enable/disable switch is the Flipt flag (no redeploy needed).
+// Env-overridable so the window can be retuned without a redeploy.
 export function getReemitConfig(): ReemitConfig {
   return {
     lookbackSecs: parsePositiveSecs(process.env.REEMIT_LOOKBACK_SECS, DEFAULT_LOOKBACK_SECS),
@@ -56,17 +39,14 @@ export function getReemitConfig(): ReemitConfig {
 
 export type ReemitResult = { postsScanned: number; imagesEmitted: number };
 
-// The emit is one data-modifying-CTE statement (fence property #1): `scanned`,
-// the INSERT, and the count read all execute under a single snapshot. The counts
-// are read via RETURNING/aggregate in the SAME statement so posts_scanned is
-// honest (no second snapshot) — it is still one statement, so the fence holds.
+// This must stay a single data-modifying-CTE statement: the scan, the INSERT, and
+// the count all run under one snapshot, and the BitdexOps id is allocated inside the
+// INSERT. Splitting it into a per-row emit loop takes a fresh snapshot per row and
+// lets a concurrent unpublish be re-ordered into a ghost re-publish.
 //
-//   - publishedAt <= now()  → excludes still-scheduled (future) posts; a scheduled
-//     post enters the window only once its clock passes, which is exactly when a
-//     missed activation needs healing.
-//   - updatedAt < now() - settle → the settle belt: a post being (un)published
-//     right now has a fresh updatedAt and is skipped until it settles, so the
-//     re-emit and a live publish/unpublish op never coexist in a processable window.
+// The updatedAt < now() - settle clause skips a post that is being (un)published
+// right now (fresh updatedAt) until it settles, so a re-emit never coexists with a
+// live publish/unpublish op.
 export function buildReemitQuery({ lookbackSecs, settleSecs }: ReemitConfig): Prisma.Sql {
   return Prisma.sql`
     WITH scanned AS (
@@ -91,10 +71,9 @@ export function buildReemitQuery({ lookbackSecs, settleSecs }: ReemitConfig): Pr
   `;
 }
 
-// Run the emit. Any PG error — notably a MISSING bitdex_post_fanout_ops /
-// bitdex_image_sortat_ops (the functions are created by the sync-trigger deploy,
-// not here) — propagates out of $queryRaw and is NOT swallowed, so createJob's
-// wrapper logs a `job-error` to Axiom and marks the run failed. Loud, never silent.
+// bitdex_post_fanout_ops / bitdex_image_sortat_ops are created by the sync-trigger
+// deploy, not this repo. A missing function propagates out of $queryRaw rather than
+// being swallowed, so the run fails loudly instead of silently healing nothing.
 export async function runReemit(config: ReemitConfig): Promise<ReemitResult> {
   const rows = await dbWrite.$queryRaw<ReemitResult[]>(buildReemitQuery(config));
   const row = rows[0];
@@ -108,15 +87,12 @@ export const reemitBitdexOps = createJob(
   'reemit-bitdex-ops',
   CADENCE_CRON,
   async () => {
-    // DEFAULT-OFF gate. Registered + scheduled but no-ops every run until the flag
-    // is flipped ON for the W4 shadow window. An unknown/undefined flag → false.
+    // Default-off: registered and scheduled but no-ops until the flag is flipped on.
     const enabled = await isFlipt(FLIPT_FEATURE_FLAGS.BITDEX_PUBLISH_REEMITTER);
     if (!enabled) return;
 
-    // Count the ATTEMPT before the emit — so a run that fails (e.g. a missing
-    // shared PG function) still moves a counter. runs_total stays success-only, so
-    // attempts - runs = the error count and the W4 "counter increments" check can't
-    // be ambiguous between flag-off / erroring / not-scheduled.
+    // Count the attempt before the emit so a failing run still moves a counter;
+    // runs_total stays success-only (attempts - runs = the error count).
     reemitAttemptsCounter?.inc();
 
     const config = getReemitConfig();
@@ -127,7 +103,7 @@ export const reemitBitdexOps = createJob(
       ({ postsScanned, imagesEmitted } = await runReemit(config));
     } catch (e) {
       reemitErrorsCounter?.inc();
-      throw e; // createJob's wrapper logs job-error to Axiom + marks the run failed.
+      throw e; // createJob logs job-error to Axiom and marks the run failed
     }
     const durationSec = (Date.now() - start) / 1000;
 
