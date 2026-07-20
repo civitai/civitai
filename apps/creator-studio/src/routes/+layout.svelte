@@ -151,7 +151,7 @@
             id="cs-sim-membership"
             value={data.testMembership ?? ''}
             onchange={(e) => setTestMembership(e.currentTarget.value)}
-            class="h-auto py-1 text-xs"
+            class="h-auto py-1 text-xs [&>option]:bg-dark-7 [&>option]:text-white"
           >
             {#each membershipOptions as opt (opt.value)}
               <NativeSelectOption value={opt.value}>{opt.label}</NativeSelectOption>

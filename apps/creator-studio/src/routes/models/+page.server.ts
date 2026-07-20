@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import { getCreatorModels, MODELS_PER_PAGE } from '$lib/server/models';
+import {
+  getCreatorModels,
+  MODELS_PER_PAGE,
+  PAGE_SIZE_OPTIONS,
+  PAGE_SIZE_COOKIE,
+} from '$lib/server/models';
 import {
   resolveMembership,
   canSetLicensingFee,
@@ -33,21 +38,40 @@ const modelsQuerySchema = z.object({
   q: z.string().optional(),
   fee: z.enum(['set', 'off']).optional().catch(undefined),
   bm: z.string().optional(),
+  mt: z.string().optional(),
   status: z.enum(['all', 'published', 'draft']).optional().catch(undefined),
   access: z.enum(['1']).optional().catch(undefined),
   sort: z.enum(['recent', 'name']).catch('recent'),
   page: z.coerce.number().int().min(1).catch(1),
+  // Page-size selector value (868ke493p); persisted to a cookie so it applies on later loads.
+  ps: z.coerce.number().int().optional().catch(undefined),
 });
+
+// A year — the page-size preference should stick.
+const PAGE_SIZE_MAX_AGE = 60 * 60 * 24 * 365;
+function resolvePageSize(psParam: number | undefined, cookieVal: string | undefined): number {
+  const opts = PAGE_SIZE_OPTIONS as readonly number[];
+  if (psParam && opts.includes(psParam)) return psParam;
+  const c = Number(cookieVal);
+  return opts.includes(c) ? c : MODELS_PER_PAGE;
+}
 
 const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 
-export const load: PageServerLoad = async ({ locals, parent, url }) => {
+export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
   const parsed = modelsQuerySchema.parse(Object.fromEntries(url.searchParams));
   const q = parsed.q?.trim() || undefined;
   const baseModel = parsed.bm?.trim() || undefined;
+  const type = parsed.mt?.trim() || undefined;
   const access = parsed.access === '1';
   const bulkMode = url.searchParams.get('mode') === 'bulk';
+
+  // Page size: an explicit ?ps= updates the shared cookie; otherwise fall back to the cookie, then the default.
+  const perPage = resolvePageSize(parsed.ps, cookies.get(PAGE_SIZE_COOKIE));
+  if (parsed.ps && (PAGE_SIZE_OPTIONS as readonly number[]).includes(parsed.ps)) {
+    cookies.set(PAGE_SIZE_COOKIE, String(perPage), { path: '/', maxAge: PAGE_SIZE_MAX_AGE });
+  }
 
   const [result, modelsScore] = await Promise.all([
     getCreatorModels({
@@ -55,23 +79,27 @@ export const load: PageServerLoad = async ({ locals, parent, url }) => {
       q,
       fee: parsed.fee,
       baseModel,
+      type,
       status: parsed.status,
       access,
       sort: parsed.sort,
       page: parsed.page,
+      perPage,
       withMatchingVersionIds: bulkMode,
     }),
     getModelsScore(locals.user.id),
   ]);
   return {
     ...result,
-    perPage: MODELS_PER_PAGE,
+    perPage,
+    pageSizeOptions: PAGE_SIZE_OPTIONS,
     canSetFee: canSetLicensingFee(membership),
     maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
     query: {
       q: q ?? '',
       fee: parsed.fee ?? '',
       bm: baseModel ?? '',
+      mt: type ?? '',
       status: parsed.status ?? '',
       access,
       sort: parsed.sort,

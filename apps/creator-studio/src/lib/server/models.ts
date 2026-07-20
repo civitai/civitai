@@ -1,4 +1,5 @@
 import { dbRead } from '$lib/server/db';
+import type { ModelType } from '@civitai/db-schema';
 import type { EarlyAccessConfig } from '$lib/monetization/early-access';
 
 // The `earlyAccessConfig` column is `{}` (or JSON null) for versions that never configured early access.
@@ -39,10 +40,14 @@ export type ModelsQuery = {
   q?: string;
   fee?: FeeFilter;
   baseModel?: string;
+  /** Model type (Checkpoint / LORA / …) — a Model-level filter (868ke491e). */
+  type?: string;
   status?: StatusFilter;
   access?: boolean; // has early / paid access on a version
   sort?: ModelsSort;
   page?: number;
+  /** Rows per page (defaults to MODELS_PER_PAGE); the page's cookie-backed size selector sets it. */
+  perPage?: number;
   /** Also compute the full matching version-id set for bulk "select all" (only needed in bulk mode). */
   withMatchingVersionIds?: boolean;
 };
@@ -53,18 +58,22 @@ export type CreatorModelsResult = {
   page: number;
   pageCount: number;
   baseModels: string[];
+  modelTypes: string[];
   matchingVersionIds: number[];
 };
 
 export const MODELS_PER_PAGE = 20;
+// Cookie-backed page-size options shared across paged Studio surfaces (868ke493p).
+export const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+export const PAGE_SIZE_COOKIE = 'cs-page-size';
 
 // The creator's models with versions nested, filterable by search / fee / base model / status / access, with
 // sort + pagination. Version-level filters (fee/baseModel/access) both narrow the model list (models with ≥1
 // matching version) AND restrict the versions shown, so "select all" selects exactly what's on screen.
 export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModelsResult> {
-  const { userId, q, fee, baseModel, status, access, sort = 'recent' } = query;
+  const { userId, q, fee, baseModel, type, status, access, sort = 'recent' } = query;
   const page = Math.max(1, query.page ?? 1);
-  const perPage = MODELS_PER_PAGE;
+  const perPage = query.perPage ?? MODELS_PER_PAGE;
 
   // Model-list filter (shared by count + page query; kysely builders are immutable, so branch off one).
   let filtered = dbRead
@@ -72,6 +81,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     .where('userId', '=', userId)
     .where('deletedAt', 'is', null);
   if (q) filtered = filtered.where('name', 'ilike', `%${q}%`);
+  if (type) filtered = filtered.where('type', '=', type as ModelType);
   if (status === 'published') filtered = filtered.where('status', '=', 'Published');
   else if (status === 'draft') filtered = filtered.where('status', '=', 'Draft');
   else if (status !== 'all') filtered = filtered.where('status', '!=', 'Draft'); // default: hide drafts
@@ -90,7 +100,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       )
     );
 
-  const [totalRow, models, baseModelRows] = await Promise.all([
+  const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
     filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
     filtered
       .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel'])
@@ -108,13 +118,23 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       .distinct()
       .orderBy('mv.baseModel', 'asc')
       .execute(),
+    // Distinct model types the creator has — the model-type filter options (868ke491e).
+    dbRead
+      .selectFrom('Model')
+      .where('userId', '=', userId)
+      .where('deletedAt', 'is', null)
+      .select('type')
+      .distinct()
+      .orderBy('type', 'asc')
+      .execute(),
   ]);
   const total = Number(totalRow?.count ?? 0);
   const baseModels = baseModelRows.map((r) => r.baseModel).filter(Boolean);
+  const modelTypes = modelTypeRows.map((r) => r.type).filter(Boolean);
 
   const pageCount = Math.max(1, Math.ceil(total / perPage));
   if (models.length === 0)
-    return { models: [], total, page, pageCount, baseModels, matchingVersionIds: [] };
+    return { models: [], total, page, pageCount, baseModels, modelTypes, matchingVersionIds: [] };
 
   const versions = await dbRead
     .selectFrom('ModelVersion')
@@ -150,6 +170,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       .where('m.userId', '=', userId)
       .where('m.deletedAt', 'is', null)
       .$if(!!q, (b) => b.where('m.name', 'ilike', `%${q}%`))
+      .$if(!!type, (b) => b.where('m.type', '=', type as ModelType))
       .$if(status === 'published', (b) => b.where('m.status', '=', 'Published'))
       .$if(status === 'draft', (b) => b.where('m.status', '=', 'Draft'))
       .$if(!status || (status !== 'all' && status !== 'published' && status !== 'draft'), (b) =>
@@ -199,6 +220,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     page,
     pageCount,
     baseModels,
+    modelTypes,
     matchingVersionIds,
   };
 }

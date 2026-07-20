@@ -104,18 +104,26 @@
   const activeFilterCount = $derived(
     (data.query.status ? 1 : 0) +
       (data.query.bm ? 1 : 0) +
+      (data.query.mt ? 1 : 0) +
       (data.query.access ? 1 : 0) +
       (data.query.fee ? 1 : 0)
   );
 
   // --- URL-driven table state (search / fee filter / sort / pagination) ---
   function navigate(params: Record<string, string | null>) {
-    const url = new URL(page.url);
-    for (const [k, v] of Object.entries(params)) {
-      if (v) url.searchParams.set(k, v);
-      else url.searchParams.delete(k);
+    goto(buildHref(params), { keepFocus: true, noScroll: true, replaceState: true });
+  }
+
+  // Build an href off the current URL, applying overrides — so links (bulk mode on/off) preserve the active
+  // filters/sort/page instead of resetting them (868ke491x bulk-edit-clears-filters bug).
+  function buildHref(overrides: Record<string, string | null>): string {
+    const params = new URLSearchParams(page.url.searchParams);
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v) params.set(k, v);
+      else params.delete(k);
     }
-    goto(url, { keepFocus: true, noScroll: true, replaceState: true });
+    const qs = params.toString();
+    return qs ? `${page.url.pathname}?${qs}` : page.url.pathname;
   }
 
   // Search fires on Enter, on blur, and via the button — all no-op if the term is unchanged.
@@ -287,6 +295,22 @@
         </RadioGroup>
       </fieldset>
       <div class="space-y-1.5">
+        <Label for="filter-mt" class="text-xs font-medium uppercase tracking-wide text-dark-3">
+          Model type
+        </Label>
+        <NativeSelect
+          id="filter-mt"
+          value={data.query.mt}
+          onchange={(e) => navigate({ mt: e.currentTarget.value || null, page: null })}
+          class="[&>option]:bg-dark-7 [&>option]:text-white"
+        >
+          <NativeSelectOption value="">All types</NativeSelectOption>
+          {#each data.modelTypes as mt (mt)}
+            <NativeSelectOption value={mt}>{mt}</NativeSelectOption>
+          {/each}
+        </NativeSelect>
+      </div>
+      <div class="space-y-1.5">
         <Label for="filter-bm" class="text-xs font-medium uppercase tracking-wide text-dark-3">
           Base model
         </Label>
@@ -294,6 +318,7 @@
           id="filter-bm"
           value={data.query.bm}
           onchange={(e) => navigate({ bm: e.currentTarget.value || null, page: null })}
+          class="[&>option]:bg-dark-7 [&>option]:text-white"
         >
           <NativeSelectOption value="">All base models</NativeSelectOption>
           {#each data.baseModels as bm (bm)}
@@ -329,7 +354,8 @@
           variant="link"
           size="sm"
           class="h-auto p-0 text-xs"
-          onclick={() => navigate({ status: null, bm: null, access: null, fee: null, page: null })}
+          onclick={() =>
+            navigate({ status: null, bm: null, mt: null, access: null, fee: null, page: null })}
         >
           Clear filters
         </Button>
@@ -340,18 +366,40 @@
     aria-label="Sort"
     value={data.query.sort}
     onchange={(e) => navigate({ sort: e.currentTarget.value, page: null })}
+    class="[&>option]:bg-dark-7 [&>option]:text-white"
   >
     <NativeSelectOption value="recent">Recently updated</NativeSelectOption>
     <NativeSelectOption value="name">Name</NativeSelectOption>
   </NativeSelect>
   {#if data.canSetFee && data.total > 0 && !bulkMode}
-    <Button href="/models?mode=bulk" data-sveltekit-replacestate variant="outline" size="sm" class="ml-auto">
+    <Button
+      href={buildHref({ mode: 'bulk' })}
+      data-sveltekit-replacestate
+      variant="outline"
+      size="sm"
+      class="ml-auto"
+    >
       Bulk edit fees
     </Button>
   {/if}
 </div>
 
-<p class="mb-4 text-xs text-dark-3">{data.total} model{data.total === 1 ? '' : 's'}</p>
+<div class="mb-4 flex items-center justify-between gap-2">
+  <p class="text-xs text-dark-3">{data.total} model{data.total === 1 ? '' : 's'}</p>
+  <label class="flex items-center gap-1.5 text-xs text-dark-3">
+    Per page
+    <NativeSelect
+      aria-label="Models per page"
+      value={String(data.perPage)}
+      onchange={(e) => navigate({ ps: e.currentTarget.value, page: null })}
+      class="h-7 py-0 text-xs [&>option]:bg-dark-7 [&>option]:text-white"
+    >
+      {#each data.pageSizeOptions as n (n)}
+        <NativeSelectOption value={String(n)}>{n}</NativeSelectOption>
+      {/each}
+    </NativeSelect>
+  </label>
+</div>
 
 {#if bulkMode}
   <div
@@ -385,7 +433,12 @@
         class="w-20"
       />
       <span class="text-sm text-dark-1">⚡ per</span>
-      <NativeSelect name="images" bind:value={bulkImages} aria-label="Images">
+      <NativeSelect
+        name="images"
+        bind:value={bulkImages}
+        aria-label="Images"
+        class="[&>option]:bg-dark-7 [&>option]:text-white"
+      >
         {#each FEE_IMAGE_OPTIONS as opt (opt)}
           <NativeSelectOption value={String(opt)}>{opt}</NativeSelectOption>
         {/each}
@@ -398,7 +451,9 @@
       >
         Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
       </Button>
-      <Button href="/models" data-sveltekit-replacestate variant="outline" size="sm">Cancel</Button>
+      <Button href={buildHref({ mode: null })} data-sveltekit-replacestate variant="outline" size="sm">
+        Cancel
+      </Button>
       <span class="text-xs text-dark-1">Empty buzz clears the fee.</span>
     </form>
   </div>
@@ -601,7 +656,12 @@
                 class="w-16 py-1"
               />
               <span class="text-xs text-dark-3">⚡ per</span>
-              <NativeSelect name="images" value={String(ratio.images)} aria-label="Images for {editing.name}">
+              <NativeSelect
+                name="images"
+                value={String(ratio.images)}
+                aria-label="Images for {editing.name}"
+                class="[&>option]:bg-dark-7 [&>option]:text-white"
+              >
                 {#each FEE_IMAGE_OPTIONS as opt (opt)}
                   <NativeSelectOption value={String(opt)}>{opt}</NativeSelectOption>
                 {/each}
