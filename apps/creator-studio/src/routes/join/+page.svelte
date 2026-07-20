@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
-  import { IconCheck, IconX, IconTrendingUp } from '@tabler/icons-svelte';
+  import { IconCheck, IconX, IconTrendingUp, IconBolt } from '@tabler/icons-svelte';
   import {
     CREATOR_PROGRAM_URL,
     CIVITAI_MEMBERSHIP_URL,
@@ -9,11 +9,15 @@
     CREATOR_PROGRAM_CAPABILITIES,
     CREATOR_SCORE_TIPS,
   } from '$lib/creator-program';
+  import { formatBuzz, currencyMeta } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
   const scoreLabel = MIN_CREATOR_SCORE.toLocaleString();
+  const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  // The server returns null unless the pool rate is real AND the creator holds bankable Buzz.
+  const estimate = $derived(data.estimate);
   // A paying member only needs to clear the creator-score bar; a non-member needs a membership first.
   const isMember = $derived(data.membership.isMember);
   const score = $derived(Math.round(data.creatorScore));
@@ -25,6 +29,33 @@
   <h1>Join the Creator Program</h1>
   <p>Unlock the Studio's monetization tools — set licensing fees and sell access to your models.</p>
 </header>
+
+{#if estimate}
+  <section class="mb-8 rounded-lg border border-green-9/50 bg-green-9/10 p-5">
+    <div class="flex items-start gap-3">
+      <IconBolt size={28} class="mt-0.5 shrink-0 text-green-4" />
+      <div class="min-w-0 flex-1">
+        <p class="text-xs uppercase tracking-wide text-green-4">Turn your Buzz into earnings</p>
+        <div class="mt-2 flex flex-col gap-1">
+          {#each estimate.rows as row (row.type)}
+            <p class="text-lg font-semibold text-white">
+              <span style="color:{currencyMeta(row.type).color}">{formatBuzz(row.buzz)}</span>
+              <span class="text-sm font-normal capitalize text-dark-2">{row.type}</span>
+              <span class="text-green-4">→ ~{usd.format(row.usd)}</span>
+            </p>
+          {/each}
+        </div>
+        {#if estimate.rows.length > 1}
+          <p class="mt-1.5 text-sm text-green-3">~{usd.format(estimate.totalUsd)} total this month</p>
+        {/if}
+        <p class="mt-2 text-xs text-green-3">
+          Estimated at this month's Creator Program pool rate (capped at $1 per 1,000 Buzz). Join to start
+          earning — actual payouts vary with the pool.
+        </p>
+      </div>
+    </div>
+  </section>
+{/if}
 
 <section class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
   {#each CREATOR_PROGRAM_PERKS as perk (perk.title)}
