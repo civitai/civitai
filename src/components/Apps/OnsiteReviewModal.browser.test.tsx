@@ -33,6 +33,9 @@ const ONSITE_PENDING = {
     scopes: ['user:read'],
     targets: [{ slotId: 'model.sidebar_top', priority: 10 }],
     iframe: { src: 'https://example.com/block', sandbox: 'allow-scripts' },
+    // An unexpected/novel top-level key — falls into the "Other manifest fields"
+    // disclosure so the mod can still inspect payloads the renderer doesn't model.
+    unexpectedTopLevelKey: { note: 'novel-payload' },
   },
   fileSummary: {
     files: [{ path: 'index.js', sha256: 'x', sizeBytes: 10 }],
@@ -183,6 +186,57 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
     // Both action entry points are present on a pending request.
     await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Reject…' })).toBeInTheDocument();
+  });
+
+  test('the iframe + other-manifest-fields sections render as collapsed-by-default disclosures the mod can expand', async () => {
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    // Both disclosure CONTROLS render — the moderator security signal (risky
+    // iframe sandbox flags; unexpected/novel manifest keys) is one click away,
+    // not lost. The fixture carries one iframe block + one unexpected top-level key.
+    const iframeCtrl = page.getByRole('button', { name: 'Iframe' });
+    const otherCtrl = page.getByRole('button', { name: 'Other manifest fields (1)' });
+    await expect.element(iframeCtrl).toBeInTheDocument();
+    await expect.element(otherCtrl).toBeInTheDocument();
+    // Default-CLOSED: both controls report aria-expanded="false". (Mantine keeps
+    // collapsed Accordion panel content MOUNTED but hidden, so the control's
+    // expanded-state is the deterministic default-closed signal, not DOM presence.)
+    await expect.element(iframeCtrl).toHaveAttribute('aria-expanded', 'false');
+    await expect.element(otherCtrl).toHaveAttribute('aria-expanded', 'false');
+    // Expanding the Iframe disclosure flips it open and reveals the sandbox flags
+    // (`allow-scripts` lives only inside the Iframe panel).
+    await iframeCtrl.click();
+    await expect.element(iframeCtrl).toHaveAttribute('aria-expanded', 'true');
+    await expect.element(page.getByText('allow-scripts')).toBeVisible();
+    // Expanding "Other manifest fields" reveals the raw JSON of the novel key.
+    await otherCtrl.click();
+    await expect.element(otherCtrl).toHaveAttribute('aria-expanded', 'true');
+    await expect.element(page.getByText(/novel-payload/)).toBeVisible();
+  });
+
+  test('a manifest with NO iframe config and no novel keys renders NO empty "Iframe"/"Other" disclosures', async () => {
+    // A block that only uses fully-handled inline fields — no iframe, no unexpected keys.
+    const nonIframe = {
+      ...ONSITE_PENDING,
+      id: 'onsite-req-noiframe',
+      slug: 'noiframe-block',
+      manifest: {
+        name: 'No Iframe Block',
+        blockId: 'blk_2',
+        version: '1.0.0',
+        scopes: ['user:read'],
+        targets: [{ slotId: 'model.sidebar_top', priority: 10 }],
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: nonIframe, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    // The inline structured render still shows (scopes/targets).
+    await expect.element(page.getByText('model.sidebar_top')).toBeInTheDocument();
+    // Neither disclosure control renders — no empty "Iframe" or "Other" accordion.
+    expect(page.getByRole('button', { name: 'Iframe' }).elements()).toHaveLength(0);
+    expect(page.getByText(/^Other manifest fields/).elements()).toHaveLength(0);
   });
 });
 
