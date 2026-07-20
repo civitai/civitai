@@ -128,3 +128,8 @@ export function newAppListingReportId(): string {
 export function newAppListingModerationEventId(): string {
   return `alme_${newUlid()}`;
 }
+
+// App Blocks — agentic mod code-review report (P0). Dark/additive.
+export function newAppReviewAgentReportId(): string {
+  return `arar_${newUlid()}`;
+}
