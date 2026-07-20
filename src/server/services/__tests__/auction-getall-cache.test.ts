@@ -23,10 +23,9 @@ const {
 }));
 
 vi.mock('~/server/db/client', () => ({
-  // `getAllAuctionsUncached` reads the PRIMARY DB (`dbWrite`) — that's the load this
-  // cache removes, so the win is asserted by counting calls to THIS mock.
-  dbWrite: { auction: { findMany: auctionFindMany } },
-  dbRead: {},
+  // The DB load this cache removes is asserted by counting calls to THIS mock.
+  dbRead: { auction: { findMany: auctionFindMany } },
+  dbWrite: {},
 }));
 
 // Cut the heavy sibling-service import graph (image.service pulls the event-engine-common
@@ -56,15 +55,12 @@ vi.mock('~/server/redis/client', async (importOriginal) => {
   };
 });
 
-import {
-  getAllAuctions,
-  getAllAuctionsUncached,
-} from '~/server/services/auction.service';
+import { getAllAuctions, getAllAuctionsUncached } from '~/server/services/auction.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 
 const KEY = REDIS_KEYS.CACHES.ACTIVE_AUCTIONS; // 'packed:caches:active-auctions'
 
-// A representative active-auction row set exactly as `dbWrite.auction.findMany` returns
+// A representative active-auction row set exactly as `dbRead.auction.findMany` returns
 // it (only the fields `getAllAuctionsUncached` / `prepareBids` read). `auctionBase` is an
 // opaque object passed straight through to the output — it must survive byte-identically
 // through the cache. Returned FRESH per call so the in-place `.sort()` in the origin can't

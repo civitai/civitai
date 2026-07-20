@@ -1,4 +1,13 @@
-import { ActionIcon, Center, Divider, Skeleton, Stack, Text, TextInput, Title } from '@mantine/core';
+import {
+  ActionIcon,
+  Center,
+  Divider,
+  Skeleton,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core';
 import { IconAlertCircle, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useCallback, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -107,7 +116,7 @@ export const AuctionMyBids = () => {
       <Title order={5}>Active Bids</Title>
       {isLoadingBidData ? (
         bidSkeletons
-      ) :isErrorBidData ? (
+      ) : isErrorBidData ? (
         <Center my="lg">
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
             <Text>There was an error fetching your bid data. Please try again.</Text>
@@ -137,7 +146,7 @@ export const AuctionMyBids = () => {
       <Title order={5}>Recurring Bids</Title>
       {isLoadingBidRecurringData ? (
         bidSkeletons
-      ) :isErrorBidRecurringData ? (
+      ) : isErrorBidRecurringData ? (
         <Center my="lg">
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
             <Text>There was an error fetching your bid data. Please try again.</Text>
@@ -166,7 +175,7 @@ export const AuctionMyBids = () => {
       <Title order={5}>Past Bids</Title>
       {isLoadingBidData ? (
         bidSkeletons
-      ) :isErrorBidData ? (
+      ) : isErrorBidData ? (
         <Center my="lg">
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
             <Text>There was an error fetching your bid data. Please try again.</Text>
