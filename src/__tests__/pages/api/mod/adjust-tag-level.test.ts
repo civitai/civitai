@@ -23,10 +23,21 @@ vi.mock('~/server/db/db-helpers', async (importOriginal) => {
   return { ...actual, batchProcessor: vi.fn().mockResolvedValue(undefined) };
 });
 
-vi.mock('~/server/redis/client', () => ({
-  redis: {},
-  REDIS_KEYS: { CACHES: {} },
-}));
+vi.mock('~/server/redis/client', () => {
+  // Recursive key proxy: any nested key path resolves to a string, so
+  // module-eval-time dereferences like `REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.CORRECT`
+  // (used to build top-level counters in the transitively-imported new-order utils)
+  // don't throw. Mirrors the passing sibling orchestration sysredis-soft test.
+  const make = (): any => new Proxy(() => 'k', { get: () => make() });
+  return {
+    // The handler's bustGetTagsCache() → tag.service.bustCacheTag reads a tag's
+    // key-set via redis.sMembers then redis.del's each — provide benign no-op
+    // implementations so that (real, un-mocked) bust path completes.
+    redis: { sMembers: vi.fn().mockResolvedValue([]), del: vi.fn().mockResolvedValue(0) },
+    REDIS_KEYS: make(),
+    REDIS_SYS_KEYS: make(),
+  };
+});
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: Function) => handler,
@@ -39,6 +50,11 @@ vi.mock('~/env/server', () => ({
       if (prop === 'IS_BUILD') return false;
       if (prop === 'LOGGING') return [];
       if (prop.endsWith('URL') || prop.endsWith('_URL') || prop.endsWith('ENDPOINT')) return 'http://localhost:3000';
+      // Numeric-config env vars (e.g. MEILI_CALL_CONCURRENCY) are consumed at
+      // module-eval time by pLimit()/limiter setup in the transitively-imported
+      // service graph and MUST be positive numbers — a string 'mock-value' throws
+      // ("Expected concurrency to be a number from 1 and up").
+      if (prop.endsWith('CONCURRENCY') || prop.endsWith('LIMIT') || prop.endsWith('TIMEOUT')) return 4;
       return 'mock-value';
     },
   }),
