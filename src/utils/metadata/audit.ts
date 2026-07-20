@@ -467,13 +467,20 @@ export function __buildOldAgeRegexesCombinedForTest() {
 // because the trailing digit in `score_9` sits within 3 non-alphanumeric chars of `year`.
 const falsePositiveTagPattern = /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
 
+// Prompt attention-weight syntax embeds a decimal that isn't an age. Without stripping it,
+// `(@ningen mame:0.8), year` falsely matches the `{age} {years}` template because the `8`
+// from the `0.8` weight sits within 3 non-alphanumeric chars of `year`. Only the decimal
+// weight (a `:x.y` immediately preceding a closing `)`/`]`) is removed, so a real age inside
+// a weighted group — e.g. `(8 year old:1.2)` — and integer forms like `age:8` are preserved.
+const promptWeightPattern = /:\s*\d+\.\d+(?=\s*[)\]])/g;
+
 // --------------------------------------
 // Age Check Function (Two-Phase Approach)
 // --------------------------------------
 export function includesMinorAge(prompt: string | undefined) {
   if (!prompt) return { found: false, age: undefined };
 
-  const cleaned = prompt.replace(falsePositiveTagPattern, ' ');
+  const cleaned = prompt.replace(falsePositiveTagPattern, ' ').replace(promptWeightPattern, '');
 
   // Phase 1: Quick screening - skip if prompt clearly doesn't contain age references
   // This rejects 99%+ of prompts instantly with a tiny regex

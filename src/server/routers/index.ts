@@ -10,6 +10,9 @@ export const appRouter = router({
   appListings: lazy(() =>
     import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
   ),
+  blockImageUpload: lazy(() =>
+    import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter)
+  ),
   account: lazy(() => import('./account.router').then((m) => m.accountRouter)),
   announcement: lazy(() => import('./announcement.router').then((m) => m.announcementRouter)),
   answer: lazy(() => import('./answer.router').then((m) => m.answerRouter)),

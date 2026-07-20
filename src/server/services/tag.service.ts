@@ -11,7 +11,11 @@ import {
 import { CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { imageTagsCache } from '~/server/redis/caches';
+import {
+  imageTagsCache,
+  modelVotableTagsCache,
+  tagCache as basicTagCache,
+} from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
@@ -20,7 +24,6 @@ import type {
   GetVotableTagsSchema,
   GetVotableTagsSchema2,
 } from '~/server/schema/tag.schema';
-import { modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getReplacedTagIds, getSystemTags } from '~/server/services/system-cache';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -31,14 +34,37 @@ import {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
-import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
-export const getTagWithModelCount = ({ name }: { name: string }) => {
+// Read-through cache for the static, user-independent `getTags` listing hierarchy
+// — the expensive `TagsOnTags EXISTS` isCategory + nsfwLevel-rollup subqueries that
+// dominate this procedure's DB total-exec-time. Keyed by a hash of the full query
+// SQL (so every param variation is a distinct key). Busted on every writer that
+// changes the `Tag` taxonomy or the `TagsOnTags` hierarchy (see `bustGetTagsCache`).
+export const GET_TAGS_CACHE_TAG = 'getTags';
+const getTagsListingCache = queryCache(dbRead, 'getTags', 'v1');
+export const bustGetTagsCache = () => bustCacheTag(GET_TAGS_CACHE_TAG);
+
+type TagWithModelCount = { id: number; name: string; unfeatured: boolean; count: number };
+
+// Cache key for `getTagWithModelCount`. `Tag.name` is `citext` (case-insensitive), so
+// `WHERE "name" = $1` matches case-insensitively in the DB. We normalize the key to
+// lowercase so `"Anime"`/`"anime"` dedup to ONE entry (matching citext semantics) — but
+// we do NOT trim, because the DB WHERE is whitespace-SENSITIVE; trimming the key while
+// the query stays untrimmed would let `" anime"` collide with the real `"anime"` entry
+// and serve the wrong row. Mirrors `getTagPageSeoData`'s key normalization exactly.
+// (JS `toLowerCase` folds ASCII the same way the DB collation's citext `lower()` does;
+// exotic-Unicode case pairs could land in separate keys that each independently resolve
+// to the same tag — correct output, marginally weaker dedup.)
+const getTagWithModelCountCacheKey = (name: string) =>
+  `${REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${string}`;
+
+const queryTagWithModelCount = ({ name }: { name: string }) =>
   // No longer include count since we just have too many now...
-  return dbRead.$queryRaw<[{ id: number; name: string; unfeatured: boolean; count: number }]>`
+  dbRead.$queryRaw<[TagWithModelCount]>`
     SELECT "id",
            "name",
            "unfeatured",
@@ -48,6 +74,60 @@ export const getTagWithModelCount = ({ name }: { name: string }) => {
     GROUP BY "id", "name"
     LIMIT 1 OFFSET 0;
   `;
+
+// Read-through cache over the near-static tag-name → {id,name,unfeatured,count:0} lookup.
+// Output is byte-identical to the raw query (the cached `name` is the tag's ACTUAL
+// stored-case DB name, not the normalized key). Bucket A: DB total-exec-time / call-count
+// reduction only, no behaviour change — the DB runs ~4% CPU, so this is a pod-neutral
+// cost/margin win, NOT a capacity win.
+//
+// Fail-open like `fetchThroughCache`: on any Redis error we degrade to the origin query
+// (this is a hot path — ~2.5M calls/peak — so a Redis stall must not 500). No distributed
+// stampede lock: the origin is a single-row indexed citext lookup (~0.4ms warm) that at
+// worst runs once per name per TTL cluster-wide, so a brief cold-key stampede is trivially
+// cheap — not worth the lock's added Redis round-trips on the hot read.
+//
+// NEGATIVE RESULTS ARE NOT CACHED (decision (a)): an unknown name always re-hits the DB,
+// so a newly created/renamed tag becomes findable immediately (no create-then-view
+// staleness). This also shrinks the invalidation surface to writers that change an
+// EXISTING tag's cached shape — pure `tag.create` paths need no bust because a brand-new
+// name had no cached (positive) entry.
+export const getTagWithModelCount = async ({
+  name,
+}: {
+  name: string;
+}): Promise<TagWithModelCount[]> => {
+  const key = getTagWithModelCountCacheKey(name);
+
+  try {
+    const cached = await redis.packed.get<TagWithModelCount[]>(key);
+    if (cached) return cached;
+  } catch {
+    // Redis read degraded — fall through to the origin query (fail open).
+  }
+
+  const result = await queryTagWithModelCount({ name });
+
+  if (result.length > 0) {
+    try {
+      await redis.packed.set(key, result, { EX: CacheTTL.hour });
+    } catch {
+      // Best-effort cache write; a Redis stall here never fails the request.
+    }
+  }
+
+  return result;
+};
+
+// Bust a single tag-name key. Hard delete (not a staleness reset): because we never cache
+// negatives, deleting the key means the next read re-queries and (finding the tag gone)
+// leaves it uncached. Called by `deleteTags`.
+const bustTagWithModelCountCache = async (name: string) => {
+  try {
+    await redis.del(getTagWithModelCountCacheKey(name));
+  } catch {
+    // Best-effort bust; the TTL bounds any residual staleness.
+  }
 };
 
 export type TagPageSeoData = {
@@ -273,9 +353,9 @@ export const getTags = async ({
       t."nsfwLevel") "nsfwLevel"`
     : Prisma.sql``;
 
-  const tagsRaw = await dbRead.$queryRaw<
-    { id: number; name: string; isCategory?: boolean; nsfwLevel?: number }[]
-  >`
+  type TagsRawRow = { id: number; name: string; isCategory?: boolean; nsfwLevel?: number };
+
+  const tagsRawQuery = Prisma.sql`
     SELECT t."id",
            t."name"
            ${isCategory}
@@ -290,6 +370,26 @@ export const getTags = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
   `;
+
+  // Cache only the bounded-key-space listings — the ~28 calls/s category/trending
+  // hierarchy reads that dominate this procedure. Bypass the cache for the
+  // high-cardinality dimensions so the Redis key space can't explode:
+  //   - `query`:          free-text `name LIKE` search — effectively unbounded.
+  //   - `modelId`:        per-model `TagsOnModels EXISTS` filter (huge id space, and
+  //                       would pull `TagsOnModels` into the invalidation surface).
+  //   - `excludedTagIds`: caller-supplied id arrays (rare admin/form paths).
+  // The cacheable path is user-INDEPENDENT: every input (incl. `includeAdminTags`,
+  // which toggles the `adminOnly = false` clause) is baked into `tagsRawQuery`, so
+  // the query hash IS the full param key — no per-user data, no admin-tag leak to
+  // non-admins. It depends only on `Tag` + `TagsOnTags` + `TagMetric`.
+  const cacheableListing = !query && !modelId && !(excludedTagIds && excludedTagIds.length);
+
+  const tagsRaw = cacheableListing
+    ? await getTagsListingCache<TagsRawRow[]>(tagsRawQuery, {
+        ttl: CacheTTL.hour,
+        tag: GET_TAGS_CACHE_TAG,
+      })
+    : await dbRead.$queryRaw<TagsRawRow[]>(tagsRawQuery);
 
   const models: Record<number, number[]> = {};
   // if (withModels) {
@@ -323,6 +423,18 @@ export const getTags = async ({
 };
 
 // #region [tag voting]
+// The ImageTag view already drops unlisted tags (`AND NOT t_1.unlisted` in its Tag
+// lateral); ModelTag does not, so only the model path needs this. Mods keep them so
+// they can see what content is flagged as.
+async function stripUnlistedTags<T extends { id: number }>(
+  tags: T[],
+  isModerator: boolean
+): Promise<T[]> {
+  if (isModerator || !tags.length) return tags;
+  const cached = await basicTagCache.fetch(tags.map((tag) => tag.id));
+  return tags.filter((tag) => !cached[tag.id]?.unlisted);
+}
+
 export const getVotableTags = async ({
   userId,
   type,
@@ -335,12 +447,11 @@ export const getVotableTags = async ({
 }) => {
   let results: VotableTagModel[] = [];
   if (type === 'model') {
-    const tags = await dbRead.modelTag.findMany({
-      where: { modelId: id, score: { gt: 0 } },
-      select: modelTagCompositeSelect,
-      orderBy: { score: 'desc' },
-      // take,
-    });
+    // Static, user-independent read of the ModelTag composite view — cache-backed
+    // (mirrors the image path's imageTagsCache). The per-user vote is merged below,
+    // uncached, so nothing user-specific is cached here.
+    const cached = await modelVotableTagsCache.fetch([id]);
+    const tags = cached[id]?.tags ?? [];
     results.push(
       ...tags.map(({ tagId, tagName, tagType, ...tag }) => ({
         ...tag,
@@ -361,6 +472,7 @@ export const getVotableTags = async ({
         if (userVote) tag.vote = userVote.vote;
       }
     }
+    results = await stripUnlistedTags(results, isModerator);
   } else if (type === 'image') {
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
 
@@ -522,9 +634,11 @@ export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput)
 
   await clearCache(userId, type);
 
-  // Bust image tags cache if voting on images
+  // Bust the votable-tags cache for the affected entity
   if (type === 'image') {
     await imageTagsCache.bust(id);
+  } else if (type === 'model') {
+    await modelVotableTagsCache.bust(id);
   }
 };
 
@@ -581,9 +695,11 @@ export const addTagVotes = async ({
     if (count > 0) await clearCache(userId, type); // Clear cache if it is
   }
 
-  // Bust image tags cache if voting on images
+  // Bust the votable-tags cache for the affected entity
   if (type === 'image') {
     await imageTagsCache.bust(id);
+  } else if (type === 'model') {
+    await modelVotableTagsCache.bust(id);
   }
 };
 // #endregion
@@ -607,6 +723,10 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       WHERE m."id" = ANY(${entityIds}::int[])
       ON CONFLICT DO NOTHING
     `);
+    // The ModelTag view gives every TagsOnModels row a base score of 5 (independent
+    // of votes), so a freshly-applied tag is immediately score>0 and would appear in
+    // getVotableTags — bust so the votable-tags cache reflects it within the TTL.
+    await modelVotableTagsCache.bust(entityIds);
   } else if (entityType === 'image') {
     const result = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
       SELECT i."id" AS "imageId",  t."id" AS "tagId"
@@ -667,6 +787,10 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
         await redis.del(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${tag.name.replace(' category', '')}`);
       } catch {}
     }
+
+    // Adding a TagsOnTags edge changes category membership + the nsfwLevel rollup
+    // that the cached `getTags` listings compute — bust the listing cache.
+    await bustGetTagsCache();
   }
 };
 
@@ -715,9 +839,9 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
   const tagIdMatch = (col: string) =>
     isTagIds
       ? Prisma.sql`${Prisma.raw(`"${col}"`)} = ANY(${castedTags as number[]}::int[])`
-      : Prisma.sql`${Prisma.raw(
-          `"${col}"`
-        )} IN (SELECT id FROM "Tag" WHERE "name" = ANY(${castedTags as string[]}::text[]))`;
+      : Prisma.sql`${Prisma.raw(`"${col}"`)} IN (SELECT id FROM "Tag" WHERE "name" = ANY(${
+          castedTags as string[]
+        }::text[]))`;
 
   // TODO.fix "disabled" doesnt exist for TagsOnModels, is this being used?
   if (entityType === 'model') {
@@ -727,6 +851,10 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
       WHERE "modelId" = ANY(${entityIds}::int[])
         AND ${tagIdMatch('tagId')}
     `);
+    // Precautionary: the ModelTag view does NOT currently filter on `disabled`, so this
+    // has no effect on getVotableTags output today — but bust to stay correct if the
+    // view ever starts honoring `disabled`, and to keep model mutations uniformly busting.
+    await modelVotableTagsCache.bust(entityIds);
   } else if (entityType === 'image') {
     const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>(Prisma.sql`
       SELECT "imageId", "tagId"
@@ -748,6 +876,10 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
 
     // Bust cache for tag rules (since we can't easily check the type)
     await redis.del(REDIS_KEYS.SYSTEM.TAG_RULES);
+
+    // Removing a TagsOnTags edge changes category membership + the nsfwLevel rollup
+    // that the cached `getTags` listings compute — bust the listing cache.
+    await bustGetTagsCache();
   }
 };
 
@@ -768,6 +900,25 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
     )
   `);
 
+  // Get affected models before deletion — the ModelTag view JOINs Tag, so deleting the
+  // Tag row (cascading its TagsOnModels/TagsOnModelsVote rows) removes it from a model's
+  // votable list. Read the view directly (mirrors the ImageTag query above).
+  const affectedModels = await dbWrite.$queryRaw<{ modelId: number }[]>(Prisma.sql`
+    SELECT DISTINCT "modelId"
+    FROM "ModelTag"
+    WHERE "tagId" IN (
+      SELECT id FROM "Tag" WHERE ${tagMatch}
+    )
+  `);
+
+  // Resolve the affected tag NAMES before deletion so we can bust the name-keyed
+  // getTagWithModelCount cache. deleteTags accepts ids OR names; reading the stored names
+  // here covers the id-input case and gives the exact stored case (the key is lowercased,
+  // so either form maps to the same key — but this is the correct, unambiguous source).
+  const affectedTags = await dbWrite.$queryRaw<{ name: string }[]>(Prisma.sql`
+    SELECT "name" FROM "Tag" WHERE ${tagMatch}
+  `);
+
   await dbWrite.$executeRaw(Prisma.sql`
     DELETE
     FROM "Tag"
@@ -779,6 +930,23 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
     const imageIds = affectedImages.map((x) => x.imageId);
     await imageTagsCache.bust(imageIds);
   }
+
+  // Bust cache for affected models
+  if (affectedModels.length > 0) {
+    const modelIds = affectedModels.map((x) => x.modelId);
+    await modelVotableTagsCache.bust(modelIds);
+  }
+
+  // Bust the per-name getTagWithModelCount cache for every deleted tag (its cached row now
+  // points at a gone tag). This is the ONLY app writer that mutates that cache's shape —
+  // no app path renames a tag or flips `unfeatured` (see the PR body's invalidation surface).
+  if (affectedTags.length > 0) {
+    await Promise.all(affectedTags.map((t) => bustTagWithModelCountCache(t.name)));
+  }
+
+  // Deleting a Tag removes it from the cached `getTags` listings (and cascades its
+  // TagsOnTags edges, changing category membership / nsfwLevel rollup) — bust.
+  await bustGetTagsCache();
 };
 
 // unused

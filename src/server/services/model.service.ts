@@ -42,6 +42,7 @@ import { withSpan } from '~/server/utils/otel-helpers';
 import {
   dataForModelsCache,
   modelTagCache,
+  modelVotableTagsCache,
   userBasicCache,
   userModelCountCache,
 } from '~/server/redis/caches';
@@ -123,7 +124,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
-import { capGetAllModelImages } from '~/server/utils/model-getall-images';
+import {
+  buildGetAllModelImages,
+  GET_ALL_IMAGES_PER_MODEL,
+} from '~/server/utils/model-getall-images';
 import {
   DEFAULT_PAGE_SIZE,
   getCursorClauses,
@@ -150,6 +154,7 @@ import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
+import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetAssociatedResourcesInput,
@@ -1305,9 +1310,19 @@ export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
 export const getModelsWithImagesAndModelVersions = async ({
   input,
   user,
+  // Per-model image cap for the RESPONSE (the shared image cache is untouched).
+  // The browse-feed controller selects the SLIM cap when the DARK
+  // `getAllModelImagesSlim` flag is on; other callers (home blocks, collections)
+  // default to `GET_ALL_IMAGES_PER_MODEL`.
+  imagesPerModel = GET_ALL_IMAGES_PER_MODEL,
+  // When true (flag-ON browse feed only) pick the nsfw-biased coverage slice instead
+  // of the naive first-`imagesPerModel`, so reducing the count adds ~zero feed drops.
+  biasImageSlice = false,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  imagesPerModel?: number;
+  biasImageSlice?: boolean;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1410,13 +1425,14 @@ export const getModelsWithImagesAndModelVersions = async ({
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
           //   : versionImages,
-          // Cap the images in the getAll (browse feed) response — the browse
-          // ModelCard only renders images[0], but the shared image cache returns
-          // up to 20, bloating the tRPC payload (serialized synchronously on the
-          // event loop). `capGetAllModelImages` returns a new array, so the shared
-          // `imagesForModelVersionsCache` entries (still used at full 20 by
-          // model-detail pages, auctions, etc.) are untouched.
-          images: capGetAllModelImages(filteredImages),
+          // Trim the images in the getAll (browse feed) response — the #1
+          // serialize-freeze source. `buildGetAllModelImages` caps the array to
+          // `imagesPerModel` (flag-selected) AND drops the per-image fields no
+          // consumer reads (always-on). It returns NEW arrays/objects, so the
+          // shared `imagesForModelVersionsCache` entries (still used at full 20
+          // with all fields by model-detail pages, auctions, etc.) are untouched.
+          // See `~/server/utils/model-getall-images`.
+          images: buildGetAllModelImages(filteredImages, imagesPerModel, biasImageSlice),
           canGenerate,
         };
       })
@@ -1547,8 +1563,10 @@ export const deleteModelById = async ({
         UPDATE "Post"
         SET "metadata" = "metadata" || jsonb_build_object(
           'unpublishedAt', ${new Date().toISOString()},
-          'unpublishedBy', ${userId}
-                                       )
+          'unpublishedBy', ${userId},
+          'prevPublishedAt', "publishedAt"
+                                       ),
+            "publishedAt" = NULL
         WHERE
             "publishedAt" IS NOT NULL
         AND "userId" = ${model.userId}
@@ -1574,6 +1592,39 @@ export const deleteModelById = async ({
   // never cached, so the base-row gap is benign on this path.)
   const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
   await preventModelVersionLagBatch(id, deletedVersionIds);
+  // Drop the deleted model's post images from the image search index — parity
+  // with unpublishModelById / permaDeleteModelById. The image index doesn't
+  // filter on model status, so without this a soft-deleted model's images keep
+  // surfacing in Meili-backed feeds even though the DB feed already hides them.
+  // dbWrite to dodge replica lag on the just-committed txn (same as unpublish).
+  if (deletedModel && deletedVersionIds.length) {
+    try {
+      const deletedPosts = await dbWrite.post.findMany({
+        where: { modelVersionId: { in: deletedVersionIds }, userId: deletedModel.userId },
+        select: { id: true },
+      });
+      if (deletedPosts.length) {
+        const deletedImages = await dbWrite.image.findMany({
+          where: { postId: { in: deletedPosts.map((p) => p.id) } },
+          select: { id: true },
+        });
+        if (deletedImages.length)
+          await queueImageSearchIndexUpdate({
+            ids: deletedImages.map((i) => i.id),
+            action: SearchIndexUpdateQueueAction.Delete,
+          });
+      }
+    } catch (error) {
+      // Best-effort: the model is already committed-deleted, so an index-queue
+      // hiccup must not throw to the caller and skip the trailing cache busts.
+      logToAxiom({
+        type: 'error',
+        name: 'model-delete-image-search-index',
+        message: `Failed to queue image search index update for model ${id}`,
+        error,
+      });
+    }
+  }
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
@@ -1631,6 +1682,9 @@ export const permaDeleteModelById = async ({
 }) => {
   // Populated inside the tx so the snapshot is consistent with the cascade.
   let modelFileUrls: string[] = [];
+  // Version ids captured inside the tx (before the cascade removes them) so the
+  // post-commit storage-resolver deregister can reach every reaped version.
+  let versionIds: number[] = [];
 
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
@@ -1652,6 +1706,8 @@ export const permaDeleteModelById = async ({
         },
       });
       if (!model) return { deletedModel: null, imagesToDelete: [] };
+
+      versionIds = model.modelVersions.map(({ id }) => id);
 
       // Get posts to find associated images
       const posts = await tx.post.findMany({
@@ -1742,6 +1798,23 @@ export const permaDeleteModelById = async ({
           type: 'error',
           name: 'model-perma-delete-s3-objects',
           message: `Failed to delete S3 objects for model ${id}`,
+          error,
+        });
+      }
+    }
+    // Post-commit: deregister storage-resolver file_locations for every version
+    // this model owned. For a tiered file the real backend object is keyed by
+    // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
+    // the surviving row keeps that object whitelisted against the dereference-
+    // quarantine sweep — a permanent leak. Best-effort + never throws.
+    if (versionIds.length > 0) {
+      try {
+        await deregisterFileLocationsBatch(versionIds);
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'model-perma-delete-deregister-file-locations',
+          message: `Failed to deregister file locations for model ${id}`,
           error,
         });
       }
@@ -1910,6 +1983,8 @@ export const upsertModel = async (
     }
 
     await modelTagCache.refresh(result.id);
+    // Model tag set changed → the votable-tags list (score>0 ModelTag rows) changed too.
+    await modelVotableTagsCache.bust(result.id);
     await preventReplicationLag('model', result.id);
     if (data.uploadType === ModelUploadType.Trained) {
       // getTrainingModelsByUserId filters by userId — flag that path so the
@@ -2005,6 +2080,7 @@ export const upsertModel = async (
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
       await modelTagCache.refresh(result.id);
+      if (tagsOnModels) await modelVotableTagsCache.bust(result.id);
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
@@ -2395,22 +2471,33 @@ export const unpublishModelById = async ({
   // Use dbWrite for the search-index lookups for the same reason as
   // publishModelById — the replica may not yet reflect the txn we just
   // committed.
-  const posts = await dbWrite.post.findMany({
-    where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
-    select: { id: true },
-  });
-  const images = await dbWrite.image.findMany({
-    where: { postId: { in: posts.map((x) => x.id) } },
-    select: { id: true },
-  });
+  try {
+    const posts = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
+      select: { id: true },
+    });
+    const images = await dbWrite.image.findMany({
+      where: { postId: { in: posts.map((x) => x.id) } },
+      select: { id: true },
+    });
 
-  // Remove this model from search index as it's been unpublished.
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  // Remove all affected images from search index
-  await queueImageSearchIndexUpdate({
-    ids: images.map((x) => x.id),
-    action: SearchIndexUpdateQueueAction.Delete,
-  });
+    // Remove this model from search index as it's been unpublished.
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    // Remove all affected images from search index
+    await queueImageSearchIndexUpdate({
+      ids: images.map((x) => x.id),
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  } catch (error) {
+    // Best-effort: the unpublish txn is already committed, so an index-queue
+    // hiccup must not throw to the caller and skip the trailing bid cleanup.
+    logToAxiom({
+      type: 'error',
+      name: 'model-unpublish-image-search-index',
+      message: `Failed to queue search index update for model ${id}`,
+      error,
+    });
+  }
 
   await deleteBidsForModel({ modelId: id });
 
@@ -2865,6 +2952,8 @@ export const setModelsCategory = async ({
     `;
 
     await modelTagCache.refresh(modelIds);
+    // Applied tags land as score>0 ModelTag rows → refresh the votable-tags cache too.
+    await modelVotableTagsCache.bust(modelIds);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -3610,6 +3699,61 @@ export async function getFeaturedModels() {
 
 export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
+}
+
+// Mod-only read of a model's moderation state — surfaces why a model is
+// locked / marked nsfw / hidden so mods can self-triage instead of escalating
+// (auto-actions like the profanity nsfw-lock are otherwise invisible to them).
+export async function getModelModerationDetail({ id }: { id: number }) {
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      nsfw: true,
+      nsfwLevel: true,
+      status: true,
+      availability: true,
+      minor: true,
+      poi: true,
+      lockedProperties: true,
+      deletedAt: true,
+      deletedBy: true,
+      meta: true,
+    },
+  });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+  const meta = (model.meta ?? {}) as ModelMeta;
+  return {
+    id: model.id,
+    name: model.name,
+    nsfw: model.nsfw,
+    nsfwLevel: model.nsfwLevel,
+    status: model.status,
+    availability: model.availability,
+    minor: model.minor,
+    poi: model.poi,
+    lockedProperties: model.lockedProperties ?? [],
+    cannotPromote: meta.cannotPromote ?? false,
+    cannotPublish: meta.cannotPublish ?? false,
+    commentsLocked: meta.commentsLocked ?? false,
+    deletedAt: model.deletedAt,
+    deletedBy: model.deletedBy,
+    profanity: meta.profanityMatches?.length
+      ? {
+          matches: meta.profanityMatches,
+          reason: meta.profanityEvaluation?.reason ?? null,
+          metrics: meta.profanityEvaluation?.metrics ?? null,
+        }
+      : null,
+    unpublishedAt: meta.unpublishedAt ?? null,
+    unpublishedBy: meta.unpublishedBy ?? null,
+    unpublishedReason: meta.unpublishedReason ?? null,
+    takenDownAt: meta.takenDownAt ?? null,
+    takenDownBy: meta.takenDownBy ?? null,
+    needsReview: meta.needsReview ?? false,
+  };
 }
 
 export async function getModelModRules() {

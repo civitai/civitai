@@ -1,6 +1,11 @@
 import { decodeProtectedHeader, jwtVerify } from 'jose';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import {
+  ensureRegisterAppBlockRuntimeMetrics,
+  statusToRequestResult,
+  type AppBlockEndpoint,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
@@ -10,6 +15,10 @@ import {
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  isBlockActionDetail,
+  type BlockActionDetail,
+} from '~/shared/constants/block-action-detail';
 
 /**
  * Block-scope middleware — wraps a Next.js API handler with block JWT
@@ -72,7 +81,51 @@ export type BlockScopedNextApiRequest = NextApiRequest & {
   blockClaims?: BlockTokenClaims;
 };
 
+/**
+ * W13 richer audit detail — a mutation handler wrapped by `withBlockScope`
+ * (tip, shared-storage increment, …) stashes a structured `BlockActionDetail`
+ * on the response so the finish-writer below can include it on the audit row
+ * WITHOUT a second write path. The middleware is the SINGLE writer; the handler
+ * only annotates. Reads never stash — their label is derived from `scope` at
+ * render time.
+ *
+ * 🔴 Best-effort by construction: `stashBlockActionDetail` can NEVER throw into
+ * the handler's money path (it swallows), and `readBlockActionDetail` narrows a
+ * possibly-absent/garbage value defensively. A missing or malformed stash simply
+ * writes a plain (detail-less) row.
+ */
+const BLOCK_ACTION_DETAIL_KEY = '__civitaiBlockActionDetail';
+
+export function stashBlockActionDetail(res: NextApiResponse, detail: BlockActionDetail): void {
+  try {
+    if (isBlockActionDetail(detail)) {
+      (res as unknown as Record<string, unknown>)[BLOCK_ACTION_DETAIL_KEY] = detail;
+    }
+  } catch {
+    /* audit annotation is best-effort — never let it perturb the response */
+  }
+}
+
+export function readBlockActionDetail(res: NextApiResponse): BlockActionDetail | undefined {
+  try {
+    const stashed = (res as unknown as Record<string, unknown>)[BLOCK_ACTION_DETAIL_KEY];
+    return isBlockActionDetail(stashed) ? stashed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface WithBlockScopeOpts {
+  /**
+   * Low-cardinality LOGICAL name for this endpoint (e.g. 'tip', 'me',
+   * 'model_detail', 'collections', 'shared_storage_top'). Used as the `endpoint` label on the
+   * per-app REST-RED metrics (`civitai_app_block_requests_total` /
+   * `civitai_app_block_request_duration_seconds`). Derived from the HANDLER, so
+   * ids in the path can never leak into the label. Strictly enumerated — see
+   * AppBlockEndpoint in ~/server/metrics/app-block-runtime.metrics.
+   */
+  endpoint: AppBlockEndpoint;
+
   /**
    * The block scope this endpoint requires. When PRESENT, the middleware
    * enforces `claims.scopes.includes(requiredScope)` (403 on miss) AND runs
@@ -106,21 +159,27 @@ export interface WithBlockScopeOpts {
    * `src/components/AppBlocks/sandbox.ts` — only internal/verified tiers get
    * it), so the iframe runs at an OPAQUE origin and every `fetch` it makes
    * sends `Origin: null`. `null` can never be in the OauthClient.allowedOrigins
-   * allowlist, so a direct (non-bridge) catalog fetch's CORS preflight falls
-   * through to the handler and 405s — the in-block resource browser then can't
-   * load. (Generation/money go through the postMessage host bridge, which is
-   * CORS-free; the catalog selector is the one path that direct-fetches.)
+   * allowlist, so a direct (non-bridge) fetch's CORS preflight falls through to
+   * the handler and 405s — the in-block resource browser (or collections / tip /
+   * shared-storage rail) then can't load. (First hit by the catalog
+   * selector; the collections, tip, and shared-storage REST endpoints a
+   * block direct-fetches hit the SAME wall.)
    *
-   * SAFE ONLY for the block CATALOG endpoints (/api/v1/blocks/{models,images}),
-   * which is why this is an explicit per-endpoint opt-in and NOT a blanket
-   * middleware behavior: they return PUBLIC, maturity-clamped data (strictly ⊆
-   * the public, already-`ACAO:*` /api/v1/models), carry NO credentials
-   * (Allow-Credentials is omitted and block iframes have no civitai cookie), and
-   * the real request still requires a valid short-lived block JWT in
-   * `Authorization` (an attacker's own null-origin sandboxed page can't mint
-   * one). The preflight is CORS POLICY only; the token remains the gate. NEVER
-   * set this on a scoped/credentialed endpoint (me.ts, settings, …) — `ACAO:
-   * null` there would let ANY sandboxed page read a per-user response.
+   * SAFE wherever authorization rests SOLELY on the Bearer block-JWT with NO
+   * ambient/cookie credential — which is every block REST endpoint, so this is
+   * set on both the PUBLIC catalog endpoints (/api/v1/blocks/{models,images})
+   * and the per-user scoped ones (collections/tip/shared-storage). Block
+   * iframes carry no civitai cookie and `Access-Control-Allow-Credentials` is
+   * omitted, so `ACAO: null` grants NO tokenless access: the real request still
+   * requires a valid short-lived block JWT in `Authorization` (an attacker's own
+   * null-origin sandboxed page can't mint one), and per-user responses are bound
+   * to the token's SUBJECT — the preflight is CORS POLICY only; the token is the
+   * gate, not CORS. That is why it stays an explicit per-endpoint opt-in and not
+   * blanket middleware behavior. Do NOT set it on any endpoint that would
+   * authorize via an AMBIENT credential (a civitai session cookie) — there
+   * `ACAO: null` could let a sandboxed page read a per-user response WITHOUT
+   * presenting a token. (No block endpoint reads cookies today; the catalog
+   * endpoints additionally return only PUBLIC maturity-clamped data.)
    */
   allowOpaqueOrigin?: boolean;
 }
@@ -296,7 +355,7 @@ async function setBlockCors(
     return 'fallthrough';
   }
 
-  // Opaque-origin (`Origin: null`) opt-in — CATALOG endpoints only (see
+  // Opaque-origin (`Origin: null`) opt-in — opted-in block endpoints only (see
   // WithBlockScopeOpts.allowOpaqueOrigin). Unverified blocks run sandboxed
   // without `allow-same-origin` → opaque origin → `Origin: null`, which can
   // never be in the allowlist above. We echo `ACAO: null` ONLY when the
@@ -529,12 +588,10 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  * Enforces context binding per scope type. Each scope can require
  * additional request-shape checks beyond having-the-scope:
  *   - models:read:self   → query.id ≡ claims.ctx.modelId (integer match)
- *   - media:read:owned   → claims.sub != 'anon'
  *   - buzz:read:self     → claims.sub != 'anon'
  *   - social:tip:self    → claims.sub != 'anon'
  *   - user:read:self     → claims.sub != 'anon'
  *   - ai:write:budgeted  → claims.buzzBudget > 0
- *   - block:settings:*   → query.blockInstanceId ≡ claims.blockInstanceId
  *
  * Throws ForbiddenError on mismatch.
  */
@@ -574,12 +631,11 @@ export function enforceContextBinding(
         }
         break;
       }
-      case 'media:read:owned':
       case 'buzz:read:self':
       case 'social:tip:self':
       case 'user:read:self': {
         // Every :self scope requires an authenticated subject — there's no
-        // anonymous "self" to read/own/tip. user:read:self joined this set
+        // anonymous "self" to read/tip. user:read:self joined this set
         // when /api/v1/blocks/me switched off buzz:read:self (audit I3).
         if (claims.sub === 'anon') {
           throw forbidden(`${scope} requires authenticated subject`);
@@ -589,14 +645,6 @@ export function enforceContextBinding(
       case 'ai:write:budgeted': {
         if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
           throw forbidden('ai:write:budgeted requires positive buzzBudget claim');
-        }
-        break;
-      }
-      case 'block:settings:read':
-      case 'block:settings:write': {
-        const requested = readBoundQueryString(req, 'blockInstanceId');
-        if (!requested || requested !== claims.blockInstanceId) {
-          throw forbidden(`${scope} bound to different blockInstanceId`);
         }
         break;
       }
@@ -627,6 +675,23 @@ export function enforceContextBinding(
         // anon subject here so wiring this scope can't silently fail open (mirrors
         // the apps:storage:write case). The trust gate itself is enforced in
         // `resolveSharedContext`.
+        if (claims.sub === 'anon') {
+          throw forbidden(`${scope} requires authenticated subject`);
+        }
+        break;
+      }
+      case 'collections:read:self':
+      case 'collections:read:private':
+      case 'collections:write:self': {
+        // All three collections scopes are :self — there is no anonymous "self"
+        // whose own/private collections to read or whose account to
+        // follow-on-behalf-of. Require an authenticated subject here (mirrors the
+        // social:tip:self / apps:storage:* :self cases). The per-op authority lives
+        // in the block collections endpoints: reads enforce collection
+        // visibility/ownership (a private collection is 404 without ownership AND
+        // the read:private scope) + the maturity clamp; the follow write is
+        // self-bound to this subject. No request-shape binding is added here —
+        // presence of the scope + a non-anon subject is the middleware check.
         if (claims.sub === 'anon') {
           throw forbidden(`${scope} requires authenticated subject`);
         }
@@ -696,6 +761,42 @@ export function withBlockScope(
       res.status(401).json({ error: 'invalid block token' });
       return;
     }
+
+    // Runtime observability (additive + dark — no behavior change): per-app REST
+    // RED. Recorded on response finish so it captures the wrapped handler's real
+    // status + latency AND the middleware's OWN 403 rejections below (revocation
+    // / missing-scope / context-binding). The invalid-token 401 above is
+    // intentionally NOT attributed — there are no claims, so no `app_block_id` to
+    // key on. `endpoint`/`result` are strictly enumerated. Fire-and-forget: a
+    // metrics failure must never poison the user-facing response.
+    //
+    // `app_block_id` cardinality: a normal (approved/pre-approval) token carries
+    // a real FK appBlockId bounded to the approved-app set. A DEV token
+    // (`claims.dev === true`, the same discriminator the max-age cap + audit path
+    // use) carries a CALLER-CONSTRUCTED, synthetic, non-resolving appBlockId (see
+    // dev-scoped-mint.service) — an unbounded label vector even though minting is
+    // mod/dev-cohort gated. Bucket ALL dev tokens to the single stable label
+    // 'dev' so that vector is closed while real per-app attribution is preserved.
+    const appBlockIdLabel = claims.dev === true ? 'dev' : claims.appBlockId;
+    const metricStart = process.hrtime.bigint();
+    let metricRecorded = false;
+    const recordBlockMetric = () => {
+      if (metricRecorded) return;
+      metricRecorded = true;
+      try {
+        const { requestsTotal, requestDurationSeconds } = ensureRegisterAppBlockRuntimeMetrics();
+        const labels = { app_block_id: appBlockIdLabel, endpoint: opts.endpoint };
+        const elapsedSeconds = Number(process.hrtime.bigint() - metricStart) / 1e9;
+        requestDurationSeconds.observe(labels, elapsedSeconds);
+        requestsTotal.inc({ ...labels, result: statusToRequestResult(res.statusCode) });
+      } catch {
+        // never let observability break the request
+      }
+    };
+    // 'close' covers a client-aborted connection that never emits 'finish'; the
+    // recorded-once guard makes the pair idempotent.
+    res.on('finish', recordBlockMetric);
+    res.on('close', recordBlockMetric);
 
     // H-2: per-instance revocation check. Uninstall, toggleEnabled(false),
     // and (Phase 2) publisher-ban all write a marker that lives for one
@@ -807,6 +908,10 @@ export function withBlockScope(
     if (userIdForLog != null) {
       const endpointForLog = normalizeEndpoint(req.url ?? '');
       res.on('finish', () => {
+        // W13: a mutation handler may have stashed a structured action detail on
+        // the response. Read it defensively (best-effort) — a missing/malformed
+        // stash writes a plain, detail-less row (the passive-read path).
+        const actionDetail = readBlockActionDetail(res);
         // Dynamic import so this module doesn't eager-load
         // user-app-surface.service (which transitively loads dbRead +
         // Prisma client init). Test envs that import the middleware for
@@ -823,6 +928,7 @@ export function withBlockScope(
             scope: opts.requiredScope ?? '(any-token)',
               endpoint: endpointForLog,
               statusCode: res.statusCode,
+              ...(actionDetail ? { detail: actionDetail } : {}),
               // Phase 2: a dev token MAY carry a synthetic non-FK appBlockId (a
               // pre-approval dev-tunnel app) — let the audit write persist it via
               // the nullable-appBlockId path instead of FK-failing + swallowing.

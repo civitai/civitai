@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getChallengeById,
+  resolveChallengeReviewInputs,
   type RecentEntry,
 } from '~/server/games/daily-challenge/challenge-helpers';
 import {
@@ -59,6 +60,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const config = await getChallengeConfig();
   const metadata = parseChallengeMetadata(challenge.metadata);
   const themeElements = metadata.themeElements;
+
+  // Resolve dynamic judging categories + nsfw once for all entries — mirrors the gate in
+  // reviewEntriesForChallenge so re-review scores use the same rubric as the original review.
+  const { categories, nsfw } = await resolveChallengeReviewInputs(challenge);
 
   // Fetch entries with their existing judge comment IDs
   // When imageIds is provided, select those specific entries (regardless of judged status)
@@ -122,6 +127,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
             imageUrl: getEdgeUrl(entry.url, { width: 1200, optimized: true }),
             config: judgingConfig,
             themeElements,
+            categories,
+            nsfw,
           }),
         2,
         1000

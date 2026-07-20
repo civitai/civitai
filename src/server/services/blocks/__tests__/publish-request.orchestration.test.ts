@@ -36,8 +36,14 @@ const {
   mockTriggerBuild,
   mockUlidSeq,
   mockNewUlid,
+  mockAplSeq,
+  mockNewAppListingId,
+  mockProvision,
 } = vi.hoisted(() => {
   const ulidSeq: { i: number } = { i: 0 };
+  // Dedicated counter for AppListing ids so minting a listing id does NOT
+  // advance the shared ULID sequence that AppBlock/publish-request ids key off.
+  const aplSeq: { i: number } = { i: 0 };
   return {
     mockDbRead: {
       appBlockPublishRequest: {
@@ -53,6 +59,12 @@ const {
       // OauthClient row after a P2002 collision to recover the existing
       // client on retry.
       oauthClient: { findUnique: vi.fn() },
+      // W13 auto-create-on-approve: approveRequest checks for an existing onsite
+      // AppListing (idempotency, keyed on appBlockId) before creating one.
+      appListing: { findUnique: vi.fn(), findFirst: vi.fn(async () => null) },
+      // Fix #1 (onsite): withdrawRequest probes the listing's latest mod event to
+      // decide whether a reset withdraw closes the listing. Null → no reset in flight.
+      appListingModerationEvent: { findFirst: vi.fn(async () => null) },
     },
     mockDbWrite: {
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
@@ -71,12 +83,35 @@ const {
         findUnique: vi.fn(),
         findFirst: vi.fn(),
       },
-      appBlock: { create: vi.fn(), update: vi.fn() },
+      // `findUnique` added (W13 auto-create-on-approve): approveRequest re-reads
+      // the freshly-approved AppBlock's own columns off the PRIMARY to map it into
+      // the onsite AppListing (same projection the backfill selects).
+      // `updateMany` added (W13 category-on-approve): approveRequest copies a
+      // validated manifest `category` onto AppBlock.category via a targeted,
+      // no-clobber `updateMany` (gated on category=null) right before the (3b)
+      // listing-create re-read.
+      appBlock: {
+        create: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+        findUnique: vi.fn(),
+      },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
       // the app-block OauthClient's allowedScopes to the manifest-derived
       // ceiling + forces grants:[] on the subsequent-version + P2002-retry
       // paths.
       oauthClient: { create: vi.fn(), update: vi.fn() },
+      // W13 auto-create-on-approve: approveRequest mints the onsite AppListing
+      // (idempotent skip-if-exists, P2002-tolerant) right after the AppBlock row
+      // exists so the app appears on the /apps grid without a manual backfill.
+      // `updateMany` (W13 onsite reset re-approve): approveRequest restores a reset
+      // (`pending`) onsite listing back to `approved`; default 0-count no-op.
+      appListing: { create: vi.fn(), updateMany: vi.fn(async () => ({ count: 0 })) },
+      // Fix #1 (onsite) withdraw close: the reset-withdraw path flips the listing
+      // pending→removed + writes a delist event inside a tx. `$transaction` is wired
+      // post-hoist (below) to run its callback against this same write mock.
+      appListingModerationEvent: { create: vi.fn(async () => ({})) },
+      $transaction: vi.fn(),
     },
     mockS3Send: vi.fn(),
     mockBundleBuffer: { current: null as Buffer | null },
@@ -112,8 +147,27 @@ const {
       // 26-char placeholder ending in a stable counter so tests can match
       return `00000000000000000000000${String(ulidSeq.i).padStart(3, '0')}`;
     }),
+    mockAplSeq: aplSeq,
+    // The mapper (app-listing-mapper) calls newAppListingId; the module mock
+    // below must provide it (deterministic so listing-id assertions can match).
+    mockNewAppListingId: vi.fn(() => {
+      aplSeq.i += 1;
+      return `apl_test_${aplSeq.i}`;
+    }),
+    // W4 storage-provision-on-approve: approveRequest dynamically imports
+    // AppStorageProvisioner and calls provision() for a storage-declaring app so
+    // its appsDb schema exists at approve (no manual admin backfill). Mocked so
+    // the approve tests never reach the real cnpg-cluster-apps DDL path.
+    mockProvision: vi.fn(async () => undefined),
   };
 });
+
+// Wire the write mock's interactive transaction to run its callback against the same
+// mock (so tx-scoped writes in the withdraw reset-close land on these spies). Done
+// post-hoist to avoid referencing `mockDbWrite` inside its own hoisted factory.
+(mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+  async (cb: (tx: unknown) => Promise<unknown>) => cb(mockDbWrite)
+);
 
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
@@ -138,8 +192,18 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
 }));
 
+// approveRequest does `await import('~/server/services/apps/storage-provision.service')`
+// to provision the app's appsDb schema (W4). Mock the resolved id the service
+// sees so the (3c) block never touches the real appsDb/pg module graph.
+vi.mock('~/server/services/apps/storage-provision.service', () => ({
+  AppStorageProvisioner: { provision: mockProvision },
+}));
+
 vi.mock('~/server/utils/app-block-ids', () => ({
   newUlid: mockNewUlid,
+  newAppListingId: mockNewAppListingId,
+  // Fix #1 (onsite) withdraw close writes a delist moderation event.
+  newAppListingModerationEventId: () => 'alme_reset_close',
 }));
 
 // Override the global env mock with the keys submitVersion / approveRequest /
@@ -216,6 +280,7 @@ beforeEach(() => {
   // the URL assertions work.
   process.env.NEXTAUTH_URL = 'https://example.test';
   mockUlidSeq.i = 0;
+  mockAplSeq.i = 0;
   for (const surface of [mockDbRead, mockDbWrite, mockForgejo]) {
     for (const key of Object.keys(surface)) {
       const grp = (surface as Record<string, Record<string, unknown>>)[key];
@@ -241,14 +306,43 @@ beforeEach(() => {
   mockForgejo.setCommitStatus.mockResolvedValue(undefined);
   mockTriggerBuild.mockClear();
   mockTriggerBuild.mockResolvedValue({ name: 'pipelinerun-mock' });
+  // W4 storage-provision-on-approve default: provision() resolves cleanly. Tests
+  // that exercise the failure path override with mockRejectedValueOnce.
+  mockProvision.mockReset();
+  mockProvision.mockResolvedValue(undefined);
   mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
   mockDbWrite.appBlock.update.mockResolvedValue(undefined);
+  // W13 category-on-approve default: the no-clobber category `updateMany` is a
+  // no-op unless a test opts in (the default manifest declares no category).
+  mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
 
   // Default: no pending conflict, no existing app block, user lookup OK.
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   mockDbRead.appBlock.findFirst.mockResolvedValue(null);
   mockDbRead.user.findUnique.mockResolvedValue({ username: 'tester' });
   mockDbWrite.appBlockPublishRequest.create.mockResolvedValue({ id: 'will-be-overwritten' });
+
+  // W13 auto-create-on-approve defaults: no pre-existing listing (so the happy
+  // path creates one), the freshly-approved AppBlock re-read echoes a hosted
+  // (externalUrl=null) row derived from the default manifest, and create() echoes
+  // the generated id back.
+  mockDbRead.appListing.findUnique.mockResolvedValue(null);
+  mockDbWrite.appBlock.findUnique.mockImplementation(
+    async (args: { where: { id: string } }) => ({
+      id: args.where.id,
+      blockId: 'hello',
+      manifest: manifest(),
+      contentRating: 'g',
+      category: null,
+      featured: false,
+      featuredOrder: null,
+      externalUrl: null,
+      app: { userId: 42 },
+    })
+  );
+  mockDbWrite.appListing.create.mockImplementation(
+    async (args: { data: { id: string } }) => ({ id: args.data.id })
+  );
 
   // S3 default no-op for PUT; GET returns whatever mockBundleBuffer.current is set to.
   mockS3Send.mockImplementation(async (cmd: { input?: { Key?: string } }) => {
@@ -628,6 +722,62 @@ describe('withdrawRequest', () => {
     await withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 });
     expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('🔴 Fix #1 (onsite): withdrawing a reset (pending onsite listing) closes it REMOVED + a DELIST event (owner canNOT republish)', async () => {
+    const { withdrawRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_reset',
+      status: 'pending',
+      submittedByUserId: 42,
+      slug: 'my-app',
+    });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+    // beforeEach's mockReset strips the tx impl — re-wire it to run the callback.
+    mockDbWrite.$transaction.mockImplementation(
+      async (cb: (tx: unknown) => Promise<unknown>) => cb(mockDbWrite)
+    );
+    // The reset target: an onsite listing for this slug is currently `pending`. A pending
+    // onsite listing is ALWAYS a mod reset (deterministic — NO most-recent-event probe,
+    // which an intervening report event could defeat), so the close writes `delist`.
+    mockDbRead.appListing.findFirst.mockResolvedValue({ id: 'apl_1', slug: 'my-app' });
+    mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await withdrawRequest({ publishRequestId: 'pubreq_reset', userId: 42 });
+
+    // The request is withdrawn AND the reset listing is closed to `removed`.
+    expect(mockDbWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apl_1', kind: 'onsite', status: 'pending' },
+      data: { status: 'removed' },
+    });
+    // 🔴 A `delist` event (owner as actor) → republishOwnListing's guard FORBIDS the
+    // owner; a mod must relist (which also un-suspends the block).
+    const evtArg = mockDbWrite.appListingModerationEvent.create.mock.calls[0][0].data;
+    expect(evtArg).toMatchObject({
+      appListingId: 'apl_1',
+      action: 'delist',
+      actorUserId: 42,
+      before: { status: 'pending' },
+      after: { status: 'removed' },
+    });
+  });
+
+  it('Fix #1 (onsite): a FIRST-TIME submission withdraw (no reset listing) does NOT close any listing', async () => {
+    const { withdrawRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_first',
+      status: 'pending',
+      submittedByUserId: 42,
+      slug: 'brand-new',
+    });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+    // No approved listing yet for a never-approved app → the reset probe finds nothing.
+    mockDbRead.appListing.findFirst.mockResolvedValue(null);
+
+    await withdrawRequest({ publishRequestId: 'pubreq_first', userId: 42 });
+
+    expect(mockDbWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
   });
 
   it('throws NOT_OWNED for a request owned by a different user', async () => {
@@ -1195,6 +1345,66 @@ describe('approveRequest', () => {
     // ...and the app_blocks row stores the same canonical value.
     const abArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
     expect((abArg.manifest as any).iframe.src).toBe('https://hello.civit.ai/');
+  });
+
+  it('🔴 W13 onsite reset re-approve (SUBSEQUENT-version): restores the listing AND UN-SUSPENDS the block', async () => {
+    // The real reset scenario: the block ALREADY exists (isFirstVersion=false), so the
+    // approve takes the subsequent-version `appBlock.update` branch — which refreshes
+    // manifest/version but does NOT set status. `resetOnsiteListingToPending` left the
+    // block `suspended`, so the re-approve must un-suspend it explicitly, else the app
+    // is store-visible (listing approved) but dead (block suspended, run page 404s).
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    // The reset listing flip matches one row (listing WAS pending) → reset re-approve.
+    mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    expect(result.isFirstVersion).toBe(false);
+
+    // (a) listing restored pending → approved (guarded to `pending`; status-only).
+    expect(mockDbWrite.appListing.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ appBlockId: 'apb_existing', kind: 'onsite', status: 'pending' }),
+        data: { status: 'approved' },
+      })
+    );
+    // 🔴 (b) block un-suspended suspended → approved (guarded to `suspended`) — the fix
+    // for the "store-visible but dead" bug. Gated on the listing flip having matched.
+    expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apb_existing', status: 'suspended' },
+      data: { status: 'approved' },
+    });
+  });
+
+  it('normal subsequent-version approve (listing NOT pending) does NOT un-suspend the block', async () => {
+    // Guard the gate: when the listing flip matches 0 rows (a normal approve of an
+    // already-approved app, NOT a reset), the block un-suspend must NOT fire — so a
+    // delisted-then-resubmitted app is never auto-un-suspended here.
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    // Listing flip matches 0 rows (not a reset) → the block un-suspend is skipped.
+    mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 0 });
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    const unsuspend = mockDbWrite.appBlock.updateMany.mock.calls.find(
+      (c: any[]) => c[0]?.data?.status === 'approved' && c[0]?.where?.status === 'suspended'
+    );
+    expect(unsuspend).toBeUndefined();
   });
 
   // PUSH-ORIGINATED approve (Phase 3 git-push authoring). The git-push webhook
@@ -1827,6 +2037,566 @@ describe('approveRequest', () => {
     expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
   });
+
+  // ---- W13: onsite AppListing auto-create-on-approve ----------------------
+  //
+  // approveRequest now mints the store-facing onsite `AppListing` (idempotent,
+  // keyed on appBlockId) right after the AppBlock row exists, so an approved app
+  // shows on the `/apps` grid without a manual `backfillAppListings` run. It
+  // reuses the SAME `mapAppBlockToListing` shape the backfill uses.
+  describe('W13: onsite AppListing auto-create', () => {
+    it('first-version approve creates the onsite listing with the correct fields', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // Idempotency guard: checked for an existing listing by appBlockId first.
+      expect(mockDbRead.appListing.findUnique).toHaveBeenCalledWith({
+        where: { appBlockId: result.appBlockId },
+        select: { id: true },
+      });
+      // Exactly one listing minted — onsite, approved, slug=blockId, appBlockId
+      // set, name/contentRating derived from the manifest, owner = submitter.
+      // A first-version AppBlock has no curation, so category/featured default.
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        kind: 'onsite',
+        slug: 'hello',
+        name: 'Hello World',
+        status: 'approved',
+        contentRating: 'g',
+        appBlockId: result.appBlockId,
+        externalUrl: null,
+        connectClientId: null,
+        userId: 42,
+        category: null,
+        featured: false,
+        featuredOrder: null,
+        iconId: null,
+        coverId: null,
+      });
+    });
+
+    it('always mints an ONSITE listing (never offsite — the offsite flow is a separate service)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.kind).toBe('onsite');
+      expect(data.externalUrl).toBeNull();
+      expect(data.connectClientId).toBeNull();
+    });
+
+    it('subsequent-version approve does NOT duplicate or clobber an existing listing', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ version: '0.2.0' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      // A listing already exists (minted on the first approve; a mod may since
+      // have set category/featured). The guard must SKIP, never update.
+      mockDbRead.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
+      mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(result.appBlockId).toBe('apb_existing');
+      expect(mockDbRead.appListing.findUnique).toHaveBeenCalledWith({
+        where: { appBlockId: 'apb_existing' },
+        select: { id: true },
+      });
+      // Skip-if-exists: no create. There is NO appListing.update path at all in
+      // the approve flow, so curated fields (category/featured/featuredOrder)
+      // cannot be clobbered on a re-approve.
+      expect(mockDbWrite.appListing.create).not.toHaveBeenCalled();
+      // The approve itself still completes (build triggered, request finalised).
+      expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    it('transition case: subsequent-version approve with NO prior listing mints one mirroring the AppBlock curation + owner (not the current submitter)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        // This version submitted by user 42…
+        pendingRequest({ manifest: manifest({ version: '0.2.0' }), submittedByUserId: 42 })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      // No listing yet (app approved BEFORE this feature; never backfilled).
+      mockDbRead.appListing.findUnique.mockResolvedValue(null);
+      // …but the AppBlock carries mod curation + its ORIGINAL owner (7 ≠ 42).
+      mockDbWrite.appBlock.findUnique.mockImplementation(
+        async (args: { where: { id: string } }) => ({
+          id: args.where.id,
+          blockId: 'hello',
+          manifest: manifest({ version: '0.2.0' }),
+          contentRating: 'g',
+          category: 'productivity',
+          featured: true,
+          featuredOrder: 3,
+          externalUrl: null,
+          app: { userId: 7 },
+        })
+      );
+      mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        kind: 'onsite',
+        appBlockId: 'apb_existing',
+        category: 'productivity',
+        featured: true,
+        featuredOrder: 3,
+        userId: 7, // the app owner, faithfully mirrored — NOT the submitter (42)
+      });
+    });
+
+    it('absorbs a concurrent create (P2002) — approve still succeeds end-to-end', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+      // Race: findUnique saw no listing, but the create loses to a concurrent
+      // approve/backfill → P2002. Treated as a no-op skip, not a failure.
+      mockDbRead.appListing.findUnique.mockResolvedValue(null);
+      const p2002 = Object.assign(new Error('Unique constraint failed on appBlockId'), {
+        code: 'P2002',
+      });
+      mockDbWrite.appListing.create.mockRejectedValueOnce(p2002);
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The P2002 did NOT abort the approve — commit, request-finalise, and build
+      // all still ran.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+      expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    // TRANSACTION-BOUNDARY coverage. approveRequest is NOT a DB transaction (it
+    // interleaves Forgejo/MinIO/Tekton I/O), so there is no literal rollback. The
+    // listing is a CONVENIENCE and must NEVER gate the approve/deploy: a non-P2002
+    // listing-create failure is logged and the approve CONTINUES. Idempotency
+    // (skip-if-exists + P2002-absorb) means a retry never duplicates it.
+    it('tx-boundary: a non-P2002 listing-create error does NOT abort the approve — commit/finalise/build still run, listing simply absent (backfill-recoverable)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+      mockDbWrite.appListing.create.mockRejectedValueOnce(
+        new Error('app_listings content_rating check violation')
+      );
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The listing create was attempted and failed…
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+      // …but the approve proceeded end-to-end: commit, request-finalise, build.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
+      expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+      expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    // The specific owner-deleted class the audit flagged: the AppBlock's owner
+    // (OauthClient userId, which can differ from the submitter) deleted their
+    // account → user_id FK violation on the listing insert. This must NOT wedge
+    // the app's deploy forever — approve still succeeds, no listing minted.
+    it('owner-deleted class: a user_id FK violation on the listing insert never blocks the deploy (approve succeeds, no listing)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+      // Prisma P2003 = FK constraint failed (the deleted-owner user_id FK).
+      const fkErr = Object.assign(new Error('Foreign key constraint failed on user_id'), {
+        code: 'P2003',
+      });
+      mockDbWrite.appListing.create.mockRejectedValueOnce(fkErr);
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(result.isFirstVersion).toBe(true);
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+      expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+    });
+
+    it('tx-boundary: listing is created once and survives a mid-flow commit failure without duplication on re-approve (retry convergence)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+
+      // Attempt 1: listing IS created (no existing), THEN commitFiles fails, so
+      // the approve throws with the request still 'pending' (never finalised).
+      mockForgejo.commitFiles.mockRejectedValueOnce(new Error('Forgejo 503 on commit'));
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow(/Forgejo 503/);
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+
+      // Attempt 2: the SAME still-pending request. OauthClient + AppBlock creates
+      // P2002-recover to the existing rows (deterministic-id retry model), and the
+      // listing now exists so the idempotency guard SKIPS it.
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst
+        .mockResolvedValueOnce(null) // isFirstVersion check (race-window null)
+        .mockResolvedValueOnce({ id: 'apb_first' }); // AppBlock.create P2002 recovery
+      const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
+      mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+      mockDbWrite.appBlock.create.mockRejectedValueOnce(p2002);
+      mockDbRead.appListing.findUnique.mockResolvedValue({ id: 'apl_test_1' }); // now exists
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 998 });
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      // Still exactly ONE listing create across BOTH approves — no duplicate.
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ---- W13: category-on-approve ------------------------------------------
+  //
+  // approveRequest now copies a VALIDATED manifest `category` onto
+  // AppBlock.category so it flows to the auto-created (3b) store listing —
+  // WITHOUT touching (3b) or the mapper (they already read AppBlock.category).
+  // It's a targeted, NO-CLOBBER `updateMany` gated on `category: null`, run at
+  // the PRIMARY right before the (3b) re-read (read-your-writes), so a mod's
+  // curated category is never overridden and a manifest with no category leaves
+  // the column null.
+  describe('W13: category-on-approve (manifest category → AppBlock.category → listing)', () => {
+    // Simulate the DB row's category column with no-clobber `updateMany`
+    // (category set ONLY when currently null) feeding the (3b) findUnique
+    // re-read — so the listing-create assertion is genuinely end-to-end, not a
+    // tautology. `initial` is whatever category the row already carries.
+    function simulateCategoryPersistence(initial: string | null) {
+      const state: { category: string | null } = { category: initial };
+      mockDbWrite.appBlock.updateMany.mockImplementation(
+        async (args: { where: { category: unknown }; data: { category?: string } }) => {
+          // Mirror the SQL `WHERE category IS NULL` gate: only set when null.
+          if (state.category === null && typeof args.data.category === 'string') {
+            state.category = args.data.category;
+            return { count: 1 };
+          }
+          return { count: 0 };
+        }
+      );
+      mockDbWrite.appBlock.findUnique.mockImplementation(
+        async (args: { where: { id: string } }) => ({
+          id: args.where.id,
+          blockId: 'hello',
+          manifest: manifest(),
+          contentRating: 'g',
+          category: state.category,
+          featured: false,
+          featuredOrder: null,
+          externalUrl: null,
+          app: { userId: 42 },
+        })
+      );
+      return state;
+    }
+
+    it('first-version approve with a manifest category sets AppBlock.category (no-clobber gate) and the listing mirrors it', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ category: 'generation' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ category: 'generation' });
+      const state = simulateCategoryPersistence(null);
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The category-set is a targeted, no-clobber updateMany gated on category=null.
+      expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledWith({
+        where: { id: result.appBlockId, category: null },
+        data: { category: 'generation' },
+      });
+      expect(state.category).toBe('generation');
+      // End-to-end: the auto-created onsite listing is categorised from the manifest.
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.category).toBe('generation');
+    });
+
+    it('no-clobber: a moderator-curated category is NOT overridden by a re-approve whose manifest declares a different one', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      // Subsequent-version approve; the manifest declares 'games'…
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ version: '0.2.0', category: 'games' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      // …but the row already carries the moderator's curated 'utility'. Use the
+      // transition case (no prior listing) so a listing IS minted and we can
+      // assert its category faithfully mirrors the curated value, not 'games'.
+      mockDbRead.appListing.findUnique.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0', category: 'games' });
+      const state = simulateCategoryPersistence('utility');
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The updateMany still runs (manifest has a category) but its null-gate
+      // matches 0 rows, so the curated value survives.
+      expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledWith({
+        where: { id: 'apb_existing', category: null },
+        data: { category: 'games' },
+      });
+      expect(state.category).toBe('utility');
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.category).toBe('utility');
+    });
+
+    it('manifest with NO category leaves AppBlock.category null (no updateMany, listing uncategorised)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+      const state = simulateCategoryPersistence(null);
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // No manifest category ⇒ the category-set is skipped entirely.
+      expect(mockDbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+      expect(state.category).toBeNull();
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.category).toBeNull();
+    });
+
+    it('tx-boundary: a transient category updateMany error does NOT abort the approve — commit/finalise/build still run, category simply unset (mirrors #3085 listing posture)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ category: 'generation' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ category: 'generation' });
+      // The (3a) category-set hits a transient DB error. It FEEDS the convenience
+      // listing, so — like the (3b) listing-create — it must log-and-continue,
+      // never gate the approve/deploy.
+      mockDbWrite.appBlock.updateMany.mockRejectedValueOnce(
+        new Error('deadlock detected on app_blocks update')
+      );
+      // The (3b) re-read still returns a null category (the set never landed).
+      mockDbWrite.appBlock.findUnique.mockImplementation(
+        async (args: { where: { id: string } }) => ({
+          id: args.where.id,
+          blockId: 'hello',
+          manifest: manifest(),
+          contentRating: 'g',
+          category: null,
+          featured: false,
+          featuredOrder: null,
+          externalUrl: null,
+          app: { userId: 42 },
+        })
+      );
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The category write was attempted and failed…
+      expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledTimes(1);
+      // …but the approve still COMPLETED end-to-end: commit + build + finalise.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+      // The listing is still minted (its own create didn't fail), just uncategorised.
+      expect(mockDbWrite.appListing.create).toHaveBeenCalledTimes(1);
+      const data = mockDbWrite.appListing.create.mock.calls[0][0].data;
+      expect(data.category).toBeNull();
+    });
+
+    it('rejects an approve whose manifest declares an unknown category (validator gate)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ category: 'not-a-category' }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ category: 'not-a-category' });
+
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow(/Invalid manifest — cannot approve/);
+      // Pre-validation fails before any category write or listing-create.
+      expect(mockDbWrite.appBlock.updateMany).not.toHaveBeenCalled();
+      expect(mockDbWrite.appListing.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---- W4: per-app storage provisioning-on-approve -----------------------
+  //
+  // approveRequest now provisions the app's appsDb schema (kv / quota /
+  // shared_kv / votes / counters / shared_kv_reports + triggers + role) at
+  // approve — but ONLY when the approved manifest declares any `apps:storage:*`
+  // scope — so a storage-declaring app has its datastore the moment it deploys,
+  // without a manual `/api/admin/apps-storage-backfill` run. It reuses the SAME
+  // `sanitizeAppSlug(blockId)` derivation the backfill uses, is idempotent
+  // (CREATE ... IF NOT EXISTS DDL), and — like (3a)/(3b)/#3085/#3089 — it
+  // log-and-continues on ANY error so provisioning can NEVER gate the deploy.
+  describe('W4: storage provisioning-on-approve', () => {
+    it('provisions the appsDb schema ONCE for a storage-declaring app with slug = sanitized blockId', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes: ['apps:storage:read', 'apps:storage:write'] }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({
+        scopes: ['apps:storage:read', 'apps:storage:write'],
+      });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // Provisioned exactly once, with the appBlockId of the freshly-created row
+      // and the sanitized slug (blockId 'hello' → schema slug 'hello').
+      expect(mockProvision).toHaveBeenCalledTimes(1);
+      expect(mockProvision).toHaveBeenCalledWith({ appBlockId: result.appBlockId, slug: 'hello' });
+      // The approve itself completed end-to-end.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    it('provisions for a SHARED-storage-only app (apps:storage:shared:*)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes: ['apps:storage:shared:read'] }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ scopes: ['apps:storage:shared:read'] });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockProvision).toHaveBeenCalledTimes(1);
+      expect(mockProvision).toHaveBeenCalledWith({ appBlockId: result.appBlockId, slug: 'hello' });
+    });
+
+    it('derives the schema slug from the blockId via sanitizeAppSlug (hyphens → underscores)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      // blockId 'my-cool-app' → appsDb schema slug 'my_cool_app' (hyphens folded).
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({
+          slug: 'my-cool-app',
+          manifest: manifest({ blockId: 'my-cool-app', scopes: ['apps:storage:write'] }),
+        })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({
+        blockId: 'my-cool-app',
+        scopes: ['apps:storage:write'],
+      });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockProvision).toHaveBeenCalledWith({
+        appBlockId: result.appBlockId,
+        slug: 'my_cool_app',
+      });
+    });
+
+    it('does NOT provision a non-storage app (declares only ai:write:budgeted)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes: ['ai:write:budgeted'] }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ scopes: ['ai:write:budgeted'] });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // Gen-only app never touches the datastore → no empty 6-table schema minted.
+      expect(mockProvision).not.toHaveBeenCalled();
+      // …and the approve still completes normally.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    it('does NOT provision an app with no scopes at all (default manifest)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle();
+
+      await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      expect(mockProvision).not.toHaveBeenCalled();
+    });
+
+    // TRANSACTION-BOUNDARY / log-and-continue coverage (mirrors the (3b)/(3a)
+    // tx-boundary tests): provisioning is a side effect that must NEVER gate the
+    // approve/deploy. A provision() throw is logged and the approve CONTINUES.
+    it('tx-boundary: a provision() error does NOT abort the approve — commit/finalise/build still run (backfill-recoverable)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({ manifest: manifest({ scopes: ['apps:storage:read'] }) })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+      mockBundleBuffer.current = await makeValidBundle({ scopes: ['apps:storage:read'] });
+      // The appsDb DDL fails (e.g. cnpg-cluster-apps briefly unavailable).
+      mockProvision.mockRejectedValueOnce(new Error('cnpg-cluster-apps: connection refused'));
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // The provision was attempted and failed…
+      expect(mockProvision).toHaveBeenCalledTimes(1);
+      // …but the approve proceeded end-to-end: AppBlock create, commit, finalise, build.
+      expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+      expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
+      expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
+      expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
+      expect(mockTriggerBuild).toHaveBeenCalledOnce();
+    });
+
+    it('idempotency: a subsequent-version re-approve provisions again (safe — CREATE ... IF NOT EXISTS)', async () => {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        pendingRequest({
+          manifest: manifest({ version: '0.2.0', scopes: ['apps:storage:read'] }),
+        })
+      );
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+      });
+      mockBundleBuffer.current = await makeValidBundle({
+        version: '0.2.0',
+        scopes: ['apps:storage:read'],
+      });
+
+      const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+      // Re-runs the idempotent DDL against the EXISTING app block's id + slug.
+      expect(result.appBlockId).toBe('apb_existing');
+      expect(mockProvision).toHaveBeenCalledTimes(1);
+      expect(mockProvision).toHaveBeenCalledWith({ appBlockId: 'apb_existing', slug: 'hello' });
+    });
+  });
 });
 
 // ---- rejectRequest ---------------------------------------------------------
@@ -1867,15 +2637,15 @@ describe('rejectRequest', () => {
     expect(updateArg.data.rejectionReason).toBe('short but valid here');
   });
 
-  it('rejects reasons shorter than 10 characters (after trim)', async () => {
+  it('rejects reasons shorter than the shared min (3) after trim', async () => {
     const { rejectRequest } = await import('../publish-request.service');
     await expect(
       rejectRequest({
         publishRequestId: 'pubreq_x',
         reviewerUserId: 999,
-        rejectionReason: '   short   ',
+        rejectionReason: '  no  ',
       })
-    ).rejects.toThrow(/at least 10 characters/);
+    ).rejects.toThrow(/at least 3 characters/);
   });
 
   it('rejects reasons longer than 2000 characters', async () => {

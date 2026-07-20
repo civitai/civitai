@@ -27,6 +27,10 @@ type Props = ButtonProps &
     accountTypes?: BuzzSpendType[];
     showTypePct?: boolean;
     priceReplacement?: React.ReactNode;
+    // Force the buzz color (button + amount badge) instead of deriving it from
+    // the funding-account distribution — e.g. when the user explicitly picks
+    // which Buzz type to spend.
+    colorType?: BuzzSpendType;
   };
 
 export function BuzzTransactionButton({
@@ -43,6 +47,7 @@ export function BuzzTransactionButton({
   accountTypes,
   showTypePct = false,
   priceReplacement,
+  colorType,
   ...buttonProps
 }: Props) {
   const allowedAccountTypes = useAvailableBuzz(accountTypes);
@@ -73,7 +78,7 @@ export function BuzzTransactionButton({
     Object.keys(buzzTypeDistribution.amt)[0] || baseType
   ) as BuzzSpendType;
 
-  const colorConfig = useBuzzCurrencyConfig(mainBuzzColor);
+  const colorConfig = useBuzzCurrencyConfig(colorType ?? mainBuzzColor);
 
   if (!features.buzz) return null;
 

@@ -41,6 +41,46 @@
   z-index: 4;
 }
 
+// Storefront cards flow in an auto-fill grid at a smaller min width, so the
+// artwork panel and paddings shrink to keep the cards compact. The exterior
+// border + inset highlight + soft shadow give the depth that keeps the card
+// from blending into the page background.
+.cardStorefront {
+  padding: var(--mantine-spacing-sm);
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.04));
+}
+
+.cardHeaderCompact {
+  margin: calc(-1 * var(--mantine-spacing-sm));
+  padding: var(--mantine-spacing-sm);
+  margin-bottom: var(--mantine-spacing-sm);
+  height: 170px;
+}
+
+.titleStorefront {
+  font-size: var(--mantine-font-size-md);
+  line-height: 1.25;
+}
+
+// Label on the left, a dark Buzz pill on the right — mirrors the buzz buttons.
+.buyButtonInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+// The label ellipsizes so a long action never squeezes the price pill.
+.buyButtonLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 // Soft blurred white light-spots sitting behind the cosmetic sample.
 .cardHeader::before {
   content: '';
@@ -171,6 +211,16 @@
   --button-color: #1a1403;
   font-weight: 800;
   box-shadow: 0 4px 16px -5px rgba(245, 159, 0, 0.55);
+
+  // Out of stock / unavailable: drop the warm glow and use a flat gray that
+  // reads as disabled against the card instead of blending into it.
+  &:disabled,
+  &[data-disabled] {
+    box-shadow: none;
+    background: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4)) !important;
+    color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-1)) !important;
+    opacity: 1;
+  }
 }
 
 .buyButtonGreen {
@@ -178,4 +228,20 @@
   --button-hover: linear-gradient(135deg, #7ee592, #34af4c);
   --button-color: #051f0d;
   box-shadow: 0 4px 16px -5px rgba(47, 158, 68, 0.55);
+}
+
+// Flat buzz-gold fill (no gradient) so the dark label stays legible edge to
+// edge — modeled on the Buzz purchase button.
+.buyButtonSolid {
+  --button-bg: #fab005;
+  --button-hover: #f59f00;
+  --button-color: #1a1403;
+  box-shadow: none;
+}
+
+.buyButtonSolidGreen {
+  --button-bg: #2f9e44;
+  --button-hover: #2b8a3e;
+  --button-color: #051f0d;
+  box-shadow: none;
 }

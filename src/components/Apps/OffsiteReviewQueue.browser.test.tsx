@@ -30,6 +30,7 @@ const OFFSITE_ROW = {
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   approveMutate: vi.fn(),
+  rejectMutate: vi.fn(),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -83,7 +84,13 @@ vi.mock('~/utils/trpc', () => {
             isPending: false,
           }),
         },
-        rejectExternalRequest: { useMutation: mutation },
+        rejectExternalRequest: {
+          useMutation: () => ({
+            mutate: mocks.rejectMutate,
+            mutateAsync: vi.fn(),
+            isPending: false,
+          }),
+        },
       },
     },
   };
@@ -94,6 +101,7 @@ const { OffsiteReviewQueue } = await import('./OffsiteReviewQueue');
 beforeEach(() => {
   mocks.invalidate.mockClear();
   mocks.approveMutate.mockClear();
+  mocks.rejectMutate.mockClear();
 });
 
 describe('OffsiteReviewQueue — kind-aware review row', () => {
@@ -146,6 +154,66 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
     await page.getByTestId('apps-offsite-reject-open').click();
     await expect.element(page.getByTestId('apps-offsite-reject-reason')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-offsite-reject-confirm')).toBeInTheDocument();
+  });
+
+  // Bug 1: the Reject confirm was gated on a silent 10-char minimum (every other
+  // mod-reason field uses the shared 3-char `OFFSITE_MOD_REASON_MIN`). Gate is now
+  // unified on that minimum with inline feedback — assert the disabled→enabled
+  // transition (also catches a genuine wiring defect if the gate never opens).
+  test('Reject confirm is disabled until a ≥min-length reason is typed', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-reject-open').click();
+
+    const confirm = page.getByTestId('apps-offsite-reject-confirm');
+    // Empty reason → disabled.
+    await expect.element(confirm).toBeDisabled();
+
+    // A too-short reason (2 < OFFSITE_MOD_REASON_MIN=3) → still disabled.
+    await page.getByTestId('apps-offsite-reject-reason').fill('no');
+    await expect.element(confirm).toBeDisabled();
+
+    // A reason at/above the 3-char minimum → enabled.
+    await page.getByTestId('apps-offsite-reject-reason').fill('needs a real reason');
+    await expect.element(confirm).toBeEnabled();
+
+    // Whitespace-only padding does NOT satisfy the gate (trimmed length counts).
+    await page.getByTestId('apps-offsite-reject-reason').fill('  a  ');
+    await expect.element(confirm).toBeDisabled();
+  });
+
+  // Beyond the GATE (disabled→enabled), lock that a valid reject actually FIRES
+  // the reject mutation with the trimmed reason + the request id — no prior test
+  // asserted the fired offsite reject mutation (only the gate).
+  test('Reject with a ≥min-length reason FIRES rejectExternalRequest with {publishRequestId, rejectionReason}', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-reject-open').click();
+
+    await page.getByTestId('apps-offsite-reject-reason').fill('needs a real reason');
+    const confirm = page.getByTestId('apps-offsite-reject-confirm');
+    await expect.element(confirm).toBeEnabled();
+    await confirm.click();
+    expect(mocks.rejectMutate).toHaveBeenCalledWith({
+      publishRequestId: 'req-1',
+      rejectionReason: 'needs a real reason',
+    });
+  });
+
+  // The disabled-reason Tooltip wraps the disabled Button in a Box so it still
+  // fires on hover (a native disabled <button> emits no pointer events). Assert
+  // the hint text surfaces while the gate is closed.
+  test('hovering the disabled Reject confirm surfaces the reason hint', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await page.getByTestId('apps-offsite-reject-open').click();
+
+    const confirm = page.getByTestId('apps-offsite-reject-confirm');
+    await expect.element(confirm).toBeDisabled();
+    await confirm.hover();
+    await expect
+      .element(page.getByText('Enter a reason — at least 3 characters.'))
+      .toBeInTheDocument();
   });
 
   test('the submitted timestamp renders as "Month D, YYYY" (no time-of-day)', async () => {

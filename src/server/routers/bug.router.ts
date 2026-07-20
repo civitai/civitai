@@ -40,7 +40,7 @@ export const bugRouter = router({
     .query(({ input }) => getBugById(input)),
   getLatest: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .input(getBugsInput.pick({ domain: true }).optional())
+    .input(getBugsInput.pick({ domain: true }).default({}))
     .use(applyRequestDomainColor)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input }) => getLatestBugUpdate(input)),

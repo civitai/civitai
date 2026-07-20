@@ -6,13 +6,20 @@ import {
   __resetConfigCacheForTests,
   __resetRateLimitForTests,
   __setEmitSinkForTests,
+  currentSerializeCtx,
   instrumentSerialize,
   resolveSerializeConfig,
   runWithSerializeCtx,
+  runWithSerializeCtxAlways,
   serializeCtxFromRequest,
   shouldLogSerialize,
+  ssrDehydrateSerializePath,
   type SerializeLogPayload,
 } from '~/server/logging/trpc-serialize-log';
+import {
+  onDevalueWriteFallback,
+  writeSerializeWithFallback,
+} from '~/shared/utils/trpc-union-transformer';
 
 // Env keys this module reads — snapshot + restore around every test so cases can
 // tune thresholds without leaking into siblings.
@@ -285,6 +292,64 @@ describe('trpc-serialize-log', () => {
       expect(captured[0].path).toBe('image.getInfinite');
       expect(captured[0].serializeMs).toBe(100);
       expect(captured[0].bytes!).toBeGreaterThanOrEqual(1024 * 1024);
+    });
+  });
+
+  // FIX 2 (PR #3186 audit): SSR dehydrate writes through the fallback serializer,
+  // but the attribution ALS was seeded ONLY at the tRPC HTTP boundary — so an SSR
+  // offender (e.g. /changelog) logged `path: 'unknown'`. The SSR path now seeds
+  // the ctx via `runWithSerializeCtxAlways` (kill-switch-independent) with a
+  // sanitized page marker from `ssrDehydrateSerializePath`.
+  describe('ssrDehydrateSerializePath (page marker survives the fallback-dedup split)', () => {
+    it('sanitizes the pathname to a single "/"-free attribution key', () => {
+      expect(ssrDehydrateSerializePath('/changelog')).toBe('ssr:dehydrate:changelog');
+      expect(ssrDehydrateSerializePath('/user/foo/models?section=x')).toBe(
+        'ssr:dehydrate:user.foo.models'
+      );
+    });
+
+    it('collapses "/" and empty to a stable root marker', () => {
+      expect(ssrDehydrateSerializePath('/')).toBe('ssr:dehydrate:root');
+      expect(ssrDehydrateSerializePath(undefined)).toBe('ssr:dehydrate:root');
+    });
+  });
+
+  describe('runWithSerializeCtxAlways (kill-switch-independent SSR attribution)', () => {
+    it('seeds the ctx even when TRPC_SERIALIZE_LOG_ENABLED is off', () => {
+      process.env.TRPC_SERIALIZE_LOG_ENABLED = 'false';
+      let seen: string | undefined;
+      runWithSerializeCtxAlways({ path: 'ssr:dehydrate:changelog' }, () => {
+        seen = currentSerializeCtx()?.path;
+      });
+      expect(seen).toBe('ssr:dehydrate:changelog');
+    });
+
+    it('contrast: the gated runWithSerializeCtx does NOT seed when disabled', () => {
+      process.env.TRPC_SERIALIZE_LOG_ENABLED = 'false';
+      let seen: string | undefined = 'sentinel';
+      runWithSerializeCtx({ path: 'x' }, () => {
+        seen = currentSerializeCtx()?.path;
+      });
+      expect(seen).toBeUndefined();
+    });
+
+    it('an SSR-origin devalue-write fallback attributes a non-"unknown" path', () => {
+      // The devalue-write-fallback observer (src/server/trpc.ts) reads
+      // currentSerializeCtx(); seeding it around dehydrate makes an SSR offender
+      // attributable. Kill-switch off to prove the SSR seed is independent of it.
+      process.env.TRPC_SERIALIZE_LOG_ENABLED = 'false';
+      const seenPaths: (string | undefined)[] = [];
+      onDevalueWriteFallback(() => seenPaths.push(currentSerializeCtx()?.path));
+      try {
+        const nonPojo = { ok: false, error: new Error('boom') }; // devalue THROWS → fallback fires
+        runWithSerializeCtxAlways({ path: ssrDehydrateSerializePath('/changelog') }, () => {
+          writeSerializeWithFallback(nonPojo);
+        });
+        expect(seenPaths).toEqual(['ssr:dehydrate:changelog']);
+        expect(seenPaths[0]).not.toBe('unknown');
+      } finally {
+        onDevalueWriteFallback(undefined as any);
+      }
     });
   });
 });

@@ -1,22 +1,26 @@
+import { useState } from 'react';
 import {
   Stack,
   Title,
   Group,
   Text,
   Button,
-  ThemeIcon,
   ActionIcon,
   Modal,
   Divider,
+  SegmentedControl,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconSettings, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesInfinite';
+import { DailyChallengesRow } from '~/components/Challenge/DailyChallengesRow';
 import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChallengeEvents';
+import { ChallengeFeedFilters } from '~/components/Filters/FeedFilters/ChallengeFeedFilters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import {
@@ -24,9 +28,12 @@ import {
   parseParticipationQuery,
 } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
-import { ChallengeStatus } from '~/shared/utils/prisma/enums';
+import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schema';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import styles from './index.module.css';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
@@ -44,6 +51,23 @@ const statusMap: Record<string, ChallengeStatus> = {
 function ChallengesPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const canCreateChallenge =
+    !currentUser?.muted &&
+    features.canWrite &&
+    features.challengePlatform &&
+    features.userChallenges;
+  const createChallengeButton = canCreateChallenge ? (
+    <Button
+      component={Link}
+      href="/challenges/create"
+      leftSection={<IconTrophy size={16} />}
+      variant="light"
+      rel="nofollow"
+    >
+      Create Challenge
+    </Button>
+  ) : null;
   const [infoOpened, { open: openInfo, close: closeInfo }] = useDisclosure(false);
 
   // Parse query params
@@ -54,6 +78,49 @@ function ChallengesPage() {
     .filter((s): s is ChallengeStatus => s != null);
   const includeEnded = statusFilters.includes('completed');
   const participation = parseParticipationQuery(router.query.participation);
+
+  const mine = router.query.engagement === 'created';
+  const [myStatus, setMyStatus] = useState<'Scheduled' | 'Active' | 'Completed'>('Scheduled');
+
+  const myStatusFilters: Record<string, Partial<GetInfiniteChallengesInput>> = {
+    Scheduled: { status: [ChallengeStatus.Scheduled], includeEnded: false },
+    Active: { status: [ChallengeStatus.Active], includeEnded: false },
+    Completed: { status: [ChallengeStatus.Completed], includeEnded: true },
+  };
+
+  if (mine) {
+    if (!currentUser || !features.userChallenges) return <NotFound />;
+    return (
+      <MasonryContainer>
+        <Stack gap="xs">
+          <Stack gap="xl" align="flex-start">
+            <Group justify="space-between" w="100%" wrap="nowrap" gap="sm">
+              <Title>My Challenges</Title>
+              {createChallengeButton}
+            </Group>
+            <SegmentedControl
+              classNames={styles}
+              transitionDuration={0}
+              radius="xl"
+              data={['Scheduled', 'Active', 'Completed']}
+              value={myStatus}
+              onChange={(v) => setMyStatus(v as 'Scheduled' | 'Active' | 'Completed')}
+              withItemsBorders={false}
+            />
+          </Stack>
+          <ChallengesInfinite
+            filters={{
+              userId: currentUser.id,
+              source: [ChallengeSource.User],
+              excludeEventChallenges: true,
+              ...myStatusFilters[myStatus],
+            }}
+            emptyAction={createChallengeButton}
+          />
+        </Stack>
+      </MasonryContainer>
+    );
+  }
 
   return (
     <>
@@ -120,34 +187,18 @@ function ChallengesPage() {
 
       <MasonryContainer>
         <Stack gap="md">
-          {/* Header */}
-          <Group justify="space-between" wrap="nowrap">
-            <Group gap="sm">
-              <ThemeIcon size="xl" radius="xl" color="yellow" variant="light">
-                <IconTrophy size={24} />
-              </ThemeIcon>
-              <div>
-                <Group gap={4}>
-                  <Title order={1}>Challenges</Title>
-                  <ActionIcon variant="subtle" color="gray" onClick={openInfo}>
-                    <IconInfoCircle size={20} />
-                  </ActionIcon>
-                </Group>
-                <Text c="dimmed" size="sm">
-                  Compete in AI art challenges and win prizes
-                </Text>
-              </div>
+          {/* Featured Challenge Events */}
+          <FeaturedChallengeEvents />
+
+          {/* Daily Challenges — active + upcoming System challenges, horizontal scroll. */}
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Group gap={4} wrap="nowrap">
+              <Title order={3}>Daily Challenges</Title>
+              <ActionIcon variant="subtle" color="gray" onClick={openInfo}>
+                <IconInfoCircle size={20} />
+              </ActionIcon>
             </Group>
-            <Group gap="sm">
-              <Button
-                component={Link}
-                href="/challenges/winners"
-                leftSection={<IconTrophy size={16} />}
-                variant="light"
-                color="yellow"
-              >
-                Previous Winners
-              </Button>
+            <Group gap="sm" wrap="nowrap" className="shrink-0">
               {currentUser?.isModerator && (
                 <Button
                   component={Link}
@@ -158,24 +209,43 @@ function ChallengesPage() {
                   Manage
                 </Button>
               )}
+              <Button
+                component={Link}
+                href="/challenges/winners"
+                leftSection={<IconTrophy size={16} />}
+                variant="light"
+                color="yellow"
+              >
+                Daily Challenge Winners
+              </Button>
             </Group>
           </Group>
+          <DailyChallengesRow />
 
-          {/* Featured Challenge Events */}
-          <FeaturedChallengeEvents />
-
-          {/* Daily Challenges */}
-          <Divider />
-          <Title order={3}>Daily Challenges</Title>
-          <ChallengesInfinite
-            filters={{
-              sort,
-              status: statusArray.length > 0 ? statusArray : undefined,
-              includeEnded,
-              excludeEventChallenges: true,
-              participation,
-            }}
-          />
+          {/* Community Challenges — user + staff-created, masonry. Sort/filter controls live inline
+              here (moved off the global SubNav) since they only scope this section. Behind the
+              userChallenges flag: with it off, the page shows only the daily-challenge experience. */}
+          {features.userChallenges && (
+            <>
+              <Divider />
+              <Group wrap="wrap" gap="sm">
+                <Title order={3}>Community Challenges</Title>
+                <Group gap="sm" wrap="wrap" ml="auto">
+                  <ChallengeFeedFilters />
+                </Group>
+              </Group>
+              <ChallengesInfinite
+                filters={{
+                  source: [ChallengeSource.User, ChallengeSource.Mod],
+                  sort,
+                  status: statusArray.length > 0 ? statusArray : undefined,
+                  includeEnded,
+                  excludeEventChallenges: true,
+                  participation,
+                }}
+              />
+            </>
+          )}
         </Stack>
       </MasonryContainer>
     </>

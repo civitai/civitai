@@ -1,4 +1,5 @@
 import type { NextApiRequest } from 'next';
+import { SPOKE_CALLBACK_PATH as CALLBACK_PATH } from '@civitai/auth';
 
 // The first-party login bridge core (PKCE/state, the hub authorize URL, the code→session exchange, and the
 // bridge cookie) now lives in @civitai/auth — framework-agnostic, shared by every spoke and unit-tested there.
@@ -36,4 +37,44 @@ export function resolveSelfOrigin(req: NextApiRequest): string | undefined {
     (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0]?.trim() ??
     (host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
   return `${proto}://${host}`;
+}
+
+// ── Bridge-cookie delivery PROBE (temporary diagnostic) ─────────────────────────────────────────────────────
+// A Domain-scoped, 1-hour companion to the 10-min host-only bridge cookie — set alongside it at /authorize,
+// read at /callback. When the bridge cookie is MISSING (oauth_state=no_cookie) it separates the causes that
+// the Domain fix's own before/after can't:
+//   probe present, authHost ≠ callback host → a host variation (www↔apex) the new Domain scope now covers;
+//   probe present, ageMs > bridge TTL (10m)  → the login outran the bridge cookie's lifetime (expiry);
+//   probe ABSENT                             → a full cross-site cookie block or a bot (no cookies at all).
+// It carries NO secret — only the origin host + a timestamp. Remove once the .red no_cookie cause is settled.
+export const BRIDGE_PROBE_COOKIE = 'oauth_bridge_probe';
+const BRIDGE_PROBE_TTL_S = 3600;
+
+export function buildBridgeProbeCookie(opts: { host: string; domain?: string; secure: boolean }): string {
+  const payload = encodeURIComponent(JSON.stringify({ h: opts.host, t: Date.now() }));
+  return [
+    `${BRIDGE_PROBE_COOKIE}=${payload}`,
+    `Path=${CALLBACK_PATH}`,
+    'HttpOnly',
+    opts.secure ? 'SameSite=None' : 'SameSite=Lax',
+    ...(opts.secure ? ['Secure'] : []),
+    ...(opts.domain ? [`Domain=${opts.domain}`] : []),
+    `Max-Age=${BRIDGE_PROBE_TTL_S}`,
+  ].join('; ');
+}
+
+/** Decode the probe cookie → the origin host it was set on + how long ago (ms), or undefined if absent/bad. */
+export function readBridgeProbe(
+  value: string | undefined
+): { authHost?: string; ageMs?: number } | undefined {
+  if (!value) return undefined;
+  try {
+    const p = JSON.parse(decodeURIComponent(value)) as { h?: unknown; t?: unknown };
+    return {
+      authHost: typeof p.h === 'string' ? p.h : undefined,
+      ageMs: typeof p.t === 'number' ? Date.now() - p.t : undefined,
+    };
+  } catch {
+    return undefined;
+  }
 }

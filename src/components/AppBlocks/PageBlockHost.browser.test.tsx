@@ -13,6 +13,18 @@ import { renderWithProviders } from '../../../test/component-setup';
 // without a real tRPC provider. The workflow + storage bridges are exercised in
 // PageBlockHostWorkflow / PageBlockHostStorage.browser.test.tsx; here they're
 // inert stubs.
+// AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
+// moderator gate; these suites render the real host without a CivitaiSessionProvider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+// Issue B: spy on the toast so the un-grantable-consent path is assertable without
+// mounting the full Notifications provider. Preserve the module's other exports.
+const showNotificationSpy = vi.fn();
+vi.mock('@mantine/notifications', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mantine/notifications')>();
+  return { ...actual, showNotification: (args: unknown) => showNotificationSpy(args) };
+});
+
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (pulled into PageBlockHost's real render graph) statically
   // imports `setTrpcBatchingEnabled` from this module (added in #2946). Because
@@ -21,16 +33,27 @@ vi.mock('~/utils/trpc', () => ({
   // test file fails to import — silently, since this suite is report-only.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
+    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyViewer: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzTransactions: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getMyDailyCompensation: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {
         append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -152,6 +175,7 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
   beforeEach(() => {
     // dialogStore is a module-level zustand store shared across tests — reset it.
     useDialogStore.getState().closeAll();
+    showNotificationSpy.mockClear();
   });
 
   test('after BLOCK_READY, REQUEST_CONSENT opens the consent dialog with the server-known missing set', async () => {
@@ -222,9 +246,56 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     );
 
     await driveToReady();
+    // baseProps.declaredScopes already carries ai:write:budgeted, so with nothing
+    // missing it is ALREADY granted → benign re-request → no dialog AND no toast.
     postFromBlock('REQUEST_CONSENT', { scopes: ['ai:write:budgeted'] });
 
     await new Promise((r) => setTimeout(r, 150));
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    expect(showNotificationSpy).not.toHaveBeenCalled();
+  });
+
+  test('Issue B: an UN-GRANTABLE requested scope (clamped at mint) surfaces a toast, not a silent drop', async () => {
+    // The preview token carries no storage scopes and nothing is grantable via
+    // consent (missingScopes empty) — a block asking for apps:storage:write can
+    // NEVER be satisfied here. Instead of dropping silently (dead-looking button),
+    // the host surfaces a user-visible message.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+    // No consent dialog is opened for an un-grantable scope.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('Issue B: reviewMode never toasts an un-grantable consent request (untrusted preview stays silent)', async () => {
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        declaredScopes={['models:read:self']}
+        missingScopes={[]}
+        needsConsent={false}
+        reviewMode
+        onConsentGranted={vi.fn()}
+      />
+    );
+
+    await driveToReady();
+    postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write'] });
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(showNotificationSpy).not.toHaveBeenCalled();
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 });

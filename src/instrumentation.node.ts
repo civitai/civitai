@@ -17,6 +17,7 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
+import { registerPyroscope } from '~/server/pyroscope';
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
@@ -31,6 +32,18 @@ registerCpuProfiler();
 // CPU_PROFILE_LAG_TRIGGER_MS is set (suggested: 1000) on the dp-prod-api
 // deployment. See src/server/cpu-profiler.ts.
 registerEventLoopStallProfiler();
+
+// Arm Grafana Pyroscope CONTINUOUS wall+cpu profiling. DARK by default: a
+// complete no-op unless PYROSCOPE_ENABLED='true' (and PYROSCOPE_SERVER_ADDRESS)
+// are set on the deployment — in the dark configuration the @pyroscope/nodejs
+// package (and its eager native @datadog/pprof addon) is never even imported.
+// Async because it dynamically imports the SDK only when armed; MUST NOT be
+// awaited (fire-and-forget, like the warmer) so boot is never blocked. Any arm
+// failure (incl. the native addon failing to load) is swallowed and can never
+// crash boot. See src/server/pyroscope.ts.
+void registerPyroscope().catch((err) => {
+  console.error('[instrumentation.node] pyroscope arm failed (dark, fail-open):', err);
+});
 
 // Arm the event-loop long-task detector. DISARMED by default (no-op unless
 // EVENTLOOP_LONGTASK_THRESHOLD_MS > 0), in which case the request hot path runs

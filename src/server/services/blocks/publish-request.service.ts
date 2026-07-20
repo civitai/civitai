@@ -9,6 +9,8 @@ import {
   MAX_SCREENSHOT_SIZE_BYTES,
   MAX_SCREENSHOTS,
   MAX_TOTAL_DECOMPRESSED_BYTES,
+  PUBLISH_REJECTION_REASON_MAX,
+  PUBLISH_REJECTION_REASON_MIN,
   SCREENSHOT_DIR,
   SCREENSHOT_EXTENSIONS,
   type ScreenshotExtension,
@@ -18,6 +20,23 @@ import {
 import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+// Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
+// the notifications client in its body). approve/reject call it POST-COMMIT to notify
+// the submitting developer of the moderator decision — best-effort, wrapped in a
+// try/catch at each call site so a notification failure can never fail the decision.
+import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-notify';
+// Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
+// approveRequest copies a validated manifest `category` onto AppBlock.category.
+import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+// Type-only (erased at runtime) — the AppBlock projection the shared
+// AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
+// approveRequest). The mapper VALUE itself is dynamically imported at use.
+import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+// Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
+// the (3c) storage-provision-on-approve block; matches the admin backfill's
+// derivation exactly. The provisioner VALUE is dynamically imported at use so
+// appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
+import { sanitizeAppSlug } from '~/server/utils/apps-slug';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -1229,6 +1248,65 @@ export class WithdrawRequestError extends Error {
 }
 
 /**
+ * 🔴 Fix #1 (ONSITE reset coverage) — when an owner withdraws the block publish
+ * request that `resetOnsiteListingToPending` re-queued, close the reset listing so the
+ * owner can't defeat the mod's mandated re-review. This is the onsite mirror of the
+ * offsite `closeTerminalListing` pending→removed+`delist` withdraw path.
+ *
+ * 🔴 DETERMINISTIC (mirrors the offsite `closeTerminalListing` rule): fires whenever an
+ * ONSITE `AppListing` for this slug is currently `pending` — which is ALWAYS a mod
+ * reset. Onsite listings are created `approved` on approve; the ONLY writer of
+ * `status='pending'` on an onsite listing is `resetOnsiteListingToPending`, so a
+ * `pending` onsite listing == a mod-mandated re-review. It therefore does NOT probe the
+ * most-recent moderation event (an intervening report-resolve/dismiss event on the same
+ * listing could shift the newest event off `reset-to-pending` and defeat such a probe).
+ * Flip the listing `pending → removed` (status-guarded TOCTOU) + write a `delist` audit
+ * event with the OWNER as actor: the last event is now a takedown, so
+ * `republishOwnListing`'s guard FORBIDS the owner and a mod must `relistListing`
+ * (`removed → approved`, which also un-suspends the backing block). The block is left
+ * `suspended` (already so from the reset) — correct, relist restores it.
+ *
+ * A first-time submission withdraw (no approved listing yet → no `pending` onsite
+ * listing) is a no-op.
+ */
+async function closeOnsiteResetListingOnWithdraw(opts: {
+  slug: string;
+  actorUserId: number;
+}): Promise<void> {
+  const { dbRead, dbWrite } = await import('~/server/db/client');
+
+  const listing = await dbRead.appListing.findFirst({
+    where: { slug: opts.slug, kind: 'onsite', status: 'pending' },
+    select: { id: true, slug: true },
+  });
+  if (!listing) return; // not a reset withdraw (first-time submission, or already closed)
+
+  // A `pending` onsite listing is unconditionally a mod reset → close it. Imported here
+  // (only on the rare reset branch) to keep the common no-reset withdraw path free of
+  // the id-gen module.
+  const { newAppListingModerationEventId } = await import('~/server/utils/app-block-ids');
+  await dbWrite.$transaction(async (tx) => {
+    const flipped = await tx.appListing.updateMany({
+      where: { id: listing.id, kind: 'onsite', status: 'pending' },
+      data: { status: 'removed' },
+    });
+    if (flipped.count === 0) return; // raced (mod re-approved/relisted) → leave as-is
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: listing.id,
+        slug: listing.slug,
+        action: 'delist',
+        actorUserId: opts.actorUserId,
+        reason: null,
+        before: { status: 'pending' },
+        after: { status: 'removed' },
+      },
+    });
+  });
+}
+
+/**
  * Dev-facing withdrawal of their own pending request. Idempotent
  * (re-withdrawing is a no-op if already withdrawn). Throws a typed
  * {@link WithdrawRequestError} on a missing row, another user's row, or a
@@ -1266,7 +1344,9 @@ export async function withdrawRequest(opts: {
     // orphans (the apply Job's ttlSecondsAfterFinished only reaps the Job, not the
     // workloads it applied). Captured here so we can fire teardownReviewForRequest
     // after the withdraw lands.
-    select: { id: true, status: true, submittedByUserId: true, deployState: true },
+    // `slug` (Fix #1 onsite coverage): a withdraw of a mod-mandated reset re-queue must
+    // close the reset listing so the owner can't defeat the re-review — see below.
+    select: { id: true, status: true, submittedByUserId: true, deployState: true, slug: true },
   });
   if (!row) {
     throw new WithdrawRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
@@ -1291,6 +1371,15 @@ export async function withdrawRequest(opts: {
     data: { status: 'withdrawn' },
   });
   if (count > 0) {
+    // 🔴 Fix #1 (ONSITE coverage): if this withdrawn request was a MOD-MANDATED reset
+    // re-queue (`resetOnsiteListingToPending` bounced an approved onsite listing to
+    // `pending` + suspended the block + cloned this pending request), the owner
+    // withdrawing it must NOT leave them able to defeat the re-review. Close the reset
+    // listing to `removed` + write a `delist` event (the onsite mirror of the offsite
+    // `closeTerminalListing` withdraw path) so `republishOwnListing`'s guard FORBIDS an
+    // owner self-restore — a mod must `relistListing` (which also un-suspends the
+    // block). A first-time submission withdraw has no `pending` onsite listing → no-op.
+    await closeOnsiteResetListingOnWithdraw({ slug: row.slug, actorUserId: userId });
     // MOD REVIEW SANDBOX (#2831) — tear down any review env spun up for this
     // request. Best-effort + non-blocking (mirrors approveRequest/rejectRequest):
     // the withdraw has already committed, so a teardown failure must never affect
@@ -1902,6 +1991,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
   const manifestRenderMode =
     typeof manifest.renderMode === 'string' ? manifest.renderMode : 'iframe';
+  // W13 category-on-approve: the OPTIONAL marketplace `category` the manifest
+  // declares (already shape-validated below by BlockManifestValidator — if
+  // present it is guaranteed a MARKETPLACE_CATEGORIES member; the guard here
+  // narrows the type + is defense-in-depth). `null` when the manifest omits it.
+  // Copied onto AppBlock.category ONLY when the row has no curated category yet
+  // (no-clobber — see the updateMany just before the (3b) listing-create block).
+  const manifestCategory = isMarketplaceCategory(manifest.category) ? manifest.category : null;
 
   // Determine first-vs-subsequent via the existing app_blocks row.
   // We don't rely on request.appBlockId being null because two requests
@@ -2169,6 +2265,250 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     });
   }
 
+  // (3a) Category-on-approve (W13 follow-up to (3b)) — populate AppBlock.category
+  // from the validated manifest `category` so it flows to the auto-created store
+  // listing below WITHOUT any change to (3b)/`mapAppBlockToListing` (they already
+  // read AppBlock.category). NO-CLOBBER + read-your-writes, done as ONE atomic
+  // write across every path (first-version create, P2002-retry, subsequent
+  // version): a targeted `updateMany` gated on `category: null` sets it ONLY when
+  // no category is present yet. This is immune to replica lag (the gate is
+  // evaluated at the PRIMARY, unlike the `dbRead` row read above) and guarantees
+  // a moderator's curated category (set via `setMarketplaceMeta`) is never
+  // overridden by a re-approve. Skipped entirely when the manifest declares no
+  // category (the row keeps whatever it had — null for a fresh app). Runs BEFORE
+  // the (3b) block's `dbWrite.appBlock.findUnique` re-read (same PRIMARY), so the
+  // listing-create reads the just-written category (read-your-writes). A first-
+  // version approve whose manifest declares a category therefore mints a listing
+  // already categorised; a manifest with no category leaves it null (mod-curated
+  // later). The "category added in a LATER version" case (listing already exists,
+  // so (3b) skips it) is an accepted non-goal — recoverable via mod curation.
+  if (manifestCategory !== null) {
+    try {
+      await dbWrite.appBlock.updateMany({
+        where: { id: appBlockId, category: null },
+        data: { category: manifestCategory },
+      });
+    } catch (err) {
+      // Same posture as the (3b) listing-create below (and #3085): the category
+      // FEEDS the convenience store listing, so it must NEVER gate the
+      // approve/deploy. On ANY error (transient DB blip, etc.) log-and-CONTINUE
+      // — the app still deploys, the category is simply absent this pass and is
+      // recoverable on a re-approve (the null-gate re-applies idempotently) or
+      // via mod curation. If we rethrew, a deterministically-failing write here
+      // could wedge the app's deploy forever over a mere categorisation miss.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] category-from-manifest set failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — AppBlock.category is unset this pass, recoverable on re-approve or via mod curation: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
+  }
+
+  // (3b) App Store listing (W13) — auto-create the onsite `AppListing` for this
+  // app so an approved+deployed onsite app shows on the `/apps` store grid
+  // WITHOUT a manual `backfillAppListings` run. This closes the W13-LOCKED
+  // "1:1 slug=blockId auto-create-on-approve" decision that was never wired.
+  //
+  // TRANSACTION BOUNDARY: approveRequest is NOT a DB transaction — it interleaves
+  // durable DB writes with Forgejo/MinIO/Tekton I/O and is made correct by
+  // deterministic ids + P2002-fallback so a partial-failure re-approve converges
+  // (the OauthClient + AppBlock creates above use exactly this pattern). We slot
+  // the listing create into that same model: run it right after the AppBlock row
+  // exists, using the same client, WHILE THE PUBLISH_REQUEST IS STILL 'pending'
+  // (it is finalised 'approved' only in step 6, after the commit succeeds). So a
+  // failure in ANY later step (bundle fetch / commit / build) leaves the request
+  // pending → the mod re-approves → this block idempotently SKIPS the existing
+  // listing and the flow converges. The listing is never permanently orphaned.
+  //
+  // IDEMPOTENT on `appBlockId` (the 1:1 unique): first-version approve CREATES it;
+  // a subsequent-version approve finds it present and SKIPS — it must NEVER clobber
+  // curator edits (category/featured/featuredOrder) made after the first approve.
+  // A concurrent create (a racing approve or the backfill) is absorbed by the
+  // P2002 catch. We NEVER update an existing listing here.
+  //
+  // ONSITE ONLY: approveRequest only ever produces hosted (external_url IS NULL)
+  // AppBlocks, so `mapAppBlockToListing` yields kind='onsite'. The offsite
+  // external-submission flow (`offsite-listing.service`) owns its own listing
+  // writes — this path never touches it and never double-creates.
+  //
+  // We read the freshly-approved AppBlock's OWN columns from the PRIMARY
+  // (read-your-writes — it was just created/updated via dbWrite above) and map it
+  // through the SAME `mapAppBlockToListing` the backfill uses, over the exact same
+  // projection the backfill selects. That way the two paths cannot drift AND any
+  // mod curation already on the row (category/featured/featuredOrder) + the real
+  // OauthClient owner are mirrored faithfully — important for the transition case
+  // where an app approved BEFORE this feature (possibly already curated) has its
+  // first listing minted now on a subsequent-version approve.
+  const { mapAppBlockToListing } = await import('./app-listing-mapper');
+  try {
+    const existingListing = await dbRead.appListing.findUnique({
+      where: { appBlockId },
+      select: { id: true },
+    });
+    if (!existingListing) {
+      const ab = await dbWrite.appBlock.findUnique({
+        where: { id: appBlockId },
+        select: {
+          id: true,
+          blockId: true,
+          manifest: true,
+          contentRating: true,
+          category: true,
+          featured: true,
+          featuredOrder: true,
+          externalUrl: true,
+          app: { select: { userId: true } },
+        },
+      });
+      // A resolvable owner is required for the listing's userId FK. Every approved
+      // AppBlock has an OauthClient owner, so a miss here is anomalous — skip
+      // (don't throw into the already-side-effecting approve flow); the backfill
+      // remains the recovery path for such an anomaly.
+      if (ab && ab.app && typeof ab.app.userId === 'number') {
+        await dbWrite.appListing.create({
+          data: mapAppBlockToListing(ab as SourceAppBlock),
+          select: { id: true },
+        });
+      }
+    }
+  } catch (err) {
+    // The store listing is a CONVENIENCE — it must NEVER gate the approve/deploy.
+    //   - P2002 = unique violation on appBlockId: a concurrent approve/backfill
+    //     created the listing first. The invariant (one listing per app) still
+    //     holds → silent no-op skip.
+    //   - ANY OTHER error (e.g. the app owner deleted their account → user_id FK
+    //     violation, an out-of-domain contentRating hitting the CHECK, a transient
+    //     DB error): log-and-CONTINUE. If we rethrew, that failure would abort the
+    //     whole approve BEFORE the commit/build — and because it re-fails
+    //     deterministically, the app could NEVER be re-approved/deployed over a
+    //     mere shelf-listing miss. Instead the approve proceeds, the app deploys,
+    //     and the listing is simply absent until a `blocks.backfillAppListings`
+    //     run mints it. Duck-type on the Prisma error `code` (matches this file's
+    //     OauthClient/AppBlock P2002 handling).
+    const code = (err as { code?: unknown })?.code;
+    if (code !== 'P2002') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] onsite AppListing auto-create failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
+  }
+
+  // (3b-reset) W13 ONSITE reset-to-pending re-approve — restore BOTH store visibility
+  // AND the block runtime. `resetOnsiteListingToPending` (offsite-moderation.service)
+  // bounces an approved onsite listing to `pending` AND suspends the backing block
+  // (`app_blocks.status` approved → suspended — the real runtime stop), then re-queues
+  // THIS request. Re-approving it must therefore undo BOTH halves:
+  //   (a) flip the LISTING `pending → approved` so it re-appears on /apps, AND
+  //   (b) un-suspend the BLOCK `suspended → approved` so `<slug>.civit.ai` / the run
+  //       page serves again.
+  // 🔴 (b) is NOT covered by the `appBlock.update` above: the subsequent-version branch
+  // (isFirstVersion=false, the reset case — the block already exists) refreshes
+  // manifest/version but NEVER sets `status`, so without this the block stays
+  // `suspended` while the listing shows `approved` — store-visible but dead, and NOT
+  // self-recoverable (`relistListing` guards `status:'removed'`, not `pending`).
+  //
+  // GATED on the listing having actually been `pending` (the reset case): the guarded
+  // listing flip's `count` tells us. Only THEN do we un-suspend the block — so a
+  // normal subsequent-version approve of an already-approved app (listing not pending →
+  // count 0) does NOT touch the block, and a delisted-then-resubmitted app is never
+  // auto-un-suspended here (its listing is `removed`, not `pending`, so count 0 too).
+  // Both flips are status-guarded (never clobber a drifted/curated state) — the listing
+  // flip touches only `status`. Same log-and-continue posture: the store listing +
+  // block restore are a convenience and must NEVER gate the approve/deploy.
+  try {
+    const restored = await dbWrite.appListing.updateMany({
+      where: { appBlockId, kind: 'onsite', status: 'pending' },
+      data: { status: 'approved' },
+    });
+    if (restored.count > 0) {
+      // Reset re-approve confirmed → un-suspend the backing block so it serves again.
+      // Guarded to `suspended` (idempotent + drift-safe: an already-approved block is
+      // a 0-row no-op).
+      await dbWrite.appBlock.updateMany({
+        where: { id: appBlockId, status: 'suspended' },
+        data: { status: 'approved' },
+      });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] onsite reset-to-pending restore failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+        `approve/deploy CONTINUES — a reset app may stay hidden/suspended until relisted: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+    );
+  }
+
+  // (3c) Per-app storage provisioning (W4) — create the app's appsDb schema +
+  // tables (kv / quota / shared_kv / votes / counters / shared_kv_reports + the
+  // quota triggers + per-app role) at approve, so a storage-declaring app has its
+  // datastore the moment it deploys — WITHOUT a manual
+  // `/api/admin/apps-storage-backfill` run. Closes the same "approve silently
+  // didn't do X" gap as (3a)/(3b): before this, an approved+deployed app that
+  // declared `apps:storage:*` had NO schema until someone hand-ran the backfill,
+  // so its FIRST storage call 500'd with `relation "app_<slug>.shared_kv" does not
+  // exist` (this bit the live `app-requests` app).
+  //
+  // GATED ON STORAGE SCOPE (design decision): we provision ONLY when the approved
+  // manifest declares any `apps:storage:*` scope (per-user read/write OR shared
+  // read/write). A gen-only app (e.g. one declaring just `ai:write:budgeted`)
+  // never touches the datastore, so minting an empty 6-table schema + role for it
+  // is pure litter. An app that ADDS storage in a LATER version is provisioned on
+  // THAT version's approve — a scope change requires a new approved version, and
+  // the DDL is idempotent, so there is no "added storage but never provisioned"
+  // hole. (The admin backfill still provisions ALL approved apps unconditionally;
+  // this go-forward path is deliberately narrower.) The scope snapshot used here
+  // is the SAME `manifestScopes` written to `AppBlock.approvedScopes` above, so
+  // the provision decision matches what the token-mint path will actually grant.
+  //
+  // IDEMPOTENT: `AppStorageProvisioner.provision` is `CREATE ... IF NOT EXISTS` /
+  // DO-block / ON CONFLICT throughout, so first-version and every subsequent-
+  // version approve (a re-approve just re-runs the DDL) are equally safe.
+  //
+  // LOG-AND-CONTINUE (same posture as (3a)/(3b) + #3085/#3089/#3090): storage
+  // provisioning must NEVER block an app's approve/deploy. On ANY error we emit a
+  // structured warning and CONTINUE — the app still deploys and the schema is
+  // recoverable via `/api/admin/apps-storage-backfill`. If we rethrew, a
+  // deterministically-failing appsDb (e.g. cnpg-cluster-apps briefly down) would
+  // wedge the app's deploy forever over a datastore miss.
+  const declaresStorageScope = manifestScopes.some((s) => s.startsWith('apps:storage:'));
+  if (declaresStorageScope) {
+    // Same slug derivation the backfill uses: sanitizeAppSlug(blockId). request.slug
+    // is the manifest blockId (== AppBlock.blockId), already SLUG_REGEX-validated at
+    // submit; sanitizeAppSlug folds it to the appsDb schema slug (hyphens → `_`).
+    const storageSlug = sanitizeAppSlug(request.slug);
+    if (!storageSlug) {
+      // Anomalous — a submit-validated blockId should always normalize. Skip +
+      // warn rather than throw into the already-side-effecting approve flow.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] storage provisioning skipped (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `blockId does not normalize to a valid appsDb slug — recoverable via /api/admin/apps-storage-backfill`
+      );
+    } else {
+      try {
+        const { AppStorageProvisioner } = await import(
+          '~/server/services/apps/storage-provision.service'
+        );
+        await AppStorageProvisioner.provision({ appBlockId, slug: storageSlug });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[approveRequest] storage provisioning failed (slug=${request.slug}, appBlockId=${appBlockId}, storageSlug=${storageSlug}); ` +
+            `approve/deploy CONTINUES — the app's datastore schema is absent this pass, recoverable via /api/admin/apps-storage-backfill: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+        );
+      }
+    }
+  }
+
   // (4) Obtain the bundle bytes. Two origins:
   //   - ZIP path (submitVersion): the dev uploaded a ZIP → we have a real
   //     bundleKey → GET it from MinIO (single GET; per-file extract in-memory).
@@ -2344,6 +2684,32 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // deploy_state BEFORE markRequestDeployState flipped it to production
   // 'building'), so the common no-preview approve does zero extra DB/k8s work.
   if (hadReviewPreview) void teardownReviewForRequest(request.id);
+
+  // POST-COMMIT, best-effort — notify the submitting developer their block was
+  // approved (and is now building/deploying). This runs AFTER the status flip to
+  // 'approved' + the build trigger have both succeeded (a failed approve throws
+  // above and never reaches here → no notification for a rolled-back approve). The
+  // whole call is wrapped so a notification failure can NEVER fail or roll back the
+  // approve — the decision is already durable. Keyed by the request id for
+  // idempotency (a re-approve of the same request notifies once).
+  try {
+    await notifyAppBlockSubmitter({
+      type: 'app-block-approved',
+      userId: request.submittedByUserId,
+      key: `app-block-approved:${params.publishRequestId}`,
+      details: {
+        slug: request.slug,
+        name: typeof manifest.name === 'string' ? manifest.name : null,
+        version: request.version,
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] submitter notification failed (id=${params.publishRequestId}); ` +
+        `approve stands: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   return {
     publishRequestId: request.id,
@@ -2572,12 +2938,30 @@ export function parseReviewDetail(raw: string | null | undefined): ReviewPreview
  * status='pending') is NOT resurrected by a late callback write. The initial
  * `preview-building` mark from previewRequest must NOT set this (it transitions
  * from null / preview-failed → preview-building).
+ *
+ * Pass `expectedSha` for a stale-watcher guard on the apply watcher's advancing
+ * writes. `requireActivePreview` proves *some* preview is active, but is sha-
+ * BLIND — it can't tell whether the active preview is the one THIS watcher owns.
+ * Because the reachability wait keeps a watcher alive for up to a few minutes, a
+ * mod can tear down preview A mid-wait and re-preview (build B) within that
+ * window; without a sha check, watcher A's late live/failed write matches B's
+ * active row and clobbers it (marking a live B failed, or — worse — stamping B
+ * `preview-live` with A's host/url so the mod reviews the WRONG code). When set,
+ * the write additionally requires the row's CURRENT `deployDetail` to still
+ * carry this build's sha, so a superseded watcher's write affects 0 rows.
+ * `deployDetail` is a stringified-JSON `String` column (not a Prisma `Json`
+ * column), so this matches the serialized `"sha":"<sha>"` fragment via
+ * `contains` — a single atomic UPDATE…WHERE, no read-then-write race. The sha is
+ * a 40-char hex the callback validates against /^[0-9a-f]{40}$/, so it's a safe,
+ * collision-free literal to embed. Only the WATCHER's advancing writes pass this;
+ * the initial `previewRequest`/`preview-building` write must NOT (it is
+ * establishing the new preview, whose sha isn't yet on the row).
  */
 export async function markReviewPreviewState(
   publishRequestId: string,
   state: ReviewPreviewState,
   detail: ReviewPreviewDetail,
-  opts?: { requireActivePreview?: boolean }
+  opts?: { requireActivePreview?: boolean; expectedSha?: string }
 ): Promise<void> {
   try {
     const { dbWrite } = await import('~/server/db/client');
@@ -2588,6 +2972,11 @@ export async function markReviewPreviewState(
         // Only advance a row that is STILL an active preview (torn-down rows have
         // deployState=null → excluded → no resurrection).
         ...(opts?.requireActivePreview ? { deployState: { startsWith: 'preview-' } } : {}),
+        // Stale-watcher guard: only advance if the row's current detail still
+        // belongs to this build's sha (the serialized `"sha":"<sha>"` fragment).
+        ...(opts?.expectedSha
+          ? { deployDetail: { contains: `"sha":"${opts.expectedSha}"` } }
+          : {}),
       },
       data: {
         deployState: state,
@@ -2789,6 +3178,192 @@ export async function getReviewStatus(opts: {
     detail,
     updatedAt: row.deployUpdatedAt ?? null,
     previewUrl,
+  };
+}
+
+/**
+ * MOD REVIEW SANDBOX (#2831) — resolve the target for a full-page review preview
+ * mount (`/apps/review/preview/<publishRequestId>`).
+ *
+ * The page needs the `slug` to drive `ReviewBlockPreviewHost`, but the shared
+ * `getReviewStatus` return shape deliberately does NOT carry it (that shape feeds
+ * the modal poll and is kept minimal). This resolves the row by id server-side in
+ * the page's `getServerSideProps` instead of widening `getReviewStatus`.
+ *
+ * Returns `{ id, slug }` ONLY for an EXISTING, PENDING request — the only state a
+ * review preview can ever be live against (teardown clears the preview on
+ * approve/reject, matching `mintReviewBlockToken`'s pending gate). Returns null
+ * for a missing / non-pending request so the page fails closed with a 404 and
+ * never leaks which of the two it was.
+ *
+ * NO AUTHORIZATION is performed here (like `getReviewStatus` / `mintReviewBlockToken`,
+ * which rely on their router gate) — this leaks a pending app's slug by id, so
+ * EVERY caller MUST already be moderator-gated (today: the page resolver runs the
+ * `isAppReviewer` gate before calling). Do not call from a non-mod-gated path.
+ */
+export async function resolveReviewPreviewTarget(
+  publishRequestId: string
+): Promise<{ id: string; slug: string } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { id: true, status: true, slug: true },
+  });
+  if (!row) return null;
+  if (row.status !== 'pending') return null;
+  return { id: row.id, slug: row.slug };
+}
+
+export type MintReviewBlockTokenResult = {
+  /** The signed, self-bound, scope-stripped block JWT for the review preview. */
+  token: string;
+  expiresAt: string;
+  /** The scopes that SURVIVED the render-only clamp (the block's real capability). */
+  scopes: string[];
+  /** Forced-SFW: the review mint never reads a color domain. */
+  domain: null;
+  maxBrowsingLevel: number;
+  // Render metadata — SERVER-DERIVED so the preview host's PageBlockHost props are
+  // guaranteed to match the token claims (no client-side id reconstruction / drift).
+  blockId: string;
+  /** Synthetic, non-resolving `pending-<pubreq_…>` — matches the token appId claim. */
+  appId: string;
+  /** The `pubreq_<ULID>` request id — matches the token appBlockId claim. */
+  appBlockId: string;
+  /** `page_<pubreq_…>` — matches the token blockInstanceId claim + BLOCK_INIT ids. */
+  blockInstanceId: string;
+  appName: string;
+  /** The pending manifest's declared iframe sandbox (render fidelity). trustTier is
+   *  forced 'unverified' at the host → allow-same-origin is dropped regardless. */
+  sandbox: string;
+};
+
+/**
+ * MOD REVIEW SANDBOX (#2831) — mint the block token the on-site review preview
+ * host (`ReviewPreviewPanel` → `PageBlockHost`) handshakes with, so a PENDING,
+ * UN-APPROVED block actually renders inside the mod's review modal.
+ *
+ * SECURITY (this runs UNAPPROVED, untrusted code with a MOD's session — the crux
+ * of the whole feature, so the mint is the first defense layer):
+ *   - Resolved by `publishRequestId` (NOT ownership — the mod is not the author).
+ *     The router gates the call: moderatorProcedure + enforceAppBlocksFlag + the
+ *     mod-only `app-blocks-review-sandbox` flag (identical to previewRequest).
+ *   - SELF-BOUND: the token `sub` is the calling MOD's id — every self-bound read
+ *     (`*:read:self`) can only ever return the MOD's own data, never the author's.
+ *   - SCOPE-STRIPPED: the pending manifest's declared `scopes` are the SOURCE, but
+ *     they are clamped through the SAME audited belt the dev-tunnel host mint uses
+ *     (`clampDevScopes`) with the STRICTEST allowlist (`REVIEW_MINT_SCOPE_ALLOWLIST`
+ *     — render-only) and `keyCanSpend:false` (belt-and-suspenders strip of the
+ *     spend scope). A manifest that declares `ai:write:budgeted` / `apps:storage:*`
+ *     / `buzz:read:self` gets NONE of them — the review JWT can carry only the
+ *     render-only survivors.
+ *   - FORCED-SFW ceiling + `domain:null` (never reads a request host).
+ *   - SYNTHETIC, NON-RESOLVING ids: `appBlockId` = the `pubreq_<ULID>` request id
+ *     (an already-recognized `SYNTHETIC_APP_BLOCK_ID_PREFIXES` prefix, so the
+ *     best-effort scope-invocation FK-fails and no spend attribution row is forged);
+ *     `appId` = the non-resolving `pending-<pubreq_…>` (attribution lookup MISSES).
+ *     No `review-` prefix is introduced (mirrors the dev-token pending path).
+ *   - SHORT TTL: inherits the dev mint's 4h `dev:true` lifetime.
+ * Defense-in-depth continues at the host (`reviewMode` read-only NACKs) and the
+ * iframe (forced `trustTier:'unverified'` → opaque origin) — no single layer is
+ * load-bearing.
+ */
+export async function mintReviewBlockToken(opts: {
+  publishRequestId: string;
+  /** The calling moderator's id — the token `sub` is bound to it (self-bound). */
+  modUserId: number;
+}): Promise<MintReviewBlockTokenResult> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: opts.publishRequestId },
+    select: { id: true, status: true, slug: true, manifest: true },
+  });
+  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
+  // Only a PENDING request is previewable — an approved/rejected/withdrawn row has
+  // no review preview to mint against (fail-closed, matches previewRequest's remit).
+  if (row.status !== 'pending') {
+    throw new Error(`publish request ${opts.publishRequestId} is not pending`);
+  }
+
+  // Scope SOURCE is the pending request's UN-REVIEWED manifest.scopes (author-
+  // controlled, NOT trusted) — clamped DOWN by the render-only belt below. The
+  // name/sandbox are render metadata only (never security-load-bearing: trustTier
+  // is forced 'unverified' at the host and every side-effect NACKs).
+  const manifest = (row.manifest ?? {}) as {
+    scopes?: unknown;
+    name?: unknown;
+    iframe?: { sandbox?: unknown } | null;
+  };
+  const manifestScopes: string[] = Array.isArray(manifest.scopes)
+    ? manifest.scopes.filter((s): s is string => typeof s === 'string')
+    : [];
+  const manifestName = typeof manifest.name === 'string' ? manifest.name : row.slug;
+  const manifestSandbox =
+    manifest.iframe && typeof manifest.iframe.sandbox === 'string'
+      ? manifest.iframe.sandbox
+      : 'allow-scripts';
+
+  const {
+    clampDevScopes,
+    signDevScopedPageToken,
+    REVIEW_MINT_SCOPE_ALLOWLIST,
+    FORCED_SFW_CEILING,
+  } = await import('./dev-scoped-mint.service');
+
+  // The AUDITED clamp belt — render-only allowlist + NO OAuth ceiling (a pending
+  // app has no OauthClient) + keyCanSpend:false (belt-and-suspenders spend strip).
+  const granted = clampDevScopes({
+    scopeSource: manifestScopes,
+    oauthAllowed: null,
+    keyCanSpend: false,
+    allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+  });
+
+  // SIGN — self-bound to the MOD, forced-SFW, domain:null, synthetic non-resolving
+  // ids (see the fn doc). `signAppBlockId` = the `pubreq_<ULID>` request id (already
+  // a recognized SYNTHETIC_APP_BLOCK_ID_PREFIXES prefix); `signAppId` = the
+  // non-resolving `pending-<id>` (mirrors the dev-token pending path — the
+  // attribution lookup misses so no spend row can be forged). blockInstanceId
+  // matches the host's `page_<pubReqId>` prop so BLOCK_INIT ids line up. No spend →
+  // no buzzBudget.
+  const result = await signDevScopedPageToken({
+    userId: opts.modUserId,
+    signBlockId: row.slug,
+    signAppId: `pending-${row.id}`,
+    signAppBlockId: row.id,
+    blockInstanceId: `page_${row.id}`,
+    granted,
+    buzzBudget: undefined,
+  });
+
+  // MINT-TIME AUDIT (mirror the `app-blocks.dev-tunnel.mint` structured event):
+  // the forensic record of granting a review token over an un-approved app. NEVER
+  // log the token. Fire-and-forget — the audit must never fail the mint.
+  const { logToAxiom } = await import('~/server/logging/client');
+  logToAxiom(
+    {
+      name: 'app-blocks.review.mint',
+      type: 'info',
+      modUserId: opts.modUserId,
+      publishRequestId: row.id,
+      slug: row.slug,
+      scopes: granted,
+    },
+    'webhooks'
+  ).catch(() => null);
+
+  return {
+    token: result.token,
+    expiresAt: result.expiresAt,
+    scopes: granted,
+    domain: null,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    blockId: row.slug,
+    appId: `pending-${row.id}`,
+    appBlockId: row.id,
+    blockInstanceId: `page_${row.id}`,
+    appName: manifestName,
+    sandbox: manifestSandbox,
   };
 }
 
@@ -3182,17 +3757,31 @@ export type RejectRequestParams = {
 export async function rejectRequest(params: RejectRequestParams): Promise<void> {
   const { dbRead, dbWrite } = await import('~/server/db/client');
   const reason = params.rejectionReason.trim();
-  if (reason.length < 10) {
-    throw new Error('rejection reason must be at least 10 characters');
+  if (reason.length < PUBLISH_REJECTION_REASON_MIN) {
+    throw new Error(
+      `rejection reason must be at least ${PUBLISH_REJECTION_REASON_MIN} characters`
+    );
   }
-  if (reason.length > 2000) {
-    throw new Error('rejection reason must be at most 2000 characters');
+  if (reason.length > PUBLISH_REJECTION_REASON_MAX) {
+    throw new Error(
+      `rejection reason must be at most ${PUBLISH_REJECTION_REASON_MAX} characters`
+    );
   }
 
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
     // deployState (#2831): only fire the review teardown if a preview was started.
-    select: { id: true, status: true, deployState: true },
+    // slug/version/manifest/submittedByUserId feed the POST-COMMIT submitter
+    // notification (best-effort; see below).
+    select: {
+      id: true,
+      status: true,
+      deployState: true,
+      slug: true,
+      version: true,
+      manifest: true,
+      submittedByUserId: true,
+    },
   });
   if (!row) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (row.status !== 'pending') {
@@ -3216,4 +3805,34 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   // must never affect the outcome. Gated on a preview actually having been
   // started so the common no-preview reject does zero extra work.
   if (hadReviewPreview) void teardownReviewForRequest(row.id);
+
+  // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
+  // approved, carrying the (already-trimmed) moderator reason so it shows inline on
+  // /apps/my-submissions. Runs AFTER the status flip to 'rejected' commits (a reject
+  // that throws above — bad reason length, non-pending row — never reaches here → no
+  // notification). Wrapped so a notification failure can NEVER fail the reject.
+  // Keyed by the request id for idempotency.
+  const rejectManifest =
+    row.manifest && typeof row.manifest === 'object'
+      ? (row.manifest as Record<string, unknown>)
+      : {};
+  try {
+    await notifyAppBlockSubmitter({
+      type: 'app-block-rejected',
+      userId: row.submittedByUserId,
+      key: `app-block-rejected:${params.publishRequestId}`,
+      details: {
+        slug: row.slug,
+        name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
+        version: row.version,
+        reason,
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[rejectRequest] submitter notification failed (id=${params.publishRequestId}); ` +
+        `reject stands: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }

@@ -11,10 +11,11 @@ import type {
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview as getUserContentOverviewFromCache,
   getUserContentOverviewPublic as getUserContentOverviewPublicFromCache,
@@ -36,7 +37,7 @@ export const getUserContentOverview = async ({
   variant?: UserContentOverviewVariant;
 }) => {
   if (!username && !userId) {
-    throw new Error('Either username or id must be provided');
+    throwBadRequestError('Either username or id must be provided');
   }
 
   if (!userId) {
@@ -77,7 +78,7 @@ export const getUserWithProfile = async ({
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
   if (!username && !id) {
-    throw new Error('Either username or id must be provided');
+    throwBadRequestError('Either username or id must be provided');
   }
   const getUser = async () => {
     const user = await dbClient.user.findUniqueOrThrow({
@@ -118,14 +119,20 @@ export const getUserWithProfile = async ({
       coverImage?.needsReview || coverImage?.ingestion === ImageIngestionStatus.Blocked;
     const sameUser = sessionUserId === user.id;
 
+    // A shop only counts as "live" if it's enabled AND the owner still has an
+    // active Creator Program membership (lapsed memberships shutter the shop).
+    // Only pay for the membership check when the shop is actually enabled.
+    const shopEnabled =
+      (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
+      true;
+    const creatorShopEnabled = shopEnabled && (await hasValidCreatorMembership(user.id));
+
     return {
       ...user,
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
-      creatorShopEnabled:
-        (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
-        true,
+      creatorShopEnabled,
       ...getUserBanDetails({
         meta: userMeta,
         isModerator: isModerator ?? false,

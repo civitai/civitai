@@ -17,6 +17,7 @@ type ComicFilters = {
   sort?: string;
   period?: string;
   followed?: boolean;
+  followedComics?: boolean;
 };
 
 export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false }: Props) {
@@ -37,6 +38,7 @@ export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false 
           | 'AllTime'
           | undefined,
         followed: debouncedFilters.followed,
+        followedComics: debouncedFilters.followedComics,
         browsingLevel,
       },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }

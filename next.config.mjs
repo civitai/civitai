@@ -140,6 +140,7 @@ export default defineNextConfig(
       'superjson',
       '@civitai/db-schema',
       '@civitai/db',
+      '@civitai/shared',
       '@civitai/buzz',
       '@civitai/redis',
       '@civitai/clickhouse',
@@ -151,17 +152,10 @@ export default defineNextConfig(
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
-      'redis',
-      '@redis/client',
-      '@redis/bloom',
-      '@redis/json',
-      '@redis/search',
-      '@redis/time-series',
-      '@opentelemetry/sdk-node',
-      '@opentelemetry/instrumentation',
-      '@opentelemetry/instrumentation-http',
-      '@opentelemetry/instrumentation-redis',
-      '@prisma/instrumentation',
+      'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
+      '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
+      '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      '@pyroscope/nodejs', '@datadog/pprof',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
     // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'

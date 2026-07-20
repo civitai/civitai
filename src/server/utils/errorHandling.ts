@@ -408,6 +408,36 @@ export function isClickHouseConnectionError(e: unknown): boolean {
   return false;
 }
 
+/**
+ * Run a ClickHouse READ and map a TRANSIENT connection/transport blip to a
+ * retryable SERVICE_UNAVAILABLE (HTTP 503) instead of a raw INTERNAL_SERVER_ERROR
+ * (500). A transient dependency outage — a `socket hang up`, a dropped/reset socket,
+ * a momentary CH-Cloud capacity brownout (Code 279/210/209/202) — is retryable, so a
+ * polling client should back off + retry rather than the user-facing query 500ing and
+ * counting against this app's 500 SLO. A REAL query/schema fault (non-connection CH
+ * error — bad SELECT, UNKNOWN_TABLE, `Code: 62/60/349`) is rethrown UNCHANGED so it
+ * still surfaces (and alerts) as a 500. The original error is always preserved as the
+ * TRPCError `cause`.
+ *
+ * This is the reusable form of the inline guard hand-written for the New Order
+ * counters (#3064) and #2978/#3049 — wrap ONLY the READ call-sites you want to
+ * fail-503 on a CH brownout. It is deliberately NOT applied to the shared
+ * `clickhouse.$query` client boundary, which also serves inserts + background/cron
+ * reads where a tRPC-typed 503 would be semantically wrong; classification stays a
+ * narrow, transient-only allowlist (see {@link isClickHouseConnectionError}).
+ */
+export async function runClickHouseRead<T>(
+  fn: () => Promise<T>,
+  message = 'This service is temporarily unavailable. Please try again.'
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (isClickHouseConnectionError(e)) throwServiceUnavailableError(message, e);
+    throw e;
+  }
+}
+
 export function handleLogError(e: Error, name?: string, details?: MixedObject) {
   const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
   if (isProd)

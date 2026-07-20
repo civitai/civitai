@@ -65,6 +65,14 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     image: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     },
+    // W13 owner controls: the batched last-moderation-event lookup (removed listings).
+    appListingModerationEvent: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      create: vi.fn(async (args: { data: unknown }) => args.data),
+    },
+    // Fix B4: listMySubmissions' last-event batch is now a raw `DISTINCT ON` query.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -99,6 +107,11 @@ function resetAll() {
     client.appListing.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
     client.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
     client.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+    client.appListingModerationEvent.findFirst.mockReset().mockResolvedValue(null);
+    client.appListingModerationEvent.create
+      .mockReset()
+      .mockImplementation(async (a: { data: unknown }) => a.data);
+    client.$queryRaw.mockReset().mockResolvedValue([]);
     client.appListingScreenshot.count.mockReset().mockResolvedValue(0);
     client.appListingScreenshot.findMany.mockReset().mockResolvedValue([]);
     client.appListingScreenshot.createMany.mockReset().mockResolvedValue({ count: 0 });
@@ -113,6 +126,7 @@ function resetAll() {
     client.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
     client.appListingPublishRequest.findMany.mockReset().mockResolvedValue([]);
     client.image.findMany.mockReset().mockResolvedValue([]);
+    client.appListingModerationEvent.findMany.mockReset().mockResolvedValue([]);
   }
   mockWrite.$transaction
     .mockReset()
@@ -553,6 +567,33 @@ describe('submitListingRevision', () => {
       submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
   });
+
+  it('F1: a NO-URL (connect-only) shadow (externalUrl null) submits successfully — the URL gate is optional', async () => {
+    // Merged model: a no-homepage external app carries externalUrl: null. Gating the
+    // URL unconditionally made such a listing UN-REVISABLE (validateExternalUrl(null)
+    // returns {ok:false} → threw). The gate now runs only when a URL is present.
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow({ externalUrl: null }));
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+
+    const res = await submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER });
+    expect(res.shadowId).toBe('apl_shadow');
+    expect(res.slug).toBe('cool-app');
+    // A pending request WAS created (the null-URL revision was NOT blocked).
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('F1: a shadow with a PRESENT-but-invalid stored URL still → BAD_REQUEST, no request', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      shadowRow({ externalUrl: 'http://insecure.example.com' })
+    );
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+    await expect(
+      submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('externalUrl') });
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -734,6 +775,17 @@ describe('reject/withdraw a pending REVISION', () => {
       kind: 'offsite',
       appListingId: 'apl_shadow', // the shadow, a draft
     });
+    // Pre-tx notification snapshot: the shadow reads as a REVISION (revisionOfId set)
+    // → the "not approved" owner notice is skipped (parent stays live).
+    mockRead.appListing.findUnique.mockResolvedValue({
+      userId: OWNER,
+      name: 'Cool App',
+      slug: 'cool-app',
+      revisionOfId: 'apl_parent',
+    });
+    // In-tx `closeTerminalListing` reads the listing on the WRITE client (the tx) to
+    // pick the delete-vs-flip branch — a draft shadow → the status-guarded delete.
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'draft', slug: 'apl_shadow' });
     await rejectExternalRequest({
       publishRequestId: 'alpr_rev',
       reviewerUserId: MOD,
@@ -756,6 +808,9 @@ describe('reject/withdraw a pending REVISION', () => {
       submittedByUserId: OWNER,
       appListingId: 'apl_shadow',
     });
+    // In-tx `closeTerminalListing` reads the listing on the WRITE client (the tx) to
+    // pick the delete-vs-flip branch — a draft shadow → the status-guarded delete.
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'draft', slug: 'apl_shadow' });
     await withdrawExternalRequest({ publishRequestId: 'alpr_rev', userId: OWNER });
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
       where: { id: 'apl_shadow', status: 'draft' },
@@ -828,5 +883,61 @@ describe('listMySubmissions (shadow handling)', () => {
       .mockResolvedValueOnce([]); // shadow exists in the DB, but no PENDING request targets it
     const res = await listMySubmissions({ userId: OWNER });
     expect(res.items[0]).toMatchObject({ hasPendingRevision: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listMySubmissions — lastModerationAction projection (W13 owner controls)
+// ---------------------------------------------------------------------------
+
+describe('listMySubmissions (lastModerationAction for removed listings)', () => {
+  /** A REMOVED listing's request row (the request stays `approved` after a takedown). */
+  const removedRequestRow = {
+    id: 'alpr_removed',
+    appListingId: 'apl_removed',
+    slug: 'gone-app',
+    status: 'approved',
+    appListing: { name: 'Gone App', revisionOfId: null, status: 'removed' },
+  };
+  const liveRequestRow = {
+    id: 'alpr_live',
+    appListingId: 'apl_live',
+    slug: 'live-app',
+    status: 'approved',
+    appListing: { name: 'Live App', revisionOfId: null, status: 'approved' },
+  };
+
+  it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([removedRequestRow])
+      .mockResolvedValueOnce([]); // no pending revision
+    // Fix B4: the last-event batch is a raw `DISTINCT ON` query — one row per listing.
+    mockRead.$queryRaw.mockResolvedValueOnce([
+      { appListingId: 'apl_removed', action: 'owner-unpublish' },
+    ]);
+
+    const res = await listMySubmissions({ userId: OWNER });
+
+    // The raw last-event query is issued exactly once for the removed listing set.
+    expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(res.items[0]).toMatchObject({ lastModerationAction: 'owner-unpublish' });
+  });
+
+  it('surfaces a moderator takedown (delist) as the lastModerationAction (republish forbidden client-side)', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([removedRequestRow])
+      .mockResolvedValueOnce([]);
+    mockRead.$queryRaw.mockResolvedValueOnce([{ appListingId: 'apl_removed', action: 'delist' }]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items[0]).toMatchObject({ lastModerationAction: 'delist' });
+  });
+
+  it('does NOT query moderation events for a LIVE listing (no removed rows) → null action', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([liveRequestRow])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(mockRead.$queryRaw).not.toHaveBeenCalled();
+    expect(res.items[0]).toMatchObject({ lastModerationAction: null });
   });
 });

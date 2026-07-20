@@ -29,7 +29,14 @@ import { redis } from '~/server/redis/client';
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
-const schema = z.object({ id: z.coerce.number() });
+// Bound the coerced id to Postgres int4 (the `Model.id` column type, max
+// 2147483647). `z.coerce.number()` alone accepts arbitrarily large numeric
+// strings (bot/scraper garbage like `853267723675816615`), which then bind to
+// the int4 model id in Prisma and throw a PG "value out of range for type
+// integer" → a raw 500. Rejecting them here fails safeParse → the existing 400
+// path fires. `.int().gt(0)` also rejects non-integer / non-positive ids. A
+// valid-but-nonexistent in-range id still passes and reaches the handler's 404.
+export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(2147483647) });
 
 const baseUrl = getBaseUrl();
 
@@ -245,4 +252,7 @@ async function fetchModelResponseCached(
 // App Blocks: allow this route to be called with an RS256 block JWT carrying
 // the `models:read:self` scope. When no block JWT is present the call falls
 // through to the existing PublicEndpoint path, so legacy callers are unaffected.
-export default withBlockScope(baseHandler, { requiredScope: 'models:read:self' });
+export default withBlockScope(baseHandler, {
+  endpoint: 'model_detail',
+  requiredScope: 'models:read:self',
+});

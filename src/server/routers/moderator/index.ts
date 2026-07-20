@@ -25,6 +25,8 @@ import {
 } from '~/server/services/creator-program.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import {
+  getModelModerationDetail,
+  getModelModRules,
   getTrainingModelsForModerators,
   transferModelOwnership,
 } from '~/server/services/model.service';
@@ -51,6 +53,9 @@ export const modRouter = router({
     transferOwnership: moderatorProcedure
       .input(transferModelOwnershipSchema)
       .mutation(({ input, ctx }) => transferModelOwnership({ ...input, modUserId: ctx.user.id })),
+    getModerationDetail: moderatorProcedure
+      .input(getByIdSchema)
+      .query(({ input }) => getModelModerationDetail(input)),
   }),
   modelVersions: router({
     query: moderatorProcedure

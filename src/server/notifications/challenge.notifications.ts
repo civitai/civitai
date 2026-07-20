@@ -43,4 +43,17 @@ export const challengeNotifications = createNotificationProcessor({
       url: `/challenges/${details.challengeId}`,
     }),
   },
+  'challenge-cancelled': {
+    displayName: 'Challenge Cancelled',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `The "${
+        details.challengeTitle
+      }" challenge was cancelled. The prize pool portion of your entry fee (${numberWithCommas(
+        details.refundedBuzz
+      )} Buzz per entry) has been refunded to your account — the platform fee portion of each entry is not refunded.`,
+      url: `/challenges/${details.challengeId}`,
+    }),
+  },
 });

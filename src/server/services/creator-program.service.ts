@@ -28,6 +28,8 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import {
   bustFetchThroughCache,
@@ -204,7 +206,9 @@ export async function flushBankedCache() {
 }
 
 export async function getCreatorRequirements(userId: number) {
-  const [status] = await dbWrite.$queryRaw<{ score: number; membership: UserTier }[]>`
+  const [status] = await dbWrite.$queryRaw<
+    { score: number; membership: UserTier; onboarding: number }[]
+  >`
     SELECT
     -- We are doing greatest in case the meta->'scores'->'total' is not properly computated.
     -- Noticed a few cases where it was different than the total sum (lower). Safeguard here.
@@ -223,10 +227,17 @@ export async function getCreatorRequirements(userId: number) {
       JOIN "Product" p ON p.id = cs."productId"
       WHERE status IN ('incomplete', 'active') AND cs."userId" = u.id
       LIMIT 1
-    ) as membership
+    ) as membership,
+    u.onboarding as onboarding
     FROM "User" u
     WHERE id = ${userId};
   `;
+
+  // A member whose subscription lapsed keeps the onboarding flag (we don't strip
+  // it), so surface a lapsed signal for the UI. Uses the same gate as the shop /
+  // banking so all three agree on what "active" means.
+  const joined = Flags.hasFlag(status.onboarding, OnboardingSteps.CreatorProgram);
+  const membershipLapsed = joined && !(await hasValidCreatorMembership(userId));
 
   return {
     score: {
@@ -237,7 +248,20 @@ export async function getCreatorRequirements(userId: number) {
     validMembership:
       // We will not support founder tier.
       status.membership !== 'free' && status.membership !== 'founder' ? status.membership : false,
+    membershipLapsed,
   };
+}
+
+// Whether a user currently holds a valid Creator Program membership — an active,
+// good-standing subscription on a supported tier. Uses getHighestTierSubscription
+// so it honors membership on ANY buzzType (yellow/green/blue paid + referral
+// grants), matching how session-user resolves tier. Checking a single buzzType
+// here would lock out .green/.red members and referral-granted members whose paid
+// sub isn't yellow.
+export async function hasValidCreatorMembership(userId: number) {
+  const subscription = await getHighestTierSubscription(userId);
+  const tier = subscription?.tier;
+  return !!tier && tier !== 'free' && tier !== 'founder';
 }
 
 export async function joinCreatorsProgram(userId: number) {
@@ -397,20 +421,22 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
     throw throwBadRequestError('User is banned from the Creator Program');
   }
 
-  // Check if user has active membership for this buzzType
+  // Banking claims real pool money, so it requires a confirmed, unexpired paid
+  // membership — stricter than the shop's hasValidCreatorMembership, which also
+  // accepts incomplete/renewing subs. Like the shop gate it is buzzType-agnostic
+  // (any buzzType) but rejects free/founder tiers.
   const activeMembership = await dbWrite.customerSubscription.findFirst({
-    where: {
-      userId,
-      status: 'active',
-      currentPeriodEnd: {
-        gt: new Date(),
-      },
-    },
+    where: { userId, status: 'active', currentPeriodEnd: { gt: new Date() } },
+    select: { product: { select: { metadata: true } } },
   });
-
-  if (!activeMembership) {
-    throw throwBadRequestError(`Active membership required to bank ${buzzType} buzz`);
-  }
+  // safeParse: malformed/missing product metadata falls through to the clean 400
+  // below instead of throwing an uncaught ZodError (500).
+  const parsedMeta = activeMembership
+    ? subscriptionProductMetadataSchema.safeParse(activeMembership.product.metadata)
+    : undefined;
+  const membershipTier = parsedMeta?.success ? parsedMeta.data[env.TIER_METADATA_KEY] : undefined;
+  if (!membershipTier || membershipTier === 'free' || membershipTier === 'founder')
+    throw throwBadRequestError('An active Creator Program membership is required to bank Buzz.');
 
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });

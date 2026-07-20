@@ -18,6 +18,7 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
+import { imageReviewedSql } from '~/server/common/image-visibility';
 import {
   BlockedReason,
   ImageScanType,
@@ -68,6 +69,7 @@ import {
   registerCounterWithLabels,
 } from '~/server/prom/client';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
+import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
 import {
   getBaseModelFromResources,
   getUserFollows,
@@ -78,7 +80,6 @@ import {
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
-  userImageVideoCountCache,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import {
@@ -184,6 +185,7 @@ import {
   nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -1200,6 +1202,11 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   // correlation. Built upstream via buildSearchActor().
   actor?: string;
 };
+// Derived from `getAllImages`' return type, which applies `stripImageForInfiniteWire`
+// to each item — so this shape is already narrowed to
+// `Omit<..., IMAGE_INFINITE_DROPPED_FIELDS>`. Any consumer that reads a dropped field
+// (client component or internal server caller) is a compile error. See
+// `~/server/utils/image-infinite-wire.ts`.
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 
 // Per-call ceiling for the image-feed raw query. The `civitai` postgres role
@@ -1326,6 +1333,13 @@ export const getAllImages = async (
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);
 
+  // `applyDomainFeature` only backfills an absent `browsingLevel` on capped
+  // (green) domains, so on red/blue it can arrive undefined and reach the SQL as
+  // NULL — `(nsfwLevel & NULL)` is NULL, silently dropping every row. Fail closed
+  // to public rather than to nothing; widening here would serve levels the caller
+  // never asked for.
+  if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
+
   // Parse random cursor seed upfront (needed to determine if we need to fetch seed)
   let parsedRandomCursorSeed: number | undefined;
   if (sort === ImageSort.Random && cursor) {
@@ -1390,9 +1404,9 @@ export const getAllImages = async (
   const prioritizeUser = !!prioritizedUserIds?.length;
   const useModelVersionCache = prioritizeUser && prefetchedIsFlipt;
   if (prioritizeUser && useModelVersionCache) {
-    if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    if (cursor) throw throwBadRequestError('Cannot use cursor with prioritizedUserIds');
     if (!modelVersionId)
-      throw new Error('modelVersionId is required when using prioritizedUserIds');
+      throw throwBadRequestError('modelVersionId is required when using prioritizedUserIds');
 
     const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
     const versionData = cachedData[modelVersionId];
@@ -1731,7 +1745,7 @@ export const getAllImages = async (
 
   if (prioritizeUser && !useModelVersionCache) {
     // [x]
-    if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    if (cursor) throw throwBadRequestError('Cannot use cursor with prioritizedUserIds');
     isPersonalized = true; // prioritizedUserIds reorders/filters per-caller
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
@@ -2086,7 +2100,7 @@ export const getAllImages = async (
         hasPositivePrompt?: boolean;
         poi?: boolean;
         minor?: boolean;
-        judgeScore?: JudgeScore | null;
+        judgeScore?: JudgeScore | Record<string, number> | null;
         // Visibility-gated linked-Model3D id (or null) for the "Posted to 3D
         // Model" chip on the feed-modal path. See the model3dId override below.
         model3dId?: number | null;
@@ -2155,7 +2169,11 @@ export const getAllImages = async (
 
   return {
     nextCursor,
-    items: images,
+    // Always-on wire trim: drop the grep-proven-unread fields no `image.getInfinite`
+    // consumer reads. Narrows `ImagesInfiniteModel` (defined from this return type) to
+    // `Omit<..., IMAGE_INFINITE_DROPPED_FIELDS>`, so tsc/`next build` flags any reader.
+    // See `~/server/utils/image-infinite-wire.ts` for the traced consumer graph.
+    items: images.map(stripImageForInfiniteWire),
   };
 };
 
@@ -2495,7 +2513,14 @@ export const getAllImagesIndex = async (
 
   return {
     nextCursor,
-    items: mergedData,
+    // Always-on wire trim on the DOMINANT tRPC Meili/BitDex feed path: the item
+    // literal above emits `scannedAt`/`mimeType`/`postTitle` as explicit `null`
+    // props (plus any of IMAGE_INFINITE_DROPPED_FIELDS carried on `...sr`), which
+    // still SERIALIZE even though the return type is narrowed to `Omit<...>` (a
+    // `const` object literal → no excess-property check strips them). Map through
+    // `stripImageForInfiniteWire` so they are actually removed from the payload,
+    // matching the DB `getAllImages` path. See `~/server/utils/image-infinite-wire.ts`.
+    items: mergedData.map(stripImageForInfiniteWire),
     ...(searchSource && { source: searchSource }),
   };
 };
@@ -3000,7 +3025,10 @@ export async function getImagesFromFeedSearch(
 
     return {
       nextCursor: feedResult.nextCursor,
-      items: transformedItems,
+      // Mirror the DB path's wire trim so both `image.getInfinite` backends ship the
+      // identical narrowed shape (drops any of IMAGE_INFINITE_DROPPED_FIELDS still
+      // carried on the ImageDocument rest).
+      items: transformedItems.map(stripImageForInfiniteWire),
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
@@ -4859,7 +4887,7 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."needsReview" IS NULL AND ${imageReviewedSql()}`,
           withoutPost
             ? null
             : Prisma.sql`
@@ -5419,17 +5447,25 @@ export const getImagesForPosts = async ({
       width: number;
       height: number;
       hash: string;
-      createdAt: Date;
+      // postId groups images under their post server-side (post.service groups
+      // on `x.postId === post.id`) AND is read on the response by
+      // ImageContextMenu → ImageMenuItems (collection/view/edit/searchable menu
+      // items on the browse post cards) — kept.
       postId: number;
       type: MediaType;
       metadata: ImageMetadata | VideoMetadata | null;
-      hasMeta: boolean;
       onSite: boolean;
       remixOfId?: number | null;
-      hasPositivePrompt?: boolean;
       poi?: boolean;
       minor?: boolean;
     }[]
+    // NOTE: getImagesForPosts is used ONLY by getPostsInfinite. The browse
+    // cards render `images[0]` and the hidden-preferences filter reads
+    // {id,userId,nsfwLevel,tagIds,poi,minor}; NO consumer reads createdAt,
+    // hasMeta, or hasPositivePrompt — dropped here to cut per-image serialize
+    // weight (this endpoint's payload is ~85% images at ~7 images/post, so the
+    // per-image field COUNT — not the #3052 image CAP, which only trims the
+    // rare >8-image gallery tail — is what drives bytes + superjson serializeMs).
   >`
     SELECT
       i.id,
@@ -5442,22 +5478,7 @@ export const getImagesForPosts = async ({
       i.hash,
       i.type,
       i.metadata,
-      i."createdAt",
       i."postId",
-      (
-        CASE
-          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
-          ELSE TRUE
-        END
-      ) AS "hasMeta",
-      (
-        CASE
-          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
-            AND i.meta->>'prompt' IS NOT NULL
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) AS "hasPositivePrompt",
       ${imageOnSiteSql()} as "onSite",
       i.metadata->>'remixOfId' as "remixOfId",
       i.minor,
@@ -5760,7 +5781,10 @@ export async function createImage({
     });
   }
 
-  await userImageVideoCountCache.refresh(image.userId);
+  // No count refresh here: a new image is Pending and unpublished, so it cannot
+  // satisfy the count predicate yet, and caching that zero pins it for the TTL.
+  // The count is updated on the transitions that make an image countable —
+  // publish and scan completion.
 
   return result;
 }

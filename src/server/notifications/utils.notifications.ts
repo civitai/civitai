@@ -2,6 +2,8 @@ import { articleNotifications } from '~/server/notifications/article.notificatio
 import { comicNotifications } from '~/server/notifications/comics.notifications';
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
+import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
+import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
@@ -38,6 +40,8 @@ export const notificationProcessors = {
   ...unpublishNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
+  ...appListingNotifications,
+  ...appBlockNotifications,
   ...articleRatingReviewNotifications,
   ...reportNotifications,
   ...featuredNotifications,

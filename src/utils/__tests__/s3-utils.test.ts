@@ -85,6 +85,7 @@ import {
   parseB2Url,
   deleteModelFileObject,
   deleteModelFileObjects,
+  classifyS3MultipartError,
 } from '~/utils/s3-utils';
 
 beforeEach(() => {
@@ -123,7 +124,9 @@ describe('parseKey', () => {
 describe('parseB2Url', () => {
   it('parses public path-style B2 URL (s3.<region>.backblazeb2.com)', () => {
     expect(
-      parseB2Url('https://s3.us-west-004.backblazeb2.com/civitai-modelfiles-b2/some/key.safetensors')
+      parseB2Url(
+        'https://s3.us-west-004.backblazeb2.com/civitai-modelfiles-b2/some/key.safetensors'
+      )
     ).toEqual({ bucket: 'civitai-modelfiles-b2', key: 'some/key.safetensors' });
   });
 
@@ -134,9 +137,10 @@ describe('parseB2Url', () => {
   });
 
   it('parses configured B2 endpoint (matches env.S3_UPLOAD_B2_ENDPOINT host)', () => {
-    expect(
-      parseB2Url('https://s3.us-west-004.backblazeb2.com/civitai-modelfiles-b2/k')
-    ).toEqual({ bucket: 'civitai-modelfiles-b2', key: 'k' });
+    expect(parseB2Url('https://s3.us-west-004.backblazeb2.com/civitai-modelfiles-b2/k')).toEqual({
+      bucket: 'civitai-modelfiles-b2',
+      key: 'k',
+    });
   });
 
   it('returns null for malformed URLs', () => {
@@ -184,9 +188,7 @@ describe('deleteModelFileObject — bucket allowlist gate', () => {
     mocks.findManyMock.mockResolvedValueOnce([
       { url: 'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k', id: 7 },
     ]);
-    await deleteModelFileObject(
-      'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k'
-    );
+    await deleteModelFileObject('https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/k');
     expect(mocks.deleteObjectCalls).toHaveLength(0);
   });
 
@@ -233,8 +235,110 @@ describe('deleteModelFileObjects — bucket allowlist + grouping', () => {
       'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/a',
       'https://civitai-prod-settled.abcd1234.r2.cloudflarestorage.com/b',
     ]);
-    expect(mocks.deleteManyObjectsCalls).toEqual([
-      { bucket: 'civitai-prod-settled', keys: ['b'] },
-    ]);
+    expect(mocks.deleteManyObjectsCalls).toEqual([{ bucket: 'civitai-prod-settled', keys: ['b'] }]);
+  });
+});
+
+// The classifier that de-fangs the multipart complete/abort raw-500 landmine
+// (~27 raw-500s/12h on dp-prod). Pure function → exercised directly here; the
+// handler-level mapping (409 vs 204 vs 503 vs 500) is covered in
+// src/server/__tests__/upload-{complete,abort}-endpoint.test.ts.
+describe('classifyS3MultipartError', () => {
+  it('classifies AWS-SDK NoSuchUpload (name + $metadata 404) as not-found', () => {
+    const err = Object.assign(
+      new Error(
+        'The specified upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.'
+      ),
+      { name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } }
+    );
+    expect(classifyS3MultipartError(err)).toBe('not-found');
+  });
+
+  it('classifies a bare 404 (no name) as not-found', () => {
+    const err = Object.assign(new Error('not found'), { $metadata: { httpStatusCode: 404 } });
+    expect(classifyS3MultipartError(err)).toBe('not-found');
+  });
+
+  it.each([500, 502, 503, 504])('classifies an S3 HTTP %i as transient', (status) => {
+    const err = Object.assign(new Error('storage blip'), {
+      name: 'InternalError',
+      $metadata: { httpStatusCode: status },
+    });
+    expect(classifyS3MultipartError(err)).toBe('transient');
+  });
+
+  it.each(['SlowDown', 'RequestTimeout', 'RequestTimeTooSkewed', 'ServiceUnavailable'])(
+    'classifies the throttle/timing signal %s as transient',
+    (name) => {
+      // No httpStatusCode → matched purely by name.
+      const err = Object.assign(new Error(name), { name });
+      expect(classifyS3MultipartError(err)).toBe('transient');
+    }
+  );
+
+  it('classifies a status-less network failure (ECONNRESET) as transient', () => {
+    const err = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    expect(classifyS3MultipartError(err)).toBe('transient');
+  });
+
+  it('classifies a status-less ETIMEDOUT as transient', () => {
+    const err = Object.assign(new Error('connection timed out'), { code: 'ETIMEDOUT' });
+    expect(classifyS3MultipartError(err)).toBe('transient');
+  });
+
+  it.each(['InvalidPart', 'InvalidPartOrder', 'EntityTooSmall', 'MalformedXML'])(
+    'classifies the parts-manifest fault %s (400) as invalid-parts',
+    (name) => {
+      const err = Object.assign(new Error('parts mismatch'), {
+        name,
+        $metadata: { httpStatusCode: 400 },
+      });
+      expect(classifyS3MultipartError(err)).toBe('invalid-parts');
+    }
+  );
+
+  it('classifies InvalidPart by name even without a status code as invalid-parts', () => {
+    // The dominant dp-prod signature carries $metadata 400, but the name alone is
+    // an unambiguous parts fault.
+    const err = Object.assign(
+      new Error(
+        'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.'
+      ),
+      { name: 'InvalidPart' }
+    );
+    expect(classifyS3MultipartError(err)).toBe('invalid-parts');
+  });
+
+  it('classifies InvalidRequest + 400 ("must specify at least one part") as invalid-parts', () => {
+    const err = Object.assign(new Error('You must specify at least one part'), {
+      name: 'InvalidRequest',
+      $metadata: { httpStatusCode: 400 },
+    });
+    expect(classifyS3MultipartError(err)).toBe('invalid-parts');
+  });
+
+  it('classifies a generic/unknown error as other (stays a hard 500)', () => {
+    expect(classifyS3MultipartError(new Error('boom'))).toBe('other');
+  });
+
+  it('does NOT over-broaden: an unknown 4xx name (400) still classifies as other', () => {
+    // Guard against the client-fault bucket swallowing genuine unrecognized 400s —
+    // only the named parts-manifest faults (+ InvalidRequest/400) are invalid-parts.
+    const err = Object.assign(new Error('bad request'), {
+      name: 'SomeUnknownClientError',
+      $metadata: { httpStatusCode: 400 },
+    });
+    expect(classifyS3MultipartError(err)).toBe('other');
+  });
+
+  it('does NOT map InvalidRequest without a 400 (e.g. no status) as invalid-parts', () => {
+    // InvalidRequest is a generic name; only a 400 on this path is a parts fault.
+    const err = Object.assign(new Error('generic invalid request'), { name: 'InvalidRequest' });
+    expect(classifyS3MultipartError(err)).toBe('other');
+  });
+
+  it('handles null / undefined without throwing', () => {
+    expect(classifyS3MultipartError(null)).toBe('other');
+    expect(classifyS3MultipartError(undefined)).toBe('other');
   });
 });

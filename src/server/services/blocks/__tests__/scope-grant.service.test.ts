@@ -8,7 +8,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *   - recordScopeGrant: additive (existing grants persist), un-revokes,
  *     idempotent on the (user, app_block) unique index, P2002-race-safe
  *   - partitionByConsent: granted scopes sign; ungranted withheld; exempt
- *     scopes (block:settings:*, apps:storage:*) always sign
+ *     scopes (apps:storage:*, models:read:self, collections:read:self/write:self)
+ *     always sign
  */
 
 const { mockDb } = vi.hoisted(() => {
@@ -136,18 +137,60 @@ describe('scope-grant.service', () => {
       expect(missing).toEqual(['ai:write:budgeted']);
     });
 
-    it('always signs consent-exempt scopes (block:settings:*, apps:storage:*, models:read:self)', async () => {
+    it('always signs consent-exempt scopes (apps:storage:*, models:read:self)', async () => {
       const { partitionByConsent } = await import('../scope-grant.service');
       const { signable, missing } = partitionByConsent(
-        ['block:settings:read', 'apps:storage:write', 'models:read:self'],
+        ['apps:storage:read', 'apps:storage:write', 'models:read:self'],
         new Set() // user granted nothing
       );
       // models:read:self is consent-exempt (allow-by-default, 01ea90441), so all
-      // three sign with no grant and nothing is withheld.
+      // three sign with no grant and nothing is withheld. (block:settings:* was
+      // removed from the exempt set alongside the scope's removal from the registry.)
       expect(new Set(signable)).toEqual(
-        new Set(['block:settings:read', 'apps:storage:write', 'models:read:self'])
+        new Set(['apps:storage:read', 'apps:storage:write', 'models:read:self'])
       );
       expect(missing).toEqual([]);
+    });
+
+    it('does NOT exempt the removed block:settings:* scopes (footgun guard)', async () => {
+      // block:settings:read/write were dropped from CONSENT_EXEMPT_SCOPES when the
+      // scopes were removed from the registry. If either is ever re-added to the
+      // registry it must NOT be silently consent-exempt — it must flow through the
+      // gate (→ `missing`) unless an explicit grant/exemption decision is made.
+      const { partitionByConsent } = await import('../scope-grant.service');
+      const { signable, missing } = partitionByConsent(
+        ['block:settings:read', 'block:settings:write'],
+        new Set() // user granted nothing
+      );
+      expect(signable).toEqual([]);
+      expect(new Set(missing)).toEqual(new Set(['block:settings:read', 'block:settings:write']));
+    });
+
+    it('signs the SHARED storage scopes WITHOUT any grant (governed by resolveSharedContext, not consent)', async () => {
+      // Regression: shared-storage apps 403'd at runtime because the shared
+      // scopes fell into `missing` (not consent-exempt) and were stripped from
+      // the minted token. They are now exempt — their gate is the server-side
+      // min-trust + moderation layer in apps-shared.router, not a consent prompt.
+      const { partitionByConsent } = await import('../scope-grant.service');
+      const { signable, missing } = partitionByConsent(
+        ['apps:storage:shared:read', 'apps:storage:shared:write'],
+        new Set() // user granted nothing
+      );
+      expect(new Set(signable)).toEqual(
+        new Set(['apps:storage:shared:read', 'apps:storage:shared:write'])
+      );
+      expect(missing).toEqual([]);
+    });
+
+    it('mint model: a shared-storage manifest with NO grant → both shared scopes signable (authenticated branch)', async () => {
+      // Mirrors the token-mint authenticated branch (block-tokens/index.ts):
+      // requestedScopes ∩ consent → `signable` is what gets signed. A shared app
+      // whose approved manifest declares the shared scopes must produce a token
+      // carrying BOTH even though the user has granted nothing.
+      const { partitionByConsent } = await import('../scope-grant.service');
+      const manifestScopes = ['apps:storage:shared:read', 'apps:storage:shared:write'];
+      const { signable } = partitionByConsent(manifestScopes, new Set());
+      expect(signable).toEqual(manifestScopes);
     });
   });
 
@@ -155,13 +198,30 @@ describe('scope-grant.service', () => {
     it('drops the consent-exempt scopes so the implicit grant only stores gated ones', async () => {
       const { consentGatedScopes } = await import('../scope-grant.service');
       // models:read:self is consent-exempt (01ea90441), so it's dropped here
-      // alongside block:settings:* / apps:storage:* — only ai:write:budgeted is
-      // gated and kept.
+      // alongside apps:storage:* — only ai:write:budgeted is gated and kept.
       expect(
         consentGatedScopes([
           'models:read:self',
-          'block:settings:read',
+          'apps:storage:write',
           'apps:storage:read',
+          'ai:write:budgeted',
+        ])
+      ).toEqual(['ai:write:budgeted']);
+    });
+
+    it('drops the SHARED storage scopes → the anon-strip KEEPS them + install does not record them as gated', async () => {
+      // consentGatedScopes drives BOTH (a) the anon-scope strip at mint (an anon
+      // token keeps only NON-gated scopes) and (b) what the install/subscribe
+      // implicit grant records. The shared scopes must be exempt so an anon read
+      // token can carry shared:read (public community data) and install doesn't
+      // demand a grant that would never be given. Anon WRITE remains impossible:
+      // resolveSharedContext rejects a null subject before any data access,
+      // independent of the scope (see apps-shared.router tests).
+      const { consentGatedScopes } = await import('../scope-grant.service');
+      expect(
+        consentGatedScopes([
+          'apps:storage:shared:read',
+          'apps:storage:shared:write',
           'ai:write:budgeted',
         ])
       ).toEqual(['ai:write:budgeted']);

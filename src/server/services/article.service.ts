@@ -169,9 +169,16 @@ export const getArticles = async ({
   pending,
   browsingLevel,
   include,
+  forceHidePrivate,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
   include?: Array<'cosmetics'>;
+  // When true, `availability = Private` articles are ALWAYS dropped, even when a
+  // `username`/`collectionId`/etc. filter is set (which normally expands the result
+  // set to include the caller's private articles). Used by the public REST surface
+  // so an anonymous `?username=X` request can never surface a user's private
+  // articles. Defaults to false → the website/tRPC path is unchanged.
+  forceHidePrivate?: boolean;
 }) => {
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
@@ -183,7 +190,8 @@ export const getArticles = async ({
       !!sessionUser?.username &&
       postgresSlugify(sessionUser.username) === postgresSlugify(username);
     const hidePrivateArticles =
-      !ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds;
+      forceHidePrivate ||
+      (!ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds);
 
     const AND: Prisma.Sql[] = [];
 

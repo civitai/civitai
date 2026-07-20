@@ -8,6 +8,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 import { tagCache, tagCacheByName } from '~/server/redis/caches';
+import { bustGetTagsCache } from '~/server/services/tag.service';
 
 const schema = z.object({
   tags: commaDelimitedStringArray(),
@@ -34,6 +35,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     await Promise.all([
       ...tags.map((tag) => tagCacheByName.bust(tag)),
       ...tagIds.map((id) => tagCache.bust(id)),
+      // A tag's `nsfwLevel`/`type` gate the cached `getTags` listings (the PG-only
+      // filter forced on no-query calls, the type filter, and the nsfwLevel rollup)
+      // — bust so a re-leveled tag is dropped from stale listings.
+      bustGetTagsCache(),
     ]);
   }
 

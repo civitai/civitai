@@ -21,6 +21,7 @@ const {
   mockClearCacheByPattern,
   mockCachedObject,
   mockCreateCachedObject,
+  mockGetHighestTierSubscription,
 } = vi.hoisted(() => {
   const mockCachedObject = {
     fetch: vi.fn().mockResolvedValue({}),
@@ -66,6 +67,7 @@ const {
     mockClearCacheByPattern: vi.fn().mockResolvedValue(undefined),
     mockCachedObject,
     mockCreateCachedObject: vi.fn(() => mockCachedObject),
+    mockGetHighestTierSubscription: vi.fn().mockResolvedValue(null),
   };
 });
 
@@ -107,6 +109,9 @@ vi.mock('~/server/redis/client', () => ({
   },
   REDIS_SYS_KEYS: { CREATOR_PROGRAM: { FLIP_PHASES: 'cp:flip' } },
   sysRedis: mockSysRedis,
+}));
+vi.mock('~/server/services/subscriptions.service', () => ({
+  getHighestTierSubscription: mockGetHighestTierSubscription,
 }));
 vi.mock('~/utils/signal-client', () => ({ signalClient: mockSignalClient }));
 vi.mock('~/server/prom/client', () => ({ userUpdateCounter: { inc: vi.fn() } }));
@@ -277,7 +282,9 @@ describe('getBanked', () => {
 describe('bankBuzz', () => {
   beforeEach(() => {
     mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
-    mockDbWrite.customerSubscription.findFirst.mockResolvedValue({ id: 1 });
+    mockDbWrite.customerSubscription.findFirst.mockResolvedValue({
+      product: { metadata: { tier: 'silver' } },
+    });
     mockCapCache();
     mockBankedAmounts(0, 0);
 
@@ -324,8 +331,16 @@ describe('bankBuzz', () => {
     await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow();
   });
 
-  it('rejects users without active membership', async () => {
-    mockDbWrite.customerSubscription.findFirst.mockResolvedValueOnce(null);
+  it('rejects users without a valid membership', async () => {
+    mockDbWrite.customerSubscription.findFirst.mockResolvedValue(null);
+
+    await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow();
+  });
+
+  it('rejects users whose only active membership is free/founder tier', async () => {
+    mockDbWrite.customerSubscription.findFirst.mockResolvedValue({
+      product: { metadata: { tier: 'founder' } },
+    });
 
     await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow();
   });
@@ -611,7 +626,9 @@ describe('getPoolParticipantsV2', () => {
 describe('unified pool invariants', () => {
   beforeEach(() => {
     mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
-    mockDbWrite.customerSubscription.findFirst.mockResolvedValue({ id: 1 });
+    mockDbWrite.customerSubscription.findFirst.mockResolvedValue({
+      product: { metadata: { tier: 'silver' } },
+    });
     mockCapCache();
     mockBankedAmounts(0, 0);
     mockClickhouse.$query.mockResolvedValue([{ balance: 35000 }]);
@@ -631,7 +648,9 @@ describe('unified pool invariants', () => {
 
     vi.clearAllMocks();
     mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
-    mockDbWrite.customerSubscription.findFirst.mockResolvedValue({ id: 1 });
+    mockDbWrite.customerSubscription.findFirst.mockResolvedValue({
+      product: { metadata: { tier: 'silver' } },
+    });
     mockCapCache();
     mockBankedAmounts(0, 0);
     mockClickhouse.$query.mockResolvedValue([{ balance: 35000 }]);

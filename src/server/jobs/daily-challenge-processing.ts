@@ -7,13 +7,17 @@ import { eventEngine } from '~/server/events';
 import {
   claimChallengeForCompletion,
   computeDynamicPool,
+  distributePrizes,
   createChallengeRecord,
   createChallengeWinner,
   getChallengeById,
+  getChallengeEntryCount,
   getExistingWinnersForRetry,
+  incrementOperationSpent,
   resolveEventContext,
   setChallengeActive,
   updateChallengeStatus,
+  type ChallengeDetails,
   type EventContext,
   type RecentEntry,
   type SelectedResource,
@@ -46,15 +50,24 @@ import {
   getUpcomingSystemChallenge,
   type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { calculateWeightedCategoryScore } from '~/server/games/daily-challenge/daily-challenge-scoring';
 import {
+  getIsSafeBrowsingLevel,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import {
+  estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
-import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
+import {
+  challengeJudgingCategoriesSchema,
+  parseChallengeMetadata,
+  type ChallengeJudgingCategory,
+} from '~/server/schema/challenge.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransactionMany,
@@ -63,7 +76,17 @@ import {
 import { upsertComment } from '~/server/services/commentsv2.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
+import {
+  refundUserChallengeFunds,
+  buildWinnerPayoutTransactions,
+  getChallengeBuzzType,
+} from '~/server/games/daily-challenge/challenge-funding';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import {
+  CHALLENGE_ENTRY_HOUSE_CUT,
+  CHALLENGE_JOB_BATCH_SIZE,
+  CHALLENGE_JOB_CONCURRENCY,
+} from '~/shared/constants/challenge.constants';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { createLogger } from '~/utils/logging';
@@ -523,6 +546,14 @@ export async function createUpcomingChallenge(targetDate?: Date) {
   return challengeToLegacyFormat(challenge);
 }
 
+// Indirection seam: reviewEntries() calls reviewEntriesForChallenge() through this object
+// (rather than the bare function reference) so tests can substitute per-challenge processing
+// via `vi.spyOn(challengeReviewInternals, 'reviewEntriesForChallenge')` without needing to mock
+// every DB/LLM call the real implementation makes.
+export const challengeReviewInternals = {
+  reviewEntriesForChallenge,
+};
+
 export async function reviewEntries() {
   // Check if challenge platform is enabled
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.CHALLENGE_PLATFORM_ENABLED))) {
@@ -540,23 +571,36 @@ export async function reviewEntries() {
 
     log(`Processing entries for ${activeChallenges.length} active challenge(s)`);
 
-    // Process each challenge with error isolation
-    for (const challenge of activeChallenges) {
-      try {
-        await reviewEntriesForChallenge(challenge);
-      } catch (error) {
-        // Log error but continue with other challenges
-        const err = error as Error;
-        logToAxiom({
-          type: 'error',
-          name: 'daily-challenge-process-entries',
-          message: err.message,
-          challengeId: challenge.challengeId,
-          collectionId: challenge.collectionId,
-        });
-        log(`Failed to process challenge ${challenge.challengeId}:`, error);
-      }
+    if (activeChallenges.length >= CHALLENGE_JOB_BATCH_SIZE) {
+      logToAxiom({
+        type: 'warning',
+        name: 'daily-challenge-process-entries',
+        message: 'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
+        count: activeChallenges.length,
+      });
     }
+
+    // Process challenges with bounded concurrency. Each task isolates its own error so one
+    // failing challenge can't abort or block the rest of the batch.
+    await limitConcurrency(
+      activeChallenges.map((challenge) => async () => {
+        try {
+          await challengeReviewInternals.reviewEntriesForChallenge(challenge);
+        } catch (error) {
+          // Log error but continue with other challenges
+          const err = error as Error;
+          logToAxiom({
+            type: 'error',
+            name: 'daily-challenge-process-entries',
+            message: err.message,
+            challengeId: challenge.challengeId,
+            collectionId: challenge.collectionId,
+          });
+          log(`Failed to process challenge ${challenge.challengeId}:`, error);
+        }
+      }),
+      CHALLENGE_JOB_CONCURRENCY
+    );
   } catch (e) {
     const error = e as Error;
     logToAxiom({
@@ -589,19 +633,23 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           judgeId: number | null;
           judgingPrompt: string | null;
           prizeMode: PrizeMode;
+          prizePool: number;
           basePrizePool: number;
           buzzPerAction: number;
           poolTrigger: PoolTrigger | null;
           maxPrizePool: number | null;
           prizeDistribution: number[] | null;
           metadata: unknown;
+          source: ChallengeSource;
+          judgingCategories: unknown;
+          entryFee: number;
         }
       | undefined
     ]
   >`
     SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
-           "prizeMode", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
-           "metadata"
+           "prizeMode", "prizePool", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
+           "metadata", "source", "judgingCategories", "entryFee"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
@@ -609,6 +657,14 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
+  // Any challenge that stores judgingCategories is judged by them; those without fall back to the
+  // default theme/wittiness/humor/aesthetic rubric (generateReview resolves DEFAULT_CATEGORY_ROWS
+  // from the DB). Parse defensively — a malformed value falls back to the fixed schema instead of
+  // failing the review.
+  const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
+    challengeRecord?.judgingCategories
+  );
+  const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
 
   // Get judging config from ChallengeJudge (or cached default judge if not assigned)
   const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;
@@ -831,22 +887,34 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   `;
   log('Recent entries:', recentEntries.length);
 
-  // Randomly select entries to review up to the limit
-  let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
-  const shuffledEntries = shuffle(recentEntries);
-  const toReview: typeof shuffledEntries = [];
-  const reviewingUsers = new Set<number>();
-  for (const entry of shuffledEntries) {
-    if (toReviewCount <= 0) break;
-    if (reviewingUsers.has(entry.userId)) continue;
-    // Skip users who have already hit the per-user scored cap
-    const userScored = scoredCountMap.get(entry.userId) ?? 0;
-    if (userScored >= config.maxScoredPerUser) continue;
-    toReview.push(entry);
-    reviewingUsers.add(entry.userId);
-    toReviewCount--;
+  // Paid user challenges judge EVERY new entry — participants paid a fee for a score, so the
+  // random sampling and per-user cap (both sized for free dailies) must not leave a paying
+  // entrant unjudged with no chance to win. Entry volume is bounded by maxEntriesPerUser and
+  // the participant cap. Free challenges keep the sampled selection below.
+  const judgeAllEntries =
+    challengeRecord?.source === ChallengeSource.User && (challengeRecord?.entryFee ?? 0) > 0;
+
+  let toReview: typeof recentEntries;
+  if (judgeAllEntries) {
+    toReview = [...recentEntries];
+  } else {
+    // Randomly select entries to review up to the limit
+    let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
+    const shuffledEntries = shuffle(recentEntries);
+    toReview = [];
+    const reviewingUsers = new Set<number>();
+    for (const entry of shuffledEntries) {
+      if (toReviewCount <= 0) break;
+      if (reviewingUsers.has(entry.userId)) continue;
+      // Skip users who have already hit the per-user scored cap
+      const userScored = scoredCountMap.get(entry.userId) ?? 0;
+      if (userScored >= config.maxScoredPerUser) continue;
+      toReview.push(entry);
+      reviewingUsers.add(entry.userId);
+      toReviewCount--;
+    }
   }
-  log('Entries to review:', toReview.length);
+  log('Entries to review:', toReview.length, judgeAllEntries ? '(all — paid entries)' : '');
 
   // Get forced to review entries (also respecting per-user cap)
   const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
@@ -896,8 +964,19 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
         config: judgingConfig,
+        categories: userCategories?.map((c) => ({
+          key: c.key,
+          name: c.label,
+          criteria: c.criteria,
+        })),
+        nsfw: !getIsSafeBrowsingLevel(allowedNsfwLevel),
       });
       log('Review prepared', entry.imageId, review);
+
+      const reviewBuzzCost = Math.ceil(estimateBuzzCost(review.model, review.usage));
+      if (reviewBuzzCost > 0) {
+        await incrementOperationSpent(currentChallenge.challengeId, reviewBuzzCost);
+      }
 
       // Add tag and score note to collection item (include judgeId for tracking)
       const note = JSON.stringify({
@@ -1020,38 +1099,58 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     challengeRecord.poolTrigger &&
     challengeRecord.prizeDistribution
   ) {
-    const [stats] = await dbRead.$queryRaw<[{ entryCount: bigint; uniqueUsers: bigint }]>`
-      SELECT
-        COUNT(*) as "entryCount",
-        COUNT(DISTINCT i."userId") as "uniqueUsers"
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      WHERE ci."collectionId" = ${currentChallenge.collectionId}
-        AND ci.status = 'ACCEPTED'
-    `;
+    if (challengeRecord.source === ChallengeSource.User) {
+      // Entry-fee challenges: the pool is the REAL collected total already accumulated in
+      // Challenge.prizePool (seeded to basePrizePool, grown by chargeEntryFees only for entries
+      // that actually paid). NEVER derive it from the ACCEPTED entry count — accepted entries can
+      // be unpaid (mod-curated images, entry-fee rollback survivors), which would inflate the pool
+      // into minted payout from account 0. Only recompute the per-place breakdown from that total.
+      const totalPool = challengeRecord.prizePool;
+      const dynamicPrizes = distributePrizes(totalPool, challengeRecord.prizeDistribution);
 
-    const actionCount =
-      challengeRecord.poolTrigger === PoolTrigger.Entry
-        ? Number(stats.entryCount)
-        : Number(stats.uniqueUsers);
+      await dbWrite.challenge.update({
+        where: { id: currentChallenge.challengeId },
+        data: { prizes: dynamicPrizes as unknown as Prisma.InputJsonValue },
+      });
 
-    const { totalPool, prizes: dynamicPrizes } = computeDynamicPool({
-      basePrizePool: challengeRecord.basePrizePool,
-      buzzPerAction: challengeRecord.buzzPerAction,
-      actionCount,
-      maxPrizePool: challengeRecord.maxPrizePool,
-      prizeDistribution: challengeRecord.prizeDistribution,
-    });
+      log('Dynamic prizes recomputed from real collected pool (user challenge):', {
+        totalPool,
+        prizes: dynamicPrizes,
+      });
+    } else {
+      const [stats] = await dbRead.$queryRaw<[{ entryCount: bigint; uniqueUsers: bigint }]>`
+        SELECT
+          COUNT(*) as "entryCount",
+          COUNT(DISTINCT i."userId") as "uniqueUsers"
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        WHERE ci."collectionId" = ${currentChallenge.collectionId}
+          AND ci.status = 'ACCEPTED'
+      `;
 
-    await dbWrite.challenge.update({
-      where: { id: currentChallenge.challengeId },
-      data: {
-        prizePool: totalPool,
-        prizes: dynamicPrizes as unknown as Prisma.InputJsonValue,
-      },
-    });
+      const actionCount =
+        challengeRecord.poolTrigger === PoolTrigger.Entry
+          ? Number(stats.entryCount)
+          : Number(stats.uniqueUsers);
 
-    log('Dynamic prize pool updated:', { totalPool, prizes: dynamicPrizes });
+      const { totalPool, prizes: dynamicPrizes } = computeDynamicPool({
+        basePrizePool: challengeRecord.basePrizePool,
+        buzzPerAction: challengeRecord.buzzPerAction,
+        actionCount,
+        maxPrizePool: challengeRecord.maxPrizePool,
+        prizeDistribution: challengeRecord.prizeDistribution,
+      });
+
+      await dbWrite.challenge.update({
+        where: { id: currentChallenge.challengeId },
+        data: {
+          prizePool: totalPool,
+          prizes: dynamicPrizes as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      log('Dynamic prize pool updated:', { totalPool, prizes: dynamicPrizes });
+    }
   }
 
   // Update last review time in Challenge metadata
@@ -1064,6 +1163,33 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     `);
   }
   log('Last reviewed at updated');
+}
+
+/**
+ * Emit the `challenge-llm-spend` cost-observability metric when a challenge reaches a terminal
+ * (Completed) state. `houseCutCollected` approximates the house cut collected from paid entries
+ * as `entryCount * CHALLENGE_ENTRY_HOUSE_CUT` — 0 for challenges that don't charge an entry fee.
+ * Best-effort: this runs after the challenge's terminal state is already committed, so a failure
+ * here is logged rather than thrown.
+ */
+async function logChallengeSpendMetric(challenge: ChallengeDetails) {
+  try {
+    const entryCount = await getChallengeEntryCount(challenge.collectionId);
+    const houseCutCollected =
+      challenge.source === ChallengeSource.User && challenge.entryFee > 0
+        ? entryCount * CHALLENGE_ENTRY_HOUSE_CUT
+        : 0;
+    logToAxiom({
+      name: 'challenge-llm-spend',
+      challengeId: challenge.id,
+      source: challenge.source,
+      operationSpent: challenge.operationSpent,
+      houseCutCollected,
+    });
+  } catch (error) {
+    const err = error as Error;
+    log('Failed to log challenge-llm-spend metric', challenge.id, err.message);
+  }
 }
 
 /**
@@ -1094,6 +1220,8 @@ export async function pickWinnersForChallenge(
   log('Challenge claimed for completion');
 
   try {
+    const winnerBuzzType = await getChallengeBuzzType(currentChallenge.challengeId);
+
     // Check if winners already exist from a previous (failed) run.
     // If so, skip LLM generation entirely to avoid non-deterministic re-picks.
     const existingWinners = await getExistingWinnersForRetry(currentChallenge.challengeId);
@@ -1124,11 +1252,17 @@ export async function pickWinnersForChallenge(
       // 2. Get judging config and event context from Challenge
       const [challengeJudgeRow] = await dbRead.$queryRaw<
         [
-          | { judgeId: number | null; judgingPrompt: string | null; eventId: number | null }
+          | {
+              judgeId: number | null;
+              judgingPrompt: string | null;
+              eventId: number | null;
+              source: ChallengeSource;
+              judgingCategories: unknown;
+            }
           | undefined
         ]
       >`
-        SELECT "judgeId", "judgingPrompt", "eventId" FROM "Challenge"
+        SELECT "judgeId", "judgingPrompt", "eventId", "source", "judgingCategories" FROM "Challenge"
         WHERE id = ${currentChallenge.challengeId}
         LIMIT 1
       `;
@@ -1142,83 +1276,174 @@ export async function pickWinnersForChallenge(
 
       const eventContext = await resolveEventContext(challengeJudgeRow?.eventId ?? null);
 
+      // Rank by stored judgingCategories when present (any source); otherwise the fixed
+      // theme/wittiness/humor/aesthetic rubric. Parse defensively — a malformed value falls back
+      // to the fixed schema.
+      const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
+        challengeJudgeRow?.judgingCategories
+      );
+      const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
+
       // Close challenge collection
       await endChallenge(currentChallenge);
       log('Collection closed');
+
+      // Entry fees charged since the last 10-min review recompute grew prizePool but not the
+      // stored per-place breakdown — with the collection now closed the pool is final, so
+      // recompute the breakdown before winners are mapped/paid. Skipping this would underpay
+      // winners and strand the last window's fees in account 0 (and the residual alert below
+      // compares against the same stale breakdown, so it would never fire).
+      if (challengeJudgeRow?.source === ChallengeSource.User) {
+        const fresh = await dbWrite.challenge.findUnique({
+          where: { id: currentChallenge.challengeId },
+          select: { prizePool: true, prizeDistribution: true },
+        });
+        const distribution = Array.isArray(fresh?.prizeDistribution)
+          ? (fresh.prizeDistribution as number[])
+          : null;
+        if (fresh && distribution?.length) {
+          const finalPrizes = distributePrizes(fresh.prizePool, distribution);
+          await dbWrite.challenge.update({
+            where: { id: currentChallenge.challengeId },
+            data: { prizes: finalPrizes as unknown as Prisma.InputJsonValue },
+          });
+          currentChallenge.prizes = finalPrizes;
+          log('Final prize breakdown recomputed from collected pool:', {
+            prizePool: fresh.prizePool,
+            prizes: finalPrizes,
+          });
+        }
+      }
 
       // 3. Get judged entries + LLM judgment
       const judgedEntries = await getJudgedEntries(
         currentChallenge.collectionId,
         config,
-        eventContext
+        eventContext,
+        challengeJudgeRow?.source ?? ChallengeSource.System,
+        userCategories
       );
       if (!judgedEntries.length) {
         log('No judged entries for challenge:', currentChallenge.challengeId);
+        // Zero-winner completion of a paid user challenge strands its entry fees + initial prize in
+        // account 0 (no payout runs below). Reverse the actual charges (mint-safe + idempotent —
+        // keyed off real charges) BEFORE marking Completed. No-op for daily/mod/system.
+        if (challengeJudgeRow?.source === ChallengeSource.User) {
+          await refundUserChallengeFunds(currentChallenge.challengeId);
+          log('Refunded user challenge funds (no winners)');
+        }
         await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
         log('Challenge marked as completed (no entries)');
+        const freshChallenge = await getChallengeById(currentChallenge.challengeId);
+        if (freshChallenge) await logChallengeSpendMetric(freshChallenge);
         return;
       }
 
-      log('Sending entries for final judgment');
-      const generated = await generateWinners({
-        theme: currentChallenge.theme,
-        entries: judgedEntries.map((entry) => ({
-          creator: entry.username,
-          creatorId: entry.userId,
-          summary: entry.summary,
-          score: entry.score,
-        })),
-        config: judgingConfig,
-      });
-      process = generated.process;
-      outcome = generated.outcome;
+      // Degenerate participation: asking an LLM to pick "exactly 3" winners among fewer than 2
+      // distinct entrants is semantically broken (and a wasted judging call) — skip
+      // generateWinners and award place 1 deterministically instead. judgedEntries.length is
+      // already guaranteed >= 1 here (see the empty-entries return above), so "< 2 distinct"
+      // can only mean exactly one distinct entrant.
+      const distinctEntrantIds = new Set(judgedEntries.map((entry) => entry.userId));
 
-      // Map winners to entries
-      winningEntries = generated.winners
-        .map((winner, i) => {
-          const entry = judgedEntries.find(
-            (e) =>
-              e.username.toLowerCase() === winner.creator.toLowerCase() ||
-              e.userId === winner.creatorId
-          );
-          if (!entry) return null;
-          return {
-            userId: entry.userId,
-            imageId: entry.imageId,
-            position: i + 1,
-            prize: currentChallenge.prizes[i].buzz,
-            reason: winner.reason,
-          };
-        })
-        .filter(isDefined);
+      if (distinctEntrantIds.size < 2) {
+        const [soleEntry] = judgedEntries;
+        log('Fewer than 2 distinct entrants — awarding place 1 deterministically (no LLM):', {
+          challengeId: currentChallenge.challengeId,
+          userId: soleEntry.userId,
+        });
 
-      // 4. Create ChallengeWinner records (idempotent via P2002 handling)
-      for (const entry of winningEntries) {
+        const prize = currentChallenge.prizes[0]?.buzz ?? 0;
+        const soleWinnerReason = 'Sole eligible entrant';
+        winningEntries = [
+          {
+            userId: soleEntry.userId,
+            imageId: soleEntry.imageId,
+            position: 1,
+            prize,
+            reason: soleWinnerReason,
+          },
+        ];
+        process = 'Deterministic award: fewer than 2 distinct entrants';
+        outcome = 'Sole entrant awarded place 1 without LLM judging';
+
         await createChallengeWinner({
           challengeId: currentChallenge.challengeId,
-          userId: entry.userId,
-          imageId: entry.imageId!, // always non-null on fresh winner path
-          place: entry.position,
-          buzzAwarded: entry.prize,
-          pointsAwarded: currentChallenge.prizes[entry.position - 1].points,
-          reason: entry.reason ?? undefined,
+          userId: soleEntry.userId,
+          imageId: soleEntry.imageId,
+          place: 1,
+          buzzAwarded: prize,
+          pointsAwarded: currentChallenge.prizes[0]?.points ?? 0,
+          reason: soleWinnerReason,
         });
+        log('ChallengeWinner record created (deterministic sole-entrant award)');
+      } else {
+        log('Sending entries for final judgment');
+        const generated = await generateWinners({
+          theme: currentChallenge.theme,
+          entries: judgedEntries.map((entry) => ({
+            creator: entry.username,
+            creatorId: entry.userId,
+            summary: entry.summary,
+            score: entry.score,
+          })),
+          config: judgingConfig,
+        });
+        process = generated.process;
+        outcome = generated.outcome;
+
+        const winnersBuzzCost = Math.ceil(estimateBuzzCost(generated.model, generated.usage));
+        if (winnersBuzzCost > 0) {
+          await incrementOperationSpent(currentChallenge.challengeId, winnersBuzzCost);
+        }
+
+        // Map winners to entries by numeric creatorId only. `winner.creator` is the LLM's echo of
+        // the (user-controlled, spoofable) display name — matching on it let a second entrant who
+        // set their name equal to another entrant's name hijack `find`'s first-match semantics and
+        // steal that entrant's payout. judgedEntries is already deduped to one entry per userId
+        // (see getJudgedEntries), so creatorId alone fully disambiguates.
+        winningEntries = generated.winners
+          .map((winner, i) => {
+            const entry = judgedEntries.find((e) => e.userId === winner.creatorId);
+            if (!entry) return null;
+            return {
+              userId: entry.userId,
+              imageId: entry.imageId,
+              position: i + 1,
+              prize: currentChallenge.prizes[i]?.buzz ?? 0,
+              reason: winner.reason,
+            };
+          })
+          .filter(isDefined);
+
+        // 4. Create ChallengeWinner records (idempotent via P2002 handling)
+        for (const entry of winningEntries) {
+          await createChallengeWinner({
+            challengeId: currentChallenge.challengeId,
+            userId: entry.userId,
+            imageId: entry.imageId!, // always non-null on fresh winner path
+            place: entry.position,
+            buzzAwarded: entry.prize,
+            pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
+            reason: entry.reason ?? undefined,
+          });
+        }
+        log('ChallengeWinner records created');
       }
-      log('ChallengeWinner records created');
     }
 
-    // 5. Distribute winner buzz prizes
+    // 5. Distribute winner buzz prizes. Pay `entry.prize` (keyed to the entry's PLACE and equal
+    // to the recorded ChallengeWinner.buzzAwarded) — indexing prizes[] by array position would
+    // overpay when an unmatched LLM winner was filtered out above (place-2 entry at index 0
+    // would get place-1 buzz), and on the retry path the array order isn't tied to place at all.
     await withRetries(() =>
       createBuzzTransactionMany(
-        winningEntries.map((entry, i) => ({
-          type: TransactionType.Reward,
-          toAccountId: entry.userId,
-          fromAccountId: 0, // central bank
-          amount: currentChallenge.prizes[i].buzz,
-          description: `Challenge Winner Prize #${entry.position}: ${currentChallenge.title}`,
-          externalTransactionId: `challenge-winner-prize-${currentChallenge.challengeId}-${entry.userId}-place-${entry.position}`,
-          toAccountType: 'yellow',
-        }))
+        buildWinnerPayoutTransactions({
+          challengeId: currentChallenge.challengeId,
+          title: currentChallenge.title,
+          buzzType: winnerBuzzType,
+          winners: winningEntries,
+        })
       )
     );
     log('Prizes sent');
@@ -1238,6 +1463,25 @@ export async function pickWinnersForChallenge(
 
     // 7. Set Completed status + store summary (AFTER all prizes distributed)
     const challengeRecord = await getChallengeById(currentChallenge.challengeId);
+
+    // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).
+    if (challengeRecord?.source === ChallengeSource.User) {
+      const totalPrizeBuzz = challengeRecord.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
+      const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
+      const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
+      if (residualBuzz > 0) {
+        await logToAxiom({
+          type: 'info',
+          name: 'challenge-partial-winner-residual',
+          message: 'User challenge completed with fewer winners than prize places; buzz not paid out',
+          challengeId: currentChallenge.challengeId,
+          residualBuzz,
+          winnersCount: winningEntries.length,
+          prizePlaces: challengeRecord.prizes.length,
+        });
+      }
+    }
+
     const existingMetadata = parseChallengeMetadata(challengeRecord?.metadata);
     await dbWrite.challenge.update({
       where: { id: currentChallenge.challengeId },
@@ -1263,6 +1507,7 @@ export async function pickWinnersForChallenge(
       },
     });
     log('Challenge status updated to Completed');
+    if (challengeRecord) await logChallengeSpendMetric(challengeRecord);
 
     // 8. Send notifications to winners (non-critical, last)
     const notificationKey = currentChallenge.challengeId ?? currentChallenge.collectionId;
@@ -1389,7 +1634,9 @@ const duplicateImageColumns = [
   'nsfwLevelLocked',
   'aiNsfwLevel',
   'aiModel',
-  'sortAt',
+  // sortAt intentionally omitted: the image_sort_at_before trigger authors it
+  // from the copied scannedAt/createdAt (postId is not copied → postless), so
+  // copying the source's sortAt would be inert. Do not re-add it.
   'pHash',
 ];
 async function duplicateImage(imageId: number, userId: number) {
@@ -1429,38 +1676,63 @@ export async function getCoverOfModel(modelId: number) {
 export async function getJudgedEntries(
   collectionId: number,
   config: ChallengeConfig,
-  eventContext?: EventContext
+  eventContext?: EventContext,
+  source: ChallengeSource = ChallengeSource.System,
+  categories?: ChallengeJudgingCategory[]
 ) {
+  // Challenges scored against creator-defined category labels (any challenge that stored
+  // judgingCategories — see the callers) can't use the fixed
+  // theme/aesthetic/humor/wittiness SQL ordering below — rank those in JS instead (see the
+  // branch after the winner-cooldown filter). The caller already resolved whether categories
+  // apply (including the fixed-schema fallback for malformed values), so route on their
+  // presence alone rather than re-checking source here.
+  const useWeightedCategories = !!categories?.length;
+
   // Get each user's BEST entry only (by AI score), so users with many entries
   // don't have an advantage over users with fewer entries
-  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
-    WITH ranked AS (
-      SELECT
-        ci."imageId",
-        i."userId",
-        u."username",
-        ci.note,
-        ROW_NUMBER() OVER (
-          PARTITION BY i."userId"
-          ORDER BY (
-            (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
-            (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
-            (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
-            (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
-          ) DESC
-        ) as rn
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      JOIN "User" u ON u.id = i."userId"
-      WHERE ci."collectionId" = ${collectionId}
-      AND ci."tagId" = ${config.judgedTagId}
-      AND ci.note IS NOT NULL
-      AND ci.status = 'ACCEPTED'
-    )
-    SELECT "imageId", "userId", username, note
-    FROM ranked
-    WHERE rn = 1
-  `;
+  const userBestEntries = useWeightedCategories
+    ? await dbRead.$queryRaw<JudgedEntry[]>`
+        SELECT
+          ci."imageId",
+          i."userId",
+          u."username",
+          ci.note
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        JOIN "User" u ON u.id = i."userId"
+        WHERE ci."collectionId" = ${collectionId}
+        AND ci."tagId" = ${config.judgedTagId}
+        AND ci.note IS NOT NULL
+        AND ci.status = 'ACCEPTED'
+      `
+    : await dbRead.$queryRaw<JudgedEntry[]>`
+        WITH ranked AS (
+          SELECT
+            ci."imageId",
+            i."userId",
+            u."username",
+            ci.note,
+            ROW_NUMBER() OVER (
+              PARTITION BY i."userId"
+              ORDER BY (
+                (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
+                (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
+                (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
+                (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
+              ) DESC
+            ) as rn
+          FROM "CollectionItem" ci
+          JOIN "Image" i ON i.id = ci."imageId"
+          JOIN "User" u ON u.id = i."userId"
+          WHERE ci."collectionId" = ${collectionId}
+          AND ci."tagId" = ${config.judgedTagId}
+          AND ci.note IS NOT NULL
+          AND ci.status = 'ACCEPTED'
+        )
+        SELECT "imageId", "userId", username, note
+        FROM ranked
+        WHERE rn = 1
+      `;
   log('Users with judged entries:', userBestEntries?.length);
   if (!userBestEntries.length) {
     return [];
@@ -1468,7 +1740,11 @@ export async function getJudgedEntries(
 
   // Exclude users who won a challenge within the cooldown period, scoped by event
   let recentWinnerIds = new Set<number>();
-  if (eventContext?.winnerCooldownDays === 0) {
+  if (source === ChallengeSource.User) {
+    // Paid user challenges never apply the winner cooldown — a recent daily-challenge win
+    // must not silently disqualify someone from a pool they paid to enter.
+    log('Skipping winner cooldown — user-created challenge');
+  } else if (eventContext?.winnerCooldownDays === 0) {
     // Event allows consecutive wins — skip cooldown entirely
     log('Skipping winner cooldown — event cooldown set to 0', {
       eventId: eventContext.eventId,
@@ -1506,7 +1782,9 @@ export async function getJudgedEntries(
   const eligibleEntries = filterRecentWinners(userBestEntries, recentWinnerIds);
 
   const cooldownSource =
-    eventContext?.winnerCooldownDays === 0
+    source === ChallengeSource.User
+      ? 'none (user challenge)'
+      : eventContext?.winnerCooldownDays === 0
       ? 'none (no cooldown)'
       : eventContext?.winnerCooldownDays != null
       ? `${String(eventContext.winnerCooldownDays)} day (event override)`
@@ -1517,6 +1795,31 @@ export async function getJudgedEntries(
     eligible: eligibleEntries.length,
     cooldown: cooldownSource,
   });
+
+  if (useWeightedCategories) {
+    // categories is non-empty here (useWeightedCategories guard above)
+    const cats = categories!;
+    const ranked = eligibleEntries
+      .map(({ note, ...entry }) => {
+        const { score, summary } = JSON.parse(note);
+        const weightedRating = calculateWeightedCategoryScore(score, cats);
+        return { ...entry, summary, score, weightedRating };
+      })
+      .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
+
+    // Best entry per user (entries aren't deduped in SQL for this path)
+    const bestPerUser = new Map<number, (typeof ranked)[number]>();
+    for (const entry of ranked) {
+      const current = bestPerUser.get(entry.userId);
+      if (!current || entry.weightedRating > current.weightedRating) {
+        bestPerUser.set(entry.userId, entry);
+      }
+    }
+
+    return [...bestPerUser.values()]
+      .sort((a, b) => b.weightedRating - a.weightedRating)
+      .slice(0, config.finalReviewAmount);
+  }
 
   // Rank entries by weighted AI judge score with theme gate rules
   const judgedEntries = eligibleEntries

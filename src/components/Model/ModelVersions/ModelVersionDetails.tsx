@@ -83,6 +83,7 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
+import { ModelModerationCard } from '~/components/Model/ModelVersions/ModelModerationCard';
 import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
@@ -148,7 +149,17 @@ import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-hel
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 import classes from './ModelVersionDetails.module.scss';
+
+// Hoisted constant inline-style objects — these previously allocated a fresh
+// object on every render inside the Details/file rows (feeding SSR GC). Same
+// values, referenced by identity.
+const styleDottedUnderline: React.CSSProperties = { textDecorationStyle: 'dotted' };
+const styleNowrap: React.CSSProperties = { whiteSpace: 'nowrap' };
+const styleFlexShrink0: React.CSSProperties = { flexShrink: 0 };
+const styleOpacity06: React.CSSProperties = { opacity: 0.6 };
+const styleIconOpacity: React.CSSProperties = { opacity: 0.5 };
 
 export function ModelVersionDetails(props: Props) {
   return <ModelVersionDetailsContent {...props} />;
@@ -354,18 +365,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     staleTime: 60 * 1000, // 1 minute - avoid refetching on every model view
   });
   const isNotificationOn =
-    (followingUsers.includes(model.user.id) || isModelEngaged('Notify')) &&
-    !isModelEngaged('Mute');
+    (followingUsers.includes(model.user.id) || isModelEngaged('Notify')) && !isModelEngaged('Mute');
   const toggleNotifyModelMutation = trpc.user.toggleNotifyModel.useMutation({
     onMutate() {
       // Optimistic store update + snapshot for rollback.
       const snapshot = snapshotMembership(model.id);
       applyNotifyToggled(model.id, !isNotificationOn);
       return { snapshot };
-    },
-    async onSuccess() {
-      // Keep the legacy getEngagedModels cache in sync for still-on-old-endpoint feeds.
-      await queryUtils.user.getEngagedModels.invalidate();
     },
     onError(error, _vars, context) {
       if (context?.snapshot) restoreMembership(model.id, context.snapshot);
@@ -872,6 +878,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </div>
                 </Stack>
               </Card>
+              {user?.isModerator && <ModelModerationCard modelId={model.id} />}
               {/* Component-only model message */}
               {isComponentOnlyModel && (
                 <AlertWithIcon
@@ -1140,14 +1147,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         const config = componentTypeConfig[lc.componentType];
                         const Icon = config?.icon ?? IconPuzzle;
                         return (
-                          <Box
+                          <div
                             key={`lc-${lc.recommendedResourceId ?? lc.fileId}`}
-                            p="sm"
-                            style={{
-                              borderBottom: `1px solid ${
-                                colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-                              }`,
-                            }}
+                            className={classes.fileRow}
                           >
                             <Group justify="space-between" wrap="nowrap">
                               <Group gap="sm" wrap="nowrap">
@@ -1170,7 +1172,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                       size="sm"
                                       fw={500}
                                       td="underline"
-                                      style={{ textDecorationStyle: 'dotted' }}
+                                      style={styleDottedUnderline}
                                     >
                                       {lc.modelName}
                                     </Text>
@@ -1183,9 +1185,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                   </Text>
                                 </Box>
                               </Group>
-                              <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+                              <Group gap="xs" wrap="nowrap" style={styleFlexShrink0}>
                                 {lc.sizeKB ? (
-                                  <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+                                  <Text size="xs" c="dimmed" style={styleNowrap}>
                                     {formatKBytes(lc.sizeKB)}
                                   </Text>
                                 ) : null}
@@ -1230,7 +1232,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 </Tooltip>
                               </Group>
                             </Group>
-                          </Box>
+                          </div>
                         );
                       })}
                       {/* Regular optional files */}
@@ -1246,15 +1248,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         });
 
                         return (
-                          <Box
-                            key={file.id}
-                            p="sm"
-                            style={{
-                              borderBottom: `1px solid ${
-                                colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-                              }`,
-                            }}
-                          >
+                          <div key={file.id} className={classes.fileRow}>
                             <Group justify="space-between" wrap="nowrap">
                               <Group gap="sm" wrap="nowrap">
                                 <ThemeIcon
@@ -1262,7 +1256,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                   radius="md"
                                   color="gray"
                                   variant="light"
-                                  style={{ opacity: 0.6 }}
+                                  style={styleOpacity06}
                                 >
                                   <FileIcon size={20} />
                                 </ThemeIcon>
@@ -1300,7 +1294,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                 </ActionIcon>
                               </Tooltip>
                             </Group>
-                          </Box>
+                          </div>
                         );
                       })}
                     </Stack>
@@ -1341,26 +1335,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </Group>
               </Accordion.Control>
               <Accordion.Panel p={0}>
-                <Stack
-                  gap={0}
-                  style={{
-                    backgroundColor: colorScheme === 'dark' ? '#1f2023' : theme.colors.gray[0],
-                  }}
-                >
+                <Stack gap={0} className={classes.detailsPanel}>
                   {/* Type */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
-                      Type
-                    </Text>
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Type</span>
                     <Group gap={6}>
                       <Badge size="sm" radius="xl" variant="filled" color="gray">
                         {getDisplayName(model.type)} {model.checkpointType}
@@ -1373,25 +1351,14 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         <HowToUseModel type={model.type} />
                       )}
                     </Group>
-                  </Group>
+                  </div>
                   {/* Stats */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
-                      Stats
-                    </Text>
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Stats</span>
                     <Group gap={12}>
                       {!downloadsDisabled && (
                         <Group gap={4}>
-                          <IconDownload size={16} style={{ opacity: 0.5 }} />
+                          <IconDownload size={16} style={styleIconOpacity} />
                           <Text size="sm">
                             <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
                           </Text>
@@ -1399,7 +1366,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       )}
                       {canGenerate && (
                         <Group gap={4}>
-                          <IconBrush size={16} style={{ opacity: 0.5 }} />
+                          <IconBrush size={16} style={styleIconOpacity} />
                           <Text size="sm">
                             <AnimatedCount value={liveMetrics.generationCount} />
                           </Text>
@@ -1407,56 +1374,36 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       )}
                       {!!liveMetrics.earnedAmount && (
                         <Group gap={4}>
-                          <IconBolt size={16} style={{ opacity: 0.5 }} />
+                          <IconBolt size={16} style={styleIconOpacity} />
                           <Text size="sm">
                             <AnimatedCount value={liveMetrics.earnedAmount} />
                           </Text>
                         </Group>
                       )}
                     </Group>
-                  </Group>
+                  </div>
                   {/* Generation Popularity */}
                   {canGenerate &&
                     features.modelVersionPopularity &&
                     model.type === ModelType.Checkpoint && (
-                      <Group
-                        justify="space-between"
-                        px="md"
-                        py={10}
-                        style={{
-                          borderBottom: `1px solid ${
-                            colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                          }`,
-                        }}
-                      >
-                        <Text size="sm" c="dimmed">
-                          Generation
-                        </Text>
+                      <div className={classes.detailRow}>
+                        <span className={classes.detailLabel}>Generation</span>
                         <ModelVersionPopularity
                           versionId={version.id}
                           isCheckpoint={model.type === ModelType.Checkpoint}
                           listenForUpdates
                         />
-                      </Group>
+                      </div>
                     )}
                   {/* Generation License Fee */}
                   {Number(version.licensingFee ?? 0) > 0 && (
-                    <Group
-                      justify="space-between"
-                      px="md"
-                      py={10}
-                      style={{
-                        borderBottom: `1px solid ${
-                          colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                        }`,
-                      }}
-                    >
-                      <Text size="sm" c="dimmed">
-                        Generation License Fee
-                      </Text>
+                    <div className={classes.detailRow}>
+                      <span className={classes.detailLabel}>Generation License Fee</span>
                       <Group gap={4} wrap="nowrap">
                         <CurrencyIcon currency="BUZZ" size={16} />
-                        <Text size="sm">{numberWithCommas(Number(version.licensingFee))} / image</Text>
+                        <Text size="sm">
+                          {numberWithCommas(Number(version.licensingFee))} / image
+                        </Text>
                         <Popover
                           width={260}
                           shadow="md"
@@ -1485,45 +1432,25 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           </Popover.Dropdown>
                         </Popover>
                       </Group>
-                    </Group>
+                    </div>
                   )}
                   {/* Reviews */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
-                      Reviews
-                    </Text>
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Reviews</span>
                     <ModelVersionReview
                       modelId={model.id}
                       versionId={version.id}
                       thumbsUpCount={liveMetrics.thumbsUpCount}
                       thumbsDownCount={liveMetrics.thumbsDownCount}
                     />
-                  </Group>
+                  </div>
                   {/* Published */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>
                       {version.status === 'Published' && version.publishedAt
                         ? 'Published'
                         : 'Uploaded'}
-                    </Text>
+                    </span>
                     <Text size="sm">
                       {formatDate(
                         version.status === 'Published' && version.publishedAt
@@ -1531,75 +1458,76 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           : version.createdAt
                       )}
                     </Text>
-                  </Group>
+                  </div>
                   {/* Base Model */}
-                  <Group
-                    justify="space-between"
-                    px="md"
-                    py={10}
-                    style={{
-                      borderBottom: `1px solid ${
-                        colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                      }`,
-                    }}
-                  >
-                    <Text size="sm" c="dimmed">
-                      Base Model
-                    </Text>
+                  <div className={classes.detailRow}>
+                    <span className={classes.detailLabel}>Base Model</span>
                     <Text size="sm">
                       {version.baseModel}{' '}
                       {version.baseModelType && version.baseModelType !== 'Standard'
                         ? version.baseModelType
                         : ''}
                     </Text>
-                  </Group>
+                  </div>
+                  {/* Training */}
+                  {(!!version.steps || !!version.epochs) && (
+                    <div className={classes.detailRow}>
+                      <span className={classes.detailLabel}>Training</span>
+                      <Group gap={4}>
+                        {!!version.steps && (
+                          <Badge size="sm" radius="sm" color="teal">
+                            Steps: {version.steps.toLocaleString()}
+                          </Badge>
+                        )}
+                        {!!version.epochs && (
+                          <Badge size="sm" radius="sm" color="teal">
+                            Epochs: {version.epochs.toLocaleString()}
+                          </Badge>
+                        )}
+                      </Group>
+                    </div>
+                  )}
+                  {/* Usage Tips */}
+                  {(isDefined(version.clipSkip) || isDefined(version.settings?.strength)) && (
+                    <div className={classes.detailRow}>
+                      <span className={classes.detailLabel}>Usage Tips</span>
+                      <Group gap={4}>
+                        {isDefined(version.clipSkip) && (
+                          <Badge size="sm" radius="sm" color="cyan">
+                            Clip Skip: {version.clipSkip}
+                          </Badge>
+                        )}
+                        {isDefined(version.settings?.strength) && (
+                          <Badge size="sm" radius="sm" color="cyan">
+                            {`Strength: ${version.settings.strength}`}
+                          </Badge>
+                        )}
+                      </Group>
+                    </div>
+                  )}
                   {/* Hash */}
                   {!!hashes.length && (
-                    <Group justify="space-between" px="md" py={10}>
-                      <Text size="sm" c="dimmed">
-                        Hash
-                      </Text>
+                    <div className={classes.detailRowPlain}>
+                      <span className={classes.detailLabel}>Hash</span>
                       <ModelHash hashes={hashes} />
-                    </Group>
+                    </div>
                   )}
                   {/* Trigger Words */}
                   {!!version.trainedWords?.length && (
-                    <Group
-                      justify="space-between"
-                      px="md"
-                      py={10}
-                      style={{
-                        borderTop: `1px solid ${
-                          colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                        }`,
-                      }}
-                    >
-                      <Text size="sm" c="dimmed">
-                        Trigger Words
-                      </Text>
+                    <div className={classes.detailRowTop}>
+                      <span className={classes.detailLabel}>Trigger Words</span>
                       <TrainedWords
                         trainedWords={version.trainedWords}
                         files={version.files}
                         type={model.type}
                       />
-                    </Group>
+                    </div>
                   )}
                   {/* AIR */}
                   {features.air && (
-                    <Group
-                      justify="space-between"
-                      px="md"
-                      py={10}
-                      style={{
-                        borderTop: `1px solid ${
-                          colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                        }`,
-                      }}
-                    >
+                    <div className={classes.detailRowTop}>
                       <Group gap="xs">
-                        <Text size="sm" c="dimmed">
-                          AIR
-                        </Text>
+                        <span className={classes.detailLabel}>AIR</span>
                         <URNExplanation size={16} />
                       </Group>
                       <ModelURN
@@ -1609,7 +1537,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         modelVersionId={version.id}
                         fileType={primaryFile?.type}
                       />
-                    </Group>
+                    </div>
                   )}
                 </Stack>
               </Accordion.Panel>

@@ -53,6 +53,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
+  runClickHouseRead,
   throwBadRequestError,
   throwInsufficientFundsError,
   withRetries,
@@ -1063,32 +1064,43 @@ export const getDailyCompensationRewardByUser = async ({
 
   const hasPublishedResources = modelVersions.length > 0;
   if (!clickhouse || !modelVersions.length) return { resources: [], hasPublishedResources };
+  // Capture the narrowed (non-undefined) client so the read closure below keeps the
+  // type guard — TS doesn't propagate the `!clickhouse` narrowing into a callback.
+  const ch = clickhouse;
 
   const minDate = dayjs.utc(date).startOf('day').startOf('month').toDate();
   const maxDate = dayjs.utc(date).endOf('day').endOf('month').toDate();
 
   const versionIds = modelVersions.map((v) => v.id);
-  const generationData = await clickhouse.$query<Row>`
-    SELECT
-      date,
-      modelVersionId,
-      accountType,
-      SUM(FLOOR(amount))::int AS total
-    FROM orchestration.resourceCompensations
-    WHERE date BETWEEN ${minDate} AND ${maxDate}
-      AND modelVersionId IN (${versionIds})
-      AND amount > 0
-      AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
-      -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
-      -- License fees can settle to cash OR buzz, so we ignore the accountType filter on that source and surface all of them together.
-      AND ${
-        accountType && source !== 'licenseFee'
-          ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(accountType)}')`
-          : '1=1'
-      }
-    GROUP BY modelVersionId, accountType, date
-    ORDER BY date DESC, total DESC
-  `;
+  // A transient ClickHouse connection blip in this read (e.g. `socket hang up`) is a
+  // retryable dependency outage, not a query fault — map it to a retryable 503 (so the
+  // client backs off + retries) instead of the whole compensation query 500ing. A real
+  // query/schema fault (non-connection CH error) still surfaces raw. Same class as the
+  // #3064 New Order counter fix / #2978 / #3049.
+  const generationData = await runClickHouseRead(
+    () => ch.$query<Row>`
+      SELECT
+        date,
+        modelVersionId,
+        accountType,
+        SUM(FLOOR(amount))::int AS total
+      FROM orchestration.resourceCompensations
+      WHERE date BETWEEN ${minDate} AND ${maxDate}
+        AND modelVersionId IN (${versionIds})
+        AND amount > 0
+        AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
+        -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
+        -- License fees can settle to cash OR buzz, so we ignore the accountType filter on that source and surface all of them together.
+        AND ${
+          accountType && source !== 'licenseFee'
+            ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(accountType)}')`
+            : '1=1'
+        }
+      GROUP BY modelVersionId, accountType, date
+      ORDER BY date DESC, total DESC
+    `,
+    'Daily Buzz compensation is temporarily unavailable, please retry.'
+  );
 
   if (!generationData.length) return { resources: [], hasPublishedResources };
 

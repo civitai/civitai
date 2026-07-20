@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  calculateCategoryScore,
   calculateWeightedScore,
+  calculateWeightedCategoryScore,
   SCORE_WEIGHTS,
   THEME_DISQUALIFY_THRESHOLD,
   THEME_GATE_THRESHOLD,
@@ -67,5 +69,46 @@ describe('calculateWeightedScore', () => {
     expect(THEME_DISQUALIFY_THRESHOLD).toBe(2);
     expect(THEME_GATE_THRESHOLD).toBe(4);
     expect(THEME_GATE_MAX_SCORE).toBe(5.0);
+  });
+});
+
+describe('calculateCategoryScore (user-defined categories)', () => {
+  it('averages arbitrary categories equally', () => {
+    expect(calculateCategoryScore({ horror: 8, originality: 6 })).toBe(7);
+    expect(calculateCategoryScore({ a: 10, b: 0 })).toBe(5);
+  });
+
+  it('clamps out-of-range LLM output and ignores NaN', () => {
+    expect(calculateCategoryScore({ a: 12, b: -3 })).toBe(5); // clamps to 10 and 0
+    expect(calculateCategoryScore({ a: 6, b: NaN })).toBe(6);
+  });
+
+  it('returns null when there are no categories', () => {
+    expect(calculateCategoryScore({})).toBeNull();
+  });
+});
+
+describe('calculateWeightedCategoryScore', () => {
+  const cats = [
+    { key: 'theme', label: 'Theme', weight: 50 },
+    { key: 'humor', label: 'Humor', weight: 50 },
+  ];
+  it('weights by percentage', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 8, Humor: 4 }, cats)).toBeCloseTo(6);
+  });
+  it('disqualifies (null) when theme < 2 (matches daily rubric)', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 1, Humor: 10 }, cats)).toBeNull();
+  });
+  it('does NOT disqualify at exactly theme 2 (but caps at 5)', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 2, Humor: 10 }, cats)).toBe(5);
+  });
+  it('caps at 5 when theme < 4', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 3, Humor: 10 }, cats)).toBe(5);
+  });
+  it('clamps out-of-range category scores to 0-10', () => {
+    expect(calculateWeightedCategoryScore({ Theme: 20, Humor: -5 }, cats)).toBeCloseTo(5);
+  });
+  it('matches score keys tolerant of case/whitespace drift from the LLM', () => {
+    expect(calculateWeightedCategoryScore({ theme: 8, humor: 4 }, cats)).toBeCloseTo(6);
   });
 });

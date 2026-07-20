@@ -27,6 +27,27 @@ describe('includesMinorAge', () => {
     });
   });
 
+  describe('prompt attention-weight false positives', () => {
+    it('decimal weight digit adjacent to year should not flag', () => {
+      expect(includesMinorAge('(@ningen mame:0.8), year')).toEqual({
+        found: false,
+        age: undefined,
+      });
+    });
+
+    it('assorted decimal weights adjacent to year do not flag', () => {
+      expect(includesMinorAge('(masterpiece:0.8), (best quality:1.2), year 2025')).toEqual({
+        found: false,
+        age: undefined,
+      });
+    });
+
+    it('a real age inside a weighted group is still detected', () => {
+      expect(includesMinorAge('(8 year old:1.2)')).toEqual({ found: true, age: 8 });
+      expect(includesMinorAge('(loli:1.2), 8 year old')).toEqual({ found: true, age: 8 });
+    });
+  });
+
   describe('legitimate minor detection is preserved', () => {
     it('N year old phrasing', () => {
       expect(includesMinorAge('9 year old girl')).toEqual({ found: true, age: 9 });

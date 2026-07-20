@@ -29,6 +29,22 @@ type ImagesAsPostsInfiniteState = {
     modelVersionId?: number;
   } & Record<string, unknown>;
   showModerationOptions?: boolean;
+  /**
+   * The effective browsing level the gallery query used (system level ∩ the
+   * gallery's capped level). The lazy per-post carousel reuses it so its
+   * `getInfinite({ postId })` tail fetch returns the SAME visible set the feed
+   * slice + `imageCount` were computed from.
+   */
+  browsingLevel?: number;
+  /**
+   * Hidden-preference inputs the feed applied to the slice, forwarded so the lazy
+   * carousel re-applies them to the fetched tail (content safety — the tail must
+   * NOT surface gallery-owner-hidden / user-hidden / system-hidden-tagged /
+   * poi/minor images the feed would have dropped).
+   */
+  hiddenImageIds?: number[];
+  hiddenTags?: number[];
+  hiddenUsers?: number[];
 };
 const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
 export const useImagesAsPostsInfiniteContext = () => {

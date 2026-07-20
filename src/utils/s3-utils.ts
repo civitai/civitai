@@ -20,6 +20,7 @@ import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentB2Client, recordB2PresignIssued } from '~/server/prom/b2-put.metrics';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { isUpstreamNetworkError } from '~/server/utils/errorHandling';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -546,6 +547,89 @@ export async function abortMultipartUpload(
       UploadId: uploadId,
     })
   );
+}
+
+/**
+ * Classification of an S3/AWS-SDK error thrown while finalizing (complete) or
+ * aborting a multipart upload, so the `/api/upload/{complete,abort}` handlers can
+ * map it to the RIGHT HTTP status instead of a blind raw 500.
+ *
+ *  - `not-found`  — the multipart upload no longer exists: it was ALREADY completed
+ *    or aborted (a client double-submit / retry-after-success). The AWS-SDK v3
+ *    surfaces this as `NoSuchUpload` (HTTP 404). This is a client/STATE fault, not a
+ *    server fault: "The specified upload does not exist. The upload ID may be
+ *    invalid, or the upload may have been aborted or completed." Retrying it is
+ *    futile — the caller should STOP. (This was ~27 raw-500s/12h on dp-prod, the
+ *    same `key`+`uploadId` repeating across pods as the client kept retrying.)
+ *  - `invalid-parts` — a client/STATE fault in the parts manifest the browser sent
+ *    to CompleteMultipartUpload: the ETag+PartNumber array doesn't match what the
+ *    backend stored (a part upload silently failed/expired, or a stale ETag), or the
+ *    manifest is empty/mis-ordered/malformed. The AWS-SDK v3 surfaces these as
+ *    `InvalidPart` ("One or more of the specified parts could not be found. …"),
+ *    `InvalidPartOrder`, `EntityTooSmall`, `MalformedXML`, or `InvalidRequest`
+ *    ("You must specify at least one part") — ALL HTTP 400. Retrying with the SAME
+ *    bad manifest is futile → the caller must STOP and re-upload. Mapped to a
+ *    terminal 422 (not a raw 500 that invites SDK retry amplification + pollutes the
+ *    500 alert). This was ~25 raw-500s/24h on dp-prod, the dominant residual after
+ *    #3065's not-found/transient split.
+ *  - `transient` — a retry-able storage-backend blip: an S3/B2 HTTP 5xx, a throttle
+ *    / timing signal (`SlowDown` / `RequestTimeout` / `RequestTimeTooSkewed` /
+ *    `ServiceUnavailable` / `InternalError`), or a status-less network failure
+ *    (`ECONNRESET` / `ETIMEDOUT` / …). Mirror #2972/#3049 → 503 + Retry-After.
+ *  - `other`     — anything unrecognized, INCLUDING a genuine server-side bug. Left
+ *    to surface as a hard 500 so a real failed upload fails LOUD (never masked as a
+ *    silent 409/422/503).
+ *
+ * AWS-SDK v3 errors carry `error.name` (e.g. `'NoSuchUpload'`, `'SlowDown'`) and
+ * `error.$metadata.httpStatusCode`; a pre-response network failure has neither, so
+ * it is matched by {@link isUpstreamNetworkError}.
+ */
+export type S3MultipartErrorClass = 'not-found' | 'invalid-parts' | 'transient' | 'other';
+
+const S3_TRANSIENT_ERROR_NAMES: ReadonlySet<string> = new Set([
+  'SlowDown',
+  'RequestTimeout',
+  'RequestTimeTooSkewed',
+  'ServiceUnavailable',
+  'InternalError',
+]);
+
+// Client/STATE faults in the parts manifest sent to CompleteMultipartUpload — all
+// HTTP 400. Terminal: retrying the same bad manifest is futile, the client must
+// re-upload. (`InvalidRequest`/"you must specify at least one part" is matched
+// separately below since that name is generic and only 400-on-this-path is a
+// parts fault.)
+const S3_INVALID_PARTS_ERROR_NAMES: ReadonlySet<string> = new Set([
+  'InvalidPart',
+  'InvalidPartOrder',
+  'EntityTooSmall',
+  'MalformedXML',
+]);
+
+export function classifyS3MultipartError(error: unknown): S3MultipartErrorClass {
+  const err = error as
+    | { name?: unknown; $metadata?: { httpStatusCode?: unknown } | null }
+    | null
+    | undefined;
+  const name = typeof err?.name === 'string' ? err.name : undefined;
+  const httpStatusCode =
+    typeof err?.$metadata?.httpStatusCode === 'number' ? err.$metadata.httpStatusCode : undefined;
+
+  // Terminal state fault: the upload is already finalized/aborted → stop retrying.
+  if (name === 'NoSuchUpload' || httpStatusCode === 404) return 'not-found';
+
+  // Terminal client/STATE fault: the parts manifest doesn't match what the backend
+  // stored (or is empty/mis-ordered/malformed) → re-upload, don't retry as-is.
+  if (name && S3_INVALID_PARTS_ERROR_NAMES.has(name)) return 'invalid-parts';
+  if (name === 'InvalidRequest' && httpStatusCode === 400) return 'invalid-parts';
+
+  // Retry-able storage-backend failure.
+  if (typeof httpStatusCode === 'number' && httpStatusCode >= 500) return 'transient';
+  if (name && S3_TRANSIENT_ERROR_NAMES.has(name)) return 'transient';
+  if (isUpstreamNetworkError(error)) return 'transient';
+
+  // Unrecognized — keep surfacing as a hard 500 (do NOT mask a real server fault).
+  return 'other';
 }
 
 type GetObjectOptions = {

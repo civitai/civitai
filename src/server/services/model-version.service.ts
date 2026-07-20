@@ -28,8 +28,10 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   dataForModelsCache,
   modelVersionAccessCache,
+  modelVersionPublicDonationGoalsCache,
   modelVersionResourceCache,
 } from '~/server/redis/caches';
+import type { ModelVersionPublicDonationGoal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
@@ -107,6 +109,7 @@ import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
+import { deregisterFileLocations } from '~/utils/storage-resolver';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -270,41 +273,51 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
   });
 };
 
-// Licensing lineage roots selectable for a given base model — the versions
-// flagged LicensingRoot that define a fee others can inherit (e.g. an
-// ecosystem's Base / Turbo checkpoints). Feeds the version-form picker.
-export const getLicensingRoots = async ({ baseModel }: { baseModel: string }) => {
-  return dbRead.$queryRaw<
+// Licensing lineage roots selectable for a given base model — versions
+// registered in `LicensingRoot` whose fee others inherit (e.g. an ecosystem's
+// Base / Turbo checkpoints). Scoped to the caller's model type so a LoRA isn't
+// offered a checkpoint's fee. `defaultVersionId` is the root a derivative
+// pre-selects. Feeds the version-form picker.
+export const getLicensingRoots = async ({
+  baseModel,
+  modelType,
+}: {
+  baseModel: string;
+  modelType?: ModelType;
+}) => {
+  const roots = await dbRead.$queryRaw<
     Array<{
       id: number;
       modelId: number;
-      modelName: string;
       versionName: string;
       licensingFee: number | null;
       licensingFeeType: LicensingFeeType | null;
       licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+      isDefault: boolean;
     }>
   >`
     SELECT
       mv.id,
       mv."modelId",
-      m.name AS "modelName",
       mv.name AS "versionName",
       mv."licensingFee"::float8 AS "licensingFee",
       mv."licensingFeeType",
-      mv."licensingFeeSettlementCurrency"
-    FROM "ModelVersion" mv
+      mv."licensingFeeSettlementCurrency",
+      lr."isDefault"
+    FROM "LicensingRoot" lr
+    JOIN "ModelVersion" mv ON mv.id = lr."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv."baseModel" = ${baseModel}
-      AND (mv.flags & ${ModelVersionFlag.LicensingRoot}) = ${ModelVersionFlag.LicensingRoot}
+    WHERE lr."baseModel" = ${baseModel}
       AND mv.status = ${ModelStatus.Published}::"ModelStatus"
-      AND mv."licensingFee" IS NOT NULL
-      AND mv."licensingFee" > 0
       AND m.status = ${ModelStatus.Published}::"ModelStatus"
       AND m.availability = ${Availability.Public}::"Availability"
       AND m."deletedAt" IS NULL
-    ORDER BY m.name, mv.index
+      ${modelType ? Prisma.sql`AND lr."modelType" = ${modelType}::"ModelType"` : Prisma.empty}
+    ORDER BY lr."isDefault" DESC, m.name, mv.index
   `;
+
+  const defaultVersionId = roots.find((r) => r.isDefault)?.id ?? null;
+  return { roots, defaultVersionId };
 };
 
 // Field-level early-access requirements (status-independent): a timeframe needs
@@ -384,15 +397,15 @@ export const upsertModelVersion = async ({
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
+  const existingFlags = id
+    ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
+    : 0;
+
   // Versions with a license fee earn through that channel, so they opt out of
   // tip + creator-comp payouts. We only ever ADD the flag — clearing the fee
   // doesn't strip it, since a creator may have set the bit independently.
   let flagsOverride: number | undefined;
   if (data.licensingFee != null && data.licensingFee > 0) {
-    const existingFlags = id
-      ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ??
-        0
-      : 0;
     flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
   }
 
@@ -845,6 +858,10 @@ export const deleteVersionById = async ({
   }
 
   // Post-commit S3 cleanup — only after Postgres confirms the delete stuck.
+  // Keyed on ModelFile.url; this deletes the bytes for non-tiered / legacy
+  // files. For a TIERED file ModelFile.url is a known-stale pointer, so this
+  // path misses the real object — the deregister step below is what stops that
+  // leak. The two are complementary; keep both.
   if (modelFileUrls.length > 0) {
     try {
       await deleteModelFileObjects(modelFileUrls);
@@ -856,6 +873,25 @@ export const deleteVersionById = async ({
         error,
       });
     }
+  }
+
+  // Post-commit: deregister storage-resolver file_locations rows for this
+  // version. For a tiered file the real backend object is keyed by
+  // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
+  // the surviving row keeps that object whitelisted against the dereference-
+  // quarantine sweep. Removing the row turns the now catalog-gone object into a
+  // true storage orphan the existing sweep reclaims (reversibly) on its next
+  // cycle. deregisterFileLocations is best-effort and never throws, but wrap it
+  // anyway so a future change can't turn a registry blip into a failed delete.
+  try {
+    await deregisterFileLocations(id);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-delete-deregister-file-locations',
+      message: `Failed to deregister file locations for model version ${id}`,
+      error,
+    });
   }
 
   return version;
@@ -1719,6 +1755,15 @@ export const earlyAccessPurchase = async ({
       ? (earlyAccesConfig.downloadPrice as number)
       : (earlyAccesConfig.generationPrice as number);
 
+  const accessRecord = await dbWrite.entityAccess.findFirst({
+    where: {
+      accessorId: userId,
+      accessorType: 'User',
+      accessToId: modelVersionId,
+      accessToType: 'ModelVersion',
+    },
+  });
+
   try {
     const externalTransactionIdPrefix = `early-access-${modelVersionId}-${type}-${userId}`;
     const data = await createMultiAccountBuzzTransaction({
@@ -1736,14 +1781,7 @@ export const earlyAccessPurchase = async ({
       throw throwBadRequestError('Failed to create Buzz transaction.');
 
     buzzTransactionId = externalTransactionIdPrefix;
-    const accessRecord = await dbWrite.entityAccess.findFirst({
-      where: {
-        accessorId: userId,
-        accessorType: 'User',
-        accessToId: modelVersionId,
-        accessToType: 'ModelVersion',
-      },
-    });
+    
 
     await dbWrite.$transaction(
       async (tx) => {
@@ -1850,6 +1888,18 @@ export const earlyAccessPurchase = async ({
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
 
+      if (!accessRecord) {
+        // Remove the entity access record if it was created during this transaction.
+        await dbWrite.entityAccess.deleteMany({
+          where: {
+            accessorId: userId,
+            accessorType: 'User',
+            accessToId: modelVersionId,
+            accessToType: 'ModelVersion',
+          },
+        });
+      }
+
       logToAxiom({
         type: 'error',
         name: 'early-access-purchase-refund',
@@ -1862,6 +1912,17 @@ export const earlyAccessPurchase = async ({
   }
 };
 
+// Serve the PUBLIC (viewer-independent) donation-goal variant from the shared, modelVersionId-
+// keyed cache. A missing entry means the version doesn't exist → 404, matching the uncached
+// read→primary-fallback→NOT_FOUND behavior (the cache's lookupFn does the same primary
+// fallback and only seeds entries for versions that exist).
+const getPublicDonationGoals = async (id: number): Promise<ModelVersionPublicDonationGoal[]> => {
+  const cached = await modelVersionPublicDonationGoalsCache.fetch([id]);
+  const entry = cached[id];
+  if (!entry) throw throwNotFoundError(`No model version with id ${id}`);
+  return entry.goals;
+};
+
 export const modelVersionDonationGoals = async ({
   id,
   userId,
@@ -1870,7 +1931,17 @@ export const modelVersionDonationGoals = async ({
   id: number;
   userId?: number;
   isModerator?: boolean;
-}) => {
+}): Promise<ModelVersionPublicDonationGoal[]> => {
+  // Fast path — a caller that can be NEITHER the owner NOR a moderator always receives the
+  // public variant, which does not vary by viewer. Serve it from the shared cache with no
+  // per-viewer DB read. (canSeeAllGoals below can only be true when userId === ownerId or
+  // isModerator, so this branch can never be a privileged caller.)
+  if (!isModerator && userId == null) {
+    return getPublicDonationGoals(id);
+  }
+
+  // The caller MIGHT be privileged (owner or moderator) — resolve the version to learn the
+  // owner and to 404 / fall back to the primary on replica lag.
   const donationFindArgs = {
     where: { id },
     select: {
@@ -1905,11 +1976,19 @@ export const modelVersionDonationGoals = async ({
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 
+  // Logged-in but NOT the owner and NOT a moderator → still the public variant. Route through
+  // the same shared cache: it can only ever hold the public payload, so no privileged/draft
+  // data can leak in, and the expensive donationGoal.findMany + Donation SUM are elided.
+  if (!canSeeAllGoals) {
+    return getPublicDonationGoals(id);
+  }
+
+  // PRIVILEGED (owner or moderator): computed fresh and NEVER read from / written to the
+  // public cache. This variant may include inactive/draft goals (active/isEarlyAccess filters
+  // dropped), so it must never enter the shared key.
   const donationGoals = await dbRead.donationGoal.findMany({
     where: {
       modelVersionId: id,
-      active: canSeeAllGoals ? undefined : true,
-      isEarlyAccess: version.earlyAccessEndsAt || canSeeAllGoals ? undefined : false, // Avoids returning earlyAccessGoals for public models.
     },
     select: {
       id: true,

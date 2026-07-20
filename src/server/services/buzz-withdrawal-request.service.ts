@@ -670,19 +670,24 @@ export const updateBuzzWithdrawalRequest = async ({
   return await Promise.all(
     requests.map(async (req) => {
       try {
-        // Worse case is we'll need to re-process it alone, hence nothing too bad. We'll just return the error.
-        return processRequest(req);
+        // `await` so the catch below actually fires (without it the rejection
+        // escapes to Promise.all and the log never runs).
+        return await processRequest(req);
       } catch (e) {
         await logToAxiom({
           type: 'update-buzz-withdrawal-request-error',
           message: 'Failed to update withdrawal request',
           data: {
             requestId: req.id,
-            error: e,
+            error: e instanceof Error ? e.message : String(e),
           },
         });
 
-        return e;
+        // Re-throw rather than `return e`: returning an Error instance is
+        // unserializable by the devalue tRPC transformer (→ 500). Throwing
+        // surfaces the failure via tRPC's error channel, matching the prior
+        // effective behavior (any failed request fails the mutation).
+        throw e;
       }
     })
   );

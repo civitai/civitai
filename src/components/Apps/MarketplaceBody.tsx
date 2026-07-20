@@ -228,7 +228,19 @@ export function MarketplaceBody() {
   //    never fires the install `onOpen`. The store dedups, so an app opened via
   //    both paths is recorded once.
   function recordRecent(block: AvailableBlock) {
-    setRecents(recordRecentlyOpenedApp({ id: block.id, blockId: block.blockId }));
+    // Enrich the recents entry with the block's name + cover image when they're
+    // already on hand (they are, on the AvailableBlock) so the shared app-chrome
+    // "Recently run" menu can render icon + name without a re-fetch. Both are
+    // optional in the store, so a null coverUrl/appName just falls back to the
+    // generic icon / blockId handle.
+    setRecents(
+      recordRecentlyOpenedApp({
+        id: block.id,
+        blockId: block.blockId,
+        name: block.appName ?? undefined,
+        iconUrl: block.coverUrl ?? undefined,
+      })
+    );
   }
 
   function handleOpen(block: AvailableBlock) {

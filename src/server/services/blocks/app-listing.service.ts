@@ -8,6 +8,7 @@ import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schem
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type {
   GetAppListingDetailInput,
+  ListAllListingsForModerationInput,
   ListAppListingsInput,
   ListingCard,
   ListingCardKindData,
@@ -194,6 +195,9 @@ function manifestHasPage(manifest: unknown): boolean {
  */
 export const listingHydrateSelect = {
   id: true,
+  // Integer surrogate — projected into the detail DTO only (the comments thread
+  // key). Harmless extra column for the card projection, which doesn't surface it.
+  serialId: true,
   kind: true,
   slug: true,
   name: true,
@@ -208,7 +212,11 @@ export const listingHydrateSelect = {
   cover: { select: { url: true } },
   user: { select: { id: true, username: true, image: true } },
   metric: { select: { thumbsUpCount: true, thumbsDownCount: true } },
-  appBlock: { select: { manifest: true } },
+  // `currentVersionDeployedAt` powers the DEPLOY-GATE on the detail read (an
+  // onsite listing whose backing block has never successfully deployed is
+  // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
+  // available while a new version re-builds).
+  appBlock: { select: { manifest: true, currentVersionDeployedAt: true } },
   screenshots: {
     where: { imageId: { not: null } },
     // Stable order: `id` tiebreaks rows with a tied `order` (default 0), which
@@ -303,6 +311,7 @@ export function projectListingDetail(row: HydratedListing): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
     id: row.id,
+    serialId: row.serialId,
     slug: row.slug,
     kind: row.kind as ListingKind,
     name: row.name,
@@ -453,10 +462,20 @@ export async function listAvailableListings(
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
+    -- DEPLOY-GATE: join the backing AppBlock (onsite only) so we can require it
+    -- has actually deployed its slug origin before listing it.
+    LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
     WHERE al.status = 'approved'
       -- Never surface a SHADOW revision draft. Shadows are status='draft' so the
       -- approved-only filter already hides them; this is defense-in-depth.
       AND al.revision_of_id IS NULL
+      -- DEPLOY-GATE (generic, all app-blocks): an ONSITE (block-backed) listing
+      -- only appears once its backing AppBlock has SUCCESSFULLY deployed at least
+      -- once (current_version_deployed_at set on a successful apply, left NULL
+      -- while first-building). A re-deploying app keeps its non-null timestamp,
+      -- so it stays listed. OFFSITE listings have no AppBlock/deploy concept and
+      -- are UNAFFECTED (kind discriminates, never appBlockId nullness).
+      AND (al.kind <> 'onsite' OR ab.current_version_deployed_at IS NOT NULL)
       AND (${kindParam}::text IS NULL OR al.kind = ${kindParam}::text)
       AND (${categoryParam}::text IS NULL OR al.category = ${categoryParam}::text)
       AND ${listingMatureFilter(redCapable)}
@@ -525,9 +544,165 @@ export async function getListingDetail(
   // can't reuse this for a non-public path: a non-approved row returns null
   // exactly like a missing one — never its data.
   if (!row || row.status !== 'approved') return null;
+  // DEPLOY-GATE (generic, all app-blocks): an ONSITE listing whose backing
+  // AppBlock has NEVER successfully deployed is indistinguishable from a missing
+  // one — its `<slug>.<APPS_DOMAIN>` origin would 404. `currentVersionDeployedAt`
+  // is set only on a successful apply and stays set while a NEW version rebuilds,
+  // so a live app mid-re-deploy is still shown. OFFSITE listings have no
+  // AppBlock/deploy concept and are UNAFFECTED (discriminate on `kind`).
+  if (row.kind === 'onsite' && row.appBlock?.currentVersionDeployedAt == null) return null;
   // Maturity gate off a non-red host: a mature listing is indistinguishable from
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
 
   return projectListingDetail(row);
+}
+
+// ---------------------------------------------------------------------------
+// W13 POST-APPROVAL MOD MANAGEMENT — the moderator ALL-STATUS listings read.
+//
+// The mod management table's data source: listings across EVERY lifecycle status
+// (draft|pending|approved|rejected|removed), with the fields the table + the
+// per-row lifecycle actions need — NOT the public allowlist (this is mod-only, so
+// it carries `status`, the owner chip, and the latest pending publish-request id
+// so the Review action can open the existing off-site review modal). Keyset-
+// paginated by the ULID `id` (a stable total order); mirrors the sibling mod-read
+// queues' Prisma-cursor discipline. Shadow revision drafts are excluded.
+// ---------------------------------------------------------------------------
+
+/** A public creator/submitter chip (id/username/image only — the standard subset). */
+export type ModerationUserChip = { id: number; username: string | null; image: string | null };
+
+/** One row of the moderator all-status listings table (a single `AppListing`). */
+export type ModerationListingRow = {
+  id: string;
+  slug: string;
+  name: string;
+  kind: ListingKind;
+  status: string;
+  category: string | null;
+  contentRating: string | null;
+  /** Off-site external-link target (for the review modal / a Visit affordance). */
+  externalUrl: string | null;
+  /** Backing AppBlock id (onsite), else null. */
+  appBlockId: string | null;
+  owner: ModerationUserChip | null;
+  installCount: number;
+  thumbsUpCount: number;
+  thumbsDownCount: number;
+  /**
+   * The listing's LATEST pending publish request, when one exists (a pending
+   * listing has one) — carries what the reused off-site review modal needs. Null
+   * when nothing is pending review for this listing.
+   */
+  pendingRequest: {
+    id: string;
+    submittedAt: Date;
+    changelog: string | null;
+    submittedBy: ModerationUserChip | null;
+  } | null;
+};
+
+/**
+ * The Prisma `select` for a moderation-table row. Includes `status` + the owner
+ * chip + the metric counts + the SINGLE latest pending publish request (the
+ * Review action's `publishRequestId` + the fields to build the modal's row).
+ */
+export const moderationListingSelect = {
+  id: true,
+  slug: true,
+  name: true,
+  kind: true,
+  status: true,
+  category: true,
+  contentRating: true,
+  externalUrl: true,
+  appBlockId: true,
+  user: { select: { id: true, username: true, image: true } },
+  metric: { select: { installCount: true, thumbsUpCount: true, thumbsDownCount: true } },
+  publishRequests: {
+    where: { status: 'pending' },
+    orderBy: { submittedAt: 'desc' },
+    take: 1,
+    select: {
+      id: true,
+      submittedAt: true,
+      changelog: true,
+      submittedBy: { select: { id: true, username: true, image: true } },
+    },
+  },
+} satisfies Prisma.AppListingSelect;
+
+type HydratedModerationRow = Prisma.AppListingGetPayload<{ select: typeof moderationListingSelect }>;
+
+/** Project a hydrated moderation row → the {@link ModerationListingRow} DTO. */
+export function projectModerationListing(row: HydratedModerationRow): ModerationListingRow {
+  const pending = row.publishRequests[0] ?? null;
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    kind: row.kind as ListingKind,
+    status: row.status,
+    category: row.category ?? null,
+    contentRating: row.contentRating ?? null,
+    externalUrl: row.externalUrl ?? null,
+    appBlockId: row.appBlockId ?? null,
+    owner: creatorChip(row.user),
+    installCount: row.metric?.installCount ?? 0,
+    thumbsUpCount: row.metric?.thumbsUpCount ?? 0,
+    thumbsDownCount: row.metric?.thumbsDownCount ?? 0,
+    pendingRequest: pending
+      ? {
+          id: pending.id,
+          submittedAt: pending.submittedAt,
+          changelog: pending.changelog ?? null,
+          submittedBy: creatorChip(pending.submittedBy),
+        }
+      : null,
+  };
+}
+
+/**
+ * List listings across ALL lifecycle statuses for the mod management table.
+ * Filters (all optional): `status`, `kind`, and a server-side `search` over
+ * name/slug (case-insensitive). Keyset-paginated by the ULID `id` DESC (newest
+ * first, a stable total order — the opaque cursor is the last row's id); bounded
+ * to 50. Shadow revision drafts (`revisionOfId != null`) are never surfaced.
+ */
+export async function listAllListingsForModeration(
+  input: ListAllListingsForModerationInput
+): Promise<{ items: ModerationListingRow[]; nextCursor: string | null }> {
+  const limit = Math.min(input.limit ?? 25, 50);
+  const search = input.search?.trim();
+
+  const where: Prisma.AppListingWhereInput = {
+    // Never surface a SHADOW revision draft as its own row (mirrors the read path).
+    revisionOfId: null,
+    ...(input.status ? { status: input.status } : {}),
+    ...(input.kind ? { kind: input.kind } : {}),
+    ...(search
+      ? {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { slug: { contains: search, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
+  };
+
+  const rows = await dbRead.appListing.findMany({
+    where,
+    // `id` is `apl_<ULID>` → lexicographically creation-ordered, so `id DESC` is
+    // both "newest first" AND a stable total keyset (id is unique).
+    orderBy: { id: 'desc' },
+    take: limit + 1,
+    ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+    select: moderationListingSelect,
+  });
+
+  const hasNext = rows.length > limit;
+  const page = hasNext ? rows.slice(0, limit) : rows;
+  const items = page.map(projectModerationListing);
+  return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

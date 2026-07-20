@@ -18,6 +18,15 @@ export type BlockRenderBeaconInput = {
   appBlockId: string;
   blockInstanceId: string;
   slotId: string;
+  // Render outcome. Omitted (or 'ok') for the BLOCK_READY success beacon; 'error'
+  // when the host detects a genuine render failure (error-boundary trip, or the
+  // iframe never reaching BLOCK_READY within its timeout). Drives the
+  // `civitai_app_block_renders_total{result}` prom counter server-side.
+  status?: 'ok' | 'error';
+  // Optional low-cardinality failure discriminator (e.g. 'timeout', 'fatal',
+  // 'no_token', 'error_boundary'). Accepted + bounded server-side; reserved for a
+  // future ClickHouse column (NOT a prom label, NOT in the CH insert today).
+  errorClass?: string;
 };
 
 export function sendBlockRender(input: BlockRenderBeaconInput) {

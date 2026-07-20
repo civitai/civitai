@@ -410,7 +410,7 @@ export {
   calculateWeightedScore,
 } from './daily-challenge-scoring';
 
-export function parseJudgeScore(note: string | null): JudgeScore | null {
+export function parseJudgeScore(note: string | null): JudgeScore | Record<string, number> | null {
   if (!note) return null;
   try {
     const parsed = JSON.parse(note);

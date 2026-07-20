@@ -1,0 +1,25 @@
+// Dark Buzz pill, modeled on the BuzzTransactionButton price badge: near-black
+// background with the gold Buzz color for the amount. Not bold, lightly rounded
+// (sm) to match that button's price badge.
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  // Less left padding — the bolt icon carries its own visual gap. Slightly more
+  // vertical padding so the pill isn't cramped.
+  padding: 3px 8px 3px 4px;
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-color-dark-8);
+  color: var(--mantine-color-yellow-4);
+  // Same layer caveat as font-weight below — force it past the button's size.
+  font-size: var(--mantine-font-size-xs) !important;
+  // Not bold. The parent button sets 800 and, via Mantine's cascade layers,
+  // that wins over a plain declaration here — so force it.
+  font-weight: 400 !important;
+  white-space: nowrap;
+  flex: none;
+}
+
+.green {
+  color: var(--mantine-color-green-4);
+}

@@ -2,7 +2,8 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { uniq } from 'lodash-es';
+import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import {
   bustMvCache,
@@ -292,6 +293,9 @@ export const processScheduledPublishing = createJob(
           action: SearchIndexUpdateQueueAction.Update,
         });
       }
+      // This job publishes via raw SQL rather than updatePost, so it owns the
+      // count refresh for the posts it flips.
+      await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));
     }
 
     const processedModelIds = [

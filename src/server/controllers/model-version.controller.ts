@@ -78,8 +78,6 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { Flags } from '~/shared/utils/flags';
-import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -133,6 +131,7 @@ const loadModelVersion = async ({
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
         licensingSourceVersionId: true,
+        flags: true,
         meta: true,
         model: {
           select: {
@@ -281,6 +280,7 @@ const loadModelVersion = async ({
 
     return {
       ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
       canGenerate,
       wildcardSetId,
       earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
@@ -425,15 +425,15 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
-    // Licensing lineage: the chosen source must be a LicensingRoot for the same
-    // base model. Guards against pointing at an arbitrary (or zero-fee) version
-    // to dodge the base-model rule.
+    // Licensing lineage: the chosen source must be a registered LicensingRoot for
+    // the same base model. Guards against pointing at an arbitrary version to
+    // dodge the base-model rule.
     if (input.licensingSourceVersionId != null) {
-      const source = await dbRead.modelVersion.findUnique({
-        where: { id: input.licensingSourceVersionId },
-        select: { flags: true, baseModel: true },
+      const source = await dbRead.licensingRoot.findUnique({
+        where: { modelVersionId: input.licensingSourceVersionId },
+        select: { baseModel: true },
       });
-      if (!source || !Flags.hasFlag(source.flags, ModelVersionFlag.LicensingRoot))
+      if (!source)
         throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
       if (source.baseModel !== input.baseModel)
         throw throwBadRequestError('Licensing source must share the same base model.');
@@ -510,7 +510,12 @@ export const upsertModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return version;
+    // The service returns a full Prisma row; devalue (TRPC_WRITE_DEVALUE pools)
+    // throws on a raw `Decimal`, so convert before it hits the wire.
+    return {
+      ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -535,7 +540,11 @@ export const deleteModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return version;
+    // `deleteVersionById` returns the full deleted row — same Decimal hazard as upsert above.
+    return {
+      ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

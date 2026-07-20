@@ -79,11 +79,11 @@ export default function SubmitAppPage() {
             <>
               Choose how you want to list your app. Author an on-platform{' '}
               <strong>App</strong> with the <Code>civitai</Code> CLI, or list an{' '}
-              <strong>External link</strong> that opens your off-site site. A moderator reviews
+              <strong>external app</strong> by connecting your OAuth app. A moderator reviews
               every submission before it appears.
             </>
           ) : (
-            <>Submitting {mode === 'external' ? 'an External link' : 'an App'}.</>
+            <>Submitting {mode === 'external' ? 'an external app' : 'an App'}.</>
           )
         }
       >

@@ -14,9 +14,11 @@ import type { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 export function CosmeticsSection({
   items,
   ownedCosmeticIds,
+  ownerUserId,
 }: {
   items: CreatorShopItem[];
   ownedCosmeticIds: Set<number>;
+  ownerUserId: number;
 }) {
   const [filters, setFilters] = useState<GetShopInput>({});
   const [sort, setSort] = useState<SortKey>('newest');
@@ -63,8 +65,8 @@ export function CosmeticsSection({
       />
       <ShopItemGrid
         items={cosmetics}
-        cols={{ base: 1, xs: 2, sm: 3, md: 4 }}
         ownedCosmeticIds={ownedCosmeticIds}
+        ownerUserId={ownerUserId}
       />
     </Stack>
   );

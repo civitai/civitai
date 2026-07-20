@@ -308,21 +308,24 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
 /**
  * Delivers monthly cosmetics to users with active Civitai subscriptions.
  * TODO: This should be updated to do any provider not only Civitai.Not needed right now, but in the future
+ *
+ * Deliberately NOT limited to the subscription's monthly anniversary day: the insert is
+ * idempotent (ON CONFLICT DO NOTHING) and the daily cron re-attempts every active sub for
+ * as long as the badge's availability window is open. A single-shot day match permanently
+ * dropped the badge whenever anything wasn't in place at that exact moment — badge cosmetics
+ * authored after the cron already ran, codes redeemed after the day passed, or subs
+ * cancelled/reinstated across their anniversary.
  * @param { userIds = [], tx }: { userIds?: number[]; tx?: Prisma.TransactionClient }
  * @returns {Promise<void>}
  */
 export const deliverMonthlyCosmetics = async ({
   userIds = [],
-  dateOverride,
   tx,
 }: {
   userIds?: number[];
-  dateOverride?: Date;
   tx?: Prisma.TransactionClient;
 }) => {
   const client = tx ?? dbWrite;
-  const date = dateOverride ?? new Date();
-  const currentDay = date.getDate();
 
   await client.$executeRaw`
       with users_affected AS (
@@ -342,18 +345,7 @@ export const deliverMonthlyCosmetics = async ({
         WHERE ${
           userIds.length > 0
             ? Prisma.sql`cs."userId" IN (${Prisma.join(userIds)})`
-            : Prisma.sql`
-          (
-          -- Exact day match (normal case)
-          EXTRACT(day from cs."currentPeriodStart") = ${currentDay}
-          OR
-          -- Handle month-end edge cases (e.g., Jan 30th -> Feb 28th, Jan 31st -> Apr 30th)
-          (
-            EXTRACT(day from cs."currentPeriodStart") > EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-            AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-          )
-        )
-        `
+            : Prisma.sql`TRUE`
         }
         AND status = 'active'
         AND "currentPeriodEnd" > NOW()

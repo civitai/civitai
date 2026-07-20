@@ -1,9 +1,24 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
-import { IconApps, IconDots, IconEyeOff } from '@tabler/icons-react';
+import { ActionIcon, Avatar, Box, Group, Menu, Text } from '@mantine/core';
+import {
+  IconApps,
+  IconDots,
+  IconEyeOff,
+  IconLayoutGrid,
+  IconShieldCheck,
+  IconShieldLock,
+  IconUpload,
+} from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  getRecentlyOpenedApps,
+  type RecentApp,
+} from '~/components/Apps/recentlyOpenedAppsStore';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
+import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
@@ -72,6 +87,12 @@ const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 // otherwise OOM the tab. 8000px is well above any legitimate block.
 const HARD_HEIGHT_CEILING = 8_000;
 
+// Max "Recently run" entries shown in the app-chrome platform-nav dropdown.
+// Kept short so the compact menu doesn't grow unbounded (the store itself caps
+// at MAX_RECENTS; this is the additional display cap after excluding the
+// current app).
+const RECENTLY_RUN_LIMIT = 5;
+
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
 
 // Reduce a thrown tRPC error to a single short string the block can surface.
@@ -136,12 +157,18 @@ function storageErrorMessage(err: unknown): string {
  */
 export function AppBlockChrome({
   blockInstanceId,
+  appBlockId,
   appName,
   modelId,
   modelName,
   slotId,
 }: {
   blockInstanceId: string;
+  /** The approved AppBlock id of the running app. When present, the ⋯ menu
+   *  gains a "Permissions & activity" item that opens a per-app transparency
+   *  drawer (granted scopes + action audit). Omitted → the item is not shown
+   *  (a caller that hasn't threaded the id gets the pre-existing chrome). */
+  appBlockId?: string;
   appName?: string;
   modelId?: number;
   modelName?: string;
@@ -150,6 +177,56 @@ export function AppBlockChrome({
    *  surface. Omitted → treated as a model surface (Hide shown). */
   slotId?: string;
 }) {
+  // Gate the platform-nav "Review" item with the SAME greppable predicate the
+  // /apps/review page + its server gate use (isAppReviewer), so the run-nav
+  // shortcut can't drift from the real reviewer gate — this stays moderator-only
+  // even after external-dev submission (W11) widens isAppDeveloper. useCurrentUser
+  // returns null for anon → not a reviewer.
+  const currentUser = useCurrentUser();
+  const isModerator = isAppReviewer(currentUser);
+  // Per-app "Permissions & activity" drawer open state (only reachable when
+  // appBlockId was threaded through).
+  const [permsOpen, setPermsOpen] = useState(false);
+
+  // The platform-nav ("Civitai Apps") Menu is CONTROLLED so we can close it when
+  // the user clicks INTO the cross-origin app iframe. Mantine's default
+  // outside-click close CAN'T detect that: the iframe swallows the mousedown, so
+  // the parent document never sees it and Mantine can't tell the click was
+  // "outside" the dropdown — the menu appears stuck open (the reported bug).
+  // The fix is iframe-aware: while the menu is open, listen for the window
+  // `blur` event, which DOES fire when focus/pointer moves into a cross-origin
+  // iframe, and close on it. Normal same-document outside-clicks + item-clicks
+  // still close via Mantine's untouched defaults (closeOnClickOutside /
+  // closeOnItemClick).
+  const [menuOpened, setMenuOpened] = useState(false);
+  useEffect(() => {
+    if (!menuOpened) return;
+    const onBlur = () => setMenuOpened(false);
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, [menuOpened]);
+
+  // Recently-run apps (client-only personalisation from localStorage). Seeded
+  // empty so SSR + the first client render match (no hydration mismatch); the
+  // real list loads in an effect after mount AND is refreshed every time the
+  // menu opens (see handleMenuChange) so a within-session client-nav
+  // (app A → app B) shows the CURRENT list, not the list as of first mount.
+  // Excludes the app currently being viewed (matched by appBlockId — the store's
+  // stable id) and is capped to a short list for the compact dropdown.
+  const [recents, setRecents] = useState<RecentApp[]>([]);
+  useEffect(() => {
+    setRecents(getRecentlyOpenedApps());
+  }, []);
+  const recentApps = recents.filter((r) => r.id !== appBlockId).slice(0, RECENTLY_RUN_LIMIT);
+
+  // Controlled-Menu change handler: mirror the open state AND re-read the recents
+  // store on the transition to open, so the "Recently run" list is fresh within
+  // an SPA session. Still SSR-safe — the read only happens on a user-driven open
+  // (never during render) and getRecentlyOpenedApps() self-guards `isClient`.
+  const handleMenuChange = useCallback((opened: boolean) => {
+    setMenuOpened(opened);
+    if (opened) setRecents(getRecentlyOpenedApps());
+  }, []);
   // The full-page run surface (`app.page`) has no model-page slot to hide the
   // block from — the page IS the block — so suppress the "Hide" item there.
   const isPage = slotId != null && isPageSlot(slotId);
@@ -181,6 +258,7 @@ export function AppBlockChrome({
   // avoiding an unlabeled SVG / a double-reading "App".
   const iconProvenance = hasName || !showBadgeName;
   return (
+    <>
     <Group
       justify="space-between"
       gap="xs"
@@ -196,18 +274,111 @@ export function AppBlockChrome({
       {/* minWidth:0 lets the truncating name shrink instead of pushing the
           ⋯ menu out of the narrow sidebar layout. */}
       <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-        {/* Provenance signal for screen readers. role="img" is required for the
-            aria-label to be reliably announced — a bare tabler <svg> has no role,
-            so without it the label is dropped. On the fallback the visible "App"
-            Text carries provenance, so the icon is marked decorative. */}
-        <IconApps
-          size={14}
-          stroke={1.5}
-          role={iconProvenance ? 'img' : undefined}
-          aria-label={iconProvenance ? 'App' : undefined}
-          aria-hidden={iconProvenance ? undefined : true}
-          style={{ flexShrink: 0 }}
-        />
+        {/* The provenance app icon doubles as a quick-nav Menu of the Civitai
+            App PLATFORM's own pages (NOT the sandboxed app's internal routes —
+            apps self-route as SPAs inside the iframe; the host has no list of
+            those). The IconApps keeps its screen-reader provenance semantics
+            (role="img" + aria-label "App") — required so a bare tabler <svg>'s
+            label is announced; on the fallback the visible "App" Text carries
+            provenance instead, so the icon is marked decorative there. */}
+        <Menu
+          position="bottom-start"
+          shadow="md"
+          width={200}
+          opened={menuOpened}
+          onChange={handleMenuChange}
+        >
+          <Menu.Target>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label="Apps menu"
+              data-testid="app-platform-nav-trigger"
+              style={{ flexShrink: 0 }}
+            >
+              <IconApps
+                size={14}
+                stroke={1.5}
+                role={iconProvenance ? 'img' : undefined}
+                aria-label={iconProvenance ? 'App' : undefined}
+                aria-hidden={iconProvenance ? undefined : true}
+              />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Label>Civitai Apps</Menu.Label>
+            <Menu.Item
+              component={Link}
+              href="/apps"
+              leftSection={<IconLayoutGrid size={14} stroke={1.5} />}
+            >
+              Apps home
+            </Menu.Item>
+            <Menu.Item
+              component={Link}
+              href="/apps/installed"
+              leftSection={<IconApps size={14} stroke={1.5} />}
+            >
+              Installed apps
+            </Menu.Item>
+            <Menu.Item
+              component={Link}
+              href="/apps/my-submissions"
+              leftSection={<IconUpload size={14} stroke={1.5} />}
+            >
+              My submissions
+            </Menu.Item>
+            {isModerator && (
+              <Menu.Item
+                component={Link}
+                href="/apps/review"
+                leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+              >
+                Review
+              </Menu.Item>
+            )}
+            {/* "Recently run" — a 1-click return to apps the viewer recently ran,
+                sourced from the client-only localStorage recents store (read
+                after mount so SSR + first client render match). Excludes the app
+                currently being viewed and the whole label+section is omitted when
+                there's nothing else to show (a first-time / single-app viewer).
+                Each item shows the app icon (persisted `iconUrl`, else a generic
+                app icon) + name, linking to the full-page run route. */}
+            {recentApps.length > 0 && (
+              <div data-testid="app-recently-run">
+                <Menu.Label>Recently run</Menu.Label>
+                {recentApps.map((r) => (
+                  <Menu.Item
+                    key={r.id}
+                    component={Link}
+                    href={`/apps/run/${r.blockId}`}
+                    data-testid="app-recently-run-item"
+                    leftSection={
+                      r.iconUrl ? (
+                        <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
+                      ) : (
+                        <IconApps size={14} stroke={1.5} />
+                      )
+                    }
+                  >
+                    {/* The persisted `name` is the SAME publisher-controlled string
+                        the trust label above laundered through localStorage — so
+                        route it through the identical sanitizer (strips bidi
+                        RLO/LRO overrides, zero-width/format + control chars, caps
+                        Zalgo combining runs, bounds length). `||` (not `??`) so an
+                        empty/whitespace sanitized result falls back to the blockId
+                        handle. `lineClamp={1}` keeps a pathologically long name
+                        from blowing out the width={200} dropdown. */}
+                    <Text size="sm" lineClamp={1}>
+                      {sanitizeAppChromeName(r.name) || r.blockId}
+                    </Text>
+                  </Menu.Item>
+                ))}
+              </div>
+            )}
+          </Menu.Dropdown>
+        </Menu>
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
             ellipsis at a bounded width so a long name never wraps or shoves
             the menu off the row in the narrow model.sidebar_top slot. On the
@@ -282,6 +453,14 @@ export function AppBlockChrome({
           >
             Manage apps
           </Menu.Item>
+          {appBlockId && (
+            <Menu.Item
+              leftSection={<IconShieldLock size={14} stroke={1.5} />}
+              onClick={() => setPermsOpen(true)}
+            >
+              Permissions & activity
+            </Menu.Item>
+          )}
           {showHide && (
             <Menu.Item
               leftSection={<IconEyeOff size={14} stroke={1.5} />}
@@ -301,6 +480,17 @@ export function AppBlockChrome({
         </Menu.Dropdown>
       </Menu>
     </Group>
+    {/* Per-app transparency drawer (Part B). Rendered only when the caller
+        threaded an appBlockId; the body's queries fire only once opened. */}
+    {appBlockId && (
+      <AppPermissionsActivityDrawer
+        appBlockId={appBlockId}
+        appName={sanitizedName ?? undefined}
+        opened={permsOpen}
+        onClose={() => setPermsOpen(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -680,6 +870,26 @@ export function IframeHost({
     });
     return off;
   }, [onMessage, applyHeight, install.appBlockId, install.blockInstanceId, slotId]);
+
+  // App Blocks runtime observability — render-FAILURE beacon. The success
+  // beacon fires at BLOCK_READY above (guarded by `blockRenderEmittedRef`). Here
+  // we fire the mutually-exclusive `error` beacon when the host lands on a
+  // terminal-failure state — the iframe never reached BLOCK_READY in time
+  // ('timeout'), the block reported a fatal error ('fatal'), or its token never
+  // resolved ('no_token'). Sharing the SAME emit-once ref makes ok/error
+  // mutually exclusive per mount. Fire-and-forget (beacon swallows failures).
+  useEffect(() => {
+    if (status !== 'timeout' && status !== 'fatal' && status !== 'no_token') return;
+    if (blockRenderEmittedRef.current) return;
+    blockRenderEmittedRef.current = true;
+    sendBlockRender({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+      slotId,
+      status: 'error',
+      errorClass: status,
+    });
+  }, [status, install.appBlockId, install.blockInstanceId, slotId]);
 
   useEffect(() => {
     const off = onMessage<unknown>('RESIZE_IFRAME', (raw) => {
@@ -1278,6 +1488,7 @@ export function IframeHost({
   // server enforces scope + flag + trust gate (resolveSharedContext). Every reply
   // carries the same requestId on success AND error so the block never hangs.
   const sharedAppendMutation = trpc.apps.shared.append.useMutation();
+  const sharedUpdateMutation = trpc.apps.shared.update.useMutation();
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
@@ -1394,6 +1605,39 @@ export function IframeHost({
     return off;
   }, [onMessage, send, token, sharedAppendMutation]);
 
+  // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (author-scoped
+  // in-place edit; #3146). Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
+  // SHARED_APPEND's `{ key }`) — the SDK 0.24 hook rejects on `!ok || error` and
+  // its isValidSharedUpdateResult REQUIRES a boolean `ok`, so BOTH paths send one
+  // (the error path MUST carry `ok: false` or the reply is dropped → block hangs).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
+      'SHARED_UPDATE',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.key !== 'string' ||
+          typeof raw.value !== 'object' ||
+          raw.value === null
+        )
+          return;
+        const requestId = raw.requestId;
+        try {
+          await sharedUpdateMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+            value: raw.value as { title: string; body?: string },
+          });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedUpdateMutation]);
+
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'SHARED_VOTE',
@@ -1484,6 +1728,7 @@ export function IframeHost({
     >
       <AppBlockChrome
         blockInstanceId={install.blockInstanceId}
+        appBlockId={install.appBlockId}
         appName={install.manifest.name}
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}

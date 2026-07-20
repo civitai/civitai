@@ -77,6 +77,8 @@ import {
   getResourceIdsForImages,
   getTagNamesForImages,
 } from './../services/image.service';
+import { Limiter } from '~/server/utils/concurrency-helpers';
+import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
@@ -563,7 +565,24 @@ export const getImagesAsPostsInfiniteHandler = async ({
         sortAt: image.sortAt,
         createdAt,
         user,
-        images,
+        // Serialize-cost reduction (this endpoint is the #2 oversized-tRPC-response
+        // producer). Two levers:
+        //  (1) LAZY per-post image slice — when the DARK `galleryLazyPostImages`
+        //      flag is on, return only the first `GALLERY_POST_IMAGE_SLICE` images
+        //      plus the TRUE `imageCount` (computed from the FULL `images` array
+        //      BELOW, before the slice, so "1 of N" is accurate). The card carousel
+        //      lazy-loads the tail via `trpc.image.getInfinite({ postId })` — the UX
+        //      is NOT truncated, only the initial payload shrinks. OFF ⇒ all images
+        //      inline AND no `imageCount` field (byte-identical to today).
+        //  (2) always strip per-image fields no consumer reads (zero-UX).
+        // Both run AFTER the per-post `index` sort above and after the post-level
+        // fields are read off `image`/`images[0]`, so nothing server-side needs the
+        // dropped/sliced data. `imageCount` reflects the count AFTER the server-side
+        // browsing-level/poi/minor filtering `getAllImages` already applied and
+        // BEFORE the slice — matching what a full `getInfinite({ postId })` tail
+        // fetch (same browsingLevel/version filters) returns, so the carousel never
+        // dead-ends. (`buildPostImagesWire` is unit-tested in isolation.)
+        ...buildPostImagesWire(images, { lazy: features.galleryLazyPostImages }),
         review: review
           ? {
               rating: review.rating,

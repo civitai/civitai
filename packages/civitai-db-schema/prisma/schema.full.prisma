@@ -572,6 +572,7 @@ model User {
   blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
   blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
   blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
+  blockSpendAttributionsAsContentAuthor BlockSpendAttribution[] @relation("BlockSpendAttributionContentAuthor")
   blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
   blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
@@ -1078,22 +1079,27 @@ model ModelVersion {
   ImageResourceNew        ImageResourceNew[]
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
-  baseModelLicensingFees  BaseModelLicensingFee[]
+  licensingRoot           LicensingRoot?
 
   @@index([modelId], type: Hash)
   @@index([licensingSourceVersionId])
 }
 
-model BaseModelLicensingFee {
+// A version registered as a chargeable licensing root for its (baseModel,
+// modelType). Membership = a row exists; `isDefault` marks the one root a
+// derivative pre-selects (enforced one-per-scope by a partial unique index).
+// Replaces the ModelVersion.LicensingRoot flag + BaseModelLicensingFee pointer.
+model LicensingRoot {
+  id             Int          @id @default(autoincrement())
   baseModel      String
   modelType      ModelType
-  modelVersionId Int
+  modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  isDefault      Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  @@id([baseModel, modelType])
-  @@index([modelVersionId])
+  @@index([baseModel, modelType])
 }
 
 enum LicensingFeeType {
@@ -1380,6 +1386,7 @@ model Report {
   reportedUser   UserReport?
   collection     CollectionReport?
   bounty         BountyReport?
+  challenge      ChallengeReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
   comicProject   ComicProjectReport?
@@ -1693,7 +1700,7 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
-  sortAt            DateTime                @default(now())
+  sortAt            DateTime                @default(dbgenerated()) // authored by image_post_triggers (set_image_sort_at BEFORE INSERT/UPDATE); no client/DB literal default — keeps the field client-optional while the trigger owns the value
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
@@ -2489,6 +2496,15 @@ model AppBlockPublishRequest {
 /// NOT run prisma migrate deploy; the committed SQL is hand-applied per env.
 model AppListing {
   id              String       @id // apl_<ULID>
+  // Integer surrogate for CommentsV2. The store `id` is a TEXT ULID, but a
+  // CommentsV2 `Thread` parent FK must be Int (`Thread.appListingId Int? @unique`)
+  // — CommentsV2 is integer-keyed end to end. This UNIQUE auto-increment surrogate
+  // bridges the two; it is NOT the PK (`id` stays the ULID). DB-assigned
+  // (autoincrement) + backfilled for existing rows by the w13 comments migration.
+  serialId        Int          @unique @default(autoincrement()) @map("serial_id")
+  // The CommentsV2 discussion thread for this listing (parent = serialId). Optional
+  // 1:1 — created lazily on the first comment/lock (mirrors every other Thread parent).
+  thread          Thread?      @relation("AppListingThread")
   // Store kind discriminator: 'onsite' (an AppBlock we host) or 'offsite'
   // (external-link or OAuth-connect). Validated in the service + a DB CHECK.
   kind            String
@@ -2522,6 +2538,15 @@ model AppListing {
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
+  // W13 OAuth-connect scope review (DARK — additive, nullable; nothing reads
+  // these yet). `connectRequestedScopes` = the TokenScope bitmask the listing
+  // requests, always a subset ⊆ `connectClient.allowedScopes` (the per-client
+  // ceiling). `connectScopeJustifications` = a JSON object keyed by TokenScope
+  // enum-key STRING (e.g. "ModelsRead") → the dev's rationale (≤500 chars,
+  // SCOPE_JUSTIFICATION_MAX_LENGTH). Both NULL for external-link / on-site
+  // listings (only OAuth-connect listings carry them).
+  connectRequestedScopes     Int?  @map("connect_requested_scopes")
+  connectScopeJustifications Json? @map("connect_scope_justifications")
   // 1:1 backing AppBlock (UNIQUE) + idempotency key. Set for EVERY backfilled
   // row — on-site AND the #2821 off-site rows (both come from an AppBlock). It is
   // NOT a kind discriminator: discriminate on `kind`, never on appBlockId nullness.
@@ -2779,6 +2804,83 @@ model AppListingModerationEvent {
   // Correlate events back to the report that triggered them.
   @@index([reportId], map: "app_listing_mod_events_report_idx")
   @@map("app_listing_moderation_events")
+}
+
+/// App Blocks — agentic mod code-review report (P0 persistence layer).
+///
+/// One row per agent code-review of an app version, keyed to the app + version
+/// so the NEXT version's review can diff against the prior one (the
+/// `priorReportId` chain). Fronts BOTH on-site App Blocks (`appBlockId`) and
+/// external / OAuth-connect apps (`oauthClientId`) — EXACTLY ONE of those is set.
+///
+/// P0 = data model ONLY, fully DARK/INERT: NOTHING in the running image reads or
+/// writes this table (no router, no REST handler, no job) — it is additive and
+/// safe to apply ahead of the code that will populate it. Provisioning, the
+/// review UI, and the chat surface arrive in later phases.
+///
+/// Design notes:
+///   - `publishRequestId`, `appBlockId`, `oauthClientId` are PLAIN INDEXED ids,
+///     NOT Prisma relations. `publishRequestId` is dual-target by construction
+///     (an on-site review is an AppBlockPublishRequest `pubreq_<ULID>`; a
+///     connect review is an AppListingPublishRequest `alpr_<ULID>`), so it has
+///     no single clean FK — it is resolved in the service by kind. Keeping the
+///     app-key columns index-only (no back-relations on AppBlock/OauthClient)
+///     keeps this dark P0 a self-contained additive island; the `(key, version)`
+///     indexes drive the "latest prior report" lookup without relation traversal.
+///   - `status` is a checked string (running|complete|failed|torn-down); the
+///     CHECK lives ONLY in the migration .sql (Prisma can't express it), the
+///     canonical code set is APP_REVIEW_AGENT_REPORT_STATUSES in the service.
+///   - `costUsd` is Decimal(12,6): LLM costs are frequently sub-cent, so the
+///     repo's Decimal(10,2) money precision would round them away — 6 dp keeps
+///     per-review cost faithful. Deliberate deviation from the (10,2) precedent.
+///
+/// MANUAL-APPLY (datapacket-talos CLAUDE.md DB rule #8): the main civitai DB
+/// (CNPG nvme0) does NOT run prisma migrate deploy; the committed SQL is
+/// hand-applied per environment.
+model AppReviewAgentReport {
+  id               String    @id // arar_<ULID>
+  // The review (publish request) this report was generated for. Dual-target
+  // (on-site = AppBlockPublishRequest, connect = AppListingPublishRequest) so it
+  // is stored as an indexed id, not a FK. Resolved by kind in the service.
+  publishRequestId String    @map("publish_request_id")
+  // App identity — EXACTLY ONE is set: `appBlockId` for an on-site App Block,
+  // `oauthClientId` for an external / OAuth-connect app. Plain indexed columns.
+  appBlockId       String?   @map("app_block_id")
+  oauthClientId    String?   @map("oauth_client_id")
+  // The reviewed bundle's version (semver) + integrity hash.
+  version          String
+  bundleSha256     String    @map("bundle_sha256")
+  // Agent-run lifecycle: running|complete|failed|torn-down (CHECK in the .sql).
+  status           String    @default("running")
+  // The LLM that produced the review (NULL until the run reports one).
+  model            String?
+  startedAt        DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz(6)
+  // Structured agent outputs (NULLABLE — populated as the run progresses).
+  codeReview       Json?     @map("code_review")
+  securityAudit    Json?     @map("security_audit")
+  scopeVerdicts    Json?     @map("scope_verdicts")
+  summaryMd        String?   @map("summary_md")
+  // The prior version's report in the chain (self-relation) — lets the next
+  // version diff against it. SetNull so deleting an older report does not
+  // cascade-delete its successors (the chain head is preserved).
+  priorReportId    String?               @map("prior_report_id")
+  priorReport      AppReviewAgentReport?  @relation("AppReviewAgentReportChain", fields: [priorReportId], references: [id], onDelete: SetNull)
+  nextReports      AppReviewAgentReport[] @relation("AppReviewAgentReportChain")
+  // LLM token accounting (provider-shaped Json) + total cost. See costUsd note
+  // in the model docstring for the Decimal(12,6) rationale.
+  tokenUsage       Json?     @map("token_usage")
+  costUsd          Decimal?  @map("cost_usd") @db.Decimal(12, 6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // "latest prior complete report for this app older than version X" lookups,
+  // one index per app-key kind (on-site vs connect).
+  @@index([appBlockId, version], map: "app_review_agent_reports_app_block_version_idx")
+  @@index([oauthClientId, version], map: "app_review_agent_reports_oauth_client_version_idx")
+  // By-review lookup (getAgentReport).
+  @@index([publishRequestId], map: "app_review_agent_reports_publish_request_idx")
+  @@map("app_review_agent_reports")
 }
 
 /// Per-block-instance, per-user settings (viewer preferences).
@@ -3044,6 +3146,20 @@ model BlockSpendAttribution {
   appOwnerUserId     Int      @map("app_owner_user_id")
   appOwner           User     @relation("BlockSpendAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
 
+  /// The USER who published the shared content this generation ran on behalf
+  /// of (the "content author") — the durable BASIS for a FUTURE creator
+  /// payout. Resolved SERVER-SIDE from `sharedContentKey` against the calling
+  /// app's own `app_<slug>.shared_kv`, never client-supplied. NULL when no
+  /// key was supplied, the row is missing/hidden, or the author is the
+  /// spender (self) or the app owner. FULLY GENERIC — any app that publishes
+  /// cross-user shared content can populate it — not tied to any one app kind.
+  /// TRACK-ONLY today: nothing pays out on it yet.
+  contentAuthorUserId Int?    @map("content_author_user_id")
+  contentAuthor       User?   @relation("BlockSpendAttributionContentAuthor", fields: [contentAuthorUserId], references: [id], onDelete: SetNull)
+  /// The opaque shared-storage `key` the app supplied for this generation
+  /// (bounded, app-owned). NULL when the app supplied none.
+  sharedContentKey    String? @map("shared_content_key")
+
   status             String   @default("pending")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.
@@ -3057,6 +3173,7 @@ model BlockSpendAttribution {
   @@unique([workflowId, appBlockId], map: "block_spend_attribution_workflow_app_uniq")
   @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsa_publisher_dashboard_idx")
   @@index([appBlockId, attributedAt(sort: Desc)], map: "bsa_app_block_dashboard_idx")
+  @@index([contentAuthorUserId, attributedAt(sort: Desc)], map: "bsa_content_author_idx")
   @@map("block_spend_attribution")
 }
 
@@ -3171,15 +3288,39 @@ model BlockScopeInvocation {
   /// `local-<slug>` / `pending-<pubreqId>`) for a PRE-APPROVAL dev-tunnel spend —
   /// the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
   syntheticAppId   String?  @map("synthetic_app_id")
-  blockInstanceId  String   @map("block_instance_id")
+  /// NULLABLE: an EXTERNAL OAuth invocation (`source = 'external-oauth'`) has no
+  /// block instance — the acting app is a pure OauthClient with no App Block. A
+  /// block-token row always sets this.
+  blockInstanceId  String?  @map("block_instance_id")
+  /// The acting OauthClient id for an EXTERNAL OAuth invocation (`source =
+  /// 'external-oauth'`) — the "which app" for external OAuth API usage, mirroring
+  /// what `appBlockId` is for a block-token row. NULL for a block-token row.
+  /// Intentionally FK-LESS text so the audit row SURVIVES deletion of the
+  /// OauthClient it references (an audit trail must outlive the app).
+  oauthClientId    String?  @map("oauth_client_id")
+  /// Discriminates the token population that made the call: `'app-block'` (an App
+  /// Block block-token, the historical default) vs `'external-oauth'` (a standard
+  /// external OAuth access token verified at `enforceTokenScope`). Additive:
+  /// existing rows backfill to `'app-block'`.
+  source           String   @default("app-block")
   scope            String
   endpoint         String
   statusCode       Int      @map("status_code") @db.SmallInt
+  /// Structured per-action audit detail (W13). NULL for a passive read (whose
+  /// friendly label is derived from `scope` at render time) and for any row
+  /// written before this column existed. For an impactful MUTATION it carries a
+  /// stable `action` code + minimal subject refs (`{ action, amount?, toUserId?,
+  /// modelVersionId?, entityId?, entityType?, key?, outcome? }` — see
+  /// BlockActionDetail). Stores IDS, not display names — the view resolves them
+  /// via batch lookups, so the row never rots when a name changes. Nullable + no
+  /// default → additive, backwards-compatible, no backfill.
+  detail           Json?
   invokedAt        DateTime @default(now()) @map("invoked_at") @db.Timestamptz(6)
 
   @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
   @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
   @@index([syntheticAppId, invokedAt(sort: Desc)], map: "bsi_synthetic_app_invoked_idx")
+  @@index([oauthClientId, invokedAt(sort: Desc)], map: "bsi_oauth_client_invoked_idx")
   @@map("block_scope_invocations")
 }
 
@@ -3469,6 +3610,11 @@ model Thread {
   model3d          Model3D?        @relation(fields: [model3dId], references: [id], onDelete: SetNull)
   model3dReviewId  Int?            @unique
   model3dReview    Model3DReview?  @relation(fields: [model3dReviewId], references: [id], onDelete: SetNull)
+  // App-store listing comments (W13). References the AppListing INTEGER surrogate
+  // (`serial_id`), NOT its TEXT ULID `id` — CommentsV2 is integer-keyed. `app_listings`
+  // is the same DB (main civitai nvme0), so this is a plain FK, not a cross-DB bridge.
+  appListingId     Int?            @unique
+  appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -5198,6 +5344,13 @@ enum ChallengeReviewCostType {
   Flat     // Single flat rate for all entries
 }
 
+enum ChallengeIngestionStatus {
+  Pending // Awaiting text+cover scan; hidden from public feeds
+  Scanned // Passed scan, nsfwLevel assigned, publicly visible
+  Blocked // Hard-blocked (hate/CSAM/etc.); never shown
+  Error   // Scan failed; needs retry
+}
+
 model Challenge {
   id Int @id @default(autoincrement())
 
@@ -5222,14 +5375,16 @@ model Challenge {
   allowedNsfwLevel Int @default(1) // Bitwise NSFW levels allowed (1=PG, 2=PG13, 4=R, etc.)
 
   // Judging Configuration
-  judgingPrompt    String? @db.Text // Custom AI judging prompt
-  reviewPercentage Int     @default(100) // % of entries to score
-  maxReviews       Int? // Hard cap on reviews (cost control)
+  judgingPrompt     String? @db.Text // Custom AI judging prompt (mod/system only)
+  judgingCategories Json? // User challenges: [{name, criteria}]; drives dynamic score schema + public display
+  reviewPercentage  Int     @default(100) // % of entries to score
+  maxReviews        Int? // Hard cap on reviews (cost control)
 
   // Entries - stored in a Contest Collection (auto-created if not provided)
   collectionId      Int? // Optional - auto-created on challenge creation
   collection        Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
-  maxEntriesPerUser Int         @default(20)
+  maxEntriesPerUser Int         @default(20) // Max submissions per participant
+  maxParticipants   Int? // Max distinct participants (null = unlimited); bounds entry-fee judging cost
 
   // Prizes & Costs
   prizes               Json @default("[]") // [{buzz: 5000, points: 150}, ...]
@@ -5246,10 +5401,12 @@ model Challenge {
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)
   reviewCostType  ChallengeReviewCostType @default(None) // Type of paid review pricing
   reviewCost      Int  @default(0) // Buzz cost (per entry or flat, depending on reviewCostType)
+  entryFee        Int  @default(0) // Buzz charged per entry to participate (0 = free). Net to pool = entryFee - platform cut
+  buzzType        String @default("yellow")
 
   // Ownership & Source
-  createdById Int
-  createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdById Int?
+  createdBy   User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
   source      ChallengeSource @default(System)
 
   // Judge
@@ -5259,6 +5416,12 @@ model Challenge {
   // Lifecycle
   status ChallengeStatus @default(Scheduled)
 
+  // Moderation / scan gating (user challenges hidden until Scanned). Default Scanned so
+  // existing + system/mod challenges stay visible without a backfill blackout. Named `ingestion`
+  // to match the other scanned entities (Image.ingestion, Article.ingestion).
+  ingestion ChallengeIngestionStatus @default(Scanned)
+  scannedAt DateTime?
+
   // Metadata
   metadata  Json?
   createdAt DateTime @default(now())
@@ -5267,6 +5430,7 @@ model Challenge {
   // Relations
   winners ChallengeWinner[]
   threads Thread[]
+  reports ChallengeReport[]
 
   // Event grouping
   eventId Int?
@@ -5276,9 +5440,20 @@ model Challenge {
   @@index([status, endsAt]) // "Ending Soon" feed
   @@index([status, startsAt]) // "Just Started" feed
   @@index([status, visibleAt]) // "Upcoming" feed
+  @@index([status, ingestion]) // public feed excludes non-Scanned challenges
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
   @@index([eventId])
+}
+
+model ChallengeReport {
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, challengeId])
+  @@index([challengeId], type: Hash)
 }
 
 model ChallengeJudge {
@@ -5296,6 +5471,7 @@ model ChallengeJudge {
   reviewTemplate        String? @db.Text // JSON message template (agent-workbench format)
   winnerSelectionPrompt String? @db.Text
   active                Boolean @default(true)
+  userSelectable        Boolean @default(false) // offer this judge to users in the create form
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5303,6 +5479,25 @@ model ChallengeJudge {
   challenges Challenge[]
 
   @@index([userId])
+  @@index([active])
+}
+
+// Judging-category library for challenges. label/group/criteria feed the client picker;
+// rubric/rubricNsfw are server-only LLM prompt content, managed directly in the DB per
+// environment (same handling as ChallengeJudge prompts).
+model ChallengeCategory {
+  key        String  @id @db.VarChar(50)
+  label      String  @db.VarChar(100)
+  group      String  @db.VarChar(100)
+  criteria   String  @db.Text
+  rubric     String? @db.Text
+  rubricNsfw String? @db.Text
+  sortOrder  Int     @default(0)
+  active     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([active])
 }
 

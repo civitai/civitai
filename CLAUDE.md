@@ -289,6 +289,7 @@ Feature-specific documentation lives in `docs/features/`. Before implementing a 
 | Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
+| Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |
 
 ## Troubleshooting
 

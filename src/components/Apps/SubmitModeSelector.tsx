@@ -5,15 +5,17 @@ import type { ReactNode } from 'react';
 /**
  * /apps/submit type-picker (W13). The author first picks HOW to list their app:
  * an on-platform **App** (authored + submitted with the `civitai` CLI) or an
- * **External link** (a marketplace card that opens an off-site https URL). Each
- * type is a large selectable card; picking one calls `onSelect`, and the page
- * reveals that flow + a "choose a different type" affordance.
+ * **External app** (a marketplace card that links the caller's OAuth app, with an
+ * optional homepage link). Each type is a large selectable card; picking one calls
+ * `onSelect`, and the page reveals that flow + a "choose a different type" affordance.
  *
  * Presentational only (no tRPC / no server imports) so it renders in isolation
  * for the component test.
  *
  * The internal mode id keeps the historical `block` value for the on-platform
- * app — only the label/copy is "App"; the code id is never renamed.
+ * app — only the label/copy is "App"; the code id is never renamed. The former
+ * separate `'connect'` mode was MERGED into `'external'` (every external app IS an
+ * OAuth app — one listing links the OAuth client + carries an optional homepage URL).
  */
 export type SubmitMode = 'block' | 'external';
 
@@ -29,8 +31,8 @@ export function SubmitModeSelector({ onSelect }: { onSelect: (mode: SubmitMode) 
       />
       <ModeCard
         icon={<IconExternalLink size={22} />}
-        title="External link"
-        description="A marketplace card for an app hosted off-site. Users get a Visit ↗ button that opens your https link in a new tab — no bundle, no install."
+        title="List an external app (connect your OAuth app)"
+        description="List an app hosted off-site by linking your registered OAuth app so users can grant it access. Disclose the scopes your app requests and why, add an optional homepage link — a moderator reviews before it appears."
         onSelect={() => onSelect('external')}
         testId="apps-submit-mode-card-external"
       />

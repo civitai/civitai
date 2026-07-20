@@ -1,7 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { completeMultipartUpload, getUploadS3Client, getB2ImageS3Client } from '~/utils/s3-utils';
+import {
+  classifyS3MultipartError,
+  completeMultipartUpload,
+  getUploadS3Client,
+  getB2ImageS3Client,
+} from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
@@ -39,6 +44,35 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       backend,
       error: error.message,
     });
+
+    // Classify the S3 error so a client/state fault or a transient storage blip is
+    // NOT mis-reported as a raw 500 (which the client then retries → amplification).
+    const errorClass = classifyS3MultipartError(e);
+    if (errorClass === 'not-found') {
+      // The multipart upload is already finalized or aborted (double-submit /
+      // retry-after-success). 409 Conflict = terminal state → tells the client to
+      // STOP retrying; there is no Location to return so we can't fake a 200.
+      res.status(409).json({ error: 'Upload already finalized or aborted' });
+      return;
+    }
+    if (errorClass === 'invalid-parts') {
+      // The parts manifest the client sent doesn't match what the backend stored
+      // (a part upload failed/expired, a stale ETag, or an empty/mis-ordered list) —
+      // a B2/S3 400-class fault. 422 Unprocessable Entity = the request was well
+      // formed but the upload STATE isn't; terminal → the client must stop retrying
+      // this manifest and re-upload. no-store so nothing caches the failure.
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(422).json({ error: 'Upload parts invalid or incomplete — please re-upload' });
+      return;
+    }
+    if (errorClass === 'transient') {
+      // Retry-able storage-backend blip (S3/B2 5xx, throttle/timing, or network).
+      res.setHeader('Retry-After', '2');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(503).json({ error: 'Storage temporarily unavailable, please retry' });
+      return;
+    }
+    // Real server fault → surface loud as a 500 so the upload legitimately fails.
     res.status(500).json({ error });
   }
 };

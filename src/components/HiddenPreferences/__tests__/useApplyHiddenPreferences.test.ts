@@ -186,3 +186,131 @@ describe('useApplyHiddenPreferences — feed-drop emit fires from the commit eff
     unmount();
   });
 });
+
+// ============================================================================
+// `case 'images'` branch — the content-safety filter the gallery's LAZY per-post
+// carousel re-applies to its fetched tail (`useApplyHiddenPreferences({ type:
+// 'images' })` in `LazyPostImagesCarousel`, #3071). #3071 shipped this branch
+// UNTESTED — the browser test stubbed the hook to identity, so it would have
+// passed even if the filter were deleted. These pin the REAL pure filter so a
+// hidden image can never silently leak into the lazily-loaded tail.
+// ============================================================================
+
+type ImgOverrides = Partial<{
+  id: number;
+  userId: number;
+  nsfwLevel: number;
+  tagIds: number[];
+  poi: boolean;
+  minor: boolean;
+  prompt: string;
+}>;
+
+// A single browsing-visible image (nsfwLevel 1 intersects BROWSING_LEVEL 1). Each
+// override flips exactly one drop dimension so a failing case isolates one rule.
+const makeImage = (o: ImgOverrides = {}) => ({
+  id: o.id ?? nextId++,
+  userId: o.userId ?? 9999,
+  nsfwLevel: o.nsfwLevel ?? 1,
+  tagIds: o.tagIds ?? [],
+  poi: o.poi ?? false,
+  minor: o.minor ?? false,
+  prompt: o.prompt ?? '',
+});
+
+const prefsWith = (
+  o: Partial<{ images: number[]; users: number[]; tags: number[]; systemTags: number[] }> = {}
+): HiddenPreferencesState => ({
+  ...emptyPrefs(),
+  hiddenImages: new Map((o.images ?? []).map((id): [number, boolean] => [id, true])),
+  hiddenUsers: new Map((o.users ?? []).map((id): [number, boolean] => [id, true])),
+  hiddenTags: new Map((o.tags ?? []).map((id): [number, boolean] => [id, true])),
+  systemHiddenTags: new Map((o.systemTags ?? []).map((id): [number, boolean] => [id, true])),
+});
+
+type RunImagesOpts = {
+  hiddenPreferences?: HiddenPreferencesState;
+  poiDisabled?: boolean;
+  minorDisabled?: boolean;
+  currentUser?: unknown;
+};
+const runImages = (data: ReturnType<typeof makeImage>[], opts: RunImagesOpts = {}) =>
+  filterPreferences({
+    type: 'images',
+    data,
+    hiddenPreferences: opts.hiddenPreferences ?? emptyPrefs(),
+    browsingLevel: BROWSING_LEVEL,
+    currentUser: (opts.currentUser ?? null) as never,
+    canViewNsfw: true,
+    poiDisabled: opts.poiDisabled ?? false,
+    minorDisabled: opts.minorDisabled ?? false,
+  });
+
+describe("filterPreferences — 'images' branch drops every hidden dimension (lazy-tail safety)", () => {
+  it('keeps a browsing-visible image untouched', () => {
+    const { items } = runImages([makeImage({ id: 1 })]);
+    expect(items.map((i) => i.id)).toEqual([1]);
+  });
+
+  // [label, the-image-that-must-drop, filter opts]. Each pairs the dirty image with
+  // a clean sibling (id 1) and asserts the clean one survives while the dirty drops.
+  const cases: Array<[string, ReturnType<typeof makeImage>, RunImagesOpts, keyof ReturnType<typeof runImages>['hidden']]> = [
+    ['browsing-level mismatch', makeImage({ id: 2, nsfwLevel: 2 }), {}, 'browsingLevel'],
+    ['hidden image id', makeImage({ id: 3 }), { hiddenPreferences: prefsWith({ images: [3] }) }, 'images'],
+    ['hidden user', makeImage({ id: 4, userId: 555 }), { hiddenPreferences: prefsWith({ users: [555] }) }, 'users'],
+    ['hidden tag', makeImage({ id: 5, tagIds: [88] }), { hiddenPreferences: prefsWith({ tags: [88] }) }, 'tags'],
+    ['system hidden tag', makeImage({ id: 6, tagIds: [77] }), { hiddenPreferences: prefsWith({ systemTags: [77] }) }, 'tags'],
+    ['poi (disablePoi)', makeImage({ id: 7, poi: true }), { poiDisabled: true }, 'poi'],
+    ['minor (disableMinor)', makeImage({ id: 8, minor: true }), { minorDisabled: true }, 'minor'],
+  ];
+
+  it.each(cases)('drops a %s image and keeps the clean sibling', (_label, dirty, opts, counter) => {
+    const { items, hidden } = runImages([makeImage({ id: 1 }), dirty], opts);
+    const ids = items.map((i) => i.id);
+    expect(ids).toContain(1); // the clean image survives
+    expect(ids).not.toContain(dirty.id); // the hidden one is filtered out
+    expect(hidden[counter]).toBe(1); // …and attributed to the right dimension
+  });
+
+  it('does NOT drop a poi/minor image when the respective toggle is OFF', () => {
+    const { items } = runImages([makeImage({ id: 9, poi: true, minor: true })], {
+      poiDisabled: false,
+      minorDisabled: false,
+    });
+    expect(items.map((i) => i.id)).toEqual([9]);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Seed ↔ tail parity. The feed seed runs the `posts` per-image filter; the lazy
+// carousel's tail runs the `images` filter. For the shared drop dimensions the
+// `images` branch is a superset, so nothing the seed drops can reappear via the
+// tail, and a tail-only image that clears the bar is admitted.
+// ----------------------------------------------------------------------------
+describe("seed ('posts') ↔ tail ('images') filter parity — no reappear-via-tail", () => {
+  it('an image the posts-seed filter drops (hidden tag) is also dropped by the images tail', () => {
+    const clean = makeImage({ id: 10 });
+    const dirty = makeImage({ id: 11, tagIds: [42] });
+    const hiddenTag = prefsWith({ tags: [42] });
+
+    // Seed: the `posts` branch filters each post's images.
+    const posts = filterPreferences({
+      type: 'posts',
+      data: [{ userId: 9999, nsfwLevel: 1, images: [clean, dirty] }],
+      hiddenPreferences: hiddenTag,
+      browsingLevel: BROWSING_LEVEL,
+      currentUser: null as never,
+      canViewNsfw: true,
+    });
+    expect(posts.items[0].images.map((i: { id: number }) => i.id)).toEqual([10]);
+
+    // Tail: the same dirty image is dropped by the `images` branch.
+    const tail = runImages([clean, dirty], { hiddenPreferences: hiddenTag });
+    expect(tail.items.map((i) => i.id)).toEqual([10]);
+  });
+
+  it('a tail-only image that clears the bar survives the images filter', () => {
+    const tailOnly = makeImage({ id: 12 });
+    expect(runImages([tailOnly]).items.map((i) => i.id)).toEqual([12]);
+  });
+});

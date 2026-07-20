@@ -188,7 +188,8 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
 // resolver, labeled by procedure path. Used to rank heavy-pool isolation
 // candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
-// layout (to 30s) keeps the long tail visible like images_search.
+// layout is trimmed for cardinality (see the buckets note below) while keeping
+// resolution around typical p95/p99.
 //
 // ⚠️ HIGH CARDINALITY: `path` is a fixed enum of ~870 procedure names (NOT ~93 —
 // that's the router count), so this emits ~870 x (buckets+sum+count) series PER
@@ -198,7 +199,26 @@ export const trpcProcedureDuration = registerHistogram({
   name: 'trpc_procedure_duration_seconds',
   help: 'tRPC procedure wall-clock duration (full chain + resolver) by path',
   labelNames: ['path'] as const,
-  buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
+  // Trimmed 7→6 explicit boundaries (le 8→7 incl. +Inf, ~12% fewer _bucket
+  // series) to cut Prometheus cardinality on this high-`path` histogram while
+  // keeping boundaries near typical p95/p99. Dropped only the 50ms floor; the
+  // 30s tail boundary is retained so _bucket-based p99 can still resolve the
+  // 10–30s range (the parked-handler / slow-procedure diagnostic band).
+  buckets: [0.1, 0.5, 1, 2.5, 10, 30],
+});
+
+// Web-client READ-capability saturation for the superjson → devalue serializer
+// migration. Incremented per web tRPC procedure, bucketed by whether the request's
+// reported `x-client-version` belongs to a build that can decode the union
+// serializer (Phase-1-capable). LOW cardinality by construction: a single boolean
+// label (`phase1_capable` = 'true' | 'false') — NOT the raw version string. The
+// Phase-2 write-flip go/no-go reads the saturation ratio:
+//   rate(...{phase1_capable="true"}) / rate(...) — the fraction of live web traffic
+//   that can safely decode a devalue response.
+export const trpcClientReadCapabilityRequests = registerCounterWithLabels({
+  name: 'trpc_client_read_capability_requests_total',
+  help: 'Web tRPC procedures bucketed by client union-decode (Phase-1) capability',
+  labelNames: ['phase1_capable'] as const,
 });
 
 // Image feed metrics

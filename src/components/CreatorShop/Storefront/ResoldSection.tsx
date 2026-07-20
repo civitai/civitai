@@ -15,6 +15,8 @@ export function ResoldSection({
 }: {
   items: CreatorShopData['resold'];
   ownedCosmeticIds: Set<number>;
+  // Also the shop owner whose page this is; drives purchase attribution and
+  // (in ShopItemGrid) whether to show per-card creator attribution.
   viaShopUserId: number;
 }) {
   const [filters, setFilters] = useState<GetShopInput>({});
@@ -44,8 +46,8 @@ export function ResoldSection({
       {/* viaShopUserId credits this shop owner with the reseller share on purchase. */}
       <ShopItemGrid
         items={filtered}
-        cols={{ base: 2, sm: 3, md: 4 }}
         ownedCosmeticIds={ownedCosmeticIds}
+        ownerUserId={viaShopUserId}
         viaShopUserId={viaShopUserId}
       />
     </Stack>

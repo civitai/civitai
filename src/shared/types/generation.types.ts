@@ -24,8 +24,6 @@ export type GenerationResourceBase = {
   additionalResourceCost?: boolean;
   availability?: Availability;
   epochNumber?: number;
-  /** Per-image license fee in Buzz set by the model version owner */
-  licensingFee?: number | null;
   // settings
   clipSkip?: number;
   minStrength: number;

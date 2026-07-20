@@ -40,26 +40,37 @@ export function safePath(raw: unknown): string {
   return typeof raw === 'string' && raw.startsWith('/') && !/^\/[/\\]/.test(raw) ? raw : '/';
 }
 
-function buildBridgeCookie(value: string, secure: boolean, maxAge: number): string {
+function buildBridgeCookie(
+  value: string,
+  secure: boolean,
+  maxAge: number,
+  domain?: string
+): string {
   return [
     `${OAUTH_BRIDGE_COOKIE}=${value}`,
     `Path=${SPOKE_CALLBACK_PATH}`, // scoped to the callback — never sent elsewhere
     'HttpOnly',
-    // SameSite=None so the cookie survives the CROSS-REGISTRABLE-DOMAIN OAuth round-trip
-    // (civitai.red → auth.civitai.com → civitai.red). Prod telemetry showed Lax being dropped on that return
-    // for .red at ~5x the .com rate (oauth_state=no_cookie). Safe here: the cookie is HttpOnly, Path-scoped,
-    // 10-min, and carries only the PKCE verifier + state guarded by the state check — not a session. None
-    // REQUIRES Secure, so fall back to Lax when the cookie isn't Secure (dev/http, where the flow is same-site
-    // localhost and Lax works).
+    // Survive the CROSS-REGISTRABLE-DOMAIN OAuth round-trip (spoke → hub → spoke):
+    //  - SameSite=None so it rides the cross-site return (fall back to Lax on non-secure dev, where
+    //    None-without-Secure is browser-rejected and the flow is same-site localhost).
+    //  - Domain=<registrable> (when provided) so it survives a host variation between set (/authorize) and read
+    //    (/callback) — e.g. www↔apex. Prod telemetry showed .red no_cookie persisting under SameSite=None with
+    //    OTHER (Domain-scoped) cookies still arriving, which points at this HOST-ONLY-vs-Domain gap. Host-only
+    //    (omit domain) in dev/localhost.
+    // Safe: HttpOnly, Path-scoped, 10-min, carries only the PKCE verifier + state guarded by the state check.
     secure ? 'SameSite=None' : 'SameSite=Lax',
     ...(secure ? ['Secure'] : []),
+    ...(domain ? [`Domain=${domain}`] : []),
     `Max-Age=${maxAge}`,
   ].join('; ');
 }
 
-/** Set-Cookie string that expires the bridge cookie (single-use cleanup; set it on the callback response). */
-export function clearBridgeCookie(secure: boolean = isSecureCookie()): string {
-  return buildBridgeCookie('', secure, 0);
+/**
+ * Set-Cookie string that expires the bridge cookie (single-use cleanup; set it on the callback response). Pass
+ * the SAME `domain` the cookie was set with — a Domain-scoped cookie can only be cleared by a matching Domain.
+ */
+export function clearBridgeCookie(secure: boolean = isSecureCookie(), domain?: string): string {
+  return buildBridgeCookie('', secure, 0, domain);
 }
 
 export interface AuthorizeRedirect {
@@ -83,6 +94,10 @@ export function buildAuthorizeRedirect(opts: {
   scope?: number;
   /** Cookie `Secure` flag. Defaults to the app's own protocol (`isSecureCookie()`). */
   secure?: boolean;
+  /** Cookie `Domain` (the registrable domain, e.g. `civitai.red`) so the bridge cookie survives a host
+   *  variation (www↔apex) between /authorize and /callback — host-only was being dropped there. Omit for
+   *  host-only (dev/localhost). */
+  cookieDomain?: string;
 }): AuthorizeRedirect {
   const hub = hubBaseUrl();
   if (!hub) throw new Error('[@civitai/auth] hub not configured (AUTH_JWT_ISSUER)');
@@ -104,7 +119,12 @@ export function buildAuthorizeRedirect(opts: {
   const payload = encodeURIComponent(JSON.stringify({ v: verifier, s: state, r: returnUrl }));
   return {
     location: url.toString(),
-    setCookie: buildBridgeCookie(payload, opts.secure ?? isSecureCookie(), OAUTH_BRIDGE_TTL_S),
+    setCookie: buildBridgeCookie(
+      payload,
+      opts.secure ?? isSecureCookie(),
+      OAUTH_BRIDGE_TTL_S,
+      opts.cookieDomain
+    ),
   };
 }
 

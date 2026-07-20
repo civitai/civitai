@@ -144,7 +144,17 @@ beforeEach(() => {
 // AUTHOR procs (appDeveloperProcedure).
 // ---------------------------------------------------------------------------
 
-const submitInput = { slug: 'cool-app', name: 'Cool', externalUrl: 'https://x.example.com' };
+const submitInput = {
+  slug: 'cool-app',
+  name: 'Cool',
+  externalUrl: 'https://x.example.com',
+  // Merged model: submit REQUIRES the caller's OAuth client + a (possibly empty)
+  // disclosed scope set. The service is mocked here, so these only need to satisfy
+  // the input schema.
+  connectClientId: 'oauth-client-1',
+  requestedScopes: 0,
+  scopeJustifications: {},
+};
 
 describe('submitExternalListing — appDeveloperProcedure (app-blocks-author)', () => {
   it('non-author (non-mod, no cohort) → FORBIDDEN, service NOT called', async () => {
@@ -362,10 +372,10 @@ describe('rejectExternalRequest — moderatorProcedure', () => {
     });
   });
 
-  it('a short reason is rejected at the SCHEMA boundary (min 10)', async () => {
+  it('a short reason is rejected at the SCHEMA boundary (min 3)', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
     await expect(
-      caller.rejectExternalRequest({ publishRequestId: 'alpr_1', rejectionReason: 'short' })
+      caller.rejectExternalRequest({ publishRequestId: 'alpr_1', rejectionReason: 'no' })
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockReject).not.toHaveBeenCalled();
   });

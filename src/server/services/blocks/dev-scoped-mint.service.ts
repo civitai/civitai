@@ -55,17 +55,45 @@ export const FORCED_SFW_CEILING = domainBrowsingCeiling(null);
 /**
  * The BEARER dev-token allowlist (scope doc §4.1): read/catalog scopes + the page
  * spend scope + per-app storage. Used by `/api/v1/blocks/dev-token` only.
- * DELIBERATELY EXCLUDES `social:tip:self` (real money OUT) and
- * `block:settings:read` / `block:settings:write` (installer-only). A requested /
+ * DELIBERATELY EXCLUDES `social:tip:self` (real money OUT). A requested /
  * approved scope outside this set is STRIPPED (defense-in-depth).
  */
 export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'models:read:self',
-  'media:read:owned',
   'user:read:self',
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
+  // collections:* — INCLUDED in the dev allowlists (both this bearer path and the
+  // tunnel path below). Unlike apps:storage:shared:* (deliberately withheld pre-
+  // approval because a pre-approval app's storage NAMESPACE is synthetic and could
+  // collide across the approve boundary), the collections surface has NO per-app
+  // namespace: read operates on the dev's OWN collections + PUBLIC collections and
+  // is gated server-side by visibility/ownership + the maturity clamp; follow is
+  // self-bound to the dev's account. There is no cross-approve-boundary state to
+  // protect, so a developer iterating on a collections app in dev:live / dev-tunnel
+  // can safely exercise discover/read/follow. `social:tip:self` stays EXCLUDED
+  // (real money OUT — unchanged), so a collections app's TIP button is not
+  // exercisable via a dev token (matches the existing "no real money in dev"
+  // posture). `collections:read:private` (own private collections) is included:
+  // in prod it's consent-gated, but the dev-token path is self-bound to the dev's
+  // OWN account (no third-party data), so a dev iterating locally can read their
+  // own private collections without a consent round-trip.
+  'collections:read:self',
+  'collections:write:self',
+  'collections:read:private',
+  // buzz:read:self (own ledger / balance / earnings) is included in BOTH dev
+  // allowlists (this bearer path + the tunnel path below). In prod it's
+  // consent-gated, but the dev-mint path is self-bound to the dev's OWN account
+  // (the token `sub` is the authenticated dev via the mint's subject-user
+  // resolution; the buzz-read bridge derives userId off `claims.sub`, never body
+  // input), so it reads ONLY the dev's own ledger — no third-party financial data
+  // and no consent round-trip. It's a pure READ (no money moves); the money-OUT
+  // scope `social:tip:self` stays EXCLUDED everywhere. Consistent with these dev
+  // allowlists ALREADY granting `ai:write:budgeted` (real Buzz SPEND) and
+  // `collections:read:private` — forbidding a dev from READING their own balance
+  // while permitting SPENDING it is incoherent.
+  'buzz:read:self',
 ]);
 
 /**
@@ -80,9 +108,55 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
  */
 export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'models:read:self',
-  'media:read:owned',
   'user:read:self',
   'ai:write:budgeted',
+  // collections:* — INCLUDED here too (see DEV_TOKEN_SCOPE_ALLOWLIST rationale):
+  // no per-app namespace, gated server-side by visibility/ownership/subject, so
+  // there is no pre-approval collision to protect against (contrast
+  // apps:storage:*, which this tunnel allowlist withholds until approval).
+  'collections:read:self',
+  'collections:write:self',
+  'collections:read:private',
+  // buzz:read:self — INCLUDED here too (see DEV_TOKEN_SCOPE_ALLOWLIST rationale):
+  // self-bound to the dev's OWN ledger via the token subject, a pure READ, no
+  // consent round-trip needed in the author's own dev-tunnel preview. Deliberately
+  // WITHHELD from the mod-review sandbox below (a mod previewing another author's
+  // app must not leak the mod's own balance).
+  'buzz:read:self',
+]);
+
+/**
+ * The MOD-REVIEW-SANDBOX host-mint allowlist (#2831 review preview). RENDER-ONLY:
+ * the STRICTEST of the three allowlists. A mod runs UNAPPROVED, untrusted code
+ * with their OWN session, so the review token must carry the minimum a block needs
+ * to render — self-bound reads ONLY, NEVER money / private / cross-user / write.
+ *
+ * KEEP (render-only survivors, all self-bound reads):
+ *   - `models:read:self`   the caller's own models (self-bound)
+ *   - `user:read:self`     the caller's own identity (also force-granted post-clamp)
+ *   - `collections:read:self` own-PUBLIC + any PUBLIC collection (no per-app namespace)
+ *
+ * WITHHELD (stripped regardless of what the pending manifest declares — the clamp
+ * drops any scope not in this set, so none of these can EVER reach the review JWT):
+ *   - `ai:write:budgeted`         real Buzz spend (ALSO stripped by keyCanSpend:false)
+ *   - `apps:storage:read|write`   per-user App Storage (synthetic appId → no namespace)
+ *   - `apps:storage:shared:read|write` cross-user shared datastore (write = abuse)
+ *   - `collections:read:private`  the caller's OWN private collections (consent-gated)
+ *   - `collections:write:self`    a write surface
+ *   - `social:tip:self`           real money OUT
+ *   - `buzz:read:self`            private financial (balance / ledger / earnings)
+ *
+ * These strings are verified against block-scope.constants.ts. Modelled on
+ * TUNNEL_HOST_MINT_SCOPE_ALLOWLIST but WITHOUT `ai:write:budgeted`,
+ * `collections:write:self`, and `collections:read:private`: the dev tunnel is the
+ * AUTHOR previewing their OWN app (spend on their own Buzz is intended); the review
+ * sandbox is a MOD previewing SOMEONE ELSE'S un-approved app, so nothing that
+ * spends, writes, or reads private/cross-user data is ever granted.
+ */
+export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
+  'models:read:self',
+  'user:read:self',
+  'collections:read:self',
 ]);
 
 /**
@@ -90,8 +164,8 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  * Start from `scopeSource` (the app's approved snapshot, an owned pending request's
  * un-reviewed `manifest.scopes`, or the caller's self-declared body scopes) and:
  *   a) keep only KNOWN block scopes,
- *   b) keep only scopes within `allowlist` (excludes social:tip:self +
- *      block:settings:* always; for the tunnel allowlist also apps:storage:*),
+ *   b) keep only scopes within `allowlist` (excludes social:tip:self always;
+ *      for the tunnel allowlist also apps:storage:*),
  *   c) keep only scopes within the app's OAuth ceiling (approved path only —
  *      `oauthAllowed !== null`); OMITTED for a pending / no-row / ephemeral app
  *      (no OauthClient — passing 0 would WRONGLY strip every non-skip scope),

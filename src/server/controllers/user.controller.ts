@@ -12,7 +12,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
-import { getStaticContent } from '~/server/services/content.service';
+import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { getUserFollows } from '~/server/redis/caches';
@@ -56,7 +56,6 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import {
-  getResourceReviewsByUserId,
   getUserResourceReview,
 } from '~/server/services/resourceReview.service';
 import {
@@ -82,7 +81,6 @@ import {
   getUserCosmetics,
   getUserCreator,
   getUserDownloadedModelVersions,
-  getUserEngagedModels,
   getUserEngagedModelsByIds,
   getUserEngagedModelVersions,
   getUserList,
@@ -343,19 +341,23 @@ export const completeOnboardingHandler = async ({
         // Store the accepted content hash alongside the date so a freshly-onboarded
         // user is hash-backed immediately and immune to stray `lastmod` bumps.
         const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
+        const tosHash = resolveTosHash(tos.hash);
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         await setUserSetting(
           id,
           domain === 'green'
-            ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: tos.hash }
-            : { tosLastSeenDate: now, tosAcceptedHash: tos.hash }
+            ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: tosHash }
+            : { tosLastSeenDate: now, tosAcceptedHash: tosHash }
         );
         break;
       }
       case OnboardingSteps.RedTOS: {
         const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
-        await setUserSetting(id, { tosRedLastSeenDate: new Date(), tosRedAcceptedHash: tos.hash });
+        await setUserSetting(id, {
+          tosRedLastSeenDate: new Date(),
+          tosRedAcceptedHash: resolveTosHash(tos.hash),
+        });
         break;
       }
       case OnboardingSteps.Profile: {
@@ -630,46 +632,9 @@ export const restoreUserHandler = async ({
   }
 };
 
-type EngagedModelType = ModelEngagementType | 'Recommended';
-
-export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
-  const { id } = ctx.user;
-
-  try {
-    const engagementsCache = await redis.get(
-      `${REDIS_KEYS.USER.BASE}:${id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`
-    );
-    if (engagementsCache) return JSON.parse(engagementsCache) as Record<EngagedModelType, number[]>;
-
-    const engagements = await getUserEngagedModels({ id });
-    const recommendedReviews = await getResourceReviewsByUserId({ userId: id, recommended: true });
-
-    // turn array of user.engagedModels into object with `type` as key and array of modelId as value
-    const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
-      const { type, modelId } = model;
-      if (!acc[type]) acc[type] = [];
-      acc[type].push(modelId);
-      return acc;
-    }, {} as Record<EngagedModelType, number[]>);
-    engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
-
-    await redis.set(
-      `${REDIS_KEYS.USER.BASE}:${id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`,
-      JSON.stringify(engagedModels),
-      {
-        EX: 60 * 60 * 24,
-      }
-    );
-
-    return engagedModels;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    throw throwDbError(error);
-  }
-};
-
-// Additive, per-visible-set counterpart to `getUserEngagedModelsHandler`. Bounded input →
-// bounded response, so (unlike the whole-history handler above) there is no cache: the tiny,
+// Per-visible-set membership handler. Replaced the removed unbounded
+// `getUserEngagedModelsHandler`, whose whole-history response was a serialize-freeze
+// source. Bounded input → bounded response, so there is no cache: the tiny,
 // index-scannable payload isn't worth the combinatorial keyspace + bust-site sprawl.
 export const getUserEngagedModelsByIdsHandler = async ({
   input,

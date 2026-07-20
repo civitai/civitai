@@ -1,4 +1,4 @@
-import { Box, Center, Group, Loader, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Box, Center, Group, Loader, Paper, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
@@ -64,6 +64,14 @@ export const CosmeticPreview = ({
       }
     : undefined;
 
+  const descriptionBox = cosmetic.description?.trim() ? (
+    <Paper withBorder radius="md" p="sm" w="100%" maw={450} mx="auto">
+      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+        {cosmetic.description}
+      </Text>
+    </Paper>
+  ) : null;
+
   switch (cosmetic.type) {
     case CosmeticType.Badge:
     case CosmeticType.ProfileDecoration:
@@ -74,13 +82,20 @@ export const CosmeticPreview = ({
       }
 
       return (
-        <Stack gap="xl">
+        <Stack gap="xl" align="center">
           {!hideHeader && (
             <Text fw="bold" align="center">
               Preview
             </Text>
           )}
-          <CreatorCardV2 user={userWithEquippedCosmetics} cosmeticOverwrites={[cosmetic]} />
+          {/* Cap the card at the profile width (450px) so profile backgrounds
+              fill it, matching how the card renders on profiles. */}
+          <CreatorCardV2
+            user={userWithEquippedCosmetics}
+            cosmeticOverwrites={[cosmetic]}
+            style={{ width: '100%', maxWidth: 450 }}
+          />
+          {descriptionBox}
         </Stack>
       );
     case CosmeticType.ContentDecoration:
@@ -129,7 +144,8 @@ export const CosmeticPreview = ({
                 </UnstyledButton>
               );
             })}
-          </Group>{' '}
+          </Group>
+          {descriptionBox}
         </Stack>
       );
     default:

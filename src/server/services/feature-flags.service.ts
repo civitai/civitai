@@ -119,6 +119,51 @@ const featureFlags = createFeatureFlags({
   // the A/B (no flag-off cohort) and shipping the deferral fleet-wide unmeasured. OFF =
   // byte-identical to today. Measured via RUM `exp_gen_tab_defer_view`. Instant safe rollback.
   genTabDeferView: { availability: [], fliptKey: 'gen-tab-defer-view' },
+  // Serialize-perf: LAZY per-post image load on `image.getImagesAsPostsInfinite` (the #2
+  // producer of oversized/event-loop-freezing tRPC responses). Model galleries carry
+  // multi-image showcase posts (17% have >12 images; p90/p99 ≈ 20). When ON the server
+  // returns only the first `GALLERY_POST_IMAGE_SLICE` (6) images per post PLUS the true
+  // `imageCount`; the card carousel lazy-loads the remainder on approach via
+  // `trpc.image.getInfinite({ postId })`. So the gallery is NOT truncated — only the initial
+  // payload shrinks (a large cut on the heavy tail). OFF = byte-identical to today (all
+  // images inline, no `imageCount`).
+  //
+  // 🔴 SERVER-SIDE flag → STALE-CLIENT RAMP DISCIPLINE (same class as the shape-swap flags):
+  // a PRE-this-PR bundle (no lazy-load code) would render only the 6-image slice with
+  // `total = slice.length` → "6 of 6" instead of "1 of 20" until the user reloads. That's a
+  // UX-truncation regression (NOT content-unsafe; browsing-level filtering is unchanged),
+  // self-healing on reload. Hence `availability: []` = DARK by default, fails CLOSED (no
+  // slice) when Flipt is absent/down; the Flipt `gallery-lazy-post-images` THRESHOLD is the
+  // ONLY on-switch. Ramp ONLY after the new bundle is serving everywhere (confirm via RUM
+  // app_version — hours, per the SPA-cache rollout pattern); threshold-only; instant rollback =
+  // drop the threshold to 0. Supersedes the retired `imagesAsPostsPerPostCap` cap flag (which
+  // truncated the gallery and was never ramped). (Mirrors the genTabDeferView precedent.)
+  galleryLazyPostImages: { availability: [], fliptKey: 'gallery-lazy-post-images' },
+  // Serialize-perf: SLIM the per-model image count on `model.getAll` — the #1
+  // producer of oversized / event-loop-freezing tRPC responses (the
+  // `trpc-response-oversized` #3017 dataset; p90 > 1MB, ~20x the next path). When
+  // ON, the browse-feed response caps each model to `GET_ALL_IMAGES_PER_MODEL_SLIM`
+  // (6) images instead of `GET_ALL_IMAGES_PER_MODEL` (12) — a ~42% page-byte cut
+  // (the always-on per-image field trim in `model-getall-images` applies either
+  // way). The browse `ModelCard` renders only the cover, so nothing VISIBLE
+  // changes; the residual risk is browsing-level FEED-DROP: the shared image cache
+  // is ordered `postId,index` (browsing-agnostic), so a mixed-level model whose only
+  // browsing-safe image sits past index 6 could be dropped from an SFW-mode viewer's
+  // feed (`hidden.noImages`). The flag-ON path MITIGATES this by picking an
+  // nsfw-biased COVERAGE slice (`selectSlimGetAllModelImages`) instead of the naive
+  // first-6 — it keeps one image of every distinct `nsfwLevel` bit present, so any
+  // viewer with a visible image in the full set keeps one in the slice (image
+  // `nsfwLevel` is a single bit, ≤6 distinct, all fit in 6). Still `availability: []`
+  // = DARK by default and FAILS
+  // CLOSED (empty availability → static eval false when Flipt is absent/down), so
+  // the cap stays 12 (byte-identical COUNT to today) unless the Flipt
+  // `get-all-model-images-slim` threshold is ramped. Deploy dark, then ramp the
+  // threshold WHILE watching the feed-drop rate (Loki
+  // `event_name="feed_noimages_drop"`, `~/utils/faro/feedDrop`); instant rollback =
+  // set the threshold to 0. (Mirrors the galleryLazyPostImages / genTabDeferView
+  // dark-flag precedent.) No client bundle change is required (the feed already
+  // renders any-length image arrays), so this is a pure server behavior flag.
+  getAllModelImagesSlim: { availability: [], fliptKey: 'get-all-model-images-slim' },
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
@@ -282,7 +327,13 @@ const featureFlags = createFeatureFlags({
   serviceStatus: ['granted'],
   cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },
   auctionsMod: ['granted'],
-  challengePlatform: ['public'],
+  // Platform-wide challenge kill-switch. Flipt is authoritative; availability ['public'] is the
+  // Flipt-DOWN / flag-absent fallback (so an outage leaves the platform ON, matching prior behavior).
+  challengePlatform: { availability: ['public'], fliptKey: 'challenge-platform-enabled' },
+  // Public user-created challenges. Flipt is the on/off kill-switch; availability ['public'] is the
+  // Flipt-DOWN / flag-absent fallback (so a Flipt outage — or deploying before the flag exists —
+  // leaves it PUBLIC). Create the `user-challenges` Flipt flag DISABLED before this deploys.
+  userChallenges: { availability: ['mod'], fliptKey: 'user-challenges' },
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   licensingFee: { availability: ['user'], fliptKey: 'licensing-fee' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
@@ -583,20 +634,43 @@ const hasFeature = (
 // `FeatureFlagKey`, which surfaces a type error at every consumer.
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;
 
+/**
+ * SINGLE per-key evaluator — the one place that decides whether a flag key is
+ * "present" (i.e. `true`) in the sparse FeatureAccess payload. BOTH the eager
+ * `computeFeatureFlags` (every key) and the per-flag lazy getter
+ * (`getFeatureFlagsLazy`, only accessed keys) call THIS, so the two paths cannot
+ * diverge — the lazy per-flag result for key X is provably the same value eager
+ * puts at X. Semantics (must match the historical inline `computeFeatureFlags`
+ * body exactly):
+ *   1. `hasFeature` false ⇒ absent (env/region/host/role + Flipt gating).
+ *   2. A toggleable flag whose `default === false` is absent at the base layer —
+ *      logged-in users get their stored choice merged client-side (via
+ *      user.getFeatureFlags), but anonymous users have no override, so a
+ *      default-off toggleable (e.g. postsNavItem) must stay off on bare access.
+ *   3. Otherwise present.
+ * `fliptContext` is threaded in (built once per compute via buildFliptContext)
+ * so a single lazy request reuses one context across every accessed key, exactly
+ * as eager reuses it across every key.
+ */
+function isFeatureFlagKeyPresent(
+  key: FeatureFlagKey,
+  ctx: FeatureAccessContext,
+  fliptContext: Record<string, string>
+): boolean {
+  if (!hasFeature(key, ctx, fliptContext)) return false;
+  const feature = featureFlags[key];
+  if (feature.toggleable && feature.default === false) return false;
+  return true;
+}
+
 function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
   // Build the Flipt context once and reuse for every flag (was rebuilt per flag).
   const fliptContext = buildFliptContext(ctx.user);
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
-    if (!hasFeature(key, ctx, fliptContext)) return acc;
-    const feature = featureFlags[key];
-    // Toggleable flags resolve to their default at the base layer. Logged-in
-    // users get their stored choice merged on top client-side (via
-    // user.getFeatureFlags), but anonymous users have no override — so a
-    // default-off toggleable (e.g. postsNavItem) must stay off for them rather
-    // than leak through on bare access.
-    if (feature.toggleable && feature.default === false) return acc;
-    acc[key] = true;
+    // Delegate the per-key decision to the shared evaluator so eager output is
+    // byte-identical to the lazy per-flag path (same code, same order).
+    if (isFeatureFlagKeyPresent(key, ctx, fliptContext)) acc[key] = true;
     return acc;
   }, {} as FeatureAccess);
 }
@@ -665,16 +739,55 @@ export const getFeatureFlags = (ctx: FeatureAccessContext): FeatureAccess => {
   return { ...value };
 };
 
+/**
+ * PER-FLAG lazy FeatureAccess. Accessing `features.X` evaluates ONLY key `X`
+ * (via the shared `isFeatureFlagKeyPresent`), instead of forcing a full
+ * `computeFeatureFlags` of all ~145 flags on first touch. This is the structural
+ * fix for the base tRPC chain (`applyDomainFeature`) reading a single Flipt-free
+ * flag (`canViewNsfw`) and paying for up to 64 wasm `evaluateBoolean` calls:
+ *   - reading `canViewNsfw` (no fliptKey) now evaluates ZERO Flipt flags;
+ *   - reading one fliptKey'd flag evaluates ONLY that flag (still through the
+ *     wasm eval cache in flipt/client.ts — no per-eval hit-rate regression).
+ *
+ * Correctness: the returned value for any key is identical to
+ * `getFeatureFlags(ctx)[key]` — both go through `isFeatureFlagKeyPresent`, and
+ * `fliptContext` is built once per request (memoized) exactly as eager builds it
+ * once per compute. Sparse semantics are preserved: a non-present key reads as
+ * `undefined` (property returns `undefined`, not `false`), matching the eager
+ * object where absent keys are `undefined`. Per-key results are memoized so
+ * repeat reads of the same key within a request are stable and free. Code that
+ * reads many keys (e.g. isFlagProtected) simply triggers several per-key
+ * computes — each still cheap for Flipt-free keys and eval-cached for Flipt ones.
+ *
+ * NOTE: unlike the previous implementation, this does NOT populate/read the
+ * whole-result cache in `getFeatureFlags` — that cache exists to amortize the
+ * full 145-flag compute, which is precisely the work we now avoid. Eager callers
+ * (user.getFeatureFlags, the SSR seed) still use that cache directly.
+ */
 export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
-  const obj = {} as FeatureAccess & { features: FeatureAccess };
+  const obj = {} as FeatureAccess;
+  // Built once on first flag access and reused for every accessed key this
+  // request — mirrors eager's "build fliptContext once per compute".
+  let fliptContext: Record<string, string> | undefined;
+  // Per-key memo so a second read of the same key is stable + free (and can't
+  // re-hit Flipt). Stores the raw presence boolean; the getter maps it to the
+  // sparse `true | undefined` wire value.
+  const memo = new Map<string, boolean>();
 
   for (const key in featureFlags) {
     Object.defineProperty(obj, key, {
+      // Match the previous descriptor: non-enumerable (data-shape-identical to
+      // the old lazy object) with only a getter.
       get() {
-        if (!obj.features) {
-          obj.features = getFeatureFlags(ctx);
+        let present = memo.get(key);
+        if (present === undefined) {
+          if (!fliptContext) fliptContext = buildFliptContext(ctx.user);
+          present = isFeatureFlagKeyPresent(key as FeatureFlagKey, ctx, fliptContext);
+          memo.set(key, present);
         }
-        return obj.features[key as keyof FeatureAccess];
+        // Sparse semantics: present ⇒ true, absent ⇒ undefined (NOT false), so
+        // `features.X === getFeatureFlags(ctx).X` holds for every key.
+        return present ? true : undefined;
       },
     });
   }

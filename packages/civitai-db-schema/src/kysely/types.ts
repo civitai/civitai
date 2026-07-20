@@ -102,6 +102,7 @@ import type {
   PrizeMode,
   PoolTrigger,
   ChallengeReviewCostType,
+  ChallengeIngestionStatus,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   ComicProjectStatus,
@@ -332,6 +333,7 @@ export type Appeal = {
 };
 export type AppListing = {
   id: string;
+  serial_id: Generated<number>;
   kind: string;
   slug: string;
   name: string;
@@ -344,6 +346,8 @@ export type AppListing = {
   content_rating: string | null;
   external_url: string | null;
   connect_client_id: string | null;
+  connect_requested_scopes: number | null;
+  connect_scope_justifications: unknown | null;
   app_block_id: string | null;
   revision_of_id: string | null;
   featured: Generated<boolean>;
@@ -423,6 +427,27 @@ export type AppListingScreenshot = {
   image_id: number | null;
   order: Generated<number>;
   caption: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppReviewAgentReport = {
+  id: string;
+  publish_request_id: string;
+  app_block_id: string | null;
+  oauth_client_id: string | null;
+  version: string;
+  bundle_sha256: string;
+  status: Generated<string>;
+  model: string | null;
+  started_at: Generated<Timestamp>;
+  completed_at: Timestamp | null;
+  code_review: unknown | null;
+  security_audit: unknown | null;
+  scope_verdicts: unknown | null;
+  summary_md: string | null;
+  prior_report_id: string | null;
+  token_usage: unknown | null;
+  cost_usd: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -669,13 +694,6 @@ export type AuctionBase = {
   validForDays: Generated<number>;
   description: string | null;
 };
-export type BaseModelLicensingFee = {
-  baseModel: string;
-  modelType: ModelType;
-  modelVersionId: number;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-};
 export type Bid = {
   id: Generated<number>;
   auctionId: number;
@@ -780,10 +798,41 @@ export type BlockScopeInvocation = {
    * the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
    */
   synthetic_app_id: string | null;
-  block_instance_id: string;
+  /**
+   * NULLABLE: an EXTERNAL OAuth invocation (`source = 'external-oauth'`) has no
+   * block instance — the acting app is a pure OauthClient with no App Block. A
+   * block-token row always sets this.
+   */
+  block_instance_id: string | null;
+  /**
+   * The acting OauthClient id for an EXTERNAL OAuth invocation (`source =
+   * 'external-oauth'`) — the "which app" for external OAuth API usage, mirroring
+   * what `appBlockId` is for a block-token row. NULL for a block-token row.
+   * Intentionally FK-LESS text so the audit row SURVIVES deletion of the
+   * OauthClient it references (an audit trail must outlive the app).
+   */
+  oauth_client_id: string | null;
+  /**
+   * Discriminates the token population that made the call: `'app-block'` (an App
+   * Block block-token, the historical default) vs `'external-oauth'` (a standard
+   * external OAuth access token verified at `enforceTokenScope`). Additive:
+   * existing rows backfill to `'app-block'`.
+   */
+  source: Generated<string>;
   scope: string;
   endpoint: string;
   status_code: number;
+  /**
+   * Structured per-action audit detail (W13). NULL for a passive read (whose
+   * friendly label is derived from `scope` at render time) and for any row
+   * written before this column existed. For an impactful MUTATION it carries a
+   * stable `action` code + minimal subject refs (`{ action, amount?, toUserId?,
+   * modelVersionId?, entityId?, entityType?, key?, outcome? }` — see
+   * BlockActionDetail). Stores IDS, not display names — the view resolves them
+   * via batch lookups, so the row never rots when a name changes. Nullable + no
+   * default → additive, backwards-compatible, no backfill.
+   */
+  detail: unknown | null;
   invoked_at: Generated<Timestamp>;
 };
 export type BlockSpendAttribution = {
@@ -811,6 +860,22 @@ export type BlockSpendAttribution = {
   spend_share_pct: number;
   app_owner_share_cents: number;
   app_owner_user_id: number;
+  /**
+   * The USER who published the shared content this generation ran on behalf
+   * of (the "content author") — the durable BASIS for a FUTURE creator
+   * payout. Resolved SERVER-SIDE from `sharedContentKey` against the calling
+   * app's own `app_<slug>.shared_kv`, never client-supplied. NULL when no
+   * key was supplied, the row is missing/hidden, or the author is the
+   * spender (self) or the app owner. FULLY GENERIC — any app that publishes
+   * cross-user shared content can populate it — not tied to any one app kind.
+   * TRACK-ONLY today: nothing pays out on it yet.
+   */
+  content_author_user_id: number | null;
+  /**
+   * The opaque shared-storage `key` the app supplied for this generation
+   * (bounded, app-owned). NULL when the app supplied none.
+   */
+  shared_content_key: string | null;
   status: Generated<string>;
   /**
    * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
@@ -1286,10 +1351,12 @@ export type Challenge = {
   modelVersionIds: Generated<number[]>;
   allowedNsfwLevel: Generated<number>;
   judgingPrompt: string | null;
+  judgingCategories: unknown | null;
   reviewPercentage: Generated<number>;
   maxReviews: number | null;
   collectionId: number | null;
   maxEntriesPerUser: Generated<number>;
+  maxParticipants: number | null;
   prizes: Generated<unknown>;
   entryPrize: unknown | null;
   entryPrizeRequirement: Generated<number>;
@@ -1304,14 +1371,30 @@ export type Challenge = {
   operationSpent: Generated<number>;
   reviewCostType: Generated<ChallengeReviewCostType>;
   reviewCost: Generated<number>;
-  createdById: number;
+  entryFee: Generated<number>;
+  buzzType: Generated<string>;
+  createdById: number | null;
   source: Generated<ChallengeSource>;
   judgeId: number | null;
   status: Generated<ChallengeStatus>;
+  ingestion: Generated<ChallengeIngestionStatus>;
+  scannedAt: Timestamp | null;
   metadata: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   eventId: number | null;
+};
+export type ChallengeCategory = {
+  key: string;
+  label: string;
+  group: string;
+  criteria: string;
+  rubric: string | null;
+  rubricNsfw: string | null;
+  sortOrder: Generated<number>;
+  active: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type ChallengeEvent = {
   id: Generated<number>;
@@ -1339,8 +1422,13 @@ export type ChallengeJudge = {
   reviewTemplate: string | null;
   winnerSelectionPrompt: string | null;
   active: Generated<boolean>;
+  userSelectable: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type ChallengeReport = {
+  challengeId: number;
+  reportId: number;
 };
 export type ChallengeWinner = {
   id: Generated<number>;
@@ -2244,6 +2332,15 @@ export type License = {
 export type LicenseToModel = {
   A: number;
   B: number;
+};
+export type LicensingRoot = {
+  id: Generated<number>;
+  baseModel: string;
+  modelType: ModelType;
+  modelVersionId: number;
+  isDefault: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type Link = {
   id: Generated<number>;
@@ -3386,6 +3483,7 @@ export type Thread = {
   challengeId: number | null;
   model3dId: number | null;
   model3dReviewId: number | null;
+  appListingId: number | null;
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
@@ -3771,6 +3869,7 @@ export type DB = {
   app_listing_reviews: AppListingReview;
   app_listing_screenshots: AppListingScreenshot;
   app_listings: AppListing;
+  app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   Article: Article;
@@ -3783,7 +3882,6 @@ export type DB = {
   ArticleStat: ArticleStat;
   Auction: Auction;
   AuctionBase: AuctionBase;
-  BaseModelLicensingFee: BaseModelLicensingFee;
   Bid: Bid;
   BidRecurring: BidRecurring;
   block_attribution_payout: BlockAttributionPayout;
@@ -3816,8 +3914,10 @@ export type DB = {
   BuzzWithdrawalRequestHistory: BuzzWithdrawalRequestHistory;
   CashWithdrawal: CashWithdrawal;
   Challenge: Challenge;
+  ChallengeCategory: ChallengeCategory;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
+  ChallengeReport: ChallengeReport;
   ChallengeWinner: ChallengeWinner;
   Changelog: Changelog;
   Chat: Chat;
@@ -3908,6 +4008,7 @@ export type DB = {
   Leaderboard: Leaderboard;
   LeaderboardResult: LeaderboardResult;
   License: License;
+  LicensingRoot: LicensingRoot;
   Link: Link;
   ModActivity: ModActivity;
   Model: Model;

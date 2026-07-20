@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -96,9 +97,20 @@ export const approveRequestSchema = z.object({
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;
 
+/**
+ * On-site reject-reason floor, unified with the shared moderator-reason minimum
+ * (`OFFSITE_MOD_REASON_MIN`, 3) so it matches every other mod-reason field on
+ * /apps/review and the client gate agrees with the server schema (was a magic 10).
+ */
+export const PUBLISH_REJECTION_REASON_MIN = OFFSITE_MOD_REASON_MIN;
+export const PUBLISH_REJECTION_REASON_MAX = 2000;
+
 export const rejectRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
-  rejectionReason: z.string().min(10).max(2000),
+  rejectionReason: z
+    .string()
+    .min(PUBLISH_REJECTION_REASON_MIN)
+    .max(PUBLISH_REJECTION_REASON_MAX),
 });
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
@@ -132,6 +144,15 @@ export const getReviewStatusSchema = z.object({
 });
 
 export type GetReviewStatusInput = z.infer<typeof getReviewStatusSchema>;
+
+/** Input for the MOD-ONLY review-sandbox `blocks.mintReviewBlockToken` (#2831) —
+ *  mints the self-bound, scope-stripped block token the on-site review preview
+ *  host handshakes with. Same shape as previewRequest (the pending request id). */
+export const mintReviewBlockTokenSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
 
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),

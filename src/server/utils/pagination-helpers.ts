@@ -16,13 +16,27 @@ export function getPagination(limit: number, page: number | undefined) {
 }
 
 export function getPagingData<T>(
-  data: { count?: number; items: T[] },
+  data: { count?: number; items: T[]; hasMore?: boolean },
   limit?: number,
   page?: number
 ) {
-  const { count: totalItems = 0, items } = data;
+  const { count: totalItems = 0, items, hasMore } = data;
   const currentPage = page ?? 1;
   const pageSize = limit ?? totalItems;
+
+  // hasMore-based pagination (e.g. the creator username-search path, which drops
+  // the expensive exact COUNT). No exact total is available, so totalItems and
+  // totalPages are monotonic LOWER-BOUNDS: exact once we've reached the final
+  // page (hasMore=false), otherwise "at least one more". `hasMore` is the
+  // authoritative next-page signal and keeps getPaginationLinks' nextPage link
+  // working (currentPage < totalPages ⇒ true while more pages remain).
+  if (hasMore !== undefined) {
+    const skipped = pageSize && currentPage > 1 ? (currentPage - 1) * pageSize : 0;
+    const boundTotalItems = skipped + items.length + (hasMore ? 1 : 0);
+    const totalPages = hasMore ? currentPage + 1 : currentPage;
+    return { items, totalItems: boundTotalItems, currentPage, pageSize, totalPages, hasMore };
+  }
+
   const totalPages = pageSize && totalItems ? Math.ceil((totalItems as number) / pageSize) : 1;
 
   return { items, totalItems, currentPage, pageSize, totalPages };
@@ -111,10 +125,7 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
   // deploy that changed the sort's `orderBy` field count. Reject as 400 rather
   // than crashing on the next line's `values[i].includes(...)` (undefined →
   // TypeError), which fell through to handleEndpointError's unlogged 500 branch
-  // — a silent, unattributable floor. NOTE: this guards arity only; it does NOT
-  // validate token contents, so an empty/NaN token (e.g. CONCAT(NULL,'|',id) →
-  // '|id' for a NULL sort column) still passes and parses to NaN — a separate,
-  // pre-existing issue, not addressed here.
+  // — a silent, unattributable floor.
   if (values.length !== fields.length) {
     throwBadRequestError(
       `Invalid cursor: expected ${fields.length} value(s) for this sort, received ${values.length}`
@@ -123,8 +134,27 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
   const result: Record<string, number | Date> = {};
   for (let i = 0; i < fields.length; i++) {
     const value = values[i];
-    if (value.includes('-')) result[fields[i].field] = dayjs.utc(value).toDate();
-    else result[fields[i].field] = parseInt(value, 10);
+    // Validate token contents (companion to the arity guard above). A cursor's
+    // tokens come from the DB-computed `prop` (a bare column, or CONCAT(col, '|',
+    // …) for a composite sort). When a sort column is NULL — e.g. a NULLS-LAST tail
+    // reached via browse filters — `CONCAT(NULL, '|', id)` collapses to `'|id'`, so
+    // this loop sees an empty token that parses to NaN (numeric) / Invalid Date. That
+    // NaN/Invalid bound then hit the SQL comparison and Postgres threw
+    // `invalid input syntax for type timestamp: "NaN"`, which surfaced as an
+    // unattributable INTERNAL_SERVER_ERROR (500). Reject the malformed cursor as a
+    // 400 instead. (Well-formed cursors carry real DB values, so this only fires on a
+    // genuinely unparseable token — never on a legitimate cursor.)
+    if (value.includes('-')) {
+      const parsed = dayjs.utc(value);
+      if (!parsed.isValid())
+        throwBadRequestError(`Invalid cursor: unparseable date value "${value}"`);
+      result[fields[i].field] = parsed.toDate();
+    } else {
+      const parsed = parseInt(value, 10);
+      if (Number.isNaN(parsed))
+        throwBadRequestError(`Invalid cursor: unparseable numeric value "${value}"`);
+      result[fields[i].field] = parsed;
+    }
   }
   return result;
 }
