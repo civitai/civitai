@@ -8,7 +8,8 @@ import {
   getTransactionsReportHandler,
   getUserAccountHandler,
   getUserMultipliersHandler,
-  getUserTransactionsHandler,
+  getUserTransactionsMultiHandler,
+  exportUserTransactionsHandler,
   previewMultiAccountTransactionHandler,
 } from '~/server/controllers/buzz.controller';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
@@ -20,7 +21,8 @@ import {
   getDailyBuzzCompensationInput,
   getEarnPotentialSchema,
   getTransactionsReportSchema,
-  getUserBuzzTransactionsSchema,
+  getUserBuzzTransactionsMultiSchema,
+  exportUserBuzzTransactionsSchema,
   previewMultiAccountTransactionInput,
   userBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
@@ -32,6 +34,7 @@ import {
   getPoolForecast,
   getUserBuzzAccounts,
 } from '~/server/services/buzz.service';
+import { rateLimit } from '~/server/middleware.trpc';
 import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -48,8 +51,22 @@ export const buzzRouter = router({
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: buzzProcedure
     .meta({ requiredScope: TokenScope.BuzzRead })
-    .input(getUserBuzzTransactionsSchema)
-    .query(getUserTransactionsHandler),
+    .input(getUserBuzzTransactionsMultiSchema)
+    .query(getUserTransactionsMultiHandler),
+  exportUserTransactions: buzzProcedure
+    .meta({ requiredScope: TokenScope.BuzzRead })
+    .use(
+      // Unbounded date range against ClickHouse plus a username hydrate — cheap
+      // per call, but trivially loopable into a scan of the whole table.
+      rateLimit({
+        limit: 10,
+        period: 3600,
+        errorMessage: 'Too many exports — try again in a bit.',
+      })
+    )
+    .input(exportUserBuzzTransactionsSchema)
+    // A read, but exposed as a mutation so the client can fire it imperatively.
+    .mutation(exportUserTransactionsHandler),
   tipUser: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialTip, blockApiKeys: true })
     .use(isFlagProtected('buzz'))

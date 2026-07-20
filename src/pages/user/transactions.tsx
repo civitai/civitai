@@ -5,17 +5,18 @@ import {
   Button,
   Card,
   Center,
+  Chip,
   Container,
   Group,
   Loader,
-  SegmentedControl,
   Select,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
-import { IconBolt } from '@tabler/icons-react';
+import { IconBolt, IconDownload } from '@tabler/icons-react';
+import { saveAs } from 'file-saver';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/router';
@@ -31,9 +32,10 @@ import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { capitalize } from '~/utils/string-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import type {
   BuzzTransactionDetails,
-  GetUserBuzzTransactionsSchema,
+  GetUserBuzzTransactionsMultiSchema,
 } from '~/server/schema/buzz.schema';
 
 const transactionTypes = [
@@ -52,7 +54,7 @@ const transactionTypes = [
 ];
 
 const defaultFilters = {
-  accountType: 'yellow' as const,
+  accountTypes: ['yellow'] as BuzzSpendType[],
   start: dayjs().subtract(1, 'month').startOf('month').startOf('day').toDate(),
   end: dayjs().endOf('month').endOf('day').toDate(),
 };
@@ -72,14 +74,14 @@ export default function UserTransactions() {
 
   // Get account type from query parameter
   const queryAccountType = router.query.accountType as BuzzSpendType | undefined;
-  const initialAccountType =
+  const initialAccountTypes =
     queryAccountType && buzzSpendTypes.includes(queryAccountType)
-      ? queryAccountType
-      : defaultFilters.accountType;
+      ? [queryAccountType]
+      : defaultFilters.accountTypes;
 
-  const [filters, setFilters] = useState<GetUserBuzzTransactionsSchema>({
+  const [filters, setFilters] = useState<GetUserBuzzTransactionsMultiSchema>({
     ...defaultFilters,
-    accountType: initialAccountType,
+    accountTypes: initialAccountTypes,
   });
   const { data, isLoading, fetchNextPage, isFetchingNextPage, hasNextPage } =
     trpc.buzz.getUserTransactions.useInfiniteQuery(filters, {
@@ -96,22 +98,56 @@ export default function UserTransactions() {
     setFilters((current) => ({ ...current, [name]: value }));
   };
 
+  const exportMutation = trpc.buzz.exportUserTransactions.useMutation({
+    onSuccess: ({ filename, csv }) => {
+      // The BOM keeps Excel from mangling non-ASCII usernames and descriptions.
+      saveAs(new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' }), filename);
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to export transactions',
+        error: new Error(error.message),
+      });
+    },
+  });
+
   return (
     <Container size="sm">
       <Stack gap="xl">
         <Title order={1}>Transaction History</Title>
-        <SegmentedControl
-          value={filters.accountType}
-          onChange={(v) => setFilters({ accountType: v as BuzzSpendType })}
-          data={buzzSpendTypes.map((type) => ({ label: capitalize(type), value: type }))}
-        />
-        <Group gap="sm">
+        <Group justify="space-between" gap="sm">
+          <Chip.Group
+            multiple
+            value={filters.accountTypes}
+            onChange={(value) => {
+              // Deselecting the last chip would leave nothing to query, so it's a no-op.
+              if (!value.length) return;
+              setFilters((current) => ({ ...current, accountTypes: value as BuzzSpendType[] }));
+            }}
+          >
+            <Group gap="xs">
+              {buzzSpendTypes.map((type) => (
+                <Chip key={type} value={type}>
+                  {capitalize(type)}
+                </Chip>
+              ))}
+            </Group>
+          </Chip.Group>
+          <Button
+            variant="light"
+            leftSection={<IconDownload size={16} />}
+            loading={exportMutation.isPending}
+            onClick={() => exportMutation.mutate(filters)}
+          >
+            Export CSV
+          </Button>
+        </Group>
+        <Group gap="sm" grow align="flex-start">
           <DatePickerInput
             label="From"
             name="start"
             placeholder="Start date"
             onChange={handleDateChange('start')}
-            w="calc(50% - 12px)"
             defaultValue={defaultFilters.start}
             maxDate={dayjs(filters.end).subtract(1, 'day').toDate()}
           />
@@ -120,7 +156,6 @@ export default function UserTransactions() {
             name="end"
             placeholder="End date"
             onChange={handleDateChange('end')}
-            w="calc(50% - 12px)"
             defaultValue={defaultFilters.end}
             minDate={dayjs(filters.start).add(1, 'day').toDate()}
             maxDate={defaultFilters.end}
@@ -150,7 +185,7 @@ export default function UserTransactions() {
           <Stack gap="md">
             {transactions.map((transaction, index) => {
               const { amount, date, fromUser, toUser, details, type } = transaction;
-              let { description } = transaction;
+              let description = transaction.description ?? undefined;
               const isDebit = amount < 0;
               const isImage = details?.entityType === 'Image';
               const { url, label }: { url?: string; label?: string } = details

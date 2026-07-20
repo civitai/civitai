@@ -27,8 +27,11 @@ import type {
   GetEarnPotentialSchema,
   // GetTransactionsReportResultSchema,
   GetTransactionsReportSchema,
+  ExportUserBuzzTransactionsSchema,
   GetUserBuzzAccountSchema,
+  GetUserBuzzTransactionsMultiSchema,
   GetUserBuzzTransactionsSchema,
+  BuzzTransactionDetails,
   PreviewMultiAccountTransactionInput,
   // PreviewMultiAccountTransactionResponse,
   RefundMultiAccountTransactionInput,
@@ -60,6 +63,10 @@ import {
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { getUserByUsername, getUsers } from './user.service';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+import { parseBuzzTransactionDetails } from '~/utils/buzz';
+import { toCsv } from '~/utils/csv';
+import { isDefined } from '~/utils/type-guards';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
@@ -295,6 +302,213 @@ export async function getUserBuzzTransactions({
       fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
     })),
   };
+}
+
+// The buzz service caps at 200 transactions per call and takes a single account
+// type, so a multi-account view or an export would need hundreds of sequential
+// round-trips. ClickHouse answers the same question in one query.
+const CH_MAX_EXPORT_ROWS = 100_000;
+
+function toClickhouseTransactionType(type: TransactionType) {
+  const name = TransactionType[type];
+  return name.charAt(0).toLowerCase() + name.slice(1);
+}
+
+const CURSOR_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|([0-9a-f-]{36})$/i;
+
+function toClickhouseCursor(cursor: string) {
+  const match = CURSOR_PATTERN.exec(cursor);
+  if (!match) throw throwBadRequestError('Invalid cursor');
+
+  return `(toDateTime('${match[1]}'), toUUID('${match[2]}'))`;
+}
+
+function toClickhouseDate(date: Date) {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+type ClickhouseBuzzTransaction = {
+  transactionId: string;
+  date: string;
+  type: string;
+  amount: number;
+  fromAccountId: number;
+  fromAccountType: string;
+  toAccountId: number;
+  toAccountType: string;
+  description: string;
+  details: string;
+  externalTransactionId: string;
+};
+
+// The `date, fromAccountId, toAccountId` sort key means an OR across both sides
+// falls back to a full range scan; one branch per direction lets each hit its
+// own projection (byFromAccount / byToAccount) instead.
+function buildTransactionsQuery({
+  accountId,
+  accountTypes,
+  type,
+  start,
+  end,
+  cursor,
+  limit,
+}: {
+  accountId: number;
+  accountTypes: BuzzSpendType[];
+  type?: TransactionType;
+  start?: Date | null;
+  end?: Date | null;
+  cursor?: string;
+  limit: number;
+}) {
+  const types = accountTypes.map((t) => `'${t}'`).join(',');
+  const shared = [
+    start ? `date >= '${toClickhouseDate(start)}'` : null,
+    end ? `date <= '${toClickhouseDate(end)}'` : null,
+    cursor ? `(date, transactionId) < ${toClickhouseCursor(cursor)}` : null,
+    type !== undefined ? `type = '${toClickhouseTransactionType(type)}'` : null,
+  ].filter(isDefined);
+
+  const branch = (direction: 'from' | 'to') =>
+    `SELECT transactionId, date, type, amount, fromAccountId, fromAccountType, toAccountId, toAccountType, description, details, externalTransactionId
+     FROM buzzTransactions
+     WHERE ${direction}AccountId = ${accountId} AND ${direction}AccountType IN (${types})
+     ${shared.map((clause) => `AND ${clause}`).join(' ')}`;
+
+  return `
+    SELECT * FROM (${branch('to')} UNION ALL ${branch('from')})
+    ORDER BY date DESC, transactionId DESC
+    LIMIT 1 BY transactionId
+    LIMIT ${limit}
+  `;
+}
+
+function parseDetails(details: string) {
+  if (!details) return undefined;
+  try {
+    return JSON.parse(details) as BuzzTransactionDetails;
+  } catch {
+    return undefined;
+  }
+}
+
+async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId: number) {
+  const counterpartyIds = new Set<number>();
+  for (const row of rows) {
+    if (row.fromAccountId !== 0) counterpartyIds.add(row.fromAccountId);
+    if (row.toAccountId !== 0) counterpartyIds.add(row.toAccountId);
+  }
+
+  const users = counterpartyIds.size ? await getUsers({ ids: [...counterpartyIds] }) : [];
+  const usersById = new Map(users.map((u) => [u.id, u]));
+
+  return rows.map((row) => {
+    const details = parseDetails(row.details);
+    const type =
+      TransactionType[
+        (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
+      ] ?? TransactionType.Tip;
+
+    return {
+      date: new Date(`${row.date.replace(' ', 'T')}Z`),
+      type,
+      // ClickHouse stores every amount as a positive magnitude; the direction
+      // lives in which side of the transaction the account is on.
+      amount: row.fromAccountId === accountId ? -row.amount : row.amount,
+      fromAccountId: row.fromAccountId,
+      toAccountId: row.toAccountId,
+      fromAccountType: row.fromAccountType as BuzzAccountType,
+      toAccountType: row.toAccountType as BuzzAccountType,
+      description: row.description || null,
+      details,
+      externalTransactionId: row.externalTransactionId || null,
+      fromUser: usersById.get(row.fromAccountId),
+      toUser: usersById.get(row.toAccountId),
+    };
+  });
+}
+
+export async function getUserBuzzTransactionsMulti({
+  accountId,
+  limit = 100,
+  ...input
+}: GetUserBuzzTransactionsMultiSchema & { accountId: number }) {
+  if (!clickhouse) throw throwBadRequestError('Transaction history is temporarily unavailable');
+
+  // One extra row tells us whether another page exists without a second query.
+  const rows = await clickhouse.$query<ClickhouseBuzzTransaction>(
+    buildTransactionsQuery({ accountId, limit: limit + 1, ...input })
+  );
+
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+
+  return {
+    cursor: hasMore && last ? `${last.date}|${last.transactionId}` : null,
+    transactions: await hydrateTransactions(page, accountId),
+  };
+}
+
+export async function exportUserBuzzTransactions({
+  accountId,
+  ...input
+}: ExportUserBuzzTransactionsSchema & { accountId: number }) {
+  if (!clickhouse) throw throwBadRequestError('Transaction export is temporarily unavailable');
+
+  const rows = await clickhouse.$query<ClickhouseBuzzTransaction>(
+    buildTransactionsQuery({ accountId, limit: CH_MAX_EXPORT_ROWS + 1, ...input })
+  );
+  if (rows.length > CH_MAX_EXPORT_ROWS)
+    throw throwBadRequestError(
+      `Too many transactions to export (over ${CH_MAX_EXPORT_ROWS.toLocaleString()}). Narrow the date range and try again.`
+    );
+
+  const transactions = await hydrateTransactions(rows, accountId);
+  const baseUrl = getBaseUrl();
+
+  const csv = toCsv(
+    [
+      'date',
+      'type',
+      'amount',
+      'accountType',
+      'fromUser',
+      'toUser',
+      'description',
+      'entityUrl',
+      'externalTransactionId',
+    ],
+    transactions.map((t) => {
+      const isDebit = t.fromAccountId === accountId;
+      const { url } = parseBuzzTransactionDetails(t.details, t.type);
+      const entityUrl = !url ? '' : url.startsWith('http') ? url : `${baseUrl}${url}`;
+
+      return [
+        t.date.toISOString(),
+        TransactionType[t.type],
+        t.amount,
+        isDebit ? t.fromAccountType : t.toAccountType,
+        counterpartyName(t.fromAccountId, t.fromUser?.username),
+        counterpartyName(t.toAccountId, t.toUser?.username),
+        t.description,
+        entityUrl,
+        t.externalTransactionId,
+      ];
+    })
+  );
+
+  const range = [input.start, input.end].map((date) =>
+    date ? toClickhouseDate(date).slice(0, 10) : 'all'
+  );
+  const filename = `civitai-transactions_${input.accountTypes.join('-')}_${range.join('_')}.csv`;
+
+  return { filename, csv };
+}
+
+function counterpartyName(accountId: number, username?: string) {
+  if (accountId === 0) return 'Civitai';
+  return username ?? `User ${accountId}`;
 }
 
 export async function createBuzzTransaction({
@@ -1093,7 +1307,9 @@ export const getDailyCompensationRewardByUser = async ({
         -- License fees can settle to cash OR buzz, so we ignore the accountType filter on that source and surface all of them together.
         AND ${
           accountType && source !== 'licenseFee'
-            ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(accountType)}')`
+            ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(
+                accountType
+              )}')`
             : '1=1'
         }
       GROUP BY modelVersionId, accountType, date
