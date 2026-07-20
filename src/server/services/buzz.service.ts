@@ -636,12 +636,25 @@ export async function* streamUserBuzzTransactionsCsv({
 
   assertValidTransactionRange(input);
 
-  yield `${toCsv(EXPORT_COLUMNS, [])}\r\n`;
-
+  // The header row is held back until the first slice comes back. Yielding it
+  // up front would commit the response headers before any query ran, which turns
+  // the likeliest failure — ClickHouse unavailable on slice one — into an
+  // unexplained aborted download instead of a readable error.
+  const header = `${toCsv(EXPORT_COLUMNS, [])}\r\n`;
   const usernames = new Map<number, string>();
+  let started = false;
+
   for await (const rows of walkTransactionSlices({ ...input, accountId })) {
-    yield `${await formatExportBatch(rows, accountId, usernames)}\r\n`;
+    const body = await formatExportBatch(rows, accountId, usernames);
+    if (!started) {
+      started = true;
+      yield header;
+    }
+    yield `${body}\r\n`;
   }
+
+  // A range with no transactions still gets a well-formed, header-only file.
+  if (!started) yield header;
 }
 
 function counterpartyName(accountId: number, username?: string) {

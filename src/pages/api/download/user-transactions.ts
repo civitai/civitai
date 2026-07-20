@@ -110,7 +110,12 @@ export default AuthedEndpoint(
         if (!res.headersSent) {
           res.setHeader('Content-Type', 'text/csv; charset=utf-8');
           res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-          res.setHeader('Cache-Control', 'private, no-store');
+          // no-transform and X-Accel-Buffering match the SSE endpoint in
+          // api/admin/clear-cache-by-pattern: without them an nginx-family proxy
+          // buffers the whole body before forwarding a byte, which holds the
+          // entire CSV in memory one hop out and undoes the streaming.
+          res.setHeader('Cache-Control', 'private, no-store, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
           // Chunked with no Content-Length: proxies and Chrome's download manager
           // both behave better when the headers are committed up front rather
           // than riding along with the first body write.
