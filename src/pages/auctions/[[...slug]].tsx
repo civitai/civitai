@@ -12,6 +12,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
+import type { InferGetServerSidePropsType } from 'next';
 import { usePathname } from 'next/navigation';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
@@ -27,6 +28,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getAuctionNameBySlug } from '~/server/services/auction.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -51,11 +53,18 @@ export const getServerSideProps = createServerSideProps({
       };
     }
 
-    return { props: {} };
+    // Only the name, so link unfurls carry the auction. Everything the page renders is
+    // fetched client-side.
+    const auctionName =
+      slug?.[0] && slug[0] !== MY_BIDS ? await getAuctionNameBySlug(slug[0]) : null;
+
+    return { props: { auctionName } };
   },
 });
 
-export default function Auctions() {
+export default function Auctions({
+  auctionName,
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
   const { slug: initialSlug } = router.query as AuctionQueryData;
   const slug = initialSlug && initialSlug.length ? initialSlug[0] : undefined;
@@ -81,13 +90,8 @@ export default function Auctions() {
   } = trpc.auction.getAll.useQuery();
 
   const getDocTitle = () => {
-    return `Auction${
-      slug === MY_BIDS
-        ? ': My Bids'
-        : selectedAuction?.auctionBase?.name
-        ? `: ${selectedAuction.auctionBase.name}`
-        : 's'
-    } | Civitai`;
+    const name = selectedAuction?.auctionBase?.name ?? auctionName;
+    return `Auction${slug === MY_BIDS ? ': My Bids' : name ? `: ${name}` : 's'} | Civitai`;
   };
 
   // TODO fix hitting /auctions when none are available

@@ -258,6 +258,17 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
   });
 };
 
+// Just the name, for the server-rendered title — link unfurlers don't run the client
+// effect that sets it. The slug can't be detitled: it drops the separator and flattens
+// the ecosystem casing (`featured-resources-noobai` -> "Featured Resources - NoobAI").
+export const getAuctionNameBySlug = async (slug: string) => {
+  const auctionBase = await dbWrite.auctionBase.findFirst({
+    where: { slug },
+    select: { name: true },
+  });
+  return auctionBase?.name ?? null;
+};
+
 export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
 export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
   const now = dayjs
