@@ -8,7 +8,7 @@ import {
   getTransactionExportFilename,
   streamUserBuzzTransactionsCsv,
 } from '~/server/services/buzz.service';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -77,7 +77,11 @@ export default AuthedEndpoint(
     // Kill switch: flipping `buzz-transaction-export` off in Flipt closes the
     // endpoint as well as the button, so a client holding a stale page or a
     // bookmarked URL can't keep the load coming.
-    if (!getFeatureFlags({ user, req }).buzzTransactionExport)
+    // Async, not the sync variant: the sync path only consults Flipt if some
+    // earlier request in this process already initialised it, so on a freshly
+    // started pod the kill switch would silently evaluate to its static default
+    // (on) — exactly when a deploy or scale-up makes you reach for it.
+    if (!(await getFeatureFlagsAsync({ user, req })).buzzTransactionExport)
       return res.status(404).json({ error: 'Not found' });
 
     const parsed = querySchema.safeParse(req.query);

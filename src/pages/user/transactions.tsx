@@ -54,6 +54,14 @@ const transactionTypes = [
   TransactionType[TransactionType.Redeemable],
 ];
 
+function safeJsonParse(body: string): { error?: string } {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return {};
+  }
+}
+
 // Built per-mount, not at module scope: dayjs() there is evaluated once per
 // process, so a long-lived pod would serve last month's defaults and cap the
 // "To" picker below the current month.
@@ -134,14 +142,27 @@ export default function UserTransactions() {
         });
         return;
       }
-      // A hidden iframe rather than a navigation: if the real request is refused
-      // between the probe and here (a second tab, a double-click), the JSON error
-      // renders inside the iframe instead of replacing this page with it.
+      // A hidden iframe rather than a navigation, so a refusal between the probe
+      // and here (a second tab, a double-click, the kill switch being flipped)
+      // doesn't replace this page with a raw JSON document.
+      //
+      // A successful response carries Content-Disposition, which the browser
+      // turns into a download WITHOUT firing `load` on the frame. So `load`
+      // firing at all means what arrived was an error body, not a file — that's
+      // the only signal available, and without it a failure is invisible.
       const frame = document.createElement('iframe');
       frame.style.display = 'none';
-      frame.src = exportUrl;
+      frame.onload = () => {
+        const body = frame.contentDocument?.body?.textContent ?? '';
+        const { error } = safeJsonParse(body);
+        showErrorNotification({
+          title: 'Export unavailable',
+          error: new Error(error ?? 'Could not export transactions right now.'),
+        });
+        frame.remove();
+      };
       document.body.appendChild(frame);
-      window.setTimeout(() => frame.remove(), 60_000);
+      frame.src = exportUrl;
     } catch {
       showErrorNotification({
         title: 'Export unavailable',
