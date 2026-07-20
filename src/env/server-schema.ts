@@ -396,12 +396,24 @@ export const serverSchema = z
     // popularity-rank staleness on the search doc lags by up to the window
     // (genuine mutations still reindex immediately via the service layer).
     // Default 45m (3× the previous fixed 15m); tune down to react faster or up
-    // to shed more search-index write pressure.
+    // to shed more search-index write pressure. Changing it requires a pod
+    // restart/rollout to take effect (env is read once at module load — no live
+    // reconfiguration, though no image rebuild is needed).
+    // `.int().min(60_000).catch(45m)` fail-soft: this is a single, non-critical
+    // search-hygiene knob, but it is parsed as part of the whole-app serverSchema
+    // that throws on ANY invalid field (src/env/server.ts) — so a bad value here
+    // (0/empty/float/garbage — e.g. a "disable debounce" attempt) would crash the
+    // ENTIRE app boot, not just search. `.catch(...)` degrades any parse/validation
+    // failure to the safe 45m default instead of crashing; the `.min(60_000)`
+    // (1-minute) floor is documented intent — a sub-minute window is pointless
+    // (the processor only runs once per minute) and out-of-range/garbage values
+    // fall back to the default rather than throwing. Mirrors the
+    // EXTERNAL_MODERATION_TIMEOUT_MS clamp pattern below.
     SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS: z.coerce
       .number()
       .int()
-      .positive()
-      .default(45 * 60 * 1000),
+      .min(60_000)
+      .catch(45 * 60 * 1000),
     // Per-call Meilisearch timeout in ms. Calls wrapped via withMeili() fail
     // fast with MeiliCallTimeoutError once exceeded, instead of hanging until
     // Traefik's 30s router timeout fires. Default tuned for the image feed
