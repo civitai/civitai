@@ -1,23 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockDbRead, mockDbWrite, mockVoidChallenge, mockCreateNotification } = vi.hoisted(() => ({
-  mockDbRead: {
-    challenge: { findUnique: vi.fn() },
-    collection: { findUnique: vi.fn() },
-  },
-  mockDbWrite: {
-    challenge: { update: vi.fn() },
-    collection: { updateMany: vi.fn() },
-  },
-  mockVoidChallenge: vi.fn(),
-  mockCreateNotification: vi.fn(),
-}));
+const { mockDbRead, mockDbWrite, mockVoidChallenge, mockCreateNotification, mockLogToAxiom } =
+  vi.hoisted(() => ({
+    mockDbRead: {
+      challenge: { findUnique: vi.fn() },
+      collection: { findUnique: vi.fn() },
+    },
+    mockDbWrite: {
+      challenge: { update: vi.fn() },
+      collection: { updateMany: vi.fn() },
+    },
+    mockVoidChallenge: vi.fn(),
+    mockCreateNotification: vi.fn(),
+    mockLogToAxiom: vi.fn(),
+  }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/challenge.service', () => ({ voidChallenge: mockVoidChallenge }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 const { applyChallengeNsfwEscalation } = await import('./challenge-nsfw-escalation');
 
@@ -31,6 +34,7 @@ function challenge(overrides: Record<string, unknown> = {}) {
     source: 'User',
     createdById: 7,
     collectionId: 55,
+    status: 'Scheduled',
     ...overrides,
   };
 }
@@ -42,6 +46,7 @@ beforeEach(() => {
   mockDbRead.collection.findUnique.mockResolvedValue({ metadata: { forcedBrowsingLevel: PG_PG13 } });
   mockVoidChallenge.mockResolvedValue({ success: true });
   mockCreateNotification.mockResolvedValue(undefined);
+  mockLogToAxiom.mockResolvedValue(undefined);
 });
 
 describe('applyChallengeNsfwEscalation', () => {
@@ -103,5 +108,19 @@ describe('applyChallengeNsfwEscalation', () => {
     await applyChallengeNsfwEscalation({ entityId: 404, isNsfw: true });
     expect(mockDbWrite.challenge.update).not.toHaveBeenCalled();
     expect(mockVoidChallenge).not.toHaveBeenCalled();
+  });
+
+  it('green user + nsfw while Active: hides via Blocked + alerts mods, no void, no refund, no cancel notif', async () => {
+    mockDbRead.challenge.findUnique.mockResolvedValue(challenge({ status: 'Active' }));
+
+    await applyChallengeNsfwEscalation({ entityId: 77, isNsfw: true });
+
+    expect(mockVoidChallenge).not.toHaveBeenCalled();
+    const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
+    expect(data.ingestion).toBe('Blocked');
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'challenge-nsfw-escalation-held', challengeId: 77 })
+    );
   });
 });

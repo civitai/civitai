@@ -7,7 +7,12 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { voidChallenge } from '~/server/services/challenge.service';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { ChallengeIngestionStatus, ChallengeSource } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeIngestionStatus,
+  ChallengeSource,
+  ChallengeStatus,
+} from '~/shared/utils/prisma/enums';
+import { logToAxiom } from '~/server/logging/client';
 
 // Applies the scan verdict to a challenge. A green USER challenge whose text is NSFW is cancelled
 // (green must be SFW): void it (Cancelled + collection closed + initial prize refunded, all idempotent),
@@ -32,6 +37,7 @@ export async function applyChallengeNsfwEscalation({
       source: true,
       createdById: true,
       collectionId: true,
+      status: true,
     },
   });
   if (!challenge) return;
@@ -45,27 +51,50 @@ export async function applyChallengeNsfwEscalation({
   });
 
   if (escalation.cancel) {
-    // Void FIRST (Cancelled + collection closed + prize refunded, idempotent) so a crash before the
-    // scan-state write leaves the challenge Cancelled/hidden — never a Scanned-and-therefore-visible
-    // green NSFW challenge. Then resolve the moderation state.
-    await voidChallenge(entityId);
+    // Only auto-void a challenge that has NOT started. A Scheduled green challenge is entry-free
+    // (entry gate) — or holds only legacy pre-gate free entries — so voiding it (Cancelled +
+    // collection closed + prize refunded, all idempotent) is always safe. Void FIRST so a crash
+    // before the scan-state write leaves it Cancelled/hidden, never Scanned-and-visible.
+    if (challenge.status === ChallengeStatus.Scheduled) {
+      await voidChallenge(entityId);
+      await dbWrite.challenge.update({
+        where: { id: entityId },
+        data: { ingestion: ChallengeIngestionStatus.Scanned, scannedAt: new Date() },
+      });
+      if (challenge.createdById) {
+        await createNotification({
+          userId: challenge.createdById,
+          category: NotificationCategory.System,
+          type: 'system-message',
+          key: `challenge-nsfw-cancelled-${entityId}`,
+          details: {
+            message:
+              'Your challenge was cancelled because its text was flagged as adult content — green challenges must be safe-for-work. Any prize you funded has been refunded; you can recreate it on civitai.red.',
+            url: `/challenges/${entityId}`,
+          },
+        });
+      }
+      return;
+    }
+
+    // Defense-in-depth: a scan verdict reached an already-started (non-Scheduled) green challenge.
+    // This should be unreachable post entry-gate (Active challenges are never re-scanned); if the
+    // invariant is ever broken, do NOT auto-void a live challenge out from under entrants. Hide it
+    // (Blocked ⟹ excluded from feeds) and alert mods to void+refund or override by hand. No auto-
+    // refund and no creator "cancelled" notification — a human decides.
     await dbWrite.challenge.update({
       where: { id: entityId },
-      data: { ingestion: ChallengeIngestionStatus.Scanned, scannedAt: new Date() },
+      data: { ingestion: ChallengeIngestionStatus.Blocked, scannedAt: new Date() },
     });
-    if (challenge.createdById) {
-      await createNotification({
-        userId: challenge.createdById,
-        category: NotificationCategory.System,
-        type: 'system-message',
-        key: `challenge-nsfw-cancelled-${entityId}`,
-        details: {
-          message:
-            'Your challenge was cancelled because its text was flagged as adult content — green challenges must be safe-for-work. Any prize you funded has been refunded; you can recreate it on civitai.red.',
-          url: `/challenges/${entityId}`,
-        },
-      });
-    }
+    logToAxiom({
+      type: 'error',
+      name: 'challenge-nsfw-escalation-held',
+      message: `Green challenge ${entityId} scanned NSFW while ${String(
+        challenge.status
+      )}; hidden and held for moderator review instead of auto-void.`,
+      challengeId: entityId,
+      status: String(challenge.status),
+    });
     return;
   }
 
