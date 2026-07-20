@@ -322,14 +322,24 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     !!currentUser &&
     currentUser.id === challenge.createdById &&
     challenge.source === ChallengeSource.User;
+  const isCancelled = challenge.status === ChallengeStatus.Cancelled;
   const canManageOwn =
     features.userChallenges && isOwner && !currentUser?.isModerator && isScheduled;
+  // Delete stays available after a moderator voids the challenge (Cancelled) so the owner can clear
+  // a dead challenge off their list; edit remains Scheduled-only (canManageOwn).
+  const canDeleteOwn =
+    features.userChallenges &&
+    isOwner &&
+    !currentUser?.isModerator &&
+    (isScheduled || isCancelled);
 
   const handleOwnerDelete = () => {
     openConfirmModal({
       title: 'Delete challenge',
-      children:
-        'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
+      // A Cancelled challenge was already refunded by the void, so don't promise another refund.
+      children: isCancelled
+        ? 'Delete this cancelled challenge? This cannot be undone.'
+        : 'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
       centered: true,
       closeOnConfirm: false,
       labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
@@ -388,7 +398,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                   <IconShare3 size={20} />
                 </ActionIcon>
               </ShareButton>
-              {(currentUser?.isModerator || canReport || canManageOwn) && (
+              {(currentUser?.isModerator || canReport || canDeleteOwn) && (
                 <Menu position="bottom-end" withArrow>
                   <Menu.Target>
                     <ActionIcon variant="light" size="lg">
@@ -475,16 +485,18 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                         </Menu.Item>
                       </>
                     )}
-                    {canManageOwn && (
+                    {canDeleteOwn && (
                       <>
                         <Menu.Label>Actions</Menu.Label>
-                        <Menu.Item
-                          leftSection={<IconPencil size={14} stroke={1.5} />}
-                          component={Link}
-                          href={`/challenges/${challenge.id}/edit`}
-                        >
-                          Edit Challenge
-                        </Menu.Item>
+                        {canManageOwn && (
+                          <Menu.Item
+                            leftSection={<IconPencil size={14} stroke={1.5} />}
+                            component={Link}
+                            href={`/challenges/${challenge.id}/edit`}
+                          >
+                            Edit Challenge
+                          </Menu.Item>
+                        )}
                         <Menu.Item
                           leftSection={<IconTrash size={14} />}
                           color="red"

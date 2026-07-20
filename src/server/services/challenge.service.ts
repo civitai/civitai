@@ -1856,9 +1856,12 @@ export async function deleteChallenge(id: number) {
   return { success: true };
 }
 
-// User-scoped delete: a creator may delete their own challenge only while it is still Scheduled
-// with no entries (no entry fees collected). Delegates to deleteChallenge, which already refunds
-// the creator's escrowed prize for Scheduled User challenges before removing challenge + collection.
+// User-scoped delete: a creator may delete their own challenge while it is still Scheduled (with no
+// entries), or after a moderator has voided it (Cancelled). A Cancelled challenge is already dead and
+// its funds refunded, so — like the moderator delete path — it may be removed regardless of entries;
+// the entry-count block only guards Scheduled challenges, where deleting would erase submissions on a
+// still-live challenge. Delegates to deleteChallenge, which refunds a Scheduled or Cancelled User
+// challenge (idempotently) before removing challenge + collection.
 export async function deleteUserChallenge({ id, userId }: { id: number; userId: number }) {
   const existing = await dbRead.challenge.findUnique({
     where: { id },
@@ -1869,12 +1872,15 @@ export async function deleteUserChallenge({ id, userId }: { id: number; userId: 
     throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be deleted here.' });
   if (existing.createdById !== userId)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own challenges.' });
-  if (existing.status !== ChallengeStatus.Scheduled)
+  if (
+    existing.status !== ChallengeStatus.Scheduled &&
+    existing.status !== ChallengeStatus.Cancelled
+  )
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: 'A published challenge can no longer be deleted.',
+      message: 'This challenge can no longer be deleted.',
     });
-  if (existing.collectionId) {
+  if (existing.status === ChallengeStatus.Scheduled && existing.collectionId) {
     const entryCount = await dbRead.collectionItem.count({
       where: { collectionId: existing.collectionId },
     });
@@ -1884,8 +1890,8 @@ export async function deleteUserChallenge({ id, userId }: { id: number; userId: 
         message: 'This challenge already has entries and can no longer be deleted.',
       });
   }
-  // deleteChallenge re-reads status and only refunds/deletes a Scheduled row, so a race with the
-  // activation job fails safe (blocks Active) rather than double-refunding.
+  // deleteChallenge re-reads status and only refunds/deletes a Scheduled or Cancelled row, so a race
+  // with the activation job fails safe (blocks Active) rather than double-refunding.
   return deleteChallenge(id);
 }
 
