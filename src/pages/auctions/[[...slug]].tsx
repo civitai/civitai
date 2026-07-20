@@ -12,7 +12,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
-import type { InferGetServerSidePropsType } from 'next';
 import { usePathname } from 'next/navigation';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
@@ -38,58 +37,25 @@ type AuctionQueryData = {
 };
 
 export const getServerSideProps = createServerSideProps({
-  useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, features, ctx, session }) => {
+  resolver: async ({ features, ctx, session }) => {
     if (!features?.auctions) return { notFound: true };
 
-    let auctionName: string | null = null;
-    let valid = true;
-
-    if (ssg) {
-      await ssg.auction.getAll.prefetch();
-      const { slug, d } = ctx.query as AuctionQueryData;
-      if (slug && slug.length) {
-        const sSlug = slug[0];
-        if (sSlug !== MY_BIDS) {
-          // await ssg.auction.getBySlug.prefetch({ slug: sSlug });
-          try {
-            await ssg.auction.getMyBids.prefetch();
-
-            // TODO try to parse this better
-            // const queryD = Array.isArray(d) ? d[0] : d;
-            // const realD = !queryD ? 0 : Number(queryD);
-            // const res = await ssg.auction.getBySlug.fetch({ slug: sSlug, d: realD });
-            const res = await ssg.auction.getBySlug.fetch({ slug: sSlug });
-            auctionName = res?.auctionBase?.name ?? null;
-          } catch {
-            valid = false;
-          }
-        } else {
-          if (!session) {
-            return {
-              redirect: {
-                destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
-                permanent: false,
-              },
-            };
-          }
-          await ssg.auction.getMyBids.prefetch();
-          await ssg.auction.getMyRecurringBids.prefetch();
-
-          auctionName = 'My Bids';
-        }
-      }
+    const { slug } = ctx.query as AuctionQueryData;
+    if (slug?.[0] === MY_BIDS && !session) {
+      return {
+        redirect: {
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
+          permanent: false,
+        },
+      };
     }
 
-    return { props: { auctionName, valid } };
+    return { props: {} };
   },
 });
 
-export default function Auctions({
-  auctionName,
-  valid,
-}: InferGetServerSidePropsType<typeof getServerSideProps>) {
+export default function Auctions() {
   const router = useRouter();
   const { slug: initialSlug } = router.query as AuctionQueryData;
   const slug = initialSlug && initialSlug.length ? initialSlug[0] : undefined;
@@ -118,8 +84,6 @@ export default function Auctions({
     return `Auction${
       slug === MY_BIDS
         ? ': My Bids'
-        : auctionName
-        ? `: ${auctionName}`
         : selectedAuction?.auctionBase?.name
         ? `: ${selectedAuction.auctionBase.name}`
         : 's'
@@ -139,11 +103,12 @@ export default function Auctions({
     document.title = getDocTitle();
   }, [slug, auctions.length]);
 
+  // A slug that matches no active auction is only knowable once the list has loaded.
   useEffect(() => {
-    if (valid !== validAuction) {
-      setValidAuction(valid);
-    }
-  }, [valid]);
+    if (isLoadingAuctions || isErrorAuctions) return;
+    const valid = !slug || slug === MY_BIDS || auctions.some((a) => a.auctionBase.slug === slug);
+    if (valid !== validAuction) setValidAuction(valid);
+  }, [slug, auctions.length, isLoadingAuctions, isErrorAuctions]);
 
   useEffect(() => {
     if (!running) runTour({ key: 'auction', step: 0 });

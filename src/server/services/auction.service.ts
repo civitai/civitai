@@ -3,7 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { uniq } from 'lodash-es';
 import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/auction.utils';
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -89,15 +89,15 @@ type AuctionSelectType = Prisma.AuctionGetPayload<typeof auctionValidator>;
 
 export type GetAllAuctionsReturn = AsyncReturnType<typeof getAllAuctions>;
 
-// The origin (uncached) fetch: reads the active-auction set from the PRIMARY DB
-// (`dbWrite`) and reduces each to `{ id, auctionBase, lowestBidRequired }`. The
-// output is fully user-independent (no `ctx`/`userId`) — the requiredScope on the
-// router gates ACCESS, not the payload — so a single global cache entry is correct
-// for every caller. Kept as a separate export so tests can assert cache-hit skips it.
+// The origin (uncached) fetch: reduces each active auction to
+// `{ id, auctionBase, lowestBidRequired }`. The output is fully user-independent
+// (no `ctx`/`userId`) — the requiredScope on the router gates ACCESS, not the
+// payload — so a single global cache entry is correct for every caller. Kept as a
+// separate export so tests can assert cache-hit skips it.
 export async function getAllAuctionsUncached() {
   const now = new Date();
 
-  const aData = await dbWrite.auction.findMany({
+  const aData = await dbRead.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
     select: auctionSelect,
     orderBy: { auctionBase: { ecosystem: { sort: 'asc', nulls: 'first' } } },
@@ -135,8 +135,7 @@ export async function getAllAuctionsUncached() {
   });
 }
 
-// Short-TTL (30s) read-through over the user-independent active-auction list to cut
-// load on the PRIMARY DB (`getAllAuctionsUncached` reads `dbWrite`), which
+// Short-TTL (30s) read-through over the user-independent active-auction list, which
 // `auction.getAll` hits ~21.8x/s at peak. Output is byte-identical to the uncached
 // path; the only delta is up-to-30s staleness. That is safe here:
 //   - the active set is time-windowed (startAt<=now<endAt); a <=30s lag in an
@@ -186,8 +185,7 @@ export const prepareBids = (
 const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
   const entityIds = data.map((x) => x.entityId);
 
-  // TODO switch back to dbRead
-  const mvData = await dbWrite.modelVersion.findMany({
+  const mvData = await dbRead.modelVersion.findMany({
     where: { id: { in: entityIds } },
     select: {
       id: true,
@@ -248,7 +246,7 @@ export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
     .startOf('day')
     .toDate();
 
-  const auction = await dbWrite.auction.findFirst({
+  const auction = await dbRead.auction.findFirst({
     where: { startAt: { lte: now }, endAt: { gt: now }, auctionBase: { slug } },
     select: auctionSelect,
   });
@@ -277,7 +275,7 @@ export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
 export type GetMyBidsReturn = AsyncReturnType<typeof getMyBids>;
 export const getMyBids = async ({ userId }: { userId: number }) => {
   try {
-    const bids = await dbWrite.bid.findMany({
+    const bids = await dbRead.bid.findMany({
       where: { userId, deleted: false },
       select: {
         id: true,
@@ -357,7 +355,7 @@ export const getMyRecurringBids = async ({ userId }: { userId: number }) => {
     const now = new Date();
 
     // TODO add active check on auctionBase
-    const bids = await dbWrite.bidRecurring.findMany({
+    const bids = await dbRead.bidRecurring.findMany({
       where: {
         userId,
         startAt: { lte: now },
@@ -429,8 +427,7 @@ export const createBid = async ({
 
   // - Check if entityId is valid for this auction type
   if (auctionData.auctionBase.type === AuctionType.Model) {
-    // TODO switch back to dbRead
-    const mv = await dbWrite.modelVersion.findFirst({
+    const mv = await dbRead.modelVersion.findFirst({
       where: { id: entityId },
       select: {
         baseModel: true,

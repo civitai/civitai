@@ -1,4 +1,4 @@
-import { ActionIcon, Center, Divider, Loader, Stack, Text, TextInput, Title } from '@mantine/core';
+import { ActionIcon, Center, Divider, Skeleton, Stack, Text, TextInput, Title } from '@mantine/core';
 import { IconAlertCircle, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useCallback, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -10,6 +10,14 @@ import type { GetMyBidsReturn, GetMyRecurringBidsReturn } from '~/server/service
 import { AuctionType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+
+const bidSkeletons = (
+  <Stack>
+    {Array.from({ length: 3 }, (_, i) => (
+      <Skeleton key={i} height={78} radius="sm" animate />
+    ))}
+  </Stack>
+);
 
 export const AuctionMyBids = () => {
   const currentUser = useCurrentUser();
@@ -98,10 +106,8 @@ export const AuctionMyBids = () => {
 
       <Title order={5}>Active Bids</Title>
       {isLoadingBidData ? (
-        <Center my="lg">
-          <Loader />
-        </Center>
-      ) : isErrorBidData ? (
+        bidSkeletons
+      ) :isErrorBidData ? (
         <Center my="lg">
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
             <Text>There was an error fetching your bid data. Please try again.</Text>
@@ -130,10 +136,8 @@ export const AuctionMyBids = () => {
 
       <Title order={5}>Recurring Bids</Title>
       {isLoadingBidRecurringData ? (
-        <Center my="lg">
-          <Loader />
-        </Center>
-      ) : isErrorBidRecurringData ? (
+        bidSkeletons
+      ) :isErrorBidRecurringData ? (
         <Center my="lg">
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
             <Text>There was an error fetching your bid data. Please try again.</Text>
@@ -161,10 +165,8 @@ export const AuctionMyBids = () => {
 
       <Title order={5}>Past Bids</Title>
       {isLoadingBidData ? (
-        <Center my="lg">
-          <Loader />
-        </Center>
-      ) : isErrorBidData ? (
+        bidSkeletons
+      ) :isErrorBidData ? (
         <Center my="lg">
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
             <Text>There was an error fetching your bid data. Please try again.</Text>

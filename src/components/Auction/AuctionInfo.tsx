@@ -10,6 +10,7 @@ import {
   Loader,
   Overlay,
   Paper,
+  Skeleton,
   Stack,
   Text,
   TextInput,
@@ -501,7 +502,11 @@ export const AuctionInfo = () => {
         </Center>
       ) : (
         <Stack>
-          <Title order={3}>{auctionData?.auctionBase?.name ?? 'Loading...'}</Title>
+          <Skeleton visible={!auctionData && !selectedAuction} animate>
+            <Title order={3}>
+              {auctionData?.auctionBase?.name ?? selectedAuction?.auctionBase?.name ?? ' '}
+            </Title>
+          </Skeleton>
           {!!auctionData?.auctionBase?.description && (
             <Text size="md" c="dimmed" fs="italic">
               {auctionData.auctionBase.description}
@@ -859,9 +864,11 @@ export const AuctionInfo = () => {
             </Group>
           </Group>
           {isLoadingAuctionData ? (
-            <Center my="lg">
-              <Loader />
-            </Center>
+            <Stack>
+              {Array.from({ length: 5 }, (_, i) => (
+                <Skeleton key={i} height={78} radius="sm" animate />
+              ))}
+            </Stack>
           ) : !auctionData ? (
             <Center my="lg">
               <Text>Nothing here</Text>
