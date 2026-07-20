@@ -1,5 +1,4 @@
 import {
-  Accordion,
   Alert,
   Badge,
   Button,
@@ -8,7 +7,6 @@ import {
   Group,
   Modal,
   NumberInput,
-  ScrollArea,
   Select,
   SimpleGrid,
   Stack,
@@ -31,7 +29,7 @@ import {
   IconWindow,
   IconX,
 } from '@tabler/icons-react';
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
@@ -318,9 +316,8 @@ function OnsiteReviewModalBody({
             {formatDate(request.submittedAt)}
           </Text>
           <Text size="xs" c="dimmed">
-            · {formatBytes(request.bundleSizeBytes)} · sha256:
+            · {formatBytes(request.bundleSizeBytes)}
           </Text>
-          <Code style={{ fontSize: 10 }}>{request.bundleSha256.slice(0, 12)}…</Code>
         </Group>
 
         {(approved || rejected) && (
@@ -372,20 +369,6 @@ function OnsiteReviewModalBody({
           </Alert>
         )}
 
-        <Button
-          component="a"
-          href={request.pushCommitUrl ?? request.reviewRepoUrl}
-          target="_blank"
-          rel="noopener"
-          variant="default"
-          leftSection={<IconCode size={14} />}
-          rightSection={<IconExternalLink size={12} />}
-        >
-          {request.pushCommitUrl
-            ? 'View code in Forgejo (git push) ↗ commit'
-            : 'View code in Forgejo'}
-        </Button>
-
         {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
             mod-gated preview before approving. Pending requests only; dark
             unless the mod-only review-sandbox flag is enabled. */}
@@ -426,6 +409,17 @@ function OnsiteReviewModalBody({
               </Badge>
             )}
           </Group>
+          <Button
+            component="a"
+            href={request.pushCommitUrl ?? request.reviewRepoUrl}
+            target="_blank"
+            rel="noopener"
+            variant="default"
+            leftSection={<IconCode size={14} />}
+            rightSection={<IconExternalLink size={12} />}
+          >
+            View full source
+          </Button>
           {mds.kind === 'update' && (
             <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
           )}
@@ -987,65 +981,13 @@ function CodeDiffPanel({
 // Structured manifest renderer (replaces the raw JSON dump)
 // ---------------------------------------------------------------------------
 
-/** Manifest top-level keys this renderer handles inline. Anything else falls
- * into the "Other fields" accordion as raw JSON so reviewers can still see
- * unexpected payloads. */
-const HANDLED_MANIFEST_KEYS = new Set([
-  '$schema',
-  'appId',
-  'blockId',
-  'version',
-  'name',
-  'description',
-  'type',
-  'minApiVersion',
-  'contentRating',
-  'renderMode',
-  'trustTier',
-  'scopes',
-  'targets',
-  'iframe',
-  'settings',
-]);
-
 function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
-  const otherKeys = useMemo(
-    () =>
-      Object.keys(manifest)
-        .filter((k) => !HANDLED_MANIFEST_KEYS.has(k))
-        .sort(),
-    [manifest]
-  );
-
   return (
     <Stack gap="sm">
       <ManifestIdentity manifest={manifest} />
       <ManifestScopes manifest={manifest} />
       <ManifestTargets manifest={manifest} />
-      <ManifestIframe manifest={manifest} />
       <ManifestSettings manifest={manifest} />
-      {otherKeys.length > 0 && (
-        <Accordion variant="contained" multiple={false}>
-          <Accordion.Item value="other">
-            <Accordion.Control>
-              <Text size="sm" fw={500}>
-                Other manifest fields ({otherKeys.length})
-              </Text>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <ScrollArea h={200}>
-                <Code block style={{ fontSize: 11, padding: 8 }}>
-                  {JSON.stringify(
-                    Object.fromEntries(otherKeys.map((k) => [k, manifest[k]])),
-                    null,
-                    2
-                  )}
-                </Code>
-              </ScrollArea>
-            </Accordion.Panel>
-          </Accordion.Item>
-        </Accordion>
-      )}
     </Stack>
   );
 }
@@ -1347,106 +1289,6 @@ function ManifestTargets({ manifest }: { manifest: Record<string, unknown> }) {
             );
           })}
         </Stack>
-      </Stack>
-    </Card>
-  );
-}
-
-function ManifestIframe({ manifest }: { manifest: Record<string, unknown> }) {
-  const iframe =
-    manifest.iframe && typeof manifest.iframe === 'object'
-      ? (manifest.iframe as Record<string, unknown>)
-      : null;
-  if (!iframe) return null;
-  const src = typeof iframe.src === 'string' ? iframe.src : null;
-  const sandbox = typeof iframe.sandbox === 'string' ? iframe.sandbox : null;
-  const minHeight = typeof iframe.minHeight === 'number' ? iframe.minHeight : null;
-  const maxHeight = typeof iframe.maxHeight === 'number' ? iframe.maxHeight : null;
-  const resizable = typeof iframe.resizable === 'boolean' ? iframe.resizable : null;
-
-  const sandboxFlags = sandbox ? sandbox.split(/\s+/).filter(Boolean) : [];
-
-  return (
-    <Card withBorder p="sm">
-      <Stack gap="xs">
-        <Group gap={6}>
-          <IconWindow size={14} />
-          <Text size="sm" fw={600}>
-            Iframe
-          </Text>
-        </Group>
-        {src && (
-          <Group gap={6} align="baseline">
-            <Text size="xs" c="dimmed" style={{ minWidth: 60 }}>
-              src
-            </Text>
-            <a href={src} target="_blank" rel="noopener" style={{ fontSize: 12 }}>
-              {src}
-            </a>
-          </Group>
-        )}
-        {sandboxFlags.length > 0 && (
-          <Group gap={6} align="baseline">
-            <Text size="xs" c="dimmed" style={{ minWidth: 60 }}>
-              sandbox
-            </Text>
-            <Group gap={4}>
-              {sandboxFlags.map((flag) => {
-                const risky =
-                  flag === 'allow-same-origin' ||
-                  flag === 'allow-top-navigation' ||
-                  flag === 'allow-popups-to-escape-sandbox';
-                return (
-                  <Tooltip
-                    key={flag}
-                    label={
-                      risky
-                        ? 'Higher-risk sandbox flag — review carefully.'
-                        : 'Standard sandbox flag.'
-                    }
-                  >
-                    <Badge
-                      size="xs"
-                      color={risky ? 'orange' : 'gray'}
-                      variant="light"
-                      leftSection={risky ? <IconShieldLock size={10} /> : undefined}
-                    >
-                      {flag}
-                    </Badge>
-                  </Tooltip>
-                );
-              })}
-            </Group>
-          </Group>
-        )}
-        {(minHeight !== null || maxHeight !== null || resizable !== null) && (
-          <Group gap={12}>
-            {minHeight !== null && (
-              <Text size="xs">
-                <Text component="span" size="xs" c="dimmed">
-                  min height:
-                </Text>{' '}
-                {minHeight}px
-              </Text>
-            )}
-            {maxHeight !== null && (
-              <Text size="xs">
-                <Text component="span" size="xs" c="dimmed">
-                  max height:
-                </Text>{' '}
-                {maxHeight}px
-              </Text>
-            )}
-            {resizable !== null && (
-              <Text size="xs">
-                <Text component="span" size="xs" c="dimmed">
-                  resizable:
-                </Text>{' '}
-                {resizable ? 'yes' : 'no'}
-              </Text>
-            )}
-          </Group>
-        )}
       </Stack>
     </Card>
   );

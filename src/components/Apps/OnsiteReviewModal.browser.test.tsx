@@ -9,7 +9,7 @@ import { renderWithProviders } from '../../../test/component-setup';
  * `OnsiteReviewModal.tsx` (mirrors #3154) so it is importable WITHOUT the page's
  * `getServerSideProps` server graph — this suite is the coverage that extraction
  * unlocks. Asserts:
- *  - onsite-specific visibility (Forgejo link + the mod Review-preview panel +
+ *  - onsite-specific visibility (View full source link + the mod Review-preview panel +
  *    the structured manifest render);
  *  - Approve FIRES `blocks.approveRequest` with the request id;
  *  - the reject reason gate (disabled < 3 chars) AND that Reject FIRES
@@ -162,12 +162,14 @@ beforeEach(() => {
 });
 
 describe('OnsiteReviewModal — onsite-specific contract', () => {
-  test('a pending selection renders the Forgejo link, the mod Review-preview panel, and the structured manifest', async () => {
+  test('a pending selection renders the View full source link, the mod Review-preview panel, and the structured manifest', async () => {
     renderWithProviders(
       <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
     );
     // The on-site code-review affordance (off-site has no bundle/code).
-    await expect.element(page.getByText('View code in Forgejo')).toBeInTheDocument();
+    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    // The old "View code in Forgejo" copy is gone.
+    expect(page.getByText('View code in Forgejo').elements()).toHaveLength(0);
     // The mod Review-preview sandbox panel — on-site pending only.
     await expect.element(page.getByText('Review preview')).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Start preview' })).toBeInTheDocument();
@@ -454,7 +456,7 @@ describe('OnsiteReviewModal — busy close-guard while a mutation is in flight',
       <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={onClose} />
     );
     // Modal is open (body rendered).
-    await expect.element(page.getByText('View code in Forgejo')).toBeInTheDocument();
+    await expect.element(page.getByText('View full source')).toBeInTheDocument();
 
     // Close vector 1 — the modal's close (X) button (Mantine static class).
     const closeBtn = document.querySelector<HTMLButtonElement>('.mantine-Modal-close');
@@ -467,7 +469,7 @@ describe('OnsiteReviewModal — busy close-guard while a mutation is in flight',
     // The busy guard swallowed both — the parent onClose was never called and the
     // modal is still mounted.
     expect(onClose).not.toHaveBeenCalled();
-    await expect.element(page.getByText('View code in Forgejo')).toBeInTheDocument();
+    await expect.element(page.getByText('View full source')).toBeInTheDocument();
   });
 });
 
