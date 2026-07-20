@@ -83,6 +83,23 @@ export const publicDonationGoalsLookupFn = async (
     },
   });
 
+  // Creator opt-out: an owner can hide the public donation-goal display for ALL their
+  // goals via the `hideDonationGoals` user setting. Non-owner/non-mod viewers go through
+  // this cache, so drop those goals here. Owners/mods bypass the cache entirely (see
+  // `modelVersionDonationGoals`) and still see their goals.
+  const ownerIds = [...new Set(goals.map((g) => g.userId))];
+  const hiddenOwnerIds = new Set<number>();
+  if (ownerIds.length > 0) {
+    const owners = await db.user.findMany({
+      where: { id: { in: ownerIds } },
+      select: { id: true, settings: true },
+    });
+    for (const owner of owners) {
+      const settings = owner.settings as { hideDonationGoals?: boolean } | null;
+      if (settings?.hideDonationGoals) hiddenOwnerIds.add(owner.id);
+    }
+  }
+
   const totalByGoalId = new Map<number, number>();
   const goalIds = goals.map((g) => g.id);
   if (goalIds.length > 0) {
@@ -100,13 +117,17 @@ export const publicDonationGoalsLookupFn = async (
   const result: Record<number, ModelVersionPublicDonationGoalsCacheItem> = {};
   for (const v of versions) result[v.id] = { modelVersionId: v.id, goals: [] };
 
+  const now = new Date();
   for (const goal of goals) {
     const { modelVersionId, ...rest } = goal;
     if (modelVersionId == null) continue;
-    // Public early-access filter, byte-identical to the uncached query's
-    // `isEarlyAccess: version.earlyAccessEndsAt ? undefined : false`: early-access goals are
-    // only shown publicly while the version still has an earlyAccessEndsAt set.
-    if (goal.isEarlyAccess && !earlyAccessById.get(modelVersionId)) continue;
+    if (hiddenOwnerIds.has(goal.userId)) continue;
+    // Public early-access filter: an early-access goal is shown publicly only while the
+    // version's early-access window is still open. Once it has ended (missing or past
+    // `earlyAccessEndsAt`) the goal is hidden from the public — the goal itself keeps
+    // working; owners/mods still see it via the uncached privileged path.
+    const earlyAccessEndsAt = earlyAccessById.get(modelVersionId);
+    if (goal.isEarlyAccess && (!earlyAccessEndsAt || earlyAccessEndsAt <= now)) continue;
     result[modelVersionId].goals.push({ ...rest, total: totalByGoalId.get(goal.id) ?? 0 });
   }
 

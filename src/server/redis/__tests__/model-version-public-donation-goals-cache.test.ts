@@ -53,6 +53,7 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
   const mk = () => ({
     modelVersion: { findMany: vi.fn() },
     donationGoal: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
   });
   return { mockDbRead: mk(), mockDbWrite: mk() };
@@ -98,9 +99,11 @@ beforeEach(() => {
   setNxMock.mockClear().mockResolvedValue(true);
   mockDbRead.modelVersion.findMany.mockReset();
   mockDbRead.donationGoal.findMany.mockReset();
+  mockDbRead.user.findMany.mockReset().mockResolvedValue([]);
   mockDbRead.$queryRaw.mockReset();
   mockDbWrite.modelVersion.findMany.mockReset();
   mockDbWrite.donationGoal.findMany.mockReset();
+  mockDbWrite.user.findMany.mockReset().mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockReset();
 });
 
@@ -196,5 +199,35 @@ describe('modelVersionPublicDonationGoalsCache', () => {
     expect(res[5].goals.map((g) => g.id)).toEqual([10]); // EA goal 11 excluded
     expect(res[9].goals.map((g) => g.id).sort((a, b) => a - b)).toEqual([20, 21]); // both shown
     expect(res[5].goals[0].total).toBe(0); // no donation → 0
+  });
+
+  it('hides an early-access goal once the early-access window has ended (past date)', async () => {
+    mockDbRead.modelVersion.findMany.mockResolvedValue([
+      { id: 9, earlyAccessEndsAt: new Date('2000-01-01T00:00:00.000Z') }, // EA already ended
+    ]);
+    mockDbRead.donationGoal.findMany.mockResolvedValue([
+      row({ id: 20, isEarlyAccess: false, modelVersionId: 9 }),
+      row({ id: 21, isEarlyAccess: true, modelVersionId: 9 }),
+    ]);
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    const cache = buildCache();
+
+    const res = await cache.fetch([9]);
+
+    expect(res[9].goals.map((g) => g.id)).toEqual([20]); // ended EA goal 21 excluded
+  });
+
+  it('hides all goals whose owner opted out via hideDonationGoals', async () => {
+    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
+    mockDbRead.donationGoal.findMany.mockResolvedValue([
+      row({ id: 10, userId: 7, modelVersionId: 5 }),
+    ]);
+    mockDbRead.user.findMany.mockResolvedValue([{ id: 7, settings: { hideDonationGoals: true } }]);
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    const cache = buildCache();
+
+    const res = await cache.fetch([5]);
+
+    expect(res[5]).toEqual({ modelVersionId: 5, goals: [] }); // owner opted out → nothing public
   });
 });

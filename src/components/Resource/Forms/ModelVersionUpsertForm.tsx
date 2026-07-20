@@ -29,6 +29,7 @@ import {
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import {
   Form,
   InputCreatableMultiSelect,
@@ -164,6 +165,9 @@ export function ModelVersionUpsertForm({
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const { hideDonationGoals } = useCurrentUserSettings();
+  const { mutate: mutateUserSettings, isPending: hideDonationGoalsUpdating } =
+    useMutateUserSettings();
   const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
 
@@ -264,7 +268,9 @@ export function ModelVersionUpsertForm({
   );
   const defaultLicensingSourceId = licensingRootsData?.defaultVersionId ?? null;
   // A version that is itself a licensing root is the source, so it doesn't pick a parent.
-  const currentIsLicensingRoot = (licensingRootsData?.roots ?? []).some((r) => r.id === version?.id);
+  const currentIsLicensingRoot = (licensingRootsData?.roots ?? []).some(
+    (r) => r.id === version?.id
+  );
   // Versions flagged NotDerivative (e.g. API-only official checkpoints) aren't
   // fine-tunes, so the form doesn't require/auto-select a parent for them. They
   // can still set their own licensing fee via the fee field above.
@@ -827,6 +833,15 @@ export function ModelVersionUpsertForm({
                                     !!version?.earlyAccessConfig?.donationGoalId ||
                                     isEarlyAccessOver
                                   }
+                                />
+                                <Switch
+                                  label="Hide donation goals from public view"
+                                  description="Others won't see the progress bar or collected amount. The goal still works, and you and moderators can still see it. This applies to all of your donation goals."
+                                  checked={hideDonationGoals ?? false}
+                                  onChange={(e) =>
+                                    mutateUserSettings({ hideDonationGoals: e.target.checked })
+                                  }
+                                  disabled={hideDonationGoalsUpdating}
                                 />
                               </Stack>
                             </Card.Section>
