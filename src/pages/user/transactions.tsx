@@ -1,5 +1,6 @@
 import { keepPreviousData } from '@tanstack/react-query';
 import {
+  Alert,
   Anchor,
   Badge,
   Button,
@@ -16,7 +17,6 @@ import {
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { IconBolt, IconDownload } from '@tabler/icons-react';
-import { saveAs } from 'file-saver';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/router';
@@ -32,7 +32,7 @@ import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { capitalize } from '~/utils/string-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { MAX_TRANSACTION_RANGE_DAYS } from '~/server/schema/buzz.schema';
 import type {
   BuzzTransactionDetails,
   GetUserBuzzTransactionsMultiSchema,
@@ -83,7 +83,7 @@ export default function UserTransactions() {
     ...defaultFilters,
     accountTypes: initialAccountTypes,
   });
-  const { data, isLoading, fetchNextPage, isFetchingNextPage, hasNextPage } =
+  const { data, isLoading, error, fetchNextPage, isFetchingNextPage, hasNextPage } =
     trpc.buzz.getUserTransactions.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.cursor,
       placeholderData: keepPreviousData,
@@ -100,18 +100,17 @@ export default function UserTransactions() {
     setFilters((current) => ({ ...current, [name]: value }));
   };
 
-  const exportMutation = trpc.buzz.exportUserTransactions.useMutation({
-    onSuccess: ({ filename, csv }) => {
-      // The BOM keeps Excel from mangling non-ASCII usernames and descriptions.
-      saveAs(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }), filename);
-    },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Failed to export transactions',
-        error: new Error(error.message),
-      });
-    },
-  });
+  // The export streams as a file download rather than a JSON response, so it's a
+  // plain link \u2014 the browser writes it to disk without buffering the CSV.
+  const exportUrl = useMemo(() => {
+    const params = new URLSearchParams({
+      accountTypes: filters.accountTypes.join(','),
+      start: filters.start.toISOString(),
+      end: filters.end.toISOString(),
+    });
+    if (filters.type != null) params.set('type', String(filters.type));
+    return `/api/download/user-transactions?${params.toString()}`;
+  }, [filters]);
 
   return (
     <Container size="sm">
@@ -136,10 +135,11 @@ export default function UserTransactions() {
             </Group>
           </Chip.Group>
           <Button
+            component="a"
+            href={exportUrl}
+            download
             variant="light"
             leftSection={<IconDownload size={16} />}
-            loading={exportMutation.isPending}
-            onClick={() => exportMutation.mutate(filters)}
           >
             Export CSV
           </Button>
@@ -151,6 +151,7 @@ export default function UserTransactions() {
             placeholder="Start date"
             onChange={handleDateChange('start')}
             defaultValue={defaultFilters.start}
+            minDate={dayjs(filters.end).subtract(MAX_TRANSACTION_RANGE_DAYS, 'day').toDate()}
             maxDate={dayjs(filters.end).subtract(1, 'day').toDate()}
           />
           <DatePickerInput
@@ -183,6 +184,8 @@ export default function UserTransactions() {
           <Center py="xl">
             <Loader />
           </Center>
+        ) : error ? (
+          <Alert color="red">{error.message}</Alert>
         ) : transactions.length ? (
           <Stack gap="md">
             {transactions.map((transaction, index) => {

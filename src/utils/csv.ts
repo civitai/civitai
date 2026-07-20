@@ -16,6 +16,10 @@ function escapeCsvValue(value: unknown): string {
   return str;
 }
 
+export function toCsvRows(rows: unknown[][]) {
+  return rows.map((row) => row.map(escapeCsvValue).join(',')).join('\r\n');
+}
+
 export function toCsv(headers: string[], rows: unknown[][]) {
-  return [headers, ...rows].map((row) => row.map(escapeCsvValue).join(',')).join('\r\n');
+  return toCsvRows([headers, ...rows]);
 }

@@ -10,7 +10,6 @@ import type {
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
   GetDailyBuzzCompensationInput,
-  ExportUserBuzzTransactionsSchema,
   GetTransactionsReportSchema,
   GetUserBuzzTransactionsMultiSchema,
   GetUserBuzzTransactionsSchema,
@@ -27,7 +26,6 @@ import {
   getUserBuzzAccount,
   getUserBuzzTransactions,
   getUserBuzzTransactionsMulti,
-  exportUserBuzzTransactions,
   previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
@@ -99,20 +97,6 @@ export async function getUserTransactionsMultiHandler({
       limit: input.limit ?? DEFAULT_PAGE_SIZE,
       accountId: ctx.user.id,
     });
-  } catch (error) {
-    throw getTRPCErrorFromUnknown(error);
-  }
-}
-
-export async function exportUserTransactionsHandler({
-  input,
-  ctx,
-}: {
-  input: ExportUserBuzzTransactionsSchema;
-  ctx: ProtectedContext;
-}) {
-  try {
-    return await exportUserBuzzTransactions({ ...input, accountId: ctx.user.id });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

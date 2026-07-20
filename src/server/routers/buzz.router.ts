@@ -9,7 +9,6 @@ import {
   getUserAccountHandler,
   getUserMultipliersHandler,
   getUserTransactionsMultiHandler,
-  exportUserTransactionsHandler,
   previewMultiAccountTransactionHandler,
 } from '~/server/controllers/buzz.controller';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
@@ -22,7 +21,6 @@ import {
   getEarnPotentialSchema,
   getTransactionsReportSchema,
   getUserBuzzTransactionsMultiSchema,
-  exportUserBuzzTransactionsSchema,
   previewMultiAccountTransactionInput,
   userBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
@@ -58,20 +56,6 @@ export const buzzRouter = router({
     )
     .input(getUserBuzzTransactionsMultiSchema)
     .query(getUserTransactionsMultiHandler),
-  exportUserTransactions: buzzProcedure
-    .meta({ requiredScope: TokenScope.BuzzRead })
-    .use(
-      // Unbounded date range against ClickHouse plus a username hydrate — cheap
-      // per call, but trivially loopable into a scan of the whole table.
-      rateLimit({
-        limit: 10,
-        period: 3600,
-        errorMessage: 'Too many exports — try again in a bit.',
-      })
-    )
-    .input(exportUserBuzzTransactionsSchema)
-    // A read, but exposed as a mutation so the client can fire it imperatively.
-    .mutation(exportUserTransactionsHandler),
   tipUser: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialTip, blockApiKeys: true })
     .use(isFlagProtected('buzz'))
