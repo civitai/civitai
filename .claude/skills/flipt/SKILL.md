@@ -31,9 +31,10 @@ so merge → visible takes up to ~30s).
 Writes are blocked by choice, not by capability. There is **no Flipt auth at
 all** — the `Authorization: Bearer` value in `.env` is a Traefik ingress bypass
 header, not a Flipt credential, and Flipt applies no authz behind it. The pod
-holds an SSH deploy key for `flipt-state`, so a v2 write against a git-backed
-environment can **commit and push to `main` directly**. That bypasses review on
-a file gating production behavior, which is why this skill refuses. Change flags
+holds an SSH deploy key for `flipt-state`, and v2's git-write model implies a
+write would **commit and push to `main` directly** — inferred from the manifest,
+not observed. A write path that *may* bypass review on a file gating production
+is reason enough to refuse either way, which is why this skill does. Change flags
 by PR to `civitai/flipt-state`.
 
 Treat that bearer value as a real secret: read it from env, never inline it, and

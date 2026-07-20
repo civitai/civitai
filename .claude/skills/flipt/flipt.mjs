@@ -184,15 +184,18 @@ async function apiRequest(method, path, body = null) {
 }
 
 // Every write here previously POSTed to /api/v1/*, which does not exist on v2.
-// They are not repointed at v2 on purpose. There is no Flipt auth behind the
-// ingress, and a v2 write against a git-backed environment commits and pushes
-// to civitai/flipt-state main using the pod's deploy key — so a "quick toggle"
-// would silently land an unreviewed commit on a file gating production.
+// They are not repointed at v2 on purpose. Confirmed from the talos-infra
+// manifest: no Flipt auth behind the ingress, a git-backed environment, and an
+// SSH deploy key for civitai/flipt-state mounted into the pod. That a write
+// would commit to that repo follows from v2's git-write model — inferred, not
+// observed. A write path that MIGHT push an unreviewed commit to a file gating
+// production is reason enough to refuse either way.
 function refuseWrite(action, key) {
   console.error(`Cannot ${action} "${key}" through the API.`);
   console.error('');
-  console.error('civitai/flipt-state is the source of truth. An API write here would not');
-  console.error('fail — it would push an unreviewed commit to that repo. Open a PR instead.');
+  console.error('civitai/flipt-state is the source of truth, and this instance is git-backed');
+  console.error('with a deploy key — an API write may push an unreviewed commit there.');
+  console.error('Open a PR instead.');
   console.error('');
   console.error('  gh repo clone civitai/flipt-state /tmp/flipt-state');
   console.error('  # edit civitai-app/default/features.yaml');
@@ -496,7 +499,7 @@ Examples:
 
 Note: this Flipt is v2 and GitOps-backed. Reads (list/get) hit the API; every
 write command refuses and prints the civitai/flipt-state workflow instead.
-Writes are refused by choice, not capability — an API write would push an
+Writes are refused by choice, not capability — an API write may push an
 unreviewed commit straight to that repo's main.
 
 Env: FLIPT_URL, FLIPT_API_TOKEN. Optionally FLIPT_ENVIRONMENT / FLIPT_NAMESPACE
