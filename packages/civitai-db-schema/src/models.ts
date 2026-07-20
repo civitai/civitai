@@ -2006,6 +2006,30 @@ export interface AppListingModerationEvent {
   createdAt: Date;
 }
 
+export interface AppReviewAgentReport {
+  id: string;
+  publishRequestId: string;
+  appBlockId: string | null;
+  oauthClientId: string | null;
+  version: string;
+  bundleSha256: string;
+  status: string;
+  model: string | null;
+  startedAt: Date;
+  completedAt: Date | null;
+  codeReview: JsonValue | null;
+  securityAudit: JsonValue | null;
+  scopeVerdicts: JsonValue | null;
+  summaryMd: string | null;
+  priorReportId: string | null;
+  priorReport?: AppReviewAgentReport | null;
+  nextReports?: AppReviewAgentReport[];
+  tokenUsage: JsonValue | null;
+  costUsd: Decimal | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface BlockUserSettings {
   blockInstanceId: string;
   subscription?: BlockUserSubscription;

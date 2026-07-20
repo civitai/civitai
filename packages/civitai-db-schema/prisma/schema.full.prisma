@@ -2806,6 +2806,83 @@ model AppListingModerationEvent {
   @@map("app_listing_moderation_events")
 }
 
+/// App Blocks — agentic mod code-review report (P0 persistence layer).
+///
+/// One row per agent code-review of an app version, keyed to the app + version
+/// so the NEXT version's review can diff against the prior one (the
+/// `priorReportId` chain). Fronts BOTH on-site App Blocks (`appBlockId`) and
+/// external / OAuth-connect apps (`oauthClientId`) — EXACTLY ONE of those is set.
+///
+/// P0 = data model ONLY, fully DARK/INERT: NOTHING in the running image reads or
+/// writes this table (no router, no REST handler, no job) — it is additive and
+/// safe to apply ahead of the code that will populate it. Provisioning, the
+/// review UI, and the chat surface arrive in later phases.
+///
+/// Design notes:
+///   - `publishRequestId`, `appBlockId`, `oauthClientId` are PLAIN INDEXED ids,
+///     NOT Prisma relations. `publishRequestId` is dual-target by construction
+///     (an on-site review is an AppBlockPublishRequest `pubreq_<ULID>`; a
+///     connect review is an AppListingPublishRequest `alpr_<ULID>`), so it has
+///     no single clean FK — it is resolved in the service by kind. Keeping the
+///     app-key columns index-only (no back-relations on AppBlock/OauthClient)
+///     keeps this dark P0 a self-contained additive island; the `(key, version)`
+///     indexes drive the "latest prior report" lookup without relation traversal.
+///   - `status` is a checked string (running|complete|failed|torn-down); the
+///     CHECK lives ONLY in the migration .sql (Prisma can't express it), the
+///     canonical code set is APP_REVIEW_AGENT_REPORT_STATUSES in the service.
+///   - `costUsd` is Decimal(12,6): LLM costs are frequently sub-cent, so the
+///     repo's Decimal(10,2) money precision would round them away — 6 dp keeps
+///     per-review cost faithful. Deliberate deviation from the (10,2) precedent.
+///
+/// MANUAL-APPLY (datapacket-talos CLAUDE.md DB rule #8): the main civitai DB
+/// (CNPG nvme0) does NOT run prisma migrate deploy; the committed SQL is
+/// hand-applied per environment.
+model AppReviewAgentReport {
+  id               String    @id // arar_<ULID>
+  // The review (publish request) this report was generated for. Dual-target
+  // (on-site = AppBlockPublishRequest, connect = AppListingPublishRequest) so it
+  // is stored as an indexed id, not a FK. Resolved by kind in the service.
+  publishRequestId String    @map("publish_request_id")
+  // App identity — EXACTLY ONE is set: `appBlockId` for an on-site App Block,
+  // `oauthClientId` for an external / OAuth-connect app. Plain indexed columns.
+  appBlockId       String?   @map("app_block_id")
+  oauthClientId    String?   @map("oauth_client_id")
+  // The reviewed bundle's version (semver) + integrity hash.
+  version          String
+  bundleSha256     String    @map("bundle_sha256")
+  // Agent-run lifecycle: running|complete|failed|torn-down (CHECK in the .sql).
+  status           String    @default("running")
+  // The LLM that produced the review (NULL until the run reports one).
+  model            String?
+  startedAt        DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz(6)
+  // Structured agent outputs (NULLABLE — populated as the run progresses).
+  codeReview       Json?     @map("code_review")
+  securityAudit    Json?     @map("security_audit")
+  scopeVerdicts    Json?     @map("scope_verdicts")
+  summaryMd        String?   @map("summary_md")
+  // The prior version's report in the chain (self-relation) — lets the next
+  // version diff against it. SetNull so deleting an older report does not
+  // cascade-delete its successors (the chain head is preserved).
+  priorReportId    String?               @map("prior_report_id")
+  priorReport      AppReviewAgentReport?  @relation("AppReviewAgentReportChain", fields: [priorReportId], references: [id], onDelete: SetNull)
+  nextReports      AppReviewAgentReport[] @relation("AppReviewAgentReportChain")
+  // LLM token accounting (provider-shaped Json) + total cost. See costUsd note
+  // in the model docstring for the Decimal(12,6) rationale.
+  tokenUsage       Json?     @map("token_usage")
+  costUsd          Decimal?  @map("cost_usd") @db.Decimal(12, 6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // "latest prior complete report for this app older than version X" lookups,
+  // one index per app-key kind (on-site vs connect).
+  @@index([appBlockId, version], map: "app_review_agent_reports_app_block_version_idx")
+  @@index([oauthClientId, version], map: "app_review_agent_reports_oauth_client_version_idx")
+  // By-review lookup (getAgentReport).
+  @@index([publishRequestId], map: "app_review_agent_reports_publish_request_idx")
+  @@map("app_review_agent_reports")
+}
+
 /// Per-block-instance, per-user settings (viewer preferences).
 /// FK CASCADE on subscription deletion and GDPR-user-delete.
 ///

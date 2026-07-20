@@ -430,6 +430,27 @@ export type AppListingScreenshot = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppReviewAgentReport = {
+  id: string;
+  publish_request_id: string;
+  app_block_id: string | null;
+  oauth_client_id: string | null;
+  version: string;
+  bundle_sha256: string;
+  status: Generated<string>;
+  model: string | null;
+  started_at: Generated<Timestamp>;
+  completed_at: Timestamp | null;
+  code_review: unknown | null;
+  security_audit: unknown | null;
+  scope_verdicts: unknown | null;
+  summary_md: string | null;
+  prior_report_id: string | null;
+  token_usage: unknown | null;
+  cost_usd: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
 export type AppUserScopeGrant = {
   id: string;
   user_id: number;
@@ -3848,6 +3869,7 @@ export type DB = {
   app_listing_reviews: AppListingReview;
   app_listing_screenshots: AppListingScreenshot;
   app_listings: AppListing;
+  app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   Article: Article;
