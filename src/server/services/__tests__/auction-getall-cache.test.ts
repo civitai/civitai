@@ -23,7 +23,7 @@ const {
 }));
 
 vi.mock('~/server/db/client', () => ({
-  // The DB load this cache removes is asserted by counting calls to THIS mock.
+  // Call count on this mock is the cache-hit assertion.
   dbRead: { auction: { findMany: auctionFindMany } },
   dbWrite: {},
 }));

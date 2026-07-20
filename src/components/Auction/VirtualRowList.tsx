@@ -1,9 +1,42 @@
+import { Center, Divider, Stack, Title } from '@mantine/core';
+import { Skeleton } from '@mantine/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ReactNode } from 'react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
-export const VIRTUAL_ROW_GAP = 8;
+const ROW_GAP = 8;
+const SKELETON_HEIGHT = 78;
+
+/** Section furniture every auction list needs around its cards. */
+export type ChromeRow =
+  | { kind: 'divider' }
+  | { kind: 'heading'; label: string }
+  | { kind: 'message'; node: ReactNode }
+  | { kind: 'skeleton' };
+
+export const CHROME_ROW_HEIGHT: Record<ChromeRow['kind'], number> = {
+  divider: 33,
+  heading: 30,
+  message: 60,
+  skeleton: SKELETON_HEIGHT,
+};
+
+export const renderChromeRow = (row: ChromeRow) => {
+  switch (row.kind) {
+    case 'divider':
+      return <Divider my="sm" />;
+    case 'heading':
+      return <Title order={5}>{row.label}</Title>;
+    case 'message':
+      return <Center my="lg">{row.node}</Center>;
+    case 'skeleton':
+      return <Skeleton height={SKELETON_HEIGHT} radius="sm" animate />;
+  }
+};
+
+export const skeletonRows = (count: number): ChromeRow[] =>
+  Array.from({ length: count }, () => ({ kind: 'skeleton' }));
 
 /**
  * Windows a list of already-built rows against the app scroll area. Auction lists run to
@@ -11,11 +44,11 @@ export const VIRTUAL_ROW_GAP = 8;
  * an ImageGuard, an avatar with cosmetics — so mounting them all is what makes switching
  * auctions slow even with everything served from cache.
  *
- * Heterogeneous rows (cards, section headers, dividers) go in one list rather than one
+ * Heterogeneous rows (cards, section headings, dividers) go in one list rather than one
  * virtualizer per section: nested virtualizers would each need their own scroll offset
  * accounting against the same scroll parent.
  */
-export function VirtualRowList<T>({
+export function VirtualRowList<T extends { kind: string }>({
   rows,
   estimateSize,
   getKey,
@@ -31,18 +64,28 @@ export function VirtualRowList<T>({
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
 
-  // Distance from the top of the scroll container down to this list. Recomputed when the
-  // row count changes; content above the list that resizes without changing the count
-  // (e.g. an expanding filter panel) will not trigger it.
+  // Rows are positioned relative to the scroll container, so the distance down to this
+  // list has to track anything above it resizing — the search box and the collapsible
+  // filter panel both do, without changing the row count.
   useLayoutEffect(() => {
-    if (!listRef.current || !scrollAreaRef?.current) return;
-    let offset = 0;
-    let current: HTMLElement | null = listRef.current;
-    while (current && current !== scrollAreaRef.current) {
-      offset += current.offsetTop;
-      current = current.offsetParent as HTMLElement;
-    }
-    setScrollMargin(offset);
+    const list = listRef.current;
+    const scrollArea = scrollAreaRef?.current;
+    if (!list || !scrollArea) return;
+
+    const measure = () => {
+      let offset = 0;
+      let current: HTMLElement | null = list;
+      while (current && current !== scrollArea) {
+        offset += current.offsetTop;
+        current = current.offsetParent as HTMLElement;
+      }
+      setScrollMargin(offset);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scrollArea);
+    return () => observer.disconnect();
   }, [scrollAreaRef, rows.length]);
 
   const virtualizer = useVirtualizer({
@@ -51,7 +94,7 @@ export function VirtualRowList<T>({
     estimateSize: useCallback(
       (index: number) => {
         const row = rows[index];
-        return row ? estimateSize(row) + VIRTUAL_ROW_GAP : VIRTUAL_ROW_GAP;
+        return row ? estimateSize(row) : 0;
       },
       [rows, estimateSize]
     ),
@@ -63,9 +106,9 @@ export function VirtualRowList<T>({
       [rows, getKey]
     ),
     overscan: 5,
+    gap: ROW_GAP,
     scrollMargin,
-    // See MasonryGridVirtual for rationale — opts out of virtual-core's 150ms
-    // setTimeout debounce on every scroll tick.
+    // Native scrollend; virtual-core's fallback installs a 150ms timer per scroll tick.
     useScrollendEvent: true,
   });
 
@@ -88,7 +131,6 @@ export function VirtualRowList<T>({
               top: 0,
               left: 0,
               width: '100%',
-              paddingBottom: VIRTUAL_ROW_GAP,
               transform: `translateY(${virtualItem.start - scrollMargin}px)`,
             }}
           >
@@ -99,3 +141,14 @@ export function VirtualRowList<T>({
     </div>
   );
 }
+
+/** Convenience for lists whose only non-card rows are chrome. */
+export const chromeRowKey = (row: ChromeRow, index: number) => `${row.kind}-${index}`;
+
+export const StackedSkeletons = ({ count }: { count: number }) => (
+  <Stack>
+    {Array.from({ length: count }, (_, i) => (
+      <Skeleton key={i} height={SKELETON_HEIGHT} radius="sm" animate />
+    ))}
+  </Stack>
+);

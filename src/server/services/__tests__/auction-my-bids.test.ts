@@ -32,7 +32,6 @@ import { getMyBids } from '~/server/services/auction.service';
 
 const NOW = new Date('2026-07-20T12:00:00Z');
 
-// An auction that is currently running, and one that closed yesterday.
 const activeAuction = {
   id: 1,
   startAt: new Date('2026-07-20T00:00:00Z'),
@@ -51,7 +50,7 @@ const closedAuction = {
   auctionBase: { ...activeAuction.auctionBase, id: 20, slug: 'sdxl' },
 };
 
-const row = (over: Partial<Record<string, unknown>> = {}) => ({
+const row = (overrides: Partial<Record<string, unknown>> = {}) => ({
   id: 100,
   entityId: 5,
   amount: 150,
@@ -64,7 +63,7 @@ const row = (over: Partial<Record<string, unknown>> = {}) => ({
   totalAmount: 150,
   winners: 1,
   lowestWinning: 150,
-  ...over,
+  ...overrides,
 });
 
 beforeEach(() => {

@@ -76,6 +76,11 @@ type ModelMyRecurringBidData = GetMyRecurringBidsReturn[number];
 
 const IMAGE_HEIGHT = 100;
 
+// Lives here because it describes these cards' layout: the row is fixed-height on
+// desktop and stacks at the same `md` breakpoint the cards themselves use. Virtualized
+// lists seed their scrollbar with it.
+export const PLACEMENT_CARD_HEIGHT = { desktop: 116, mobile: 232 };
+
 const PositionData = ({
   position,
   aboveThreshold,
@@ -717,8 +722,7 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
   );
 });
 
-// Memoized: every incoming bid signal replaces the whole getBySlug payload, so this
-// list re-renders wholesale on a busy auction. Callers must keep `addBidFn` stable.
+// Memo depends on callers keeping `addBidFn` referentially stable.
 export const ModelPlacementCard = memo(function ModelPlacementCard({
   data,
   aboveThreshold,

@@ -42,6 +42,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
 import { AuctionFiltersDropdown } from '~/components/Auction/AuctionFiltersDropdown';
 import { AuctionBidList } from '~/components/Auction/AuctionBidList';
+import { StackedSkeletons } from '~/components/Auction/VirtualRowList';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { AuctionViews, usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -455,7 +456,6 @@ export const AuctionInfo = () => {
     [auctionData?.bids, selectedModel?.id]
   );
 
-  // Stable so the memoized placement cards don't re-render on every parent render.
   const addBidFn = useCallback(
     (entity: GenerationResource) => {
       setSelectedModel(entity);
@@ -868,11 +868,7 @@ export const AuctionInfo = () => {
             </Group>
           </Group>
           {isLoadingAuctionData ? (
-            <Stack>
-              {Array.from({ length: 5 }, (_, i) => (
-                <Skeleton key={i} height={78} radius="sm" animate />
-              ))}
-            </Stack>
+            <StackedSkeletons count={5} />
           ) : !auctionData ? (
             <Center my="lg">
               <Text>Nothing here</Text>

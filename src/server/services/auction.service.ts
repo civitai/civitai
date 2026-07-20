@@ -90,8 +90,6 @@ const auctionValidator = Prisma.validator<Prisma.AuctionFindFirstArgs>()({
 });
 type AuctionSelectType = Prisma.AuctionGetPayload<typeof auctionValidator>;
 
-// TODO surround all in try catch
-
 export type GetAllAuctionsReturn = AsyncReturnType<typeof getAllAuctions>;
 
 // The origin (uncached) fetch: reduces each active auction to
@@ -140,18 +138,9 @@ export async function getAllAuctionsUncached() {
   });
 }
 
-// Short-TTL (30s) read-through over the user-independent active-auction list, which
-// `auction.getAll` hits ~21.8x/s at peak. Output is byte-identical to the uncached
-// path; the only delta is up-to-30s staleness. That is safe here:
-//   - the active set is time-windowed (startAt<=now<endAt); a <=30s lag in an
-//     auction appearing/disappearing is imperceptible, and
-//   - `lowestBidRequired` is a DISPLAY hint — bid submission re-validates the true
-//     minimum server-side (`createBid`), so a slightly-stale value can't let an
-//     under-minimum bid through.
-// No bust: the frequently-mutating input is bids (~21/s), so busting per-bid would
-// defeat the cache; auction create/close happens in the daily `handle-auctions` job
-// and is already bounded by the 30s TTL. `fetchThroughCache` fails OPEN to the origin
-// on a Redis error, so this never adds a failure mode over the uncached path.
+// Never busted, so callers can be up to 30s stale. Safe because the active set is
+// time-windowed, and because `lowestBidRequired` is a display hint that `createBid`
+// re-validates — a stale value can't let an under-minimum bid through.
 export async function getAllAuctions() {
   return fetchThroughCache(REDIS_KEYS.CACHES.ACTIVE_AUCTIONS, getAllAuctionsUncached, {
     ttl: 30,
@@ -165,26 +154,40 @@ export const prepareBids = (
   },
   returnAll = false
 ) => {
-  return Object.values(
-    a.bids
-      .filter((bid) => !bid.deleted)
-      .reduce((acc, { entityId, amount }) => {
-        if (!acc[entityId]) {
-          acc[entityId] = { entityId, totalAmount: 0, count: 0 };
-        }
-        acc[entityId].totalAmount += amount;
-        acc[entityId].count += 1;
+  return (
+    Object.values(
+      a.bids
+        .filter((bid) => !bid.deleted)
+        .reduce((acc, { entityId, amount }) => {
+          if (!acc[entityId]) {
+            acc[entityId] = { entityId, totalAmount: 0, count: 0 };
+          }
+          acc[entityId].totalAmount += amount;
+          acc[entityId].count += 1;
 
-        return acc;
-      }, {} as Record<string, { entityId: number; totalAmount: number; count: number }>)
-  )
-    .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count)
-    .slice(0, returnAll ? undefined : a.quantity)
-    .map((b, idx) => ({
-      ...b,
-      position: idx + 1,
-    }));
+          return acc;
+        }, {} as Record<string, { entityId: number; totalAmount: number; count: number }>)
+    )
+      // The entityId tiebreak has to match the `ranked` CTE in getMyBids, or the same tied
+      // bid gets a different position on the auction page than in My Bids. It currently
+      // holds either way — integer-like keys make Object.values return entityId-ascending
+      // and sort is stable — but only by accident, and a Map here would silently break it.
+      .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count || a.entityId - b.entityId)
+      .slice(0, returnAll ? undefined : a.quantity)
+      .map((b, idx) => ({
+        ...b,
+        position: idx + 1,
+      }))
+  );
 };
+
+// Image metadata is the largest field in the auction payload and no card reads it. The
+// annotation keeps the field's declared type — inferring `null` narrows it and rejects
+// callers that build this shape from a real image (e.g. ResourceSelectCard).
+const stripMetadata = <T extends { metadata: unknown }>(entity: T) => ({
+  ...entity,
+  metadata: null as T['metadata'],
+});
 
 // { entityId: number; totalAmount: number; count: number; position: number }
 const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
@@ -237,21 +240,15 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
         ...mvMatch,
         model: {
           ...modelData,
-          // `metadata` on both images is the single largest field in this payload and
-          // nothing on the auction cards reads it. The annotations keep the field typed
-          // as it was — inferring `null` would narrow it and reject callers that build
-          // this shape from a real image (e.g. ResourceSelectCard).
           user: {
             ...user,
             profilePicture: user.profilePicture
-              ? { ...user.profilePicture, metadata: null as Prisma.JsonValue }
+              ? stripMetadata(user.profilePicture)
               : user.profilePicture,
           },
           cannotPromote: (meta as ModelMeta | null | undefined)?.cannotPromote ?? false,
         },
-        image: firstImage
-          ? { ...firstImage, metadata: null as (typeof firstImage)['metadata'] }
-          : undefined,
+        image: firstImage ? stripMetadata(firstImage) : undefined,
       },
     };
   });
@@ -317,7 +314,7 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
     // ship one row per bid the user placed, rather than every bid of every auction
     // they ever participated in.
     const rows = await dbRead.$queryRaw<MyBidRow[]>`
-      WITH mine AS (
+      WITH "myBids" AS (
         SELECT b.id, b."entityId", b.amount, b."createdAt", b."fromRecurring",
                b."isRefunded", b."accountType", b."auctionId"
         FROM "Bid" b
@@ -326,38 +323,39 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
           AND b.deleted = false
           AND a."endAt" > now() - ${`${MY_BIDS_HISTORY_DAYS} days`}::interval
       ),
-      ua AS (SELECT DISTINCT "auctionId" FROM mine),
-      agg AS (
+      "myAuctionIds" AS (SELECT DISTINCT "auctionId" FROM "myBids"),
+      "entityTotals" AS (
         SELECT b."auctionId", b."entityId",
                SUM(b.amount)::int AS "totalAmount",
-               COUNT(*)::int AS cnt
+               COUNT(*)::int AS "bidCount"
         FROM "Bid" b
-        JOIN ua ON ua."auctionId" = b."auctionId"
+        JOIN "myAuctionIds" ON "myAuctionIds"."auctionId" = b."auctionId"
         WHERE b.deleted = false
         GROUP BY 1, 2
       ),
-      ranked AS (
-        SELECT agg.*,
+      -- Ordering must match prepareBids, including the entityId tiebreak.
+      "ranked" AS (
+        SELECT "entityTotals".*,
                ROW_NUMBER() OVER (
                  PARTITION BY "auctionId"
-                 ORDER BY "totalAmount" DESC, cnt DESC, "entityId"
+                 ORDER BY "totalAmount" DESC, "bidCount" DESC, "entityId"
                )::int AS position
-        FROM agg
+        FROM "entityTotals"
       ),
-      thresh AS (
+      "winningThresholds" AS (
         SELECT r."auctionId",
                COUNT(*)::int AS winners,
                MIN(r."totalAmount")::int AS "lowestWinning"
-        FROM ranked r
+        FROM "ranked" r
         JOIN "Auction" a ON a.id = r."auctionId"
         WHERE r."totalAmount" >= a."minPrice" AND r.position <= a.quantity
         GROUP BY 1
       )
       SELECT m.*, r.position, r."totalAmount",
              COALESCE(t.winners, 0) AS winners, t."lowestWinning"
-      FROM mine m
-      LEFT JOIN ranked r ON r."auctionId" = m."auctionId" AND r."entityId" = m."entityId"
-      LEFT JOIN thresh t ON t."auctionId" = m."auctionId"
+      FROM "myBids" m
+      LEFT JOIN "ranked" r ON r."auctionId" = m."auctionId" AND r."entityId" = m."entityId"
+      LEFT JOIN "winningThresholds" t ON t."auctionId" = m."auctionId"
     `;
 
     if (!rows.length) return [];

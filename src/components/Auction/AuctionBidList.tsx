@@ -1,21 +1,22 @@
-import { Center, Divider, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { useCallback, useMemo } from 'react';
-import { ModelPlacementCard } from '~/components/Auction/AuctionPlacementCard';
-import { VirtualRowList } from '~/components/Auction/VirtualRowList';
+import {
+  ModelPlacementCard,
+  PLACEMENT_CARD_HEIGHT,
+} from '~/components/Auction/AuctionPlacementCard';
+import type { ChromeRow } from '~/components/Auction/VirtualRowList';
+import {
+  CHROME_ROW_HEIGHT,
+  VirtualRowList,
+  chromeRowKey,
+  renderChromeRow,
+} from '~/components/Auction/VirtualRowList';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 
 type Bid = GetAuctionBySlugReturn['bids'][number];
-
-type Row =
-  | { kind: 'bid'; bid: Bid; aboveThreshold: boolean }
-  | { kind: 'divider' }
-  | { kind: 'empty' };
-
-// The card is a fixed-height row on desktop and stacks on mobile.
-const CARD_HEIGHT = { desktop: 116, mobile: 232 };
-const SMALL_ROW_HEIGHT = 33;
+type Row = ChromeRow | { kind: 'bid'; bid: Bid; aboveThreshold: boolean };
 
 export function AuctionBidList({
   bidsAbove,
@@ -34,12 +35,12 @@ export function AuctionBidList({
 
   const rows = useMemo<Row[]>(() => {
     const above: Row[] = bidsAbove.length
-      ? bidsAbove.map((bid) => ({ kind: 'bid' as const, bid, aboveThreshold: true }))
-      : [{ kind: 'empty' as const }];
+      ? bidsAbove.map((bid) => ({ kind: 'bid', bid, aboveThreshold: true }))
+      : [{ kind: 'message', node: <Text>No bids meeting minimum threshold.</Text> }];
     const below: Row[] = bidsBelow.length
       ? [
-          { kind: 'divider' as const },
-          ...bidsBelow.map((bid) => ({ kind: 'bid' as const, bid, aboveThreshold: false })),
+          { kind: 'divider' },
+          ...bidsBelow.map((bid): Row => ({ kind: 'bid', bid, aboveThreshold: false })),
         ]
       : [];
     return [...above, ...below];
@@ -47,12 +48,16 @@ export function AuctionBidList({
 
   const estimateSize = useCallback(
     (row: Row) =>
-      row.kind === 'bid' ? (mobile ? CARD_HEIGHT.mobile : CARD_HEIGHT.desktop) : SMALL_ROW_HEIGHT,
+      row.kind === 'bid'
+        ? mobile
+          ? PLACEMENT_CARD_HEIGHT.mobile
+          : PLACEMENT_CARD_HEIGHT.desktop
+        : CHROME_ROW_HEIGHT[row.kind],
     [mobile]
   );
 
   const getKey = useCallback(
-    (row: Row, index: number) => (row.kind === 'bid' ? row.bid.entityId : `${row.kind}-${index}`),
+    (row: Row, index: number) => (row.kind === 'bid' ? row.bid.entityId : chromeRowKey(row, index)),
     []
   );
 
@@ -66,12 +71,8 @@ export function AuctionBidList({
           searchText={searchText}
           canBid={canBid}
         />
-      ) : row.kind === 'divider' ? (
-        <Divider label="Below Threshold" labelPosition="center" />
       ) : (
-        <Center>
-          <Text>No bids meeting minimum threshold.</Text>
-        </Center>
+        renderChromeRow(row)
       ),
     [addBidFn, searchText, canBid]
   );
