@@ -3710,13 +3710,8 @@ export function mapBitdexDoc(doc: Record<string, unknown>) {
     baseModel: (doc.baseModel as string) ?? null,
     postId: (doc.postId as number) ?? null,
     postedToId: (doc.postedToId as number) ?? null,
-    // Emit model3dId ONLY when the doc actually carries a value. Leaving the key
-    // absent (→ undefined downstream) keeps the doc-level signal honest for the
-    // three-state chip in getAllImagesIndex: a number = gated model3d link,
-    // absent = no doc-level link. Prefer omit over `?? null` (belt-and-suspenders):
-    // the fallback there keys off page-level searchSource, so a stray null would
-    // NOT actually break it — but null reads as "confirmed no link" and muddies
-    // the signal. Inert until BitDex indexes the field (no such field today).
+    // Omit rather than `?? null`: downstream reads a missing key as "not indexed"
+    // and a null as "confirmed no link", so a missing value must not become null.
     ...(doc.model3dId != null ? { model3dId: doc.model3dId as number } : {}),
     remixOfId: (doc.remixOfId as number) ?? null,
     hasMeta: doc.hasMeta as boolean,
@@ -3894,16 +3889,9 @@ export async function getImagesFromBitdexPreFilter(
   }
 
   // --- Model3D gallery ---
-  // `model3dId` is the index analog of `postedToId` (set at index time from
-  // `Post.model3dId`, per-image like postedToId). Lets the 3D-model detail page
-  // serve its gallery from BitDex. Mirrors the Meili path (`= ${model3dId}`).
-  // DEPLOY ORDERING (hard): BitDex does not know this field until the model3dId
-  // config + redump land (bitdex-v2 task #8 + Wave 4 redump). A filter on an
-  // UNCONFIGURED field name is NOT ignored — BitDex returns HTTP 400 and fails
-  // the WHOLE query (executor.rs FieldNotFound → BAD_REQUEST), so shipping this
-  // builder before the redump would 400 every 3D-gallery request. This builder
-  // MUST deploy after the config+redump. (Only an unknown VALUE on a configured
-  // field degrades to an empty match; an unknown field name does not.)
+  // Must deploy only after BitDex has model3dId configured and populated: a
+  // filter on a field BitDex doesn't know returns HTTP 400 and fails the whole
+  // query, not just this clause.
   if (model3dId) filters.push(_eq('model3dId', _int(model3dId)));
 
   // --- Remix ---
