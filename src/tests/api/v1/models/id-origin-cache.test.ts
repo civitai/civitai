@@ -115,7 +115,9 @@ vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => 
 vi.mock('~/server/common/model-helpers', () => ({
   createModelFileDownloadUrl: () => '/download',
 }));
-vi.mock('~/server/services/file.service', () => ({ getDownloadFilename: () => 'file.safetensors' }));
+vi.mock('~/server/services/file.service', () => ({
+  getDownloadFilename: () => 'file.safetensors',
+}));
 vi.mock('~/server/utils/model-helpers', () => ({ getPrimaryFile: (files: any[]) => files[0] }));
 vi.mock('~/server/utils/url-helpers', () => ({ getBaseUrl: () => 'https://civitai.com' }));
 
@@ -378,5 +380,15 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
     expect(res.body.name).not.toBe('STALE');
     expect(res.body.id).toBe(123);
     expect(mockGetModelsWithVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('(i) opts out of the addon discovery gates — a by-id fetch is not a request for NSFW', async () => {
+    // browsingLevel here is the ceiling the endpoint may serve, so the addon
+    // rules (disableMinor + child-ish excludedTagIds above R) would otherwise
+    // fire on EVERY call and 404 models that /models/{id} serves at the same id.
+    await invoke({ id: '123' });
+    expect(mockGetModelsWithVersions.mock.calls[0][0]).toMatchObject({
+      ignoreBrowsingAddons: true,
+    });
   });
 });

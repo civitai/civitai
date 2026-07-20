@@ -106,9 +106,11 @@ export const actions: Actions = {
       return fail(400, { email, captcha: true });
     }
 
-    // 3. Blocked email domains.
+    // 3. Blocked email domains: reject NEW signups on a blocklisted domain, but don't retroactively
+    //    lock out EXISTING accounts when a domain is later appended to the upstream list (mirrors the
+    //    existing-user exemption in step 4).
     const domain = email.split('@')[1];
-    if (domain && (await getBlockedEmailDomains()).includes(domain)) {
+    if (domain && (await getBlockedEmailDomains()).includes(domain) && !(await userExistsByEmail(email))) {
       return fail(400, { email, blockedDomain: true });
     }
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { TRPCError } from '@trpc/server';
 
 // Verifies chargeEntryFees' two-leg (house + pool) charging and its NO-REFUND partial-failure
 // contract: the buzz ledger keeps a refunded externalTransactionId occupied and exposes no
@@ -352,5 +353,37 @@ describe('refundUserChallengeFunds — void refunds pool legs only', () => {
     const result = await refundUserChallengeFunds(CHALLENGE_ID);
     expect(result).toEqual({ refundedEntries: 0 });
     expect(mockRefundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  // The buzz service returns 404 (→ TRPCError NOT_FOUND) when a prefix matches no transactions —
+  // e.g. an entryFee challenge cancelled with zero paid entries. Nothing to reverse must be a
+  // no-op, not an error that aborts the surrounding void/delete.
+  it('tolerates the buzz NOT_FOUND when a prefix matches no transactions', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 500,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'NOT_FOUND', message: 'Not found' })
+    );
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 0 });
+  });
+
+  // A non-404 buzz failure is a real error and must still propagate.
+  it('rethrows non-NOT_FOUND buzz errors', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 0,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' })
+    );
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).rejects.toThrow('boom');
   });
 });

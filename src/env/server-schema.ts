@@ -789,6 +789,21 @@ export const serverSchema = z
     // sync without spuriously failing a healthy preview. Tunable per-environment
     // without a code change. See waitForReviewHostReachable.
     REVIEW_HOST_REACHABLE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(180000),
+    // AGENTIC MOD CODE-REVIEW (App Blocks P1). Per-review spend ceiling handed to
+    // the review agent pod as COST_CAP_USD — the runner self-aborts (status
+    // 'cost-capped') once its LLM spend crosses this. A STRING (envsubst-rendered
+    // straight into the pod env / the report cost accounting), default "2".
+    // Everything else the feature needs reuses existing config (APPS_KUBE_NAMESPACE
+    // for the provisioning Job, BUNDLE_S3_* for the presigned bundle, NEXTAUTH_URL
+    // for the callback base) — no parallel infra knobs.
+    AGENT_REVIEW_COST_CAP_USD: z.string().default('2'),
+    // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
+    // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
+    // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the
+    // per-review bearer never traverse the public internet. Optional: when unset
+    // the callback falls back to NEXTAUTH_URL (the public origin) so the feature
+    // keeps working before infra sets the in-cluster value ahead of un-dark.
+    AGENT_REVIEW_CALLBACK_BASE_URL: z.string().optional(),
     // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
     // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.

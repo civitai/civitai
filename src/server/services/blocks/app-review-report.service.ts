@@ -20,6 +20,10 @@ export const APP_REVIEW_AGENT_REPORT_STATUSES = [
   'complete',
   'failed',
   'torn-down',
+  // The runner's cost-cap outcome — persisted verbatim (the callback no longer
+  // collapses it onto `failed`). Like failed/torn-down it is NOT a valid prior
+  // link (only `complete` reports seed the diff chain).
+  'cost-capped',
 ] as const;
 export type AppReviewAgentReportStatus = (typeof APP_REVIEW_AGENT_REPORT_STATUSES)[number];
 
@@ -38,47 +42,54 @@ export async function getAgentReport(
 }
 
 export type GetPriorAgentReportArgs = {
-  appBlockId?: string | null;
-  oauthClientId?: string | null;
+  /** The stable app key (= blockId). Present on every publish request, so a
+   *  first-version review keys + chains correctly. */
+  slug: string;
   /** The version being reviewed now; the prior report must be strictly older. */
   version: string;
 };
 
 /**
- * The most recent `status='complete'` report for the SAME app (identified by
- * `appBlockId` XOR `oauthClientId`) whose version is strictly semver-OLDER than
- * `version` — i.e. the prior link in the chain the next review diffs against.
- * Returns null when the app has no earlier complete report.
+ * The most recent `status='complete'` report for the SAME app (identified by its
+ * stable `slug`) whose version is strictly semver-OLDER than `version` — i.e. the
+ * prior link in the chain the next review diffs against. Returns null when the
+ * app has no earlier complete report.
  *
  * "Most recent" is resolved on the VERSION axis (the greatest version still
  * older than the target), which is the authoritative ordering for the chain;
- * ties (same version re-reviewed) break on `startedAt` desc. Only a handful of
- * versions exist per app, so the candidate set is fetched and compared in-app
- * (the `version` column is a lexical index — not semver-ordered — so the
- * ordering can't be pushed into SQL correctly).
+ * ties (same version re-reviewed) break on `startedAt` desc. The DB does NOT
+ * drive this selection: the `(slug, version)` index only narrows rows to one
+ * app; `status='complete'` is a WHERE filter and the semver ordering is applied
+ * IN-APP (the `version` column is lexically, not semver-, ordered, so the
+ * ordering can't be pushed into SQL correctly). Only a handful of versions exist
+ * per app, and the fetch is recency-bounded (see the `take` below), so the
+ * candidate set stays small.
  */
 export async function getPriorAgentReport(
   args: GetPriorAgentReportArgs
 ): Promise<AppReviewAgentReport | null> {
-  const { appBlockId, oauthClientId, version } = args;
+  const { slug, version } = args;
 
-  const hasBlock = appBlockId != null && appBlockId !== '';
-  const hasClient = oauthClientId != null && oauthClientId !== '';
-  if (hasBlock === hasClient) {
-    // Enforce the "exactly one app key" invariant the column pair encodes.
-    throw new Error(
-      'getPriorAgentReport requires exactly one of { appBlockId, oauthClientId }'
-    );
+  if (!slug) {
+    // Fail fast on a missing app key — a report cannot chain without one.
+    throw new Error('getPriorAgentReport requires a non-empty slug');
   }
   if (!semver.valid(version)) {
     throw new Error(`getPriorAgentReport: invalid semver version "${version}"`);
   }
 
-  const where = hasBlock
-    ? { appBlockId, status: 'complete' as const }
-    : { oauthClientId, status: 'complete' as const };
+  const where = { slug, status: 'complete' as const };
 
-  const candidates = await dbRead.appReviewAgentReport.findMany({ where });
+  // Recency-bounded superset of the semver answer: take the N most recently
+  // started complete reports. The true semver-latest-older report is always
+  // within the most-recent slice for any real app (only a handful of versions
+  // exist), so bounding by recency keeps the in-app semver sort below correct
+  // while capping the fetch for a pathologically re-reviewed app.
+  const candidates = await dbRead.appReviewAgentReport.findMany({
+    where,
+    orderBy: { startedAt: 'desc' },
+    take: 100,
+  });
 
   const prior = candidates
     // Only reports strictly older (by semver) than the version under review.

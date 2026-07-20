@@ -34,6 +34,7 @@ const CreateSteps = ({
   versionId,
   modelData,
   modelVersion,
+  previousBaseModel,
   goBack,
   goNext,
   router,
@@ -44,6 +45,7 @@ const CreateSteps = ({
   versionId?: string | string[];
   modelData?: ModelVersionById['model'];
   modelVersion?: ModelVersionById;
+  previousBaseModel?: string | null;
   goBack: () => void;
   goNext: () => void;
   router: NextRouter;
@@ -85,6 +87,7 @@ const CreateSteps = ({
             id={formId}
             model={modelData}
             version={modelVersion}
+            previousBaseModel={previousBaseModel}
             onSubmit={withSavedNav((result) => {
               const skipFiles = result?.usageControl === ModelUsageControl.ExternalGeneration;
               const nextStep = skipFiles ? 3 : 2;
@@ -274,7 +277,7 @@ const TrainSteps = ({
   );
 };
 
-export function ModelVersionWizard({ data }: Props) {
+export function ModelVersionWizard({ data, previousBaseModel }: Props) {
   const router = useRouter();
 
   const { id, versionId } = router.query;
@@ -386,6 +389,7 @@ export function ModelVersionWizard({ data }: Props) {
           versionId={versionId}
           modelData={modelData}
           modelVersion={modelVersion}
+          previousBaseModel={previousBaseModel}
           goBack={goBack}
           goNext={goNext}
           router={router}
@@ -399,4 +403,5 @@ export function ModelVersionWizard({ data }: Props) {
 
 type Props = {
   data?: ModelById;
+  previousBaseModel?: string | null;
 };

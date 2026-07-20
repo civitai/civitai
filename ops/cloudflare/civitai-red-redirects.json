@@ -4,7 +4,7 @@
   "rules": [
     {
       "description": "support-portal bounce (.red -> .com session-sync trampoline)",
-      "expression": "(http.request.uri.path eq \"/bugs\" or http.request.uri.path eq \"/canny/bugs\" or http.request.uri.path eq \"/support-portal\")",
+      "expression": "(http.request.uri.path eq \"/support-portal\")",
       "action": "redirect",
       "action_parameters": {
         "from_value": {

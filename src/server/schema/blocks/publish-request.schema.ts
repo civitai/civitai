@@ -154,6 +154,15 @@ export const mintReviewBlockTokenSchema = z.object({
 
 export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
 
+/** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
+ *  dispatches an ephemeral review agent for a PENDING request. Same shape as
+ *  previewRequest (the pending request id). */
+export const startAgentReviewSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
+
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });

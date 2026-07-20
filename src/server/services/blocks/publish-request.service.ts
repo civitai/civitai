@@ -1386,6 +1386,10 @@ export async function withdrawRequest(opts: {
     // the outcome. Gated on a preview actually having been started so the common
     // no-preview withdraw does zero extra k8s work.
     if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
+    // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY:
+    // an agent can run without a sandbox preview, so this must not be gated on
+    // hadReviewPreview. Idempotent no-op when no agent was dispatched.
+    void teardownAgentReviewForRequest(publishRequestId);
     return;
   }
   if (count === 0) {
@@ -1402,6 +1406,8 @@ export async function withdrawRequest(opts: {
       // fire the review teardown (idempotent) in case THIS call observed a
       // preview but a concurrent withdraw committed first without tearing it down.
       if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
+      // AGENTIC REVIEW (P1, audit #1) — unconditional agent teardown (idempotent).
+      void teardownAgentReviewForRequest(publishRequestId);
       return;
     }
     // Raced into approved/rejected → the not-pending guarantee, now true under
@@ -2684,6 +2690,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // deploy_state BEFORE markRequestDeployState flipped it to production
   // 'building'), so the common no-preview approve does zero extra DB/k8s work.
   if (hadReviewPreview) void teardownReviewForRequest(request.id);
+  // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
+  // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
+  void teardownAgentReviewForRequest(request.id);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was
   // approved (and is now building/deploying). This runs AFTER the status flip to
@@ -3408,6 +3417,61 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
 }
 
 /**
+ * AGENTIC MOD CODE-REVIEW (P1) — best-effort teardown of any ephemeral review
+ * AGENT for a publish request, DECOUPLED from the sandbox-preview teardown
+ * (audit #1). Called UNCONDITIONALLY on every approve/reject/withdraw — a review
+ * agent can be dispatched WITHOUT ever starting a sandbox preview, so gating this
+ * on `hadReviewPreview` (as the sandbox teardown is) would leak the agent's k8s
+ * objects + a `running` report row + the staged bundle whenever a mod ran only
+ * the agent. Idempotent + label/id-scoped, so it is a no-op when nothing matches.
+ *
+ * Three best-effort steps (order-independent; none throws into the decision path):
+ *   1. delete the review-agent Deployment(s)/Service(s) by label selector,
+ *   2. flip any still-`running` report row → `torn-down` so a late callback can't
+ *      resurrect it (the callback's running-only guard then no-ops),
+ *   3. delete the per-review staged bundle object(s) so staged ZIPs don't
+ *      accumulate (audit #2).
+ * NEVER throws — mirrors teardownReviewForRequest's best-effort contract.
+ */
+export async function teardownAgentReviewForRequest(publishRequestId: string): Promise<void> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    // Cheap indexed gate: only pay the k8s + MinIO teardown I/O when an agent
+    // review actually ran for this request. Agent reviews are dark/rare, so for
+    // the many mod decisions that never trigger an agent this is a single
+    // indexed read (AppReviewAgentReport is indexed on publish_request_id), not
+    // two network round-trips (k8s LIST+DELETE + MinIO LIST+DELETE) on the live
+    // approve/reject/withdraw path.
+    const existing = await dbWrite.appReviewAgentReport.findFirst({
+      where: { publishRequestId },
+      select: { id: true },
+    });
+    if (!existing) return;
+    // (1) agent k8s objects. deleteAgentReviewResources is itself best-effort +
+    // never-throws; its label selector is scoped to publishRequestId + the
+    // review-agent role, so it can only match this review's agent. `slug` is not
+    // part of that selector, so no publish-request lookup is needed here.
+    const { deleteAgentReviewResources } = await import('./agent-review.service');
+    await deleteAgentReviewResources({ slug: '', publishRequestId });
+    // (2) flip any running report row → torn-down.
+    await dbWrite.appReviewAgentReport.updateMany({
+      where: { publishRequestId, status: 'running' },
+      data: { status: 'torn-down', completedAt: new Date() },
+    });
+    // (3) staged bundle cleanup (best-effort; also lifecycle-backstopped in infra).
+    const { deleteStagedBundle } = await import('~/utils/bundle-s3');
+    await deleteStagedBundle(publishRequestId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownAgentReviewForRequest] best-effort teardown failed (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+/**
  * MANUAL teardown of a single review preview (the mod-facing "Tear down"
  * action + the way to free a slot when the concurrency cap is hit). Distinct
  * from teardownReviewForRequest (fired from approve/reject) in that it ALSO
@@ -3805,6 +3869,9 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   // must never affect the outcome. Gated on a preview actually having been
   // started so the common no-preview reject does zero extra work.
   if (hadReviewPreview) void teardownReviewForRequest(row.id);
+  // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
+  // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
+  void teardownAgentReviewForRequest(row.id);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
   // approved, carrying the (already-trimmed) moderator reason so it shows inline on

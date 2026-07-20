@@ -550,6 +550,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <Badge size="lg" radius="sm" color="blue">
                 Upcoming
               </Badge>
+            ) : isCancelled ? (
+              <IconBadge size="lg" radius="sm" color="red" icon={<IconX size={16} />}>
+                Cancelled
+              </IconBadge>
             ) : null}
 
             {/* Countdown (active only) */}

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.2129",
+  "version": "5.0.2133",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
@@ -111,6 +111,7 @@
     "@civitai/client": "0.2.0-beta.81",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/next-axiom": "^0.17.0",
+    "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",
     "@clickhouse/client": "^0.2.2",
     "@coinbase/cdp-sdk": "^1.13.0",
@@ -219,7 +220,7 @@
     "embla-carousel-autoplay": "^8.5.2",
     "embla-carousel-react": "^8.5.2",
     "exceljs": "^4.4.0",
-    "exifreader": "^4.13.0",
+    "exifreader": "^4.39.0",
     "fastest-levenshtein": "^1.0.16",
     "file-saver": "^2.0.5",
     "google-auth-library": "^9.15.0",
@@ -395,7 +396,14 @@
   },
   "pnpm": {
     "overrides": {
-      "vite": "6.4.1"
+      "vite": "6.4.3",
+      "protobufjs@7": "^7.5.6",
+      "fast-xml-parser": "^5.9.3",
+      "axios": "^1.16.0",
+      "undici@6": "^6.27.0",
+      "tar-fs@2": "^2.1.5",
+      "tar-fs@3": "^3.1.3",
+      "ws@7": "^7.5.11"
     },
     "onlyBuiltDependencies": [
       "@parcel/watcher",

@@ -16,6 +16,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `withSysReadDeadline(...)` wrap were removed the caller would hang and the
  * test would TIME OUT. A resolved-get mock would pass even without the wrap,
  * so it wouldn't guard the SLOW protection.
+ *
+ * NOTE: `getBrowsingSettingAddons` + `getLiveFeatureFlags` are fronted by a
+ * MODULE-SCOPE in-proc TTL memo (createTtlMemo, added in #3183). That single
+ * slot persists across tests within one module instance, so a prior happy-path
+ * read would otherwise bleed its cached value into the DOWN/SLOW fail-open
+ * assertions here. Each test therefore re-imports system-cache after
+ * `vi.resetModules()` to start from a FRESH (empty) memo slate — the same
+ * isolation pattern used by `system-cache.memoize.test.ts`. Because the source
+ * default constants are re-evaluated on that fresh import, the fail-open
+ * assertions compare with `toStrictEqual` (structural), not `toBe` (which would
+ * demand cross-module-instance reference identity that resetModules precludes).
  */
 
 const { mockGet, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
@@ -44,13 +55,14 @@ vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSys
 // test touches the DB on these paths).
 vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 
-import {
-  getBrowsingSettingAddons,
-  getCreationBlockedTags,
-  getLiveFeatureFlags,
-} from '~/server/services/system-cache';
 import { DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/shared/constants/browsing-settings-addons';
 import { DEFAULT_LIVE_FEATURE_FLAGS } from '~/server/common/constants';
+
+// Fresh module (fresh in-proc memos) per test — see file header note.
+async function loadSystemCache() {
+  vi.resetModules();
+  return import('~/server/services/system-cache');
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -59,6 +71,7 @@ beforeEach(() => {
 
 describe('getBrowsingSettingAddons — sysRedis soft-dependency', () => {
   it('happy path: returns the parsed cached value through withSysReadDeadline, no fail-open', async () => {
+    const { getBrowsingSettingAddons } = await loadSystemCache();
     const addons = [{ type: 'setting', nsfwLevels: [1], excludedFromDefaultBrowsingLevel: false }];
     mockGet.mockResolvedValue(JSON.stringify(addons));
 
@@ -70,11 +83,12 @@ describe('getBrowsingSettingAddons — sysRedis soft-dependency', () => {
   });
 
   it('DOWN: get throws → fails open to defaults, does not throw, logs read-degraded', async () => {
+    const { getBrowsingSettingAddons } = await loadSystemCache();
     mockGet.mockRejectedValue(new Error('sysRedis connection is down'));
 
     const result = await getBrowsingSettingAddons();
 
-    expect(result).toBe(DEFAULT_BROWSING_SETTINGS_ADDONS);
+    expect(result).toStrictEqual(DEFAULT_BROWSING_SETTINGS_ADDONS);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     const [subtype, fn] = mockLogSysRedisFailOpen.mock.calls[0];
     expect(subtype).toBe('read-degraded');
@@ -82,12 +96,13 @@ describe('getBrowsingSettingAddons — sysRedis soft-dependency', () => {
   });
 
   it('SLOW/half-open: get NEVER settles + deadline REJECTS → fails open (fail-on-revert)', async () => {
+    const { getBrowsingSettingAddons } = await loadSystemCache();
     mockGet.mockReturnValue(new Promise(() => undefined));
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
     const result = await getBrowsingSettingAddons();
 
-    expect(result).toBe(DEFAULT_BROWSING_SETTINGS_ADDONS);
+    expect(result).toStrictEqual(DEFAULT_BROWSING_SETTINGS_ADDONS);
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
@@ -96,6 +111,7 @@ describe('getBrowsingSettingAddons — sysRedis soft-dependency', () => {
 
 describe('getCreationBlockedTags — sysRedis soft-dependency (adjacent sibling)', () => {
   it('happy path: returns the parsed+filtered blocked tags through withSysReadDeadline, no fail-open', async () => {
+    const { getCreationBlockedTags } = await loadSystemCache();
     const tags = [
       { id: 1, name: 'blocked-a' },
       { id: 2, name: 'blocked-b' },
@@ -110,6 +126,7 @@ describe('getCreationBlockedTags — sysRedis soft-dependency (adjacent sibling)
   });
 
   it('DOWN: get throws → fails open to empty list, does not throw, logs defaults-firing', async () => {
+    const { getCreationBlockedTags } = await loadSystemCache();
     mockGet.mockRejectedValue(new Error('ECONNREFUSED'));
 
     const result = await getCreationBlockedTags();
@@ -122,6 +139,7 @@ describe('getCreationBlockedTags — sysRedis soft-dependency (adjacent sibling)
   });
 
   it('SLOW/half-open: get NEVER settles + deadline REJECTS → fails open to empty (fail-on-revert)', async () => {
+    const { getCreationBlockedTags } = await loadSystemCache();
     mockGet.mockReturnValue(new Promise(() => undefined));
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
@@ -140,6 +158,7 @@ describe('getCreationBlockedTags — sysRedis soft-dependency (adjacent sibling)
 // parking ~11min.
 describe('getLiveFeatureFlags — sysRedis soft-dependency (STEP-6)', () => {
   it('happy path: returns the parsed cached value through withSysReadDeadline, no fail-open', async () => {
+    const { getLiveFeatureFlags } = await loadSystemCache();
     const flags = { ...DEFAULT_LIVE_FEATURE_FLAGS };
     mockGet.mockResolvedValue(JSON.stringify(flags));
 
@@ -151,11 +170,12 @@ describe('getLiveFeatureFlags — sysRedis soft-dependency (STEP-6)', () => {
   });
 
   it('DOWN: get throws → fails open to defaults, does not throw, logs read-degraded', async () => {
+    const { getLiveFeatureFlags } = await loadSystemCache();
     mockGet.mockRejectedValue(new Error('sysRedis connection is down'));
 
     const result = await getLiveFeatureFlags();
 
-    expect(result).toBe(DEFAULT_LIVE_FEATURE_FLAGS);
+    expect(result).toStrictEqual(DEFAULT_LIVE_FEATURE_FLAGS);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     const [subtype, fn] = mockLogSysRedisFailOpen.mock.calls[0];
     expect(subtype).toBe('read-degraded');
@@ -163,12 +183,13 @@ describe('getLiveFeatureFlags — sysRedis soft-dependency (STEP-6)', () => {
   });
 
   it('SLOW/half-open: get NEVER settles + deadline REJECTS → fails open to defaults (fail-on-revert)', async () => {
+    const { getLiveFeatureFlags } = await loadSystemCache();
     mockGet.mockReturnValue(new Promise(() => undefined));
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
     const result = await getLiveFeatureFlags();
 
-    expect(result).toBe(DEFAULT_LIVE_FEATURE_FLAGS);
+    expect(result).toStrictEqual(DEFAULT_LIVE_FEATURE_FLAGS);
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');

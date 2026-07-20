@@ -52,8 +52,10 @@ import {
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
   baseModelSupportsClipSkip,
+  defaultBaseModel,
   getActiveBaseModels,
 } from '~/shared/constants/basemodel.constants';
+import { useLastUsedBaseModelStore } from '~/store/last-used-base-model.store';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
@@ -157,6 +159,7 @@ export function ModelVersionUpsertForm({
   id,
   model,
   version,
+  previousBaseModel,
   children,
   onSubmit,
   afterName,
@@ -168,6 +171,12 @@ export function ModelVersionUpsertForm({
   const { hideDonationGoals } = useCurrentUserSettings();
   const { mutate: mutateUserSettings, isPending: hideDonationGoalsUpdating } =
     useMutateUserSettings();
+  const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
+  const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
+  // For a brand-new version, seed the base model from the previous version (if any),
+  // then the user's last-used selection, then the global default.
+  const initialBaseModel =
+    version?.baseModel ?? previousBaseModel ?? lastUsedBaseModel ?? defaultBaseModel;
   const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
 
@@ -191,7 +200,7 @@ export function ModelVersionUpsertForm({
   const defaultValues: Schema = {
     ...version,
     name: version?.name ?? 'v1.0',
-    baseModel: version?.baseModel ?? 'SD 1.5',
+    baseModel: initialBaseModel,
     baseModelType: hasBaseModelType ? version?.baseModelType ?? 'Standard' : undefined,
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
@@ -232,7 +241,7 @@ export function ModelVersionUpsertForm({
 
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
-  const baseModel = form.watch('baseModel') ?? 'SD 1.5';
+  const baseModel = form.watch('baseModel') ?? initialBaseModel;
   // Non-commercial base models (e.g. Ideogram) can't be monetized — hide the
   // licensing-fee and early-access controls for these versions.
   const isNonCommercial = isNonCommercialBaseModel(baseModel);
@@ -359,6 +368,8 @@ export function ModelVersionUpsertForm({
       });
       return;
     }
+
+    if (data.baseModel) setLastUsedBaseModel(data.baseModel);
 
     const schemaResult = querySchema.safeParse(router.query);
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
@@ -915,6 +926,9 @@ export function ModelVersionUpsertForm({
               allowDeselect={false}
               withAsterisk
               searchable
+              // Select the current value on focus so the user can click and immediately
+              // type to filter (e.g. "wan") instead of clearing the field first.
+              onFocus={(e) => e.currentTarget.select()}
             />
             {hasBaseModelType && (
               <InputSelect
@@ -1135,6 +1149,9 @@ type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
+  // Base model of the model's most recent existing version; used to default the
+  // picker when adding a brand-new version to an existing model.
+  previousBaseModel?: string | null;
   // licensingFee comes off a Prisma read as a Decimal; the form coerces it to a number in defaultValues.
   version?: Omit<Partial<VersionInput>, 'licensingFee'> & {
     licensingFee?: number | { valueOf(): string } | null;

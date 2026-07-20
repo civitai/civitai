@@ -18,12 +18,29 @@ type AddonTarget = {
 
 type Viewer = { id?: number; username?: string | null; isModerator?: boolean };
 
+export type EnforcementOptions = {
+  /**
+   * Drop the addon-derived DISCOVERY exclusions (`disableMinor` + the tag
+   * union). The addon rules read `browsingLevel` as viewer intent, which only
+   * holds for a feed; a lookup by id passes a permission CEILING
+   * (allBrowsingLevelsFlag), so they fire on every such call and 404 content the
+   * site itself serves at the same id — `getModel` applies none of this
+   * (model.service.ts). `disablePoi` deliberately survives: the model page 404s
+   * POI models too, so keeping it is what makes the two paths agree.
+   * Caller-set values still stand — this only drops the implicit ones.
+   */
+  ignoreBrowsingAddons?: boolean;
+};
+
 function applyAddonExclusions(
   input: AddonTarget,
   resolved: ResolvedBrowsingSettingsAddons,
-  viewer: Viewer
+  viewer: Viewer,
+  opts?: EnforcementOptions
 ) {
   input.disablePoi = input.disablePoi || resolved.disablePoi;
+  if (opts?.ignoreBrowsingAddons) return;
+
   input.disableMinor = input.disableMinor || resolved.disableMinor;
 
   const isOwnScoped =
@@ -90,7 +107,8 @@ export async function enforceBlockedBrowsingTags(
  */
 export async function enforceBlockedBrowsingTagsForModels(
   input: AddonTarget & { tag?: string; tagname?: string },
-  viewer: Viewer
+  viewer: Viewer,
+  opts?: EnforcementOptions
 ): Promise<{ emptyResult: boolean }> {
   const { blocked, resolved } = await loadBlockedBrowsingContext(input.browsingLevel, viewer);
 
@@ -103,6 +121,6 @@ export async function enforceBlockedBrowsingTagsForModels(
   )
     return { emptyResult: true };
 
-  applyAddonExclusions(input, resolved, viewer);
+  applyAddonExclusions(input, resolved, viewer, opts);
   return { emptyResult: false };
 }

@@ -141,6 +141,7 @@ export default defineNextConfig(
       'superjson',
       '@civitai/db-schema',
       '@civitai/db',
+      '@civitai/shared',
       '@civitai/buzz',
       '@civitai/redis',
       '@civitai/clickhouse',

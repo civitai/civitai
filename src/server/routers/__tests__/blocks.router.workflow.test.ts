@@ -4693,6 +4693,147 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     });
   });
 
+  // ── Durable audit + attribution (dogfood follow-up). Before this fix a
+  // successful customComfy generation billed real Buzz but wrote NO
+  // block_scope_invocations row (per-user activity trail) and NO
+  // block_spend_attribution row (author-bounty basis) — the branch early-returned
+  // before both writes. Parity with the txt2img path.
+  describe('submitWorkflow — durable audit + attribution', () => {
+    it('writes a block_scope_invocations row mirroring txt2img (scope + workflow:submit endpoint + ok detail)', async () => {
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
+      expect(vi.mocked(recordScopeInvocation).mock.calls[0][0]).toMatchObject({
+        userId: 42, // from claims.sub
+        appBlockId: 'apb_test',
+        blockInstanceId: 'bki_test',
+        scope: 'ai:write:budgeted',
+        endpoint: 'workflow:submit:wf_cc_1',
+        statusCode: 200,
+        detail: { action: 'workflow.submit', outcome: 'ok' },
+        dev: false, // non-dev page token
+      });
+    });
+
+    it('routes the dev/ephemeral synthetic-app case via dev:true (service writes appBlockId:null + synthetic_app_id)', async () => {
+      // A dev token carries a SYNTHETIC non-FK appBlockId (a pre-approval app has
+      // no AppBlock row). The router passes `dev:true` + the synthetic id so
+      // recordScopeInvocation's FK-fallback persists the row with synthetic_app_id.
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(
+        ccPageClaims({ dev: true, appBlockId: 'ephemeral-my-recipe' })
+      );
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      await vi.waitFor(() => expect(vi.mocked(recordScopeInvocation)).toHaveBeenCalled());
+      expect(vi.mocked(recordScopeInvocation).mock.calls[0][0]).toMatchObject({
+        appBlockId: 'ephemeral-my-recipe',
+        scope: 'ai:write:budgeted',
+        dev: true,
+      });
+    });
+
+    it('writes a block_spend_attribution TRACK-row with SERVER-DERIVED args (free-floor buzzType, null modelId + sharedContentKey)', async () => {
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(
+        ccPageClaims({
+          appId: 'app_from_token',
+          appBlockId: 'apb_from_token',
+          blockInstanceId: 'bki_from_token',
+        })
+      );
+      happyCcResources();
+      happySubmit(); // no transactions surfaced → conservative free floor (blue)
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+      expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
+        userId: 42,
+        appId: 'app_from_token',
+        appBlockId: 'apb_from_token',
+        blockInstanceId: 'bki_from_token',
+        workflowId: 'wf_cc_1',
+        buzzType: 'blue', // free-first floor when no paid debit is surfaced → 0 payout
+        modelId: null, // recipe-based, no single user-picked model
+        sharedContentKey: null, // customComfy body has no sharedContentKey field
+      });
+    });
+
+    it('derives the PAID currency basis (green debit) off the REALIZED transactions', async () => {
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      // Orchestrator surfaces a realized green (payout-eligible) debit.
+      mockSubmitWorkflow.mockResolvedValue({
+        id: 'wf_cc_paid',
+        status: 'processing',
+        steps: [{ $type: 'customComfy', output: { blobs: [] } }],
+        cost: { total: 120 },
+        transactions: { list: [{ type: 'debit', amount: 120, accountType: 'green' }] },
+      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+      expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
+        buzzType: 'green',
+        buzzAmount: 120,
+        workflowId: 'wf_cc_paid',
+      });
+    });
+
+    it('nets a same-workflow refund out of the paid basis (debit 120 − credit 20 = 100)', async () => {
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      mockSubmitWorkflow.mockResolvedValue({
+        id: 'wf_cc_net',
+        status: 'processing',
+        steps: [{ $type: 'customComfy', output: { blobs: [] } }],
+        cost: { total: 120 },
+        transactions: {
+          list: [
+            { type: 'debit', amount: 120, accountType: 'green' },
+            { type: 'credit', amount: 20, accountType: 'green' },
+          ],
+        },
+      });
+      await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+      expect(mockRecordSpendAttribution.mock.calls[0][0]).toMatchObject({
+        buzzType: 'green',
+        buzzAmount: 100,
+      });
+    });
+
+    it('over-budget static gate returns BEFORE submit → NO scope-invocation, NO attribution', async () => {
+      vi.mocked(recordScopeInvocation).mockClear();
+      mockRecordSpendAttribution.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 50 })); // 180 > 50
+      happyCcResources();
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      expect(result.snapshot.status).toBe('failed');
+      // Flush any detached microtasks the happy path would have scheduled.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vi.mocked(recordScopeInvocation)).not.toHaveBeenCalled();
+      expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
+    });
+
+    it('an attribution write failure NEVER breaks the submit (fire-and-forget)', async () => {
+      mockRecordSpendAttribution.mockClear();
+      mockRecordSpendAttribution.mockRejectedValue(new Error('attribution db down'));
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
+      // The already-billed submit still returns its snapshot.
+      expect(result.snapshot.workflowId).toBe('wf_cc_1');
+      await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
+    });
+  });
+
   // ── F4: dev-tunnel per-session spend backstop on the customComfy branch. Same
   // semantics as the txt2img F4 backstop, but reserves the CEILING (recipe.maxBuzz)
   // and is SETTLED at terminal (the session id rides the settle record), so it is

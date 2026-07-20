@@ -70,6 +70,11 @@ async function buildPublicModelResponse(
       periodMode: 'published',
       browsingLevel,
     },
+    // `browsingLevel` here is the ceiling this endpoint is allowed to serve, not
+    // a request for mature content, so the addon discovery rules must not fire —
+    // they 404 minor-flagged and child-tagged models that /models/{id} serves at
+    // the same id. POI still applies, matching the model page.
+    ignoreBrowsingAddons: true,
   });
   if (items.length === 0) return null;
 
@@ -77,76 +82,76 @@ async function buildPublicModelResponse(
 
   return {
     ...model,
-      mode: model.mode == null ? undefined : model.mode,
-      creator: user
-        ? {
-            username: user.username,
-            image: user.profilePicture
-              ? getEdgeUrl(user.profilePicture.url, {
-                  width: 96,
-                  name: user.username,
-                  type: user.profilePicture.type,
-                })
-              : user.image
-              ? getEdgeUrl(user.image, { width: 96, name: user.username })
-              : null,
-          }
-        : undefined,
-      tags: tagsOnModels.map(({ name }) => name),
-      modelVersions: modelVersions
-        .filter((x) => x.status === 'Published')
-        .map(({ images, files, ...version }) => {
-          const castedFiles = files as Array<
-            Omit<(typeof files)[number], 'metadata'> & { metadata: BasicFileMetadata }
-          >;
-          const primaryFile = getPrimaryFile(castedFiles);
-          if (!primaryFile) return null;
+    mode: model.mode == null ? undefined : model.mode,
+    creator: user
+      ? {
+          username: user.username,
+          image: user.profilePicture
+            ? getEdgeUrl(user.profilePicture.url, {
+                width: 96,
+                name: user.username,
+                type: user.profilePicture.type,
+              })
+            : user.image
+            ? getEdgeUrl(user.image, { width: 96, name: user.username })
+            : null,
+        }
+      : undefined,
+    tags: tagsOnModels.map(({ name }) => name),
+    modelVersions: modelVersions
+      .filter((x) => x.status === 'Published')
+      .map(({ images, files, ...version }) => {
+        const castedFiles = files as Array<
+          Omit<(typeof files)[number], 'metadata'> & { metadata: BasicFileMetadata }
+        >;
+        const primaryFile = getPrimaryFile(castedFiles);
+        if (!primaryFile) return null;
 
-          const includeDownloadUrl = model.mode !== ModelModifier.Archived;
-          const includeImages = model.mode !== ModelModifier.TakenDown;
+        const includeDownloadUrl = model.mode !== ModelModifier.Archived;
+        const includeImages = model.mode !== ModelModifier.TakenDown;
 
-          return removeEmpty({
-            ...version,
-            files: includeDownloadUrl
-              ? castedFiles
-                  .filter((file) => file.visibility === ModelFileVisibility.Public)
-                  .map(({ hashes, metadata, ...file }) => ({
-                    ...file,
-                    metadata: removeEmpty(metadata),
-                    name: safeDecodeURIComponent(
-                      getDownloadFilename({ model, modelVersion: version, file })
-                    ),
-                    hashes: hashesAsObject(hashes),
-                    downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                      versionId: version.id,
-                      type: file.type,
-                      meta: metadata,
-                      primary: primaryFile.id === file.id,
-                    })}`,
-                    primary: primaryFile.id === file.id ? true : undefined,
-                    url: undefined,
-                    visibility: undefined,
-                  }))
-              : [],
-            images: includeImages
-              ? images.map(({ url, id, ...image }) => ({
-                  url: getEdgeUrl(url, {
-                    original: true,
-                    name: id.toString(),
-                    type: image.type,
-                  }),
-                  ...image,
+        return removeEmpty({
+          ...version,
+          files: includeDownloadUrl
+            ? castedFiles
+                .filter((file) => file.visibility === ModelFileVisibility.Public)
+                .map(({ hashes, metadata, ...file }) => ({
+                  ...file,
+                  metadata: removeEmpty(metadata),
+                  name: safeDecodeURIComponent(
+                    getDownloadFilename({ model, modelVersion: version, file })
+                  ),
+                  hashes: hashesAsObject(hashes),
+                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                    versionId: version.id,
+                    type: file.type,
+                    meta: metadata,
+                    primary: primaryFile.id === file.id,
+                  })}`,
+                  primary: primaryFile.id === file.id ? true : undefined,
+                  url: undefined,
+                  visibility: undefined,
                 }))
-              : [],
-            downloadUrl: includeDownloadUrl
-              ? `${baseUrl}${createModelFileDownloadUrl({
-                  versionId: version.id,
-                  primary: true,
-                })}`
-              : undefined,
-          });
-        })
-        .filter((x) => x),
+            : [],
+          images: includeImages
+            ? images.map(({ url, id, ...image }) => ({
+                url: getEdgeUrl(url, {
+                  original: true,
+                  name: id.toString(),
+                  type: image.type,
+                }),
+                ...image,
+              }))
+            : [],
+          downloadUrl: includeDownloadUrl
+            ? `${baseUrl}${createModelFileDownloadUrl({
+                versionId: version.id,
+                primary: true,
+              })}`
+            : undefined,
+        });
+      })
+      .filter((x) => x),
   };
 }
 
@@ -189,8 +194,7 @@ const baseHandler = PublicEndpoint(async function handler(
     // full TTL when the build reads a lagging replica. 400 (bad id) is rejected
     // above the cache; 5xx throws out of buildPublicModelResponse and is never
     // stored.
-    if (body === null)
-      return res.status(404).json({ error: `No model with id ${id}` });
+    if (body === null) return res.status(404).json({ error: `No model with id ${id}` });
 
     return res.status(200).json(body);
   } catch (error) {
