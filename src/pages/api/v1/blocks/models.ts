@@ -156,6 +156,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         cursor: !query ? cursor : undefined,
         query,
         searchIds,
+        // The public endpoint lets the addon policy decide, which leaves minor
+        // models visible under a SFW ceiling. Blocks stay strict on both axes.
+        disableMinor: true,
       },
       {
         // CLAMPED browsing level — never the client's. nsfwImagePassthrough is
