@@ -3397,6 +3397,18 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
       sha: detail.sha ?? '',
       publishRequestId,
     });
+    // AGENTIC MOD CODE-REVIEW (P1) — also tear down any ephemeral review agent for
+    // this request (label-scoped, best-effort, never throws) and flip any still-
+    // running report row to `torn-down` so a late callback can't resurrect it (the
+    // callback's running-only guard then no-ops). Additive: does not touch the
+    // review-SANDBOX teardown above.
+    const { deleteAgentReviewResources } = await import('./agent-review.service');
+    void deleteAgentReviewResources({ slug: row.slug, publishRequestId });
+    const { dbWrite } = await import('~/server/db/client');
+    await dbWrite.appReviewAgentReport.updateMany({
+      where: { publishRequestId, status: 'running' },
+      data: { status: 'torn-down', completedAt: new Date() },
+    });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(

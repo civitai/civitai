@@ -64,6 +64,7 @@ import {
   mintReviewBlockTokenSchema,
   previewRequestSchema,
   rejectRequestSchema,
+  startAgentReviewSchema,
   teardownPreviewSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
@@ -1452,6 +1453,45 @@ export const blocksRouter = router({
         // The mod id is SERVER-derived (never client-supplied) so the token can
         // only ever be self-bound to the calling moderator.
         return await mintReviewBlockToken({
+          publishRequestId: input.publishRequestId,
+          modUserId: ctx.user.id,
+        });
+      } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW (App Blocks P1) — dispatch an ephemeral, sandboxed
+   * review agent for a PENDING publish request. Provisions the agent pod (pulls
+   * the reviewed bundle, produces a structured report, posts it back), torn down
+   * on the approve/reject decision.
+   *
+   * GATING: moderatorProcedure, NOT appDeveloperProcedure. The agent analyses an
+   * ADVERSARIAL bundle and produces mod decision-support; letting authors trigger
+   * reviews of their own apps is the wrong trust boundary, and every sibling
+   * review op (previewRequest / getReviewStatus / getPublishRequestDiff) is
+   * moderator-gated. The extra `app-blocks-agentic-review` flag check (on top of
+   * moderatorProcedure + the isModerator belt + enforceAppBlocksFlag) makes the
+   * whole feature ship DARK — the flag does not exist in Flipt yet, so
+   * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
+   */
+  startAgentReview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(startAgentReviewSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Agentic review is restricted to civitai team');
+      }
+      const { isAppBlocksAgenticReviewEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('Agentic review is not enabled');
+      }
+      const { startAgentReview } = await import('~/server/services/blocks/agent-review.service');
+      try {
+        return await startAgentReview({
           publishRequestId: input.publishRequestId,
           modUserId: ctx.user.id,
         });

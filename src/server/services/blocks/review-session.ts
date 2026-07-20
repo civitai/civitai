@@ -179,3 +179,129 @@ function resolveSecret(): string {
   if (!secret) throw new Error('NEXTAUTH_SECRET is not set');
   return secret;
 }
+
+// ---------------------------------------------------------------------------
+// AGENTIC MOD CODE-REVIEW (App Blocks P1) — per-review callback bearer token.
+//
+// The ephemeral review agent pod posts its report back to the internal
+// `agent-report-callback` route. It authenticates with a per-review bearer token
+// minted HERE and injected into the pod env (CALLBACK_TOKEN) — deliberately NOT
+// the fleet-wide `BLOCK_BUILD_CALLBACK_SECRET` (which must never leave civitai-web
+// onto an untrusted agent pod). The token is bound to the `publishRequestId` and
+// short-lived, so a leaked token can only touch THAT review's report and only for
+// the run window.
+//
+// Same construction as the `mr` entry token above (domain-separated HMAC over
+// NEXTAUTH_SECRET, compact `base64url(payload).base64url(sig)`), but a DISTINCT
+// domain prefix so the two signatures can never be confused, and it binds
+// `publishRequestId` (not a host + mod id).
+// ---------------------------------------------------------------------------
+
+/** Callback-token TTL. Bounds the whole agent run (bundle pull → analysis →
+ *  report POST). 30 min is a generous ceiling for a cost-capped single review. */
+export const AGENT_CALLBACK_TOKEN_TTL_SECONDS = 30 * 60;
+
+/** Domain-separation prefix for the agent report-callback bearer. Bump `v1` if
+ *  the payload shape changes. */
+const AGENT_CALLBACK_DOMAIN_PREFIX = 'agent-report:v1';
+
+type AgentCallbackPayload = {
+  /** publishRequestId the token authorizes a report write for. */
+  p: string;
+  /** Absolute expiry, unix seconds. */
+  exp: number;
+};
+
+/** The domain-separated string HMAC'd for the agent report-callback bearer. */
+function agentCallbackSigningString(payload: AgentCallbackPayload): string {
+  return `${AGENT_CALLBACK_DOMAIN_PREFIX}:${payload.p}:${payload.exp}`;
+}
+
+export type SignAgentCallbackTokenParams = {
+  publishRequestId: string;
+  /** Injected for testability; defaults to env.NEXTAUTH_SECRET. */
+  secret?: string;
+  /** Injected for testability; defaults to AGENT_CALLBACK_TOKEN_TTL_SECONDS. */
+  ttlSeconds?: number;
+};
+
+/**
+ * Mint a compact `base64url(payload).base64url(sig)` bearer bound to a
+ * publishRequestId, valid for `ttlSeconds` (default 30m). Injected into the
+ * review agent pod as CALLBACK_TOKEN.
+ */
+export function signAgentCallbackToken(params: SignAgentCallbackTokenParams): string {
+  const secret = params.secret ?? resolveSecret();
+  const ttl = params.ttlSeconds ?? AGENT_CALLBACK_TOKEN_TTL_SECONDS;
+  const payload: AgentCallbackPayload = {
+    p: params.publishRequestId,
+    exp: nowSec() + ttl,
+  };
+  const payloadB64 = base64url(JSON.stringify(payload));
+  const sigB64 = base64url(hmac(secret, agentCallbackSigningString(payload)));
+  return `${payloadB64}.${sigB64}`;
+}
+
+export type VerifyAgentCallbackTokenResult = {
+  ok: boolean;
+  publishRequestId?: string;
+};
+
+/**
+ * Verify an agent report-callback bearer against the expected publishRequestId.
+ * NEVER throws on malformed input — returns `{ ok:false }`. Checks: parseable
+ * payload + signature, constant-time HMAC match, not expired, and the bound
+ * `publishRequestId` equals `expectedPublishRequestId`.
+ */
+export function verifyAgentCallbackToken(
+  token: string | null | undefined,
+  expectedPublishRequestId: string,
+  opts?: { secret?: string }
+): VerifyAgentCallbackTokenResult {
+  const fail: VerifyAgentCallbackTokenResult = { ok: false };
+  if (!token || typeof token !== 'string') return fail;
+  if (!expectedPublishRequestId) return fail;
+
+  const dot = token.indexOf('.');
+  if (dot <= 0 || dot === token.length - 1) return fail;
+  const payloadB64 = token.slice(0, dot);
+  const sigB64 = token.slice(dot + 1);
+
+  let payload: AgentCallbackPayload;
+  try {
+    const parsed = JSON.parse(base64urlToBuffer(payloadB64).toString('utf8'));
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.p !== 'string' ||
+      typeof parsed.exp !== 'number'
+    ) {
+      return fail;
+    }
+    payload = parsed as AgentCallbackPayload;
+  } catch {
+    return fail;
+  }
+
+  let secret: string;
+  try {
+    secret = opts?.secret ?? resolveSecret();
+  } catch {
+    return fail;
+  }
+
+  const expectedSig = hmac(secret, agentCallbackSigningString(payload));
+  let providedSig: Buffer;
+  try {
+    providedSig = base64urlToBuffer(sigB64);
+  } catch {
+    return fail;
+  }
+  if (providedSig.length !== expectedSig.length) return fail;
+  if (!timingSafeEqual(providedSig, expectedSig)) return fail;
+
+  if (payload.exp <= nowSec()) return fail;
+  if (payload.p !== expectedPublishRequestId) return fail;
+
+  return { ok: true, publishRequestId: payload.p };
+}
