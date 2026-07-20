@@ -238,16 +238,20 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
         model: {
           ...modelData,
           // `metadata` on both images is the single largest field in this payload and
-          // nothing on the auction cards reads it.
+          // nothing on the auction cards reads it. The annotations keep the field typed
+          // as it was — inferring `null` would narrow it and reject callers that build
+          // this shape from a real image (e.g. ResourceSelectCard).
           user: {
             ...user,
             profilePicture: user.profilePicture
-              ? { ...user.profilePicture, metadata: null }
+              ? { ...user.profilePicture, metadata: null as Prisma.JsonValue }
               : user.profilePicture,
           },
           cannotPromote: (meta as ModelMeta | null | undefined)?.cannotPromote ?? false,
         },
-        image: firstImage ? { ...firstImage, metadata: null } : undefined,
+        image: firstImage
+          ? { ...firstImage, metadata: null as (typeof firstImage)['metadata'] }
+          : undefined,
       },
     };
   });
