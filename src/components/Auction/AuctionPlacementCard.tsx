@@ -406,13 +406,13 @@ const SectionBidInfo = ({
   );
 };
 
-export const ModelMyBidCard = ({
+export const ModelMyBidCard = memo(function ModelMyBidCard({
   data,
   searchText,
 }: {
   data: ModelMyBidData;
   searchText: string;
-}) => {
+}) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const { handleBuy, createLoading } = usePurchaseBid();
   const queryUtils = trpc.useUtils();
@@ -566,15 +566,15 @@ export const ModelMyBidCard = ({
       </Stack>
     </CosmeticCard>
   );
-};
+});
 
-export const ModelMyRecurringBidCard = ({
+export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
   data,
   searchText,
 }: {
   data: ModelMyRecurringBidData;
   searchText: string;
-}) => {
+}) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const queryUtils = trpc.useUtils();
 
@@ -715,7 +715,7 @@ export const ModelMyRecurringBidCard = ({
       </Stack>
     </CosmeticCard>
   );
-};
+});
 
 // Memoized: every incoming bid signal replaces the whole getBySlug payload, so this
 // list re-renders wholesale on a busy auction. Callers must keep `addBidFn` stable.
