@@ -18,7 +18,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createStorageClient } from '@civitai/storage';
+import { createCsamStorageClient, createStorageClient } from '@civitai/storage';
 
 // Load apps/storage/.env into process.env (fill gaps only — a real shell var still wins), so the smoke
 // runs from the app's .env without exporting anything (tsx doesn't auto-load .env). Runs BEFORE the
@@ -126,6 +126,34 @@ async function* generate(totalBytes: number, pieceSize: number): AsyncGenerator<
   }
 }
 
+// A backend-agnostic view over the two clients: the primary client injects the (public) backend on each
+// call; the CSAM client pins backend:csam internally and exposes the same ops without a backend param.
+function makeOps(endpoint: string, backend: Backend, token: string | undefined) {
+  if (backend === 'csam') {
+    const c = createCsamStorageClient({ endpoint, token });
+    return {
+      getPutUrl: (key: string) => c.getPutUrl({ key }),
+      getGetUrl: (key: string) => c.getGetUrl({ key }),
+      headObject: (key: string) => c.headObject({ key }),
+      getObjectBuffer: (key: string) => c.getObjectBuffer({ key }),
+      uploadStream: (key: string, chunkSize: number, src: AsyncIterable<Uint8Array>) =>
+        c.uploadStream({ key, chunkSize }, src),
+      deleteObject: (key: string) => c.deleteObject({ key }),
+    };
+  }
+  const b = backend; // narrowed to PublicStorageBackend
+  const c = createStorageClient({ endpoint, token });
+  return {
+    getPutUrl: (key: string) => c.getPutUrl({ backend: b, key }),
+    getGetUrl: (key: string) => c.getGetUrl({ backend: b, key }),
+    headObject: (key: string) => c.headObject({ backend: b, key }),
+    getObjectBuffer: (key: string) => c.getObjectBuffer({ backend: b, key }),
+    uploadStream: (key: string, chunkSize: number, src: AsyncIterable<Uint8Array>) =>
+      c.uploadStream({ backend: b, key, chunkSize }, src),
+    deleteObject: (key: string) => c.deleteObject({ backend: b, key }),
+  };
+}
+
 async function main() {
   console.log(`storage smoke — backend "${backend}" | endpoint ${endpoint} | bucket ${bucket}`);
   // Dynamic import: ../src/app -> env.ts reads STORAGE_TOKEN etc. at module load, so it must evaluate
@@ -133,7 +161,10 @@ async function main() {
   const { buildServer } = await import('../src/app');
   const app = await buildServer();
   const address = await app.listen({ port: 0, host: '127.0.0.1' }); // e.g. http://127.0.0.1:53187
-  const client = createStorageClient({ endpoint: address, token: process.env.STORAGE_TOKEN });
+  // CSAM is deliberately walled off from the primary client, so the smoke drives it through the
+  // dedicated wrapper (which pins backend:csam). Both expose the ops this smoke exercises, so the rest
+  // of the flow below is backend-agnostic via `ops`.
+  const ops = makeOps(address, backend, process.env.STORAGE_TOKEN);
   const stamp = `${Date.now()}-${process.pid}`;
   const singleKey = `smoke/${stamp}/single.bin`;
   const multiKey = `smoke/${stamp}/multi.bin`;
@@ -142,7 +173,7 @@ async function main() {
   try {
     // --- single-object round-trip: presign PUT -> upload -> head -> presign GET -> read back -> delete ---
     const payload = Buffer.from(`storage smoke ${stamp}\n`.repeat(64));
-    const put = await client.getPutUrl({ backend, key: singleKey });
+    const put = await ops.getPutUrl(singleKey);
     log(`presigned PUT (${put.bucket})`);
     const putRes = await fetch(put.url, {
       method: 'PUT',
@@ -153,35 +184,32 @@ async function main() {
     created.push(singleKey);
     log('uploaded via presigned URL');
 
-    const head = await client.headObject({ backend, key: singleKey });
+    const head = await ops.headObject(singleKey);
     assert(head.exists, 'head after upload: object should exist');
     assert(head.size === payload.byteLength, `head size ${head.size} !== ${payload.byteLength}`);
     log(`head ok (size ${head.size})`);
 
-    const get = await client.getGetUrl({ backend, key: singleKey });
+    const get = await ops.getGetUrl(singleKey);
     const readBack = Buffer.from(await (await fetch(get.url)).arrayBuffer());
     assert(readBack.equals(payload), 'read-back bytes differ from uploaded');
     log('presigned GET read-back matches');
 
     // getObjectBuffer helper (server-side read path) should return the same bytes.
-    const viaHelper = Buffer.from(await client.getObjectBuffer({ backend, key: singleKey }));
+    const viaHelper = Buffer.from(await ops.getObjectBuffer(singleKey));
     assert(viaHelper.equals(payload), 'getObjectBuffer bytes differ');
     log('getObjectBuffer matches');
 
     // --- streaming multipart round-trip: uploadStream (5MB parts) -> read back -> verify size ---
     const CHUNK = 5 * 1024 * 1024;
     const TOTAL = 12 * 1024 * 1024; // 3 parts: 5MB, 5MB, 2MB
-    const streamRes = await client.uploadStream(
-      { backend, key: multiKey, chunkSize: CHUNK },
-      generate(TOTAL, 1024 * 1024)
-    );
+    const streamRes = await ops.uploadStream(multiKey, CHUNK, generate(TOTAL, 1024 * 1024));
     created.push(multiKey);
     assert(streamRes.parts.length === 3, `expected 3 parts, got ${streamRes.parts.length}`);
     log(`streaming multipart uploaded (${streamRes.parts.length} parts)`);
 
-    const mHead = await client.headObject({ backend, key: multiKey });
+    const mHead = await ops.headObject(multiKey);
     assert(mHead.exists && mHead.size === TOTAL, `multipart head size ${mHead.size} !== ${TOTAL}`);
-    const mGet = await client.getGetUrl({ backend, key: multiKey });
+    const mGet = await ops.getGetUrl(multiKey);
     const mBytes = Buffer.from(await (await fetch(mGet.url)).arrayBuffer());
     // Full-content compare (not just size + endpoints): a swapped/shifted interior part is caught too.
     const expected = Buffer.alloc(TOTAL);
@@ -191,8 +219,8 @@ async function main() {
 
     // --- delete + confirm gone ---
     if (!keep) {
-      for (const key of created) await client.deleteObject({ backend, key });
-      const gone = await client.headObject({ backend, key: singleKey });
+      for (const key of created) await ops.deleteObject(key);
+      const gone = await ops.headObject(singleKey);
       assert(!gone.exists, 'head after delete: object should be gone');
       log('deleted + confirmed gone');
     } else {
@@ -206,7 +234,7 @@ async function main() {
     // re-deleting the happy-path objects is harmless. (STORAGE_SMOKE_KEEP=1 opts out.)
     if (!keep) {
       for (const key of created) {
-        await client.deleteObject({ backend, key }).catch(() => {});
+        await ops.deleteObject(key).catch(() => {});
       }
     }
     await app.close();
