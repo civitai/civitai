@@ -41,7 +41,7 @@ import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
 import { AuctionFiltersDropdown } from '~/components/Auction/AuctionFiltersDropdown';
-import { ModelPlacementCard } from '~/components/Auction/AuctionPlacementCard';
+import { AuctionBidList } from '~/components/Auction/AuctionBidList';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { AuctionViews, usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -455,14 +455,18 @@ export const AuctionInfo = () => {
     [auctionData?.bids, selectedModel?.id]
   );
 
-  const addBidFn = (entity: GenerationResource) => {
-    setSelectedModel(entity);
+  // Stable so the memoized placement cards don't re-render on every parent render.
+  const addBidFn = useCallback(
+    (entity: GenerationResource) => {
+      setSelectedModel(entity);
 
-    if (!placeBidInView) {
-      const elem = document.getElementById(`scroll-to-bid`);
-      if (elem) elem.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
+      if (!placeBidInView) {
+        const elem = document.getElementById(`scroll-to-bid`);
+        if (elem) elem.scrollIntoView({ behavior: 'smooth' });
+      }
+    },
+    [placeBidInView, setSelectedModel]
+  );
 
   const validFor = auctionData
     ? dayjs(auctionData.validTo).diff(dayjs(auctionData.validFrom), 'day')
@@ -878,39 +882,13 @@ export const AuctionInfo = () => {
               <Text>No bids yet. Be the first!</Text>
             </Center>
           ) : (
-            <Stack>
-              {filteredBidsAbove.length ? (
-                filteredBidsAbove.map((b) => (
-                  <ModelPlacementCard
-                    key={b.entityId}
-                    data={b}
-                    aboveThreshold={true}
-                    addBidFn={addBidFn}
-                    searchText={searchText}
-                    canBid={canBid}
-                  />
-                ))
-              ) : (
-                <Center>
-                  <Text>No bids meeting minimum threshold.</Text>
-                </Center>
-              )}
-              {filteredBidsBelow.length > 0 && (
-                <>
-                  <Divider label="Below Threshold" labelPosition="center" />
-                  {filteredBidsBelow.map((b) => (
-                    <ModelPlacementCard
-                      key={b.entityId}
-                      data={b}
-                      aboveThreshold={false}
-                      addBidFn={addBidFn}
-                      searchText={searchText}
-                      canBid={canBid}
-                    />
-                  ))}
-                </>
-              )}
-            </Stack>
+            <AuctionBidList
+              bidsAbove={filteredBidsAbove}
+              bidsBelow={filteredBidsBelow}
+              addBidFn={addBidFn}
+              searchText={searchText}
+              canBid={canBid}
+            />
           )}
         </Stack>
       )}

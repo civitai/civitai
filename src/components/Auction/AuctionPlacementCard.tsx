@@ -28,7 +28,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import produce from 'immer';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { hasNSFWWords } from '~/components/Auction/auction.utils';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
@@ -717,7 +717,9 @@ export const ModelMyRecurringBidCard = ({
   );
 };
 
-export const ModelPlacementCard = ({
+// Memoized: every incoming bid signal replaces the whole getBySlug payload, so this
+// list re-renders wholesale on a busy auction. Callers must keep `addBidFn` stable.
+export const ModelPlacementCard = memo(function ModelPlacementCard({
   data,
   aboveThreshold,
   addBidFn,
@@ -729,7 +731,7 @@ export const ModelPlacementCard = ({
   addBidFn: (r: GenerationResource) => void;
   searchText: string;
   canBid: boolean;
-}) => {
+}) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -884,6 +886,4 @@ export const ModelPlacementCard = ({
       </CosmeticCard>
     </div>
   );
-};
-
-// export const ModelPlacementCardMemo = memo(ModelPlacementCard);
+});
