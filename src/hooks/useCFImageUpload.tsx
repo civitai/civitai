@@ -28,7 +28,11 @@ type UploadResult = {
   type: MediaType;
 };
 
-type UploadToCF = (file: File, metadata?: Record<string, string>) => Promise<UploadResult>;
+type UploadToCF = (
+  file: File,
+  metadata?: Record<string, string>,
+  options?: { allowAnimatedWebP?: boolean }
+) => Promise<UploadResult>;
 
 type UseS3UploadTools = {
   uploadToCF: UploadToCF;
@@ -58,8 +62,10 @@ export const useCFImageUpload: UseCFImageUpload = () => {
   };
 
   // eslint-disable-next-line @typescript-eslint/no-shadow
-  const uploadToCF: UploadToCF = async (file, metadata = {}) => {
-    const imageData = await getDataFromFile(file, { allowAnimatedWebP: currentUser?.isModerator });
+  const uploadToCF: UploadToCF = async (file, metadata = {}, options) => {
+    const imageData = await getDataFromFile(file, {
+      allowAnimatedWebP: options?.allowAnimatedWebP ?? currentUser?.isModerator,
+    });
     if (!imageData) throw new Error('Failed to process file before upload');
 
     const filename = encodeURIComponent(file.name);

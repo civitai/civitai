@@ -799,9 +799,9 @@ describe('POST /api/v1/blocks/dev-token', () => {
             page: { title: 'evil' },
             scopes: [
               'models:read:self', // legit → kept
-              'social:tip:self', // dev-excluded + page-forbidden → stripped
+              'social:tip:self', // dev-excluded (money OUT) → stripped
               'block:settings:write', // dev-excluded → stripped
-              'buzz:read:self', // page-forbidden → stripped
+              'buzz:read:self', // own-ledger read, in dev allowlist → kept
               'totally:unknown:scope', // not a known block scope → stripped
             ],
           },
@@ -812,12 +812,13 @@ describe('POST /api/v1/blocks/dev-token', () => {
 
       expect(res._getStatusCode()).toBe(200);
       const arg = mockSign.mock.calls[0][0];
-      // Only the legit scope + the force-granted user:read:self survive — proving
-      // the un-reviewed manifest cannot escalate past the dev belt.
-      expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+      // The legit reads (incl. self-bound buzz:read:self) + the force-granted
+      // user:read:self survive; the ESCALATED money/write/unknown scopes are
+      // stripped — proving the un-reviewed manifest cannot escalate past the belt.
+      expect(arg.scopes).toEqual(['buzz:read:self', 'models:read:self', 'user:read:self']);
       expect(arg.scopes).not.toContain('social:tip:self');
       expect(arg.scopes).not.toContain('block:settings:write');
-      expect(arg.scopes).not.toContain('buzz:read:self');
+      expect(arg.scopes).toContain('buzz:read:self');
       expect(arg.scopes).not.toContain('totally:unknown:scope');
     });
 
@@ -1153,9 +1154,9 @@ describe('POST /api/v1/blocks/dev-token', () => {
         slug: 'brand-new-app',
         scopes: [
           'models:read:self', // legit → kept
-          'social:tip:self', // dev-excluded + page-forbidden → stripped
+          'social:tip:self', // dev-excluded (money OUT) → stripped
           'block:settings:write', // dev-excluded → stripped
-          'buzz:read:self', // page-forbidden → stripped
+          'buzz:read:self', // own-ledger read, in dev allowlist → kept
           'totally:unknown', // not a known block scope → stripped
         ],
       });
@@ -1163,12 +1164,13 @@ describe('POST /api/v1/blocks/dev-token', () => {
 
       expect(res._getStatusCode()).toBe(200);
       const arg = mockSign.mock.calls[0][0];
-      // Only the legit scope + force-granted user:read:self survive — proving the
-      // un-reviewed CLIENT manifest cannot escalate past the dev belt.
-      expect(arg.scopes).toEqual(['models:read:self', 'user:read:self']);
+      // The legit reads (incl. self-bound buzz:read:self) + force-granted
+      // user:read:self survive; the ESCALATED money/write/unknown scopes are
+      // stripped — proving the un-reviewed CLIENT manifest cannot escalate.
+      expect(arg.scopes).toEqual(['buzz:read:self', 'models:read:self', 'user:read:self']);
       expect(arg.scopes).not.toContain('social:tip:self');
       expect(arg.scopes).not.toContain('block:settings:write');
-      expect(arg.scopes).not.toContain('buzz:read:self');
+      expect(arg.scopes).toContain('buzz:read:self');
       expect(arg.scopes).not.toContain('totally:unknown');
     });
 

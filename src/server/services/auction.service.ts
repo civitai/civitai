@@ -5,6 +5,8 @@ import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/a
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type {
   DetailsCanceledBid,
   DetailsDroppedOutAuction,
@@ -87,7 +89,12 @@ type AuctionSelectType = Prisma.AuctionGetPayload<typeof auctionValidator>;
 
 export type GetAllAuctionsReturn = AsyncReturnType<typeof getAllAuctions>;
 
-export async function getAllAuctions() {
+// The origin (uncached) fetch: reads the active-auction set from the PRIMARY DB
+// (`dbWrite`) and reduces each to `{ id, auctionBase, lowestBidRequired }`. The
+// output is fully user-independent (no `ctx`/`userId`) — the requiredScope on the
+// router gates ACCESS, not the payload — so a single global cache entry is correct
+// for every caller. Kept as a separate export so tests can assert cache-hit skips it.
+export async function getAllAuctionsUncached() {
   const now = new Date();
 
   const aData = await dbWrite.auction.findMany({
@@ -125,6 +132,25 @@ export async function getAllAuctions() {
       auctionBase: ad.auctionBase,
       lowestBidRequired,
     };
+  });
+}
+
+// Short-TTL (30s) read-through over the user-independent active-auction list to cut
+// load on the PRIMARY DB (`getAllAuctionsUncached` reads `dbWrite`), which
+// `auction.getAll` hits ~21.8x/s at peak. Output is byte-identical to the uncached
+// path; the only delta is up-to-30s staleness. That is safe here:
+//   - the active set is time-windowed (startAt<=now<endAt); a <=30s lag in an
+//     auction appearing/disappearing is imperceptible, and
+//   - `lowestBidRequired` is a DISPLAY hint — bid submission re-validates the true
+//     minimum server-side (`createBid`), so a slightly-stale value can't let an
+//     under-minimum bid through.
+// No bust: the frequently-mutating input is bids (~21/s), so busting per-bid would
+// defeat the cache; auction create/close happens in the daily `handle-auctions` job
+// and is already bounded by the 30s TTL. `fetchThroughCache` fails OPEN to the origin
+// on a Redis error, so this never adds a failure mode over the uncached path.
+export async function getAllAuctions() {
+  return fetchThroughCache(REDIS_KEYS.CACHES.ACTIVE_AUCTIONS, getAllAuctionsUncached, {
+    ttl: 30,
   });
 }
 

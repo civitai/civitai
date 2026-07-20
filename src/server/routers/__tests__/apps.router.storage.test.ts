@@ -19,6 +19,7 @@ const {
   mockGetUserById,
   mockGetSessionUser,
   mockIsAppBlocksAuthorEnabled,
+  mockRecordScopeInvocation,
 } = vi.hoisted(() => {
   const mockClient = {
     query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
@@ -42,8 +43,16 @@ const {
     mockGetUserById: vi.fn(),
     mockGetSessionUser: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
+    mockRecordScopeInvocation: vi.fn(async () => undefined),
   };
 });
+
+// W13 — the set/delete happy paths fire recordScopeInvocation (detached) with a
+// structured `detail`. Mock it so the detached write settles promptly AND we can
+// assert the emitted detail without a real DB.
+vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
+  recordScopeInvocation: (...args: unknown[]) => mockRecordScopeInvocation(...args),
+}));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
@@ -126,6 +135,8 @@ beforeEach(() => {
   mockGetUserById.mockReset();
   mockGetSessionUser.mockReset();
   mockIsAppBlocksAuthorEnabled.mockReset();
+  mockRecordScopeInvocation.mockReset();
+  mockRecordScopeInvocation.mockResolvedValue(undefined);
 
   // Sane defaults the happy-path tests inherit.
   mockIsAppBlocksEnabled.mockImplementation(async () => true);
@@ -390,6 +401,13 @@ describe('apps.storage.set', () => {
     expect(sqls.some((s) => s.startsWith('SET LOCAL app.current_app_block_id'))).toBe(true);
     expect(sqls.some((s) => s.includes('INSERT INTO "app_generate_from_model".kv'))).toBe(true);
     expect(mockClient.release).toHaveBeenCalledOnce();
+
+    // W13 — emits a storage.set detail carrying the key.
+    await vi.waitFor(() => expect(mockRecordScopeInvocation).toHaveBeenCalled());
+    expect(mockRecordScopeInvocation.mock.calls[0][0]).toMatchObject({
+      scope: 'apps:storage',
+      detail: { action: 'storage.set', key: 'lastPrompt', outcome: 'ok' },
+    });
   });
 
   it('uses the net delta from an existing row to size the quota check', async () => {
@@ -440,6 +458,26 @@ describe('apps.storage.delete', () => {
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const out = await caller.storage.delete({ blockToken: 't', key: 'k' });
     expect(out).toEqual({ ok: true, deleted: true });
+
+    // W13 — emits a storage.delete detail carrying the key (only on real deletion).
+    await vi.waitFor(() => expect(mockRecordScopeInvocation).toHaveBeenCalled());
+    expect(mockRecordScopeInvocation.mock.calls[0][0]).toMatchObject({
+      scope: 'apps:storage',
+      detail: { action: 'storage.delete', key: 'k', outcome: 'ok' },
+    });
+  });
+
+  it('emits NO audit row (and no detail) when nothing was deleted', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('DELETE')) return { rowCount: 0, rows: [] };
+      return { rowCount: 0, rows: [] };
+    });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await caller.storage.delete({ blockToken: 't', key: 'k' });
+    // Give any (incorrectly) detached write a tick to fire — it must not.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockRecordScopeInvocation).not.toHaveBeenCalled();
   });
 });
 

@@ -332,45 +332,33 @@ describe('POST /api/v1/block-tokens', () => {
     expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
-  it('C8: block:settings:* tokens require caller == installer', async () => {
+  it('graceful drop: a removed/unknown scope in the approved snapshot does NOT 403 — it is dropped and the other scopes still mint', async () => {
+    // A legacy app approved BEFORE `block:settings:*` (and `media:read:owned`)
+    // were removed from the block-scope vocabulary still has them in its stored
+    // manifest + approved snapshot. Removing them from the known set must NOT
+    // break its mint: the now-unknown scope is dropped (it carried no capability)
+    // and the app keeps minting its remaining enforced scope.
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
       ...RESOLVED_INSTALL,
       appBlock: {
         ...RESOLVED_INSTALL.appBlock,
-        manifest: { scopes: ['block:settings:read'] },
-        approvedScopes: ['block:settings:read'],
+        manifest: { scopes: ['models:read:self', 'block:settings:read'] },
+        approvedScopes: ['models:read:self', 'block:settings:read'],
+        app: { allowedScopes: 4 /* ModelsRead bit set */ },
       },
     });
-    // Mod-but-not-installer: passes the Phase-2 isModerator mint-gate so the
-    // assertion exercises the installer check (caller 999 != installer 42),
-    // not the upstream mod-gate.
-    mockSession.value = { user: { id: 999, bannedAt: null, isModerator: true } } as never; // not the installer (42)
-    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
-    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
-    const res = makeRes();
-    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
-    expect(res._status).toBe(403);
-    expect((res._body as { error: string }).error).toMatch(/installer/);
-    expect(mockTokenService.sign).not.toHaveBeenCalled();
-  });
-
-  it('C8: block:settings:* tokens succeed when caller == installer', async () => {
-    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
-      ...RESOLVED_INSTALL,
-      appBlock: {
-        ...RESOLVED_INSTALL.appBlock,
-        manifest: { scopes: ['block:settings:read'] },
-        approvedScopes: ['block:settings:read'],
-      },
-    });
-    // == installedByUserId; mod gate satisfied (App Blocks is mod-only today).
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
     const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
     const res = makeRes();
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    // NOT a 403 — the removed scope is dropped gracefully rather than rejected.
     expect(res._status).toBe(200);
-    expect(mockTokenService.sign).toHaveBeenCalled();
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
+    // models:read:self is consent-exempt (allow-by-default) so it signs; the
+    // removed block:settings:read is omitted from the JWT entirely.
+    expect(signArgs.scopes).toEqual(['models:read:self']);
+    expect(signArgs.scopes).not.toContain('block:settings:read');
   });
 
   it('scope allowlist: rejects when manifest carries scopes the OauthClient doesnt allow', async () => {
@@ -564,14 +552,14 @@ describe('POST /api/v1/block-tokens', () => {
     expect(new Set(body.missingScopes)).toEqual(new Set(['buzz:read:self']));
   });
 
-  it('A6: consent-exempt scopes (block:settings:*) sign even with no grant', async () => {
+  it('A6: consent-exempt scopes (apps:storage:*) sign even with no grant', async () => {
     mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
       ...RESOLVED_INSTALL,
       appBlock: {
         ...RESOLVED_INSTALL.appBlock,
-        manifest: { scopes: ['block:settings:read'] },
-        approvedScopes: ['block:settings:read'],
+        manifest: { scopes: ['apps:storage:read'] },
+        approvedScopes: ['apps:storage:read'],
         app: { allowedScopes: 4 },
       },
     });
@@ -581,7 +569,7 @@ describe('POST /api/v1/block-tokens', () => {
     await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
     expect(res._status).toBe(200);
     const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
-    expect(signArgs.scopes).toEqual(['block:settings:read']);
+    expect(signArgs.scopes).toEqual(['apps:storage:read']);
     const body = res._body as { needsConsent: boolean };
     expect(body.needsConsent).toBe(false);
   });

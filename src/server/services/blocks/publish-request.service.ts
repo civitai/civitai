@@ -20,6 +20,11 @@ import {
 import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+// Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
+// the notifications client in its body). approve/reject call it POST-COMMIT to notify
+// the submitting developer of the moderator decision — best-effort, wrapped in a
+// try/catch at each call site so a notification failure can never fail the decision.
+import { notifyAppBlockSubmitter } from '~/server/services/blocks/app-block-notify';
 // Pure const (no env/Prisma) — the marketplace category taxonomy + type guard.
 // approveRequest copies a validated manifest `category` onto AppBlock.category.
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -2680,6 +2685,32 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // 'building'), so the common no-preview approve does zero extra DB/k8s work.
   if (hadReviewPreview) void teardownReviewForRequest(request.id);
 
+  // POST-COMMIT, best-effort — notify the submitting developer their block was
+  // approved (and is now building/deploying). This runs AFTER the status flip to
+  // 'approved' + the build trigger have both succeeded (a failed approve throws
+  // above and never reaches here → no notification for a rolled-back approve). The
+  // whole call is wrapped so a notification failure can NEVER fail or roll back the
+  // approve — the decision is already durable. Keyed by the request id for
+  // idempotency (a re-approve of the same request notifies once).
+  try {
+    await notifyAppBlockSubmitter({
+      type: 'app-block-approved',
+      userId: request.submittedByUserId,
+      key: `app-block-approved:${params.publishRequestId}`,
+      details: {
+        slug: request.slug,
+        name: typeof manifest.name === 'string' ? manifest.name : null,
+        version: request.version,
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[approveRequest] submitter notification failed (id=${params.publishRequestId}); ` +
+        `approve stands: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
   return {
     publishRequestId: request.id,
     appBlockId,
@@ -2907,12 +2938,30 @@ export function parseReviewDetail(raw: string | null | undefined): ReviewPreview
  * status='pending') is NOT resurrected by a late callback write. The initial
  * `preview-building` mark from previewRequest must NOT set this (it transitions
  * from null / preview-failed → preview-building).
+ *
+ * Pass `expectedSha` for a stale-watcher guard on the apply watcher's advancing
+ * writes. `requireActivePreview` proves *some* preview is active, but is sha-
+ * BLIND — it can't tell whether the active preview is the one THIS watcher owns.
+ * Because the reachability wait keeps a watcher alive for up to a few minutes, a
+ * mod can tear down preview A mid-wait and re-preview (build B) within that
+ * window; without a sha check, watcher A's late live/failed write matches B's
+ * active row and clobbers it (marking a live B failed, or — worse — stamping B
+ * `preview-live` with A's host/url so the mod reviews the WRONG code). When set,
+ * the write additionally requires the row's CURRENT `deployDetail` to still
+ * carry this build's sha, so a superseded watcher's write affects 0 rows.
+ * `deployDetail` is a stringified-JSON `String` column (not a Prisma `Json`
+ * column), so this matches the serialized `"sha":"<sha>"` fragment via
+ * `contains` — a single atomic UPDATE…WHERE, no read-then-write race. The sha is
+ * a 40-char hex the callback validates against /^[0-9a-f]{40}$/, so it's a safe,
+ * collision-free literal to embed. Only the WATCHER's advancing writes pass this;
+ * the initial `previewRequest`/`preview-building` write must NOT (it is
+ * establishing the new preview, whose sha isn't yet on the row).
  */
 export async function markReviewPreviewState(
   publishRequestId: string,
   state: ReviewPreviewState,
   detail: ReviewPreviewDetail,
-  opts?: { requireActivePreview?: boolean }
+  opts?: { requireActivePreview?: boolean; expectedSha?: string }
 ): Promise<void> {
   try {
     const { dbWrite } = await import('~/server/db/client');
@@ -2923,6 +2972,11 @@ export async function markReviewPreviewState(
         // Only advance a row that is STILL an active preview (torn-down rows have
         // deployState=null → excluded → no resurrection).
         ...(opts?.requireActivePreview ? { deployState: { startsWith: 'preview-' } } : {}),
+        // Stale-watcher guard: only advance if the row's current detail still
+        // belongs to this build's sha (the serialized `"sha":"<sha>"` fragment).
+        ...(opts?.expectedSha
+          ? { deployDetail: { contains: `"sha":"${opts.expectedSha}"` } }
+          : {}),
       },
       data: {
         deployState: state,
@@ -3124,6 +3178,192 @@ export async function getReviewStatus(opts: {
     detail,
     updatedAt: row.deployUpdatedAt ?? null,
     previewUrl,
+  };
+}
+
+/**
+ * MOD REVIEW SANDBOX (#2831) — resolve the target for a full-page review preview
+ * mount (`/apps/review/preview/<publishRequestId>`).
+ *
+ * The page needs the `slug` to drive `ReviewBlockPreviewHost`, but the shared
+ * `getReviewStatus` return shape deliberately does NOT carry it (that shape feeds
+ * the modal poll and is kept minimal). This resolves the row by id server-side in
+ * the page's `getServerSideProps` instead of widening `getReviewStatus`.
+ *
+ * Returns `{ id, slug }` ONLY for an EXISTING, PENDING request — the only state a
+ * review preview can ever be live against (teardown clears the preview on
+ * approve/reject, matching `mintReviewBlockToken`'s pending gate). Returns null
+ * for a missing / non-pending request so the page fails closed with a 404 and
+ * never leaks which of the two it was.
+ *
+ * NO AUTHORIZATION is performed here (like `getReviewStatus` / `mintReviewBlockToken`,
+ * which rely on their router gate) — this leaks a pending app's slug by id, so
+ * EVERY caller MUST already be moderator-gated (today: the page resolver runs the
+ * `isAppReviewer` gate before calling). Do not call from a non-mod-gated path.
+ */
+export async function resolveReviewPreviewTarget(
+  publishRequestId: string
+): Promise<{ id: string; slug: string } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { id: true, status: true, slug: true },
+  });
+  if (!row) return null;
+  if (row.status !== 'pending') return null;
+  return { id: row.id, slug: row.slug };
+}
+
+export type MintReviewBlockTokenResult = {
+  /** The signed, self-bound, scope-stripped block JWT for the review preview. */
+  token: string;
+  expiresAt: string;
+  /** The scopes that SURVIVED the render-only clamp (the block's real capability). */
+  scopes: string[];
+  /** Forced-SFW: the review mint never reads a color domain. */
+  domain: null;
+  maxBrowsingLevel: number;
+  // Render metadata — SERVER-DERIVED so the preview host's PageBlockHost props are
+  // guaranteed to match the token claims (no client-side id reconstruction / drift).
+  blockId: string;
+  /** Synthetic, non-resolving `pending-<pubreq_…>` — matches the token appId claim. */
+  appId: string;
+  /** The `pubreq_<ULID>` request id — matches the token appBlockId claim. */
+  appBlockId: string;
+  /** `page_<pubreq_…>` — matches the token blockInstanceId claim + BLOCK_INIT ids. */
+  blockInstanceId: string;
+  appName: string;
+  /** The pending manifest's declared iframe sandbox (render fidelity). trustTier is
+   *  forced 'unverified' at the host → allow-same-origin is dropped regardless. */
+  sandbox: string;
+};
+
+/**
+ * MOD REVIEW SANDBOX (#2831) — mint the block token the on-site review preview
+ * host (`ReviewPreviewPanel` → `PageBlockHost`) handshakes with, so a PENDING,
+ * UN-APPROVED block actually renders inside the mod's review modal.
+ *
+ * SECURITY (this runs UNAPPROVED, untrusted code with a MOD's session — the crux
+ * of the whole feature, so the mint is the first defense layer):
+ *   - Resolved by `publishRequestId` (NOT ownership — the mod is not the author).
+ *     The router gates the call: moderatorProcedure + enforceAppBlocksFlag + the
+ *     mod-only `app-blocks-review-sandbox` flag (identical to previewRequest).
+ *   - SELF-BOUND: the token `sub` is the calling MOD's id — every self-bound read
+ *     (`*:read:self`) can only ever return the MOD's own data, never the author's.
+ *   - SCOPE-STRIPPED: the pending manifest's declared `scopes` are the SOURCE, but
+ *     they are clamped through the SAME audited belt the dev-tunnel host mint uses
+ *     (`clampDevScopes`) with the STRICTEST allowlist (`REVIEW_MINT_SCOPE_ALLOWLIST`
+ *     — render-only) and `keyCanSpend:false` (belt-and-suspenders strip of the
+ *     spend scope). A manifest that declares `ai:write:budgeted` / `apps:storage:*`
+ *     / `buzz:read:self` gets NONE of them — the review JWT can carry only the
+ *     render-only survivors.
+ *   - FORCED-SFW ceiling + `domain:null` (never reads a request host).
+ *   - SYNTHETIC, NON-RESOLVING ids: `appBlockId` = the `pubreq_<ULID>` request id
+ *     (an already-recognized `SYNTHETIC_APP_BLOCK_ID_PREFIXES` prefix, so the
+ *     best-effort scope-invocation FK-fails and no spend attribution row is forged);
+ *     `appId` = the non-resolving `pending-<pubreq_…>` (attribution lookup MISSES).
+ *     No `review-` prefix is introduced (mirrors the dev-token pending path).
+ *   - SHORT TTL: inherits the dev mint's 4h `dev:true` lifetime.
+ * Defense-in-depth continues at the host (`reviewMode` read-only NACKs) and the
+ * iframe (forced `trustTier:'unverified'` → opaque origin) — no single layer is
+ * load-bearing.
+ */
+export async function mintReviewBlockToken(opts: {
+  publishRequestId: string;
+  /** The calling moderator's id — the token `sub` is bound to it (self-bound). */
+  modUserId: number;
+}): Promise<MintReviewBlockTokenResult> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: opts.publishRequestId },
+    select: { id: true, status: true, slug: true, manifest: true },
+  });
+  if (!row) throw new Error(`publish request ${opts.publishRequestId} not found`);
+  // Only a PENDING request is previewable — an approved/rejected/withdrawn row has
+  // no review preview to mint against (fail-closed, matches previewRequest's remit).
+  if (row.status !== 'pending') {
+    throw new Error(`publish request ${opts.publishRequestId} is not pending`);
+  }
+
+  // Scope SOURCE is the pending request's UN-REVIEWED manifest.scopes (author-
+  // controlled, NOT trusted) — clamped DOWN by the render-only belt below. The
+  // name/sandbox are render metadata only (never security-load-bearing: trustTier
+  // is forced 'unverified' at the host and every side-effect NACKs).
+  const manifest = (row.manifest ?? {}) as {
+    scopes?: unknown;
+    name?: unknown;
+    iframe?: { sandbox?: unknown } | null;
+  };
+  const manifestScopes: string[] = Array.isArray(manifest.scopes)
+    ? manifest.scopes.filter((s): s is string => typeof s === 'string')
+    : [];
+  const manifestName = typeof manifest.name === 'string' ? manifest.name : row.slug;
+  const manifestSandbox =
+    manifest.iframe && typeof manifest.iframe.sandbox === 'string'
+      ? manifest.iframe.sandbox
+      : 'allow-scripts';
+
+  const {
+    clampDevScopes,
+    signDevScopedPageToken,
+    REVIEW_MINT_SCOPE_ALLOWLIST,
+    FORCED_SFW_CEILING,
+  } = await import('./dev-scoped-mint.service');
+
+  // The AUDITED clamp belt — render-only allowlist + NO OAuth ceiling (a pending
+  // app has no OauthClient) + keyCanSpend:false (belt-and-suspenders spend strip).
+  const granted = clampDevScopes({
+    scopeSource: manifestScopes,
+    oauthAllowed: null,
+    keyCanSpend: false,
+    allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+  });
+
+  // SIGN — self-bound to the MOD, forced-SFW, domain:null, synthetic non-resolving
+  // ids (see the fn doc). `signAppBlockId` = the `pubreq_<ULID>` request id (already
+  // a recognized SYNTHETIC_APP_BLOCK_ID_PREFIXES prefix); `signAppId` = the
+  // non-resolving `pending-<id>` (mirrors the dev-token pending path — the
+  // attribution lookup misses so no spend row can be forged). blockInstanceId
+  // matches the host's `page_<pubReqId>` prop so BLOCK_INIT ids line up. No spend →
+  // no buzzBudget.
+  const result = await signDevScopedPageToken({
+    userId: opts.modUserId,
+    signBlockId: row.slug,
+    signAppId: `pending-${row.id}`,
+    signAppBlockId: row.id,
+    blockInstanceId: `page_${row.id}`,
+    granted,
+    buzzBudget: undefined,
+  });
+
+  // MINT-TIME AUDIT (mirror the `app-blocks.dev-tunnel.mint` structured event):
+  // the forensic record of granting a review token over an un-approved app. NEVER
+  // log the token. Fire-and-forget — the audit must never fail the mint.
+  const { logToAxiom } = await import('~/server/logging/client');
+  logToAxiom(
+    {
+      name: 'app-blocks.review.mint',
+      type: 'info',
+      modUserId: opts.modUserId,
+      publishRequestId: row.id,
+      slug: row.slug,
+      scopes: granted,
+    },
+    'webhooks'
+  ).catch(() => null);
+
+  return {
+    token: result.token,
+    expiresAt: result.expiresAt,
+    scopes: granted,
+    domain: null,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    blockId: row.slug,
+    appId: `pending-${row.id}`,
+    appBlockId: row.id,
+    blockInstanceId: `page_${row.id}`,
+    appName: manifestName,
+    sandbox: manifestSandbox,
   };
 }
 
@@ -3531,7 +3771,17 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
     // deployState (#2831): only fire the review teardown if a preview was started.
-    select: { id: true, status: true, deployState: true },
+    // slug/version/manifest/submittedByUserId feed the POST-COMMIT submitter
+    // notification (best-effort; see below).
+    select: {
+      id: true,
+      status: true,
+      deployState: true,
+      slug: true,
+      version: true,
+      manifest: true,
+      submittedByUserId: true,
+    },
   });
   if (!row) throw new Error(`publish request ${params.publishRequestId} not found`);
   if (row.status !== 'pending') {
@@ -3555,4 +3805,34 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   // must never affect the outcome. Gated on a preview actually having been
   // started so the common no-preview reject does zero extra work.
   if (hadReviewPreview) void teardownReviewForRequest(row.id);
+
+  // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
+  // approved, carrying the (already-trimmed) moderator reason so it shows inline on
+  // /apps/my-submissions. Runs AFTER the status flip to 'rejected' commits (a reject
+  // that throws above — bad reason length, non-pending row — never reaches here → no
+  // notification). Wrapped so a notification failure can NEVER fail the reject.
+  // Keyed by the request id for idempotency.
+  const rejectManifest =
+    row.manifest && typeof row.manifest === 'object'
+      ? (row.manifest as Record<string, unknown>)
+      : {};
+  try {
+    await notifyAppBlockSubmitter({
+      type: 'app-block-rejected',
+      userId: row.submittedByUserId,
+      key: `app-block-rejected:${params.publishRequestId}`,
+      details: {
+        slug: row.slug,
+        name: typeof rejectManifest.name === 'string' ? rejectManifest.name : null,
+        version: row.version,
+        reason,
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[rejectRequest] submitter notification failed (id=${params.publishRequestId}); ` +
+        `reject stands: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }

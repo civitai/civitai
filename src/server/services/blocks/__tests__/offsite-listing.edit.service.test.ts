@@ -567,6 +567,33 @@ describe('submitListingRevision', () => {
       submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
   });
+
+  it('F1: a NO-URL (connect-only) shadow (externalUrl null) submits successfully — the URL gate is optional', async () => {
+    // Merged model: a no-homepage external app carries externalUrl: null. Gating the
+    // URL unconditionally made such a listing UN-REVISABLE (validateExternalUrl(null)
+    // returns {ok:false} → threw). The gate now runs only when a URL is present.
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow({ externalUrl: null }));
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+
+    const res = await submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER });
+    expect(res.shadowId).toBe('apl_shadow');
+    expect(res.slug).toBe('cool-app');
+    // A pending request WAS created (the null-URL revision was NOT blocked).
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('F1: a shadow with a PRESENT-but-invalid stored URL still → BAD_REQUEST, no request', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      shadowRow({ externalUrl: 'http://insecure.example.com' })
+    );
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+    await expect(
+      submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('externalUrl') });
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

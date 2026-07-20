@@ -279,7 +279,7 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     expect(card.kindData).toEqual({ kind: 'offsite', subKind: 'connect', externalUrl: null });
   });
 
-  it('offsite external-link card: subKind=external-link + externalUrl', () => {
+  it('offsite external-link card (LEGACY URL-only, connectClientId null): subKind=external-link + externalUrl, grandfathered', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
@@ -291,6 +291,24 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     expect(card.kindData).toEqual({
       kind: 'offsite',
       subKind: 'external-link',
+      externalUrl: 'https://ext.example/app',
+    });
+  });
+
+  it('MERGED offsite card (connect client + a homepage URL): subKind=connect AND the Visit URL both surface', () => {
+    // The merged model — a new external listing links an OAuth client AND may carry an
+    // optional homepage link. Both must be present on the card DTO.
+    const row = hydratedRow({
+      kind: 'offsite',
+      appBlockId: null,
+      appBlock: null,
+      connectClientId: 'oauth_abc',
+      externalUrl: 'https://ext.example/app',
+    });
+    const card = projectListingCard(row as never);
+    expect(card.kindData).toEqual({
+      kind: 'offsite',
+      subKind: 'connect',
       externalUrl: 'https://ext.example/app',
     });
   });

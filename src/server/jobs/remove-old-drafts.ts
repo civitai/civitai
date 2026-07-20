@@ -2,6 +2,7 @@ import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
 
 const log = createLogger('remove-old-drafts');
@@ -38,11 +39,40 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   const batches = chunk(modelIds, BATCH_SIZE);
   for (const batch of batches) {
     try {
+      // Collect the version ids BEFORE the cascade nukes the ModelVersion rows —
+      // once the Model delete cascades, this lookup returns nothing. These feed
+      // the post-delete storage-resolver deregister below.
+      const versionRows = await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${batch})
+      `;
+      const versionIds = versionRows.map((v) => v.id);
+
       await dbWrite.$executeRaw`
         DELETE FROM "Model"
         WHERE id = ANY(${batch})
       `;
       deletedCount += batch.length;
+
+      // Post-delete: deregister storage-resolver file_locations for the reaped
+      // versions. The FK cascade removes ModelVersion/ModelFile rows but leaves
+      // file_locations behind — every leaked row keeps its backend object
+      // whitelisted against the dereference-quarantine sweep, a permanent orphan.
+      // Best-effort by contract (never throws); guard anyway so a future change
+      // can't turn a registry blip into a failed batch.
+      if (versionIds.length > 0) {
+        try {
+          await deregisterFileLocationsBatch(versionIds);
+        } catch (error) {
+          const e = error as Error;
+          logToAxiom({
+            type: 'error',
+            name: 'remove-old-drafts',
+            message: 'Failed to deregister file locations for removed draft versions',
+            error: e.message,
+            stack: e.stack,
+          });
+        }
+      }
     } catch (error) {
       const e = error as Error;
       errorCount += batch.length;

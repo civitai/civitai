@@ -386,6 +386,34 @@ export const serverSchema = z
     SEARCH_API_KEY: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
+    // Debounce window (ms) for flushing model-metric-affected ids into the
+    // model search-index update queue. The model metric processor runs every
+    // minute and accumulates every model whose ModelVersionMetric.updatedAt
+    // changed into a Redis SET (dedup); it only drains that SET into the
+    // search-index queue once per window. Widening the window collapses more
+    // of a hot model's repeated metric changes into a single reindex, shrinking
+    // the burst the search backend has to drain at peak. Cost: metric-count /
+    // popularity-rank staleness on the search doc lags by up to the window
+    // (genuine mutations still reindex immediately via the service layer).
+    // Default 45m (3× the previous fixed 15m); tune down to react faster or up
+    // to shed more search-index write pressure. Changing it requires a pod
+    // restart/rollout to take effect (env is read once at module load — no live
+    // reconfiguration, though no image rebuild is needed).
+    // `.int().min(60_000).catch(45m)` fail-soft: this is a single, non-critical
+    // search-hygiene knob, but it is parsed as part of the whole-app serverSchema
+    // that throws on ANY invalid field (src/env/server.ts) — so a bad value here
+    // (0/empty/float/garbage — e.g. a "disable debounce" attempt) would crash the
+    // ENTIRE app boot, not just search. `.catch(...)` degrades any parse/validation
+    // failure to the safe 45m default instead of crashing; the `.min(60_000)`
+    // (1-minute) floor is documented intent — a sub-minute window is pointless
+    // (the processor only runs once per minute) and out-of-range/garbage values
+    // fall back to the default rather than throwing. Mirrors the
+    // EXTERNAL_MODERATION_TIMEOUT_MS clamp pattern below.
+    SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .catch(45 * 60 * 1000),
     // Per-call Meilisearch timeout in ms. Calls wrapped via withMeili() fail
     // fast with MeiliCallTimeoutError once exceeded, instead of hanging until
     // Traefik's 30s router timeout fires. Default tuned for the image feed
@@ -753,6 +781,14 @@ export const serverSchema = z
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
+    // How long the review-build callback waits for a freshly-deployed review
+    // preview's PUBLIC host to become reachable before giving up and marking the
+    // preview failed. The dominant lag is the per-host DNS record's creation +
+    // public propagation (the DNS sync loop runs on ~a 60s cycle), NOT the
+    // deploy — so the default is set to ~3× that (180s) to tolerate a backed-up
+    // sync without spuriously failing a healthy preview. Tunable per-environment
+    // without a code change. See waitForReviewHostReachable.
+    REVIEW_HOST_REACHABLE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(180000),
     // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
     // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.

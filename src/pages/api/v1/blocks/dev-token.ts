@@ -72,7 +72,7 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    PAGE_FORBIDDEN_SCOPES; spend is the dev's OWN budget-capped Buzz against the
  *    untouched per-user daily cap; the runtime spend belt still asserts
  *    moderator pre-GA. The R1-escalation test proves an escalated manifest scope
- *    (`social:tip:self`, `block:settings:write`, an unknown/mature scope) is
+ *    (`social:tip:self`, an unknown/removed/mature scope) is
  *    STRIPPED, never minted.
  *
  *    APPID MISATTRIBUTION (audit S1 — FIXED): the pending path mints a SYNTHETIC

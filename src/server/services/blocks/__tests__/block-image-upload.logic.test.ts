@@ -3,6 +3,7 @@ import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   classifyBlockImageUploadScan,
+  isAllowedOutputHost,
   isWithinSfwImageCeiling,
 } from '~/server/services/blocks/block-image-upload.logic';
 
@@ -124,5 +125,41 @@ describe('isWithinSfwImageCeiling', () => {
     expect(isWithinSfwImageCeiling(NsfwLevel.XXX)).toBe(false);
     // A mixed level (PG + R) still exceeds — any nsfw bit fails the ceiling.
     expect(isWithinSfwImageCeiling(NsfwLevel.PG | NsfwLevel.R)).toBe(false);
+  });
+});
+
+/**
+ * The SSRF allowlist for a server-resolved workflow OUTPUT url. Bounded to
+ * Civitai-controlled image hosts (output blobs resolve to `orchestration…civitai.com`).
+ * Regression guard for the "output url is not an allowed generation host" bug where
+ * the allowlist was wrongly derived from the internal `ORCHESTRATOR_ENDPOINT` host.
+ */
+describe('isAllowedOutputHost', () => {
+  it('allows the real Civitai-hosted output blob hosts (apex + subdomains, https)', () => {
+    for (const url of [
+      'https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg',
+      'https://image.civitai.com/xG1nkqK-abc/width=1024/x.jpeg',
+      'https://civitai.com/x.png',
+      'https://orchestration.civitai.red/x.jpeg',
+      'https://civitai.green/x.jpeg',
+      'https://a.b.civitai.com/x.jpeg',
+    ]) {
+      expect(isAllowedOutputHost(url)).toBe(true);
+    }
+  });
+
+  it('rejects non-Civitai hosts, host-confusion tricks, and non-https', () => {
+    for (const url of [
+      'https://evil-civitai.com/x.jpeg', // suffix-without-dot
+      'https://civitai.com.evil.com/x.jpeg', // subdomain-of-attacker
+      'https://evil.com/?x=civitai.com', // query substring
+      'https://civitai.com@evil.com/x.jpeg', // userinfo
+      'http://orchestration.civitai.com/x.jpeg', // not https
+      'https://orchestration-api.orchestration-poc.svc.cluster.local:8080/x', // the internal API host
+      'https://notcivitai.com/x.jpeg',
+      'not a url',
+    ]) {
+      expect(isAllowedOutputHost(url)).toBe(false);
+    }
   });
 });

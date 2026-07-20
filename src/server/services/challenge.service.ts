@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  CHALLENGE_MODERATION_LABELS,
   claimChallengeForCompletion,
   buildChallengeModerationText,
   closeChallengeCollection,
@@ -85,7 +86,14 @@ import {
   type ChallengeBuzzType,
 } from '~/server/games/daily-challenge/challenge-currency';
 import {
+  CHALLENGE_MAX_DURATION_DAYS,
+  CHALLENGE_MAX_DURATION_MS,
+  CHALLENGE_MAX_START_LEAD_DAYS,
+  CHALLENGE_MIN_DURATION_HOURS,
+  CHALLENGE_MIN_DURATION_MS,
+  CHALLENGE_MIN_START_LEAD_HOURS,
   getEntryPoolContribution,
+  getMaxUserChallengeStartsAt,
   getMinUserChallengeStartsAt,
   getUserChallengeVisibleAt,
 } from '~/shared/constants/challenge.constants';
@@ -941,8 +949,14 @@ export async function getChallengeDetail(
       return null;
   }
 
-  // Domain-currency gate — direct-URL parity with the feed filter; user-scoped, creator exempt.
+  // Domain-currency gate — direct-URL parity with the feed filter. Like the other gates above,
+  // moderators and creators can preview unpublished/hidden challenges regardless of domain.
+  // On the green site a mismatched (yellow) challenge is returned anyway: the detail page's
+  // <Gated> shows the civitai.red redirect card instead of a bare 404. The red side keeps
+  // hiding green challenges — there's no equivalent redirect surface pointing back to green.
   if (
+    !isGreen &&
+    !canPreviewUnpublished &&
     isChallengeHiddenByDomainCurrency(
       {
         source: challenge.source,
@@ -1350,8 +1364,13 @@ export async function upsertChallenge({
 export async function upsertUserChallenge({
   userId,
   buzzType,
+  isModerator,
   ...input
-}: UserChallengeUpsertInput & { userId: number; buzzType: ChallengeBuzzType }) {
+}: UserChallengeUpsertInput & {
+  userId: number;
+  buzzType: ChallengeBuzzType;
+  isModerator?: boolean;
+}) {
   const {
     id,
     coverImage,
@@ -1369,14 +1388,38 @@ export async function upsertUserChallenge({
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'End date must be after start date' });
   }
 
-  // Start must be at least CHALLENGE_MIN_START_LEAD_HOURS out — no "starts right now" challenges.
-  // On create this always applies; on edit it's only re-checked when the start date actually moves
-  // (guarded below, against the stored startsAt), so an unrelated edit near start time isn't blocked.
+  // Duration bounds are intrinsic to the payload (also validated by the Zod schema), so they
+  // apply on create and edit alike.
+  const durationMs = rest.endsAt.getTime() - rest.startsAt.getTime();
+  if (durationMs < CHALLENGE_MIN_DURATION_MS) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Challenge must run for at least ${CHALLENGE_MIN_DURATION_HOURS} hours.`,
+    });
+  }
+  if (durationMs > CHALLENGE_MAX_DURATION_MS) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Challenge cannot run longer than ${CHALLENGE_MAX_DURATION_DAYS} days.`,
+    });
+  }
+
+  // Start must be at least CHALLENGE_MIN_START_LEAD_HOURS out (no "starts right now") and at
+  // most CHALLENGE_MAX_START_LEAD_DAYS out (no far-future squatting). On create these always
+  // apply; on edit they're only re-checked when the start date actually moves (guarded below,
+  // against the stored startsAt), so an unrelated edit near start time isn't blocked.
   const minStartsAt = getMinUserChallengeStartsAt();
+  const maxStartsAt = getMaxUserChallengeStartsAt();
   if (!id && rest.startsAt < minStartsAt) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
-      message: 'Challenge must start at least 3 hours from now.',
+      message: `Challenge must start at least ${CHALLENGE_MIN_START_LEAD_HOURS} hours from now.`,
+    });
+  }
+  if (!id && rest.startsAt > maxStartsAt) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Challenge cannot start more than ${CHALLENGE_MAX_START_LEAD_DAYS} days from now.`,
     });
   }
 
@@ -1419,8 +1462,10 @@ export async function upsertUserChallenge({
   // only covers text.
   let coverImageId: number;
   if (coverImage.id != null) {
+    // Regular users must own the reused image. Moderators skip the ownership check entirely
+    // (trusted role — typically re-saving the creator's existing cover during a mod edit).
     const ownedImage = await dbRead.image.findFirst({
-      where: { id: coverImage.id, userId },
+      where: isModerator ? { id: coverImage.id } : { id: coverImage.id, userId },
       select: { id: true },
     });
     if (!ownedImage)
@@ -1480,7 +1525,7 @@ export async function upsertUserChallenge({
     if (!existing) throw throwNotFoundError('Challenge not found');
     if (existing.source !== ChallengeSource.User)
       throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
-    if (existing.createdById !== userId)
+    if (existing.createdById !== userId && !isModerator)
       throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
     // Text/config locks once live: only Scheduled challenges with no entries yet are editable.
     if (existing.status !== ChallengeStatus.Scheduled)
@@ -1516,7 +1561,12 @@ export async function upsertUserChallenge({
     if (startChanged && rest.startsAt < minStartsAt)
       throw new TRPCError({
         code: 'BAD_REQUEST',
-        message: 'Challenge must start at least 3 hours from now.',
+        message: `Challenge must start at least ${CHALLENGE_MIN_START_LEAD_HOURS} hours from now.`,
+      });
+    if (startChanged && rest.startsAt > maxStartsAt)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Challenge cannot start more than ${CHALLENGE_MAX_START_LEAD_DAYS} days from now.`,
       });
 
     // Only reset the scan verdict when the moderated text actually changed. Resetting on every
@@ -1524,7 +1574,20 @@ export async function upsertUserChallenge({
     // EntityModeration row, so no webhook ever flips ingestion back to Scanned and the challenge
     // sits hidden until the activation job voids it.
     const moderatedTextChanged =
-      buildChallengeModerationText(commonData) !== buildChallengeModerationText(existing);
+      // themeElements lives in metadata (no Challenge column), so it rides along only for the
+      // moderation-text comparison — never in the commonData row write.
+      buildChallengeModerationText({ ...commonData, themeElements: themeEls ?? null }) !==
+      buildChallengeModerationText({
+        ...existing,
+        themeElements: parseChallengeMetadata(existing.metadata).themeElements,
+      });
+
+    // Write themeElements on every edit — including clears. A dropped clear would make the
+    // reset scan resubmit byte-identical text, hit the contentHash dedup, and strand the
+    // challenge at Pending until the activation job voids it (the #3160 deadlock).
+    const nextMetadata = { ...parseChallengeMetadata(existing.metadata) };
+    if (themeEls) nextMetadata.themeElements = themeEls;
+    else delete nextMetadata.themeElements;
 
     const updated = await dbWrite.$transaction(async (tx) => {
       // Conditional on status IN THE WRITE: the Scheduled/entry-count checks above ran on the
@@ -1547,9 +1610,7 @@ export async function upsertUserChallenge({
           }),
           // Recompute the visibility window from the (possibly updated) start date.
           visibleAt: getUserChallengeVisibleAt(rest.startsAt),
-          ...(themeEls && {
-            metadata: { ...parseChallengeMetadata(existing.metadata), themeElements: themeEls },
-          }),
+          metadata: nextMetadata,
         },
       });
       if (count === 0)
@@ -1679,7 +1740,7 @@ export async function upsertUserChallenge({
 export async function scanUserChallenge(challengeId: number): Promise<void> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { title: true, description: true, theme: true, invitation: true },
+    select: { title: true, description: true, theme: true, invitation: true, metadata: true },
   });
   if (!challenge) return;
 
@@ -1687,8 +1748,11 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
     await submitTextModeration({
       entityType: 'Challenge',
       entityId: challengeId,
-      content: buildChallengeModerationText(challenge),
-      labels: ['nsfw'],
+      content: buildChallengeModerationText({
+        ...challenge,
+        themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+      }),
+      labels: [...CHALLENGE_MODERATION_LABELS],
       priority: 'low',
     });
   } catch (e) {
@@ -1770,13 +1834,19 @@ export async function deleteChallenge(id: number) {
 
   const collectionId = challenge.collectionId;
 
-  // Delete challenge first (cascades to ChallengeWinner)
-  await dbWrite.challenge.delete({ where: { id } });
+  // Keep challenge + collection deletion in one transaction so a failed collection delete
+  // cannot leave an orphaned contest collection after the challenge row is removed.
+  await dbWrite.$transaction(async (tx) => {
+    // Delete challenge first (cascades to ChallengeWinner)
+    await tx.challenge.delete({ where: { id } });
 
-  // Delete the associated collection and all its data
+    // Delete the associated collection and all its data
+    if (collectionId) {
+      await tx.collection.delete({ where: { id: collectionId } });
+    }
+  });
+
   if (collectionId) {
-    await dbWrite.collection.delete({ where: { id: collectionId } });
-
     // Remove from search index
     await collectionsSearchIndex.queueUpdate([
       { id: collectionId, action: SearchIndexUpdateQueueAction.Delete },
@@ -1786,9 +1856,12 @@ export async function deleteChallenge(id: number) {
   return { success: true };
 }
 
-// User-scoped delete: a creator may delete their own challenge only while it is still Scheduled
-// with no entries (no entry fees collected). Delegates to deleteChallenge, which already refunds
-// the creator's escrowed prize for Scheduled User challenges before removing challenge + collection.
+// User-scoped delete: a creator may delete their own challenge while it is still Scheduled (with no
+// entries), or after a moderator has voided it (Cancelled). A Cancelled challenge is already dead and
+// its funds refunded, so — like the moderator delete path — it may be removed regardless of entries;
+// the entry-count block only guards Scheduled challenges, where deleting would erase submissions on a
+// still-live challenge. Delegates to deleteChallenge, which refunds a Scheduled or Cancelled User
+// challenge (idempotently) before removing challenge + collection.
 export async function deleteUserChallenge({ id, userId }: { id: number; userId: number }) {
   const existing = await dbRead.challenge.findUnique({
     where: { id },
@@ -1799,12 +1872,15 @@ export async function deleteUserChallenge({ id, userId }: { id: number; userId: 
     throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be deleted here.' });
   if (existing.createdById !== userId)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only delete your own challenges.' });
-  if (existing.status !== ChallengeStatus.Scheduled)
+  if (
+    existing.status !== ChallengeStatus.Scheduled &&
+    existing.status !== ChallengeStatus.Cancelled
+  )
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
-      message: 'A published challenge can no longer be deleted.',
+      message: 'This challenge can no longer be deleted.',
     });
-  if (existing.collectionId) {
+  if (existing.status === ChallengeStatus.Scheduled && existing.collectionId) {
     const entryCount = await dbRead.collectionItem.count({
       where: { collectionId: existing.collectionId },
     });
@@ -1814,21 +1890,32 @@ export async function deleteUserChallenge({ id, userId }: { id: number; userId: 
         message: 'This challenge already has entries and can no longer be deleted.',
       });
   }
-  // deleteChallenge re-reads status and only refunds/deletes a Scheduled row, so a race with the
-  // activation job fails safe (blocks Active) rather than double-refunding.
+  // deleteChallenge re-reads status and only refunds/deletes a Scheduled or Cancelled row, so a race
+  // with the activation job fails safe (blocks Active) rather than double-refunding.
   return deleteChallenge(id);
 }
 
 // User-safe fetch for the edit form. getChallengeForEdit is moderator-only; this guards ownership
 // first, then returns the same shape. User challenges have judgingPrompt = null, so nothing
-// moderator-sensitive is exposed.
-export async function getUserChallengeForEdit({ id, userId }: { id: number; userId: number }) {
+// moderator-sensitive is exposed. Moderators bypass ownership (they manage user challenges through
+// this same form); non-User challenges stay on the moderator edit page regardless.
+export async function getUserChallengeForEdit({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
   const existing = await dbRead.challenge.findUnique({
     where: { id },
     select: { source: true, createdById: true, status: true },
   });
   if (!existing) throw throwNotFoundError('Challenge not found');
-  if (existing.source !== ChallengeSource.User || existing.createdById !== userId)
+  if (existing.source !== ChallengeSource.User)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This challenge cannot be edited here.' });
+  if (existing.createdById !== userId && !isModerator)
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You can only edit your own challenges.' });
   if (existing.status !== ChallengeStatus.Scheduled)
     throw new TRPCError({

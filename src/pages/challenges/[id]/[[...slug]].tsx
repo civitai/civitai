@@ -322,14 +322,24 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     !!currentUser &&
     currentUser.id === challenge.createdById &&
     challenge.source === ChallengeSource.User;
+  const isCancelled = challenge.status === ChallengeStatus.Cancelled;
   const canManageOwn =
     features.userChallenges && isOwner && !currentUser?.isModerator && isScheduled;
+  // Delete stays available after a moderator voids the challenge (Cancelled) so the owner can clear
+  // a dead challenge off their list; edit remains Scheduled-only (canManageOwn).
+  const canDeleteOwn =
+    features.userChallenges &&
+    isOwner &&
+    !currentUser?.isModerator &&
+    (isScheduled || isCancelled);
 
   const handleOwnerDelete = () => {
     openConfirmModal({
       title: 'Delete challenge',
-      children:
-        'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
+      // A Cancelled challenge was already refunded by the void, so don't promise another refund.
+      children: isCancelled
+        ? 'Delete this cancelled challenge? This cannot be undone.'
+        : 'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
       centered: true,
       closeOnConfirm: false,
       labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
@@ -356,6 +366,16 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
       // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
       contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
+      // Yellow user challenges live on civitai.red regardless of rating — the server returns
+      // them on green so this renders the redirect card instead of a 404 (inert on red).
+      // Owner/mods keep detail access on green for SFW yellow challenges, mirroring the
+      // server-side preview exemption; NSFW ones still redirect via contentNsfwLevel.
+      nsfw={
+        challenge.source === ChallengeSource.User &&
+        challenge.buzzType === 'yellow' &&
+        !isOwner &&
+        !currentUser?.isModerator
+      }
       bypassRating={isOwner || (currentUser?.isModerator ?? false)}
       meta={{
         title: `${challenge.title} | Civitai Challenges`,
@@ -378,7 +398,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                   <IconShare3 size={20} />
                 </ActionIcon>
               </ShareButton>
-              {(currentUser?.isModerator || canReport || canManageOwn) && (
+              {(currentUser?.isModerator || canReport || canDeleteOwn) && (
                 <Menu position="bottom-end" withArrow>
                   <Menu.Target>
                     <ActionIcon variant="light" size="lg">
@@ -392,7 +412,13 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                         <Menu.Item
                           leftSection={<IconPencil size={14} stroke={1.5} />}
                           component={Link}
-                          href={`/moderator/challenges/${challenge.id}/edit`}
+                          // User challenges use the user form (entry fee / judging categories);
+                          // the moderator form's prize model doesn't apply to them.
+                          href={
+                            challenge.source === ChallengeSource.User
+                              ? `/challenges/${challenge.id}/edit`
+                              : `/moderator/challenges/${challenge.id}/edit`
+                          }
                         >
                           Edit Challenge
                         </Menu.Item>
@@ -459,16 +485,18 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                         </Menu.Item>
                       </>
                     )}
-                    {canManageOwn && (
+                    {canDeleteOwn && (
                       <>
                         <Menu.Label>Actions</Menu.Label>
-                        <Menu.Item
-                          leftSection={<IconPencil size={14} stroke={1.5} />}
-                          component={Link}
-                          href={`/challenges/${challenge.id}/edit`}
-                        >
-                          Edit Challenge
-                        </Menu.Item>
+                        {canManageOwn && (
+                          <Menu.Item
+                            leftSection={<IconPencil size={14} stroke={1.5} />}
+                            component={Link}
+                            href={`/challenges/${challenge.id}/edit`}
+                          >
+                            Edit Challenge
+                          </Menu.Item>
+                        )}
                         <Menu.Item
                           leftSection={<IconTrash size={14} />}
                           color="red"

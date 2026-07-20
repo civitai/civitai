@@ -11,6 +11,10 @@ import {
   OFFSITE_MOD_REASON_MIN,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  ALL_SCOPES,
+  SCOPE_JUSTIFICATION_MAX_LENGTH,
+} from '~/shared/constants/token-scope.constants';
 
 /**
  * App Store Listings (W13) — P3a OFF-SITE (external-link) submission schemas.
@@ -61,22 +65,51 @@ export const OFFSITE_REJECTION_REASON_MIN = OFFSITE_MOD_REASON_MIN;
 export const OFFSITE_REJECTION_REASON_MAX = OFFSITE_MOD_REASON_MAX;
 
 /**
- * Author submit input for a pure external-link off-site listing.
+ * Author submit input for an external-app off-site listing (W13 — the MERGED
+ * external+connect model). Every external app IS an OAuth app, so this ONE schema
+ * carries BOTH the display metadata AND the OAuth-client link:
+ *   - `connectClientId`  — REQUIRED: the id of the caller's OWN OAuth client
+ *     (ownership, not-app-block, and the scope-ceiling checks are enforced in the
+ *     SERVICE, which has the client row; the schema only bounds the shape).
+ *   - `requestedScopes`  — a `TokenScope` bitmask the listing DISCLOSES it will
+ *     request (review-only; it does NOT gate token issuance — the client's
+ *     `allowedScopes` stays the runtime ceiling). The service asserts it is a subset
+ *     of the client's ceiling.
+ *   - `scopeJustifications` — `{ TokenScope-enum-key: rationale ≤SCOPE_JUSTIFICATION_MAX_LENGTH }`.
+ *     Per-value length is bounded here; the key-validity / keys-⊆-requested / non-empty
+ *     rules are enforced by the shared `validateConnectScopeJustifications` in the
+ *     service (single source with the App Blocks manifest validator).
+ *   - `externalUrl`      — OPTIONAL homepage / "Visit ↗" link. Bound loose here
+ *     (string length) and validated for the https-only / absolute-URL shape by the
+ *     shared `validateExternalUrl` in the superRefine below ONLY WHEN PRESENT (single
+ *     source of truth), so a `http:` / `javascript:` / `data:` / over-long URL is
+ *     rejected at the schema boundary — while an omitted URL is accepted.
  *
- * `externalUrl` is bound loose here (string length) and validated for the
- * https-only / absolute-URL shape by the shared `validateExternalUrl` in the
- * superRefine below (single source of truth), so a `http:` / `javascript:` /
- * `data:` / over-long URL is rejected at the schema boundary — not just in the
- * service. `page` / `targets` / `iframe` are accepted as unknown ONLY so the
- * mutual-exclusivity check can REJECT them (an external app must not declare an
- * on-platform surface — see `assertNoOnPlatformSurface`); the service never reads
- * them.
+ * `page` / `targets` / `iframe` are accepted as unknown ONLY so the mutual-exclusivity
+ * check can REJECT them (an external app must not declare an on-platform surface — see
+ * `assertNoOnPlatformSurface`); the service never reads them.
  */
 export const submitExternalListingSchema = z
   .object({
     slug: z.string().min(3).max(40).regex(SLUG_REGEX),
     name: z.string().min(1).max(OFFSITE_NAME_MAX),
-    externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH),
+    // REQUIRED: every external app links its own OAuth client.
+    connectClientId: z.string().min(1).max(64),
+    // Non-negative bitmask, UPPER-BOUNDED at the full defined scope set (`ALL_SCOPES`,
+    // the OR of every TokenScope bit). Without the max, a crafted value beyond int4
+    // (e.g. 2**32, or 2**32 + a real bit) survives the subset check — JS bitwise ToInt32
+    // in `connectScopesSubsetOfCeiling` truncates it away — then the int4 INSERT raises
+    // Postgres 22003, which the service's P2002-only catch surfaces as a raw 500. The
+    // `.max` rejects it at the schema boundary (400) instead. `ALL_SCOPES` (not
+    // `TokenScope.Full`) is the correct ceiling: Full excludes the AppBlocksSubmit /
+    // AppBlocksDevTunnel bits, which a client's `allowedScopes` MAY legitimately carry,
+    // so bounding at Full could reject a valid subset. The per-client subset check still
+    // lives in the service (it needs the client's `allowedScopes`).
+    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES),
+    // Per-value length bound only; full key/subset validation is in the service.
+    scopeJustifications: z.record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH)),
+    // OPTIONAL homepage / Visit link. Validated for the https-only shape only when present.
+    externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
     tagline: z.string().max(OFFSITE_TAGLINE_MAX).optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).optional(),
     // Validated against the shared taxonomy const so adding a category needs no
@@ -93,9 +126,12 @@ export const submitExternalListingSchema = z
     iframe: z.unknown().optional(),
   })
   .superRefine((val, ctx) => {
-    const url = validateExternalUrl(val.externalUrl);
-    if (!url.ok) {
-      ctx.addIssue({ code: 'custom', message: url.error, path: ['externalUrl'] });
+    // externalUrl is OPTIONAL — validate the https shape ONLY when a URL is provided.
+    if (val.externalUrl != null) {
+      const url = validateExternalUrl(val.externalUrl);
+      if (!url.ok) {
+        ctx.addIssue({ code: 'custom', message: url.error, path: ['externalUrl'] });
+      }
     }
     const surface = assertNoOnPlatformSurface({
       page: val.page,
@@ -138,6 +174,16 @@ export const updateListingPatchSchema = z
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).nullable().optional(),
     category: z.enum(MARKETPLACE_CATEGORIES).nullable().optional(),
     contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
+    // OAuth-connect scope disclosure edit (connect sub-kind only). The two travel
+    // as a pair: the SERVICE re-runs the subset-of-ceiling + justification checks
+    // (needs the listing's client `allowedScopes`) and rejects justifications
+    // without a `requestedScopes` mask, so a scope change re-enters mod review.
+    // Upper-bounded at `ALL_SCOPES` for the same int4-overflow reason as the submit
+    // schema (a value beyond int4 would 500 on the UPDATE, not 400 at the boundary).
+    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES).optional(),
+    scopeJustifications: z
+      .record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH))
+      .optional(),
   })
   .refine((p) => Object.values(p).some((v) => v !== undefined), {
     message: 'patch must change at least one field',

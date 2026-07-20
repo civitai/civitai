@@ -296,10 +296,14 @@ export const appListingsRouter = router({
   // -------------------------------------------------------------------------
 
   /**
-   * AUTHOR: submit a pure external-link off-site app. Creates a DRAFT
-   * `AppListing` + a `pending` `AppListingPublishRequest` (B1); the author then
+   * AUTHOR: submit an external-app off-site listing (the MERGED external+connect
+   * model — every external app links its own OAuth client). REQUIRES the caller's
+   * OAuth `connectClientId` (owned, not an App-Block client) + the disclosed
+   * requested-scope subset (⊆ the client's `allowedScopes`) + per-scope
+   * justifications; `externalUrl` is an OPTIONAL homepage / Visit link. Creates a
+   * DRAFT `AppListing` + a `pending` `AppListingPublishRequest` (B1); the author then
    * attaches assets via the (author-gated) asset-CRUD procs above before a mod
-   * approves it (PR-b). Owner-bound to the caller (no user-supplied owner).
+   * approves it. Owner-bound to the caller (no user-supplied owner).
    */
   submitExternalListing: appDeveloperProcedure
     .use(

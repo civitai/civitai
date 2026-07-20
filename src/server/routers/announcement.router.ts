@@ -23,7 +23,7 @@ export const announcementRouter = router({
     .mutation(({ input }) => deleteAnnouncement(input.id)),
   getAnnouncements: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .input(getCurrentAnnouncementsSchema.optional())
+    .input(getCurrentAnnouncementsSchema.default({}))
     .use(applyRequestDomainColor)
     .query(({ ctx, input }) => getCurrentAnnouncements({ ...input, userId: ctx.user?.id })),
   getAnnouncementsPaged: moderatorProcedure

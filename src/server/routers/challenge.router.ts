@@ -184,12 +184,18 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .query(({ ctx }) => getUserChallengeCreateEligibility(ctx.user.id)),
 
-  // User: fetch own Scheduled challenge for editing (owner-guarded in the service).
+  // User: fetch own Scheduled challenge for editing (owner/moderator-guarded in the service).
   getUserChallengeForEdit: protectedProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
     .use(isFlagProtected('userChallenges'))
-    .query(({ input, ctx }) => getUserChallengeForEdit({ id: input.id, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getUserChallengeForEdit({
+        id: input.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
 
   // Moderator: Get all challenges (including drafts)
   getModeratorList: moderatorProcedure
@@ -215,6 +221,7 @@ export const challengeRouter = router({
       upsertUserChallenge({
         ...input,
         userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
         buzzType: input.buzzType ?? deriveDomainCurrency(ctx.features.isGreen),
       })
     ),

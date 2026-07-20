@@ -464,6 +464,42 @@ describe('listMyScopeInvocations', () => {
     expect(arg.where).toEqual({ userId: 42, appBlockId: 'apb_target' });
   });
 
+  // Unified scope-usage audit: the GLOBAL feed (no appBlockId) must keep app-block
+  // AND pre-approval dev-tunnel SYNTHETIC rows (appBlockId null + syntheticAppId
+  // set) while excluding ONLY external-OAuth rows (appBlockId null + syntheticAppId
+  // null). It filters on the two PRE-EXISTING columns so the read is safe before
+  // the `source`/`oauth_client_id` migration is applied. This assertion FAILS under
+  // the earlier `appBlockId: { not: null }`-only filter, which silently dropped the
+  // dev's own synthetic rows.
+  it('global feed keeps app-block + synthetic rows, excludes only external-OAuth', async () => {
+    const { listMyScopeInvocations } = await import('../user-app-surface.service');
+    await listMyScopeInvocations({ userId: 42 });
+    const arg = mockDbRead.blockScopeInvocation.findMany.mock.calls[0][0];
+    expect(arg.where).toEqual({
+      userId: 42,
+      // app-block row (appBlockId set) → matched by predicate 1;
+      // synthetic dev-tunnel row (appBlockId null, syntheticAppId set) → predicate 2;
+      // external-OAuth row (both null) → matched by NEITHER, so excluded.
+      OR: [{ appBlockId: { not: null } }, { syntheticAppId: { not: null } }],
+    });
+    // Pre-migration safety: the read must NOT reference the new columns.
+    expect(JSON.stringify(arg.where)).not.toContain('source');
+    expect(JSON.stringify(arg.where)).not.toContain('oauthClientId');
+  });
+
+  it('global feed INCLUDES a synthetic dev-tunnel row (appBlockId null, syntheticAppId set)', async () => {
+    const { listMyScopeInvocations } = await import('../user-app-surface.service');
+    // A pre-approval dev-tunnel invocation: no AppBlock row, synthetic ref set.
+    mockDbRead.blockScopeInvocation.findMany.mockResolvedValue([
+      invocationRow({ id: 7n, appBlockId: null, appBlock: null, syntheticAppId: 'ephemeral-my-app' }),
+    ]);
+    const result = await listMyScopeInvocations({ userId: 42 });
+    // The mapper returns the row (does not crash on a null appBlockId) — it is
+    // present in the dev's own audit feed, restoring the pre-PR behaviour.
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].id).toBe('7');
+  });
+
   it('emits a nextCursor when the page is full and silently ignores a malformed inbound cursor', async () => {
     const { listMyScopeInvocations } = await import('../user-app-surface.service');
     // 1 more row than limit → hasNext + nextCursor is the last visible id.

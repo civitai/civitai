@@ -712,7 +712,7 @@ export function filterPreferences<
     case 'challenges':
       const challenges = value.filter((challenge) => {
         const isOwner = challenge.createdBy.id === currentUser?.id;
-        if ((isOwner || isModerator) && challenge.nsfwLevel === 0) return true;
+        if (isOwner || isModerator) return true;
 
         // Content allowed by the challenge must intersect the user's browsing level
         if (!Flags.intersects(challenge.allowedNsfwLevel, browsingLevel)) {

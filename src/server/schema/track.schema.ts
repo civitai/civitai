@@ -445,6 +445,23 @@ const generatorSubmitSchema = z.object({
   }),
 });
 
+// Client-coalesced telemetry batch — high-volume `track.trackSearch` (~16/s) and
+// `track.addAction` (~6.8/s) were each fired as ONE tRPC call per event, dragging
+// the full non-batched tRPC middleware chain + superjson encode + ClickHouse
+// insert per event (~23 procedures/s of pure telemetry). The browser now buffers
+// them and flushes coalesced batches to the /api/track/batch beacon, which
+// dispatches each event through the SAME Tracker.search()/Tracker.action() (byte-
+// identical ClickHouse inserts) once per batch instead of once per event.
+//
+// Each batch element is discriminated by `kind` and carries the UNCHANGED
+// per-event input under `data` — the search/action schemas below are reused
+// verbatim, so nothing about what is recorded changes, only how it's transported.
+// The array is bounded (min 1, max BATCH_MAX) so a tampered client can't bloat a
+// single request; the browser flushes well below this cap (see trackEventBuffer).
+// `trackBatchEventSchema` / `trackBatchSchema` are declared at the bottom of this
+// file (after `trackActionSchema`, which the action arm references).
+export const TRACK_BATCH_MAX = 100;
+
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
 export const trackActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('AddToBounty_Click') }),
@@ -467,3 +484,69 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   imageRemixClickSchema,
   generatorSubmitSchema,
 ]);
+
+// One coalesced telemetry event in a /api/track/batch payload. `kind` selects the
+// destination (search -> Tracker.search, action -> Tracker.action) and `data` is
+// the EXACT existing per-event input for that destination. No field is added,
+// dropped, or reshaped — the transport changes, the recorded row does not.
+export const trackBatchEventSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('search'), data: trackSearchSchema }),
+  z.object({ kind: z.literal('action'), data: trackActionSchema }),
+]);
+export type TrackBatchEvent = z.infer<typeof trackBatchEventSchema>;
+
+// The whole batch: an ordered, bounded array of events. Order is preserved end to
+// end (client buffer -> array -> server iterates in order), matching the pre-batch
+// emit order. Bounded to TRACK_BATCH_MAX so a malicious/oversized body is rejected
+// at the schema layer before any Tracker dispatch.
+export const trackBatchSchema = z.array(trackBatchEventSchema).min(1).max(TRACK_BATCH_MAX);
+export type TrackBatchInput = z.infer<typeof trackBatchSchema>;
+
+// `addAction` kinds that must NOT be held in the coalescing buffer — enqueueing
+// one triggers an immediate flush so a browser crash (which sendBeacon can't
+// cover — it only fires on navigation/tab-hide) can't lose it. Everything else
+// (all searches + the high-VOLUME top-of-funnel clicks) batches on the
+// interval/size/unload triggers, which is where the load win lives (these
+// immediate kinds are low-volume).
+//
+// Two categories qualify, selected CONSERVATIVELY (when in doubt → immediate):
+//
+//   MONEY / CONVERSION-critical:
+//   - Generator_Submit      — anchors the generation→revenue funnel (externalId join)
+//   - PurchaseFunds_Confirm — buzz purchase completion (real money)
+//   - PurchaseFunds_Cancel  — checkout-funnel drop-off (purchase funnel)
+//   - NotEnoughFunds        — purchase-funnel signal (insufficient balance)
+//   - Tip_Confirm           — buzz tip send (money moves)
+//   - AddToBounty_Confirm   — buzz committed to a bounty
+//   - AwardBounty_Confirm   — buzz awarded from a bounty
+//   - Membership_Cancel     — subscription churn
+//   - Membership_Downgrade  — subscription downgrade
+//
+//   COMPLIANCE / SAFETY-critical:
+//   - CSAM_Help_Triggered   — child-safety signal; must never be buffered/crash-lost
+//
+// Batched (low-value, high-volume or non-critical): the *_Click intents,
+// TipInteractive_Click/_Cancel (pre-confirm/cancel UI steps — the money move is
+// Tip_Confirm), LoginRedirect, ProfanitySearch, Model_Create_Click,
+// Image_Remix_Click, and every trackSearch event.
+export const IMMEDIATE_FLUSH_ACTION_TYPES = new Set<TrackActionInput['type']>([
+  // money / conversion
+  'Generator_Submit',
+  'PurchaseFunds_Confirm',
+  'PurchaseFunds_Cancel',
+  'NotEnoughFunds',
+  'Tip_Confirm',
+  'AddToBounty_Confirm',
+  'AwardBounty_Confirm',
+  'Membership_Cancel',
+  'Membership_Downgrade',
+  // compliance / safety
+  'CSAM_Help_Triggered',
+]);
+
+// A batch event flushes immediately only when it's an `action` whose type is in
+// the set above. Searches are never immediate (they're the bulk of the volume →
+// always batched). Used by the client buffer to decide immediate-flush vs coalesce.
+export function isImmediateFlushTrackEvent(event: TrackBatchEvent): boolean {
+  return event.kind === 'action' && IMMEDIATE_FLUSH_ACTION_TYPES.has(event.data.type);
+}

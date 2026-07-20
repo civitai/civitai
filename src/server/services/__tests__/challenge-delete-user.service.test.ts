@@ -17,6 +17,7 @@ const {
       delete: vi.fn().mockResolvedValue(undefined),
     },
     collection: { delete: vi.fn().mockResolvedValue(undefined) },
+    $transaction: vi.fn(),
   },
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockQueueUpdate: vi.fn(),
@@ -52,6 +53,9 @@ describe('deleteUserChallenge', () => {
     vi.clearAllMocks();
     mockDbRead.collectionItem.count.mockResolvedValue(0);
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
+      fn({ challenge: mockDbWrite.challenge, collection: mockDbWrite.collection })
+    );
   });
 
   it('owner + Scheduled + 0 entries: claims, refunds and deletes', async () => {
@@ -97,7 +101,7 @@ describe('deleteUserChallenge', () => {
     expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
   });
 
-  it('rejects non-Scheduled status', async () => {
+  it('rejects Active status', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue(
       makeChallenge({ status: ChallengeStatus.Active })
     );
@@ -105,11 +109,31 @@ describe('deleteUserChallenge', () => {
     expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
   });
 
-  it('rejects when entries exist', async () => {
+  it('rejects when entries exist on a Scheduled challenge', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue(makeChallenge());
     mockDbRead.collectionItem.count.mockResolvedValue(3);
     await expect(deleteUserChallenge({ id: 1, userId: OWNER })).rejects.toThrow(/entries/i);
     expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
+  });
+
+  it('owner + Cancelled: deletes regardless of entries (idempotent refund, no re-claim)', async () => {
+    mockDbRead.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Cancelled })
+    );
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Cancelled })
+    );
+    // Entries present, but a Cancelled (mod-voided) challenge must not be entry-gated.
+    mockDbRead.collectionItem.count.mockResolvedValue(5);
+    const res = await deleteUserChallenge({ id: 1, userId: OWNER });
+    expect(res).toEqual({ success: true });
+    // No entry-count gate for Cancelled — collectionItem.count is never consulted.
+    expect(mockDbRead.collectionItem.count).not.toHaveBeenCalled();
+    // Already-Cancelled: no Scheduled->Cancelled claim; refund is the idempotent net-zero recovery.
+    expect(mockDbWrite.challenge.updateMany).not.toHaveBeenCalled();
+    expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
+    expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+    expect(mockDbWrite.collection.delete).toHaveBeenCalledWith({ where: { id: 100 } });
   });
 
   it('missing challenge throws NOT_FOUND', async () => {
@@ -122,6 +146,9 @@ describe('deleteChallenge (direct)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
+      fn({ challenge: mockDbWrite.challenge, collection: mockDbWrite.collection })
+    );
   });
 
   it('already-Cancelled User challenge: re-refunds idempotently without re-claiming, then deletes', async () => {
@@ -133,6 +160,14 @@ describe('deleteChallenge (direct)', () => {
     expect(mockDbWrite.challenge.updateMany).not.toHaveBeenCalled();
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
     expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+  });
+
+  it('fails atomically when collection deletion fails', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(makeChallenge());
+    mockDbWrite.collection.delete.mockRejectedValueOnce(new Error('collection delete failed'));
+
+    await expect(deleteChallenge(1)).rejects.toThrow(/collection delete failed/i);
+    expect(mockQueueUpdate).not.toHaveBeenCalled();
   });
 
   it('blocks deleting an Active challenge', async () => {

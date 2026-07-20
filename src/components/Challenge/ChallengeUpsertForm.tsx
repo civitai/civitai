@@ -60,12 +60,18 @@ import CategoryWeights from '~/components/Challenge/CategoryWeights';
 import {
   type CategoryWeightRow,
   CHALLENGE_ENTRY_HOUSE_CUT,
+  CHALLENGE_MAX_DURATION_DAYS,
+  CHALLENGE_MAX_DURATION_MS,
   CHALLENGE_MAX_ENTRY_FEE,
   CHALLENGE_MAX_INITIAL_PRIZE,
+  CHALLENGE_MAX_START_LEAD_DAYS,
+  CHALLENGE_MIN_DURATION_HOURS,
+  CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
   CHALLENGE_MIN_START_LEAD_HOURS,
   DEFAULT_CATEGORY_ROWS,
   getEntryPoolContribution,
+  getMaxUserChallengeStartsAt,
   getMinUserChallengeStartsAt,
   getUserChallengeVisibleAt,
 } from '~/shared/constants/challenge.constants';
@@ -376,6 +382,11 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       return;
     }
 
+    const parsedThemeElements = data.themeElements
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     if (isUser) {
       // The user schema requires description (see formSchema) — this narrows the type for the
       // mutation and is a safety net; the inline error comes from the schema on the first submit.
@@ -384,12 +395,34 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         return;
       }
 
-      // Start must be >= 3h out. Mirrors the server: always on create, on edit only when the
-      // start date actually moved (so an unrelated edit near start time isn't blocked).
+      // Duration bounds mirror the server (and zod schema): intrinsic to the payload, so they
+      // apply on create and edit alike.
+      const durationMs = endsAt.getTime() - startsAt.getTime();
+      if (durationMs < CHALLENGE_MIN_DURATION_MS) {
+        form.setError('endsAt', {
+          message: `Challenge must run for at least ${CHALLENGE_MIN_DURATION_HOURS} hours.`,
+        });
+        return;
+      }
+      if (durationMs > CHALLENGE_MAX_DURATION_MS) {
+        form.setError('endsAt', {
+          message: `Challenge cannot run longer than ${CHALLENGE_MAX_DURATION_DAYS} days.`,
+        });
+        return;
+      }
+
+      // Start must be >= 3h and <= 30d out. Mirrors the server: always on create, on edit only
+      // when the start date actually moved (so an unrelated edit near start time isn't blocked).
       const startMoved = !challenge || startsAt.getTime() !== challenge.startsAt.getTime();
       if (startMoved && startsAt < getMinUserChallengeStartsAt()) {
         form.setError('startsAt', {
           message: `Challenge must start at least ${CHALLENGE_MIN_START_LEAD_HOURS} hours from now.`,
+        });
+        return;
+      }
+      if (startMoved && startsAt > getMaxUserChallengeStartsAt()) {
+        form.setError('startsAt', {
+          message: `Challenge cannot start more than ${CHALLENGE_MAX_START_LEAD_DAYS} days from now.`,
         });
         return;
       }
@@ -421,6 +454,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         title: data.title,
         description: data.description,
         theme: data.theme,
+        themeElements: parsedThemeElements?.length ? parsedThemeElements : undefined,
         coverImage: data.coverImage,
         allowedNsfwLevel: data.allowedNsfwLevel,
         modelVersionIds: data.modelVersionIds,
@@ -457,12 +491,6 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
       return;
     }
     const visibleAt = snapScheduleHour(data.visibleAt);
-
-    // Parse comma-separated theme elements into array
-    const parsedThemeElements = data.themeElements
-      ?.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
 
     // Shared fields for both modes
     const sharedFields = {
@@ -819,7 +847,8 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <Alert icon={<IconInfoCircle size={16} />} color="blue">
                   Entry fees &amp; prizes use <b>{buzzLabel} Buzz</b>. Your challenge is funded by
                   entry fees — each entry pays the entry fee; {CHALLENGE_ENTRY_HOUSE_CUT} Buzz per
-                  entry covers AI judging and the rest grows the prize pool.
+                  entry covers AI judging and the rest grows the prize pool. Entry fees are
+                  non-refundable once paid.
                 </Alert>
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                   <InputNumber
@@ -830,7 +859,9 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     min={CHALLENGE_MIN_ENTRY_FEE}
                     max={CHALLENGE_MAX_ENTRY_FEE}
                     step={10}
-                    description={`${perEntryToPool} Buzz of each entry goes to the prize pool. Entry fees are non-refundable once paid.`}
+                    allowNegative={false}
+                    clampBehavior="blur"
+                    description={`Min ${CHALLENGE_MIN_ENTRY_FEE} Buzz. ${perEntryToPool} Buzz of each entry goes to the prize pool.`}
                     withAsterisk
                     disabled={isTerminal}
                   />
@@ -840,16 +871,46 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                     currency={Currency.BUZZ}
                     min={0}
+                    max={CHALLENGE_MAX_INITIAL_PRIZE}
                     step={100}
+                    allowNegative={false}
+                    clampBehavior="blur"
                     description="Buzz you seed the pool with (charged to you on creation)."
                     disabled={isTerminal}
                   />
                 </SimpleGrid>
                 <Divider label="Prize split (must total 100%)" />
                 <SimpleGrid cols={3}>
-                  <InputNumber name="dist1" label="1st Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
-                  <InputNumber name="dist2" label="2nd Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
-                  <InputNumber name="dist3" label="3rd Place %" min={1} max={100} allowNegative={false} clampBehavior="blur" withAsterisk disabled={isTerminal} />
+                  <InputNumber 
+                    name="dist1"
+                    label="1st Place %"
+                    min={1}
+                    max={100}
+                    allowNegative={false}
+                    clampBehavior="blur"
+                    withAsterisk
+                    disabled={isTerminal}
+                  />
+                  <InputNumber
+                    name="dist2"
+                    label="2nd Place %"
+                    min={1}
+                    max={100}
+                    allowNegative={false}
+                    clampBehavior="blur"
+                    withAsterisk
+                    disabled={isTerminal}
+                  />
+                  <InputNumber
+                    name="dist3"
+                    label="3rd Place %"
+                    min={1}
+                    max={100}
+                    allowNegative={false}
+                    clampBehavior="blur"
+                    withAsterisk
+                    disabled={isTerminal}
+                  />
                 </SimpleGrid>
                 <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
                   {dist1 || 0} + {dist2 || 0} + {dist3 || 0} = {totalPct}%

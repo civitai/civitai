@@ -42,6 +42,8 @@ const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
   dailyCompensation: vi.fn(),
   viewer: vi.fn(),
+  queryAppWorkflows: vi.fn(),
+  cancelAppWorkflow: vi.fn(),
 }));
 
 // AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
@@ -67,6 +69,10 @@ vi.mock('~/utils/trpc', () => ({
       getMyBuzzAccounts: { useMutation: () => ({ mutateAsync: mocks.accounts }) },
       getMyDailyCompensation: { useMutation: () => ({ mutateAsync: mocks.dailyCompensation }) },
       getMyViewer: { useMutation: () => ({ mutateAsync: mocks.viewer }) },
+      queryAppWorkflows: { useMutation: () => ({ mutateAsync: mocks.queryAppWorkflows }) },
+      cancelAppWorkflow: { useMutation: () => ({ mutateAsync: mocks.cancelAppWorkflow }) },
+      publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     // PageBlockHost also wires the storage bridge (inert here — exercised in
     // PageBlockHostStorage.browser.test.tsx); stub so the component mounts.
@@ -185,6 +191,8 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     mocks.accounts.mockReset();
     mocks.dailyCompensation.mockReset();
     mocks.viewer.mockReset();
+    mocks.queryAppWorkflows.mockReset();
+    mocks.cancelAppWorkflow.mockReset();
     // dialogStore is a module-level zustand store shared across tests — reset it
     // (the OPEN_BUZZ_PURCHASE handler triggers a dialog on it).
     useDialogStore.getState().closeAll();
@@ -823,6 +831,186 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
         'green'
       );
     });
+    replies.stop();
+  });
+
+  // ── App generator SUBQUEUE bridges — QUERY_APP_WORKFLOWS / CANCEL_APP_WORKFLOW.
+  //    The app's OWN tag-scoped slice of the viewer's generation queue: read (image
+  //    results) + cancel. Host mediates via the block-token-authed
+  //    blocks.queryAppWorkflows / blocks.cancelAppWorkflow MUTATIONS (server forces
+  //    the per-app tag + the fail-closed cancel guard). Every path MUST reply.
+  test('QUERY_APP_WORKFLOWS forwards token + params and posts APP_WORKFLOWS_RESULT', async () => {
+    const result = {
+      workflows: [
+        {
+          workflowId: 'wf_a',
+          status: 'succeeded',
+          images: [{ url: 'https://cdn/i.png', width: 1024, height: 1024, nsfwLevel: 1 }],
+          cost: 25,
+          createdAt: '2026-07-15T00:00:00.000Z',
+        },
+      ],
+      cursor: 'next_1',
+    };
+    mocks.queryAppWorkflows.mockResolvedValue(result);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('QUERY_APP_WORKFLOWS', { requestId: 'rq_q', params: { limit: 10 } });
+
+    await vi.waitFor(() => {
+      expect(mocks.queryAppWorkflows).toHaveBeenCalledWith({ blockToken: 'tok_abc', limit: 10 });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('APP_WORKFLOWS_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_q', result });
+    });
+    replies.stop();
+  });
+
+  test('QUERY_APP_WORKFLOWS ignores a block-supplied blockToken/tags in params (host token authoritative)', async () => {
+    mocks.queryAppWorkflows.mockResolvedValue({ workflows: [], cursor: null });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    // A block tries to smuggle its own token AND its own tags — neither can reach
+    // the server call: blockToken is spread LAST (host token wins) and the server
+    // input schema has no `tags` field (stripped), so the host-forced app tag is
+    // the ONLY scoping. Here we assert the host token wins at the bridge layer.
+    postFromBlock('QUERY_APP_WORKFLOWS', {
+      requestId: 'rq_q_evil',
+      params: { limit: 5, blockToken: 'EVIL_TOKEN', tags: ['app-block:other'] },
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.queryAppWorkflows).toHaveBeenCalled();
+    });
+    const arg = mocks.queryAppWorkflows.mock.calls[0][0] as { blockToken: string; limit: number };
+    expect(arg.blockToken).toBe('tok_abc'); // host page token, never the block-sent one
+    expect(arg.limit).toBe(5);
+    replies.stop();
+  });
+
+  test('QUERY_APP_WORKFLOWS error path posts an error-variant result (no hang)', async () => {
+    mocks.queryAppWorkflows.mockRejectedValue(new Error('block lacks ai:write:budgeted scope'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('QUERY_APP_WORKFLOWS', { requestId: 'rq_q_err' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('APP_WORKFLOWS_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_q_err',
+        error: 'block lacks ai:write:budgeted scope',
+      });
+    });
+    replies.stop();
+  });
+
+  test('QUERY_APP_WORKFLOWS with a null page token replies with the error variant (never hangs)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} token={null} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement | null;
+      if (!el?.contentWindow) throw new Error('iframe not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('QUERY_APP_WORKFLOWS', { requestId: 'rq_q_notoken' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('APP_WORKFLOWS_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_q_notoken', error: 'no block token' });
+    });
+    expect(mocks.queryAppWorkflows).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('CANCEL_APP_WORKFLOW forwards workflowId and posts CANCEL_APP_WORKFLOW_RESULT', async () => {
+    const result = {
+      workflow: {
+        workflowId: 'wf_c',
+        status: 'canceled',
+        images: [],
+        cost: 0,
+        createdAt: '2026-07-15T00:00:00.000Z',
+      },
+    };
+    mocks.cancelAppWorkflow.mockResolvedValue(result);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CANCEL_APP_WORKFLOW', { requestId: 'rq_c', workflowId: 'wf_c' });
+
+    await vi.waitFor(() => {
+      expect(mocks.cancelAppWorkflow).toHaveBeenCalledWith({
+        blockToken: 'tok_abc',
+        workflowId: 'wf_c',
+      });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('CANCEL_APP_WORKFLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_c', result });
+    });
+    replies.stop();
+  });
+
+  test('CANCEL_APP_WORKFLOW error path (FORBIDDEN guard) posts an error-variant result (no hang)', async () => {
+    mocks.cancelAppWorkflow.mockRejectedValue(new Error('workflow is not in this app subqueue'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CANCEL_APP_WORKFLOW', { requestId: 'rq_c_err', workflowId: 'wf_x' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('CANCEL_APP_WORKFLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_c_err',
+        error: 'workflow is not in this app subqueue',
+      });
+    });
+    replies.stop();
+  });
+
+  test('CANCEL_APP_WORKFLOW with a missing workflowId is dropped (no mutation, no reply)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CANCEL_APP_WORKFLOW', { requestId: 'rq_c_noid' }); // no workflowId
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(mocks.cancelAppWorkflow).not.toHaveBeenCalled();
+    expect(replies.last('CANCEL_APP_WORKFLOW_RESULT')).toBeUndefined();
+    replies.stop();
+  });
+
+  test('CANCEL_APP_WORKFLOW with a null page token replies with the error variant (never hangs)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} token={null} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement | null;
+      if (!el?.contentWindow) throw new Error('iframe not mounted yet');
+    });
+    const replies = listenForReply();
+
+    postFromBlock('CANCEL_APP_WORKFLOW', { requestId: 'rq_c_notoken', workflowId: 'wf_c' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('CANCEL_APP_WORKFLOW_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_c_notoken', error: 'no block token' });
+    });
+    expect(mocks.cancelAppWorkflow).not.toHaveBeenCalled();
     replies.stop();
   });
 });

@@ -4,12 +4,14 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTransformer,
   clientTransformer,
+  onDevalueWriteFallback,
   pickServerWriteSerialize,
   serverWriteSerialize,
   unionDeserialize,
   unionTransformer,
   WRITE_DEVALUE,
   writeSerialize,
+  writeSerializeWithFallback,
 } from '~/shared/utils/trpc-union-transformer';
 
 /**
@@ -97,6 +99,107 @@ describe('unionDeserialize (READ stays union on every slot in Phase 2)', () => {
     // back an absent/empty transformer payload.
     expect(unionDeserialize(superjson.serialize(undefined))).toBeUndefined();
     expect(unionDeserialize(superjson.serialize(null))).toBeNull();
+  });
+});
+
+/**
+ * Regression: the all-mutations "input deserializes to undefined" 500 incident.
+ *
+ * On the Next.js **pages-router** adapter a devalue INPUT delivered in the POST
+ * BODY is JSON-parsed TWICE before it reaches `unionDeserialize` — the single
+ * JSON-string quoting that `@trpc/client`'s `getBody` puts around the devalue
+ * payload is stripped by (1) Next's `bodyParser` and (2) tRPC's `createBody`
+ * `typeof req.body === 'string'` short-circuit — so tRPC's `req.json()` parses
+ * the devalue string itself (a JSON array) into an ARRAY. That defeated the
+ * `typeof === 'string'` sniff, `superjson.deserialize(array)` returned undefined,
+ * and every non-batched mutation (generateFromGraph, track.*, reaction.toggle …)
+ * 500'd. Superjson inputs never hit this — their `{ json, meta }` OBJECT survives
+ * `createBody`'s re-`JSON.stringify`. This models that exact double-parse.
+ */
+function pagesRouterPostBodyDoubleParse(clientSerialized: unknown): unknown {
+  // @trpc/client getBody: the transformer output is JSON.stringify'd once.
+  const wireBody = JSON.stringify(clientSerialized);
+  // Next.js bodyParser (application/json) parses the raw body → req.body.
+  const reqBody = JSON.parse(wireBody);
+  // @trpc/server node-http createBody: a STRING req.body is returned as-is (NOT
+  // re-quoted); a non-string is re-JSON.stringify'd.
+  const fetchBody = typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody);
+  // @trpc/server resolveResponse getInputs (non-batch): result[0] = req.json().
+  return JSON.parse(fetchBody);
+}
+
+describe('unionDeserialize — pages-router POST-body double-parse recovery (mutations 500 incident)', () => {
+  it('recovers a devalue INPUT that the pages adapter double-parsed into an array (was → undefined)', () => {
+    const x = sample();
+    // What a devalue-writing (e.g. cached #3178) client sends as the input.
+    const clientSerialized = devalueStringify(x);
+    const afterDoubleParse = pagesRouterPostBodyDoubleParse(clientSerialized);
+
+    // Precondition: the double-parse HAS destroyed the string-ness (this is the bug).
+    expect(typeof afterDoubleParse).not.toBe('string');
+    expect(Array.isArray(afterDoubleParse)).toBe(true);
+
+    // The fix recovers the full value (pre-fix this returned `undefined`).
+    const out = unionDeserialize(afterDoubleParse) as ReturnType<typeof sample>;
+    expect(out).not.toBeUndefined();
+    expect(out).toEqual(x);
+    expect(out.nextCursor).toBe(9007199254740993n);
+    expect(out.buckets).toBeInstanceOf(Map);
+    expect(out.items[0].createdAt).toBeInstanceOf(Date);
+  });
+
+  it('recovers the generateFromGraph mutation input shape (would 500 on the {input} destructure)', () => {
+    const gfg = {
+      input: { workflow: 'txt2img', prompt: 'a cat', disablePoi: false },
+      tags: ['new'],
+      civitaiTip: 0,
+      creatorTip: 0,
+      buzzType: 'blue',
+      externalId: 'abc',
+    };
+    const out = unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(gfg)));
+    expect(out).toEqual(gfg);
+    // The resolver does `const { input } = input` — must not be undefined.
+    expect(out.input.workflow).toBe('txt2img');
+  });
+
+  it('recovers a double-parsed devalue PRIMITIVE / bare-array input', () => {
+    for (const x of [42, 'plain', true, [1, 2, 3], { a: 1 }]) {
+      expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(x)))).toEqual(x);
+    }
+  });
+
+  // Contract pin #1: devalue encodes these as BARE negative-int markers
+  // (undefined→-1, NaN→-3, Infinity→-4, -Infinity→-5, -0→-6), so after the
+  // double-parse they arrive as bare NUMBERS, not arrays. They must not collide
+  // with isSuperjsonEnvelope and must round-trip losslessly. Guards the
+  // "devalue top-level is array-or-negative-number" contract the fix rests on.
+  it('recovers double-parsed devalue SPECIAL primitives (bare marker numbers)', () => {
+    expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(undefined)))).toBeUndefined();
+    expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(NaN)))).toBeNaN();
+    expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(Infinity)))).toBe(Infinity);
+    expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(-Infinity)))).toBe(-Infinity);
+    // -0 must survive as -0 (devalue emits the -6 marker, not a raw -0).
+    expect(Object.is(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(-0))), -0)).toBe(true);
+  });
+
+  // Contract pin #2: a user input literally shaped like a superjson envelope
+  // ({ json, ... }) must NOT be mistaken for one. devalue flattens any top-level
+  // object to an ARRAY, so isSuperjsonEnvelope never matches it. Guards the
+  // "superjson-envelope sniff can't be spoofed by user data" contract.
+  it('recovers a devalue input literally shaped like a { json, ... } superjson envelope', () => {
+    for (const x of [{ json: 5 }, { json: 5, meta: 6 }, { json: { nested: true }, extra: 'x' }]) {
+      expect(unionDeserialize(pagesRouterPostBodyDoubleParse(devalueStringify(x)))).toEqual(x);
+    }
+  });
+
+  it('still routes a superjson envelope (its object survives createBody re-stringify) to superjson', () => {
+    const x = sample();
+    // Superjson path: createBody re-JSON.stringify's the object, so req.json()
+    // yields the { json, meta } envelope intact — must NOT hit the devalue branch.
+    const afterRoundTrip = pagesRouterPostBodyDoubleParse(superjson.serialize(x));
+    expect(afterRoundTrip).not.toBeInstanceOf(Array);
+    expect(unionDeserialize(afterRoundTrip)).toEqual(x);
   });
 });
 
@@ -267,6 +370,72 @@ describe('devalue write path rejects non-POJO tRPC outputs (devalue is strict)',
     // devalue represents these faithfully — the contract rejects non-POJOs, NOT
     // these first-class rich types (so the fix is narrow: only class instances /
     // Errors / symbols / Promises are the hazard).
-    expect(() => writeSerialize({ d: new Date(), m: new Map([['a', 1]]), s: new Set([1]), n: 2n })).not.toThrow();
+    expect(() =>
+      writeSerialize({ d: new Date(), m: new Map([['a', 1]]), s: new Set([1]), n: 2n })
+    ).not.toThrow();
+  });
+});
+
+/**
+ * FAIL-OPEN gate: `pickServerWriteSerialize(true)` routes through
+ * `writeSerializeWithFallback`, which keeps devalue's strictness observable
+ * (via the observer hook) without letting a non-POJO payload become a
+ * user-facing 500 — the fallback superjson write decodes through the same
+ * union READ every peer already runs. `writeSerialize` (above) stays the
+ * strict contract for tests.
+ */
+describe('writeSerializeWithFallback (fail-open devalue write)', () => {
+  it('writes devalue (string) for POJO payloads — identical to the strict write', () => {
+    const x = sample();
+    const out = writeSerializeWithFallback(x);
+    expect(typeof out).toBe('string');
+    expect(out).toBe(devalueStringify(x));
+    expect(unionDeserialize(out)).toEqual(x);
+  });
+
+  it('falls back to superjson (object) on a non-POJO payload and notifies the observer', () => {
+    const seen: unknown[] = [];
+    onDevalueWriteFallback((err) => seen.push(err));
+    try {
+      const payload = { ok: false, error: new Error('boom') };
+      const out = writeSerializeWithFallback(payload);
+      // superjson object — NOT a devalue string — still union-decodable.
+      expect(typeof out).not.toBe('string');
+      expect(out).toEqual(superjson.serialize(payload));
+      expect(unionDeserialize(out)).toEqual(
+        superjson.deserialize(superjson.serialize(payload) as any)
+      );
+      expect(seen).toHaveLength(1);
+    } finally {
+      onDevalueWriteFallback(undefined as any);
+    }
+  });
+
+  it('a throwing observer never breaks the response path', () => {
+    onDevalueWriteFallback(() => {
+      throw new Error('observer boom');
+    });
+    try {
+      expect(() => writeSerializeWithFallback({ e: new Error('x') })).not.toThrow();
+    } finally {
+      onDevalueWriteFallback(undefined as any);
+    }
+  });
+
+  it('pickServerWriteSerialize(true) IS the fail-open write (non-POJO → superjson, no throw)', () => {
+    const write = pickServerWriteSerialize(true);
+    const payload = {
+      items: [
+        new (class Sdk {
+          id = 1;
+          toJSON() {
+            return { id: this.id };
+          }
+        })(),
+      ],
+    };
+    let out: unknown;
+    expect(() => (out = write(payload))).not.toThrow();
+    expect(typeof out).not.toBe('string');
   });
 });

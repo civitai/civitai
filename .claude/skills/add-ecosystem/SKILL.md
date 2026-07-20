@@ -85,6 +85,8 @@ After the ecosystem is added and typecheck passes, ask:
 
 If yes, invoke the `add-generation-support` skill. If no, stop — the ecosystem record alone is enough for it to appear in model listings.
 
+Note: making a new ecosystem **generatable** (`GenerationBaseModel`) and **featurable in auctions** (`AuctionBase`) are manual DB steps that the constants do **not** handle automatically — miss them and the feature silently half-works (this bit Anima and Krea 2). Those steps are documented in the `add-generation-support` skill under "Post-onboarding: generation coverage & auction featurability."
+
 ## Record structures
 
 ### `EcosystemRecord`

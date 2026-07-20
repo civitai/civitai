@@ -346,6 +346,8 @@ export type AppListing = {
   content_rating: string | null;
   external_url: string | null;
   connect_client_id: string | null;
+  connect_requested_scopes: number | null;
+  connect_scope_justifications: unknown | null;
   app_block_id: string | null;
   revision_of_id: string | null;
   featured: Generated<boolean>;
@@ -425,6 +427,27 @@ export type AppListingScreenshot = {
   image_id: number | null;
   order: Generated<number>;
   caption: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppReviewAgentReport = {
+  id: string;
+  publish_request_id: string;
+  app_block_id: string | null;
+  oauth_client_id: string | null;
+  version: string;
+  bundle_sha256: string;
+  status: Generated<string>;
+  model: string | null;
+  started_at: Generated<Timestamp>;
+  completed_at: Timestamp | null;
+  code_review: unknown | null;
+  security_audit: unknown | null;
+  scope_verdicts: unknown | null;
+  summary_md: string | null;
+  prior_report_id: string | null;
+  token_usage: unknown | null;
+  cost_usd: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -775,10 +798,41 @@ export type BlockScopeInvocation = {
    * the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
    */
   synthetic_app_id: string | null;
-  block_instance_id: string;
+  /**
+   * NULLABLE: an EXTERNAL OAuth invocation (`source = 'external-oauth'`) has no
+   * block instance — the acting app is a pure OauthClient with no App Block. A
+   * block-token row always sets this.
+   */
+  block_instance_id: string | null;
+  /**
+   * The acting OauthClient id for an EXTERNAL OAuth invocation (`source =
+   * 'external-oauth'`) — the "which app" for external OAuth API usage, mirroring
+   * what `appBlockId` is for a block-token row. NULL for a block-token row.
+   * Intentionally FK-LESS text so the audit row SURVIVES deletion of the
+   * OauthClient it references (an audit trail must outlive the app).
+   */
+  oauth_client_id: string | null;
+  /**
+   * Discriminates the token population that made the call: `'app-block'` (an App
+   * Block block-token, the historical default) vs `'external-oauth'` (a standard
+   * external OAuth access token verified at `enforceTokenScope`). Additive:
+   * existing rows backfill to `'app-block'`.
+   */
+  source: Generated<string>;
   scope: string;
   endpoint: string;
   status_code: number;
+  /**
+   * Structured per-action audit detail (W13). NULL for a passive read (whose
+   * friendly label is derived from `scope` at render time) and for any row
+   * written before this column existed. For an impactful MUTATION it carries a
+   * stable `action` code + minimal subject refs (`{ action, amount?, toUserId?,
+   * modelVersionId?, entityId?, entityType?, key?, outcome? }` — see
+   * BlockActionDetail). Stores IDS, not display names — the view resolves them
+   * via batch lookups, so the row never rots when a name changes. Nullable + no
+   * default → additive, backwards-compatible, no backfill.
+   */
+  detail: unknown | null;
   invoked_at: Generated<Timestamp>;
 };
 export type BlockSpendAttribution = {
@@ -3815,6 +3869,7 @@ export type DB = {
   app_listing_reviews: AppListingReview;
   app_listing_screenshots: AppListingScreenshot;
   app_listings: AppListing;
+  app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   Article: Article;

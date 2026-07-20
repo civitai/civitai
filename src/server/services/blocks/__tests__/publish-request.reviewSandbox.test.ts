@@ -542,6 +542,101 @@ describe('teardownPreview', () => {
 });
 
 // ---------------------------------------------------------------------------
+// markReviewPreviewState — the stale-watcher sha guard (#2831 reachability arc).
+// The reachability wait can keep an apply watcher alive for minutes, so a mod
+// can tear down preview A mid-wait and re-preview a new build B within the
+// window. The watcher's advancing writes pass `expectedSha` so a superseded
+// watcher can't clobber the newer preview's row.
+// ---------------------------------------------------------------------------
+describe('markReviewPreviewState (stale-watcher sha guard)', () => {
+  const SHA_A = 'a'.repeat(40);
+  const SHA_B = 'b'.repeat(40);
+
+  beforeEach(() => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockReset();
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('adds the sha guard (deployDetail contains the serialized sha) when expectedSha is set', async () => {
+    await markReviewPreviewState(
+      PUBREQ,
+      'preview-live',
+      { sha: SHA_A, host: 'h', url: 'u' },
+      { requireActivePreview: true, expectedSha: SHA_A }
+    );
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: PUBREQ,
+          status: 'pending',
+          deployState: { startsWith: 'preview-' },
+          deployDetail: { contains: `"sha":"${SHA_A}"` },
+        }),
+      })
+    );
+  });
+
+  it('the initial (building) write carries NO sha guard and NO active-preview guard', async () => {
+    // previewRequest is ESTABLISHING the new preview — its sha isn't on the row
+    // yet, so requiring it would deadlock the first transition.
+    await markReviewPreviewState(PUBREQ, 'preview-building', { sha: SHA_A, host: 'h', url: 'u' });
+    const [arg] = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0] as any[];
+    expect(arg.where).not.toHaveProperty('deployDetail');
+    expect(arg.where).not.toHaveProperty('deployState');
+  });
+
+  it('a superseded watcher (sha A) does NOT clobber the newer active preview (sha B)', async () => {
+    // Play the DB: the row's CURRENT detail belongs to build B. An updateMany
+    // changes the row only when the where-clause's sha fragment is actually a
+    // substring of B's stored detail (which is exactly what Postgres LIKE does).
+    const storedDetailForB = JSON.stringify({ sha: SHA_B, host: 'review-bbbbbbbbbbbbbbbb.civit.ai' });
+    let rowsChanged = 0;
+    mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation(async ({ where }: any) => {
+      const frag = where?.deployDetail?.contains as string | undefined;
+      // requireActivePreview is satisfied (B is a preview-* state); the sha
+      // fragment is the discriminator. No fragment (guard dropped) → matches.
+      const matches = frag == null || storedDetailForB.includes(frag);
+      const count = matches ? 1 : 0;
+      rowsChanged += count;
+      return { count };
+    });
+
+    // Stale watcher A advances toward preview-live for its OWN sha (A).
+    await markReviewPreviewState(
+      PUBREQ,
+      'preview-live',
+      { sha: SHA_A, host: 'hA', url: 'uA' },
+      { requireActivePreview: true, expectedSha: SHA_A }
+    );
+
+    // B's row is untouched — the guard fragment for A is absent from B's detail,
+    // so watcher A changed 0 rows. (If the expectedSha guard were dropped, the
+    // where-clause would carry no sha fragment, `matches` would be true, and this
+    // would be 1 → the test fails, proving the guard is load-bearing.)
+    expect(rowsChanged).toBe(0);
+  });
+
+  it('the OWNING watcher (sha B) still advances the row it owns', async () => {
+    const storedDetailForB = JSON.stringify({ sha: SHA_B, host: 'review-bbbbbbbbbbbbbbbb.civit.ai' });
+    let rowsChanged = 0;
+    mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation(async ({ where }: any) => {
+      const frag = where?.deployDetail?.contains as string | undefined;
+      const matches = frag == null || storedDetailForB.includes(frag);
+      const count = matches ? 1 : 0;
+      rowsChanged += count;
+      return { count };
+    });
+    await markReviewPreviewState(
+      PUBREQ,
+      'preview-live',
+      { sha: SHA_B, host: 'hB', url: 'uB' },
+      { requireActivePreview: true, expectedSha: SHA_B }
+    );
+    expect(rowsChanged).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // listActiveReviewPreviews — the global panel's feed (cap + active rows).
 // ---------------------------------------------------------------------------
 describe('listActiveReviewPreviews', () => {

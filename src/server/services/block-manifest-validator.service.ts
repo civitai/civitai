@@ -12,6 +12,9 @@ import {
 // imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
 // so the manifest validator and the fetch-time guard share ONE source of truth.
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+// Single source for the per-scope justification length bound — shared with the
+// OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
+import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
@@ -82,6 +85,17 @@ interface RawManifest {
    */
   buildCommand?: unknown;
   outputDir?: unknown;
+  /**
+   * OPTIONAL per-scope justification — a map of scope-id → free-text rationale
+   * the developer supplies to explain WHY the app requests each scope. Surfaced
+   * to the moderator in review. Backward-compatible: absent ⇒ still valid, and
+   * `scopes` is unchanged. Every key MUST be a scope present in `scopes` (a
+   * justification for a scope the app doesn't request is REJECTED, so the mod
+   * never sees dangling rationale). Each value is a non-empty string bounded by
+   * SCOPE_JUSTIFICATION_MAX_LENGTH. This only CAPTURES the dev's stated claim —
+   * the platform does not verify it (verification is a deliberate follow-up).
+   */
+  scopeJustifications?: unknown;
   [key: string]: unknown;
 }
 
@@ -117,13 +131,20 @@ const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 // Anything else — extra args, flags, shell metacharacters, multiple commands —
 // is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
 // so the rejection reason is explicit when a metachar is what tripped it.
-const BUILD_COMMAND_MAX_LENGTH = 128;
-const BUILD_COMMAND_RE =
+export const BUILD_COMMAND_MAX_LENGTH = 128;
+export const BUILD_COMMAND_RE =
   /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
 // Shell metacharacters that must never appear in a buildCommand. Checked first
 // so the error is specific ("contains shell metacharacters") rather than the
 // generic allowlist-miss message.
 const SHELL_METACHAR_RE = /[;|&$`<>(){}\\!*?\[\]'"\n\r]/;
+
+// Max length of a single per-scope justification string (scopeJustifications
+// map value). Bounded so a malicious/careless manifest can't bloat the stored
+// blob or the mod-review render. LIFTED to @civitai/auth/token-scope (imported
+// above) so the App Blocks manifest path and the OAuth-connect scope-review
+// path share ONE literal; re-exported here to keep existing importers stable.
+export { SCOPE_JUSTIFICATION_MAX_LENGTH };
 
 // Min/max for the iframe height envelope. The host clamps incoming
 // RESIZE_IFRAME to these bounds, but rejecting absurd values at
@@ -344,6 +365,45 @@ export class BlockManifestValidator {
         errors.push(
           `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(', ')}`
         );
+      }
+    }
+
+    // Optional per-scope justifications (scope-id → rationale). Backward-compatible:
+    // absent ⇒ nothing to check. When present it must be a plain object; every key
+    // must be a scope the manifest actually declares (a justification for a scope
+    // NOT in `scopes` is rejected, so no dangling rationale reaches the mod), and
+    // every value must be a non-empty string ≤ SCOPE_JUSTIFICATION_MAX_LENGTH. The
+    // platform only CAPTURES the dev's stated rationale here — it does not verify it.
+    if (m.scopeJustifications !== undefined) {
+      if (
+        !m.scopeJustifications ||
+        typeof m.scopeJustifications !== 'object' ||
+        Array.isArray(m.scopeJustifications)
+      ) {
+        errors.push('scopeJustifications must be an object mapping scope-id to a justification string');
+      } else {
+        const declaredScopes = new Set(
+          Array.isArray(m.scopes)
+            ? (m.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
+            : []
+        );
+        for (const [scope, justification] of Object.entries(
+          m.scopeJustifications as Record<string, unknown>
+        )) {
+          if (!declaredScopes.has(scope)) {
+            errors.push(
+              `scopeJustifications references scope "${scope}" which is not in the manifest's scopes`
+            );
+            continue;
+          }
+          if (typeof justification !== 'string' || justification.length === 0) {
+            errors.push(`scopeJustifications["${scope}"] must be a non-empty string`);
+          } else if (justification.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+            errors.push(
+              `scopeJustifications["${scope}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`
+            );
+          }
+        }
       }
     }
 

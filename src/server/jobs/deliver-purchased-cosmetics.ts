@@ -49,8 +49,12 @@ export const deliverPurchasedCosmetics = createJob(
         JOIN "Cosmetic" c ON
           c."productId" = s."productId"
           AND c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp)
-          AND (c."availableStart" IS NULL OR s."currentPeriodStart" >= c."availableStart")
-          AND (c."availableEnd" IS NULL OR s."currentPeriodStart" <= c."availableEnd")
+          -- Compare at date granularity: membership badges are authored with an 11:00 UTC
+          -- availableStart, so a period that started earlier that same day (e.g. a Stripe
+          -- renewal at 00:30 on the 1st) failed a timestamp comparison forever — this join
+          -- re-runs daily but currentPeriodStart never moves within the period.
+          AND (c."availableStart" IS NULL OR s."currentPeriodStart"::date >= c."availableStart"::date)
+          AND (c."availableEnd" IS NULL OR s."currentPeriodStart"::date <= c."availableEnd"::date)
         ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 

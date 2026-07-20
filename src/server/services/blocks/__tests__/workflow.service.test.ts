@@ -17,16 +17,22 @@ const { mockDbRead } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 
 import {
+  appBlockTag,
+  buildCustomComfyWorkflowInput,
   buildImageWorkflowInput,
   buildTextToImageInput,
+  BLOCK_CUSTOM_COMFY_STEP_NAME,
   BLOCK_IMAGE_WORKFLOW_TYPES,
+  createBlockCustomComfyStep,
   isPageLoraResource,
+  projectAppWorkflow,
   resolveBlockImageWorkflowType,
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
 } from '../workflow.service';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
+import { getRecipe, REGISTERED_RECIPE_IDS } from '../recipes';
 // REAL param-building path (no mocks): the generation graph validator and the
 // step-metadata snapshot fn are the exact functions the orchestrator's
 // `createWorkflowStepsFromGraph` runs to derive `workflowMetadata.params`. Both
@@ -352,6 +358,191 @@ describe('snapshotFromWorkflow', () => {
       );
       expect(snap.spentAccountType).toBeUndefined();
     });
+  });
+});
+
+describe('appBlockTag', () => {
+  it('formats the per-app subqueue tag', () => {
+    expect(appBlockTag('app_abc')).toBe('app-block:app_abc');
+  });
+  it('is the SAME format the submit path stamps (stamp/read cannot desync)', () => {
+    // buildWorkflowTags (blocks.router) stamps `app-block:${claims.appId}`; the
+    // read filter calls appBlockTag(claims.appId). Pin the literal so a change to
+    // one without the other is caught.
+    const appId = 'oauthClient_123';
+    expect(appBlockTag(appId)).toBe(`app-block:${appId}`);
+  });
+});
+
+describe('projectAppWorkflow', () => {
+  it('projects the happy path to the clean AppWorkflow wire shape', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_a',
+      createdAt: '2026-07-15T12:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 30 },
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [
+              {
+                id: 'b1',
+                url: 'https://cdn/i1.png',
+                available: true,
+                width: 1024,
+                height: 768,
+                nsfwLevel: 'pg',
+                type: 'image',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never)).toEqual({
+      workflowId: 'wf_a',
+      status: 'succeeded',
+      images: [{ url: 'https://cdn/i1.png', width: 1024, height: 768, nsfwLevel: 1 }],
+      cost: 30,
+      createdAt: '2026-07-15T12:00:00.000Z',
+    });
+  });
+
+  it('maps the orchestrator string nsfwLevel to the numeric browsing-level bitflag', () => {
+    const cases: Array<[string, number | null]> = [
+      ['g', 1], // SFW 'g' → PG (the raw map lacks it; canonical helper supplies it)
+      ['pg', 1],
+      ['pg13', 2],
+      ['r', 4],
+      ['x', 8],
+      ['xxx', 16],
+      ['na', null], // genuinely unrated → null
+    ];
+    for (const [rating, expected] of cases) {
+      const wf = fakeWorkflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 's1',
+            status: 'succeeded',
+            metadata: {},
+            output: {
+              images: [{ id: 'b', url: 'https://cdn/x.png', available: true, nsfwLevel: rating }],
+            },
+          },
+        ],
+      });
+      expect(projectAppWorkflow(wf as never).images[0].nsfwLevel).toBe(expected);
+    }
+  });
+
+  it('nulls width/height/nsfwLevel when the orchestrator omits them', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'b', url: 'https://cdn/x.png', available: true }] },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never).images[0]).toEqual({
+      url: 'https://cdn/x.png',
+      width: null,
+      height: null,
+      nsfwLevel: null,
+    });
+  });
+
+  it('drops pending/blocked/urless blobs (no dead links leaked)', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'processing',
+          metadata: {},
+          output: {
+            images: [
+              { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+              { id: 'b2', url: null, available: false, type: 'image' },
+              { id: 'b3', url: 'https://cdn/blocked.png', available: false, type: 'image' },
+              { id: 'b4', url: '', available: true, type: 'image' },
+            ],
+          },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      { url: 'https://cdn/ok.png', width: null, height: null, nsfwLevel: null },
+    ]);
+  });
+
+  it('maps orchestrator-internal statuses to the block-contract status set', () => {
+    const map: Array<[string, string]> = [
+      ['unassigned', 'pending'],
+      ['preparing', 'pending'],
+      ['scheduled', 'pending'],
+      ['processing', 'processing'],
+      ['succeeded', 'succeeded'],
+      ['failed', 'failed'],
+      ['expired', 'expired'],
+      ['canceled', 'canceled'],
+    ];
+    for (const [orch, contract] of map) {
+      expect(projectAppWorkflow(fakeWorkflow({ status: orch }) as never).status).toBe(contract);
+    }
+  });
+
+  it('returns cost:null when the orchestrator omits a total, and an empty images list for a pending workflow', () => {
+    const wf = fakeWorkflow({ status: 'preparing', cost: {}, steps: [] });
+    const projected = projectAppWorkflow(wf as never);
+    expect(projected.cost).toBeNull();
+    expect(projected.images).toEqual([]);
+    expect(projected.status).toBe('pending');
+  });
+
+  it('does NOT leak internal fields (steps/params/tags/transactions/metadata)', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 's1',
+          status: 'succeeded',
+          metadata: { params: { prompt: 'secret prompt' } },
+          output: { images: [{ id: 'b', url: 'https://cdn/x.png', available: true }] },
+        },
+      ],
+      tags: ['civitai', 'app-block:app_x'],
+      transactions: { list: [{ type: 'debit', amount: 30, accountType: 'yellow' }] },
+    });
+    const projected = projectAppWorkflow(wf as never);
+    expect(Object.keys(projected).sort()).toEqual(
+      ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
+    );
+    expect(JSON.stringify(projected)).not.toContain('secret prompt');
+    expect(JSON.stringify(projected)).not.toContain('transactions');
+  });
+
+  it('ignores non-image-producing step types (no image leak from e.g. chatCompletion)', () => {
+    const wf = fakeWorkflow({
+      steps: [
+        {
+          $type: 'chatCompletion',
+          name: 's1',
+          status: 'succeeded',
+          metadata: {},
+          output: { images: [{ id: 'x', url: 'https://leak/', available: true }] },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
   });
 });
 
@@ -1234,5 +1425,138 @@ describe('blockWorkflowBodySchema sourceImage bound (SSRF / arbitrary-URL guard)
         sourceImage: { url: 'https://image.civitai.com/a.jpeg', width: 99999, height: 1024 },
       }).success
     ).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// customComfy bridge (App Blocks customComfy bridge, v1) — INERT building blocks.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('blockWorkflowBodySchema: customComfy member', () => {
+  it('accepts a registered recipe with opaque params', () => {
+    const r = blockWorkflowBodySchema.safeParse({
+      kind: 'customComfy',
+      recipe: REGISTERED_RECIPE_IDS[0],
+      params: { prompt: 'an icy lake', engine: 'zimage-turbo' },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects an unregistered recipe id at the wire schema (fail-closed)', () => {
+    const r = blockWorkflowBodySchema.safeParse({
+      kind: 'customComfy',
+      recipe: 'not-a-real-recipe',
+      params: {},
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects an extra top-level field (.strict())', () => {
+    const r = blockWorkflowBodySchema.safeParse({
+      kind: 'customComfy',
+      recipe: REGISTERED_RECIPE_IDS[0],
+      params: {},
+      sneaky: 1,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('still parses an existing textToImage body (union widened, not replaced)', () => {
+    const r = blockWorkflowBodySchema.safeParse({
+      kind: 'textToImage',
+      modelId: 1,
+      modelVersionId: 2,
+      params: { prompt: 'hi' },
+    });
+    expect(r.success).toBe(true);
+  });
+});
+
+describe('buildCustomComfyWorkflowInput (translator)', () => {
+  const recipe = getRecipe('seamless-pano-360')!;
+
+  it('applies the recipe param schema then runs its pure builder', () => {
+    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1, engine: 'zimage-turbo' });
+    expect(input.trace).toBe('binary');
+    expect(input.resources[0]).toContain('z_image_turbo');
+    expect(input.workflow['1'].class_type).toBe('UNETLoader');
+    // seed threaded into the KSampler leaf
+    expect(input.workflow['9'].inputs).toMatchObject({ seed: 1 });
+  });
+
+  it('throws (fail-closed) on an out-of-bounds param the coarse wire schema let through', () => {
+    // `params: Record<string,unknown>` would accept these; the recipe schema rejects them.
+    expect(() => buildCustomComfyWorkflowInput(recipe, { prompt: 'x'.repeat(2000) })).toThrow();
+    expect(() => buildCustomComfyWorkflowInput(recipe, { prompt: 'x', engine: 'sdxl' })).toThrow();
+    expect(() => buildCustomComfyWorkflowInput(recipe, { prompt: 'x', checkpoint: {} })).toThrow();
+  });
+});
+
+describe('createBlockCustomComfyStep (step wrapper)', () => {
+  const recipe = getRecipe('seamless-pano-360')!;
+
+  it('wraps the input as a customComfy step and stamps the recipe timeout (HH:MM:SS)', () => {
+    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
+    const step = createBlockCustomComfyStep(recipe, input);
+    expect(step.$type).toBe('customComfy');
+    expect(step.name).toBe(BLOCK_CUSTOM_COMFY_STEP_NAME);
+    // 180s ceiling → 00:03:00 (NOT the reference's loose 01:00:00).
+    expect(step.timeout).toBe('00:03:00');
+    expect(step.input).toBe(input);
+  });
+});
+
+describe('snapshotFromWorkflow: customComfy blobs', () => {
+  it('surfaces available blob urls from a customComfy step (output.blobs, not .images)', () => {
+    const wf = fakeWorkflow({
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'customComfy',
+          name: 'block-custom-comfy',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [
+              { id: 'p1', type: 'image', url: 'https://cdn/pano.png', available: true },
+              { id: 'p2', type: 'image', url: 'https://pending/', available: false },
+            ],
+          },
+        },
+      ],
+    });
+    const snap = snapshotFromWorkflow(wf as never);
+    expect(snap.imageUrls).toEqual(['https://cdn/pano.png']);
+  });
+});
+
+describe('projectAppWorkflow: customComfy blobs', () => {
+  it('projects blobs to images (null width/height, nsfwLevel mapped from rating)', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_cc',
+      createdAt: '2026-07-17T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 47 },
+      steps: [
+        {
+          $type: 'customComfy',
+          name: 'block-custom-comfy',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blobs: [
+              { id: 'p1', type: 'image', url: 'https://cdn/pano.png', available: true, nsfwLevel: 'pg' },
+              { id: 'p2', type: 'image', url: 'https://blocked/', available: false },
+            ],
+          },
+        },
+      ],
+    });
+    expect(projectAppWorkflow(wf as never)).toEqual({
+      workflowId: 'wf_cc',
+      status: 'succeeded',
+      images: [{ url: 'https://cdn/pano.png', width: null, height: null, nsfwLevel: 1 }],
+      cost: 47,
+      createdAt: '2026-07-17T00:00:00.000Z',
+    });
   });
 });

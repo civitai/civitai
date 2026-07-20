@@ -15,6 +15,11 @@ import Link from 'next/link';
 import { useMemo } from 'react';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
+import {
+  describeBlockAction,
+  READ_SCOPE_LABELS,
+  type BlockActionDetail,
+} from '~/shared/constants/block-action-detail';
 
 /**
  * Shared per-viewer app-activity timeline. Extracted from
@@ -95,7 +100,10 @@ export function humaniseScopeInvocation(scope: string, endpoint?: string): strin
   if (endpoint === 'user-settings:write') return 'Saved your block settings';
   if (endpoint?.startsWith('storage:set:')) return 'Wrote app-local storage';
   if (endpoint?.startsWith('storage:delete:')) return 'Deleted app-local storage';
-  return SCOPE_ACTION_LABELS[scope] ?? scope;
+  // Passive READS get a friendly label from the scope→label map (W13 — no
+  // write-side change for reads). Fall through to the local write labels, then
+  // the raw scope string for anything genuinely unknown.
+  return READ_SCOPE_LABELS[scope] ?? SCOPE_ACTION_LABELS[scope] ?? scope;
 }
 
 /**
@@ -132,10 +140,11 @@ function ScopeStatusBadge({ statusCode }: { statusCode: number }) {
  * actually sees. A scope-invocation row carries (endpoint, statusCode)
  * instead of (amount, status); humaniseActivityAction is overloaded.
  *
- * `description` (follow-up-ready): a scope-invocation row renders a
- * `description` field when the server starts populating one; until then it
- * falls back to the humanised scope+endpoint. This lets a later PR enrich the
- * per-action audit detail without a rewrite of this view.
+ * `detail` (W13): a scope-invocation row carries an optional structured
+ * `BlockActionDetail` (stable action code + subject-ref ids). When present the
+ * view resolves its ids → display names (batched) and renders a human sentence;
+ * when absent (passive read / pre-W13 row) it falls back to the humanised
+ * scope+endpoint.
  */
 type ActivityFeedRow =
   | {
@@ -159,7 +168,7 @@ type ActivityFeedRow =
       scope: string;
       endpoint: string;
       statusCode: number;
-      description?: string | null;
+      detail: BlockActionDetail | null;
     };
 
 export function AppActivityPanel({
@@ -212,15 +221,70 @@ export function AppActivityPanel({
           scope: item.scope,
           endpoint: item.endpoint,
           statusCode: item.statusCode,
-          // Follow-up enrichment slot: render server-supplied per-action detail
-          // when present, else fall back to the humanised scope+endpoint below.
-          description: (item as { description?: string | null }).description ?? null,
+          // W13 structured per-action detail (null for a passive read / pre-W13
+          // row). Resolved to names + a sentence at render time below.
+          detail: (item as { detail?: BlockActionDetail | null }).detail ?? null,
         }))
       ) ?? [];
     return [...buzzRows, ...scopeRows].sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
     );
   }, [buzz.data, scopes.data, appBlockId]);
+
+  // W13 name resolution — collect the unique subject-ref ids across the rich
+  // rows and resolve them in ONE batched round-trip each (never per-row/N+1):
+  // model versions via the existing `getVersionsByIds`, recipients via
+  // `user.getById` coalesced through the tRPC http-batch link. The view renders
+  // ids until the names settle (progressive), then swaps in @username / name.
+  const userIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          items.flatMap((i) =>
+            i.kind === 'scope' && i.detail?.toUserId != null ? [i.detail.toUserId] : []
+          )
+        )
+      ),
+    [items]
+  );
+  // Version-name lookups are keyed on the (entityType==='ModelVersion', entityId)
+  // subject ref the writers actually emit — batched across all rows (no N+1).
+  const versionIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          items.flatMap((i) =>
+            i.kind === 'scope' && i.detail?.entityType === 'ModelVersion' && i.detail.entityId != null
+              ? [i.detail.entityId]
+              : []
+          )
+        )
+      ),
+    [items]
+  );
+
+  const versionsQuery = trpc.modelVersion.getVersionsByIds.useQuery(
+    { ids: versionIds },
+    { enabled: versionIds.length > 0 }
+  );
+  const userQueries = trpc.useQueries((t) => userIds.map((id) => t.user.getById({ id })));
+
+  const usernameById = useMemo(() => {
+    const map = new Map<number, string>();
+    userQueries.forEach((q, idx) => {
+      const username = (q.data as { username?: string | null } | undefined)?.username;
+      if (username) map.set(userIds[idx], username);
+    });
+    return map;
+  }, [userQueries, userIds]);
+
+  const versionNameById = useMemo(() => {
+    const map = new Map<number, string>();
+    (versionsQuery.data ?? []).forEach((v) => {
+      if (v?.id != null && v.name) map.set(v.id, v.name);
+    });
+    return map;
+  }, [versionsQuery.data]);
 
   // Anonymous / disabled: the protected queries never fired — show the empty
   // state rather than an indefinite loader.
@@ -282,6 +346,19 @@ export function AppActivityPanel({
                 <Text size="xs">
                   {item.kind === 'buzz'
                     ? humaniseActivityAction(item.scope)
+                    : item.detail
+                    ? // W13 rich mutation row — resolve ids → names + a sentence.
+                      describeBlockAction(item.detail, {
+                        username:
+                          item.detail.toUserId != null
+                            ? usernameById.get(item.detail.toUserId)
+                            : null,
+                        subjectName:
+                          item.detail.entityType === 'ModelVersion' &&
+                          item.detail.entityId != null
+                            ? versionNameById.get(item.detail.entityId)
+                            : null,
+                      })
                     : humaniseScopeInvocation(item.scope, item.endpoint)}
                 </Text>
               </Table.Td>
@@ -297,9 +374,10 @@ export function AppActivityPanel({
                     size="xs"
                     style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}
                   >
-                    {/* Follow-up-ready: prefer a server-supplied description; fall
-                        back to the derived scope+endpoint tail when absent. */}
-                    {item.description ? item.description : humaniseScopeEndpoint(item.endpoint)}
+                    {/* The Action cell carries the human sentence when a rich
+                        detail is present; the Detail cell always shows the raw
+                        technical ref (workflow id / storage key / endpoint). */}
+                    {humaniseScopeEndpoint(item.endpoint)}
                   </Text>
                 )}
               </Table.Td>

@@ -2,7 +2,6 @@ import {
   Alert,
   Anchor,
   Badge,
-  Box,
   Button,
   Card,
   Code,
@@ -19,7 +18,6 @@ import {
   Text,
   Textarea,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -32,7 +30,15 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useState } from 'react';
+import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
+import {
+  ReasonGatedActionModal,
+  ReasonGatedField,
+  ReasonGatedSubmitButton,
+  reasonMeetsMin,
+} from '~/components/Apps/ReasonGatedActionModal';
 import { getOffsiteReviewChecklist } from '~/components/Apps/offsiteReviewChecklist';
+import { ConnectScopesPanel } from '~/components/Apps/ConnectScopesPanel';
 import { getReportReasonLabel } from '~/components/Apps/appListingReportView';
 import {
   isDestructiveAction,
@@ -82,6 +88,14 @@ export type OffsitePendingRow = {
     externalUrl: string | null;
     category: string | null;
     contentRating: string | null;
+    // OAuth-CONNECT sub-kind (PR3). `connectClientId` is the discriminator: when set,
+    // the row is a connect listing and the review modal renders the requested-scope
+    // panel + the sensitive-justification checklist item. Null for an external-link
+    // listing. `connectScopeJustifications` is keyed by TokenScope enum-key.
+    connectClientId?: string | null;
+    connectRequestedScopes?: number | null;
+    connectScopeJustifications?: Record<string, string> | null;
+    connectClient?: { name: string | null } | null;
   } | null;
   submittedBy: OffsiteUser | null;
 };
@@ -114,9 +128,21 @@ export function OffsiteReviewQueue() {
     { enabled: !!features?.appBlocks, retry: false }
   );
 
-  // Flag off / not enabled → the query errors (moderatorProcedure); render nothing
-  // so the section stays unobtrusive when off-site review isn't in use.
-  if (queue.error) return null;
+  // Dark posture: flag off → nothing. An AUTHZ error (non-mod) → nothing. But a
+  // TRANSIENT error must surface a retry rather than silently blank the section.
+  if (!features?.appBlocks) return null;
+  if (queue.error) {
+    if (isModAuthzError(queue.error)) return null;
+    return (
+      <ModQueryError
+        error={queue.error}
+        onRetry={() => queue.refetch()}
+        isRetrying={queue.isFetching}
+        title="Couldn’t load external submissions"
+        testId="apps-offsite-queue-error"
+      />
+    );
+  }
 
   const items = (queue.data?.items ?? []) as OffsitePendingRow[];
 
@@ -308,6 +334,11 @@ export function OffsiteReviewModal({
     nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(declaredRating);
   const selectedRating: OffsiteContentRating = ratingOverride ?? derivedRating;
 
+  // OAuth-CONNECT sub-kind (PR3): render the requested-scope panel + the sensitive-
+  // justification checklist item only when the listing is a connect listing.
+  const connectClientId = request.appListing?.connectClientId ?? null;
+  const isConnect = connectClientId != null;
+
   const checklist = getOffsiteReviewChecklist({
     name: request.appListing?.name,
     externalUrl: request.appListing?.externalUrl,
@@ -316,6 +347,9 @@ export function OffsiteReviewModal({
     screenshotCount,
     category: request.appListing?.category,
     description: null,
+    connectClientId,
+    connectRequestedScopes: request.appListing?.connectRequestedScopes ?? null,
+    connectScopeJustifications: request.appListing?.connectScopeJustifications ?? null,
   });
 
   const assetsIncomplete = !assetsQuery.isLoading && (!hasIcon || !hasCover || screenshotCount < 1);
@@ -435,6 +469,14 @@ export function OffsiteReviewModal({
           </Stack>
         </Card>
 
+        {isConnect && (
+          <ConnectScopesPanel
+            connectClientName={request.appListing?.connectClient?.name ?? null}
+            requestedScopes={request.appListing?.connectRequestedScopes ?? 0}
+            justifications={request.appListing?.connectScopeJustifications ?? null}
+          />
+        )}
+
         <Stack gap={4}>
           <Text size="sm" fw={600}>
             Content review checklist
@@ -494,65 +536,37 @@ export function OffsiteReviewModal({
         )}
 
         {actionMode === 'reject' ? (
-          (() => {
-            const reasonLen = rejectionReason.trim().length;
-            const reasonTooShort = reasonLen < OFFSITE_MOD_REASON_MIN;
-            const rejectDisabled = busy || reasonTooShort;
-            return (
-              <Stack gap="xs">
-                <Text size="sm" fw={600}>
-                  Rejection reason
-                </Text>
-                <Textarea
-                  autosize
-                  minRows={3}
-                  maxRows={10}
-                  placeholder={`Explain what needs to change (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the author).`}
-                  description={`${reasonLen}/${OFFSITE_MOD_REASON_MIN} characters minimum`}
-                  error={
-                    reasonTooShort && reasonLen > 0
-                      ? `Enter at least ${OFFSITE_MOD_REASON_MIN} characters.`
-                      : undefined
-                  }
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.currentTarget.value)}
-                  disabled={busy}
-                  data-testid="apps-offsite-reject-reason"
-                />
-                <Group justify="flex-end" gap="xs">
-                  <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
-                    Cancel
-                  </Button>
-                  <Tooltip
-                    label={`Enter a reason — at least ${OFFSITE_MOD_REASON_MIN} characters.`}
-                    disabled={!reasonTooShort}
-                    withArrow
-                  >
-                    {/* A native disabled <button> fires no pointer events, so the
-                        Tooltip must attach to a wrapper to show in the exact state
-                        it explains (Mantine's documented disabled-target pattern). */}
-                    <Box>
-                      <Button
-                        color="red"
-                        leftSection={<IconX size={14} />}
-                        onClick={() =>
-                          rejectMut.mutate({
-                            publishRequestId: request.id,
-                            rejectionReason: rejectionReason.trim(),
-                          })
-                        }
-                        disabled={rejectDisabled}
-                        loading={rejectMut.isPending}
-                        data-testid="apps-offsite-reject-confirm"
-                      >
-                        Reject
-                      </Button>
-                    </Box>
-                  </Tooltip>
-                </Group>
-              </Stack>
-            );
-          })()
+          <Stack gap="xs">
+            <ReasonGatedField
+              value={rejectionReason}
+              onChange={setRejectionReason}
+              disabled={busy}
+              label="Rejection reason"
+              placeholder={`Explain what needs to change (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the author).`}
+              testId="apps-offsite-reject-reason"
+              minRows={3}
+              maxRows={10}
+            />
+            <Group justify="flex-end" gap="xs">
+              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
+                Cancel
+              </Button>
+              <ReasonGatedSubmitButton
+                onClick={() =>
+                  rejectMut.mutate({
+                    publishRequestId: request.id,
+                    rejectionReason: rejectionReason.trim(),
+                  })
+                }
+                gateOpen={reasonMeetsMin(rejectionReason)}
+                busy={rejectMut.isPending}
+                color="red"
+                leftSection={<IconX size={14} />}
+                label="Reject"
+                testId="apps-offsite-reject-confirm"
+              />
+            </Group>
+          </Stack>
         ) : actionMode === 'approve' ? (
           <Stack gap="xs">
             <Select
@@ -672,8 +686,20 @@ export function OffsiteReportsQueue() {
     { enabled: !!features?.appBlocks, retry: false }
   );
 
-  // Flag off / not a mod → the query errors (moderatorProcedure); render nothing.
-  if (queue.error) return null;
+  // Dark posture: flag off / non-mod → nothing; a transient error → a retry Alert.
+  if (!features?.appBlocks) return null;
+  if (queue.error) {
+    if (isModAuthzError(queue.error)) return null;
+    return (
+      <ModQueryError
+        error={queue.error}
+        onRetry={() => queue.refetch()}
+        isRetrying={queue.isFetching}
+        title="Couldn’t load reports"
+        testId="apps-reports-queue-error"
+      />
+    );
+  }
 
   const items = (queue.data?.items ?? []) as ReportRow[];
 
@@ -891,12 +917,15 @@ function ReportActionModal({
   const reasonRequired =
     action === 'delist' || action === 'relist' || action === 'claim' || action === 'purge';
   const isClaim = action === 'claim';
+  const destructive = isDestructiveAction(action);
   const trimmed = text.trim();
   const validTarget = typeof targetUserId === 'number' && Number.isInteger(targetUserId) && targetUserId > 0;
-  const canSubmit =
-    !busy &&
-    (!reasonRequired || trimmed.length >= OFFSITE_MOD_REASON_MIN) &&
-    (!isClaim || validTarget);
+
+  function reset() {
+    setText('');
+    setTargetUserId('');
+    onClose();
+  }
 
   function submit() {
     switch (action) {
@@ -930,14 +959,10 @@ function ReportActionModal({
   }
 
   return (
-    <Modal
+    <ReasonGatedActionModal
       opened={!!pending}
-      onClose={() => {
-        if (busy) return;
-        setText('');
-        setTargetUserId('');
-        onClose();
-      }}
+      onCancel={reset}
+      busy={busy}
       title={
         <Group gap={6}>
           <Text fw={600}>
@@ -945,18 +970,27 @@ function ReportActionModal({
           </Text>
         </Group>
       }
-      centered
-    >
-      <Stack gap="md">
-        {isDestructiveAction(action) && (
-          <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />}>
-            <Text size="sm">
-              Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-              (with the slug snapshot) is kept. This cannot be undone.
-            </Text>
-          </Alert>
-        )}
-        {isClaim && (
+      reason={text}
+      onReasonChange={setText}
+      reasonRequired={reasonRequired}
+      reasonLabel={
+        reasonRequired ? `Reason (≥${OFFSITE_MOD_REASON_MIN} chars, audited)` : 'Note (optional)'
+      }
+      reasonPlaceholder={
+        reasonRequired
+          ? 'Why this action — recorded in the audit trail.'
+          : 'Optional resolution note (audited).'
+      }
+      reasonTestId="apps-report-action-reason"
+      destructive={destructive}
+      destructiveWarning={
+        <Text size="sm">
+          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
+          (with the slug snapshot) is kept. This cannot be undone.
+        </Text>
+      }
+      extraSlot={
+        isClaim ? (
           <>
             <Alert color="blue" variant="light" icon={<IconAlertTriangle size={16} />}>
               <Text size="sm">
@@ -976,46 +1010,14 @@ function ReportActionModal({
               data-testid="apps-report-claim-target"
             />
           </>
-        )}
-        <Textarea
-          label={reasonRequired ? `Reason (≥${OFFSITE_MOD_REASON_MIN} chars, audited)` : 'Note (optional)'}
-          autosize
-          minRows={3}
-          maxRows={8}
-          placeholder={
-            reasonRequired
-              ? 'Why this action — recorded in the audit trail.'
-              : 'Optional resolution note (audited).'
-          }
-          value={text}
-          onChange={(e) => setText(e.currentTarget.value)}
-          disabled={busy}
-          data-testid="apps-report-action-reason"
-        />
-        <Group justify="flex-end" gap="xs">
-          <Button
-            variant="default"
-            onClick={() => {
-              setText('');
-              setTargetUserId('');
-              onClose();
-            }}
-            disabled={busy}
-          >
-            Cancel
-          </Button>
-          <Button
-            color={isDestructiveAction(action) ? 'red' : undefined}
-            onClick={submit}
-            disabled={!canSubmit}
-            loading={busy}
-            data-testid="apps-report-action-confirm"
-          >
-            {isDestructiveAction(action) ? 'Purge permanently' : reportActionLabel(action)}
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
+        ) : undefined
+      }
+      extraGateSatisfied={!isClaim || validTarget}
+      extraGateTooltip="Enter a valid new owner id."
+      submitLabel={destructive ? 'Purge permanently' : reportActionLabel(action)}
+      submitTestId="apps-report-action-confirm"
+      onSubmit={submit}
+    />
   );
 }
 

@@ -193,6 +193,53 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // App generator SUBQUEUE bridges (tag-scoped) — the calling app's OWN slice of
+  // the viewer's generation queue: read (image results) + cancel one, both scoped
+  // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed
+  // ownership+tag guard on cancel — the block never sees the user's personal
+  // gens). AHEAD of the published SDK dist union (the SDK bridge lands in a
+  // follow-up PR) — forward-looking coverage, allowed by the one-directional
+  // compile-time gate. PAGE-ONLY affordance today (a full-page generator app;
+  // model-slot apps are deferred + will get the page host too), so N/A for the
+  // model host — mirrors the buzz self-read / OPEN_RESOURCE_PICKER placement.
+  QUERY_APP_WORKFLOWS: {
+    request: true,
+    reply: 'APP_WORKFLOWS_RESULT',
+    IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  CANCEL_APP_WORKFLOW: {
+    request: true,
+    reply: 'CANCEL_APP_WORKFLOW_RESULT',
+    IframeHost: 'app subqueue is a page-only affordance today; slot-apps deferred',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Model-Benchmarking shared grid — publish the app's OWN workflow outputs as
+  // bare, real-scanned public images (host-chrome consent confirm BEFORE the
+  // FAIL-CLOSED `blocks.publishGenerationOutputs` MUTATION). Page-only affordance
+  // today. Unhandled ⇒ the block hangs; PageBlockHost registers the handler.
+  PUBLISH_GENERATION_OUTPUTS: {
+    request: true,
+    reply: 'PUBLISH_RESULT',
+    IframeHost:
+      'shared-grid publish is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Model-Benchmarking shared grid — per-viewer gated read of the grid's image
+  // ids (the server applies the viewer's browsing-level clamp; above-ceiling /
+  // unscanned / flagged come back `hidden` with no url). Host-mediated via the
+  // `blocks.getImagesByIds` MUTATION. Page-only affordance today.
+  GET_IMAGES_BY_IDS: {
+    request: true,
+    reply: 'IMAGES_RESULT',
+    IframeHost:
+      'shared-grid gated read is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // Per-account (blue/green/yellow) balance read backing the SDK
   // `useBuzzBalance()` hook + the account-picker (Phase 3 host wiring). Host-
   // mediated via the block-token-authed `blocks.getMyBuzzBalance` MUTATION.

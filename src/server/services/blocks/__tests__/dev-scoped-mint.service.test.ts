@@ -37,6 +37,7 @@ import {
   DEV_TOKEN_SCOPE_ALLOWLIST,
   FORCED_SFW_CEILING,
   resolveDevBuzzBudget,
+  REVIEW_MINT_SCOPE_ALLOWLIST,
   signDevScopedPageToken,
   TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
 } from '~/server/services/blocks/dev-scoped-mint.service';
@@ -48,13 +49,13 @@ const AI_WRITE_BIT = 1 << 15;
 
 const FULL_SOURCE = [
   'models:read:self',
-  'media:read:owned',
+  'media:read:owned', // REMOVED decorative scope — now unknown → always stripped
   'ai:write:budgeted',
   'apps:storage:read',
   'apps:storage:write',
-  'social:tip:self', // PAGE_FORBIDDEN
-  'buzz:read:self', // PAGE_FORBIDDEN
-  'block:settings:read', // not in either dev allowlist
+  'social:tip:self', // money-OUT — in NO allowlist, always stripped
+  'buzz:read:self', // own-ledger READ — in both dev allowlists, NOT the review one
+  'block:settings:read', // REMOVED decorative scope — now unknown → always stripped
   'totally:fake:scope', // unknown
 ];
 
@@ -68,13 +69,19 @@ describe('clampDevScopes', () => {
     });
     expect(granted).toEqual([
       'ai:write:budgeted',
-      'media:read:owned',
+      'buzz:read:self',
       'models:read:self',
       'user:read:self',
     ]);
     // App Storage never survives the tunnel clamp.
     expect(granted).not.toContain('apps:storage:read');
     expect(granted).not.toContain('apps:storage:write');
+    // buzz:read:self (own-ledger read) survives; social:tip:self (money OUT) never does.
+    expect(granted).toContain('buzz:read:self');
+    expect(granted).not.toContain('social:tip:self');
+    // Removed decorative scopes are unknown → stripped by step (a) of the clamp.
+    expect(granted).not.toContain('media:read:owned');
+    expect(granted).not.toContain('block:settings:read');
   });
 
   it('DEV (bearer) allowlist KEEPS apps:storage:* — the tunnel-vs-bearer difference is exactly storage', () => {
@@ -86,9 +93,10 @@ describe('clampDevScopes', () => {
     });
     expect(granted).toContain('apps:storage:read');
     expect(granted).toContain('apps:storage:write');
-    // Still drops forbidden/unknown/out-of-allowlist.
+    // buzz:read:self (own-ledger read) is in the bearer dev allowlist too.
+    expect(granted).toContain('buzz:read:self');
+    // Still drops money-OUT/unknown/out-of-allowlist.
     expect(granted).not.toContain('social:tip:self');
-    expect(granted).not.toContain('buzz:read:self');
     expect(granted).not.toContain('block:settings:read');
     expect(granted).not.toContain('totally:fake:scope');
   });
@@ -152,6 +160,115 @@ describe('clampDevScopes', () => {
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(dedup).toEqual(['models:read:self', 'user:read:self']);
+  });
+});
+
+describe('buzz:read:self allowlist membership (own-ledger read, self-bound)', () => {
+  it('is in BOTH dev allowlists but NOT the mod-review sandbox allowlist', () => {
+    expect(DEV_TOKEN_SCOPE_ALLOWLIST.has('buzz:read:self')).toBe(true);
+    expect(TUNNEL_HOST_MINT_SCOPE_ALLOWLIST.has('buzz:read:self')).toBe(true);
+    expect(REVIEW_MINT_SCOPE_ALLOWLIST.has('buzz:read:self')).toBe(false);
+  });
+
+  it('the money-OUT scope social:tip:self is in NONE of the allowlists', () => {
+    expect(DEV_TOKEN_SCOPE_ALLOWLIST.has('social:tip:self')).toBe(false);
+    expect(TUNNEL_HOST_MINT_SCOPE_ALLOWLIST.has('social:tip:self')).toBe(false);
+    expect(REVIEW_MINT_SCOPE_ALLOWLIST.has('social:tip:self')).toBe(false);
+  });
+
+  it('a dev-tunnel manifest requesting buzz:read:self KEEPS the scope through the clamp (consent works)', () => {
+    const granted = clampDevScopes({
+      scopeSource: ['buzz:read:self', 'models:read:self'],
+      oauthAllowed: null, // pre-approval dev tunnel — no OauthClient
+      keyCanSpend: true,
+      allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+    });
+    // The scope survives → the block's REQUEST_CONSENT resolves a real
+    // missingScope instead of an empty set (the reported "dead button" bug).
+    expect(granted).toContain('buzz:read:self');
+    expect(granted).toEqual(['buzz:read:self', 'models:read:self', 'user:read:self']);
+  });
+
+  it('the mod-review sandbox STRIPS buzz:read:self even when the pending manifest declares it', () => {
+    const granted = clampDevScopes({
+      scopeSource: ['buzz:read:self', 'models:read:self'],
+      oauthAllowed: null,
+      keyCanSpend: false,
+      allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).not.toContain('buzz:read:self');
+  });
+});
+
+describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #2831)', () => {
+  // The pending manifest a MALICIOUS app could declare: it asks for spend, per-user
+  // + shared storage, private collections, real-money tip, and financial read.
+  const MALICIOUS_MANIFEST_SCOPES = [
+    'models:read:self',
+    'media:read:owned', // removed decorative scope — unknown → stripped
+    'collections:read:self',
+    'ai:write:budgeted',
+    'apps:storage:read',
+    'apps:storage:write',
+    'apps:storage:shared:read',
+    'apps:storage:shared:write',
+    'collections:read:private',
+    'collections:write:self',
+    'social:tip:self',
+    'buzz:read:self',
+  ];
+
+  it('strips EVERY money/private/cross-user/write scope — only the render-only reads survive', () => {
+    const granted = clampDevScopes({
+      scopeSource: MALICIOUS_MANIFEST_SCOPES,
+      oauthAllowed: null, // pending app — no OauthClient
+      keyCanSpend: false, // review preview never spends (belt-and-suspenders)
+      allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    });
+    // ONLY the render-only survivors (+ the unconditional user:read:self grant).
+    expect(granted).toEqual([
+      'collections:read:self',
+      'models:read:self',
+      'user:read:self',
+    ]);
+    // None of the withheld scopes can EVER reach the review JWT.
+    for (const withheld of [
+      'media:read:owned', // removed decorative scope — unknown → stripped
+      'ai:write:budgeted',
+      'apps:storage:read',
+      'apps:storage:write',
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+      'collections:read:private',
+      'collections:write:self',
+      'social:tip:self',
+      'buzz:read:self',
+    ]) {
+      expect(granted).not.toContain(withheld);
+    }
+  });
+
+  it('is STRICTER than the dev-tunnel allowlist — never grants ai:write:budgeted even with keyCanSpend:true', () => {
+    // Even if a caller mistakenly passed keyCanSpend:true, the allowlist itself
+    // omits ai:write:budgeted, so spend can never survive the review clamp.
+    const granted = clampDevScopes({
+      scopeSource: ['ai:write:budgeted', 'models:read:self'],
+      oauthAllowed: null,
+      keyCanSpend: true,
+      allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).not.toContain('ai:write:budgeted');
+    expect(granted).toEqual(['models:read:self', 'user:read:self']);
+  });
+
+  it('an EMPTY manifest still yields a usable read-only token (force-granted user:read:self)', () => {
+    const granted = clampDevScopes({
+      scopeSource: [],
+      oauthAllowed: null,
+      keyCanSpend: false,
+      allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).toEqual(['user:read:self']);
   });
 });
 

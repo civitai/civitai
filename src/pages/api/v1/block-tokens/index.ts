@@ -55,7 +55,7 @@ import type { Logger } from '@civitai/next-axiom';
  * Token lifetime: 15 minutes. Rate limits: 120/min per IP, 60/min per (subject, instance).
  *
  * Anon viewers receive a token with `sub: "anon"`. Scopes requiring an
- * authenticated subject (buzz:read:self, social:tip:self, media:read:owned)
+ * authenticated subject (buzz:read:self, social:tip:self, user:read:self)
  * are rejected downstream by the block-scope middleware.
  *
  * CSRF posture: SAME-ORIGIN ONLY with EXACT host equality. The host page on
@@ -731,8 +731,26 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         ) as string[])
       : [];
 
+  // Graceful deprecation: drop any scope that is no longer part of the known
+  // block-scope vocabulary BEFORE the OAuth / approved-snapshot gates below.
+  // A scope can become unknown when it is deprecated AFTER an app was approved
+  // (e.g. the removed decorative `media:read:owned` / `block:settings:*`). Such
+  // a scope carries no capability — the runtime gate (`enforceContextBinding`)
+  // rejects it and it is never signed into a token — so a legacy app that
+  // historically declared one must keep minting its OTHER scopes rather than
+  // 403ing the whole request. (Without this pre-filter, an unknown scope would
+  // be flagged by `validateBlockScopesAgainstOauthClient` and hard-fail the
+  // mint.) The capability-bearing (known) scopes are still fully gated below.
+  //
+  // INTENTIONAL: if the manifest declared ONLY removed/unknown scopes this
+  // filters to an EMPTY set and we go on to sign a valid ZERO-scope token (not
+  // an error). That is correct — the app simply has no capabilities, and every
+  // scope-gated endpoint fails closed at the deny-by-default runtime gate. A
+  // useless-but-valid token is the right graceful outcome, not a 403.
+  const knownManifestScopes = rawManifestScopes.filter(isKnownBlockScope);
+
   const oauthAllowed = block.app?.allowedScopes ?? 0;
-  const scopeCheck = validateBlockScopesAgainstOauthClient(rawManifestScopes, oauthAllowed);
+  const scopeCheck = validateBlockScopesAgainstOauthClient(knownManifestScopes, oauthAllowed);
   if (!scopeCheck.valid) {
     res.status(403).json({
       error: 'block manifest carries scopes outside the OAuth client allowlist',
@@ -744,13 +762,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // H-2: intersect requested scopes with the approved-scope snapshot. An
   // approved manifest re-published with added scopes already loses approval
   // (status → 'pending', filtered above), but the approved_scopes column is
-  // the authoritative pinning. Empty array = fail-closed.
+  // the authoritative pinning. Empty array = fail-closed. Checked on the
+  // known-scope subset — an unknown scope was dropped above (capability-less),
+  // so an anti-swap check on it would only mislead; a KNOWN scope added outside
+  // the approved snapshot is still caught here.
   const approvedScopes = new Set(block.approvedScopes ?? []);
   if (approvedScopes.size === 0) {
     res.status(403).json({ error: 'block has no approved scopes' });
     return;
   }
-  const outsideApproved = rawManifestScopes.filter((s) => !approvedScopes.has(s));
+  const outsideApproved = knownManifestScopes.filter((s) => !approvedScopes.has(s));
   if (outsideApproved.length > 0) {
     res.status(403).json({
       error: 'block manifest carries scopes outside the approved snapshot',
@@ -758,7 +779,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     });
     return;
   }
-  const requestedScopes = rawManifestScopes.filter(isKnownBlockScope);
+  const requestedScopes = knownManifestScopes;
 
   // W10 PAGE HARD RULE (belt over the manifest + approved-scope intersection):
   // a page (kind==='page', entity=none) is viewer-scoped with no model entity
@@ -809,7 +830,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // anon-safe scope subset rather than a 403. The anon-safe subset is the
   // manifest scopes with every consent-gated scope STRIPPED — which is exactly
   // every `:self` / owned / money / tip scope (`user:read:self`,
-  // `buzz:read:self`, `media:read:owned`, `social:tip:self`,
+  // `buzz:read:self`, `social:tip:self`,
   // `ai:write:budgeted`, `models:read:self`, …). `consentGatedScopes` is the
   // single source of truth for "requires a per-user grant"; an anon viewer has
   // no grant and never can, so the entire consent-gated set is withheld.
@@ -836,10 +857,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     needsConsent = false;
   }
 
-  // C8: settings scopes are publisher-only. Caller must be the install's
-  // installedByUserId. When the publisher's account has been deleted,
-  // installedByUserId is NULL (SET NULL FK) → this check fails for everyone,
-  // which is the correct fail-closed behavior — the model owner can uninstall.
+  // C8 (now INERT — retained as fail-safe): settings scopes were publisher-only,
+  // requiring caller == install.installedByUserId. `block:settings:*` has since
+  // been removed from the known block-scope vocabulary, so it is filtered out of
+  // `manifestScopes` above (never known) and this branch can no longer fire. Kept
+  // as harmless defense-in-depth so re-introducing a settings scope re-arms the
+  // installer gate rather than silently minting it. (See block-scope.constants.ts.)
   const wantsSettingsScope = manifestScopes.some(
     (s) => s === 'block:settings:read' || s === 'block:settings:write'
   );

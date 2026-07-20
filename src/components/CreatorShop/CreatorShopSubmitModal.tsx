@@ -120,7 +120,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             <Alert color="yellow" icon={<IconAlertTriangle size={18} />}>
               <Text size="xs">
                 All cosmetics must be <b>safe-for-work</b> and must not use{' '}
-                <b>copyrighted or trademarked material</b>{' '}you don&apos;t own. Submissions that
+                <b>copyrighted or trademarked material</b> you don&apos;t own. Submissions that
                 violate this will be rejected.
               </Text>
             </Alert>
@@ -169,13 +169,12 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               minRows={2}
             />
 
-            {supportsAnimated && !artLocked && (
-              <Switch
-                checked={animated}
-                onChange={(e) => form.setAnimated(e.currentTarget.checked)}
-                label="Animated cosmetic"
-                description="Enable if your artwork is an animated PNG or WebP."
-              />
+            {supportsAnimated && !artLocked && animated && (
+              <Alert color="blue" icon={<IconInfoCircle size={18} />}>
+                <Text size="xs">
+                  Animated artwork detected — this cosmetic will play its animation.
+                </Text>
+              </Alert>
             )}
           </>
         )}

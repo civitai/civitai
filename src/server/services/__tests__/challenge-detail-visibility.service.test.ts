@@ -209,4 +209,43 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
       expect(await getChallengeDetail(400, RANDO_ID, false, false)).toBeNull();
     });
   });
+
+  describe('domain-currency gate', () => {
+    it('returns the detail for a moderator despite domain mismatch', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
+      );
+
+      // green site viewer + yellow challenge would normally be hidden by domain-currency gate
+      const result = await getChallengeDetail(400, MOD_ID, true, true);
+      expect(result).not.toBeNull();
+    });
+
+    it('returns the detail for the owner despite domain mismatch', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
+      );
+
+      const result = await getChallengeDetail(400, OWNER_ID, true, false);
+      expect(result).not.toBeNull();
+    });
+
+    it('returns a yellow challenge on the green site so the client can render the redirect gate', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
+      );
+
+      expect(await getChallengeDetail(400, RANDO_ID, true, false)).not.toBeNull();
+      expect(await getChallengeDetail(400, undefined, true, false)).not.toBeNull();
+    });
+
+    it('keeps green challenges hidden from other users on the red site', async () => {
+      mockGetChallengeById.mockResolvedValue(
+        makeUserChallenge({ ingestion: 'Scanned', buzzType: 'green' })
+      );
+
+      expect(await getChallengeDetail(400, RANDO_ID, false, false)).toBeNull();
+      expect(await getChallengeDetail(400, undefined, false, false)).toBeNull();
+    });
+  });
 });

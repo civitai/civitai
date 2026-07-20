@@ -9,19 +9,24 @@ import {
 } from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
- * App Store Listings (W13 P3a) — off-site submission INPUT validation.
+ * App Store Listings (W13) — external-app submission INPUT validation (the MERGED
+ * external+connect model — every external app links its own OAuth client).
  *
- * Pins the submit-schema gates: https-only external URL (delegated to the shared
- * `validateExternalUrl`), slug shape, name/description bounds, taxonomy category,
- * author-declared contentRating (default SFW), optional changelog, and the
- * external ⟂ on-platform mutual-exclusivity (a page/targets/iframe field is
- * REJECTED, not silently dropped).
+ * Pins the submit-schema gates: REQUIRED `connectClientId`, OPTIONAL https external
+ * URL (delegated to the shared `validateExternalUrl` only when present), slug shape,
+ * name/description bounds, taxonomy category, author-declared contentRating (default
+ * SFW), optional changelog, and the external ⟂ on-platform mutual-exclusivity (a
+ * page/targets/iframe field is REJECTED, not silently dropped).
  */
 
 const base = {
   slug: 'cool-app',
   name: 'Cool App',
   externalUrl: 'https://cool.example.com/app',
+  // REQUIRED in the merged model — every external app links an OAuth client.
+  connectClientId: 'oauth-client-1',
+  requestedScopes: 0,
+  scopeJustifications: {},
 };
 
 describe('submitExternalListingSchema — happy path', () => {
@@ -30,6 +35,18 @@ describe('submitExternalListingSchema — happy path', () => {
     expect(parsed.success).toBe(true);
     // contentRating defaults to SFW when omitted.
     if (parsed.success) expect(parsed.data.contentRating).toBe('g');
+  });
+
+  it('REQUIRES connectClientId (missing → reject)', () => {
+    const { connectClientId, ...rest } = base;
+    expect(submitExternalListingSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('accepts a submission WITHOUT externalUrl (optional homepage link)', () => {
+    const { externalUrl, ...rest } = base;
+    const parsed = submitExternalListingSchema.safeParse(rest);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.externalUrl).toBeUndefined();
   });
 
   it('accepts a full submission (tagline/description/category/changelog/rating)', () => {

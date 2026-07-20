@@ -18,6 +18,7 @@ import {
   CREATOR_SHOP_SUBMISSION_FEE,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
+import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
 
 // Owns the submit/edit form: local field state, the derived readiness/affordability
@@ -97,8 +98,21 @@ export function useSubmitCreatorShopForm({
     const result = await validateCosmeticImage(file, type, maxSize);
     setChecks(result.checks);
     if (!result.allRequiredPassed) return;
-    const uploaded = await uploadToCF(file);
-    setImageId(uploaded.id);
+    try {
+      const uploaded = await uploadToCF(file, undefined, { allowAnimatedWebP: supportsAnimated });
+      setAnimated(supportsAnimated && (await isAnimatedImage(file)));
+      setImageId(uploaded.id);
+    } catch (error) {
+      // Clear the stuck tracked file so `uploading` flips back to false —
+      // otherwise the preview spins forever and Replace stays disabled. Keeps
+      // localUrl so the creator still sees their pick and can re-drop.
+      resetFiles();
+      const err = error instanceof Error ? error : new Error('Could not upload your artwork');
+      // getDataFromFile already toasts its own preprocess failures (then returns
+      // null → this generic throw), so don't double-notify for those.
+      if (err.message !== 'Failed to process file before upload')
+        showErrorNotification({ title: 'Upload failed', error: err });
+    }
   };
 
   const handleReplace = () => {
@@ -183,7 +197,6 @@ export function useSubmitCreatorShopForm({
     buzzType,
     setBuzzType,
     animated,
-    setAnimated,
     sellableByOthers,
     setSellableByOthers,
     sellerShare,

@@ -5,6 +5,7 @@ import {
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
   resolveResourcePickerRequest,
+  resolveUngrantableConsentScopes,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
 } from '../pageBlockHostLogic';
@@ -45,6 +46,55 @@ describe('grantedPageScopes (#3/#6 — BLOCK_INIT carries the JWT scopes, not []
   it('is a no-op for a missingScopes entry that was never declared', () => {
     const declared = ['apps:storage:read'];
     expect(grantedPageScopes(declared, ['ai:write:budgeted'])).toEqual(declared);
+  });
+});
+
+describe('resolveUngrantableConsentScopes (Issue B — un-grantable dev-preview consent → toast)', () => {
+  it('returns the un-grantable subset when a requested scope is neither granted NOR missing (clamped at mint)', () => {
+    // dev-tunnel preview: the token carries models:read:self; the block asks for
+    // a scope the tunnel allowlist withheld → not granted, not addable via consent.
+    const out = resolveUngrantableConsentScopes(
+      ['apps:storage:read'],
+      ['models:read:self'],
+      []
+    );
+    expect(out).toEqual(['apps:storage:read']);
+  });
+
+  it('returns EMPTY for the BENIGN already-granted case (block re-requests a held scope) — no toast', () => {
+    expect(
+      resolveUngrantableConsentScopes(['buzz:read:self'], ['buzz:read:self', 'models:read:self'], [])
+    ).toEqual([]);
+  });
+
+  it('returns EMPTY when the requested scope is grantable via consent (it is in missingScopes) — modal path owns it', () => {
+    expect(
+      resolveUngrantableConsentScopes(['ai:write:budgeted'], ['models:read:self'], [
+        'ai:write:budgeted',
+      ])
+    ).toEqual([]);
+  });
+
+  it('returns EMPTY when the block sends no hint / a garbage hint (never a fragile heuristic)', () => {
+    expect(resolveUngrantableConsentScopes(undefined, ['models:read:self'], [])).toEqual([]);
+    expect(resolveUngrantableConsentScopes([], ['models:read:self'], [])).toEqual([]);
+    expect(resolveUngrantableConsentScopes('nope', ['models:read:self'], [])).toEqual([]);
+    expect(resolveUngrantableConsentScopes([1, null, ''], ['models:read:self'], [])).toEqual([]);
+  });
+
+  it('reports ONLY the un-grantable scopes from a mixed hint (drops granted + missing), sorted+deduped', () => {
+    const out = resolveUngrantableConsentScopes(
+      ['apps:storage:write', 'apps:storage:read', 'apps:storage:write', 'buzz:read:self', 'ai:write:budgeted'],
+      ['buzz:read:self'], // already granted
+      ['ai:write:budgeted'] // grantable via consent
+    );
+    expect(out).toEqual(['apps:storage:read', 'apps:storage:write']);
+  });
+
+  it('tolerates an undefined missingScopes', () => {
+    expect(
+      resolveUngrantableConsentScopes(['apps:storage:read'], ['models:read:self'], undefined)
+    ).toEqual(['apps:storage:read']);
   });
 });
 

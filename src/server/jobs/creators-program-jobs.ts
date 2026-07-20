@@ -1,4 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
@@ -266,11 +267,29 @@ export const creatorsProgramSettleCash = createJob(
   }
 );
 
-const getCreatorProgramUsers = async () => {
+// activeMembershipOnly mirrors hasValidCreatorMembership set-wise (any buzzType,
+// non-terminal status, not renewal-lapsed, tier above founder) so lapsed members
+// — who keep the onboarding flag — can be excluded from nudges they can't act on.
+const getCreatorProgramUsers = async ({
+  activeMembershipOnly = false,
+}: { activeMembershipOnly?: boolean } = {}) => {
   const users = await dbWrite.$queryRaw<{ userId: number }[]>`
       SELECT "id" as "userId"
-      FROM "User"
+      FROM "User" u
       WHERE "onboarding" & ${OnboardingSteps.CreatorProgram} != 0
+      ${
+        activeMembershipOnly
+          ? Prisma.sql`AND EXISTS (
+              SELECT 1
+              FROM "CustomerSubscription" cs
+              JOIN "Product" p ON p.id = cs."productId"
+              WHERE cs."userId" = u.id
+                AND cs.status NOT IN ('canceled', 'incomplete_expired', 'past_due', 'unpaid')
+                AND COALESCE(cs.metadata->>'renewalEmailSent', '') <> 'true'
+                AND p.metadata->>${env.TIER_METADATA_KEY} NOT IN ('free', 'founder')
+            )`
+          : Prisma.empty
+      }
     `;
 
   return users.map((u) => u.userId);
@@ -281,7 +300,8 @@ export const bankingPhaseEndingNotification = createJob(
   `0 0 L-${EXTRACTION_PHASE_DURATION + 1} * *`,
   async () => {
     const month = dayjs().format('YYYY-MM');
-    const users = await getCreatorProgramUsers();
+    // Banking nudge — only people who can actually still bank.
+    const users = await getCreatorProgramUsers({ activeMembershipOnly: true });
 
     await createNotification({
       type: 'creator-program-banking-phase-ending',

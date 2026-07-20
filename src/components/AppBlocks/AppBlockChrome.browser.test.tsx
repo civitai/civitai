@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
 // AppBlockChrome now calls useCurrentUser() (moderator gate for the platform-nav
@@ -12,6 +12,11 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 
 // eslint-disable-next-line import/first
 import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
+// eslint-disable-next-line import/first
+import {
+  clearRecentlyOpenedApps,
+  recordRecentlyOpenedApp,
+} from '~/components/Apps/recentlyOpenedAppsStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
@@ -272,5 +277,200 @@ describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
     expect(text).not.toMatch(/[‮​]/);
     // The legible characters are preserved (control char became a space → collapsed).
     expect(text.replace(/\s+/g, '')).toBe('EvilAppName');
+  });
+});
+
+// "Recently run" section in the platform-nav ("Civitai Apps") dropdown — a
+// 1-click return to recently-run apps, sourced from the localStorage recents
+// store. Icon + name per entry, links to `/apps/run/<blockId>`, EXCLUDES the
+// current app, and the whole label+section is omitted when there are no other
+// recents. The store is real localStorage in browser mode, so seed it directly.
+describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => {
+  beforeEach(() => {
+    clearRecentlyOpenedApps();
+  });
+
+  // The platform-nav Menu mounts its dropdown lazily — open it first (its trigger
+  // is "Apps menu", distinct from the ⋯ "App menu").
+  async function openPlatformNav() {
+    await page.getByRole('button', { name: 'Apps menu' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+  }
+
+  test('renders recents (icon + name), EXCLUDES the current app, links to /apps/run/<blockId>', async () => {
+    // Seed newest-last so the resulting order is [other, noicon, current].
+    recordRecentlyOpenedApp({ id: 'current', blockId: 'current-block', name: 'Current App' });
+    recordRecentlyOpenedApp({ id: 'noicon', blockId: 'noicon-block', name: 'No Icon App' });
+    recordRecentlyOpenedApp({
+      id: 'other',
+      blockId: 'other-block',
+      name: 'Other App',
+      iconUrl: 'https://cdn.example/icon.png',
+    });
+
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-recents"
+        appBlockId="current"
+        appName="Current App"
+        slotId="app.page"
+      />
+    );
+    await openPlatformNav();
+
+    // Section label present.
+    await expect.element(page.getByText('Recently run', { exact: true })).toBeInTheDocument();
+
+    // Rich entry: icon (Avatar <img>) + name, links to the run route.
+    const other = page.getByRole('menuitem', { name: 'Other App' }).element() as HTMLElement;
+    expect(other.getAttribute('href')).toBe('/apps/run/other-block');
+    const otherImg = other.querySelector('img');
+    expect(otherImg).not.toBeNull();
+    expect(otherImg?.getAttribute('src')).toBe('https://cdn.example/icon.png');
+
+    // Icon-less entry falls back to a generic app icon (an <svg>, no <img>).
+    const noicon = page.getByRole('menuitem', { name: 'No Icon App' }).element() as HTMLElement;
+    expect(noicon.getAttribute('href')).toBe('/apps/run/noicon-block');
+    expect(noicon.querySelector('img')).toBeNull();
+    expect(noicon.querySelector('svg')).not.toBeNull();
+
+    // The current app is EXCLUDED — no menuitem links to its run route.
+    const currentLinks = page
+      .getByRole('menuitem')
+      .all()
+      .map((el) => el.element().getAttribute('href'));
+    expect(currentLinks).not.toContain('/apps/run/current-block');
+  });
+
+  test('the whole "Recently run" section is ABSENT when there are no OTHER recents', async () => {
+    // Only the current app is a recent → nothing to offer after exclusion.
+    recordRecentlyOpenedApp({ id: 'solo', blockId: 'solo-block', name: 'Solo App' });
+
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-solo"
+        appBlockId="solo"
+        appName="Solo App"
+        slotId="app.page"
+      />
+    );
+    await openPlatformNav();
+
+    // Neither the label nor the section wrapper renders.
+    await expect.element(page.getByText('Recently run', { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
+  });
+
+  test('an EMPTY recents store renders no "Recently run" section', async () => {
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-empty"
+        appBlockId="anything"
+        appName="Anything"
+        slotId="app.page"
+      />
+    );
+    await openPlatformNav();
+    await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
+  });
+
+  // Security-adjacent consistency: the persisted `name` is publisher-controlled
+  // (laundered through localStorage) — the SAME untrusted source the host trust
+  // label sanitizes. The recents item must route it through sanitizeAppChromeName
+  // too, so a bidi-override / zero-width / oversized name can't render raw in the
+  // dropdown. Mutation-sanity: dropping the sanitizer call (rendering `r.name`
+  // raw) fails the "dangerous chars stripped" assertions below.
+  test('a hostile persisted name is rendered SANITIZED (bidi/zero-width stripped) + length-bounded', async () => {
+    // RLO override + zero-width space + a long tail well past APP_CHROME_NAME_MAX
+    // (64). sanitizeAppChromeName strips the bidi/format chars and caps length.
+    const rawName = 'Evil‮Hack​App' + 'X'.repeat(200);
+    recordRecentlyOpenedApp({ id: 'hostile', blockId: 'hostile-block', name: rawName });
+
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-hostile"
+        appBlockId="viewer"
+        appName="Viewer App"
+        slotId="app.page"
+      />
+    );
+    await openPlatformNav();
+
+    // The item is present and still links to its run route (blockId unaffected).
+    const item = page.getByTestId('app-recently-run-item').element() as HTMLElement;
+    expect(item.getAttribute('href')).toBe('/apps/run/hostile-block');
+
+    const text = item.textContent ?? '';
+    // The bidi RLO override + zero-width space must NOT survive into the DOM.
+    expect(text).not.toMatch(/[‮​]/);
+    // The legible characters are preserved (format chars removed, not the letters).
+    expect(text).toContain('EvilHackApp');
+    // Length is bounded by the sanitizer (rawName was 200+ chars; the rendered
+    // string must be far shorter — proves the length cap ran, not just a CSS clamp).
+    expect(text.length).toBeLessThan(rawName.length);
+    expect(text.length).toBeLessThanOrEqual(70); // APP_CHROME_NAME_MAX (64) + ellipsis slack
+  });
+
+  // Freshness: the store is read on mount AND re-read every time the menu opens,
+  // so a within-session client-nav (open app A → open app B, no full reload)
+  // shows the CURRENT recents — not a snapshot frozen at first mount.
+  test('re-reads the recents store on menu OPEN (fresh within an SPA session)', async () => {
+    // Mount with an EMPTY store — first open shows no recents section.
+    renderWithProviders(
+      <AppBlockChrome
+        blockInstanceId="inst-fresh"
+        appBlockId="viewer"
+        appName="Viewer App"
+        slotId="app.page"
+      />
+    );
+    await openPlatformNav();
+    await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
+
+    // Close the menu (Escape), then a NEW app is recorded mid-session (simulating
+    // the viewer running another app via client-nav elsewhere in the SPA).
+    await page.getByRole('button', { name: 'Apps menu' }).click();
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Apps home' }))
+      .not.toBeInTheDocument();
+    recordRecentlyOpenedApp({ id: 'fresh', blockId: 'fresh-block', name: 'Fresh App' });
+
+    // Re-open — the open-refresh read must surface the newly-recorded app.
+    await openPlatformNav();
+    await expect.element(page.getByTestId('app-recently-run')).toBeInTheDocument();
+    const item = page.getByRole('menuitem', { name: 'Fresh App' }).element() as HTMLElement;
+    expect(item.getAttribute('href')).toBe('/apps/run/fresh-block');
+  });
+});
+
+// Iframe-aware close (the reported bug): the run page is dominated by a
+// cross-origin app iframe that SWALLOWS the click, so Mantine's default
+// outside-click close never sees the mousedown and the menu appears stuck open.
+// The controlled Menu closes on the window `blur` event, which DOES fire when
+// focus/pointer moves into the iframe.
+describe('AppBlockChrome platform-nav closes on window blur (iframe-aware)', () => {
+  beforeEach(() => {
+    clearRecentlyOpenedApps();
+  });
+
+  test('opening works, and a window blur (click into the app iframe) closes the menu', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-blur" appName="Any App" slotId="app.page" />
+    );
+
+    // Target toggles the menu open.
+    await page.getByRole('button', { name: 'Apps menu' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+
+    // Simulate the click landing INSIDE the cross-origin iframe: the parent
+    // window loses focus → `blur`. The controlled menu must close.
+    window.dispatchEvent(new Event('blur'));
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Apps home' }))
+      .not.toBeInTheDocument();
+
+    // The target still opens the menu again after the blur-close (toggle intact).
+    await page.getByRole('button', { name: 'Apps menu' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
   });
 });

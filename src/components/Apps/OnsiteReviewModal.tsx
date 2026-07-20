@@ -2,7 +2,6 @@ import {
   Accordion,
   Alert,
   Badge,
-  Box,
   Button,
   Card,
   Code,
@@ -16,6 +15,7 @@ import {
   Switch,
   Text,
   Textarea,
+  ThemeIcon,
   Tooltip,
 } from '@mantine/core';
 import {
@@ -24,6 +24,7 @@ import {
   IconCheck,
   IconCode,
   IconExternalLink,
+  IconInfoCircle,
   IconKey,
   IconLayoutGrid,
   IconShieldLock,
@@ -31,14 +32,22 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
-import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
+import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
+import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import {
   FileDiffEntry,
   FileListPreview,
   ManifestDiffPreview,
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
+import {
+  ReasonGatedField,
+  ReasonGatedSubmitButton,
+  reasonMeetsMin,
+} from '~/components/Apps/ReasonGatedActionModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import {
   MARKETPLACE_CATEGORIES,
@@ -146,6 +155,19 @@ export function formatDate(d: string | Date | null | undefined): string {
 // prominently.
 // ---------------------------------------------------------------------------
 
+/**
+ * Thin outer shell. Owns the Mantine `<Modal>` (kept mounted + `opened`-toggled
+ * so open/close still animates and doesn't flash) and derives only the static,
+ * per-request title from `selection`. The interactive body — which holds the
+ * transient approve/reject UI state — is rendered as a SEPARATE component keyed
+ * on `selection.request.id` so it REMOUNTS whenever a different request is
+ * selected. That remount is what deterministically resets `approvalNotes` /
+ * `rejectionReason` / `actionMode` per request: previously this state lived on
+ * one long-lived component that only swapped its `selection` prop, so switching
+ * from one app to another leaked the prior app's reject-mode + reason text (a
+ * mod who clicked "Reject…" on app A then opened app B saw B stuck in reject
+ * mode with A's reason). Keying here means no caller has to remember to key it.
+ */
 export function OnsiteReviewModal({
   selection,
   onClose,
@@ -153,15 +175,92 @@ export function OnsiteReviewModal({
   selection: OnsiteReviewSelection;
   onClose: () => void;
 }) {
+  // Set by the body while an approve/reject mutation is in flight so this shell's
+  // onClose (Escape / overlay click / the X) refuses to close mid-action — the
+  // same guard the pre-split modal had inline. Written by the body during its
+  // render; only read here in the (post-commit) close handler, so the value is
+  // always current by the time a close is triggered.
+  const busyRef = useRef(false);
+
+  return (
+    <Modal
+      opened={!!selection}
+      onClose={() => {
+        if (busyRef.current) return;
+        onClose();
+      }}
+      title={selection ? <OnsiteReviewModalTitle selection={selection} /> : null}
+      size="xl"
+      centered
+    >
+      {selection && (
+        <OnsiteReviewModalBody
+          key={selection.request.id}
+          selection={selection}
+          onClose={onClose}
+          busyRef={busyRef}
+        />
+      )}
+    </Modal>
+  );
+}
+
+/** Static, per-request modal title (slug + version + a mode/first-version badge).
+ *  Derived purely from `selection` — no transient state — so it lives on the
+ *  stable shell, not the keyed body. */
+function OnsiteReviewModalTitle({ selection }: { selection: NonNullable<OnsiteReviewSelection> }) {
+  const { request, mode } = selection;
+  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  return (
+    <Group gap={6}>
+      <Text fw={600}>{request.slug}</Text>
+      <Code>{request.version}</Code>
+      {mds.kind === 'first-version' && (
+        <Badge color="violet" size="sm">
+          first version
+        </Badge>
+      )}
+      {mode === 'approved' && (
+        <Badge color="green" size="sm">
+          approved
+        </Badge>
+      )}
+      {mode === 'rejected' && (
+        <Badge color="red" size="sm">
+          rejected
+        </Badge>
+      )}
+    </Group>
+  );
+}
+
+/**
+ * Interactive review body. Holds the transient approve/reject UI state
+ * (`approvalNotes` / `rejectionReason` / `actionMode`) plus the approve/reject
+ * mutations. The parent keys this on `selection.request.id`, so all of that
+ * state is fresh on every request switch — no manual reset needed, and the
+ * `onSuccess → onClose` paths are safe because the next open remounts fresh.
+ */
+function OnsiteReviewModalBody({
+  selection,
+  onClose,
+  busyRef,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+  onClose: () => void;
+  busyRef: { current: boolean };
+}) {
   const utils = trpc.useUtils();
   const [approvalNotes, setApprovalNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
 
+  const { request, mode } = selection;
+
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async () => {
       showSuccessNotification({
-        message: `Approved ${selection?.request.slug} v${selection?.request.version}. Build started.`,
+        message: `Approved ${request.slug} v${request.version}. Build started.`,
       });
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listApprovedRequests.invalidate();
@@ -177,7 +276,7 @@ export function OnsiteReviewModal({
   const rejectMut = trpc.blocks.rejectRequest.useMutation({
     onSuccess: async () => {
       showSuccessNotification({
-        message: `Rejected ${selection?.request.slug} v${selection?.request.version}.`,
+        message: `Rejected ${request.slug} v${request.version}.`,
       });
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listRejectedRequests.invalidate();
@@ -191,53 +290,20 @@ export function OnsiteReviewModal({
     },
   });
 
-  if (!selection) return null;
-  const { request, mode } = selection;
   const readOnly = mode !== 'pending';
 
   const manifest = request.manifest as Record<string, unknown>;
   const fs = (request.fileSummary ?? {}) as FileSummary;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
   const busy = approveMut.isPending || rejectMut.isPending;
+  // Publish the in-flight state up to the shell so its onClose can guard on it.
+  busyRef.current = busy;
 
   const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
   const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
 
   return (
-    <Modal
-      opened={!!selection}
-      onClose={() => {
-        if (busy) return;
-        setApprovalNotes('');
-        setRejectionReason('');
-        setActionMode('view');
-        onClose();
-      }}
-      title={
-        <Group gap={6}>
-          <Text fw={600}>{request.slug}</Text>
-          <Code>{request.version}</Code>
-          {mds.kind === 'first-version' && (
-            <Badge color="violet" size="sm">
-              first version
-            </Badge>
-          )}
-          {mode === 'approved' && (
-            <Badge color="green" size="sm">
-              approved
-            </Badge>
-          )}
-          {mode === 'rejected' && (
-            <Badge color="red" size="sm">
-              rejected
-            </Badge>
-          )}
-        </Group>
-      }
-      size="xl"
-      centered
-    >
-      <Stack gap="md">
+    <Stack gap="md">
         <Group gap="xs" align="flex-start">
           <Text size="xs" c="dimmed">
             Submitter:
@@ -252,9 +318,8 @@ export function OnsiteReviewModal({
             {formatDate(request.submittedAt)}
           </Text>
           <Text size="xs" c="dimmed">
-            · {formatBytes(request.bundleSizeBytes)} · sha256:
+            · {formatBytes(request.bundleSizeBytes)}
           </Text>
-          <Code style={{ fontSize: 10 }}>{request.bundleSha256.slice(0, 12)}…</Code>
         </Group>
 
         {(approved || rejected) && (
@@ -306,20 +371,6 @@ export function OnsiteReviewModal({
           </Alert>
         )}
 
-        <Button
-          component="a"
-          href={request.pushCommitUrl ?? request.reviewRepoUrl}
-          target="_blank"
-          rel="noopener"
-          variant="default"
-          leftSection={<IconCode size={14} />}
-          rightSection={<IconExternalLink size={12} />}
-        >
-          {request.pushCommitUrl
-            ? 'View code in Forgejo (git push) ↗ commit'
-            : 'View code in Forgejo'}
-        </Button>
-
         {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
             mod-gated preview before approving. Pending requests only; dark
             unless the mod-only review-sandbox flag is enabled. */}
@@ -360,6 +411,17 @@ export function OnsiteReviewModal({
               </Badge>
             )}
           </Group>
+          <Button
+            component="a"
+            href={request.pushCommitUrl ?? request.reviewRepoUrl}
+            target="_blank"
+            rel="noopener"
+            variant="default"
+            leftSection={<IconCode size={14} />}
+            rightSection={<IconExternalLink size={12} />}
+          >
+            View full source
+          </Button>
           {mds.kind === 'update' && (
             <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
           )}
@@ -394,65 +456,37 @@ export function OnsiteReviewModal({
         </Stack>
 
         {readOnly ? null : actionMode === 'reject' ? (
-          (() => {
-            const reasonLen = rejectionReason.trim().length;
-            const reasonTooShort = reasonLen < OFFSITE_MOD_REASON_MIN;
-            const rejectDisabled = busy || reasonTooShort;
-            return (
-              <Stack gap="xs">
-                <Text size="sm" fw={600}>
-                  Rejection reason
-                </Text>
-                <Textarea
-                  autosize
-                  minRows={3}
-                  maxRows={10}
-                  placeholder={`Explain what needs to change before this can be approved (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the dev).`}
-                  description={`${reasonLen}/${OFFSITE_MOD_REASON_MIN} characters minimum`}
-                  error={
-                    reasonTooShort && reasonLen > 0
-                      ? `Enter at least ${OFFSITE_MOD_REASON_MIN} characters.`
-                      : undefined
-                  }
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.currentTarget.value)}
-                  disabled={busy}
-                  data-testid="apps-review-reject-reason"
-                />
-                <Group justify="flex-end" gap="xs">
-                  <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
-                    Cancel
-                  </Button>
-                  <Tooltip
-                    label={`Enter a reason — at least ${OFFSITE_MOD_REASON_MIN} characters.`}
-                    disabled={!reasonTooShort}
-                    withArrow
-                  >
-                    {/* A native disabled <button> fires no pointer events, so the
-                        Tooltip must attach to a wrapper to show in the exact state
-                        it explains (Mantine's documented disabled-target pattern). */}
-                    <Box>
-                      <Button
-                        color="red"
-                        leftSection={<IconX size={14} />}
-                        onClick={() =>
-                          rejectMut.mutate({
-                            publishRequestId: request.id,
-                            rejectionReason: rejectionReason.trim(),
-                          })
-                        }
-                        disabled={rejectDisabled}
-                        loading={rejectMut.isPending}
-                        data-testid="apps-review-reject-confirm"
-                      >
-                        Reject
-                      </Button>
-                    </Box>
-                  </Tooltip>
-                </Group>
-              </Stack>
-            );
-          })()
+          <Stack gap="xs">
+            <ReasonGatedField
+              value={rejectionReason}
+              onChange={setRejectionReason}
+              disabled={busy}
+              label="Rejection reason"
+              placeholder={`Explain what needs to change before this can be approved (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the dev).`}
+              testId="apps-review-reject-reason"
+              minRows={3}
+              maxRows={10}
+            />
+            <Group justify="flex-end" gap="xs">
+              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
+                Cancel
+              </Button>
+              <ReasonGatedSubmitButton
+                onClick={() =>
+                  rejectMut.mutate({
+                    publishRequestId: request.id,
+                    rejectionReason: rejectionReason.trim(),
+                  })
+                }
+                gateOpen={reasonMeetsMin(rejectionReason)}
+                busy={rejectMut.isPending}
+                color="red"
+                leftSection={<IconX size={14} />}
+                label="Reject"
+                testId="apps-review-reject-confirm"
+              />
+            </Group>
+          </Stack>
         ) : (
           <Stack gap="xs">
             <Textarea
@@ -493,7 +527,6 @@ export function OnsiteReviewModal({
           </Stack>
         )}
       </Stack>
-    </Modal>
   );
 }
 
@@ -514,39 +547,13 @@ function ReviewPreviewPanel({
   publishRequestId: string;
   slug: string;
 }) {
-  const features = useFeatureFlags();
   const utils = trpc.useUtils();
 
-  // Poll the review status. Enabled on mount (not gated on a client "started"
-  // flag) so a preview already live on the row is picked up after a page reload
-  // / modal re-open — getReviewStatus returns the PERSISTED deploy_state, so we
-  // derive the button + live iframe from the server, not from ephemeral React
-  // state (which reset to "Start preview" on reload). building/deploying poll
-  // fast, live polls slow, none/failed do a single fetch then stop (see
-  // refetchInterval).
-  const statusQuery = trpc.blocks.getReviewStatus.useQuery(
-    { publishRequestId },
-    {
-      enabled: !!features?.appBlocks,
-      retry: false,
-      refetchInterval: (query) => {
-        // react-query v5: the callback receives the Query; the data is at
-        // query.state.data (matches the my-submissions.tsx idiom).
-        const s = query.state.data?.state;
-        if (s === 'preview-building' || s === 'preview-deploying') return 3000;
-        // Keep a SLOW poll alive while the preview is live — it detects
-        // approve/reject/teardown state changes. getReviewStatus mints a fresh
-        // `?mr=<token>` previewUrl (120s TTL) on every poll, but the IFRAME src is
-        // DECOUPLED from the poll via pickReviewIframeSrc (see `stableIframeSrc`
-        // below): the iframe keeps its src until the embedded token nears expiry,
-        // then swaps ONCE — so the live preview doesn't hard-reload every minute
-        // (which would wipe in-progress interaction). A 60s poll < 120s TTL still
-        // guarantees a fresh token is always available when a swap is due.
-        if (s === 'preview-live') return 60000;
-        return false; // failed or none → stop polling
-      },
-    }
-  );
+  // Shared live-preview poll + iframe-src stabilization (extracted verbatim to
+  // `useReviewPreview` so this in-modal preview and the full-page preview route
+  // stay behaviourally identical).
+  const { state, detail, isLive, inProgress, isFailed, stableIframeSrc, error } =
+    useReviewPreview(publishRequestId);
 
   const previewMut = trpc.blocks.previewRequest.useMutation({
     onSuccess: async () => {
@@ -572,34 +579,6 @@ function ReviewPreviewPanel({
       showErrorNotification({ title: 'Could not tear down preview', error: new Error(e.message) });
     },
   });
-
-  const state = statusQuery.data?.state ?? null;
-  const detail = statusQuery.data?.detail;
-  // Prefer the FRESH, mod-bound, short-TTL tokened URL (`?mr=<token>`) the server
-  // mints on every poll when the preview is live — that token is the cross-origin
-  // access bridge the `*.civit.ai` mod-gate forwardAuth verifies on the iframe's
-  // entry document request. Read from the latest query data each render so the
-  // iframe never mounts with an expired token. Fall back to the bare host URL
-  // (e.g. while building) only for display.
-  const url = statusQuery.data?.previewUrl ?? detail?.url;
-  const inProgress = state === 'preview-building' || state === 'preview-deploying';
-  const isLive = state === 'preview-live';
-  const isFailed = state === 'preview-failed';
-
-  // Stabilize the IFRAME src so it does NOT change on every poll. getReviewStatus
-  // mints a fresh `?mr=<token>` previewUrl every 60s poll; binding the iframe
-  // straight to `url` would hard-reload it each minute, wiping in-progress
-  // interaction in the previewed block. pickReviewIframeSrc keeps the embedded
-  // src until its token nears expiry (TTL 120s), then swaps once. The Open-host
-  // button + the `url` display still use the freshest token. Held in a ref so the
-  // chosen src survives re-renders; recomputed each render via the pure helper.
-  const iframeSrcRef = useRef<string | undefined>(undefined);
-  const stableIframeSrc = isLive
-    ? pickReviewIframeSrc(iframeSrcRef.current, url, Date.now())
-    : undefined;
-  // Persist the choice so the next render compares against the embedded token,
-  // not the latest poll's. Clear when the preview leaves the live state.
-  iframeSrcRef.current = stableIframeSrc || undefined;
 
   return (
     <Stack gap={4}>
@@ -634,17 +613,23 @@ function ReviewPreviewPanel({
         >
           {state ? 'Rebuild preview' : 'Start preview'}
         </Button>
-        {isLive && url && (
+        {isLive && (
+          // Full-page preview on a SAME-ORIGIN internal route that mounts the same
+          // review host bridge at full viewport — opened top-level, so the mod
+          // reviews the app "as the user would see it" while keeping this modal
+          // open. It links by publishRequestId (NOT the raw `?mr=` host URL): that
+          // raw URL is broken opened top-level — it has no host bridge, so the SDK
+          // block hangs on "Connecting to host" (the bug #3172 fixed for the iframe).
           <Button
             size="xs"
             variant="default"
             component="a"
-            href={url}
+            href={`/apps/review/preview/${publishRequestId}`}
             target="_blank"
             rel="noopener"
             rightSection={<IconExternalLink size={12} />}
           >
-            Open review host
+            Open full-page preview ↗
           </Button>
         )}
         {state && (
@@ -679,28 +664,33 @@ function ReviewPreviewPanel({
         </Alert>
       )}
       {isLive && stableIframeSrc && (
-        <iframe
-          title={`Review preview for ${slug}`}
-          src={stableIframeSrc}
-          // no-referrer: the `?mr=<token>` entry-token URL must NOT leak via the
-          // `Referer` header to assets the previewed (untrusted) block loads.
-          // (We deliberately do NOT bind the token to a publishRequestId: that
-          // binding isn't statelessly verifiable at the mod-gate without a DB
-          // lookup, which the stateless forwardAuth gate intentionally avoids.
-          // Host + mod + short TTL + no-referrer is the chosen containment.)
-          referrerPolicy="no-referrer"
+        // Mount the REAL PageBlockHost (via ReviewBlockPreviewHost) instead of a
+        // raw <iframe>: the bug was that a raw iframe had NO host bridge, so
+        // nothing posted BLOCK_INIT and the SDK block hung on "Connecting to host".
+        // The host mints a self-bound, scope-stripped block token, forces
+        // trustTier:'unverified' (opaque origin — drops allow-same-origin), and
+        // runs reviewMode (read-only NACKs). The `?mr=` entry-token URL keeps its
+        // pickReviewIframeSrc stabilization here; PageBlockHost's own iframe sets
+        // referrerPolicy="no-referrer" so the entry token never leaks via Referer.
+        <div
           style={{
             width: '100%',
             height: 420,
             border: '1px solid var(--mantine-color-default-border)',
             borderRadius: 6,
+            overflow: 'hidden',
           }}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        />
+        >
+          <ReviewBlockPreviewHost
+            publishRequestId={publishRequestId}
+            slug={slug}
+            iframeSrc={stableIframeSrc}
+          />
+        </div>
       )}
-      {statusQuery.error && (
+      {error && (
         <Text size="xs" c="dimmed">
-          {statusQuery.error.message}
+          {error.message}
         </Text>
       )}
     </Stack>
@@ -994,8 +984,8 @@ function CodeDiffPanel({
 // ---------------------------------------------------------------------------
 
 /** Manifest top-level keys this renderer handles inline. Anything else falls
- * into the "Other fields" accordion as raw JSON so reviewers can still see
- * unexpected payloads. */
+ * into the "Other manifest fields" disclosure as raw JSON so reviewers can
+ * still see unexpected payloads. */
 const HANDLED_MANIFEST_KEYS = new Set([
   '$schema',
   'appId',
@@ -1023,33 +1013,53 @@ function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
     [manifest]
   );
 
+  const hasIframe = !!(manifest.iframe && typeof manifest.iframe === 'object');
+  const hasOther = otherKeys.length > 0;
+
   return (
     <Stack gap="sm">
       <ManifestIdentity manifest={manifest} />
       <ManifestScopes manifest={manifest} />
       <ManifestTargets manifest={manifest} />
-      <ManifestIframe manifest={manifest} />
       <ManifestSettings manifest={manifest} />
-      {otherKeys.length > 0 && (
+      {/* Iframe + other-manifest-fields are collapsed-by-default disclosures:
+          the default view stays trimmed, but the moderator security signal
+          (risky iframe sandbox flags; unexpected/novel manifest keys) is one
+          click away. No defaultValue → every item starts closed. */}
+      {(hasIframe || hasOther) && (
         <Accordion variant="contained" multiple={false}>
-          <Accordion.Item value="other">
-            <Accordion.Control>
-              <Text size="sm" fw={500}>
-                Other manifest fields ({otherKeys.length})
-              </Text>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <ScrollArea h={200}>
-                <Code block style={{ fontSize: 11, padding: 8 }}>
-                  {JSON.stringify(
-                    Object.fromEntries(otherKeys.map((k) => [k, manifest[k]])),
-                    null,
-                    2
-                  )}
-                </Code>
-              </ScrollArea>
-            </Accordion.Panel>
-          </Accordion.Item>
+          {hasIframe && (
+            <Accordion.Item value="iframe">
+              <Accordion.Control>
+                <Text size="sm" fw={500}>
+                  Iframe
+                </Text>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <ManifestIframe manifest={manifest} />
+              </Accordion.Panel>
+            </Accordion.Item>
+          )}
+          {hasOther && (
+            <Accordion.Item value="other">
+              <Accordion.Control>
+                <Text size="sm" fw={500}>
+                  Other manifest fields ({otherKeys.length})
+                </Text>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <ScrollArea h={200}>
+                  <Code block style={{ fontSize: 11, padding: 8 }}>
+                    {JSON.stringify(
+                      Object.fromEntries(otherKeys.map((k) => [k, manifest[k]])),
+                      null,
+                      2
+                    )}
+                  </Code>
+                </ScrollArea>
+              </Accordion.Panel>
+            </Accordion.Item>
+          )}
         </Accordion>
       )}
     </Stack>
@@ -1151,45 +1161,147 @@ function trustColor(tier: string): string {
   }
 }
 
+function ManifestScopeRow({
+  scope,
+  justifications,
+}: {
+  scope: string;
+  justifications: Record<string, unknown>;
+}) {
+  const desc = SCOPE_DESCRIPTIONS[scope];
+  const known = !!desc;
+  const sensitive = isSensitiveBlockScope(scope);
+  const rawJustification = justifications[scope];
+  const justification =
+    typeof rawJustification === 'string' && rawJustification.trim().length > 0
+      ? rawJustification.trim()
+      : null;
+  return (
+    <Stack gap={2}>
+      <Group gap={8} align="flex-start" wrap="nowrap">
+        <Badge
+          variant={known ? 'light' : 'outline'}
+          color={known ? (sensitive ? 'orange' : 'blue') : 'red'}
+          style={{ fontFamily: 'ui-monospace, monospace' }}
+        >
+          {scope}
+        </Badge>
+        {sensitive && <SensitiveScopeBadge />}
+        <Text size="xs" c={known ? 'dimmed' : 'red'}>
+          {desc ?? 'Unknown scope — would fail at token issuance.'}
+        </Text>
+      </Group>
+      {justification ? (
+        <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+          <Text span fw={600} c="dimmed">
+            Why:{' '}
+          </Text>
+          {justification}
+        </Text>
+      ) : (
+        <Text size="xs" c="dimmed" fs="italic">
+          No justification provided
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
 function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const scopes = Array.isArray(manifest.scopes)
     ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
+  // Optional dev-supplied per-scope justification (scope-id → rationale). Shown
+  // to the moderator so they can weigh WHY the app requested each permission.
+  // NOTE: these are the developer's STATED rationale — the platform does not (yet)
+  // verify the claims; this surface only DISPLAYS them.
+  const justifications =
+    manifest.scopeJustifications &&
+    typeof manifest.scopeJustifications === 'object' &&
+    !Array.isArray(manifest.scopeJustifications)
+      ? (manifest.scopeJustifications as Record<string, unknown>)
+      : {};
+  // Split the declared scopes into a SENSITIVE group (elevated-risk — rendered
+  // first with warning emphasis) and the normal group. Each group keeps the
+  // existing "(N)" count semantics for its own members.
+  const sensitiveScopes = scopes.filter((s) => isSensitiveBlockScope(s));
+  const normalScopes = scopes.filter((s) => !isSensitiveBlockScope(s));
   return (
     <Card withBorder p="sm">
       <Stack gap="xs">
-        <Group gap={6}>
-          <IconKey size={14} />
-          <Text size="sm" fw={600}>
-            JWT scopes ({scopes.length})
-          </Text>
-        </Group>
         {scopes.length === 0 ? (
-          <Text size="xs" c="dimmed" fs="italic">
-            No scopes requested — block can only consume host postMessage
-            data, no scope-gated platform APIs.
-          </Text>
+          <>
+            <Group gap={6}>
+              <IconKey size={14} />
+              <Text size="sm" fw={600}>
+                Permissions (0)
+              </Text>
+              <Tooltip
+                multiline
+                w={280}
+                label="Permissions the block requests. They are encoded as scopes in the app's signed block-token JWT (distinct from OAuth scopes) and enforced per-operation server-side: every capability re-verifies the token and checks the required scope before it runs."
+              >
+                <ThemeIcon size="xs" variant="subtle" color="gray">
+                  <IconInfoCircle size={13} />
+                </ThemeIcon>
+              </Tooltip>
+            </Group>
+            <Text size="xs" c="dimmed" fs="italic">
+              No permissions requested — block can only consume host postMessage
+              data, no scope-gated platform APIs.
+            </Text>
+          </>
         ) : (
-          <Stack gap={4}>
-            {scopes.map((s) => {
-              const desc = SCOPE_DESCRIPTIONS[s];
-              const known = !!desc;
-              return (
-                <Group key={s} gap={8} align="flex-start" wrap="nowrap">
-                  <Badge
-                    variant={known ? 'light' : 'outline'}
-                    color={known ? 'blue' : 'red'}
-                    style={{ fontFamily: 'ui-monospace, monospace' }}
-                  >
-                    {s}
-                  </Badge>
-                  <Text size="xs" c={known ? 'dimmed' : 'red'}>
-                    {desc ?? 'Unknown scope — would fail at token issuance.'}
+          <>
+            {sensitiveScopes.length > 0 && (
+              <Stack gap={8}>
+                <Group gap={6}>
+                  <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
+                  <Text size="sm" fw={600} c="orange">
+                    Sensitive permissions ({sensitiveScopes.length})
                   </Text>
+                  <Tooltip
+                    multiline
+                    w={280}
+                    label="Elevated-risk permissions — these let the app spend the viewer's Buzz, read the viewer's Buzz balance or private data, or write data other users see. Review the justification for each carefully."
+                  >
+                    <ThemeIcon size="xs" variant="subtle" color="orange">
+                      <IconInfoCircle size={13} />
+                    </ThemeIcon>
+                  </Tooltip>
                 </Group>
-              );
-            })}
-          </Stack>
+                {sensitiveScopes.map((s) => (
+                  <ManifestScopeRow key={s} scope={s} justifications={justifications} />
+                ))}
+              </Stack>
+            )}
+            <Group gap={6}>
+              <IconKey size={14} />
+              <Text size="sm" fw={600}>
+                Permissions ({normalScopes.length})
+              </Text>
+              <Tooltip
+                multiline
+                w={280}
+                label="Permissions the block requests. They are encoded as scopes in the app's signed block-token JWT (distinct from OAuth scopes) and enforced per-operation server-side: every capability re-verifies the token and checks the required scope before it runs."
+              >
+                <ThemeIcon size="xs" variant="subtle" color="gray">
+                  <IconInfoCircle size={13} />
+                </ThemeIcon>
+              </Tooltip>
+            </Group>
+            {normalScopes.length === 0 ? (
+              <Text size="xs" c="dimmed" fs="italic">
+                No non-sensitive permissions requested.
+              </Text>
+            ) : (
+              <Stack gap={8}>
+                {normalScopes.map((s) => (
+                  <ManifestScopeRow key={s} scope={s} justifications={justifications} />
+                ))}
+              </Stack>
+            )}
+          </>
         )}
       </Stack>
     </Card>

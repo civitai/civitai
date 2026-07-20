@@ -1703,6 +1703,21 @@ export const REDIS_SYS_KEYS = {
      * the approved/owned path is unaffected (only the ephemeral branch increments).
      */
     DEV_TUNNEL_EPHEMERAL_RATE_LIMIT: 'system:blocks:dev-tunnel-ephemeral-rate-limit',
+    /**
+     * App Blocks `customComfy` bridge — per-workflow SETTLE record so a
+     * post-paid customComfy job's terminal poll/cancel can refund the
+     * declared `maxBuzz` CEILING down to the workflow's REAL accrued cost
+     * against BOTH the per-user daily and per-app aggregate reservations.
+     * Keyed `${CUSTOM_COMFY_SETTLE}:<workflowId>`, JSON value
+     * `{ buzzCapKey, appSpendKey|null, ceiling }`, hard-TTL EX ~25h so it
+     * self-expires with the reservation window. Written at submit (after
+     * reserving the ceiling), consumed once via GET+DEL at the FIRST terminal
+     * observation (idempotent settle). On `sysRedis`, like the sibling BLOCKS
+     * caps/limiters. DEV/live-harness tokens still get a per-user daily
+     * reservation + settle; the per-app reservation (and its settle key) is
+     * absent for them (synthetic appBlockId), matching the txt2img caps.
+     */
+    CUSTOM_COMFY_SETTLE: 'system:blocks:custom-comfy-settle',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
@@ -2018,6 +2033,8 @@ export const REDIS_KEYS = {
     POST_STATS: 'packed:caches:post-stats',
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
+    MODEL_VOTABLE_TAGS: 'packed:caches:model-votable-tags',
+    MODEL_VERSION_PUBLIC_DONATION_GOALS: 'packed:caches:model-version-public-donation-goals',
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     TENSOR_METADATA: 'packed:caches:tensor-metadata',
@@ -2043,11 +2060,27 @@ export const REDIS_KEYS = {
     CRYPTO_CONVERSION_RATE: 'packed:caches:crypto-conversion-rate',
     CRYPTO_MIN_AMOUNT: 'packed:caches:crypto-min-amount',
     TAG_PAGE_SEO: 'packed:caches:tag-page-seo',
+    // Per-tag-name lookup backing `tag.getTagWithModelCount` (the tag page's
+    // id/name/unfeatured resolve). ~2.5M calls/peak of a near-static citext row
+    // read; keyed by the lowercased tag name (mirrors citext case-insensitivity),
+    // positive results only (unknown names stay uncached so a new tag is findable
+    // immediately), busted on tag delete. See `getTagWithModelCount` in tag.service.
+    TAG_WITH_MODEL_COUNT: 'packed:caches:tag-with-model-count',
     // Total-creators count for the v1 /api/v1/creators pagination metadata. The
     // underlying dbRead.user.count scans the whole ~892k-row Model table on every
     // call (~1174ms in EXPLAIN ANALYZE); the total is a slowly-moving aggregate so
     // a few-minutes-stale value in totalItems/totalPages is harmless.
     CREATORS_COUNT: 'packed:caches:creators-count',
+    // The user-independent active-auction list backing `auction.getAll` (~21.8
+    // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
+    // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
+    // one global key serves everyone. Short TTL (30s), no bust: the set is time-
+    // windowed (startAt<=now<endAt, transitions bounded to <=30s) and the frequently-
+    // mutating input is bids (each shifts lowestBidRequired) — busting per-bid at
+    // ~21/s would defeat the cache, and a slightly-stale lowestBidRequired is display-
+    // only (bid submission re-validates the true minimum server-side). See
+    // `getAllAuctions` in auction.service.
+    ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

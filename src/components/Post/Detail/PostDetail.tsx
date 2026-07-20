@@ -211,8 +211,8 @@ export function PostDetailContent({ postId }: Props) {
                   )}
                   <Text size="sm">
                     This post is hidden from the public because its parent model or version was
-                    unpublished. Republish the parent to bring this post back — the original
-                    publish date will be preserved.
+                    unpublished. Republish the parent to bring this post back — the original publish
+                    date will be preserved.
                   </Text>
                   {post.parentModelId && post.modelVersionId && (
                     <Text size="sm">
@@ -416,8 +416,8 @@ export function PostDetailContent({ postId }: Props) {
             {!imagesLoading && !unfilteredImages?.length ? (
               hasActiveContentFilter ? (
                 <Alert color="yellow">
-                  No images visible at your current browsing settings. Some images in this post may
-                  be hidden because they are tagged as minor or depict real people.
+                  No images in this post are visible with your current browsing and content
+                  settings.
                 </Alert>
               ) : (
                 <Alert>Unable to load images</Alert>

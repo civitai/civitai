@@ -108,7 +108,7 @@ vi.mock('~/server/utils/errorHandling', () => ({
 }));
 
 // Import after mocks are set up (top-level, not in beforeEach)
-const { getChallengeForEdit, upsertUserChallenge } = await import(
+const { getChallengeForEdit, getUserChallengeForEdit, upsertUserChallenge } = await import(
   '~/server/services/challenge.service'
 );
 
@@ -275,5 +275,186 @@ describe('upsertUserChallenge (edit branch) — creator standing re-check', () =
     expect(mockAssertCanCreateUserChallenge).not.toHaveBeenCalled();
     // The edit branch must never reach for the score-bundled check.
     expect(mockAssertUserInGoodStanding).not.toHaveBeenCalled();
+  });
+});
+
+describe('getUserChallengeForEdit — ownership/moderator gate', () => {
+  const guardRow = {
+    source: 'User' as const,
+    createdById: 111,
+    status: 'Scheduled' as const,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetChallengeConfig.mockResolvedValue(mockConfig);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      { id: 111, username: 'creator', image: null, deletedAt: null },
+    ]);
+    mockDbRead.challenge.findUnique.mockResolvedValue(guardRow);
+    mockGetChallengeById.mockResolvedValue(
+      makeMockChallenge({ source: 'User', createdById: 111, status: 'Scheduled' })
+    );
+  });
+
+  it('returns the challenge for its owner', async () => {
+    const result = await getUserChallengeForEdit({ id: 1, userId: 111 });
+    expect(result?.id).toBe(1);
+  });
+
+  it('returns the challenge for a moderator who is not the owner', async () => {
+    const result = await getUserChallengeForEdit({ id: 1, userId: 222, isModerator: true });
+    expect(result?.id).toBe(1);
+  });
+
+  it('rejects a non-owner without moderator status', async () => {
+    await expect(getUserChallengeForEdit({ id: 1, userId: 222 })).rejects.toThrow(
+      'You can only edit your own challenges.'
+    );
+  });
+
+  it('rejects non-User challenges even for moderators (mod form owns those)', async () => {
+    mockDbRead.challenge.findUnique.mockResolvedValue({ ...guardRow, source: 'System' });
+    await expect(
+      getUserChallengeForEdit({ id: 1, userId: 222, isModerator: true })
+    ).rejects.toThrow('This challenge cannot be edited here.');
+  });
+});
+
+describe('upsertUserChallenge — schedule limits', () => {
+  // Minimal input: schedule checks run before judge/standing/DB lookups, so most fields are unused.
+  // judgingCategories still carries a contract-valid shape (theme once, weights sum 100) so the
+  // fixture stays representative if the service ever validates it before the schedule gate.
+  const baseInput = {
+    userId: 111,
+    buzzType: 'yellow' as const,
+    title: 'Schedule test',
+    description: 'desc',
+    theme: 'Neon',
+    coverImage: { id: 555, url: 'unused' },
+    allowedNsfwLevel: 1,
+    modelVersionIds: [],
+    judgeId: 1,
+    judgingCategories: [{ key: 'theme', label: 'Theme', criteria: 'Fits the theme.', weight: 100 }],
+    entryFee: 50,
+    initialPrizeBuzz: 0,
+    prizeDistribution: [50, 30, 20],
+    maxEntriesPerUser: 5,
+  };
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects a create with a duration under the minimum', async () => {
+    const startsAt = new Date(Date.now() + 4 * HOUR);
+    await expect(
+      upsertUserChallenge({
+        ...baseInput,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 23 * HOUR),
+      } as never)
+    ).rejects.toThrow('Challenge must run for at least 24 hours.');
+  });
+
+  it('rejects a create with a duration over the maximum', async () => {
+    const startsAt = new Date(Date.now() + 4 * HOUR);
+    await expect(
+      upsertUserChallenge({
+        ...baseInput,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 31 * DAY),
+      } as never)
+    ).rejects.toThrow('Challenge cannot run longer than 30 days.');
+  });
+
+  it('rejects a create starting more than 30 days out', async () => {
+    const startsAt = new Date(Date.now() + 31 * DAY);
+    await expect(
+      upsertUserChallenge({
+        ...baseInput,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 2 * DAY),
+      } as never)
+    ).rejects.toThrow('Challenge cannot start more than 30 days from now.');
+  });
+
+  it('does NOT apply the create-path max-future check on an edit', async () => {
+    // Stored start > 30d out (e.g. created before the limit existed) and unchanged in the
+    // payload. The top-of-function max-future check must be create-only (`!id`) — the call must
+    // get past all top-of-function schedule gates and reach the challenge lookup, whose null
+    // sentinel produces "Challenge not found".
+    const storedStartsAt = new Date(Date.now() + 40 * DAY);
+    mockAssertUserAccountInGoodStanding.mockResolvedValueOnce({
+      scoreTotal: 0,
+      bannedAt: null,
+      muted: false,
+      deletedAt: null,
+      activeStrikes: 0,
+    });
+    mockDbRead.image.findFirst.mockResolvedValue({ id: 555 });
+    mockDbRead.challenge.findUnique.mockResolvedValueOnce(null);
+
+    await expect(
+      upsertUserChallenge({
+        ...baseInput,
+        id: 42,
+        startsAt: storedStartsAt,
+        endsAt: new Date(storedStartsAt.getTime() + 2 * DAY),
+      } as never)
+    ).rejects.toThrow('Challenge not found');
+  });
+
+  it('rejects an edit that MOVES the start date beyond 30 days out', async () => {
+    const storedStartsAt = new Date(Date.now() + 5 * DAY);
+    const movedStartsAt = new Date(Date.now() + 35 * DAY);
+    mockAssertUserAccountInGoodStanding.mockResolvedValueOnce({
+      scoreTotal: 0,
+      bannedAt: null,
+      muted: false,
+      deletedAt: null,
+      activeStrikes: 0,
+    });
+    mockDbRead.image.findFirst.mockResolvedValue({ id: 555 });
+    // Row shape mirrors the edit branch's findUnique select (challenge.service.ts:~1477-1492).
+    // collectionId: null skips the entry-count query; buzzType/basePrizePool/allowedNsfwLevel
+    // clear the currency + green-SFW gates that run before the startChanged check.
+    mockDbRead.challenge.findUnique.mockResolvedValueOnce({
+      createdById: 111,
+      source: 'User',
+      status: 'Scheduled',
+      collectionId: null,
+      basePrizePool: 0,
+      metadata: null,
+      buzzType: 'yellow',
+      startsAt: storedStartsAt,
+      title: 'Schedule test',
+      description: 'desc',
+      theme: 'Neon',
+      invitation: null,
+    });
+
+    await expect(
+      upsertUserChallenge({
+        ...baseInput,
+        id: 42,
+        startsAt: movedStartsAt,
+        endsAt: new Date(movedStartsAt.getTime() + 2 * DAY),
+      } as never)
+    ).rejects.toThrow('Challenge cannot start more than 30 days from now.');
+  });
+
+  it('rejects an edit with a duration over the maximum', async () => {
+    const startsAt = new Date(Date.now() + 5 * DAY);
+    await expect(
+      upsertUserChallenge({
+        ...baseInput,
+        id: 42,
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 31 * DAY),
+      } as never)
+    ).rejects.toThrow('Challenge cannot run longer than 30 days.');
   });
 });

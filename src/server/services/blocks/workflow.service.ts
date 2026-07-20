@@ -1,7 +1,9 @@
 import { TRPCError } from '@trpc/server';
-import type { Workflow, WorkflowStatus } from '@civitai/client';
+import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
+import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
+import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
@@ -35,6 +37,20 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
   for (const step of workflow.steps ?? []) {
+    // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
+    // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
+    // its own extraction, otherwise its rendered panorama is silently dropped.
+    if (step.$type === 'customComfy') {
+      const blobs = (
+        step as unknown as { output?: { blobs?: Array<{ url?: string | null; available?: boolean }> } }
+      ).output?.blobs;
+      for (const blob of blobs ?? []) {
+        if (blob.available && typeof blob.url === 'string' && blob.url.length > 0) {
+          imageUrls.push(blob.url);
+        }
+      }
+      continue;
+    }
     if (step.$type !== 'textToImage' && step.$type !== 'imageGen' && step.$type !== 'comfy') {
       continue;
     }
@@ -68,6 +84,134 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     // optional — omitted when there's no debit to report so every existing
     // snapshot stays byte-identical to before.
     ...(spentAccountType ? { spentAccountType } : {}),
+  };
+}
+
+/**
+ * The per-APP "subqueue" tag. Every app-submitted workflow is server-stamped
+ * with this tag at submit (`buildWorkflowTags` in blocks.router), so a POSITIVE
+ * `tags:['app-block:<appId>']` filter on the orchestrator LIST returns exactly
+ * the calling app's own generations — never the user's personal queue.
+ *
+ * SINGLE SOURCE OF TRUTH: the submit-time STAMP and the read-time FILTER both
+ * call this, so the tag format can never silently desync (a mismatch would make
+ * the subqueue read return an empty list forever, or — worse if the read hard-
+ * coded a looser prefix — widen it). `appId` is always the OauthClient.id read
+ * from the VERIFIED block token, never client input.
+ */
+export function appBlockTag(appId: string): string {
+  return `app-block:${appId}`;
+}
+
+/**
+ * The clean, wire-stable projection of an orchestrator Workflow the App Blocks
+ * generator SUBQUEUE read (`blocks.queryAppWorkflows`) hands to a block. This is
+ * the CONTRACT the SDK matches — keep it minimal + additive-only. It deliberately
+ * DROPS every internal/sensitive workflow field (steps, params, prompts,
+ * resources, tokens, transactions, metadata, tags) so a block can never read
+ * generation internals of a queue it only owns by tag.
+ *
+ *   images: only blobs that are `available` with a non-null url are surfaced —
+ *           pending/blocked/expired blobs are dropped rather than handing the
+ *           block dead links (mirrors `snapshotFromWorkflow`). `width`/`height`
+ *           are null when the orchestrator hasn't populated them. `nsfwLevel` is
+ *           the numeric civitai browsing-level bitflag (1/2/4/8/16) mapped from
+ *           the orchestrator's string rating; `null` for an unrated ('na') blob.
+ *   cost:   the workflow's realized/estimated buzz total, or null when absent.
+ *   status: the block-contract status (see ORCH_STATUS_MAP) — the orchestrator's
+ *           unassigned/preparing/scheduled all collapse to `pending`.
+ */
+export type AppWorkflowImage = {
+  url: string;
+  width: number | null;
+  height: number | null;
+  nsfwLevel: number | null;
+};
+export type AppWorkflow = {
+  workflowId: string;
+  status: BlockWorkflowSnapshot['status'];
+  images: AppWorkflowImage[];
+  cost: number | null;
+  createdAt: string;
+};
+
+/**
+ * Pure projection Workflow → AppWorkflow. No IO, no throws — safe to map over a
+ * whole page of LIST results. See `AppWorkflow` for the field-by-field contract.
+ */
+export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
+  const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
+  const images: AppWorkflowImage[] = [];
+  for (const step of workflow.steps ?? []) {
+    // A `customComfy` step surfaces its outputs as `output.blobs`
+    // (CustomComfyOutput) — no width/height, `nsfwLevel` is the same string
+    // rating the image steps carry. Extract it here so the app subqueue read
+    // picks up recipe-generated images (mirrors the snapshotFromWorkflow branch).
+    if (step.$type === 'customComfy') {
+      const blobs = (
+        step as unknown as {
+          output?: {
+            blobs?: Array<{ url?: string | null; available?: boolean; nsfwLevel?: string | null }>;
+          };
+        }
+      ).output?.blobs;
+      for (const blob of blobs ?? []) {
+        if (!blob.available || typeof blob.url !== 'string' || blob.url.length === 0) continue;
+        images.push({
+          url: blob.url,
+          width: null,
+          height: null,
+          nsfwLevel:
+            blob.nsfwLevel && blob.nsfwLevel !== 'na'
+              ? nsfwLevelFromContentRating(blob.nsfwLevel)
+              : null,
+        });
+      }
+      continue;
+    }
+    if (step.$type !== 'textToImage' && step.$type !== 'imageGen' && step.$type !== 'comfy') {
+      continue;
+    }
+    const stepOutput = (
+      step as unknown as {
+        output?: {
+          images?: Array<{
+            url?: string | null;
+            available?: boolean;
+            width?: number | null;
+            height?: number | null;
+            nsfwLevel?: string | null;
+          }>;
+        };
+      }
+    ).output;
+    for (const img of stepOutput?.images ?? []) {
+      if (!img.available || typeof img.url !== 'string' || img.url.length === 0) continue;
+      images.push({
+        url: img.url,
+        width: typeof img.width === 'number' ? img.width : null,
+        height: typeof img.height === 'number' ? img.height : null,
+        // Map the orchestrator's string rating to the numeric civitai browsing-
+        // level bitflag via the CANONICAL helper (handles the SFW 'g' the raw map
+        // lacks + all of pg/pg13/r/x/xxx, fail-closed to PG for an unexpected
+        // string — so it can't drift from the platform mapping). null ONLY for the
+        // genuinely-unrated sentinel ('na') / unset.
+        nsfwLevel:
+          img.nsfwLevel && img.nsfwLevel !== 'na'
+            ? nsfwLevelFromContentRating(img.nsfwLevel)
+            : null,
+      });
+    }
+  }
+  const total = workflow.cost?.total;
+  return {
+    // A real LIST/GET item always carries an id; empty-string only if the
+    // orchestrator ever omits it (never for a persisted workflow).
+    workflowId: workflow.id ?? '',
+    status,
+    images,
+    cost: typeof total === 'number' ? total : null,
+    createdAt: workflow.createdAt,
   };
 }
 
@@ -484,3 +628,70 @@ export function buildImageWorkflowInput(
 // `buildTextToImageInput`; it is now the IMAGE-class builder (txt2img when the
 // body has no source image — byte-identical to before — img2img when it does).
 export const buildTextToImageInput = buildImageWorkflowInput;
+
+// ── customComfy translator + step builder (App Blocks customComfy bridge, v1) ─
+// INERT/DARK: neither function is called by the live blocks.router yet. The
+// router still handles ONLY `textToImage`; PR6 branches submit/estimate on
+// `kind==='customComfy'` and calls these two, wrapped in the post-paid budget
+// belt. Added here now so PR6 is a thin wiring change over reviewed building
+// blocks.
+
+/**
+ * Translate a validated `customComfy` body into the reusable customComfy step
+ * INPUT (`{ resources, trace, workflow }`). The wire schema only did the coarse
+ * gate (`recipe` ∈ registry, `params` an opaque record); this applies the
+ * recipe's OWN `.strict()` param schema (the real prompt/seed/engine/accountType
+ * bounds) and then runs the recipe's PURE graph builder.
+ *
+ * The returned input is intentionally reusable for a future prepaid
+ * `$type:'comfy'` registered-definition path — only the step WRAPPER
+ * (`createBlockCustomComfyStep`) is customComfy-specific, so the graph
+ * construction never has to change if the step type later does.
+ */
+export function buildCustomComfyWorkflowInput(
+  recipe: AnyBlockRecipe,
+  rawParams: unknown,
+  resolved: ResolvedRecipeResources = {}
+): CustomComfyStepInput {
+  // `.parse` throws a ZodError on an out-of-bounds param (e.g. prompt > 1500,
+  // unknown engine, extra field) — the router (PR6) maps it to a BAD_REQUEST /
+  // failed-snapshot, fail-closed. The coarse wire gate never validated these.
+  const params = recipe.paramSchema.parse(rawParams);
+  return recipe.buildStep(params, resolved);
+}
+
+/** The step name every block customComfy step carries (queue provenance). */
+export const BLOCK_CUSTOM_COMFY_STEP_NAME = 'block-custom-comfy';
+
+// Format a whole-second timeout as the orchestrator's `HH:MM:SS` step-timeout
+// string (WorkflowStep.timeout). 180 → '00:03:00'.
+function formatStepTimeout(totalSeconds: number): string {
+  const s = Math.max(0, Math.ceil(totalSeconds));
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+}
+
+/**
+ * Wrap a recipe's customComfy step input into the `$type:'customComfy'` step,
+ * STAMPING the recipe's aggressive `stepTimeoutSeconds` as the step `timeout`
+ * (formatted `HH:MM:SS`). That timeout is the ONLY deterministic per-job Buzz
+ * bound the orchestrator offers: at `job.ExpireAt` the job is canceled and
+ * billed for measured runtime, so worst-case Buzz = `ceil(timeout_s × 1)` =
+ * `recipe.maxBuzz` (plan §5). This is what makes the post-paid path bounded.
+ *
+ * Sibling of `createBlockTextToImageStep` (blocks.router.ts) — but a customComfy
+ * step is built by DIRECT object construction (the recipe's graph), NOT through
+ * the generation-graph pipeline, so it needs none of that helper's
+ * `createWorkflowStepsFromGraphInput` machinery.
+ */
+export function createBlockCustomComfyStep(
+  recipe: AnyBlockRecipe,
+  input: CustomComfyStepInput
+): CustomComfyStepTemplate {
+  return {
+    $type: 'customComfy',
+    name: BLOCK_CUSTOM_COMFY_STEP_NAME,
+    timeout: formatStepTimeout(recipe.stepTimeoutSeconds),
+    input,
+  };
+}

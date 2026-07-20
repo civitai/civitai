@@ -253,12 +253,20 @@ const handleJobQueueCleanIfEmpty = createJob(
     const cleanupPosts = () =>
       chunk(jobQueueIds.postIds, batchSize).map((ids) => async () => {
         if (!ids.length) return;
-        // Delete posts that have no images
+        // Delete posts that have no images, but preserve the empty anchor post of a published
+        // version — deleting it cascades to auto-unpublishing the version (reason 'no-posts'),
+        // stranding the creator. Keeping the shell lets them re-add showcase images.
         await dbWrite.$executeRaw`
           DELETE FROM "Post" p
-          WHERE id IN (${Prisma.join(ids)}) AND NOT EXISTS (
-            SELECT 1 FROM "Image" WHERE "postId" = p.id
-          )
+          WHERE id IN (${Prisma.join(ids)})
+            AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
+            AND NOT EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              JOIN "Model" m ON m.id = mv."modelId"
+              WHERE mv.id = p."modelVersionId"
+                AND p."userId" = m."userId"
+                AND mv.status = 'Published'::"ModelVersionStatus"
+            )
         `;
       });
 

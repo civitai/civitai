@@ -17,6 +17,13 @@ import {
   type PersistListingAssetImageInput,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
+import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
+import {
+  connectScopesSubsetOfCeiling,
+  validateConnectScopeJustifications,
+  SENSITIVE_TOKEN_SCOPES,
+  tokenScopeMaskToList,
+} from '~/shared/constants/token-scope.constants';
 import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
@@ -108,12 +115,25 @@ export type SubmitExternalListingResult = {
 };
 
 /**
- * Create a DRAFT off-site listing + a pending publish request in one transaction.
+ * Create a DRAFT external-app off-site listing + a pending publish request in one
+ * transaction (the MERGED external+connect model — every external app IS an OAuth
+ * app, so this ONE path links the caller's OAuth client AND carries the optional
+ * homepage URL + display metadata + reviewed scopes).
  *
  * Owner-binding (IDOR): both the `AppListing.userId` and the
  * `AppListingPublishRequest.submittedByUserId` are set from the AUTHENTICATED
  * caller (`userId`) — the input carries NO owner field, so a caller can never
- * submit on another user's behalf.
+ * submit on another user's behalf. The linked OAuth client is ALSO ownership-checked
+ * (`loadConnectClientForListing`: exists / owned-by-caller / not an App-Block client).
+ *
+ * REQUIRES a `connectClientId` (the caller's own OAuth client) + a DISCLOSED
+ * `requestedScopes` subset (⊆ the client's `allowedScopes` ceiling) + per-scope
+ * `scopeJustifications`. `externalUrl` is now OPTIONAL (homepage / Visit link) — the
+ * https re-validation runs ONLY when a URL is provided; an omitted URL stores null.
+ *
+ * Disclosure/review-only: `connectRequestedScopes` is STORED + reviewed; it does NOT
+ * gate OAuth token issuance (the client's `allowedScopes` remains the runtime ceiling
+ * via the existing consent flow).
  *
  * Slug collision: pre-checked against BOTH `AppListing.slug` (unique across both
  * kinds) AND an existing `AppBlock.block_id` (an on-site slug), then backstopped
@@ -132,10 +152,11 @@ export async function submitExternalListing(opts: {
 }): Promise<SubmitExternalListingResult> {
   const { input, userId } = opts;
 
-  // Defense-in-depth: re-run the shared URL + surface validators (this fn is
-  // exported and unit-tested directly, not only reached through the schema).
-  const url = validateExternalUrl(input.externalUrl);
-  if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
+  // Defense-in-depth: re-run the shared URL validator — but ONLY when a URL is
+  // provided (externalUrl is now optional; a connect-only listing omits it). This fn
+  // is exported + unit-tested directly, not only reached through the schema.
+  const url = input.externalUrl != null ? validateExternalUrl(input.externalUrl) : null;
+  if (url && !url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
   const surface = assertNoOnPlatformSurface({
     page: input.page,
     targets: input.targets,
@@ -157,6 +178,16 @@ export async function submitExternalListing(opts: {
       message: `unknown content rating "${contentRating}"`,
     });
   }
+
+  // Load + gate the caller's OAuth client (exists / owned / not-app-block), then
+  // validate the requested-scope subset + per-scope justifications against the
+  // client's ceiling. REQUIRED for every external listing (the merged model).
+  const client = await loadConnectClientForListing(input.connectClientId, userId);
+  assertConnectScopesValid({
+    requestedScopes: input.requestedScopes,
+    scopeJustifications: input.scopeJustifications,
+    allowedScopes: client.allowedScopes,
+  });
 
   // Per-user pending-submission cap: bound the standing orphan-draft count (drafts
   // only clear on withdraw/reject, no TTL). At/over the cap → TOO_MANY_REQUESTS.
@@ -214,9 +245,13 @@ export async function submitExternalListing(opts: {
           // Author-declared, re-asserted against the enum above; defaults to SFW
           // so an omitted rating is never mature.
           contentRating,
-          externalUrl: url.url,
-          // External-link sub-kind only — the OAuth-connect seam stays inert.
-          connectClientId: null,
+          // OPTIONAL homepage / Visit link — canonicalized when provided, else null.
+          externalUrl: url && url.ok ? url.url : null,
+          // REQUIRED OAuth client link + the disclosed (review-only) scope subset +
+          // per-scope justifications.
+          connectClientId: input.connectClientId,
+          connectRequestedScopes: input.requestedScopes,
+          connectScopeJustifications: input.scopeJustifications,
           // A natively-created off-site listing has no backing AppBlock.
           appBlockId: null,
           userId,
@@ -242,6 +277,74 @@ export async function submitExternalListing(opts: {
   }
 
   return { listingId, publishRequestId, slug };
+}
+
+// ---------------------------------------------------------------------------
+// OAuth-client link helpers — shared by the submit + edit paths of the merged
+// external-app listing flow (every external app links its own OAuth client).
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the caller's OWN OAuth client and assert it is eligible to back an external
+ * listing: it must EXIST, be OWNED by `userId` (IDOR), and NOT be an App-Block
+ * client (`isAppBlockOauthClientId` — those are managed by the App Blocks flow, not
+ * hand-listed). Returns the client's `allowedScopes` ceiling. An external listing does
+ * NOT require the client to be `isVerified` (decision Q4). All failures are friendly
+ * TRPCErrors (parity with `submitExternalListing`'s validation style).
+ */
+async function loadConnectClientForListing(
+  connectClientId: string,
+  userId: number
+): Promise<{ id: string; allowedScopes: number }> {
+  // App-block clients are excluded up-front (cheap, no DB) — they are never a
+  // hand-authored connect target.
+  if (isAppBlockOauthClientId(connectClientId)) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'App Block OAuth clients cannot be listed as connect apps',
+    });
+  }
+  const client = await dbRead.oauthClient.findUnique({
+    where: { id: connectClientId },
+    select: { id: true, userId: true, allowedScopes: true },
+  });
+  if (!client) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
+  }
+  if (client.userId !== userId) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'you can only list an OAuth client you own',
+    });
+  }
+  return { id: client.id, allowedScopes: client.allowedScopes };
+}
+
+/**
+ * Assert a requested-scope mask + its per-scope justifications are valid against the
+ * client's `allowedScopes` ceiling: the mask must be a SUBSET of the ceiling
+ * ((requested & ~allowed) === 0) and the justifications must satisfy the shared
+ * `validateConnectScopeJustifications` (keys are valid single-bit TokenScope enum
+ * keys, keys ⊆ requested, values non-empty ≤ SCOPE_JUSTIFICATION_MAX_LENGTH). Throws
+ * a friendly BAD_REQUEST on the first failure. Used on submit AND on edit (defense
+ * in depth — these fns are exported + unit-tested directly).
+ */
+function assertConnectScopesValid(opts: {
+  requestedScopes: number;
+  scopeJustifications: Record<string, string>;
+  allowedScopes: number;
+}): void {
+  const { requestedScopes, scopeJustifications, allowedScopes } = opts;
+  if (!connectScopesSubsetOfCeiling(requestedScopes, allowedScopes)) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'requested scopes exceed the OAuth client’s allowed scopes',
+    });
+  }
+  const errors = validateConnectScopeJustifications(requestedScopes, scopeJustifications);
+  if (errors.length > 0) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: errors.join('; ') });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +578,19 @@ const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
  * (an omitted field is left untouched; an explicit `null` clears a nullable one).
  * `externalUrl` is normalized to the validator's canonical form.
  */
-export function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppListingUpdateInput {
+export function buildListingPatchData(
+  patch: UpdateListingPatch,
+  opts?: {
+    /**
+     * The connect client's `allowedScopes` ceiling (from the listing's
+     * `connectClientId`). REQUIRED when the patch touches `requestedScopes` /
+     * `scopeJustifications` — the caller (`updateListing`) resolves it once and
+     * passes it in. `null` means the listing has no connect client, so a scope edit
+     * is rejected.
+     */
+    connectAllowedScopes?: number | null;
+  }
+): Prisma.AppListingUpdateInput {
   const data: Prisma.AppListingUpdateInput = {};
   if (patch.externalUrl !== undefined) {
     const url = validateExternalUrl(patch.externalUrl);
@@ -500,6 +615,32 @@ export function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppList
     }
     data.contentRating = patch.contentRating;
   }
+  // OAuth-connect scope disclosure edit. `requestedScopes` + `scopeJustifications`
+  // travel as a pair: justifications validate against the requested mask, so a
+  // justification-only edit (no mask) is rejected. Re-run the subset + justification
+  // checks against the listing's client ceiling (defense in depth — this fn is
+  // exported + unit-tested directly).
+  if (patch.requestedScopes !== undefined || patch.scopeJustifications !== undefined) {
+    if (patch.requestedScopes === undefined) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'requestedScopes is required when editing scope justifications',
+      });
+    }
+    if (opts?.connectAllowedScopes == null) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'this listing has no OAuth client, so it cannot request scopes',
+      });
+    }
+    assertConnectScopesValid({
+      requestedScopes: patch.requestedScopes,
+      scopeJustifications: patch.scopeJustifications ?? {},
+      allowedScopes: opts.connectAllowedScopes,
+    });
+    data.connectRequestedScopes = patch.requestedScopes;
+    data.connectScopeJustifications = patch.scopeJustifications ?? {};
+  }
   return data;
 }
 
@@ -511,7 +652,12 @@ export function buildListingPatchData(patch: UpdateListingPatch): Prisma.AppList
  */
 function patchHasMaterialChange(
   patch: UpdateListingPatch,
-  live: { externalUrl: string | null; name: string; contentRating: string | null }
+  live: {
+    externalUrl: string | null;
+    name: string;
+    contentRating: string | null;
+    connectRequestedScopes: number | null;
+  }
 ): boolean {
   for (const field of MATERIAL_PATCH_FIELDS) {
     const patched = patch[field];
@@ -525,6 +671,15 @@ function patchHasMaterialChange(
     }
     // name / contentRating: plain scalar inequality vs the live value.
     if (patched !== live[field]) return true;
+  }
+  // A change to the DISCLOSED OAuth scope subset is material — the mod approved a
+  // specific set of scopes, so a new set must re-enter review (the shadow carries the
+  // updated mask + justifications, re-validated in buildListingPatchData).
+  if (
+    patch.requestedScopes !== undefined &&
+    patch.requestedScopes !== (live.connectRequestedScopes ?? 0)
+  ) {
+    return true;
   }
   return false;
 }
@@ -557,6 +712,8 @@ type EditableListing = {
   contentRating: string | null;
   externalUrl: string | null;
   connectClientId: string | null;
+  connectRequestedScopes: number | null;
+  connectScopeJustifications: Prisma.JsonValue | null;
   iconId: number | null;
   coverId: number | null;
 };
@@ -575,6 +732,8 @@ const editableListingSelect = {
   contentRating: true,
   externalUrl: true,
   connectClientId: true,
+  connectRequestedScopes: true,
+  connectScopeJustifications: true,
   iconId: true,
   coverId: true,
 } as const;
@@ -619,6 +778,56 @@ export async function updateListing(opts: {
     );
   }
 
+  // If the patch touches the disclosed OAuth scopes, resolve the client's ceiling
+  // once (needed by buildListingPatchData's subset re-validation). A scope edit on a
+  // listing with no connect client → BAD_REQUEST.
+  const editsScopes =
+    patch.requestedScopes !== undefined || patch.scopeJustifications !== undefined;
+  let connectAllowedScopes: number | null = null;
+  if (editsScopes) {
+    if (listing.connectClientId == null) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'this listing has no OAuth client, so it cannot request scopes',
+      });
+    }
+    const client = await dbRead.oauthClient.findUnique({
+      where: { id: listing.connectClientId },
+      select: { userId: true, allowedScopes: true },
+    });
+    if (!client) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
+    }
+    // Defense in depth: re-assert the caller still OWNS the client (mirrors
+    // `loadConnectClientForListing`'s submit-time check). `connectClientId` is
+    // immutable on edit, so this is safe today — but if the client were transferred
+    // to another user after submit, the original listing owner must NOT be able to
+    // edit disclosed scopes against the new owner's ceiling. `userId` here is the
+    // authenticated caller (the listing was already owner-bound above).
+    if (client.userId !== userId) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'you can only list an OAuth client you own',
+      });
+    }
+    connectAllowedScopes = client.allowedScopes;
+    // Validate the scope edit UP-FRONT (before any shadow is opened) so an invalid
+    // subset/justification rejects cleanly and never leaves an orphan shadow draft.
+    // `buildListingPatchData` re-validates as defense-in-depth for direct callers.
+    if (patch.requestedScopes === undefined) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'requestedScopes is required when editing scope justifications',
+      });
+    }
+    assertConnectScopesValid({
+      requestedScopes: patch.requestedScopes,
+      scopeJustifications: patch.scopeJustifications ?? {},
+      allowedScopes: connectAllowedScopes,
+    });
+  }
+  const patchOpts = { connectAllowedScopes };
+
   switch (listing.status) {
     case 'removed':
       throw new OffsiteRequestError(
@@ -636,7 +845,7 @@ export async function updateListing(opts: {
     case 'pending': {
       // Edit IN PLACE — no re-review. A pending listing's existing pending request
       // keeps reviewing the now-updated row (it references the row, not a snapshot).
-      const data = buildListingPatchData(patch);
+      const data = buildListingPatchData(patch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
       return { listingId, status: listing.status, requiresReview: false, shadowId: null };
     }
@@ -645,12 +854,13 @@ export async function updateListing(opts: {
         externalUrl: listing.externalUrl,
         name: listing.name,
         contentRating: listing.contentRating,
+        connectRequestedScopes: listing.connectRequestedScopes,
       });
       if (!material) {
         // TRIVIAL-only edit → apply to the LIVE row in place (no re-review). Any
         // material key present is byte-identical to the live value (material ===
         // false), so writing it is a harmless no-op.
-        const data = buildListingPatchData(patch);
+        const data = buildListingPatchData(patch, patchOpts);
         await dbWrite.appListing.update({ where: { id: listingId }, data });
         return { listingId, status: listing.status, requiresReview: false, shadowId: null };
       }
@@ -658,7 +868,7 @@ export async function updateListing(opts: {
       // FULL patch (material + trivial) is written to the shadow. Assets are edited
       // separately against the shadow id, then submitListingRevision re-reviews it.
       const { shadowId } = await beginListingRevision({ listingId, userId });
-      const data = buildListingPatchData(patch);
+      const data = buildListingPatchData(patch, patchOpts);
       await dbWrite.appListing.update({ where: { id: shadowId }, data });
       return { listingId, status: listing.status, requiresReview: true, shadowId };
     }
@@ -738,6 +948,14 @@ export async function beginListingRevision(opts: {
           contentRating: parent.contentRating,
           externalUrl: parent.externalUrl,
           connectClientId: parent.connectClientId,
+          // Carry the disclosed OAuth scope subset + justifications onto the shadow so
+          // a revision that DOESN'T touch scopes preserves them (and one that does
+          // overwrites them via buildListingPatchData).
+          connectRequestedScopes: parent.connectRequestedScopes,
+          connectScopeJustifications:
+            parent.connectScopeJustifications === null
+              ? Prisma.DbNull
+              : (parent.connectScopeJustifications as Prisma.InputJsonValue),
           iconId: parent.iconId,
           coverId: parent.coverId,
           // A shadow has NO backing AppBlock (appBlockId is @unique — it stays on
@@ -864,12 +1082,26 @@ export async function submitListingRevision(opts: {
     coverId: shadow.coverId,
     screenshotCount,
   });
-  const url = validateExternalUrl(shadow.externalUrl);
-  if (!url.ok) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `stored externalUrl is invalid and cannot be submitted: ${url.error}`,
-    });
+  // Validate the stored externalUrl ONLY WHEN present — it's OPTIONAL in the merged
+  // model (a connect-only listing carries `externalUrl: null`). Gating this
+  // unconditionally made a no-homepage external app UN-REVISABLE: its material-edit
+  // shadow carries a null URL and `validateExternalUrl(null)` returns `{ok:false}`,
+  // so submitting the revision threw. Mirrors the submit / first-time-approve /
+  // revision-approve gates. A provided-but-invalid URL still blocks.
+  // Validate the stored externalUrl ONLY WHEN present — it's OPTIONAL in the merged
+  // model (a connect-only listing carries `externalUrl: null`). Gating this
+  // unconditionally made a no-homepage external app UN-REVISABLE: its material-edit
+  // shadow carries a null URL and `validateExternalUrl(null)` returns `{ok:false}`,
+  // so submitting the revision threw. Mirrors the submit / first-time-approve /
+  // revision-approve gates. A provided-but-invalid URL still blocks.
+  if (shadow.externalUrl != null) {
+    const url = validateExternalUrl(shadow.externalUrl);
+    if (!url.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `stored externalUrl is invalid and cannot be submitted: ${url.error}`,
+      });
+    }
   }
 
   // Guard a second concurrent pending revision: one open request per shadow.
@@ -1218,6 +1450,52 @@ async function resolveApprovalContentRating(
 }
 
 /**
+ * Approval gate for OAuth-CONNECT listings (PR3): every SENSITIVE requested scope
+ * MUST carry a non-empty per-scope justification before the listing can go live.
+ * `SENSITIVE_TOKEN_SCOPES` (money / private / cross-user writes) is the flagged set;
+ * a non-sensitive requested scope need not be justified. No-op for an external-link
+ * listing (`connectClientId == null`) or a connect listing requesting no sensitive
+ * scope. Throws `BAD_REQUEST` listing the offending scope keys otherwise. Read-only.
+ *
+ * 🔴 The connect fields are NOT immutable across the approve flow — an owner can edit
+ * `connectRequestedScopes`/`connectScopeJustifications` in place while the request
+ * sits draft/pending. A pre-tx call on the replica is therefore only a FAST-FAIL; the
+ * AUTHORITATIVE gate runs on the in-tx re-read of the row (row-consistent with the
+ * status flip) so a concurrent scope-broadening can't slip an unjustified sensitive
+ * scope past a mod approval (TOCTOU). Both the first-time approve and the revision
+ * approve paths re-invoke this on their in-tx `tx`-read row before flipping status.
+ */
+function assertConnectSensitiveScopesJustified(listing: {
+  connectClientId: string | null;
+  connectRequestedScopes: number | null;
+  connectScopeJustifications: Prisma.JsonValue | null;
+}): void {
+  if (listing.connectClientId == null) return; // external-link listing — no scopes.
+  const sensitiveRequested = (listing.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0) return; // nothing sensitive requested.
+  const justifications =
+    listing.connectScopeJustifications &&
+    typeof listing.connectScopeJustifications === 'object' &&
+    !Array.isArray(listing.connectScopeJustifications)
+      ? (listing.connectScopeJustifications as Record<string, unknown>)
+      : {};
+  // Each sensitive requested bit is keyed by its TokenScope enum-key (same mapping
+  // the author-side justification map uses).
+  const missing = tokenScopeMaskToList(sensitiveRequested)
+    .filter(({ key }) => {
+      const raw = justifications[key];
+      return !(typeof raw === 'string' && raw.trim().length > 0);
+    })
+    .map(({ key }) => key);
+  if (missing.length > 0) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `sensitive scope(s) require a justification before approval: ${missing.join(', ')}`,
+    });
+  }
+}
+
+/**
  * MOD approve of a pending off-site request. Loads the request + its draft
  * `AppListing`, asserts `pending`, and enforces two gates BEFORE any mutation:
  *
@@ -1300,6 +1578,12 @@ export async function approveExternalRequest(opts: {
       iconId: true,
       coverId: true,
       revisionOfId: true,
+      // Connect sub-kind (PR3): the discriminator + the reviewed scope disclosure —
+      // used to SKIP the external-URL gate (connect listings store `externalUrl:null`)
+      // and to enforce the sensitive-must-justify approval gate.
+      connectClientId: true,
+      connectRequestedScopes: true,
+      connectScopeJustifications: true,
       // Owner (for the post-commit "approved" owner notification) + name (message).
       userId: true,
       name: true,
@@ -1339,14 +1623,24 @@ export async function approveExternalRequest(opts: {
 
   // (4) Defense-in-depth: re-validate the STORED externalUrl before it can reach
   // the store (mirrors submit + the read-path `safeExternalUrl`). Also re-checked
-  // on the primary inside the tx.
-  const url = validateExternalUrl(listing.externalUrl);
-  if (!url.ok) {
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: `stored externalUrl is invalid and cannot be approved: ${url.error}`,
-    });
+  // on the primary inside the tx. In the MERGED model `externalUrl` is OPTIONAL for
+  // every listing, so the gate runs ONLY WHEN a URL is present — a provided URL must
+  // still be a valid https link; a null URL (connect-only, or a legacy row without a
+  // homepage) approves fine.
+  if (listing.externalUrl != null) {
+    const url = validateExternalUrl(listing.externalUrl);
+    if (!url.ok) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `stored externalUrl is invalid and cannot be approved: ${url.error}`,
+      });
+    }
   }
+
+  // (4b) OAuth-scope approval gate: every SENSITIVE requested scope must carry a
+  // non-empty justification before the app goes live. No-op for a legacy URL-only
+  // row (`connectClientId == null`); runs for every OAuth-linked external listing.
+  assertConnectSensitiveScopesJustified(listing);
 
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
@@ -1361,7 +1655,18 @@ export async function approveExternalRequest(opts: {
     // any failure rolls the whole tx back BEFORE anything is flipped.
     const primaryListing = await tx.appListing.findUnique({
       where: { id: appListingId },
-      select: { externalUrl: true, iconId: true, coverId: true },
+      select: {
+        externalUrl: true,
+        iconId: true,
+        coverId: true,
+        connectClientId: true,
+        // Connect sub-kind (PR3): re-read the reviewed scope disclosure on the PRIMARY
+        // so the sensitive-must-justify + subset-of-ceiling gates below are authoritative
+        // (row-consistent with the flip), not merely checked pre-tx on the replica.
+        connectRequestedScopes: true,
+        connectScopeJustifications: true,
+        connectClient: { select: { allowedScopes: true } },
+      },
     });
     if (!primaryListing) {
       throw new OffsiteRequestError('NOT_FOUND', `draft listing ${appListingId} not found`);
@@ -1374,12 +1679,44 @@ export async function approveExternalRequest(opts: {
       coverId: primaryListing.coverId,
       screenshotCount: primaryScreenshotCount,
     });
-    const primaryUrl = validateExternalUrl(primaryListing.externalUrl);
-    if (!primaryUrl.ok) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: `stored externalUrl is invalid and cannot be approved: ${primaryUrl.error}`,
+    // Validate the stored externalUrl ONLY WHEN present (it's optional in the merged
+    // model); a null URL approves fine. See step (4).
+    if (primaryListing.externalUrl != null) {
+      const primaryUrl = validateExternalUrl(primaryListing.externalUrl);
+      if (!primaryUrl.ok) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `stored externalUrl is invalid and cannot be approved: ${primaryUrl.error}`,
+        });
+      }
+    }
+
+    // AUTHORITATIVE connect-scope gate — re-run on the PRIMARY read (row-consistent
+    // with the flip). The pre-tx gate in (4b) is a REPLICA fail-fast: the connect
+    // fields are owner-editable in-place while the request sits pending (draft/pending
+    // in-place edit), so an owner could broaden `connectRequestedScopes` to sensitive
+    // bits (with an empty justification map) AFTER the mod's pre-tx gate passed but
+    // BEFORE this flip — a mod-approved listing would then go live with unjustified
+    // sensitive scopes. Re-asserting on the in-tx row closes that TOCTOU. Mirrors the
+    // revision path's in-tx re-gate. Only for connect listings (`connectClientId`
+    // non-null here; external-link listings carry no scopes).
+    if (primaryListing.connectClientId != null) {
+      assertConnectSensitiveScopesJustified({
+        connectClientId: primaryListing.connectClientId,
+        connectRequestedScopes: primaryListing.connectRequestedScopes,
+        connectScopeJustifications: primaryListing.connectScopeJustifications,
       });
+      // Also re-assert subset-of-ceiling on the primary: guards a client whose
+      // `allowedScopes` SHRANK after submit (the pre-tx subset check happened at
+      // submit/edit time). A connect listing always has a `connectClient` row here
+      // (FK-backed by the non-null `connectClientId`); treat a null ceiling as 0.
+      const allowedScopes = primaryListing.connectClient?.allowedScopes ?? 0;
+      if (!connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'requested scopes exceed the OAuth client’s allowed scopes',
+        });
+      }
     }
 
     const req = await tx.appListingPublishRequest.updateMany({
@@ -1536,6 +1873,12 @@ async function applyApprovedRevision(opts: {
         contentRating: true,
         externalUrl: true,
         connectClientId: true,
+        connectRequestedScopes: true,
+        connectScopeJustifications: true,
+        // The reviewed client's scope CEILING — re-asserted in-tx below so a client
+        // whose `allowedScopes` SHRANK between edit and revision-approve can't slip a
+        // now-out-of-ceiling scope past the mod (mirrors the first-time approve path).
+        connectClient: { select: { allowedScopes: true } },
         iconId: true,
         coverId: true,
       },
@@ -1554,12 +1897,36 @@ async function applyApprovedRevision(opts: {
       coverId: shadow.coverId,
       screenshotCount,
     });
-    const url = validateExternalUrl(shadow.externalUrl);
-    if (!url.ok) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: `stored externalUrl is invalid and cannot be approved: ${url.error}`,
-      });
+    // Validate the stored externalUrl ONLY WHEN present (optional in the merged
+    // model); a null URL is fine. See the first-time approve path (step 4).
+    if (shadow.externalUrl != null) {
+      const url = validateExternalUrl(shadow.externalUrl);
+      if (!url.ok) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `stored externalUrl is invalid and cannot be approved: ${url.error}`,
+        });
+      }
+    }
+    // OAuth-scope approval gate: the revision carries the (possibly UPDATED) scope
+    // set that will go live — every sensitive requested scope must be justified.
+    assertConnectSensitiveScopesJustified({
+      connectClientId: shadow.connectClientId,
+      connectRequestedScopes: shadow.connectRequestedScopes,
+      connectScopeJustifications: shadow.connectScopeJustifications,
+    });
+    // Also re-assert subset-of-ceiling on the in-tx shadow (mirrors the first-time
+    // approve path): guards a client whose `allowedScopes` SHRANK after the revision
+    // was edited. Only for OAuth-linked listings (`connectClientId` non-null; a legacy
+    // URL-only revision carries no scopes). A null ceiling is treated as 0.
+    if (shadow.connectClientId != null) {
+      const allowedScopes = shadow.connectClient?.allowedScopes ?? 0;
+      if (!connectScopesSubsetOfCeiling(shadow.connectRequestedScopes ?? 0, allowedScopes)) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'requested scopes exceed the OAuth client’s allowed scopes',
+        });
+      }
     }
 
     // (2) Flip the request pending→approved AND re-point it at the PARENT.
@@ -1602,6 +1969,13 @@ async function applyApprovedRevision(opts: {
         contentRating: finalRating,
         externalUrl: shadow.externalUrl,
         connectClientId: shadow.connectClientId,
+        // Apply the revision's disclosed OAuth scopes + justifications onto the live
+        // parent (a scope change is material, so the shadow carries the reviewed set).
+        connectRequestedScopes: shadow.connectRequestedScopes,
+        connectScopeJustifications:
+          shadow.connectScopeJustifications === null
+            ? Prisma.DbNull
+            : (shadow.connectScopeJustifications as Prisma.InputJsonValue),
         iconId: shadow.iconId,
         coverId: shadow.coverId,
       },
@@ -1807,6 +2181,17 @@ const submissionSelect = {
       category: true,
       contentRating: true,
       revisionOfId: true,
+      // OAuth-connect sub-kind (PR3 mod review): the requested-scope disclosure the
+      // moderator reviews. `connectClientId` is the discriminator (null ⇒ an
+      // external-link listing; the mod UI renders the scope panel only when set);
+      // `connectRequestedScopes` is the disclosed bitmask, `connectScopeJustifications`
+      // the per-scope rationale map. `connectClient.{name,allowedScopes}` gives the
+      // reviewed client's display name + its scope CEILING for context. All
+      // additive/PII-safe — the external-link queues just carry nulls.
+      connectClientId: true,
+      connectRequestedScopes: true,
+      connectScopeJustifications: true,
+      connectClient: { select: { name: true, allowedScopes: true } },
       // The listing's TRUE lifecycle status (`draft|pending|approved|rejected|
       // removed`) — DISTINCT from the publish-REQUEST `status`. An owner unpublish
       // / mod delist flips `AppListing.status` approved → removed WITHOUT touching

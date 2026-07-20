@@ -1890,6 +1890,8 @@ export interface AppListing {
   externalUrl: string | null;
   connectClientId: string | null;
   connectClient?: OauthClient | null;
+  connectRequestedScopes: number | null;
+  connectScopeJustifications: JsonValue | null;
   appBlockId: string | null;
   appBlock?: AppBlock | null;
   revisionOfId: string | null;
@@ -2002,6 +2004,30 @@ export interface AppListingModerationEvent {
   before: JsonValue | null;
   after: JsonValue | null;
   createdAt: Date;
+}
+
+export interface AppReviewAgentReport {
+  id: string;
+  publishRequestId: string;
+  appBlockId: string | null;
+  oauthClientId: string | null;
+  version: string;
+  bundleSha256: string;
+  status: string;
+  model: string | null;
+  startedAt: Date;
+  completedAt: Date | null;
+  codeReview: JsonValue | null;
+  securityAudit: JsonValue | null;
+  scopeVerdicts: JsonValue | null;
+  summaryMd: string | null;
+  priorReportId: string | null;
+  priorReport?: AppReviewAgentReport | null;
+  nextReports?: AppReviewAgentReport[];
+  tokenUsage: JsonValue | null;
+  costUsd: Decimal | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface BlockUserSettings {
@@ -2169,10 +2195,13 @@ export interface BlockScopeInvocation {
   appBlockId: string | null;
   appBlock?: AppBlock | null;
   syntheticAppId: string | null;
-  blockInstanceId: string;
+  blockInstanceId: string | null;
+  oauthClientId: string | null;
+  source: string;
   scope: string;
   endpoint: string;
   statusCode: number;
+  detail: JsonValue | null;
   invokedAt: Date;
 }
 

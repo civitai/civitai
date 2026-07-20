@@ -250,3 +250,109 @@ export async function zAddWithTTL(
     arguments: [String(score), member, String(ttlMs)],
   });
 }
+
+/**
+ * Atomically SADD a member to a tag-set AND ensure the set's whole-key TTL is a
+ * FLOOR of `ttlSeconds` — in a single EVAL that replaces the racy, redundant
+ * `Promise.all([redis.sAdd(key, member), redis.expire(key, ttlSeconds)])` pair
+ * the tRPC tag-based cache used on every cache-miss write (see the `cacheIt`
+ * middleware in `src/server/middleware.trpc.ts`).
+ *
+ * The tag-set / cache-tag model
+ * ─────────────────────────────
+ * A cache tag (e.g. `leaderboard-3`) owns a Redis SET whose members are the
+ * cache KEYS tagged with it. A tag bust (`redis.purgeTags`) reads the set's
+ * members and deletes them. So the set MUST outlive every member it holds —
+ *
+ *   INVARIANT:  TTL(tagSet)  ≥  max remaining TTL of any member key
+ *
+ * — or a later bust reads an already-expired (empty) set, misses the still-live
+ * member keys, and serves STALE cache until those members expire on their own.
+ *
+ * Why the old pair was wrong AND wasteful
+ * ───────────────────────────────────────
+ *   1. WASTE: it issued a SEPARATE `EXPIRE key ttl` node-redis command on EVERY
+ *      tagged cache-miss write (~2.6k/s at peak) in addition to the `SADD`.
+ *   2. CORRECTNESS: that `EXPIRE` was UNCONDITIONAL and plain `EXPIRE`
+ *      OVERWRITES the TTL. If a longer-TTL member had extended the set, a later
+ *      shorter-TTL write would SHORTEN the set below that longer member —
+ *      breaking the invariant (a bust after the set expired but before the long
+ *      member does misses it → stale). This can't happen with today's
+ *      all-equal-TTL callers, but the primitive was latently unsafe.
+ *
+ * What this helper does (one node-redis command)
+ * ──────────────────────────────────────────────
+ *   SADD member, read the set's TTL, and set the TTL to `ttlSeconds` ONLY when
+ *   the set's current TTL is below `ttlSeconds` (which includes the freshly
+ *   SADD-created no-expiry set, whose `TTL` reply is -1). It NEVER shortens a
+ *   set that a longer-TTL member already extended (`cur >= ttlSeconds` → the
+ *   server-side EXPIRE is skipped) — a server-side "raise-to-floor" that
+ *   strictly preserves the invariant. Note this floor semantics is NOT
+ *   expressible with a single native `EXPIRE` flag: `GT` treats the fresh
+ *   no-expiry set as +∞ and would never give it a TTL (leak); `LT` would refuse
+ *   to raise a decayed set back up to the floor. Hence the TTL read + explicit
+ *   compare inside one EVAL.
+ *
+ * Behaviour vs. the old pair
+ * ──────────────────────────
+ *   For the current all-equal-TTL callers the resulting set TTL is IDENTICAL to
+ *   the old unconditional EXPIRE (the set is always (re)floored to `ttlSeconds`,
+ *   since a decayed or fresh set always has `cur < ttlSeconds`). Cache hits,
+ *   busts, and member expiry are all unchanged. The GE guard only DIVERGES —
+ *   safely, by not shortening — when a longer-TTL member ever shares the tag.
+ *
+ * Command reduction: the separate ~2.6k/s `EXPIRE` node-redis command is gone
+ * (folded into the EVAL that already had to issue the `SADD`); the redundant
+ * server-side EXPIRE is additionally skipped whenever the set's TTL is already
+ * at/above the floor.
+ *
+ * Atomicity caveat: SADD then a conditional EXPIRE are independent `redis.call`
+ * sites in one script — no other client command interleaves between them, and
+ * (unlike the racy Promise.all pair) a crash cannot land SADD without the
+ * EXPIRE, so the set can no longer leak as a persistent no-TTL key. A Lua-level
+ * error after the SADD leaves "member added, no TTL" — the same residual class
+ * as `zAddWithTTL`; callers must keep their fail-open wrappers.
+ *
+ * @param client     - Any RedisClientType-shaped client with `.eval(...)` (the
+ *                     tRPC cache middleware passes the cache cluster client).
+ * @param key        - Tag-set key (`caches:tagged-cache:<slug>`).
+ * @param member     - Member to add (the tagged cache key).
+ * @param ttlSeconds - TTL floor for the set, in SECONDS (matches the member
+ *                     key's `EX` seconds). Must be a positive finite number.
+ * @returns SADD's reply — the number of NEWLY added members (0 if `member` was
+ *          already present).
+ */
+export async function sAddWithExpireGe(
+  client: EvalCapableClient,
+  key: string,
+  member: string,
+  ttlSeconds: number
+): Promise<number> {
+  // A non-positive / non-finite TTL would make the floor meaningless and, if it
+  // ever reached `EXPIRE` as 0/negative, DELETE the set. Guard before the EVAL.
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
+    throw new Error(
+      `sAddWithExpireGe: ttlSeconds must be a positive finite number, got ${ttlSeconds}`
+    );
+  }
+  // KEYS[1]=tag set  ARGV[1]=member  ARGV[2]=ttlSeconds
+  // TTL replies: -2 = key missing (impossible right after SADD), -1 = no expiry
+  // (a freshly SADD-created set, or a persisted one), >=0 = seconds remaining.
+  // `cur < ttl` therefore fires for the fresh set (-1) and any decayed set,
+  // and is SKIPPED only when the set already outlives the floor — never
+  // shortening a longer TTL a bigger member set.
+  const script = `
+    local added = redis.call('SADD', KEYS[1], ARGV[1])
+    local ttl = tonumber(ARGV[2])
+    local cur = redis.call('TTL', KEYS[1])
+    if cur < ttl then
+      redis.call('EXPIRE', KEYS[1], ttl)
+    end
+    return added
+  `;
+  const reply = await client.eval(script, {
+    keys: [key],
+    arguments: [member, String(ttlSeconds)],
+  });
+  return typeof reply === 'number' ? reply : Number(reply) || 0;
+}

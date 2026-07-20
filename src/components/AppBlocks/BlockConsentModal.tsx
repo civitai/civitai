@@ -1,7 +1,9 @@
 import { Button, Group, List, Modal, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconShieldLock } from '@tabler/icons-react';
 import { useState } from 'react';
+import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -56,13 +58,19 @@ export default function BlockConsentModal({
           </Text>
         </Group>
         <List size="sm" spacing={4}>
-          {missingScopes.map((scope) => (
-            <List.Item key={scope}>
-              <Text component="span" fw={600}>
-                {SCOPE_DESCRIPTIONS[scope] ?? scope}
-              </Text>
-            </List.Item>
-          ))}
+          {missingScopes.map((scope) => {
+            const sensitive = isSensitiveBlockScope(scope);
+            return (
+              <List.Item key={scope}>
+                <Group component="span" gap="xs" wrap="nowrap" align="center">
+                  <Text component="span" fw={600} c={sensitive ? 'orange' : undefined}>
+                    {SCOPE_DESCRIPTIONS[scope] ?? scope}
+                  </Text>
+                  {sensitive && <SensitiveScopeBadge size="xs" />}
+                </Group>
+              </List.Item>
+            );
+          })}
         </List>
         {error ? (
           <Text size="xs" c="red">
