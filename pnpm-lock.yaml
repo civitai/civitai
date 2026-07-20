@@ -963,6 +963,9 @@ importers:
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../../packages/civitai-shared
       '@civitai/ui':
         specifier: workspace:*
         version: link:../../packages/civitai-ui

@@ -52,6 +52,7 @@
     IconChevronRight,
     IconExternalLink,
   } from '@tabler/icons-svelte';
+  import { modelUrl } from '$lib/model-url';
   import type { PageData } from './$types';
   import type { CreatorModel, CreatorModelVersion } from '$lib/server/models';
 
@@ -440,7 +441,7 @@
             </Badge>
             {#if !bulkMode}
               <a
-                href="https://civitai.com/models/{model.id}"
+                href={modelUrl(model.id, model)}
                 target="_blank"
                 rel="noopener noreferrer"
                 title="View on Civitai"

@@ -6,6 +6,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import { formatRange } from '$lib/date-range';
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
+  import { modelUrl } from '$lib/model-url';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -19,9 +20,7 @@
   const cell = (v: PageData['model']['versions'][number], currency: string) =>
     v.currencies.find((c) => c.currency === currency) ?? { currency, total: 0, prev: 0 };
 
-  const civitaiUrl = $derived(
-    `https://civitai.${data.model.nsfw ? 'red' : 'com'}/models/${data.model.modelId}`
-  );
+  const civitaiUrl = $derived(modelUrl(data.model.modelId, data.model));
 
   let lookupId = $state('');
   function goToModel(e: Event) {

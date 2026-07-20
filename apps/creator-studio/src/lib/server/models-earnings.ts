@@ -304,6 +304,7 @@ export type ModelVersionAnalytics = {
   modelId: number;
   modelName: string | null;
   nsfw: boolean;
+  nsfwLevel: number;
   versions: VersionAnalytics[];
 };
 
@@ -324,7 +325,7 @@ async function fetchModelVersionAnalytics({
   const model = await dbRead
     .selectFrom('Model')
     .where('id', '=', mid)
-    .select(['id', 'name', 'userId', 'nsfw'])
+    .select(['id', 'name', 'userId', 'nsfw', 'nsfwLevel'])
     .executeTakeFirst();
   if (!model || Number(model.userId) !== uid) return null; // not found, or not the caller's model
 
@@ -339,6 +340,7 @@ async function fetchModelVersionAnalytics({
     modelId: mid,
     modelName: model.name ?? null,
     nsfw: !!model.nsfw,
+    nsfwLevel: Number(model.nsfwLevel ?? 0),
     versions: versions.map((v) => ({
       versionId: Number(v.id),
       versionName: v.name ?? null,
