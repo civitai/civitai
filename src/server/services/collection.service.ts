@@ -85,6 +85,7 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -2013,6 +2014,10 @@ export const validateContestCollectionEntry = async ({
       );
     }
   }
+
+  // User challenges accept entries only once Active — makes the entry WRITE agree with the fee
+  // CHARGE (which already requires Active). No-op for daily/system/community collections.
+  await assertUserChallengeAcceptingEntries(collectionId);
 
   if (!metadata) {
     return;
