@@ -132,9 +132,11 @@ export function AuctionMyBidsList({
     [mobile]
   );
 
+  // Keyed on the bid id, not (auction, entity): a user can hold both a green and a
+  // yellow bid on the same entity, and a duplicate key drops one of them from the list.
   const getKey = useCallback((row: Row, index: number) => {
-    if (row.kind === 'bid') return `bid-${row.bid.auction.id}-${row.bid.entityId}`;
-    if (row.kind === 'recurring') return `rec-${row.bid.auctionBase.id}-${row.bid.entityId}`;
+    if (row.kind === 'bid') return `bid-${row.bid.id}`;
+    if (row.kind === 'recurring') return `rec-${row.bid.id}`;
     return chromeRowKey(row, index);
   }, []);
 

@@ -456,16 +456,22 @@ export const AuctionInfo = () => {
     [auctionData?.bids, selectedModel?.id]
   );
 
+  // Read through a ref: `placeBidInView` flips every time the bid panel crosses the
+  // viewport edge, and a new identity here re-renders every memoized card in the list —
+  // during scrolling, which is the case the memo exists for.
+  const placeBidInViewRef = useRef(placeBidInView);
+  placeBidInViewRef.current = placeBidInView;
+
   const addBidFn = useCallback(
     (entity: GenerationResource) => {
       setSelectedModel(entity);
 
-      if (!placeBidInView) {
+      if (!placeBidInViewRef.current) {
         const elem = document.getElementById(`scroll-to-bid`);
         if (elem) elem.scrollIntoView({ behavior: 'smooth' });
       }
     },
-    [placeBidInView, setSelectedModel]
+    [setSelectedModel]
   );
 
   const validFor = auctionData

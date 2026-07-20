@@ -18,20 +18,20 @@ export const AuctionMyBids = () => {
   const {
     data: bidData = [],
     isInitialLoading: isInitialLoadingBidData,
-    isRefetching: isRefetchingBidData,
     isError: isErrorBidData,
   } = trpc.auction.getMyBids.useQuery(undefined, { enabled: !!currentUser });
 
   const {
     data: bidRecurringData = [],
     isInitialLoading: isInitialLoadingBidRecurringData,
-    isRefetching: isRefetchingBidRecurringData,
     isError: isErrorBidRecurringData,
   } = trpc.auction.getMyRecurringBids.useQuery(undefined, { enabled: !!currentUser });
 
-  const isLoadingBidData = isInitialLoadingBidData || isRefetchingBidData;
-  const isLoadingBidRecurringData =
-    isInitialLoadingBidRecurringData || isRefetchingBidRecurringData;
+  // Only the initial load swaps rows for skeletons. Folding in `isRefetching` would
+  // collapse the list on every window-focus refetch and post-bid invalidation, and the
+  // virtualizer clamps the scroll offset to the shrunken list rather than holding place.
+  const isLoadingBidData = isInitialLoadingBidData;
+  const isLoadingBidRecurringData = isInitialLoadingBidRecurringData;
 
   const hasSearchText = useCallback(
     (

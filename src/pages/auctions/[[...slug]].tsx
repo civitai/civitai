@@ -104,11 +104,19 @@ export default function Auctions() {
   }, [slug, auctions.length]);
 
   // A slug that matches no active auction is only knowable once the list has loaded.
+  // Derived rather than latched: the set of active slugs turns over daily without the
+  // count changing, and getAll is cached for 30s, so a freshly-opened auction can be
+  // absent from the first response and present in the next one.
+  const isValidSlug =
+    isLoadingAuctions ||
+    isErrorAuctions ||
+    !slug ||
+    slug === MY_BIDS ||
+    auctions.some((a) => a.auctionBase.slug === slug);
+
   useEffect(() => {
-    if (isLoadingAuctions || isErrorAuctions) return;
-    const valid = !slug || slug === MY_BIDS || auctions.some((a) => a.auctionBase.slug === slug);
-    if (valid !== validAuction) setValidAuction(valid);
-  }, [slug, auctions.length, isLoadingAuctions, isErrorAuctions]);
+    if (isValidSlug !== validAuction) setValidAuction(isValidSlug);
+  }, [isValidSlug, validAuction, setValidAuction]);
 
   useEffect(() => {
     if (!running) runTour({ key: 'auction', step: 0 });

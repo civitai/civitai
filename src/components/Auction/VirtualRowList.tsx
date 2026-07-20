@@ -64,9 +64,10 @@ export function VirtualRowList<T extends { kind: string }>({
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
 
-  // Rows are positioned relative to the scroll container, so the distance down to this
-  // list has to track anything above it resizing — the search box and the collapsible
-  // filter panel both do, without changing the row count.
+  // Rows are absolutely positioned against the scroll container, so a stale offset
+  // shifts every one of them. Anything above the list can resize without touching the
+  // row count — placing a bid expands the panel above it by a couple of rows' worth —
+  // so this watches the scrolled content, not just the (fixed-size) scroll box.
   useLayoutEffect(() => {
     const list = listRef.current;
     const scrollArea = scrollAreaRef?.current;
@@ -85,6 +86,7 @@ export function VirtualRowList<T extends { kind: string }>({
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(scrollArea);
+    for (const child of Array.from(scrollArea.children)) observer.observe(child);
     return () => observer.disconnect();
   }, [scrollAreaRef, rows.length]);
 
@@ -108,6 +110,8 @@ export function VirtualRowList<T extends { kind: string }>({
     overscan: 5,
     gap: ROW_GAP,
     scrollMargin,
+    // Without this a mount into an already-scrolled container paints from index 0.
+    initialOffset: () => scrollAreaRef?.current?.scrollTop ?? 0,
     // Native scrollend; virtual-core's fallback installs a 150ms timer per scroll tick.
     useScrollendEvent: true,
   });
