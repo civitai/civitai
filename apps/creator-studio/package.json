@@ -1,6 +1,6 @@
 {
   "name": "@civitai/creator-studio-app",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "private": true,
   "type": "module",
   "scripts": {
