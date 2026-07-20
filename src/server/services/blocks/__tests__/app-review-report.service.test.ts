@@ -62,6 +62,8 @@ describe('getPriorAgentReport', () => {
     await getPriorAgentReport({ appBlockId: 'ab_x', version: '2.0.0' });
     expect(mockFindMany).toHaveBeenCalledWith({
       where: { appBlockId: 'ab_x', status: 'complete' },
+      orderBy: { startedAt: 'desc' },
+      take: 100,
     });
   });
 
@@ -70,6 +72,8 @@ describe('getPriorAgentReport', () => {
     await getPriorAgentReport({ oauthClientId: 'oc_y', version: '2.0.0' });
     expect(mockFindMany).toHaveBeenCalledWith({
       where: { oauthClientId: 'oc_y', status: 'complete' },
+      orderBy: { startedAt: 'desc' },
+      take: 100,
     });
   });
 
@@ -96,6 +100,18 @@ describe('getPriorAgentReport', () => {
     ]);
     const prior = await getPriorAgentReport({ appBlockId: 'ab_x', version: '1.0.0' });
     expect(prior?.id).toBe('arar_late');
+  });
+
+  it('picks the semver-latest even when the recency-bounded fetch returns a different order', async () => {
+    // The query is bounded/ordered by startedAt desc; the in-app semver sort is
+    // authoritative, so the greatest older version wins regardless of fetch order.
+    mockFindMany.mockResolvedValue([
+      report({ id: 'arar_newest_started', version: '0.2.0', startedAt: new Date('2026-03-01T00:00:00Z') }),
+      report({ id: 'arar_highest_semver', version: '0.10.0', startedAt: new Date('2026-01-01T00:00:00Z') }),
+      report({ id: 'arar_mid', version: '0.9.0', startedAt: new Date('2026-02-01T00:00:00Z') }),
+    ]);
+    const prior = await getPriorAgentReport({ appBlockId: 'ab_x', version: '1.0.0' });
+    expect(prior?.id).toBe('arar_highest_semver');
   });
 
   it('throws when neither or both app keys are provided', async () => {
