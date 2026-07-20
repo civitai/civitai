@@ -122,6 +122,7 @@ import type {
   Model3DStatus,
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
+  OutboxEntity,
 } from './enums';
 
 export type Account = {
@@ -2791,6 +2792,15 @@ export type OauthConsent = {
   createdAt: Generated<Timestamp>;
   updatedAt: Generated<Timestamp>;
 };
+export type Outbox = {
+  id: Generated<string>;
+  event: string;
+  entityType: OutboxEntity;
+  entityId: string;
+  createdAt: Generated<Timestamp | null>;
+  details: unknown | null;
+  attempts: number | null;
+};
 export type Partner = {
   id: Generated<number>;
   name: string;
@@ -4047,6 +4057,7 @@ export type DB = {
   NewOrderSmite: NewOrderSmite;
   OauthClient: OauthClient;
   OauthConsent: OauthConsent;
+  Outbox: Outbox;
   Partner: Partner;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;

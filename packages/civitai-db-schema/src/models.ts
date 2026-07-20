@@ -234,6 +234,8 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
+export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+
 export interface Account {
   id: number;
   userId: number;
@@ -5027,6 +5029,16 @@ export interface ShopifyMerchOrder {
   userId: number | null;
   grantedAt: Date | null;
   createdAt: Date;
+}
+
+export interface Outbox {
+  id: bigint;
+  event: string;
+  entityType: OutboxEntity;
+  entityId: bigint;
+  createdAt: Date | null;
+  details: JsonValue | null;
+  attempts: number | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
