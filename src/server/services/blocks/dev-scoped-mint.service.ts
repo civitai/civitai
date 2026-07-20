@@ -248,16 +248,50 @@ export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
 }
 
 /**
+ * Extract a resolvable manifest page's declared per-generation Buzz budget
+ * (`page.buzzBudgetPerGen`) for use as the DEV-token DEFAULT budget. Returns the
+ * positive integer when the manifest declares a valid one, else `undefined` (the
+ * caller then falls back to `DEV_BUZZ_BUDGET_DEFAULT`). Mirrors the host-mint's
+ * manifest-budget read (`block-tokens/index.ts`): a fractional / NaN / Infinity /
+ * non-positive / non-number value is IGNORED (→ undefined), never flowed through
+ * as a budget. `resolveDevBuzzBudget` still clamps the result to
+ * `DEV_BUZZ_BUDGET_CAP`, so a manifest can raise the dev default UP TO the cap but
+ * never past it. Accepts the raw `manifest.page` value (already narrowed to a
+ * non-null object by the dev-token endpoint's page-block gate, but re-guarded
+ * here so this is safe to call on any input).
+ */
+export function parseManifestBuzzBudget(page: unknown): number | undefined {
+  if (typeof page !== 'object' || page === null || Array.isArray(page)) return undefined;
+  const raw = (page as { buzzBudgetPerGen?: unknown }).buzzBudgetPerGen;
+  return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : undefined;
+}
+
+/**
  * BUDGET CAP (dev-token.ts step 8). Only meaningful when `ai:write:budgeted`
- * survived the clamp. Clamp the requested budget (or the default) to the LOWER dev
- * cap; `undefined` when no spend scope was granted.
+ * survived the clamp. Resolve the effective per-call budget and clamp it to the
+ * dev cap; `undefined` when no spend scope was granted.
+ *
+ * Precedence: an EXPLICIT caller-supplied `requestedBudget` (the CLI/body can
+ * always ask for a specific budget) > the RESOLVED app manifest's
+ * `page.buzzBudgetPerGen` (`manifestDefaultBudget`, present for the approved +
+ * pending modes where a manifest is resolvable) > `DEV_BUZZ_BUDGET_DEFAULT` (the
+ * flat platform floor, used only for the ephemeral no-row mode). The
+ * `DEV_BUZZ_BUDGET_CAP` hard ceiling clamps the final value in EVERY case, so a
+ * manifest can only ever raise the dev default UP TO the cap. This is what lets a
+ * recipe/app whose `page.buzzBudgetPerGen` exceeds 50 be dev-tested without a
+ * manual `buzzBudget` request (the flat-50 default previously rejected it with
+ * `ceiling N exceeds budget 50`).
  */
 export function resolveDevBuzzBudget(
   granted: string[],
-  requestedBudget?: number
+  requestedBudget?: number,
+  manifestDefaultBudget?: number
 ): number | undefined {
   return granted.includes('ai:write:budgeted')
-    ? Math.min(requestedBudget ?? DEV_BUZZ_BUDGET_DEFAULT, DEV_BUZZ_BUDGET_CAP)
+    ? Math.min(
+        requestedBudget ?? manifestDefaultBudget ?? DEV_BUZZ_BUDGET_DEFAULT,
+        DEV_BUZZ_BUDGET_CAP
+      )
     : undefined;
 }
 

@@ -5385,6 +5385,11 @@ async function submitCustomComfyWorkflow(opts: {
   // the CEILING (not 0) on ALL reservation keys and re-throw (refund-on-throw,
   // plan §7).
   let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  // Hoisted out of the try so the post-submit spend-attribution closure (which
+  // runs AFTER the try/catch) can read the REALIZED per-account debit —
+  // `submitted` is a try-block `const` and is out of scope there. Mirrors the
+  // txt2img path (~:3646).
+  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
   try {
     const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
     const step = createBlockCustomComfyStep(recipe, stepInput);
@@ -5402,6 +5407,7 @@ async function submitCustomComfyWorkflow(opts: {
       },
     });
     snapshot = snapshotFromWorkflow(submitted);
+    realizedTransactions = submitted.transactions;
   } catch (e) {
     await refundBlockBuzzSpend(buzzCapKey, ceiling);
     if (appSpendReserve) {
@@ -5459,7 +5465,149 @@ async function submitCustomComfyWorkflow(opts: {
     }
   }
 
+  // ── Durable audit + attribution (parity with the txt2img path ~:3725,3810).
+  // The customComfy branch early-returned before these writes, so a successful
+  // recipe generation billed real Buzz but left NO durable trail: no
+  // per-user activity row (block_scope_invocations) and no author-bounty basis
+  // (block_spend_attribution). Both are ADDED here, server-derived from the
+  // VERIFIED token claims (never client input), fire-and-forget with each
+  // write's OWN try/catch so an audit failure can never add latency to — or
+  // break — the already-billed submit response.
+
+  // (1) block_scope_invocations — the per-user activity-feed row ("this app ran
+  // a workflow on your behalf"). Fires UNCONDITIONALLY after the submit returns
+  // (even a non-throwing 'failed' snapshot logs, mapped to a 500-ish code),
+  // mirroring the txt2img call. The dev/ephemeral synthetic-app case (a
+  // PRE-APPROVAL app carries a synthetic non-FK `appBlockId`) is handled INSIDE
+  // recordScopeInvocation: `dev` routes the FK-failing insert to the
+  // `appBlockId: null` + `synthetic_app_id` retry so the row persists.
+  {
+    const invocationCost = snapshot.cost?.total ?? ceiling;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        detail: {
+          action: 'workflow.submit',
+          amount:
+            typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+        },
+        // Dev token → route a synthetic non-FK appBlockId to the nullable-appBlockId
+        // + synthetic_app_id path so the pre-approval audit row persists.
+        dev: claims.dev === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  // (2) block_spend_attribution — the author-bounty spend basis (TRACK-ONLY,
+  // status='tracked' / rate_card_version='unrated' / share=0 today; the payout
+  // rail backpays later). One row per generation that spends the viewer's Buzz,
+  // server-derived from the verified block-JWT (appId/appBlockId/blockInstanceId
+  // from the token, spender from `sub`, author looked up from the app's
+  // OauthClient) — no client-supplied attribution, so it is forge-safe.
+  // Idempotent on (workflowId, appBlockId), so a re-poll/retry can't
+  // double-attribute. Reuses the SAME service the txt2img path uses; the
+  // payout-safe currency basis (paid green/yellow vs free blue) is derived off
+  // the REALIZED per-account debit so a future non-zero share only ever accrues
+  // off the user's PAID portion. For a synthetic/ephemeral appId the OauthClient
+  // lookup misses and the write is inert (caught below), matching txt2img.
+  // customComfy carries no `sharedContentKey` (its wire body is
+  // recipe+params `.strict()`), so the base track-row is written without it.
+  //
+  // Only on a REAL workflow id + non-failed status (a failed/whatif sentinel has
+  // no generation to attribute), mirroring the txt2img guard.
+  const spendWorkflowId = snapshot.workflowId;
+  if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        // Fall back to the realized snapshot cost (then the reserved ceiling)
+        // when no paid debit is surfaced — the conservative FREE floor, which
+        // isPayoutEligibleBuzz EXCLUDES → zero bounty (anti-farming preserved).
+        snapshot.cost?.total ?? ceiling
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        // customComfy is recipe-based (no single user-picked model to attribute).
+        modelId: null,
+        // customComfy has no sharedContentKey field (recipe+params only) → omit.
+        sharedContentKey: null,
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
   return { snapshot };
+}
+
+/**
+ * Derive the PAYOUT-SAFE currency basis (buzzType + buzzAmount) for a block
+ * spend-attribution row off the orchestrator's REALIZED per-account
+ * transactions. Mirrors the inline txt2img derivation (~:3871) so a customComfy
+ * generation attributes on the SAME rule without touching that byte-frozen path:
+ *
+ *  - A generation can split across FREE (blue) and PAID (green/yellow) Buzz. The
+ *    orchestrator drains blue FIRST, so `transactions.list` carries one entry
+ *    per charge with `type` (debit/credit), `amount`, and `accountType`.
+ *  - ONLY the paid portion earns — filter to payout-eligible (green/yellow)
+ *    entries, NET debits against same-workflow credits (partial refund /
+ *    correction), and stamp that paid account + net-paid amount.
+ *  - When NO net paid debit is present (blue-only, cache-hit/0-cost, or a
+ *    snapshot returned WITHOUT transactions) fall back to the conservative FREE
+ *    floor (blue + `fallbackCost`), which `isPayoutEligibleBuzz` EXCLUDES → zero
+ *    bounty. Free-Buzz spend can never accrue a bounty; an absent debit never pays.
+ *  - Defensive: if BOTH green and yellow appear (the contract offers only
+ *    ['blue', green|yellow], so at most one paid account is touched today) we
+ *    refuse to conflate them and fall back to the blue floor.
+ *
+ * Forge-safe: `realizedTransactions` is the orchestrator's authoritative
+ * response, never client input.
+ */
+function deriveBlockSpendBasis(
+  realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'],
+  isGreen: boolean,
+  fallbackCost: number
+): { buzzType: BuzzSpendType; buzzAmount: number } {
+  const paidEntries = (realizedTransactions?.list ?? []).filter((t) =>
+    isPayoutEligibleBuzz(t.accountType)
+  );
+  const distinctPaidTypes = new Set(paidEntries.map((t) => t.accountType));
+  const netPaidAmount =
+    distinctPaidTypes.size > 1
+      ? 0
+      : paidEntries.reduce(
+          (sum, t) =>
+            sum + (t.type === 'debit' ? Math.abs(t.amount ?? 0) : -Math.abs(t.amount ?? 0)),
+          0
+        );
+  const hasPaidDebit = distinctPaidTypes.size === 1 && netPaidAmount > 0;
+  const paidType = hasPaidDebit ? (paidEntries[0].accountType as BuzzSpendType) : undefined;
+  // paidType is set iff hasPaidDebit; otherwise the conservative free floor
+  // (getBlockAllowedAccountTypes[0] === 'blue' in both maturity branches).
+  const buzzType: BuzzSpendType = paidType ?? getBlockAllowedAccountTypes(isGreen)[0];
+  const buzzAmount = hasPaidDebit ? netPaidAmount : Math.ceil(fallbackCost);
+  return { buzzType, buzzAmount };
 }
 
 /**
