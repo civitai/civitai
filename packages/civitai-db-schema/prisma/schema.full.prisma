@@ -7256,3 +7256,24 @@ model ShopifyMerchOrder {
   @@index([email])
   @@index([userId])
 }
+
+enum OutboxEntity {
+  Article
+  Image
+  Model
+  Post
+  ModelVersion
+}
+
+/// Transactional outbox for entity lifecycle events, consumed by the event-engine app via Debezium CDC
+/// and its reconciliation poller. Pre-existed in the DB (applied manually); modeled here. `attempts` backs
+/// the poller's retry bookkeeping (park past a max-attempts cap; re-drive via redrive:outbox).
+model Outbox {
+  id         BigInt       @id @default(autoincrement())
+  event      String
+  entityType OutboxEntity
+  entityId   BigInt
+  createdAt  DateTime?    @default(now())
+  details    Json?
+  attempts   Int?
+}

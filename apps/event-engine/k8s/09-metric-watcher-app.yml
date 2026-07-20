@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metric-event-watcher
+  namespace: metric-watcher
+  labels:
+    app: metric-event-watcher
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: metric-event-watcher
+  template:
+    metadata:
+      labels:
+        app: metric-event-watcher
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: metric-event-watcher
+          # Note: The consumer automatically configures Debezium on startup
+          # via DebeziumManager.ensureConnectorConfigured()
+          image: ghcr.io/civitai/metric-event-watcher:latest
+          imagePullPolicy: Always
+          envFrom:
+            # Load all config from ConfigMap (includes secrets)
+            - configMapRef:
+                name: metric-watcher-cfg
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metric-event-watcher
+  namespace: metric-watcher
+  labels:
+    app: metric-event-watcher
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  selector:
+    app: metric-event-watcher
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: metric-watcher-setup
+  namespace: metric-watcher
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: setup
+          image: ghcr.io/civitai/metric-event-watcher:latest
+          command: ["npm", "run", "setup"]
+          envFrom:
+            # Load all config from ConfigMap (includes secrets)
+            - configMapRef:
+                name: metric-watcher-cfg
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: metric-event-watcher-pdb
+  namespace: metric-watcher
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: metric-event-watcher
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: metric-event-watcher-hpa
+  namespace: metric-watcher
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: metric-event-watcher
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# ServiceMonitor for Prometheus Operator (optional - only if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: metric-event-watcher
+  namespace: metric-watcher
+  labels:
+    app: metric-event-watcher
+spec:
+  selector:
+    matchLabels:
+      app: metric-event-watcher
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
