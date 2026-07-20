@@ -252,6 +252,7 @@ export const getModelsRaw = async ({
   input,
   include,
   user: sessionUser,
+  ignoreBrowsingAddons,
   _forceBaseModelMetrics,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
@@ -260,14 +261,25 @@ export const getModelsRaw = async ({
   };
   include?: Array<'details' | 'cosmetics'>;
   user?: { id: number; isModerator?: boolean; username?: string };
+  /**
+   * Drop the addon-derived discovery exclusions — for by-id lookups, whose
+   * `browsingLevel` is a permission ceiling rather than viewer intent.
+   * Deliberately a sibling of `input` (not a field on it) so it can never arrive
+   * from parsed query params.
+   */
+  ignoreBrowsingAddons?: boolean;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
-  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
-    id: sessionUser?.id,
-    username: sessionUser?.username,
-    isModerator: sessionUser?.isModerator,
-  });
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
+    input,
+    {
+      id: sessionUser?.id,
+      username: sessionUser?.username,
+      isModerator: sessionUser?.isModerator,
+    },
+    { ignoreBrowsingAddons }
+  );
   if (blockedEnforcement.emptyResult) return { items: [], isPrivate: false };
 
   const {
@@ -3174,6 +3186,7 @@ export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpoi
 export async function getModelsWithVersions({
   input,
   user,
+  ignoreBrowsingAddons,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -3182,11 +3195,14 @@ export async function getModelsWithVersions({
     username?: string;
     filePreferences?: UserFilePreferences;
   };
+  /** See `getModelsRaw` — by-id lookups opt out of the addon discovery gates. */
+  ignoreBrowsingAddons?: boolean;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
     user,
     include: ['details'],
+    ignoreBrowsingAddons,
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
