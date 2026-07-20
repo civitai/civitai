@@ -488,6 +488,43 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
   });
 }
 
+// Walks the range one calendar month at a time, newest first. Each slice is
+// fetched unordered so ClickHouse can use the byFromAccount / byToAccount
+// projections, then sorted in-process. Slices are strictly ordered relative to
+// one another, so concatenating them yields a globally descending sequence.
+async function* walkTransactionSlices(params: TransactionQueryParams) {
+  const rangeStart = dayjs(params.start);
+  let sliceEnd = dayjs(params.end);
+
+  while (!sliceEnd.isBefore(rangeStart)) {
+    const sliceStart = dayjs.max(sliceEnd.subtract(1, 'month'), rangeStart);
+    const rows = await fetchTransactionBranches({
+      ...params,
+      start: sliceStart.toDate(),
+      end: sliceEnd.toDate(),
+      ordered: false,
+      limit: undefined,
+    });
+
+    if (rows.length > MAX_SLICE_ROWS)
+      throw throwBadRequestError(
+        'Too many transactions in a single month to process. Narrow the date range and try again.'
+      );
+
+    if (rows.length) yield rows;
+    if (sliceStart.isSame(rangeStart)) return;
+
+    // Exclusive upper bound on the next slice so a transaction landing exactly
+    // on the boundary second is never emitted twice.
+    sliceEnd = sliceStart.subtract(1, 'second');
+  }
+}
+
+// A month of the busiest account on record is ~40K rows. This is a guard against
+// a future high-volume account materializing something unbounded, not a limit
+// any real user should meet.
+const MAX_SLICE_ROWS = 250_000;
+
 export async function getUserBuzzTransactionsMulti({
   accountId,
   limit = 100,
@@ -497,8 +534,14 @@ export async function getUserBuzzTransactionsMulti({
 
   assertValidTransactionRange(input);
 
-  // One extra row per branch tells us whether another page exists.
-  const rows = await fetchTransactionBranches({ accountId, limit: limit + 1, ...input });
+  // An ORDER BY would cost the projection — 33M rows read per page view versus
+  // ~54K — so pages are assembled from unordered slices instead. One extra row
+  // tells us whether another page exists.
+  const rows: ClickhouseBuzzTransaction[] = [];
+  for await (const slice of walkTransactionSlices({ accountId, ...input })) {
+    rows.push(...slice);
+    if (rows.length > limit) break;
+  }
 
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);

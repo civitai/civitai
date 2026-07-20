@@ -36,10 +36,13 @@ async function underRateLimit(userId: number) {
   const key = `${REDIS_KEYS.TRPC.LIMIT.BASE}:buzz:export:${userId}`;
   try {
     const count = await redis.incrBy(key as never, 1);
-    // Refreshed every request rather than only on the first: a pod killed
-    // between the INCR and a one-shot EXPIRE would leave the key with no TTL,
-    // locking that user out of exporting permanently.
-    await redis.expire(key as never, RATE_LIMIT_WINDOW_SECONDS);
+    // The window must stay fixed: refreshing the TTL on every request would let
+    // a user who retries through their 429s hold the counter open forever.
+    // Repairing a missing TTL still covers a pod dying between INCR and EXPIRE.
+    if (count === 1) await redis.expire(key as never, RATE_LIMIT_WINDOW_SECONDS);
+    else if ((await redis.ttl(key as never)) < 0)
+      await redis.expire(key as never, RATE_LIMIT_WINDOW_SECONDS);
+
     return count <= EXPORTS_PER_HOUR;
   } catch {
     return true;
