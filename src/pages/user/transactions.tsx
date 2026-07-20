@@ -56,7 +56,7 @@ const transactionTypes = [
 
 function safeJsonParse(body: string): { error?: string } {
   try {
-    return JSON.parse(body);
+    return JSON.parse(body) ?? {};
   } catch {
     return {};
   }
@@ -153,6 +153,12 @@ export default function UserTransactions() {
       const frame = document.createElement('iframe');
       frame.style.display = 'none';
       frame.onload = () => {
+        // Appending a src-less frame queues a load for its initial about:blank
+        // document, so src is assigned first — otherwise that phantom event can
+        // fire a false error and remove the frame before the real request runs.
+        if (frame.contentWindow?.location.href === 'about:blank') return;
+
+        window.clearTimeout(cleanup);
         const body = frame.contentDocument?.body?.textContent ?? '';
         const { error } = safeJsonParse(body);
         showErrorNotification({
@@ -161,8 +167,13 @@ export default function UserTransactions() {
         });
         frame.remove();
       };
-      document.body.appendChild(frame);
       frame.src = exportUrl;
+      document.body.appendChild(frame);
+
+      // Long enough never to interrupt a real download; only reclaims the node
+      // if nothing ever arrives. A successful download detaches from the frame,
+      // so removing it later is safe.
+      const cleanup = window.setTimeout(() => frame.remove(), 30 * 60_000);
     } catch {
       showErrorNotification({
         title: 'Export unavailable',

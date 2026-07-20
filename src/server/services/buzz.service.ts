@@ -563,11 +563,28 @@ async function* emitSliceRows(
     limit: MAX_SLICE_ROWS + 1,
   });
 
-  if (rows.length > MAX_SLICE_ROWS && end.diff(start, 'second') > MIN_SLICE_SECONDS) {
-    const mid = start.add(end.diff(start) / 2, 'millisecond');
-    // Newer half first — the whole walk is descending.
-    yield* emitSliceRows(params, mid.add(1, 'second'), end);
-    yield* emitSliceRows(params, start, mid);
+  if (rows.length > MAX_SLICE_ROWS) {
+    if (end.diff(start, 'second') > MIN_SLICE_SECONDS) {
+      const mid = start.add(end.diff(start) / 2, 'millisecond');
+      // Newer half first — the whole walk is descending.
+      yield* emitSliceRows(params, mid.add(1, 'second'), end);
+      yield* emitSliceRows(params, start, mid);
+      return;
+    }
+
+    // Can't split an interval below a second, and the bounded fetch above is
+    // truncated. Re-read it whole rather than emit a short slice: this is a
+    // financial export, where a missing row is both invisible and wrong.
+    // Unreachable in practice — the densest second on record holds 48 rows.
+    const complete = await fetchTransactionBranches({
+      ...params,
+      start: start.toDate(),
+      end: end.toDate(),
+      ordered: false,
+      limit: undefined,
+    });
+
+    if (complete.length) yield complete;
     return;
   }
 
