@@ -48,6 +48,8 @@ const statusMap: Record<string, ChallengeStatus> = {
   completed: ChallengeStatus.Completed,
 };
 
+type MyChallengeStatus = 'Scheduled' | 'Active' | 'Completed' | 'Cancelled';
+
 function ChallengesPage() {
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -80,12 +82,13 @@ function ChallengesPage() {
   const participation = parseParticipationQuery(router.query.participation);
 
   const mine = router.query.engagement === 'created';
-  const [myStatus, setMyStatus] = useState<'Scheduled' | 'Active' | 'Completed'>('Scheduled');
+  const [myStatus, setMyStatus] = useState<MyChallengeStatus>('Scheduled');
 
-  const myStatusFilters: Record<string, Partial<GetInfiniteChallengesInput>> = {
+  const myStatusFilters: Record<MyChallengeStatus, Partial<GetInfiniteChallengesInput>> = {
     Scheduled: { status: [ChallengeStatus.Scheduled], includeEnded: false },
     Active: { status: [ChallengeStatus.Active], includeEnded: false },
     Completed: { status: [ChallengeStatus.Completed], includeEnded: true },
+    Cancelled: { status: [ChallengeStatus.Cancelled], includeEnded: true },
   };
 
   if (mine) {
@@ -102,9 +105,9 @@ function ChallengesPage() {
               classNames={styles}
               transitionDuration={0}
               radius="xl"
-              data={['Scheduled', 'Active', 'Completed']}
+              data={['Scheduled', 'Active', 'Completed', 'Cancelled']}
               value={myStatus}
-              onChange={(v) => setMyStatus(v as 'Scheduled' | 'Active' | 'Completed')}
+              onChange={(v) => setMyStatus(v as MyChallengeStatus)}
               withItemsBorders={false}
             />
           </Stack>
