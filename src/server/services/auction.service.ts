@@ -29,7 +29,7 @@ import {
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
-import { getImagesForModelVersionCache } from '~/server/services/image.service';
+import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   throwBadRequestError,
@@ -213,10 +213,13 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
       },
     },
   });
-  const imageData = await getImagesForModelVersionCache(entityIds);
+  // The tag-attaching wrapper (`getImagesForModelVersionCache`) costs a second cache
+  // round-trip for tags no auction card reads.
+  const imageData = await imagesForModelVersionsCache.fetch(entityIds);
+  const mvById = new Map(mvData.map((d) => [d.id, d]));
 
   return data.map((b) => {
-    const mvMatch = mvData.find((d) => d.id === b.entityId);
+    const mvMatch = mvById.get(b.entityId);
 
     if (!mvMatch) {
       return {
@@ -225,9 +228,8 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
       };
     }
 
-    const { meta, ...modelData } = mvMatch.model;
-    const firstImage =
-      imageData[b.entityId]?.images?.length > 0 ? imageData[b.entityId]?.images?.[0] : undefined;
+    const { meta, user, ...modelData } = mvMatch.model;
+    const firstImage = imageData[b.entityId]?.images?.[0];
 
     return {
       ...b,
@@ -235,9 +237,17 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
         ...mvMatch,
         model: {
           ...modelData,
+          // `metadata` on both images is the single largest field in this payload and
+          // nothing on the auction cards reads it.
+          user: {
+            ...user,
+            profilePicture: user.profilePicture
+              ? { ...user.profilePicture, metadata: null }
+              : user.profilePicture,
+          },
           cannotPromote: (meta as ModelMeta | null | undefined)?.cannotPromote ?? false,
         },
-        image: firstImage,
+        image: firstImage ? { ...firstImage, metadata: null } : undefined,
       },
     };
   });

@@ -4,10 +4,11 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 // returns one row per bid the user placed. These tests pin the JS half of that split —
 // the threshold/`additionalPriceNeeded` arithmetic that used to run over every bid of
 // every auction the user had ever touched.
-const { queryRaw, auctionFindMany, modelVersionFindMany } = vi.hoisted(() => ({
+const { queryRaw, auctionFindMany, modelVersionFindMany, imagesFetch } = vi.hoisted(() => ({
   queryRaw: vi.fn(),
   auctionFindMany: vi.fn(),
-  modelVersionFindMany: vi.fn(async () => []),
+  modelVersionFindMany: vi.fn(async () => [] as unknown[]),
+  imagesFetch: vi.fn(async () => ({} as Record<number, unknown>)),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -19,10 +20,10 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {},
 }));
 
-// getAuctionMVData hydrates entity cards; it is orthogonal to the bid math, and its real
-// import graph (image.service -> event-engine-common) is heavy. Pass rows through unchanged.
+// image.service's real import graph (-> event-engine-common) is heavy; only the cache the
+// entity hydration reads is needed here.
 vi.mock('~/server/services/image.service', () => ({
-  getImagesForModelVersionCache: vi.fn(async () => ({})),
+  imagesForModelVersionsCache: { fetch: imagesFetch },
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/utils/signal-client', () => ({ signalClient: { send: vi.fn(), topicSend: vi.fn() } }));
@@ -140,6 +141,57 @@ describe('getMyBids', () => {
 
     const bids = await getMyBids({ userId: 1 });
     expect(bids.map((b) => b.id)).toEqual([3, 2, 1]);
+  });
+
+  // `metadata` on the entity image and on the creator's profile picture, plus the image
+  // tag list, were the three largest fields in the auction payload and nothing on the
+  // cards reads any of them.
+  describe('entity hydration payload', () => {
+    beforeEach(() => {
+      modelVersionFindMany.mockResolvedValue([
+        {
+          id: 5,
+          name: 'v1',
+          baseModel: 'SDXL 1.0',
+          nsfwLevel: 1,
+          model: {
+            id: 50,
+            name: 'A model',
+            type: 'Checkpoint',
+            nsfw: false,
+            poi: false,
+            minor: false,
+            meta: { cannotPromote: true },
+            user: {
+              id: 7,
+              username: 'creator',
+              profilePicture: { id: 1, url: 'abc', metadata: { size: 1048496 } },
+            },
+          },
+        },
+      ]);
+      imagesFetch.mockResolvedValue({
+        5: { images: [{ id: 9, url: 'img', hash: 'h', metadata: { size: 44449628 } }] },
+      });
+    });
+
+    it('drops the image and profile-picture metadata blobs', async () => {
+      queryRaw.mockResolvedValue([row({ entityId: 5 })]);
+
+      const [bid] = await getMyBids({ userId: 1 });
+      expect(bid.entityData?.image?.metadata).toBeNull();
+      expect(bid.entityData?.model.user.profilePicture?.metadata).toBeNull();
+      expect(bid.entityData?.image?.url).toBe('img'); // the fields the card renders survive
+      expect(bid.entityData?.model.cannotPromote).toBe(true);
+    });
+
+    it('reads the image cache directly, skipping the tag round-trip', async () => {
+      queryRaw.mockResolvedValue([row({ entityId: 5 })]);
+
+      const [bid] = await getMyBids({ userId: 1 });
+      expect(bid.entityData?.image).not.toHaveProperty('tags');
+      expect(imagesFetch).toHaveBeenCalledWith([5]);
+    });
   });
 
   it('never selects an auction’s bid list', async () => {
