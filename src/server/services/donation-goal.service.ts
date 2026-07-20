@@ -177,8 +177,27 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
       });
 
       // Ensures user gets access to the resource after purchasing.
-      await bustMvCache(goal.modelVersionId, modelVersion.modelId);
-      await dataForModelsCache.refresh(modelVersion.modelId);
+      //
+      // MUST be fail-open (same reasoning as the public-cache bust below): both ops do
+      // un-wrapped redis/cache work that REJECTS on any transient redis error, and this runs
+      // INSIDE donateToGoal's try AFTER `donation.create` has already committed — that catch
+      // refunds the buzz and throws "Failed to create donation" on ANY throw. So a redis blip
+      // here must NEVER propagate, or the donor is refunded for a persisted donation and retries
+      // → double donation. On failure the caches just serve briefly-stale data, which is
+      // acceptable; the goal-completion + EA-unlock DB writes above have already committed.
+      try {
+        await bustMvCache(goal.modelVersionId, modelVersion.modelId);
+        await dataForModelsCache.refresh(modelVersion.modelId);
+      } catch (error) {
+        logToAxiom({
+          type: 'warning',
+          name: 'donation-goal-ea-cache-refresh-failed',
+          error,
+          donationGoalId,
+          modelVersionId: goal.modelVersionId,
+          modelId: modelVersion.modelId,
+        }).catch(() => undefined);
+      }
     }
   }
 
