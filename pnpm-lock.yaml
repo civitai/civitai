@@ -46,6 +46,9 @@ importers:
       '@civitai/next-axiom':
         specifier: ^0.17.0
         version: 0.17.0(next@16.2.7(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:packages/civitai-shared
       '@clavata/sdk':
         specifier: ^0.2.3
         version: 0.2.3
@@ -1262,6 +1265,8 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.18)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jiti@2.7.0)(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(lightningcss@1.32.0)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1)
+
+  packages/civitai-shared: {}
 
   packages/civitai-storage:
     dependencies:
