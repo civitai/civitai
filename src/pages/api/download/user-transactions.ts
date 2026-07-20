@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { exportUserBuzzTransactionsSchema } from '~/server/schema/buzz.schema';
 import {
+  assertValidTransactionRange,
   getTransactionExportFilename,
   streamUserBuzzTransactionsCsv,
 } from '~/server/services/buzz.service';
@@ -24,7 +25,8 @@ const querySchema = z.object({
     .pipe(z.array(z.enum(buzzSpendTypes)).min(1)),
   start: z.coerce.date(),
   end: z.coerce.date(),
-  type: z.coerce.number().pipe(z.enum(TransactionType)).optional(),
+  // `?type=` with no value must not coerce to 0 (Tip) and silently narrow the export.
+  type: z.string().min(1).transform(Number).pipe(z.enum(TransactionType)).optional(),
 });
 
 // Fixed-window per-user limiter. Fails OPEN: a redis blip shouldn't block a
@@ -34,7 +36,10 @@ async function underRateLimit(userId: number) {
   const key = `${REDIS_KEYS.TRPC.LIMIT.BASE}:buzz:export:${userId}`;
   try {
     const count = await redis.incrBy(key as never, 1);
-    if (count === 1) await redis.expire(key as never, RATE_LIMIT_WINDOW_SECONDS);
+    // Refreshed every request rather than only on the first: a pod killed
+    // between the INCR and a one-shot EXPIRE would leave the key with no TTL,
+    // locking that user out of exporting permanently.
+    await redis.expire(key as never, RATE_LIMIT_WINDOW_SECONDS);
     return count <= EXPORTS_PER_HOUR;
   } catch {
     return true;
@@ -49,14 +54,19 @@ export default AuthedEndpoint(
     const input = exportUserBuzzTransactionsSchema.safeParse(parsed.data);
     if (!input.success) return res.status(400).json({ error: 'Invalid parameters' });
 
+    // Validate the range before spending any of the caller's hourly quota.
+    try {
+      assertValidTransactionRange(input.data);
+    } catch (error) {
+      return res.status(400).json({ error: (error as Error).message });
+    }
+
     if (!(await underRateLimit(user.id)))
       return res.status(429).json({ error: "You're exporting too often. Try again later." });
 
     const filename = getTransactionExportFilename(input.data);
 
     try {
-      // Headers go out before the first chunk, so any failure after this point
-      // can only truncate the download — it can't be turned into a JSON error.
       for await (const chunk of streamUserBuzzTransactionsCsv({
         ...input.data,
         accountId: user.id,
@@ -75,10 +85,17 @@ export default AuthedEndpoint(
         name: 'buzz-transactions-export',
         type: 'error',
         message: (error as Error).message,
+        stack: (error as Error).stack,
         userId: user.id,
-      });
+      }).catch(() => undefined);
+
       if (!res.headersSent)
-        return res.status(400).json({ error: (error as Error).message ?? 'Export failed' });
+        return res.status(500).json({ error: 'Could not export transactions right now.' });
+
+      // The status is already committed, so ending normally would hand the user a
+      // truncated CSV that looks complete. Destroying the socket aborts the
+      // chunked response so the browser reports a failed download instead.
+      return res.destroy();
     }
 
     return res.end();

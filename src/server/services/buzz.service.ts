@@ -313,13 +313,18 @@ function toClickhouseTransactionType(type: TransactionType) {
   return name.charAt(0).toLowerCase() + name.slice(1);
 }
 
-const CURSOR_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|([0-9a-f-]{36})$/i;
+// Lowercase-only: toString(uuid) is always lowercase and ClickHouse compares
+// strings byte-wise, so an uppercase cursor would land on the wrong side of the
+// entire result set rather than erroring.
+const CURSOR_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|([0-9a-f-]{36})$/;
 
 function toClickhouseCursor(cursor: string) {
   const match = CURSOR_PATTERN.exec(cursor);
   if (!match) throw throwBadRequestError('Invalid cursor');
 
-  return `(toDateTime('${match[1]}'), toUUID('${match[2]}'))`;
+  // A String literal, not toUUID: the predicate's left side is
+  // toString(transactionId), and ClickHouse refuses to compare String with UUID.
+  return `(toDateTime('${match[1]}'), '${match[2]}')`;
 }
 
 function toClickhouseDate(date: Date) {
@@ -353,6 +358,7 @@ function buildBranchQuery({
   end,
   cursor,
   limit,
+  ordered = true,
 }: TransactionQueryParams & { direction: 'from' | 'to' }) {
   const types = accountTypes.map((t) => `'${t}'`).join(',');
   const clauses = [
@@ -368,7 +374,7 @@ function buildBranchQuery({
     SELECT transactionId, date, type, amount, fromAccountId, fromAccountType, toAccountId, toAccountType, description, details, externalTransactionId
     FROM buzzTransactions
     WHERE ${clauses.join(' AND ')}
-    ORDER BY date DESC, toString(transactionId) DESC
+    ${ordered ? 'ORDER BY date DESC, toString(transactionId) DESC' : ''}
     ${limit ? `LIMIT ${limit}` : ''}
   `;
 }
@@ -381,9 +387,13 @@ type TransactionQueryParams = {
   end: Date;
   cursor?: string;
   limit?: number;
+  // An ORDER BY makes ClickHouse abandon the byFromAccount / byToAccount
+  // projections — measured at 13M rows read versus 92K for the same slice. Paths
+  // that already bound the row count sort in-process instead.
+  ordered?: boolean;
 };
 
-function assertValidRange({ start, end }: { start: Date; end: Date }) {
+export function assertValidTransactionRange({ start, end }: { start: Date; end: Date }) {
   if (end < start) throw throwBadRequestError('The end date must be after the start date');
   if (dayjs(end).diff(start, 'day') > MAX_TRANSACTION_RANGE_DAYS)
     throw throwBadRequestError(
@@ -485,7 +495,7 @@ export async function getUserBuzzTransactionsMulti({
 }: GetUserBuzzTransactionsMultiSchema & { accountId: number }) {
   if (!clickhouse) throw throwBadRequestError('Transaction history is temporarily unavailable');
 
-  assertValidRange(input);
+  assertValidTransactionRange(input);
 
   // One extra row per branch tells us whether another page exists.
   const rows = await fetchTransactionBranches({ accountId, limit: limit + 1, ...input });
@@ -571,7 +581,7 @@ export async function* streamUserBuzzTransactionsCsv({
 }: ExportUserBuzzTransactionsSchema & { accountId: number }) {
   if (!clickhouse) throw throwBadRequestError('Transaction export is temporarily unavailable');
 
-  assertValidRange(input);
+  assertValidTransactionRange(input);
 
   yield `${toCsv(EXPORT_COLUMNS, [])}\r\n`;
 
@@ -589,6 +599,7 @@ export async function* streamUserBuzzTransactionsCsv({
       accountId,
       start: sliceStart.toDate(),
       end: sliceEnd.toDate(),
+      ordered: false,
     });
 
     if (rows.length) yield `${await formatExportBatch(rows, accountId, usernames)}\r\n`;
