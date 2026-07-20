@@ -5,10 +5,10 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
  *
  * Covers the prior-report selection: picks the latest COMPLETE report strictly
  * semver-older than the version under review (semver, not lexical, ordering),
- * queries only status='complete' (so running/failed/torn-down are excluded at
- * the DB), respects the app key (appBlockId XOR oauthClientId), returns null
- * when there is no earlier report, and enforces the exactly-one-key + valid
- * semver invariants. Plus getAgentReport's by-review lookup.
+ * queries only status='complete' (so running/failed/torn-down/cost-capped are
+ * excluded at the DB), scopes to the stable `slug` key, returns null when there
+ * is no earlier report, and enforces the non-empty-slug + valid semver
+ * invariants. Plus getAgentReport's by-review lookup.
  */
 
 const { mockFindMany, mockFindFirst } = vi.hoisted(() => ({
@@ -53,25 +53,15 @@ describe('getPriorAgentReport', () => {
       report({ id: 'arar_c', version: '0.10.0' }),
     ]);
 
-    const prior = await getPriorAgentReport({ appBlockId: 'ab_x', version: '1.0.0' });
+    const prior = await getPriorAgentReport({ slug: 's_x', version: '1.0.0' });
     expect(prior?.id).toBe('arar_c');
   });
 
-  it('queries only status="complete" and scopes to the appBlockId key', async () => {
+  it('queries only status="complete" and scopes to the slug key', async () => {
     mockFindMany.mockResolvedValue([]);
-    await getPriorAgentReport({ appBlockId: 'ab_x', version: '2.0.0' });
+    await getPriorAgentReport({ slug: 's_x', version: '2.0.0' });
     expect(mockFindMany).toHaveBeenCalledWith({
-      where: { appBlockId: 'ab_x', status: 'complete' },
-      orderBy: { startedAt: 'desc' },
-      take: 100,
-    });
-  });
-
-  it('scopes to the oauthClientId key for a connect app', async () => {
-    mockFindMany.mockResolvedValue([]);
-    await getPriorAgentReport({ oauthClientId: 'oc_y', version: '2.0.0' });
-    expect(mockFindMany).toHaveBeenCalledWith({
-      where: { oauthClientId: 'oc_y', status: 'complete' },
+      where: { slug: 's_x', status: 'complete' },
       orderBy: { startedAt: 'desc' },
       take: 100,
     });
@@ -83,13 +73,13 @@ describe('getPriorAgentReport', () => {
       report({ id: 'arar_new', version: '1.1.0' }), // newer -> excluded
       report({ id: 'arar_old', version: '0.5.0' }), // older -> the answer
     ]);
-    const prior = await getPriorAgentReport({ appBlockId: 'ab_x', version: '1.0.0' });
+    const prior = await getPriorAgentReport({ slug: 's_x', version: '1.0.0' });
     expect(prior?.id).toBe('arar_old');
   });
 
   it('returns null when the app has no earlier complete report', async () => {
     mockFindMany.mockResolvedValue([report({ id: 'arar_only', version: '1.0.0' })]);
-    const prior = await getPriorAgentReport({ appBlockId: 'ab_x', version: '1.0.0' });
+    const prior = await getPriorAgentReport({ slug: 's_x', version: '1.0.0' });
     expect(prior).toBeNull();
   });
 
@@ -98,7 +88,7 @@ describe('getPriorAgentReport', () => {
       report({ id: 'arar_early', version: '0.9.0', startedAt: new Date('2026-01-01T00:00:00Z') }),
       report({ id: 'arar_late', version: '0.9.0', startedAt: new Date('2026-02-01T00:00:00Z') }),
     ]);
-    const prior = await getPriorAgentReport({ appBlockId: 'ab_x', version: '1.0.0' });
+    const prior = await getPriorAgentReport({ slug: 's_x', version: '1.0.0' });
     expect(prior?.id).toBe('arar_late');
   });
 
@@ -110,21 +100,20 @@ describe('getPriorAgentReport', () => {
       report({ id: 'arar_highest_semver', version: '0.10.0', startedAt: new Date('2026-01-01T00:00:00Z') }),
       report({ id: 'arar_mid', version: '0.9.0', startedAt: new Date('2026-02-01T00:00:00Z') }),
     ]);
-    const prior = await getPriorAgentReport({ appBlockId: 'ab_x', version: '1.0.0' });
+    const prior = await getPriorAgentReport({ slug: 's_x', version: '1.0.0' });
     expect(prior?.id).toBe('arar_highest_semver');
   });
 
-  it('throws when neither or both app keys are provided', async () => {
-    await expect(getPriorAgentReport({ version: '1.0.0' })).rejects.toThrow(/exactly one/);
-    await expect(
-      getPriorAgentReport({ appBlockId: 'ab_x', oauthClientId: 'oc_y', version: '1.0.0' })
-    ).rejects.toThrow(/exactly one/);
+  it('throws when the slug is empty', async () => {
+    await expect(getPriorAgentReport({ slug: '', version: '1.0.0' })).rejects.toThrow(
+      /non-empty slug/
+    );
     expect(mockFindMany).not.toHaveBeenCalled();
   });
 
   it('throws on an invalid semver version', async () => {
     await expect(
-      getPriorAgentReport({ appBlockId: 'ab_x', version: 'not-a-version' })
+      getPriorAgentReport({ slug: 's_x', version: 'not-a-version' })
     ).rejects.toThrow(/invalid semver/);
     expect(mockFindMany).not.toHaveBeenCalled();
   });

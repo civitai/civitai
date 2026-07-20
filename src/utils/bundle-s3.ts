@@ -1,4 +1,10 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
 
@@ -67,6 +73,44 @@ export async function stageBundleObject(key: string, buffer: Buffer): Promise<vo
       Body: buffer,
     })
   );
+}
+
+/**
+ * Best-effort delete of the per-review staged bundle object(s) for a publish
+ * request. The git-push review path stages a Forgejo-reconstructed ZIP under
+ * `agent-reviews/<publishRequestId>/<sha>.zip` (see `agentReviewBundleKey`); on
+ * teardown we remove it so staged ZIPs don't accumulate. Keyed by the
+ * `agent-reviews/<publishRequestId>/` prefix (the sha isn't known at teardown,
+ * and a re-review could stage a second sha), so a LIST-then-DELETE sweeps every
+ * staged object for the request.
+ *
+ * NEVER throws — called from the best-effort decision-path teardown. A missing
+ * object / absent config / list error is swallowed (a MinIO bucket
+ * lifecycle-expiry rule on the `agent-reviews/` prefix is the intended infra
+ * backstop — a follow-up, not this PR — so a missed delete self-heals).
+ */
+export async function deleteStagedBundle(publishRequestId: string): Promise<void> {
+  if (!publishRequestId) return;
+  try {
+    const client = getBundleS3Client();
+    const bucket = getBundleBucket();
+    const prefix = `agent-reviews/${publishRequestId}/`;
+    const listed = await client.send(
+      new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix })
+    );
+    const keys = (listed.Contents ?? [])
+      .map((o) => o.Key)
+      .filter((k): k is string => typeof k === 'string' && k.length > 0);
+    for (const Key of keys) {
+      try {
+        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key }));
+      } catch {
+        /* best-effort per-object — lifecycle-expiry backstops a missed delete */
+      }
+    }
+  } catch {
+    /* best-effort — never fail teardown on a staged-object cleanup error */
+  }
 }
 
 /** Sign a short-TTL read-only GET URL for a bundle object. */

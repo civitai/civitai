@@ -52,9 +52,10 @@ async function readRawBody(req: Readable): Promise<Buffer> {
 
 const PUBREQ_RE = /^pubreq_[0-9A-HJKMNP-TV-Z]{26}$/;
 
-/** Runner-reported statuses. `cost-capped` is a distinct runner outcome that
- *  maps onto the persisted `failed` status (the report table's CHECK allows only
- *  running|complete|failed|torn-down) — the cost-cap is noted in the summary. */
+/** Runner-reported statuses. All THREE are now valid persisted statuses (the
+ *  report table's CHECK allows running|complete|failed|torn-down|cost-capped), so
+ *  the runner's outcome — `cost-capped` included — is stored VERBATIM rather than
+ *  collapsed onto `failed`; a summary marker still flags the cost-cap for the UI. */
 const RUNNER_STATUSES = ['complete', 'failed', 'cost-capped'] as const;
 type RunnerStatus = (typeof RUNNER_STATUSES)[number];
 
@@ -77,10 +78,15 @@ function bearerFrom(header: unknown): string | null {
   return m ? m[1].trim() : null;
 }
 
-/** Map a runner status onto the persisted report status. Exported for the unit
- *  test that locks the cost-capped → failed collapse. */
-export function persistedStatusFor(runner: RunnerStatus): 'complete' | 'failed' {
-  return runner === 'complete' ? 'complete' : 'failed';
+/** Map a runner status onto the persisted report status — now an IDENTITY: every
+ *  runner status (complete|failed|cost-capped) is a valid persisted status, so
+ *  `cost-capped` is stored verbatim (no longer collapsed onto `failed`). Kept as
+ *  a named seam for the unit test + a single place to intercept if the persisted
+ *  set ever diverges from the runner set again. */
+export function persistedStatusFor(
+  runner: RunnerStatus
+): 'complete' | 'failed' | 'cost-capped' {
+  return runner;
 }
 
 /** Build the report UPDATE `data` from a validated body. Only provided fields are

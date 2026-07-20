@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import {
   getDp1Target,
@@ -112,12 +113,28 @@ export async function startAgentReview(
     );
   }
 
-  // Resolve the on-site app key. An UPDATE carries appBlockId (or an AppBlock
-  // exists for the slug). A genuine FIRST version has neither (the AppBlock is
-  // created on approve) — and the report table's app_key XOR CHECK requires
-  // exactly one key, so a first-version review cannot be keyed yet. Fail closed
-  // with a clear message (see the P1 handoff — resolving first-version keying is
-  // a follow-up, e.g. relaxing the XOR to allow a slug key).
+  // Double-provision guard (audit #3): refuse a second dispatch while a review is
+  // already `running` for this request. The partial-unique index
+  // (publish_request_id WHERE status='running') is the DB backstop; this is the
+  // friendly pre-check so the mod gets a clear error instead of a unique-violation.
+  const alreadyRunning = await dbRead.appReviewAgentReport.findFirst({
+    where: { publishRequestId, status: 'running' },
+    select: { id: true },
+  });
+  if (alreadyRunning) {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'a review is already running for this request',
+    });
+  }
+
+  // Resolve the INFORMATIONAL on-site app key. The report is keyed by the stable
+  // `slug` (present on every request), so this is best-effort: an UPDATE carries
+  // appBlockId, or an AppBlock already exists for the slug; a genuine FIRST
+  // version has neither (the AppBlock is created on approve) → appBlockId stays
+  // null. First-version reviews now persist fine (keyed by slug). External /
+  // connect (oauthClientId) is out of P1 scope — TODO: a later phase keys those
+  // by oauthClientId + kind='external'.
   let appBlockId = request.appBlockId ?? null;
   if (!appBlockId) {
     const existing = await dbRead.appBlock.findFirst({
@@ -125,11 +142,6 @@ export async function startAgentReview(
       select: { id: true },
     });
     appBlockId = existing?.id ?? null;
-  }
-  if (!appBlockId) {
-    throw new Error(
-      'agentic review needs an existing app version to key the report; first-version on-site reviews are not yet supported'
-    );
   }
 
   const sha = request.bundleSha256;
@@ -161,20 +173,25 @@ export async function startAgentReview(
   );
 
   // (c) Prior-version report → base64 JSON for the pod (empty string if none).
+  // Keyed by the stable slug so the chain resolves for a first version too.
   const { getPriorAgentReport } = await import('./app-review-report.service');
-  const prior = await getPriorAgentReport({ appBlockId, version: request.version });
+  const prior = await getPriorAgentReport({ slug: request.slug, version: request.version });
   const priorReportJsonB64 = prior
     ? Buffer.from(JSON.stringify(prior)).toString('base64')
     : '';
 
-  // (d) Insert the running report row (appBlockId XOR oauthClientId — on-site =
-  // appBlockId set, oauthClientId left null).
+  // (d) Insert the running report row. Keyed by `slug` (+ kind='onsite'); the
+  // `appBlockId` column is informational (populated when resolvable, else null —
+  // first versions have none). oauthClientId is left null (external/connect is out
+  // of P1 scope).
   const { newAppReviewAgentReportId } = await import('~/server/utils/app-block-ids');
   const reportId = newAppReviewAgentReportId();
   await dbWrite.appReviewAgentReport.create({
     data: {
       id: reportId,
       publishRequestId,
+      slug: request.slug,
+      kind: 'onsite',
       appBlockId,
       version: request.version,
       bundleSha256: sha,
@@ -189,7 +206,13 @@ export async function startAgentReview(
   // pod. Short-TTL + review-scoped: a leaked token can only touch THIS report.
   const { signAgentCallbackToken } = await import('./review-session');
   const callbackToken = signAgentCallbackToken({ publishRequestId });
-  const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(
+  // CONTAINMENT: prefer the IN-CLUSTER callback base (AGENT_REVIEW_CALLBACK_BASE_URL)
+  // so the adversarial report + the per-review bearer never leave the cluster onto
+  // the public internet. Falls back to the public NEXTAUTH_URL when the in-cluster
+  // env is unset (keeps working before infra sets it ahead of un-dark). Read from
+  // the VALIDATED env object, never process.env directly.
+  const callbackBase = env.AGENT_REVIEW_CALLBACK_BASE_URL ?? env.NEXTAUTH_URL ?? '';
+  const callbackUrl = `${callbackBase.replace(
     /\/$/,
     ''
   )}/api/internal/blocks/agent-report-callback`;
@@ -199,6 +222,11 @@ export async function startAgentReview(
   // (f) Provision the apply Job. On failure, flip the row to failed so it never
   // lingers `running`, then rethrow.
   try {
+    // COST CEILING (audit #5): enforcement is POD-SIDE only — the runner self-aborts
+    // (status 'cost-capped') once its LLM spend crosses COST_CAP_USD. There is NO
+    // civitai-side spend ceiling in P1 (no per-mod/day budget, no global cap): an
+    // accepted risk while the feature is DARK (mod-only, flag-gated), to revisit
+    // before widening.
     await provisionAgentReviewJob({
       agentName,
       publishRequestId,

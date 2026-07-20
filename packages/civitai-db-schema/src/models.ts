@@ -2009,6 +2009,8 @@ export interface AppListingModerationEvent {
 export interface AppReviewAgentReport {
   id: string;
   publishRequestId: string;
+  slug: string;
+  kind: string;
   appBlockId: string | null;
   oauthClientId: string | null;
   version: string;

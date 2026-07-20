@@ -21,6 +21,7 @@ const {
   mockEnv,
   mockFindUnique,
   mockAppBlockFindFirst,
+  mockReportFindFirst,
   mockCreate,
   mockUpdateMany,
   mockPresign,
@@ -33,9 +34,13 @@ const {
     APPS_KUBE_NAMESPACE: 'civitai-apps',
     APPS_DOMAIN: 'civit.ai',
     AGENT_REVIEW_COST_CAP_USD: '2',
+    NEXTAUTH_URL: 'https://civitai.com',
+    AGENT_REVIEW_CALLBACK_BASE_URL: undefined,
   } as Record<string, unknown>,
   mockFindUnique: vi.fn(),
   mockAppBlockFindFirst: vi.fn(async () => null as { id: string } | null),
+  // Double-provision pre-check: no running report by default.
+  mockReportFindFirst: vi.fn(async () => null as { id: string } | null),
   mockCreate: vi.fn(async () => undefined),
   mockUpdateMany: vi.fn(async () => ({ count: 1 })),
   mockPresign: vi.fn(async () => 'https://minio.internal/presigned?sig=x'),
@@ -51,6 +56,7 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {
     appBlockPublishRequest: { findUnique: mockFindUnique },
     appBlock: { findFirst: mockAppBlockFindFirst },
+    appReviewAgentReport: { findFirst: mockReportFindFirst },
   },
   dbWrite: {
     appReviewAgentReport: { create: mockCreate, updateMany: mockUpdateMany },
@@ -128,8 +134,11 @@ beforeEach(() => {
   process.env.NEXTAUTH_URL = 'https://civitai.com';
   vi.clearAllMocks();
   mockAppBlockFindFirst.mockResolvedValue(null);
+  mockReportFindFirst.mockResolvedValue(null);
   mockGetPrior.mockResolvedValue(null);
   mockUpdateMany.mockResolvedValue({ count: 1 });
+  mockEnv.NEXTAUTH_URL = 'https://civitai.com';
+  mockEnv.AGENT_REVIEW_CALLBACK_BASE_URL = undefined;
   stubFetch();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -172,11 +181,14 @@ describe('startAgentReview — ZIP path', () => {
     expect(mockReconstruct).not.toHaveBeenCalled();
     expect(mockStage).not.toHaveBeenCalled();
 
-    // Running row keyed on appBlockId (XOR oauthClientId).
+    // Running row keyed on the stable slug (+ kind='onsite'); appBlockId is
+    // informational (resolved here), oauthClientId left null (out of P1 scope).
     const created = mockCreate.mock.calls[0][0].data;
     expect(created).toMatchObject({
       id: 'arar_TEST',
       publishRequestId: PUBREQ,
+      slug: 'my-app',
+      kind: 'onsite',
       appBlockId: 'ab_existing',
       version: '0.2.0',
       bundleSha256: SHA,
@@ -242,7 +254,7 @@ describe('startAgentReview — prior report', () => {
     const expectedB64 = Buffer.from(JSON.stringify(prior)).toString('base64');
     expect(jobEnv().PRIOR_REPORT_JSON_B64).toBe(expectedB64);
     expect(mockCreate.mock.calls[0][0].data.priorReportId).toBe('arar_prior');
-    expect(mockGetPrior).toHaveBeenCalledWith({ appBlockId: 'ab_existing', version: '0.2.0' });
+    expect(mockGetPrior).toHaveBeenCalledWith({ slug: 'my-app', version: '0.2.0' });
   });
 });
 
@@ -255,14 +267,18 @@ describe('startAgentReview — app-key resolution', () => {
     expect(mockCreate.mock.calls[0][0].data.appBlockId).toBe('ab_by_slug');
   });
 
-  it('fails closed on a first-version request (no appBlockId, no AppBlock)', async () => {
+  it('first-version review (no appBlockId, no AppBlock) PERSISTS keyed by slug, appBlockId null', async () => {
     mockFindUnique.mockResolvedValue(pendingRequest({ appBlockId: null }));
     mockAppBlockFindFirst.mockResolvedValue(null);
 
-    await expect(startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 })).rejects.toThrow(
-      /first-version/i
-    );
-    expect(mockCreate).not.toHaveBeenCalled();
+    const res = await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 });
+    expect(res).toEqual({ reportId: 'arar_TEST', agentName: agentReviewName(PUBREQ) });
+
+    const created = mockCreate.mock.calls[0][0].data;
+    expect(created).toMatchObject({ slug: 'my-app', kind: 'onsite', appBlockId: null });
+    // Prior lookup + provisioning both proceed keyed by slug — no first-version throw.
+    expect(mockGetPrior).toHaveBeenCalledWith({ slug: 'my-app', version: '0.2.0' });
+    expect(calls.some((c) => c.method === 'POST')).toBe(true);
   });
 
   it('rejects a non-pending request', async () => {
@@ -276,6 +292,43 @@ describe('startAgentReview — app-key resolution', () => {
     mockFindUnique.mockResolvedValue(null);
     await expect(startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 })).rejects.toThrow(
       /not found/i
+    );
+  });
+});
+
+describe('startAgentReview — double-provision guard (audit #3)', () => {
+  it('refuses a second dispatch while a review is already running for the request', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockReportFindFirst.mockResolvedValue({ id: 'arar_running' });
+
+    await expect(startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 })).rejects.toThrow(
+      /already running/i
+    );
+    // No new row inserted, no Job provisioned.
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    expect(mockReportFindFirst).toHaveBeenCalledWith({
+      where: { publishRequestId: PUBREQ, status: 'running' },
+      select: { id: true },
+    });
+  });
+});
+
+describe('startAgentReview — callback base URL (containment)', () => {
+  it('defaults CALLBACK_URL to NEXTAUTH_URL when AGENT_REVIEW_CALLBACK_BASE_URL is unset', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 });
+    expect(jobEnv().CALLBACK_URL).toBe(
+      'https://civitai.com/api/internal/blocks/agent-report-callback'
+    );
+  });
+
+  it('prefers the in-cluster AGENT_REVIEW_CALLBACK_BASE_URL when set (keeps report off the public internet)', async () => {
+    mockEnv.AGENT_REVIEW_CALLBACK_BASE_URL = 'http://web.internal.svc.cluster.local/';
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 });
+    expect(jobEnv().CALLBACK_URL).toBe(
+      'http://web.internal.svc.cluster.local/api/internal/blocks/agent-report-callback'
     );
   });
 });

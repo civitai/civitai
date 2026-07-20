@@ -20,6 +20,8 @@ const {
   mockGetReviewHead,
   mockTriggerReviewBuild,
   mockDeleteReviewResources,
+  mockDeleteAgentReviewResources,
+  mockDeleteStagedBundle,
 } = vi.hoisted(() => ({
   mockDbRead: {
     appBlockPublishRequest: { findUnique: vi.fn(), findMany: vi.fn(async () => []) },
@@ -36,10 +38,14 @@ const {
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
     appListing: { updateMany: vi.fn(async () => ({ count: 0 })) },
     appListingModerationEvent: { create: vi.fn(async () => ({})) },
+    // AGENTIC REVIEW (P1) — running-report flip target for teardownAgentReviewForRequest.
+    appReviewAgentReport: { updateMany: vi.fn(async () => ({ count: 1 })) },
   },
   mockGetReviewHead: vi.fn(async () => 'a'.repeat(40)),
   mockTriggerReviewBuild: vi.fn(async () => ({ name: 'review-pr-1' })),
   mockDeleteReviewResources: vi.fn(async () => undefined),
+  mockDeleteAgentReviewResources: vi.fn(async () => undefined),
+  mockDeleteStagedBundle: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
@@ -54,11 +60,19 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   // pure helper used by previewRequest
   reviewHost: (sha: string, domain: string) => `review-${sha.slice(0, 16)}.${domain}`,
 }));
+// AGENTIC REVIEW (P1) — teardownAgentReviewForRequest dynamically imports these.
+vi.mock('~/server/services/blocks/agent-review.service', () => ({
+  deleteAgentReviewResources: mockDeleteAgentReviewResources,
+}));
+vi.mock('~/utils/bundle-s3', () => ({
+  deleteStagedBundle: mockDeleteStagedBundle,
+}));
 
 import {
   previewRequest,
   getReviewStatus,
   teardownReviewForRequest,
+  teardownAgentReviewForRequest,
   teardownPreview,
   countActiveReviewPreviews,
   listActiveReviewPreviews,
@@ -280,6 +294,39 @@ describe('teardownReviewForRequest', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// AGENTIC REVIEW (P1, audit #1/#2) — teardownAgentReviewForRequest is DECOUPLED
+// from the sandbox-preview teardown: it always deletes the agent k8s objects,
+// flips a running report row → torn-down, and cleans up the staged bundle,
+// regardless of whether a sandbox preview ever ran.
+// ---------------------------------------------------------------------------
+describe('teardownAgentReviewForRequest', () => {
+  beforeEach(() => {
+    mockDeleteAgentReviewResources.mockClear();
+    mockDeleteStagedBundle.mockClear();
+    mockDbWrite.appReviewAgentReport.updateMany.mockClear();
+    mockDbWrite.appReviewAgentReport.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('deletes agent resources, flips the running report to torn-down, and cleans the staged bundle', async () => {
+    await teardownAgentReviewForRequest(PUBREQ);
+
+    expect(mockDeleteAgentReviewResources).toHaveBeenCalledWith(
+      expect.objectContaining({ publishRequestId: PUBREQ })
+    );
+    expect(mockDbWrite.appReviewAgentReport.updateMany).toHaveBeenCalledWith({
+      where: { publishRequestId: PUBREQ, status: 'running' },
+      data: { status: 'torn-down', completedAt: expect.any(Date) },
+    });
+    expect(mockDeleteStagedBundle).toHaveBeenCalledWith(PUBREQ);
+  });
+
+  it('never throws even if a step fails (best-effort)', async () => {
+    mockDbWrite.appReviewAgentReport.updateMany.mockRejectedValue(new Error('db down'));
+    await expect(teardownAgentReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+  });
+});
+
 describe('withdrawRequest review teardown (#2831)', () => {
   const USER = 7;
   beforeEach(() => {
@@ -287,6 +334,7 @@ describe('withdrawRequest review teardown (#2831)', () => {
     mockDbWrite.appBlockPublishRequest.updateMany.mockReset();
     mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
     mockDeleteReviewResources.mockClear();
+    mockDeleteAgentReviewResources.mockClear();
   });
 
   it('tears down the review env when a previewed request is self-withdrawn', async () => {
@@ -319,7 +367,7 @@ describe('withdrawRequest review teardown (#2831)', () => {
     });
   });
 
-  it('does NOT tear down when no preview was started', async () => {
+  it('does NOT tear down the SANDBOX when no preview was started, but STILL tears down the agent (audit #1)', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
       id: PUBREQ,
       status: 'pending',
@@ -330,7 +378,12 @@ describe('withdrawRequest review teardown (#2831)', () => {
     await withdrawRequest({ publishRequestId: PUBREQ, userId: USER });
     await new Promise((r) => setTimeout(r, 0));
 
+    // Sandbox teardown is preview-gated → skipped.
     expect(mockDeleteReviewResources).not.toHaveBeenCalled();
+    // Agent teardown is UNCONDITIONAL → fires even with no sandbox preview.
+    expect(mockDeleteAgentReviewResources).toHaveBeenCalledWith(
+      expect.objectContaining({ publishRequestId: PUBREQ })
+    );
   });
 });
 

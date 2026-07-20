@@ -8,7 +8,7 @@ import { Readable } from 'node:stream';
  *   - per-review BEARER auth (not the shared HMAC) — bad/missing → 401
  *   - pipeline kill-switch → 503 (dark posture)
  *   - checkCallbackTimestamp replay window (enforce-if-present)
- *   - report shape validation + status mapping (cost-capped → failed)
+ *   - report shape validation + status passthrough (cost-capped persisted verbatim)
  *   - UPDATE guarded to status='running' — a torn-down/decided review is a no-op
  */
 
@@ -91,10 +91,10 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe('persistedStatusFor / buildReportUpdate (pure)', () => {
-  it('maps complete→complete, failed→failed, cost-capped→failed', () => {
+  it('persists every runner status verbatim (cost-capped no longer collapses to failed)', () => {
     expect(persistedStatusFor('complete')).toBe('complete');
     expect(persistedStatusFor('failed')).toBe('failed');
-    expect(persistedStatusFor('cost-capped')).toBe('failed');
+    expect(persistedStatusFor('cost-capped')).toBe('cost-capped');
   });
 
   it('writes the provided structured fields + costUsd', () => {
@@ -111,9 +111,9 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
     expect(data.completedAt).toBeInstanceOf(Date);
   });
 
-  it('prepends a cost-cap marker to the summary when cost-capped', () => {
+  it('persists cost-capped verbatim AND prepends a cost-cap marker to the summary', () => {
     const data = buildReportUpdate(JSON.parse(goodBody({ status: 'cost-capped' })));
-    expect(data.status).toBe('failed');
+    expect(data.status).toBe('cost-capped');
     expect(String(data.summaryMd)).toContain('cost cap');
   });
 

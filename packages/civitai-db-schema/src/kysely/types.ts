@@ -433,6 +433,8 @@ export type AppListingScreenshot = {
 export type AppReviewAgentReport = {
   id: string;
   publish_request_id: string;
+  slug: string;
+  kind: Generated<string>;
   app_block_id: string | null;
   oauth_client_id: string | null;
   version: string;
