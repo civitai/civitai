@@ -37,7 +37,6 @@ import type {
   RefundMultiAccountTransactionInput,
   // RefundMultiAccountTransactionResponse,
 } from '~/server/schema/buzz.schema';
-import { MAX_TRANSACTION_RANGE_DAYS } from '~/server/schema/buzz.schema';
 import {
   getUserBuzzTransactionsResponse,
   createMultiAccountBuzzTransactionResponse,
@@ -395,10 +394,15 @@ type TransactionQueryParams = {
 
 export function assertValidTransactionRange({ start, end }: { start: Date; end: Date }) {
   if (end < start) throw throwBadRequestError('The end date must be after the start date');
-  if (dayjs(end).diff(start, 'day') > MAX_TRANSACTION_RANGE_DAYS)
-    throw throwBadRequestError(
-      `Date ranges are limited to ${MAX_TRANSACTION_RANGE_DAYS} days. Narrow the range and try again.`
-    );
+}
+
+// Each month of a requested range is one pair of projection-backed queries, so
+// the span is a direct proxy for what an export costs. An all-time export for
+// the busiest account on record (148K transactions back to 2023) measured 288K
+// rows read and 2.5 MiB across the whole walk — cheap enough that the range
+// itself needs no ceiling, only a budget that scales with it.
+export function getTransactionRangeMonths({ start, end }: { start: Date; end: Date }) {
+  return Math.max(1, Math.ceil(dayjs(end).diff(start, 'month', true)));
 }
 
 // Sorted the same way ClickHouse sorts them, so a cursor built from the last row
@@ -494,7 +498,12 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
 // one another, so concatenating them yields a globally descending sequence.
 async function* walkTransactionSlices(params: TransactionQueryParams) {
   const rangeStart = dayjs(params.start);
-  let sliceEnd = dayjs(params.end);
+  // Seeded from the cursor rather than the range end: the cursor only filters
+  // rows, so without this every deep page re-walks each earlier month and pays
+  // two empty queries per month above it.
+  const cursorDate = params.cursor ? dayjs(`${params.cursor.split('|')[0]}Z`) : null;
+  let sliceEnd =
+    cursorDate?.isValid() && cursorDate.isBefore(params.end) ? cursorDate : dayjs(params.end);
 
   while (!sliceEnd.isBefore(rangeStart)) {
     const sliceStart = dayjs.max(sliceEnd.subtract(1, 'month'), rangeStart);
@@ -520,10 +529,11 @@ async function* walkTransactionSlices(params: TransactionQueryParams) {
   }
 }
 
-// A month of the busiest account on record is ~40K rows. This is a guard against
-// a future high-volume account materializing something unbounded, not a limit
-// any real user should meet.
-const MAX_SLICE_ROWS = 250_000;
+// The busiest account-month on record is ~105K rows. This guards against a
+// future high-volume account materializing something unbounded; it is not a
+// limit any real user should meet. Kept under V8's ~125K argument ceiling so a
+// slice can still be spread into a call before the guard would catch it.
+const MAX_SLICE_ROWS = 120_000;
 
 export async function getUserBuzzTransactionsMulti({
   accountId,
@@ -539,7 +549,7 @@ export async function getUserBuzzTransactionsMulti({
   // tells us whether another page exists.
   const rows: ClickhouseBuzzTransaction[] = [];
   for await (const slice of walkTransactionSlices({ accountId, ...input })) {
-    rows.push(...slice);
+    for (const row of slice) rows.push(row);
     if (rows.length > limit) break;
   }
 
@@ -628,29 +638,9 @@ export async function* streamUserBuzzTransactionsCsv({
 
   yield `${toCsv(EXPORT_COLUMNS, [])}\r\n`;
 
-  // Walked one calendar month at a time, newest first. Each slice is a bounded,
-  // partition-pruned pair of queries, so per-query cost and peak memory stay
-  // flat however wide the requested range is.
   const usernames = new Map<number, string>();
-  const rangeStart = dayjs(input.start);
-  let sliceEnd = dayjs(input.end);
-
-  while (!sliceEnd.isBefore(rangeStart)) {
-    const sliceStart = dayjs.max(sliceEnd.subtract(1, 'month'), rangeStart);
-    const rows = await fetchTransactionBranches({
-      ...input,
-      accountId,
-      start: sliceStart.toDate(),
-      end: sliceEnd.toDate(),
-      ordered: false,
-    });
-
-    if (rows.length) yield `${await formatExportBatch(rows, accountId, usernames)}\r\n`;
-    if (sliceStart.isSame(rangeStart)) break;
-
-    // Exclusive upper bound on the next slice so a transaction landing exactly
-    // on the boundary second is never emitted twice.
-    sliceEnd = sliceStart.subtract(1, 'second');
+  for await (const rows of walkTransactionSlices({ ...input, accountId })) {
+    yield `${await formatExportBatch(rows, accountId, usernames)}\r\n`;
   }
 }
 

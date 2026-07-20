@@ -4,6 +4,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { exportUserBuzzTransactionsSchema } from '~/server/schema/buzz.schema';
 import {
   assertValidTransactionRange,
+  getTransactionRangeMonths,
   getTransactionExportFilename,
   streamUserBuzzTransactionsCsv,
 } from '~/server/services/buzz.service';
@@ -15,7 +16,12 @@ export const config = {
   api: { responseLimit: false },
 };
 
-const EXPORTS_PER_HOUR = 10;
+// Cost-weighted rather than a flat request count: one month of history is one
+// pair of projection-backed queries, an all-time export is thirty-odd. The
+// budget is spent in month-units so a wide range costs proportionally more,
+// and a user pulling single months isn't punished for the shape of someone
+// else's request. 60 units ~= sixty one-month exports, or two all-time ones.
+const EXPORT_BUDGET_PER_HOUR = 60;
 const RATE_LIMIT_WINDOW_SECONDS = 3600;
 
 const querySchema = z.object({
@@ -25,17 +31,29 @@ const querySchema = z.object({
     .pipe(z.array(z.enum(buzzSpendTypes)).min(1)),
   start: z.coerce.date(),
   end: z.coerce.date(),
-  // `?type=` with no value must not coerce to 0 (Tip) and silently narrow the export.
-  type: z.string().min(1).transform(Number).pipe(z.enum(TransactionType)).optional(),
+  // Digits only. `min(1)` counts characters, so ' ', '0x2' and '1e1' all pass it
+  // and Number(' ') is 0 — silently narrowing the export to Tips.
+  type: z.string().regex(/^\d+$/).transform(Number).pipe(z.enum(TransactionType)).optional(),
 });
 
 // Fixed-window per-user limiter. Fails OPEN: a redis blip shouldn't block a
 // read-only export of the caller's own data. Shares the trpc limit namespace
 // rather than minting a key in the redis package for one endpoint.
-async function underRateLimit(userId: number) {
-  const key = `${REDIS_KEYS.TRPC.LIMIT.BASE}:buzz:export:${userId}`;
+const budgetKey = (userId: number) => `${REDIS_KEYS.TRPC.LIMIT.BASE}:buzz:export:${userId}`;
+
+// Read-only: lets the probe predict a 429 without spending anything.
+async function exportBudgetSpent(userId: number) {
   try {
-    const count = await redis.incrBy(key as never, 1);
+    return Number(await redis.get(budgetKey(userId) as never)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function chargeExportBudget(userId: number, cost: number) {
+  const key = budgetKey(userId);
+  try {
+    const count = await redis.incrBy(key as never, cost);
     // The window must stay fixed: refreshing the TTL on every request would let
     // a user who retries through their 429s hold the counter open forever.
     // Repairing a missing TTL still covers a pod dying between INCR and EXPIRE.
@@ -43,7 +61,7 @@ async function underRateLimit(userId: number) {
     else if ((await redis.ttl(key as never)) < 0)
       await redis.expire(key as never, RATE_LIMIT_WINDOW_SECONDS);
 
-    return count <= EXPORTS_PER_HOUR;
+    return count <= EXPORT_BUDGET_PER_HOUR;
   } catch {
     return true;
   }
@@ -64,8 +82,23 @@ export default AuthedEndpoint(
       return res.status(400).json({ error: (error as Error).message });
     }
 
-    if (!(await underRateLimit(user.id)))
-      return res.status(429).json({ error: "You're exporting too often. Try again later." });
+    const months = getTransactionRangeMonths(input.data);
+
+    const overBudget = `You've exported a lot of history in the past hour. Wait a bit, or pick a narrower date range — this one covers ${months} month${
+      months === 1 ? '' : 's'
+    }.`;
+
+    // A download triggered by <a download> has no way to show the user a server
+    // error, so the UI probes first. The probe spends nothing and only predicts.
+    if (req.query.probe) {
+      if ((await exportBudgetSpent(user.id)) + months > EXPORT_BUDGET_PER_HOUR)
+        return res.status(429).json({ error: overBudget });
+
+      return res.status(200).json({ ok: true, months });
+    }
+
+    if (!(await chargeExportBudget(user.id, months)))
+      return res.status(429).json({ error: overBudget });
 
     const filename = getTransactionExportFilename(input.data);
 

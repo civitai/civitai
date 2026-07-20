@@ -32,7 +32,7 @@ import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { capitalize } from '~/utils/string-helpers';
-import { MAX_TRANSACTION_RANGE_DAYS } from '~/server/schema/buzz.schema';
+import { showErrorNotification } from '~/utils/notifications';
 import type {
   BuzzTransactionDetails,
   GetUserBuzzTransactionsMultiSchema,
@@ -100,6 +100,8 @@ export default function UserTransactions() {
     setFilters((current) => ({ ...current, [name]: value }));
   };
 
+  const [exporting, setExporting] = useState(false);
+
   // The export streams as a file download rather than a JSON response, so the
   // browser can write it to disk without buffering the CSV.
   const exportUrl = useMemo(() => {
@@ -111,6 +113,31 @@ export default function UserTransactions() {
     if (filters.type != null) params.set('type', String(filters.type));
     return `/api/download/user-transactions?${params.toString()}`;
   }, [filters]);
+
+  // A browser-driven download has no way to show the user a server error, so we
+  // ask first and only navigate once we know the export will be accepted.
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const response = await fetch(`${exportUrl}&probe=1`);
+      if (!response.ok) {
+        const { error } = await response.json().catch(() => ({ error: undefined }));
+        showErrorNotification({
+          title: 'Export unavailable',
+          error: new Error(error ?? 'Could not export transactions right now.'),
+        });
+        return;
+      }
+      window.location.assign(exportUrl);
+    } catch {
+      showErrorNotification({
+        title: 'Export unavailable',
+        error: new Error('Could not reach the server. Check your connection and try again.'),
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <Container size="sm">
@@ -135,10 +162,9 @@ export default function UserTransactions() {
             </Group>
           </Chip.Group>
           <Button
-            component="a"
-            href={exportUrl}
-            download
             variant="light"
+            loading={exporting}
+            onClick={handleExport}
             leftSection={<IconDownload size={16} />}
           >
             Export CSV
@@ -150,8 +176,7 @@ export default function UserTransactions() {
             name="start"
             placeholder="Start date"
             onChange={handleDateChange('start')}
-            defaultValue={defaultFilters.start}
-            minDate={dayjs(filters.end).subtract(MAX_TRANSACTION_RANGE_DAYS, 'day').toDate()}
+            value={filters.start}
             maxDate={dayjs(filters.end).subtract(1, 'day').toDate()}
           />
           <DatePickerInput
@@ -159,7 +184,7 @@ export default function UserTransactions() {
             name="end"
             placeholder="End date"
             onChange={handleDateChange('end')}
-            defaultValue={defaultFilters.end}
+            value={filters.end}
             minDate={dayjs(filters.start).add(1, 'day').toDate()}
             maxDate={defaultFilters.end}
           />

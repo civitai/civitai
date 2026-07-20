@@ -45,12 +45,6 @@ export const getUserBuzzTransactionsSchema = z.object({
   accountType: z.enum(buzzAccountTypes).optional(),
 });
 
-// `date` is the leading sort key and the table is partitioned by month, so an
-// unbounded range degrades to a full-table scan (~740M rows / 3.4 GiB) that
-// outlives the ClickHouse client timeout. Both ends are required, and the span
-// is capped at what a single request can actually deliver.
-export const MAX_TRANSACTION_RANGE_DAYS = 370;
-
 const userTransactionFilters = {
   type: z.enum(TransactionType).optional(),
   start: z.date(),
