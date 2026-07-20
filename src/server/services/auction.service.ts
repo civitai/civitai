@@ -3,7 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { uniq } from 'lodash-es';
 import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/auction.utils';
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -43,6 +43,10 @@ import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
+
+// Reads here stay on the primary. Placing a bid invalidates getBySlug/getMyBids and
+// refetches immediately, so a replica that is even slightly behind shows the user a list
+// without the bid they just paid for.
 
 export const getAuctionTransactionPrefix = (auctionId: number, userId: number) =>
   `auction-${auctionId}-${userId}-${new Date().getTime()}`;
@@ -100,7 +104,7 @@ export type GetAllAuctionsReturn = AsyncReturnType<typeof getAllAuctions>;
 export async function getAllAuctionsUncached() {
   const now = new Date();
 
-  const aData = await dbRead.auction.findMany({
+  const aData = await dbWrite.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
     select: auctionSelect,
     orderBy: { auctionBase: { ecosystem: { sort: 'asc', nulls: 'first' } } },
@@ -193,7 +197,7 @@ const stripMetadata = <T extends { metadata: unknown }>(entity: T) => ({
 const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
   const entityIds = data.map((x) => x.entityId);
 
-  const mvData = await dbRead.modelVersion.findMany({
+  const mvData = await dbWrite.modelVersion.findMany({
     where: { id: { in: entityIds } },
     select: {
       id: true,
@@ -262,7 +266,7 @@ export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
     .startOf('day')
     .toDate();
 
-  const auction = await dbRead.auction.findFirst({
+  const auction = await dbWrite.auction.findFirst({
     where: { startAt: { lte: now }, endAt: { gt: now }, auctionBase: { slug } },
     select: auctionSelect,
   });
@@ -313,7 +317,7 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
     // The per-entity totals, ranking and winning threshold are computed in SQL so we
     // ship one row per bid the user placed, rather than every bid of every auction
     // they ever participated in.
-    const rows = await dbRead.$queryRaw<MyBidRow[]>`
+    const rows = await dbWrite.$queryRaw<MyBidRow[]>`
       WITH "myBids" AS (
         SELECT b.id, b."entityId", b.amount, b."createdAt", b."fromRecurring",
                b."isRefunded", b."accountType", b."auctionId"
@@ -360,7 +364,7 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
 
     if (!rows.length) return [];
 
-    const auctions = await dbRead.auction.findMany({
+    const auctions = await dbWrite.auction.findMany({
       where: { id: { in: uniq(rows.map((r) => r.auctionId)) } },
       select: auctionWithoutBidsSelect,
     });
@@ -418,7 +422,7 @@ export const getMyRecurringBids = async ({ userId }: { userId: number }) => {
     const now = new Date();
 
     // TODO add active check on auctionBase
-    const bids = await dbRead.bidRecurring.findMany({
+    const bids = await dbWrite.bidRecurring.findMany({
       where: {
         userId,
         startAt: { lte: now },
@@ -490,7 +494,7 @@ export const createBid = async ({
 
   // - Check if entityId is valid for this auction type
   if (auctionData.auctionBase.type === AuctionType.Model) {
-    const mv = await dbRead.modelVersion.findFirst({
+    const mv = await dbWrite.modelVersion.findFirst({
       where: { id: entityId },
       select: {
         baseModel: true,

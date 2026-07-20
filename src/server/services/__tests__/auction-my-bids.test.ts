@@ -12,12 +12,12 @@ const { queryRaw, auctionFindMany, modelVersionFindMany, imagesFetch } = vi.hois
 }));
 
 vi.mock('~/server/db/client', () => ({
-  dbRead: {
+  dbWrite: {
     $queryRaw: queryRaw,
     auction: { findMany: auctionFindMany },
     modelVersion: { findMany: modelVersionFindMany },
   },
-  dbWrite: {},
+  dbRead: {},
 }));
 
 // image.service's real import graph (-> event-engine-common) is heavy; only the cache the

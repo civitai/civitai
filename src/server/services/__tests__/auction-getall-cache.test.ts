@@ -24,8 +24,8 @@ const {
 
 vi.mock('~/server/db/client', () => ({
   // Call count on this mock is the cache-hit assertion.
-  dbRead: { auction: { findMany: auctionFindMany } },
-  dbWrite: {},
+  dbWrite: { auction: { findMany: auctionFindMany } },
+  dbRead: {},
 }));
 
 // Cut the heavy sibling-service import graph (image.service pulls the event-engine-common
@@ -60,7 +60,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 
 const KEY = REDIS_KEYS.CACHES.ACTIVE_AUCTIONS; // 'packed:caches:active-auctions'
 
-// A representative active-auction row set exactly as `dbRead.auction.findMany` returns
+// A representative active-auction row set exactly as `dbWrite.auction.findMany` returns
 // it (only the fields `getAllAuctionsUncached` / `prepareBids` read). `auctionBase` is an
 // opaque object passed straight through to the output — it must survive byte-identically
 // through the cache. Returned FRESH per call so the in-place `.sort()` in the origin can't
