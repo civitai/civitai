@@ -163,6 +163,15 @@ export const startAgentReviewSchema = z.object({
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
 
+/** Input for the MOD-ONLY agentic code-review READ path `blocks.getAgentReview`
+ *  (P2) — the poll + render source for the report of a PENDING request. Same
+ *  shape as previewRequest (the pending request id). */
+export const getAgentReviewSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type GetAgentReviewInput = z.infer<typeof getAgentReviewSchema>;
+
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });

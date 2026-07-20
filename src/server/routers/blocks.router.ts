@@ -55,6 +55,7 @@ import {
   approveRequestSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
+  getAgentReviewSchema,
   getPublishRequestDiffSchema,
   getPublishRequestScreenshotsSchema,
   getReviewStatusSchema,
@@ -1496,8 +1497,41 @@ export const blocksRouter = router({
           modUserId: ctx.user.id,
         });
       } catch (err) {
+        // Preserve a typed TRPCError's CODE (the service raises CONFLICT — "a
+        // review is already running" — which the P2 panel keys on to fall into
+        // the running state); only opaque errors collapse to BAD_REQUEST.
+        if (err instanceof TRPCError) throw err;
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
       }
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW (App Blocks P2) — READ path. Returns the latest agent
+   * report row for a PENDING publish request (or null). This is the poll + render
+   * source for the `AgentReviewPanel` in the on-site review modal.
+   *
+   * Gated IDENTICALLY to startAgentReview (moderatorProcedure + the isModerator
+   * belt + enforceAppBlocksFlag + the dedicated mod-only `app-blocks-agentic-
+   * review` flag) so it ships DARK — the flag does not exist in Flipt yet, so
+   * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
+   */
+  getAgentReview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getAgentReviewSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Agentic review is restricted to civitai team');
+      }
+      const { isAppBlocksAgenticReviewEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('Agentic review is not enabled');
+      }
+      const { getAgentReport } = await import(
+        '~/server/services/blocks/app-review-report.service'
+      );
+      return getAgentReport(input.publishRequestId);
     }),
 
   /**
