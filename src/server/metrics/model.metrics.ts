@@ -140,8 +140,11 @@ export const modelMetrics = createMetricProcessor({
     // Debounce window for draining the accumulated ids into the search-index
     // queue. Widening it collapses more of a hot model's repeated metric
     // changes into a single reindex, shrinking the burst the search backend
-    // has to drain at peak. Env-configurable so ops can tune it at runtime
-    // without a redeploy (default 45m — 3× the previous fixed 15m). The only
+    // has to drain at peak. Env-configurable, but the value is read once at
+    // module load, so a change requires a pod restart/rollout to take effect
+    // (no image rebuild needed — it is NOT reconfigurable live). A bad value
+    // fails soft to the 45m default (see server-schema.ts) rather than crashing
+    // boot (default 45m — 3× the previous fixed 15m). The only
     // cost is metric-drift staleness on the search doc (download/generation
     // counts and the popularity rank derived from them lag by up to the
     // window); genuine mutations still reindex immediately via the untouched
