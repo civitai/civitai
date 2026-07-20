@@ -3,7 +3,6 @@
   import { page, navigating } from '$app/state';
   import { invalidateAll } from '$app/navigation';
   import { buildWordmarkSvg } from '@civitai/brand';
-  import { IconLogout } from '@tabler/icons-svelte';
   import {
     Sidebar,
     SidebarProvider,
@@ -21,9 +20,9 @@
     SidebarInset,
     SidebarTrigger,
   } from '@civitai/ui/components/ui/sidebar/index.js';
-  import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
   import { NativeSelect, NativeSelectOption } from '@civitai/ui/components/ui/native-select/index.js';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
+  import AccountSwitcher from '$lib/components/AccountSwitcher.svelte';
   import { activeNavHref, isNavChildActive, navForMember } from '$lib/nav';
   import type { LayoutData } from './$types';
 
@@ -159,24 +158,8 @@
           </NativeSelect>
         </div>
       {/if}
-      <div class="flex items-center gap-2 px-1 py-1">
-        <Avatar class="size-8">
-          {#if data.user.image}
-            <AvatarImage src={data.user.image} alt={who} />
-          {/if}
-          <AvatarFallback>{who.charAt(0).toUpperCase()}</AvatarFallback>
-        </Avatar>
-        <span class="min-w-0 flex-1 truncate text-sm" title={who}>{who}</span>
-        {#if data.logoutUrl}
-          <a
-            href={data.logoutUrl}
-            aria-label="Sign out"
-            title="Sign out"
-            class="rounded-md p-1.5 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-          >
-            <IconLogout size={18} stroke={1.5} />
-          </a>
-        {/if}
+      <div class="px-1 py-1">
+        <AccountSwitcher name={who} image={data.user.image} logoutUrl={data.logoutUrl} />
       </div>
     </SidebarFooter>
   </Sidebar>

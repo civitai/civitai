@@ -99,15 +99,17 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 
 ## Dashboard
 
-- [ ] **[todo]** **Color / icons to differentiate cards** — `CU:868ke492b` (alexds9 + MNeMiC) — **"small, mandatory."**
-  Cards look alike; add color + icons to speed scanning. (Colors may be partly in — **verify icons too**; ClickUp
-  still has this open.) (`T:20`,`T:568`)
+- [x] **[done]** **Color / icons to differentiate cards** — `CU:868ke492b` (alexds9 + MNeMiC, "small, mandatory").
+  Dashboard cards now carry per-card Tabler icons + palette colors (and period-over-period delta chips). (`T:20`,`T:568`)
 
 ## Cross-cutting
 
-- [ ] **[todo]** **Account switching** — `CU:868ke4956` (MNeMiC). Same account-switch dropdown as the main site,
-  sourced from the auth server (device-ID login list), not local storage — extra request, fine on page load, show the
-  selector only if >1. Check the studio has the context. (`T:502`)
+- [x] **[done]** **Account switching** — `CU:868ke4956` (MNeMiC). Sidebar username row → popover listing the
+  accounts on this device (from the auth hub's civ-device set), with switch + sign-out. Reuses the hub's existing
+  `GET /api/auth/accounts` + `POST /api/auth/switch` (device-ownership guard `isLinkedAndFresh` stays in the hub); the
+  spoke adds thin same-origin proxy routes and relays the hub's Set-Cookie — it never mints a session itself. Note:
+  the hub lazily materializes the device set only once a 2nd account signs in on the device, so a single-account
+  device shows "no other accounts" until a second login. (`T:502`)
 
 ## Justin-owned (main-app; not our build)
 
