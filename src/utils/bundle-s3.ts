@@ -51,48 +51,31 @@ export function bundleKey(sha256: string): string {
   return `bundles/${sha256}.zip`;
 }
 
-/**
- * Build the per-review staging key for a bundle reconstructed from Forgejo (the
- * git-push publish path never uploads a ZIP, so there is no canonical
- * `bundles/<sha>.zip` object to presign). Kept under a distinct `agent-review/`
- * prefix so these transient staged objects are trivially lifecycle-expirable and
- * never collide with the canonical bundle store.
- */
-export function agentReviewBundleKey(publishRequestId: string, sha256: string): string {
-  return `agent-review/${publishRequestId}-${sha256}.zip`;
+/** Derive a per-review staging key for agent-review bundles. */
+export function agentReviewBundleKey(publishRequestId: string, sha: string): string {
+  return `agent-reviews/${publishRequestId}/${sha}.zip`;
 }
 
-/**
- * Stage a bundle ZIP into the bundle bucket at `key`. Used to persist a
- * Forgejo-reconstructed bundle so the review agent pod can pull ONE presigned
- * object (it never talks to Forgejo). Overwrites are fine — the key is content-
- * addressed by (publishRequestId, sha).
- */
-export async function stageBundleObject(
-  key: string,
-  body: Buffer,
-  contentType = 'application/zip'
-): Promise<void> {
+/** Upload a buffer to the bundle store at the given key. */
+export async function stageBundleObject(key: string, buffer: Buffer): Promise<void> {
   const client = getBundleS3Client();
+  const bucket = getBundleBucket();
   await client.send(
     new PutObjectCommand({
-      Bucket: getBundleBucket(),
+      Bucket: bucket,
       Key: key,
-      Body: body,
-      ContentType: contentType,
+      Body: buffer,
     })
   );
 }
 
-/**
- * Presign a read-only GET of a bundle object, valid for `ttlSeconds`. The URL is
- * signed against the IN-CLUSTER MinIO endpoint (BUNDLE_S3_ENDPOINT, e.g.
- * `http://minio.<ns>.svc.cluster.local`) so it is reachable from a pod's init
- * curl; it is NOT a public URL. Short TTL bounds exposure of the presigned URL
- * that is injected into the agent pod env.
- */
+/** Sign a short-TTL read-only GET URL for a bundle object. */
 export async function presignBundleGet(key: string, ttlSeconds: number): Promise<string> {
   const client = getBundleS3Client();
-  const cmd = new GetObjectCommand({ Bucket: getBundleBucket(), Key: key });
-  return getSignedUrl(client, cmd, { expiresIn: ttlSeconds });
+  const bucket = getBundleBucket();
+  return getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+    { expiresIn: ttlSeconds }
+  );
 }
