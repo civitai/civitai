@@ -386,6 +386,22 @@ export const serverSchema = z
     SEARCH_API_KEY: z.string().optional(),
     METRICS_SEARCH_HOST: z.url().optional(),
     METRICS_SEARCH_API_KEY: z.string().optional(),
+    // Debounce window (ms) for flushing model-metric-affected ids into the
+    // model search-index update queue. The model metric processor runs every
+    // minute and accumulates every model whose ModelVersionMetric.updatedAt
+    // changed into a Redis SET (dedup); it only drains that SET into the
+    // search-index queue once per window. Widening the window collapses more
+    // of a hot model's repeated metric changes into a single reindex, shrinking
+    // the burst the search backend has to drain at peak. Cost: metric-count /
+    // popularity-rank staleness on the search doc lags by up to the window
+    // (genuine mutations still reindex immediately via the service layer).
+    // Default 45m (3× the previous fixed 15m); tune down to react faster or up
+    // to shed more search-index write pressure.
+    SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(45 * 60 * 1000),
     // Per-call Meilisearch timeout in ms. Calls wrapped via withMeili() fail
     // fast with MeiliCallTimeoutError once exceeded, instead of hanging until
     // Traefik's 30s router timeout fires. Default tuned for the image feed

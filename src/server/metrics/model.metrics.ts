@@ -1,8 +1,10 @@
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
+import { env } from '~/env/server';
 import { PG_INT4_MAX, PG_INT4_MIN } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler } from '~/server/db/db-helpers';
+import { shouldFlushMetricSearchIndex } from '~/server/metrics/model-metric-search-flush';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
@@ -135,12 +137,21 @@ export const modelMetrics = createMetricProcessor({
       );
     }
 
-    const FLUSH_INTERVAL_MS = 15 * 60 * 1000;
+    // Debounce window for draining the accumulated ids into the search-index
+    // queue. Widening it collapses more of a hot model's repeated metric
+    // changes into a single reindex, shrinking the burst the search backend
+    // has to drain at peak. Env-configurable so ops can tune it at runtime
+    // without a redeploy (default 45m — 3× the previous fixed 15m). The only
+    // cost is metric-drift staleness on the search doc (download/generation
+    // counts and the popularity rank derived from them lag by up to the
+    // window); genuine mutations still reindex immediately via the untouched
+    // service-layer queueUpdate path.
+    const FLUSH_INTERVAL_MS = env.SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS;
     const lastFlushStr = await sysRedis.get(
       REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH
     );
     const lastFlush = lastFlushStr ? new Date(lastFlushStr).getTime() : 0;
-    const shouldFlush = Date.now() - lastFlush >= FLUSH_INTERVAL_MS;
+    const shouldFlush = shouldFlushMetricSearchIndex(Date.now(), lastFlush, FLUSH_INTERVAL_MS);
 
     if (shouldFlush) {
       const pendingRaw = await sysRedis.sMembers(
