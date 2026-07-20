@@ -12,7 +12,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
-import { getStaticContent } from '~/server/services/content.service';
+import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { getUserFollows } from '~/server/redis/caches';
@@ -341,19 +341,23 @@ export const completeOnboardingHandler = async ({
         // Store the accepted content hash alongside the date so a freshly-onboarded
         // user is hash-backed immediately and immune to stray `lastmod` bumps.
         const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
+        const tosHash = resolveTosHash(tos.hash);
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         await setUserSetting(
           id,
           domain === 'green'
-            ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: tos.hash }
-            : { tosLastSeenDate: now, tosAcceptedHash: tos.hash }
+            ? { tosGreenLastSeenDate: now, tosGreenAcceptedHash: tosHash }
+            : { tosLastSeenDate: now, tosAcceptedHash: tosHash }
         );
         break;
       }
       case OnboardingSteps.RedTOS: {
         const tos = await getStaticContent({ slug: ['tos'], ctx: { domain } as Context });
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
-        await setUserSetting(id, { tosRedLastSeenDate: new Date(), tosRedAcceptedHash: tos.hash });
+        await setUserSetting(id, {
+          tosRedLastSeenDate: new Date(),
+          tosRedAcceptedHash: resolveTosHash(tos.hash),
+        });
         break;
       }
       case OnboardingSteps.Profile: {
