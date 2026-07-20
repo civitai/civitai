@@ -38,8 +38,13 @@ const {
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
     appListing: { updateMany: vi.fn(async () => ({ count: 0 })) },
     appListingModerationEvent: { create: vi.fn(async () => ({})) },
-    // AGENTIC REVIEW (P1) — running-report flip target for teardownAgentReviewForRequest.
-    appReviewAgentReport: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    // AGENTIC REVIEW (P1) — teardownAgentReviewForRequest first probes findFirst
+    // (cheap indexed existence gate) then flips a running report → torn-down via
+    // updateMany. Default findFirst = a report exists (agent review ran).
+    appReviewAgentReport: {
+      findFirst: vi.fn(async () => ({ id: 'report_1' })),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
   },
   mockGetReviewHead: vi.fn(async () => 'a'.repeat(40)),
   mockTriggerReviewBuild: vi.fn(async () => ({ name: 'review-pr-1' })),
@@ -304,6 +309,8 @@ describe('teardownAgentReviewForRequest', () => {
   beforeEach(() => {
     mockDeleteAgentReviewResources.mockClear();
     mockDeleteStagedBundle.mockClear();
+    mockDbWrite.appReviewAgentReport.findFirst.mockClear();
+    mockDbWrite.appReviewAgentReport.findFirst.mockResolvedValue({ id: 'report_1' });
     mockDbWrite.appReviewAgentReport.updateMany.mockClear();
     mockDbWrite.appReviewAgentReport.updateMany.mockResolvedValue({ count: 1 });
   });
@@ -321,6 +328,23 @@ describe('teardownAgentReviewForRequest', () => {
     expect(mockDeleteStagedBundle).toHaveBeenCalledWith(PUBREQ);
   });
 
+  it('skips the k8s + MinIO teardown I/O when no agent review ran for the request', async () => {
+    // No report row for this request → the cheap indexed gate returns early,
+    // so the live approve/reject/withdraw path pays a single indexed read, not
+    // the k8s LIST+DELETE + MinIO LIST+DELETE round-trips.
+    mockDbWrite.appReviewAgentReport.findFirst.mockResolvedValue(null);
+
+    await expect(teardownAgentReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+
+    expect(mockDbWrite.appReviewAgentReport.findFirst).toHaveBeenCalledWith({
+      where: { publishRequestId: PUBREQ },
+      select: { id: true },
+    });
+    expect(mockDeleteAgentReviewResources).not.toHaveBeenCalled();
+    expect(mockDbWrite.appReviewAgentReport.updateMany).not.toHaveBeenCalled();
+    expect(mockDeleteStagedBundle).not.toHaveBeenCalled();
+  });
+
   it('never throws even if a step fails (best-effort)', async () => {
     mockDbWrite.appReviewAgentReport.updateMany.mockRejectedValue(new Error('db down'));
     await expect(teardownAgentReviewForRequest(PUBREQ)).resolves.toBeUndefined();
@@ -335,6 +359,9 @@ describe('withdrawRequest review teardown (#2831)', () => {
     mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
     mockDeleteReviewResources.mockClear();
     mockDeleteAgentReviewResources.mockClear();
+    // A report row exists → the agent teardown gate passes (a prior test may have
+    // flipped findFirst to null).
+    mockDbWrite.appReviewAgentReport.findFirst.mockResolvedValue({ id: 'report_1' });
   });
 
   it('tears down the review env when a previewed request is self-withdrawn', async () => {

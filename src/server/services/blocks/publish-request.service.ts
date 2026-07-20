@@ -3435,6 +3435,18 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
  */
 export async function teardownAgentReviewForRequest(publishRequestId: string): Promise<void> {
   try {
+    const { dbWrite } = await import('~/server/db/client');
+    // Cheap indexed gate: only pay the k8s + MinIO teardown I/O when an agent
+    // review actually ran for this request. Agent reviews are dark/rare, so for
+    // the many mod decisions that never trigger an agent this is a single
+    // indexed read (AppReviewAgentReport is indexed on publish_request_id), not
+    // two network round-trips (k8s LIST+DELETE + MinIO LIST+DELETE) on the live
+    // approve/reject/withdraw path.
+    const existing = await dbWrite.appReviewAgentReport.findFirst({
+      where: { publishRequestId },
+      select: { id: true },
+    });
+    if (!existing) return;
     // (1) agent k8s objects. deleteAgentReviewResources is itself best-effort +
     // never-throws; its label selector is scoped to publishRequestId + the
     // review-agent role, so it can only match this review's agent. `slug` is not
@@ -3442,7 +3454,6 @@ export async function teardownAgentReviewForRequest(publishRequestId: string): P
     const { deleteAgentReviewResources } = await import('./agent-review.service');
     await deleteAgentReviewResources({ slug: '', publishRequestId });
     // (2) flip any running report row → torn-down.
-    const { dbWrite } = await import('~/server/db/client');
     await dbWrite.appReviewAgentReport.updateMany({
       where: { publishRequestId, status: 'running' },
       data: { status: 'torn-down', completedAt: new Date() },
