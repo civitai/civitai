@@ -3716,7 +3716,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 // but output matches input). Sort fields are u32 unix seconds. Nullable fields return null directly.
 
 /** Map a raw BitDex document to the shape consumers expect (matching Meili search result). */
-function mapBitdexDoc(doc: Record<string, unknown>) {
+export function mapBitdexDoc(doc: Record<string, unknown>) {
   const sortAtUnix = (doc.sortAt as number) * 1000; // u32 seconds → epoch ms
   const publishedAtRaw = doc.publishedAt as number | null;
   return {
@@ -3730,6 +3730,9 @@ function mapBitdexDoc(doc: Record<string, unknown>) {
     baseModel: (doc.baseModel as string) ?? null,
     postId: (doc.postId as number) ?? null,
     postedToId: (doc.postedToId as number) ?? null,
+    // Omit rather than `?? null`: downstream reads a missing key as "not indexed"
+    // and a null as "confirmed no link", so a missing value must not become null.
+    ...(doc.model3dId != null ? { model3dId: doc.model3dId as number } : {}),
     remixOfId: (doc.remixOfId as number) ?? null,
     hasMeta: doc.hasMeta as boolean,
     onSite: doc.onSite as boolean,
@@ -3771,6 +3774,7 @@ export async function getImagesFromBitdexPreFilter(
   const {
     sort,
     modelVersionId,
+    model3dId,
     types,
     withMeta,
     fromPlatform,
@@ -3903,6 +3907,12 @@ export async function getImagesFromBitdexPreFilter(
     if (!hideManualResources) vClauses.push(_in('modelVersionIdsManual', [_int(modelVersionId)]));
     filters.push(_or(...vClauses));
   }
+
+  // --- Model3D gallery ---
+  // Must deploy only after BitDex has model3dId configured and populated: a
+  // filter on a field BitDex doesn't know returns HTTP 400 and fails the whole
+  // query, not just this clause.
+  if (model3dId) filters.push(_eq('model3dId', _int(model3dId)));
 
   // --- Remix ---
   if (remixOfId) filters.push(_eq('remixOfId', _int(remixOfId)));
