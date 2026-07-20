@@ -123,6 +123,43 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
+// Flipt v2 addresses flags as resources under an environment + namespace, and
+// this instance is GitOps-backed (flags live in civitai/flipt-state). The v1
+// /api/v1/flags endpoints this skill used to call 404 on v2.
+let _context = null;
+
+async function fliptContext() {
+  if (_context) return _context;
+
+  const envKey = process.env.FLIPT_ENVIRONMENT;
+  const nsKey = process.env.FLIPT_NAMESPACE;
+  if (envKey && nsKey) return (_context = { envKey, nsKey });
+
+  // Discovered rather than hardcoded so a second environment can't silently
+  // send every read to the wrong place.
+  const { environments = [] } = await apiRequest('GET', '/api/v2/environments');
+  const env =
+    environments.find((e) => e.key === envKey) ??
+    environments.find((e) => e.default) ??
+    environments[0];
+  if (!env) throw new Error('No Flipt environments available');
+
+  const { items = [] } = await apiRequest(
+    'GET',
+    `/api/v2/environments/${env.key}/namespaces`
+  );
+  const ns = items.find((n) => n.key === nsKey) ?? items.find((n) => n.key === 'default') ?? items[0];
+  if (!ns) throw new Error(`No namespaces in Flipt environment "${env.key}"`);
+
+  return (_context = { envKey: env.key, nsKey: ns.key });
+}
+
+async function flagsPath(key) {
+  const { envKey, nsKey } = await fliptContext();
+  const base = `/api/v2/environments/${envKey}/namespaces/${nsKey}/resources/flipt.core.Flag`;
+  return key ? `${base}/${encodeURIComponent(key)}` : base;
+}
+
 async function apiRequest(method, path, body = null) {
   const url = `${FLIPT_URL}${path}`;
   const options = {
@@ -146,8 +183,33 @@ async function apiRequest(method, path, body = null) {
   return data;
 }
 
+// Every write here previously POSTed to /api/v1/*, which does not exist on v2.
+// They are not repointed at v2 on purpose. There is no Flipt auth behind the
+// ingress, and a v2 write against a git-backed environment commits and pushes
+// to civitai/flipt-state main using the pod's deploy key — so a "quick toggle"
+// would silently land an unreviewed commit on a file gating production.
+function refuseWrite(action, key) {
+  console.error(`Cannot ${action} "${key}" through the API.`);
+  console.error('');
+  console.error('civitai/flipt-state is the source of truth. An API write here would not');
+  console.error('fail — it would push an unreviewed commit to that repo. Open a PR instead.');
+  console.error('');
+  console.error('  gh repo clone civitai/flipt-state /tmp/flipt-state');
+  console.error('  # edit civitai-app/default/features.yaml');
+  console.error('  cd /tmp/flipt-state && git add -A && git commit && git push');
+  console.error('');
+  console.error('Flag entry format:');
+  console.error('  - key: my-flag');
+  console.error('    name: my-flag');
+  console.error('    type: BOOLEAN_FLAG_TYPE');
+  console.error('    description: what it controls');
+  console.error('    enabled: false');
+  process.exit(2);
+}
+
 async function listFlags() {
-  const data = await apiRequest('GET', '/api/v1/flags');
+  const { resources = [], revision } = await apiRequest('GET', await flagsPath());
+  const data = { flags: resources.map((r) => r.payload), revision };
 
   if (jsonOutput) {
     console.log(JSON.stringify(data, null, 2));
@@ -171,13 +233,13 @@ async function listFlags() {
 }
 
 async function getFlag(key) {
-  // Flipt API doesn't support individual flag lookup well, so filter from list
-  const allFlags = await apiRequest('GET', '/api/v1/flags');
-  const data = allFlags.flags?.find(f => f.key === key);
-
-  if (!data) {
+  let data;
+  try {
+    ({ resource: { payload: data } = {} } = await apiRequest('GET', await flagsPath(key)));
+  } catch (err) {
     throw new Error(`Flag not found: ${key}`);
   }
+  if (!data) throw new Error(`Flag not found: ${key}`);
 
   if (jsonOutput) {
     console.log(JSON.stringify(data, null, 2));
@@ -230,6 +292,7 @@ async function getFlag(key) {
 }
 
 async function createFlag(key, desc, isEnabled) {
+  refuseWrite('create', key);
   const flagType = isVariant ? 'VARIANT_FLAG_TYPE' : 'BOOLEAN_FLAG_TYPE';
   try {
     const data = await apiRequest('POST', '/api/v1/flags', {
@@ -288,6 +351,7 @@ ${variantYaml}
 }
 
 async function addVariant(flagKey, variantKey) {
+  refuseWrite('add a variant to', flagKey);
   const data = await apiRequest('POST', `/api/v1/flags/${flagKey}/variants`, { key: variantKey, default: false });
   if (jsonOutput) { console.log(JSON.stringify(data, null, 2)); return; }
   console.log(`✓ Added variant "${variantKey}" to flag: ${flagKey}`);
@@ -295,6 +359,7 @@ async function addVariant(flagKey, variantKey) {
 }
 
 async function removeVariant(flagKey, variantKey) {
+  refuseWrite('remove a variant from', flagKey);
   const allFlags = await apiRequest('GET', '/api/v1/flags');
   const flag = allFlags.flags?.find(f => f.key === flagKey);
   if (!flag) throw new Error(`Flag not found: ${flagKey}`);
@@ -308,6 +373,7 @@ async function removeVariant(flagKey, variantKey) {
 }
 
 async function setRollout(flagKey, variantKey) {
+  refuseWrite('set a rollout on', flagKey);
   const allFlags = await apiRequest('GET', '/api/v1/flags');
   const flag = allFlags.flags?.find(f => f.key === flagKey);
   if (!flag) throw new Error(`Flag not found: ${flagKey}`);
@@ -326,6 +392,7 @@ async function setRollout(flagKey, variantKey) {
 }
 
 async function updateFlag(key, isEnabled) {
+  refuseWrite('update', key);
   // First verify the flag exists
   const allFlags = await apiRequest('GET', '/api/v1/flags');
   const current = allFlags.flags?.find(f => f.key === key);
@@ -364,6 +431,7 @@ async function updateFlag(key, isEnabled) {
 }
 
 async function deleteFlag(key) {
+  refuseWrite('delete', key);
   if (!force) {
     console.error(`Warning: This will delete flag "${key}"`);
     console.error('Use --force to skip this confirmation');
@@ -426,8 +494,14 @@ Examples:
   node .claude/skills/flipt/flipt.mjs set-rollout my-feature 2 --rollout 100
   node .claude/skills/flipt/flipt.mjs add-variant my-feature 3
 
-Note: Write operations require an admin token. If you have a read-only token,
-use the GitOps workflow by editing the civitai/flipt-state repository.`);
+Note: this Flipt is v2 and GitOps-backed. Reads (list/get) hit the API; every
+write command refuses and prints the civitai/flipt-state workflow instead.
+Writes are refused by choice, not capability — an API write would push an
+unreviewed commit straight to that repo's main.
+
+Env: FLIPT_URL, FLIPT_API_TOKEN. Optionally FLIPT_ENVIRONMENT / FLIPT_NAMESPACE
+to skip auto-discovery (defaults to the environment marked default, namespace
+"default").`);
 }
 
 async function main() {
