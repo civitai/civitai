@@ -1,19 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockDbRead, mockDbWrite, mockVoidChallenge, mockCreateNotification, mockLogToAxiom } =
-  vi.hoisted(() => ({
-    mockDbRead: {
-      challenge: { findUnique: vi.fn() },
-      collection: { findUnique: vi.fn() },
-    },
-    mockDbWrite: {
-      challenge: { update: vi.fn() },
-      collection: { updateMany: vi.fn() },
-    },
-    mockVoidChallenge: vi.fn(),
-    mockCreateNotification: vi.fn(),
-    mockLogToAxiom: vi.fn(),
-  }));
+const {
+  mockDbRead,
+  mockDbWrite,
+  mockVoidChallenge,
+  mockCreateNotification,
+  mockLogToAxiom,
+  mockCloseChallengeCollection,
+} = vi.hoisted(() => ({
+  mockDbRead: {
+    challenge: { findUnique: vi.fn() },
+    collection: { findUnique: vi.fn() },
+  },
+  mockDbWrite: {
+    challenge: { update: vi.fn() },
+    collection: { updateMany: vi.fn() },
+  },
+  mockVoidChallenge: vi.fn(),
+  mockCreateNotification: vi.fn(),
+  mockLogToAxiom: vi.fn(),
+  mockCloseChallengeCollection: vi.fn(),
+}));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/challenge.service', () => ({ voidChallenge: mockVoidChallenge }));
@@ -21,6 +28,9 @@ vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+  closeChallengeCollection: mockCloseChallengeCollection,
+}));
 
 const { applyChallengeNsfwEscalation } = await import('./challenge-nsfw-escalation');
 
@@ -47,6 +57,7 @@ beforeEach(() => {
   mockVoidChallenge.mockResolvedValue({ success: true });
   mockCreateNotification.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);
+  mockCloseChallengeCollection.mockResolvedValue(undefined);
 });
 
 describe('applyChallengeNsfwEscalation', () => {
@@ -119,6 +130,7 @@ describe('applyChallengeNsfwEscalation', () => {
     const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
     expect(data.ingestion).toBe('Blocked');
     expect(mockCreateNotification).not.toHaveBeenCalled();
+    expect(mockCloseChallengeCollection).toHaveBeenCalledWith({ collectionId: 55 });
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'challenge-nsfw-escalation-held', challengeId: 77 })
     );

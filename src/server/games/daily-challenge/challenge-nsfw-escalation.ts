@@ -6,6 +6,7 @@ import {
 } from '~/server/games/daily-challenge/challenge-currency';
 import { createNotification } from '~/server/services/notification.service';
 import { voidChallenge } from '~/server/services/challenge.service';
+import { closeChallengeCollection } from './challenge-helpers';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   ChallengeIngestionStatus,
@@ -86,6 +87,7 @@ export async function applyChallengeNsfwEscalation({
       where: { id: entityId },
       data: { ingestion: ChallengeIngestionStatus.Blocked, scannedAt: new Date() },
     });
+    await closeChallengeCollection({ collectionId: challenge.collectionId });
     logToAxiom({
       type: 'error',
       name: 'challenge-nsfw-escalation-held',
