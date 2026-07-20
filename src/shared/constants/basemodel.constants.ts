@@ -4358,6 +4358,12 @@ export const baseModelGroups: string[] = [...new Set(ecosystems.map((x) => x.key
  */
 export const activeBaseModels: string[] = getActiveBaseModels().map((x) => x.name);
 
+/**
+ * Default base model for brand-new models/versions that have no prior context
+ * (no previous version, no remembered last-used selection).
+ */
+export const defaultBaseModel: BaseModel = 'Anima';
+
 // -----------------------------------------------------------------------------
 // Constant Exports
 // -----------------------------------------------------------------------------
