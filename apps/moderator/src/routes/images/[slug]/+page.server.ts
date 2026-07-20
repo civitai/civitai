@@ -22,13 +22,13 @@ import { getActorMeta } from '$lib/server/request-meta';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
 import { IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
-import { allBrowsingLevelsFlag } from '@civitai/shared';
+import { allBrowsingLevelsWithBlockedFlag } from '@civitai/shared';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 
 const querySchema = z.object({
   cursor: z.coerce.number().int().positive().optional().catch(undefined),
   limit: z.coerce.number().int().min(10).max(200).catch(100),
-  level: z.coerce.number().int().min(0).catch(allBrowsingLevelsFlag),
+  level: z.coerce.number().int().min(0).catch(allBrowsingLevelsWithBlockedFlag),
 });
 
 // Comma-separated positive ints — used for the tag filter (URL) and bulk-action id lists (form).
