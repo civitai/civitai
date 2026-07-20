@@ -12,10 +12,14 @@ describe('toCsv', () => {
     );
   });
 
-  it('neutralizes values a spreadsheet would treat as a formula', () => {
+  it('neutralizes strings a spreadsheet would treat as a formula', () => {
     expect(toCsv(['v'], [['=SUM(A1)'], ['+1'], ['-1'], ['@ref']])).toBe(
       "v\r\n'=SUM(A1)\r\n'+1\r\n'-1\r\n'@ref"
     );
+  });
+
+  it('leaves negative numbers numeric so the column stays summable', () => {
+    expect(toCsv(['amount'], [[-500], [500], [0]])).toBe('amount\r\n-500\r\n500\r\n0');
   });
 
   it('renders empty cells for null and undefined', () => {

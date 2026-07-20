@@ -37,6 +37,7 @@ import type {
   RefundMultiAccountTransactionInput,
   // RefundMultiAccountTransactionResponse,
 } from '~/server/schema/buzz.schema';
+import { MAX_TRANSACTION_RANGE_DAYS } from '~/server/schema/buzz.schema';
 import {
   getUserBuzzTransactionsResponse,
   createMultiAccountBuzzTransactionResponse,
@@ -356,15 +357,21 @@ function buildTransactionsQuery({
   accountId: number;
   accountTypes: BuzzSpendType[];
   type?: TransactionType;
-  start?: Date | null;
-  end?: Date | null;
+  start: Date;
+  end: Date;
   cursor?: string;
   limit: number;
 }) {
+  if (end < start) throw throwBadRequestError('The end date must be after the start date');
+  if (dayjs(end).diff(start, 'day') > MAX_TRANSACTION_RANGE_DAYS)
+    throw throwBadRequestError(
+      `Date ranges are limited to ${MAX_TRANSACTION_RANGE_DAYS} days. Narrow the range and try again.`
+    );
+
   const types = accountTypes.map((t) => `'${t}'`).join(',');
   const shared = [
-    start ? `date >= '${toClickhouseDate(start)}'` : null,
-    end ? `date <= '${toClickhouseDate(end)}'` : null,
+    `date >= '${toClickhouseDate(start)}'`,
+    `date <= '${toClickhouseDate(end)}'`,
     cursor ? `(date, transactionId) < ${toClickhouseCursor(cursor)}` : null,
     type !== undefined ? `type = '${toClickhouseTransactionType(type)}'` : null,
   ].filter(isDefined);
@@ -389,6 +396,23 @@ function parseDetails(details: string) {
     return JSON.parse(details) as BuzzTransactionDetails;
   } catch {
     return undefined;
+  }
+}
+
+// $query embeds the full generated SQL in its error message, which the client
+// surfaces verbatim in a toast.
+async function queryTransactions(query: string) {
+  try {
+    return await clickhouse!.$query<ClickhouseBuzzTransaction>(query);
+  } catch (error) {
+    logToAxiom({
+      name: 'buzz-transactions-query',
+      type: 'error',
+      message: (error as Error).message,
+    });
+    throw throwBadRequestError(
+      'Could not load transactions right now. Try a narrower date range or try again shortly.'
+    );
   }
 }
 
@@ -436,7 +460,7 @@ export async function getUserBuzzTransactionsMulti({
   if (!clickhouse) throw throwBadRequestError('Transaction history is temporarily unavailable');
 
   // One extra row tells us whether another page exists without a second query.
-  const rows = await clickhouse.$query<ClickhouseBuzzTransaction>(
+  const rows = await queryTransactions(
     buildTransactionsQuery({ accountId, limit: limit + 1, ...input })
   );
 
@@ -456,7 +480,7 @@ export async function exportUserBuzzTransactions({
 }: ExportUserBuzzTransactionsSchema & { accountId: number }) {
   if (!clickhouse) throw throwBadRequestError('Transaction export is temporarily unavailable');
 
-  const rows = await clickhouse.$query<ClickhouseBuzzTransaction>(
+  const rows = await queryTransactions(
     buildTransactionsQuery({ accountId, limit: CH_MAX_EXPORT_ROWS + 1, ...input })
   );
   if (rows.length > CH_MAX_EXPORT_ROWS)
@@ -498,9 +522,7 @@ export async function exportUserBuzzTransactions({
     })
   );
 
-  const range = [input.start, input.end].map((date) =>
-    date ? toClickhouseDate(date).slice(0, 10) : 'all'
-  );
+  const range = [input.start, input.end].map((date) => toClickhouseDate(date).slice(0, 10));
   const filename = `civitai-transactions_${input.accountTypes.join('-')}_${range.join('_')}.csv`;
 
   return { filename, csv };

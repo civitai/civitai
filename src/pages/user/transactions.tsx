@@ -95,13 +95,15 @@ export default function UserTransactions() {
   );
 
   const handleDateChange = (name: 'start' | 'end') => (value: Date | null) => {
+    // Both bounds are required server-side, so a cleared date is a no-op.
+    if (!value) return;
     setFilters((current) => ({ ...current, [name]: value }));
   };
 
   const exportMutation = trpc.buzz.exportUserTransactions.useMutation({
     onSuccess: ({ filename, csv }) => {
       // The BOM keeps Excel from mangling non-ASCII usernames and descriptions.
-      saveAs(new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' }), filename);
+      saveAs(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }), filename);
     },
     onError: (error) => {
       showErrorNotification({
@@ -187,6 +189,7 @@ export default function UserTransactions() {
               const { amount, date, fromUser, toUser, details, type } = transaction;
               let description = transaction.description ?? undefined;
               const isDebit = amount < 0;
+              const accountType = isDebit ? transaction.fromAccountType : transaction.toAccountType;
               const isImage = details?.entityType === 'Image';
               const { url, label }: { url?: string; label?: string } = details
                 ? parseBuzzTransactionDetails(details as BuzzTransactionDetails, type)
@@ -202,6 +205,11 @@ export default function UserTransactions() {
                       <Group gap={8}>
                         <Text fw="500">{formatDate(date)}</Text>
                         <Badge>{TransactionType[type]}</Badge>
+                        {filters.accountTypes.length > 1 && (
+                          <Badge variant="light" color={accountType}>
+                            {capitalize(accountType)}
+                          </Badge>
+                        )}
                       </Group>
                       <Text c={isDebit ? 'red' : 'green'}>
                         <Group gap={4}>

@@ -51,6 +51,11 @@ export const buzzRouter = router({
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: buzzProcedure
     .meta({ requiredScope: TokenScope.BuzzRead })
+    .use(
+      // Each page is a multi-second ClickHouse scan, so paging is far cheaper to
+      // abuse than the export it shares a data source with.
+      rateLimit({ limit: 120, period: 3600 })
+    )
     .input(getUserBuzzTransactionsMultiSchema)
     .query(getUserTransactionsMultiHandler),
   exportUserTransactions: buzzProcedure
