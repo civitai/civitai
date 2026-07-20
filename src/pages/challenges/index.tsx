@@ -1,23 +1,13 @@
 import { useState } from 'react';
-import {
-  Stack,
-  Title,
-  Group,
-  Text,
-  Button,
-  ActionIcon,
-  Modal,
-  SegmentedControl,
-} from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
-import { IconInfoCircle, IconSettings, IconTrophy } from '@tabler/icons-react';
+import { Stack, Title, Group, Button, SegmentedControl } from '@mantine/core';
+import { IconTrophy, IconUsers } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { ChallengesInfinite } from '~/components/Challenge/Infinite/ChallengesInfinite';
-import { DailyChallengesRow } from '~/components/Challenge/DailyChallengesRow';
+import { DailyChallengesSection } from '~/components/Challenge/DailyChallengesSection';
 import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChallengeEvents';
 import { SectionBand } from '~/components/Challenge/SectionBand';
 import { YourChallengesRow } from '~/components/Challenge/YourChallengesRow';
@@ -28,7 +18,7 @@ import {
   parseStatusQuery,
   parseParticipationQuery,
 } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
-import { ChallengeSort } from '~/server/schema/challenge.schema';
+import { ChallengeSort, ChallengeParticipation } from '~/server/schema/challenge.schema';
 import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schema';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -69,7 +59,6 @@ function ChallengesPage() {
       Create Challenge
     </Button>
   ) : null;
-  const [infoOpened, { open: openInfo, close: closeInfo }] = useDisclosure(false);
 
   // Parse query params
   const sort = (router.query.sort as ChallengeSort) || ChallengeSort.Newest;
@@ -87,6 +76,16 @@ function ChallengesPage() {
     Scheduled: { status: [ChallengeStatus.Scheduled], includeEnded: false },
     Active: { status: [ChallengeStatus.Active], includeEnded: false },
     Completed: { status: [ChallengeStatus.Completed], includeEnded: true },
+  };
+
+  const participated = router.query.engagement === 'participated';
+  const [participatedStatus, setParticipatedStatus] = useState<'Active' | 'Completed'>('Active');
+  const participatedStatusFilters: Record<string, Partial<GetInfiniteChallengesInput>> = {
+    Active: { status: [ChallengeStatus.Active], includeEnded: false },
+    Completed: {
+      status: [ChallengeStatus.Completing, ChallengeStatus.Completed],
+      includeEnded: true,
+    },
   };
 
   if (mine) {
@@ -123,6 +122,34 @@ function ChallengesPage() {
     );
   }
 
+  if (participated) {
+    if (!currentUser) return <NotFound />;
+    return (
+      <MasonryContainer>
+        <Stack gap="xs">
+          <Stack gap="xl" align="flex-start">
+            <Title>Challenges You&apos;ve Entered</Title>
+            <SegmentedControl
+              classNames={styles}
+              transitionDuration={0}
+              radius="xl"
+              data={['Active', 'Completed']}
+              value={participatedStatus}
+              onChange={(v) => setParticipatedStatus(v as 'Active' | 'Completed')}
+              withItemsBorders={false}
+            />
+          </Stack>
+          <ChallengesInfinite
+            filters={{
+              participation: ChallengeParticipation.Entered,
+              ...participatedStatusFilters[participatedStatus],
+            }}
+          />
+        </Stack>
+      </MasonryContainer>
+    );
+  }
+
   return (
     <>
       <Meta
@@ -131,108 +158,24 @@ function ChallengesPage() {
         canonical="/challenges"
       />
 
-      {/* Info Modal */}
-      <Modal
-        opened={infoOpened}
-        onClose={closeInfo}
-        title={<Title order={3}>How Challenges Work</Title>}
-        size="lg"
-        centered
-      >
-        <Stack gap="md">
-          <div>
-            <Title order={4} mb="xs">
-              🎨 How It Works
-            </Title>
-            <Text size="sm">
-              Every day, we select a new challenge featuring a specific AI model. Create images
-              using the featured model and submit your best work to compete for prizes!
-            </Text>
-          </div>
-          <div>
-            <Title order={4} mb="xs">
-              🏆 Winning & Rewards
-            </Title>
-            <Text size="sm">
-              The top 3 entries are reviewed and selected by our AI judging system. Entries are
-              ranked by a weighted score where theme relevance counts for 50%, so staying on-theme
-              is key! Winners receive Buzz prizes and challenge points. Even if you don&apos;t win,
-              you can earn participation rewards for submitting quality entries.
-            </Text>
-          </div>
-          <div>
-            <Title order={4} mb="xs">
-              ⭐ Challenge Points
-            </Title>
-            <Text size="sm">
-              Earn points by participating in challenges. Top winners get the most points, but
-              everyone who participates earns something. Climb the leaderboard and show off your
-              skills!
-            </Text>
-          </div>
-          <div>
-            <Title order={4} mb="xs">
-              📝 Tips for Success
-            </Title>
-            <Text size="sm">
-              • Use the featured model specified in the challenge
-              <br />
-              • Follow the theme or prompt provided
-              <br />
-              • Submit your best work - quality over quantity
-              <br />• Check back daily for new challenges
-            </Text>
-          </div>
-        </Stack>
-      </Modal>
-
-      <SectionBand tone="default">
+      {/* -mt-3 cancels the shared SubNav wrapper's mb-3 so the first band sits flush under the
+          subnav (SubNav in AppLayout.tsx). */}
+      <div className="-mt-3">
         <FeaturedChallengeEvents />
-      </SectionBand>
 
       <YourChallengesRow />
 
-      <SectionBand tone="alt">
-        <Stack gap="md">
-          <Group justify="space-between" wrap="nowrap" gap="sm">
-            <Group gap={4} wrap="nowrap">
-              <Title order={3}>Daily Challenges</Title>
-              <ActionIcon variant="subtle" color="gray" onClick={openInfo}>
-                <IconInfoCircle size={20} />
-              </ActionIcon>
-            </Group>
-            <Group gap="sm" wrap="nowrap" className="shrink-0">
-              {currentUser?.isModerator && (
-                <Button
-                  component={Link}
-                  href="/moderator/challenges"
-                  leftSection={<IconSettings size={16} />}
-                  variant="light"
-                >
-                  Manage
-                </Button>
-              )}
-              <Button
-                component={Link}
-                href="/challenges/winners"
-                leftSection={<IconTrophy size={16} />}
-                variant="light"
-                color="yellow"
-              >
-                Daily Challenge Winners
-              </Button>
-            </Group>
-          </Group>
-          <DailyChallengesRow />
-        </Stack>
-      </SectionBand>
+      <DailyChallengesSection />
 
       {/* Behind the userChallenges flag: with it off, the page shows only the daily-challenge experience. */}
       {features.userChallenges && (
-        <SectionBand tone="default">
+        <SectionBand>
           <Stack gap="md">
             <Group wrap="wrap" gap="sm">
-              <Title order={3}>Community Challenges</Title>
+              <Group gap="xs" wrap="nowrap" align="center">
+                <IconUsers size={20} color="var(--mantine-color-cyan-7)" />
+                <Title order={3}>Community Challenges</Title>
+              </Group>
               <Group gap="sm" wrap="wrap" ml="auto">
                 <ChallengeFeedFilters />
               </Group>
@@ -250,6 +193,7 @@ function ChallengesPage() {
           </Stack>
         </SectionBand>
       )}
+      </div>
     </>
   );
 }

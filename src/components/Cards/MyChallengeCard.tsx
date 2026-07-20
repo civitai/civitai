@@ -1,4 +1,3 @@
-import type { BadgeProps } from '@mantine/core';
 import { Badge, Group, Text } from '@mantine/core';
 import { memo } from 'react';
 import {
@@ -17,19 +16,6 @@ import { slugit } from '~/utils/string-helpers';
 import { getMyChallengeBadge, getMyChallengeCta } from './myChallengeCard.utils';
 import type { MyParticipatedChallengeItem } from '~/server/schema/challenge.schema';
 
-const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
-  radius: 'xl',
-  variant: 'filled',
-  px: 8,
-  h: 26,
-  fw: 'bold',
-};
-
-// Semi-transparent black backing, matching ChallengeCard's "dark" chip pattern
-// (StatusBadge fallback / days-left chip) — needed so the neutral "dark" swatch
-// still reads over a bright entry image.
-const darkBgStyle = { backgroundColor: 'rgba(0, 0, 0, 0.31)' } as const;
-
 const badgeIcons = {
   trophy: IconTrophy,
   medal: IconMedal,
@@ -37,8 +23,14 @@ const badgeIcons = {
   check: IconCheck,
 } as const;
 
-// Reuse ChallengeCard's exact color tokens: yellow.7 (Complete), green (Live), blue (Upcoming).
-const badgeColors = { gold: 'yellow.7', dark: 'dark', blue: 'blue', green: 'green' } as const;
+// Per-result badge palette (matches designs/challenges-feed.pen v4). Gold uses dark content for
+// contrast; the rest use white.
+const badgeStyles = {
+  gold: { bg: 'var(--mantine-color-yellow-5)', fg: '#1a1b1e' },
+  dark: { bg: 'var(--mantine-color-gray-8)', fg: '#ffffff' },
+  blue: { bg: 'var(--mantine-color-blue-6)', fg: '#ffffff' },
+  green: { bg: 'var(--mantine-color-green-8)', fg: '#ffffff' },
+} as const;
 
 export const MyChallengeCard = memo(function MyChallengeCard({
   data,
@@ -49,6 +41,7 @@ export const MyChallengeCard = memo(function MyChallengeCard({
   const badge = getMyChallengeBadge(myResult, myPlace);
   const cta = getMyChallengeCta(myResult, isLive);
   const BadgeIcon = badgeIcons[badge.icon];
+  const badgeStyle = badgeStyles[badge.color];
 
   const image = myEntryImage
     ? {
@@ -70,19 +63,40 @@ export const MyChallengeCard = memo(function MyChallengeCard({
       aspectRatio="square"
       image={image}
       header={
-        <Badge
-          className={cardClasses.chip}
-          {...sharedBadgeProps}
-          color={badgeColors[badge.color]}
-          style={badge.color === 'dark' ? darkBgStyle : undefined}
-        >
-          <Group gap={4}>
-            <BadgeIcon size={12} />
-            <Text size="xs" fw="bold">
-              {badge.label}
+        <div className="flex w-full items-start justify-between gap-2">
+          <Badge
+            className={cardClasses.chip}
+            radius="xl"
+            variant="filled"
+            tt="none"
+            px={10}
+            h={26}
+            style={{ backgroundColor: badgeStyle.bg }}
+          >
+            <Group gap={5}>
+              <BadgeIcon size={13} color={badgeStyle.fg} />
+              <Text size="xs" fw={800} style={{ color: badgeStyle.fg }}>
+                {badge.label}
+              </Text>
+            </Group>
+          </Badge>
+          <div
+            className={clsx('shrink-0 rounded-full px-2.5 py-1', cardClasses.chip)}
+            style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+          >
+            <Text size="xs" fw={600} c="gray.2">
+              {isLive ? (
+                <>
+                  <DaysFromNow date={endsAt} withoutSuffix /> left · Live
+                </>
+              ) : (
+                <>
+                  Ended <DaysFromNow date={endsAt} />
+                </>
+              )}
             </Text>
-          </Group>
-        </Badge>
+          </div>
+        </div>
       }
       footerGradient
       footer={
@@ -99,17 +113,6 @@ export const MyChallengeCard = memo(function MyChallengeCard({
           )}
           <Text size="xl" fw={700} lineClamp={2} lh={1.2} c="white">
             {title}
-          </Text>
-          <Text size="xs" c="gray.3">
-            {isLive ? (
-              <>
-                <DaysFromNow date={endsAt} withoutSuffix /> left · Live
-              </>
-            ) : (
-              <>
-                Ended <DaysFromNow date={endsAt} />
-              </>
-            )}
           </Text>
           {/* Non-interactive: AspectRatioImageCard already renders the whole card as a link
               to this same challenge, so a nested <button>/<a> here would be an a11y violation. */}

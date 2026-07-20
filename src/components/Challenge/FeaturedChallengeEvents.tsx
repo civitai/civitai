@@ -2,6 +2,8 @@ import { useMemo } from 'react';
 import clsx from 'clsx';
 import { Stack, Title } from '@mantine/core';
 import { ChallengeCard } from '~/components/Cards/ChallengeCard';
+import { ChallengeCardSkeletonRow } from '~/components/Challenge/ChallengeCardSkeletonRow';
+import { SectionBand } from '~/components/Challenge/SectionBand';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { trpc } from '~/utils/trpc';
@@ -49,24 +51,36 @@ export function FeaturedChallengeEvents() {
     [events, filteredIds]
   );
 
-  if (isLoading || loadingPreferences || !visibleEvents || visibleEvents.length === 0) return null;
+  if (isLoading || loadingPreferences)
+    return (
+      <SectionBand>
+        <ChallengeCardSkeletonRow />
+      </SectionBand>
+    );
+
+  if (!visibleEvents || visibleEvents.length === 0) return null;
 
   return (
-    <Stack gap="md">
-      {visibleEvents.map((event) => (
-        <Stack key={event.id} gap="xs">
-          <Title order={3} className={clsx(event.titleColor && eventTitleColors[event.titleColor])}>
-            {event.title}
-          </Title>
-          <TwScrollX className="flex gap-4">
-            {event.challenges.map((challenge) => (
-              <div key={challenge.id} className="w-[320px] shrink-0">
-                <ChallengeCard data={challenge} />
-              </div>
-            ))}
-          </TwScrollX>
-        </Stack>
-      ))}
-    </Stack>
+    <SectionBand>
+      <Stack gap="md">
+        {visibleEvents.map((event) => (
+          <Stack key={event.id} gap="xs">
+            <Title
+              order={3}
+              className={clsx(event.titleColor && eventTitleColors[event.titleColor])}
+            >
+              {event.title}
+            </Title>
+            <TwScrollX className="flex gap-4">
+              {event.challenges.map((challenge) => (
+                <div key={challenge.id} className="w-[320px] shrink-0">
+                  <ChallengeCard data={challenge} />
+                </div>
+              ))}
+            </TwScrollX>
+          </Stack>
+        ))}
+      </Stack>
+    </SectionBand>
   );
 }

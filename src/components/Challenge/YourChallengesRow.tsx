@@ -1,6 +1,8 @@
-import { Button, Group, Stack, Title } from '@mantine/core';
+import { Button, Group, Stack, Text, Title } from '@mantine/core';
+import { IconSwords, IconChevronRight } from '@tabler/icons-react';
 import Link from 'next/link';
 import { MyChallengeCard } from '~/components/Cards/MyChallengeCard';
+import { ChallengeCardSkeletonRow } from '~/components/Challenge/ChallengeCardSkeletonRow';
 import { SectionBand } from '~/components/Challenge/SectionBand';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -10,7 +12,7 @@ import { trpc } from '~/utils/trpc';
 /**
  * Horizontal row of the current user's recently participated-in challenges, including its own
  * section header so the whole section disappears when there's nothing to show. Renders nothing
- * while logged out, loading, or when the user has no entries (mirrors DailyChallengesRow).
+ * while logged out or when the user has no entries; shows a skeleton row while fetching.
  */
 export function YourChallengesRow() {
   const currentUser = useCurrentUser();
@@ -29,18 +31,43 @@ export function YourChallengesRow() {
     isRefetching,
   });
 
-  if (!currentUser || isLoading || loadingPreferences || filtered.length === 0) return null;
+  const headerLeft = (
+    <Group gap={9} wrap="nowrap" align="center">
+      <IconSwords size={20} color="var(--mantine-color-grape-5)" />
+      <div>
+        <Title order={3}>Your Challenges</Title>
+        <Text size="xs" c="dimmed">
+          Challenges you&apos;ve recently entered
+        </Text>
+      </div>
+    </Group>
+  );
+
+  if (!currentUser) return null;
+
+  if (isLoading || loadingPreferences)
+    return (
+      <SectionBand>
+        <Stack gap="md">
+          {headerLeft}
+          <ChallengeCardSkeletonRow />
+        </Stack>
+      </SectionBand>
+    );
+
+  if (filtered.length === 0) return null;
 
   return (
-    <SectionBand tone="your">
+    <SectionBand>
       <Stack gap="md">
         <Group justify="space-between" wrap="nowrap">
-          <Title order={3}>Your Challenges</Title>
+          {headerLeft}
           <Button
             component={Link}
-            href="/challenges?participation=entered"
+            href="/challenges?engagement=participated"
             variant="subtle"
             size="compact-sm"
+            rightSection={<IconChevronRight size={16} />}
           >
             See all
           </Button>
