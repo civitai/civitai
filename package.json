@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.2141",
+  "version": "5.0.2142",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
