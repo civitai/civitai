@@ -4,7 +4,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  CHALLENGE_MODERATION_LABELS,
   claimChallengeForCompletion,
   buildChallengeModerationText,
   closeChallengeCollection,
@@ -17,6 +16,7 @@ import {
 } from '~/server/games/daily-challenge/challenge-helpers';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
+import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import {
   ChallengeParticipation,
   ChallengeSort,
