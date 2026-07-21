@@ -50,7 +50,7 @@ export default function Account() {
           <ContentControlsCard />
           <GenerationSettingsCard />
           {features.canViewNsfw && <ModerationCard />}
-          <CreatorControlsCard />
+          {features.creatorControls && <CreatorControlsCard />}
           <AccountsCard />
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
