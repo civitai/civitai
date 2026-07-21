@@ -1,4 +1,14 @@
-import { Button, Group, Image, List, Paper, Popover, Stack, Text } from '@mantine/core';
+import {
+  Button,
+  Group,
+  Image,
+  List,
+  Paper,
+  Popover,
+  Stack,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import { IconDownload, IconPointFilled } from '@tabler/icons-react';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
 import { COSMETIC_STANDARDS } from '~/components/CreatorShop/Submit/standards.constants';
@@ -29,10 +39,11 @@ export function DesignStandardsRow({ type }: { type: CosmeticType }) {
         Follows{' '}
         <Popover width={320} position="top" withArrow shadow="md">
           <Popover.Target>
-            <Text
-              component="span"
-              size="sm"
+            <UnstyledButton
               style={{
+                display: 'inline',
+                font: 'inherit',
+                color: 'inherit',
                 textDecoration: 'underline',
                 textDecorationStyle: 'dashed',
                 textUnderlineOffset: 3,
@@ -40,7 +51,7 @@ export function DesignStandardsRow({ type }: { type: CosmeticType }) {
               }}
             >
               {typeLabel} design standards
-            </Text>
+            </UnstyledButton>
           </Popover.Target>
           <Popover.Dropdown p="sm">
             <Stack gap="sm">
