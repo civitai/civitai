@@ -284,8 +284,11 @@ export const getModelHandler = async ({
     }
 
     const mappedVersions = filteredVersions.map((version) => {
+      const eaConfig = version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
       let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
       if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
+      const paidAccessGated =
+        !!earlyAccessDeadline || (features.earlyAccessModel && !!eaConfig?.permanent);
 
       const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
       const isDownloadable = version.usageControl === ModelUsageControl.Download || isOwner;
@@ -293,7 +296,7 @@ export const getModelHandler = async ({
         isDownloadable &&
         model.mode !== ModelModifier.Archived &&
         entityAccessForVersion?.hasAccess &&
-        (!earlyAccessDeadline ||
+        (!paidAccessGated ||
           (entityAccessForVersion?.permissions ?? 0) >= EntityAccessPermission.EarlyAccessDownload);
 
       const versionState = versionGenStates.get(version.id);

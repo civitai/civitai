@@ -131,7 +131,7 @@ export default MixedAuthEndpoint(async function handler(
       u."flags" AS "userFlags",
       (
         (
-            mv."earlyAccessEndsAt" > NOW()
+            (mv."earlyAccessEndsAt" > NOW() OR mv."earlyAccessPermanent")
             AND mv."availability" = 'EarlyAccess'
             AND (mv."earlyAccessConfig"->>'freeGeneration' IS NULL OR mv."earlyAccessConfig"->>'freeGeneration' != 'true')
         )

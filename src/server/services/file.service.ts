@@ -205,6 +205,7 @@ export const getFileForModelVersion = async ({
       trainedWords: true,
       earlyAccessEndsAt: true,
       earlyAccessConfig: true,
+      earlyAccessPermanent: true,
       createdAt: true,
       requireAuth: true,
       usageControl: true,
@@ -226,7 +227,8 @@ export const getFileForModelVersion = async ({
   });
 
   const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
-  const inEarlyAccess = deadline !== undefined && new Date() < deadline;
+  const inEarlyAccess =
+    !!modelVersion.earlyAccessPermanent || (deadline !== undefined && new Date() < deadline);
   const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
 
   const archived = modelVersion.model.mode === ModelModifier.Archived;
