@@ -34,27 +34,25 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
   shared `cs-page-size` cookie via `?ps=`; `MODELS_PER_PAGE` stays the default. Reusable across paged surfaces. (`T:339`,
   *BN*)
 
-## Early / paid access (Licensing page)
+## Early / paid access (Licensing page) — DONE + DEPLOYED
 
-> **Spec written:** [permanent-pay-for-access-plan.md](permanent-pay-for-access-plan.md) covers all three items
-> below. Investigation found this is **bigger than "just a migration"** — EA's `earlyAccessEndsAt` is trigger-derived
-> and `NULL` already means "public," so permanent needs a new "active-but-never-expires" signal + a trigger rewrite +
-> ~8 main-app paywall patches (money enforcement) + a membership gate. **Not coded** — blocked on the design/policy
-> decisions in §7 of that doc. Main-app work lands in `C:\work\civitai` and deploys before the migration.
+> Built across the main app (foundation PR #3279 + enforcement PR #3290, both merged to `main` and deployed) and
+> the spoke (`creator-studio-implementation`). Design decisions taken: **CP-member-only** gate, **edit freely /
+> protect buyers** post-publish policy, **tiered cap** (Bronze 3 / Silver 10 / Gold unlimited), explicit
+> `earlyAccessPermanent` column. Full detail: [permanent-pay-for-access-plan.md](permanent-pay-for-access-plan.md).
 
-- [ ] **[todo] [main-app]** **Early Access improvements** — `CU:868ke4944` (MNeMiC). EA cost must be **editable
-  anytime** (a typo currently forces delete + re-upload). EA values must **not** be editable after the EA window ends
-  **unless** it's a permanent-license. Manage EA for versions still in EA or **not yet published**. Audit the EA edit
-  constraints (EA internals in the plan doc). (*BN*; `T:302`,`T:424`)
-- [ ] **[todo]** **Manage paid access at any time (published items)** — once a version is published, let the creator
-  **add / change paid access whenever**, not only pre-publish. (Paired with EA-improvements above; distinct from the
-  indefinite capability below.) (*BN*; `T:329`,`T:425`)
-- [ ] **[todo] [main-app]** **Permanent pay-for-access** — `CU:868ke4949` — **MNeMiC's #1 request** (echoed alexds9 +
-  SubtleShader). Gate a model behind payment **indefinitely**, not just an EA window. Approach: reuse the EA config but
-  allow **no end date / no period length**; make it **Creator-Program-member-only** (vs EA which is open to all).
-  Needs an on-site change — Louise built EA; Claude investigates a clear path first, then decide if Louise does the
-  on-site part. (*BN*; `T:424`)
-  - `@justin:*` confirm gate: CP-member-only vs any member (`T:454` had both phrasings).
+- [x] **[done]** **Early Access improvements** — `CU:868ke4944` (MNeMiC). EA terms are now **editable anytime**
+  post-publish (price/charge/timeframe/permanent) — a purchase is a durable `entityAccess` entitlement not
+  re-evaluated against current config, so edits never affect existing buyers. Only the donation-goal lock stays.
+  (`mergeEarlyAccessConfigUpdate` relaxed; main app, deployed.) (`T:302`,`T:424`)
+- [x] **[done]** **Manage paid access at any time (published items)** — the "can't add EA after publish" guard is
+  gone; creators can add/change paid access on published versions. (Same merge-guard relaxation.) (`T:329`,`T:425`)
+- [x] **[done]** **Permanent pay-for-access** — `CU:868ke4949` — MNeMiC's #1. New `earlyAccessPermanent` column +
+  trigger (permanent = `availability EarlyAccess` + NULL end date, gated forever); all paywall sites made
+  permanent-aware; endpoint locked to the Creator Studio via `WEBHOOK_TOKEN`. Spoke: "Make permanent" checkbox
+  (member-gated), tier cap **Bronze 3 / Silver 10 / Gold ∞** + active-membership gate enforced in the spoke action,
+  token forwarded on write. **Known gap (deferred):** the tRPC `modelVersion.upsert` path can still set `permanent`
+  without the token/cap. (`T:424`)
 
 **Naming:** keep the page **"Licensing"** even though it now also covers early/paid access. (Decided.) (`T:576`)
 
@@ -69,7 +67,9 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
   `compensation` grant into `cashPending` (amount in **cents**, `externalId` = `comp-pool-unified-YYYY-MM-<userId>`);
   `rate = cashDollars / netBankedBuzz`, capped $0.001/Buzz; from **Mar 2025**. Uses the comp grant, **not**
   `CashWithdrawal`. Recipe validated against real creators (e.g. userId 3865: Jun $140.23 ÷ 201,400 = $0.70/1k). The
-  current month is excluded until its pool settles (no comp grant yet). (`T:47`)
+  current month is excluded until its pool settles (no comp grant yet). **Fix (SubtleShader DM):** comp is keyed by
+  its **pool month** parsed from the externalId, not the pay date — otherwise late true-ups paid in the current month
+  were matched against the current month's full banked Buzz, showing an absurdly low current-month rate. (`T:47`)
 - [x] **[done]** **Line ↔ bar chart toggle** — `CU:868ke4939` (alexds9 + MNeMiC). Line/Bar toggle on the earnings
   trend; smooth line default. In bar mode the current period is bars and the **previous period stays a line** (dashed
   overlay). (`T:54`)
@@ -93,6 +93,12 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
   (models-earnings.ts, ownership-checked, Redis-cached per range) reading daily
   `orchestration.daily_resource_generation_counts` + `default.daily_downloads` per version. Data validated against a
   real 38-version model. (`T:104`,`T:538`)
+- [x] **[done]** **Per-model engagement overview** — (Justin DM, alexds9). New `/analytics/engagement` tab: all-time
+  per-model table of **comments · 👍 upvotes · 👎 downvotes** across the creator's published models, sortable,
+  default-sorted by downvotes, scoped to models with a downvote or comment. Pure overview — no notifications /
+  voter-chasing (Justin's guardrail). All-time only: model votes are `ResourceReview` + comments `CommentV2`, and no
+  dated source (ModelMetricDaily = downloads-only; ClickHouse `resourceReviews`/`comments` don't reconcile with the
+  metric counts users see) — so the month picker is hidden here. Also: analytics sub-nav now always visible.
 - **[resolved — no]** **NSFW/content-level controls in analytics** — not needed; owner-only views. (`T:181`)
 
 ## Get-paid estimate (non-members)
