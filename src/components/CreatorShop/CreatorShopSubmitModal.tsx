@@ -120,8 +120,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             <Alert color="yellow" icon={<IconAlertTriangle size={18} />}>
               <Text size="xs">
                 All cosmetics must be <b>safe-for-work</b> and must not use{' '}
-                <b>copyrighted or trademarked material</b> you don&apos;t own. Submissions that
-                violate this will be rejected.
+                <b>copyrighted or trademarked material</b>
+                {' '}you don&apos;t own. Submissions that violate this will be rejected.
               </Text>
             </Alert>
             <Select
