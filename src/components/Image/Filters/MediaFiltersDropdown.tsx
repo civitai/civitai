@@ -18,6 +18,7 @@ import { PeriodFilter } from '~/components/Filters';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
+import { getDefaultMediaTypes } from '~/components/Image/image.utils';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -108,9 +109,19 @@ export function MediaFiltersDropdown({
     // strips `?period=AllTime`, but the Zustand store needs `AllTime` so
     // `PeriodFilter` keeps rendering its chips (it returns null when period
     // is undefined).
+    //
+    // The store path also restores the feed's default media-type scope instead
+    // of clearing `types` outright — otherwise `removeEmpty` drops `types` and
+    // the /images feed starts serving videos too. The URL path keeps `types`
+    // undefined so it's stripped from the query string.
     if (onChange) onChange({ ...reset, period: undefined });
-    else setFilters({ ...reset, period: MetricTimeframe.AllTime });
-  }, [onChange, setFilters]);
+    else
+      setFilters({
+        ...reset,
+        types: getDefaultMediaTypes(filterType),
+        period: MetricTimeframe.AllTime,
+      });
+  }, [onChange, setFilters, filterType]);
 
   const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
     useStagedFilters({

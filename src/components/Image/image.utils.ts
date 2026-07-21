@@ -102,6 +102,18 @@ export const imagesQueryParamSchema = z
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
+// The media-type scope a feed falls back to when its filters are cleared.
+// `/images` shows images, `/videos` shows videos; model-image feeds stay
+// unscoped (all media types). Returning `undefined` here would let `removeEmpty`
+// drop `types` from the payload, so the feed would serve every media type.
+export const getDefaultMediaTypes = (
+  filterType: FilterKeys<'images' | 'videos' | 'modelImages'>
+): MediaType[] | undefined => {
+  if (filterType === 'images') return [MediaType.image];
+  if (filterType === 'videos') return [MediaType.video];
+  return undefined;
+};
+
 // could have userImages and userVideo
 export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
