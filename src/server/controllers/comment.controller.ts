@@ -23,6 +23,7 @@ import {
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
+import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -103,6 +104,21 @@ export const upsertCommentHandler = async ({
     await throwOnBlockedLinkDomain(input.content);
     const { ownerId, locked } = ctx;
     const { modelId } = input;
+
+    if (!input.commentId && !ctx.user.isModerator) {
+      const parentAuthorId = input.parentId
+        ? (
+            await dbRead.comment.findUnique({
+              where: { id: input.parentId },
+              select: { userId: true },
+            })
+          )?.userId
+        : undefined;
+      await throwIfBlockedByOwners({
+        userId: ctx.user.id,
+        ownerIds: [ownerId, parentAuthorId],
+      });
+    }
 
     // Get model and at least 2 version to confirm access.
     // If model has 1 version, check access to that version. Otherwise, ignore.

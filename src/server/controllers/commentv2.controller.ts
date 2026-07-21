@@ -93,7 +93,11 @@ export const upsertCommentV2Handler = async ({
       }
     }
 
-    const result = await upsertComment({ ...input, userId: ctx.user.id });
+    const result = await upsertComment({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
     if (!input.id) {
       if (type && type !== 'Article' && type !== 'Challenge') {
         await ctx.track.comment({
