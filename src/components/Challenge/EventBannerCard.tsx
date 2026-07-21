@@ -22,16 +22,24 @@ const gradientByTitleColor: Record<string, string> = {
 };
 const DEFAULT_GRADIENT = 'from-dark-9/80';
 
-export function EventBannerCard({ event }: { event: ChallengeEventListItem }) {
+export function EventBannerCard({
+  event,
+  // The dedicated event page (`/challenges/events/[id]`) reuses this same card for its hero:
+  // `linkable={false}` there avoids a self-link, and `count` overrides `event.challenges.length`
+  // since `getEventById` always returns an empty `challenges` array (the grid loads separately).
+  linkable = true,
+  count: countOverride,
+}: {
+  event: ChallengeEventListItem;
+  linkable?: boolean;
+  count?: number;
+}) {
   const gradient =
     (event.titleColor && gradientByTitleColor[event.titleColor]) ?? DEFAULT_GRADIENT;
-  const count = event.challenges.length;
+  const count = countOverride ?? event.challenges.length;
 
-  return (
-    <Link
-      href={`/challenges/events/${event.id}`}
-      className="relative flex h-40 w-full overflow-hidden rounded-lg no-underline sm:h-48"
-    >
+  const content = (
+    <>
       {event.coverImage && (
         <EdgeMedia
           src={event.coverImage.url}
@@ -50,10 +58,22 @@ export function EventBannerCard({ event }: { event: ChallengeEventListItem }) {
         <Title order={2} c="white" className="drop-shadow">
           {event.title}
         </Title>
-        <Text size="sm" c="white" className="flex items-center gap-1 opacity-90">
-          Explore Event <IconArrowRight size={16} />
-        </Text>
+        {linkable && (
+          <Text size="sm" c="white" className="flex items-center gap-1 opacity-90">
+            Explore Event <IconArrowRight size={16} />
+          </Text>
+        )}
       </div>
+    </>
+  );
+
+  const className = 'relative flex h-40 w-full overflow-hidden rounded-lg no-underline sm:h-48';
+
+  if (!linkable) return <div className={className}>{content}</div>;
+
+  return (
+    <Link href={`/challenges/events/${event.id}`} className={className}>
+      {content}
     </Link>
   );
 }
