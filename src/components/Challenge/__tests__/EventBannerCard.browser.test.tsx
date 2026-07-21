@@ -20,7 +20,9 @@ describe('EventBannerCard', () => {
   test('renders the title and links to the event page', async () => {
     renderWithProviders(<EventBannerCard event={event} />);
     await expect.element(page.getByText('Civitai Summer Art Festival')).toBeInTheDocument();
-    await expect.element(page.getByRole('link')).toHaveAttribute('href', '/challenges/events/42');
+    await expect
+      .element(page.getByRole('link'))
+      .toHaveAttribute('href', '/challenges/events/42/civitai-summer-art-festival');
   });
 
   test('shows the challenge count', async () => {

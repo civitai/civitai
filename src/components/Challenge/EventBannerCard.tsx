@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { ChallengeEventListItem } from '~/server/schema/challenge.schema';
 import { formatDate } from '~/utils/date-helpers';
+import { slugit } from '~/utils/string-helpers';
 
 // Dark gradient-stop tints per `titleColor`. Hardcoded hex (Tailwind's stock `900` shade for
 // each name) rather than `from-{color}-900` utility classes: this project's tailwind.config.js
@@ -61,7 +62,7 @@ export function EventBannerCard({
   const className = 'relative flex h-40 w-full overflow-hidden rounded-lg no-underline sm:h-48';
 
   return (
-    <Link href={`/challenges/events/${event.id}`} className={className}>
+    <Link href={`/challenges/events/${event.id}/${slugit(event.title)}`} className={className}>
       {content}
     </Link>
   );
