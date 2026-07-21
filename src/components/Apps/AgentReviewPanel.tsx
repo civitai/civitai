@@ -1,4 +1,5 @@
 import { Alert, Badge, Button, Card, Group, Loader, Stack, Table, Text, ThemeIcon } from '@mantine/core';
+import { useEffect, useRef } from 'react';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -39,6 +40,39 @@ import { trpc } from '~/utils/trpc';
 
 /** Poll cadence while a run is in flight. */
 export const AGENT_REVIEW_POLL_MS = 4000;
+
+/**
+ * Stop polling after this many CONSECUTIVE failed poll requests. A single
+ * transient blip (< threshold) does NOT stop the poll — only a persistent
+ * error does. Guards against refetching every 4s forever if the read starts
+ * erroring mid-run.
+ */
+export const MAX_CONSECUTIVE_POLL_ERRORS = 3;
+
+/**
+ * Hard time ceiling for polling a single run — a review that outruns this is
+ * treated as stuck (a backend run wedged in `running` shouldn't poll forever).
+ */
+export const MAX_POLL_MS = 15 * 60 * 1000; // 15 min
+
+/**
+ * PURE poll-interval decision (unit-testable). Returns the 4s interval only
+ * while the run is genuinely in flight AND within both the error and time
+ * ceilings; otherwise `false` (stop). A single transient failure stays under
+ * the threshold and keeps polling; a persistent error or an over-long run
+ * stops it (surfaced in the UI as a manual "Check again" affordance).
+ */
+export function computeAgentReviewPollInterval(input: {
+  status: string | undefined; // last data status
+  consecutiveFailures: number; // query.state.fetchFailureCount
+  elapsedMs: number; // since polling started for this run
+}): number | false {
+  const { status, consecutiveFailures, elapsedMs } = input;
+  if (status !== 'running') return false;
+  if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_ERRORS) return false;
+  if (elapsedMs >= MAX_POLL_MS) return false;
+  return AGENT_REVIEW_POLL_MS;
+}
 
 /**
  * Whether a review request is on-site (this panel's scope). External / OAuth-
@@ -166,16 +200,23 @@ export function AgentReviewPanel({
 }) {
   const utils = trpc.useUtils();
 
+  // When polling for the CURRENT run started (per-run, so the time ceiling is
+  // measured from the run, not from mount). Set when the report first becomes
+  // `running`; cleared on any terminal status; reset by the manual "Check again".
+  const pollStartedAt = useRef<number | null>(null);
+
   const reportQuery = trpc.blocks.getAgentReview.useQuery(
     { publishRequestId },
     {
       retry: false,
       // react-query v5: the callback receives the Query; poll only while running,
-      // stop on every terminal status (matches the useReviewPreview idiom).
-      refetchInterval: (query) => {
-        const status = query.state.data?.status;
-        return status === 'running' ? AGENT_REVIEW_POLL_MS : false;
-      },
+      // and only within the error + time ceilings (see computeAgentReviewPollInterval).
+      refetchInterval: (query) =>
+        computeAgentReviewPollInterval({
+          status: query.state.data?.status,
+          consecutiveFailures: query.state.fetchFailureCount ?? 0,
+          elapsedMs: pollStartedAt.current != null ? Date.now() - pollStartedAt.current : 0,
+        }),
     }
   );
 
@@ -206,6 +247,26 @@ export function AgentReviewPanel({
   const hasReport = status === 'complete' || status === 'cost-capped';
   const failed = status === 'failed';
   const tornDown = status === 'torn-down';
+
+  // Mark / clear the per-run poll start so the time ceiling is measured per-run.
+  useEffect(() => {
+    if (running) {
+      if (pollStartedAt.current == null) pollStartedAt.current = Date.now();
+    } else {
+      pollStartedAt.current = null;
+    }
+  }, [running]);
+
+  // Whether polling has STOPPED while the status is still non-terminal (hit the
+  // error or time ceiling). The panel then pauses auto-refresh and offers a
+  // manual "Check again" instead of spinning forever.
+  const pollPaused =
+    running &&
+    computeAgentReviewPollInterval({
+      status: status ?? undefined,
+      consecutiveFailures: reportQuery.failureCount ?? 0,
+      elapsedMs: pollStartedAt.current != null ? Date.now() - pollStartedAt.current : 0,
+    }) === false;
 
   const runButton = (label: string) => (
     <Button
@@ -252,12 +313,37 @@ export function AgentReviewPanel({
       ) : !report ? (
         <Group gap="xs">{runButton('Run agentic review')}</Group>
       ) : running ? (
-        <Group gap={6}>
-          <Loader size="sm" />
-          <Text size="sm" c="dimmed">
-            Analyzing…
-          </Text>
-        </Group>
+        pollPaused ? (
+          <Stack gap={6}>
+            <Group gap={6}>
+              <IconInfoCircle size={14} />
+              <Text size="sm" c="dimmed">
+                Still analyzing — automatic updates paused.
+              </Text>
+            </Group>
+            <Group gap="xs">
+              <Button
+                size="xs"
+                variant="light"
+                leftSection={<IconRefresh size={14} />}
+                onClick={() => {
+                  // Reset the per-run window and resume polling from this point.
+                  pollStartedAt.current = Date.now();
+                  void reportQuery.refetch();
+                }}
+              >
+                Check again
+              </Button>
+            </Group>
+          </Stack>
+        ) : (
+          <Group gap={6}>
+            <Loader size="sm" />
+            <Text size="sm" c="dimmed">
+              Analyzing…
+            </Text>
+          </Group>
+        )
       ) : failed ? (
         <Stack gap={6}>
           <Alert color="red" variant="light" icon={<IconX size={14} />}>

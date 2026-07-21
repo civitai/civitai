@@ -27,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   // Report row returned by getAgentReview (null = no report yet → Run button).
   agentReport: null as unknown,
   agentLoading: false,
+  // Consecutive failed-poll count surfaced by react-query (drives the ceiling).
+  agentFailureCount: 0,
+  refetch: vi.fn().mockResolvedValue(undefined),
   // getReviewStatus poll data for the sibling ReviewPreviewPanel (kept inert).
   reviewStatus: undefined as unknown,
   // Per-mutation error injected into the NEXT mutate() call's onError.
@@ -105,7 +108,13 @@ vi.mock('~/utils/trpc', () => {
         getAgentReview: {
           useQuery: (_input: unknown, opts: { refetchInterval?: (q: unknown) => unknown }) => {
             mocks.lastAgentOpts = opts;
-            return { data: mocks.agentReport, isLoading: mocks.agentLoading, error: null };
+            return {
+              data: mocks.agentReport,
+              isLoading: mocks.agentLoading,
+              error: null,
+              failureCount: mocks.agentFailureCount,
+              refetch: mocks.refetch,
+            };
           },
         },
         startAgentReview: { useMutation: mutation('startAgentReview') },
@@ -205,6 +214,8 @@ beforeEach(() => {
   mocks.flags = { appBlocks: true, appBlocksAgenticReview: true };
   mocks.agentReport = null;
   mocks.agentLoading = false;
+  mocks.agentFailureCount = 0;
+  mocks.refetch.mockClear();
   mocks.reviewStatus = undefined;
   mocks.mutationError = undefined;
   mocks.pending = false;
@@ -345,6 +356,37 @@ describe('AgentReviewPanel — lifecycle states', () => {
     renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
     await expect.element(page.getByText(/Review was torn down/)).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Run again' })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POLL CEILING — manual "Check again" fallback
+// ---------------------------------------------------------------------------
+
+describe('AgentReviewPanel — poll ceiling / manual refresh', () => {
+  test('a stuck `running` run past the error ceiling pauses auto-refresh and offers "Check again", which refetches', async () => {
+    // Still `running`, but the poll has been failing consecutively past the
+    // threshold → auto-refresh is paused (no spinner) and a manual affordance shows.
+    mocks.agentReport = { status: 'running' };
+    mocks.agentFailureCount = 3; // >= MAX_CONSECUTIVE_POLL_ERRORS
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    await expect.element(page.getByText(/automatic updates paused/)).toBeInTheDocument();
+    // The spinning "Analyzing…" state is NOT shown while paused.
+    expect(page.getByText(/^Analyzing/).elements()).toHaveLength(0);
+
+    // Clicking "Check again" triggers a refetch (resuming the poll).
+    await page.getByRole('button', { name: 'Check again' }).click();
+    expect(mocks.refetch).toHaveBeenCalled();
+  });
+
+  test('a single transient poll failure does NOT pause — the spinner keeps showing', async () => {
+    mocks.agentReport = { status: 'running' };
+    mocks.agentFailureCount = 1; // 1 < MAX_CONSECUTIVE_POLL_ERRORS → keep polling
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    await expect.element(page.getByText(/Analyzing/)).toBeInTheDocument();
+    expect(page.getByText(/automatic updates paused/).elements()).toHaveLength(0);
+    expect(page.getByRole('button', { name: 'Check again' }).elements()).toHaveLength(0);
   });
 });
 
