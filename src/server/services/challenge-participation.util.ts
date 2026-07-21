@@ -1,7 +1,9 @@
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
-import type { ChallengeListItem, MyParticipatedChallengeItem } from '~/server/schema/challenge.schema';
-
-export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered';
+import type {
+  ChallengeListItem,
+  MyChallengeResult,
+  MyParticipatedChallengeItem,
+} from '~/server/schema/challenge.schema';
 
 export function deriveMyChallengeResult(input: {
   status: ChallengeStatus;
@@ -30,9 +32,14 @@ export function enrichParticipatedCards(
     const row = rows[i];
     const entryImg = row.myImageId ? entryImages.find((img) => img.id === row.myImageId) : null;
     const { result, isLive } = deriveMyChallengeResult({ status: card.status, myPlace: row.myPlace });
+    const thumbnail = entryImg ?? card.coverImage ?? null;
     return {
       ...card,
-      myEntryImage: entryImg ?? card.coverImage ?? null,
+      // The consumer runs these through `useApplyHiddenPreferences({ type: 'challenges' })`, whose
+      // gate reads `coverImage.nsfwLevel` and drops rows with no cover — while the card renders
+      // `myEntryImage`. Point both at the same image so the filter judges what is actually shown.
+      coverImage: thumbnail,
+      myEntryImage: thumbnail,
       myPlace: row.myPlace,
       myResult: result,
       isLive,

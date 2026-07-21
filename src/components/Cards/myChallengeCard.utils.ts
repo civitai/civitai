@@ -1,4 +1,4 @@
-import type { MyChallengeResult } from '~/server/services/challenge-participation.util';
+import type { MyChallengeResult } from '~/server/schema/challenge.schema';
 
 export type MyChallengeCtaKind = 'results' | 'entry' | 'add';
 

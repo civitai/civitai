@@ -26,7 +26,10 @@ import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
-import type { MyChallengeResult } from '~/server/services/challenge-participation.util';
+
+// Lives here rather than in the service util that derives it: the util and the client-side card
+// helpers both need it, and services depend on schema, never the reverse.
+export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered';
 
 // Cover image type for challenges (compatible with ImageGuard2)
 export type ChallengeCoverImage = {

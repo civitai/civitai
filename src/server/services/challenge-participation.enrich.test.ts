@@ -48,3 +48,44 @@ describe('enrichParticipatedCards', () => {
     expect(out.myResult).toBe('entered');
   });
 });
+
+// `useApplyHiddenPreferences({ type: 'challenges' })` gates each row on `coverImage.nsfwLevel` and
+// drops anything with no cover at all — but the card renders `myEntryImage`. Keeping `coverImage`
+// pointed at the image actually rendered makes the generic filter judge what the user will see.
+describe('enrichParticipatedCards — coverImage tracks the rendered thumbnail', () => {
+  const spicyEntry = { ...img, id: 1234, nsfwLevel: 8 };
+
+  it('sets coverImage to the entry image so the hidden-preferences filter gates on it', () => {
+    const [out] = enrichParticipatedCards(
+      [{ ...baseCard, coverImage: { ...img, id: 7, nsfwLevel: 1 } }],
+      [{ id: 10, myImageId: spicyEntry.id, myPlace: null, myEnteredAt: new Date('2026-01-03') }],
+      [spicyEntry]
+    );
+
+    expect(out.myEntryImage).toEqual(spicyEntry);
+    expect(out.coverImage).toEqual(spicyEntry);
+  });
+
+  it('keeps a cover-less challenge visible when the user has an entry image', () => {
+    const [out] = enrichParticipatedCards(
+      [{ ...baseCard, coverImage: null }],
+      [{ id: 10, myImageId: img.id, myPlace: null, myEnteredAt: new Date('2026-01-03') }],
+      [img]
+    );
+
+    // Without this the filter sees `coverImage: null` and hides a challenge the user entered.
+    expect(out.coverImage).toEqual(img);
+  });
+
+  it('falls back to the challenge cover when there is no entry image', () => {
+    const cover = { ...img, id: 7 };
+    const [out] = enrichParticipatedCards(
+      [{ ...baseCard, coverImage: cover }],
+      [{ id: 10, myImageId: null, myPlace: null, myEnteredAt: new Date('2026-01-03') }],
+      []
+    );
+
+    expect(out.coverImage).toEqual(cover);
+    expect(out.myEntryImage).toEqual(cover);
+  });
+});
