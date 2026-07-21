@@ -47,10 +47,10 @@ export default function Account() {
           <ProfileCard />
           <SocialProfileCard />
           <SettingsCard />
-          <CreatorControlsCard />
           <ContentControlsCard />
           <GenerationSettingsCard />
           {features.canViewNsfw && <ModerationCard />}
+          <CreatorControlsCard />
           <AccountsCard />
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
