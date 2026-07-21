@@ -1992,6 +1992,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     typeof request.deployState === 'string' && request.deployState.startsWith('preview-');
 
   const manifest = request.manifest as Record<string, unknown>;
+  // `manifestScopes` is written to `AppBlock.approvedScopes` on the three approve paths
+  // below (create / P2002-retry / subsequent-version). 🔴 This mod-approval flow is the
+  // ONLY place that writes `approvedScopes` — a load-bearing invariant the dev-tunnel
+  // owned-non-approved mint relies on (block-tokens/index.ts): a NEVER-approved app has
+  // `approvedScopes = []` ⟹ its dev token is read-only + cannot spend. Writing
+  // `approvedScopes` anywhere OUTSIDE this approval flow would break that safety.
   const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
   const manifestContentRating =
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
