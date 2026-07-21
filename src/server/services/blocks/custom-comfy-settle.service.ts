@@ -1,3 +1,7 @@
+import {
+  observeCustomComfyActualBuzz,
+  observeCustomComfyWallclockSeconds,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { AppSpendDailyKey } from '~/server/services/blocks/app-spend-cap.service';
 
@@ -61,6 +65,23 @@ type SettleRecord = {
   devSessionId?: string | null;
   /** The declared per-job ceiling that was reserved (recipe.maxBuzz). */
   ceiling: number;
+  /**
+   * The resolved per-engine id (`params.engine ?? recipe default`) and the recipe
+   * id, both known at submit. Carried purely for per-engine runtime/cost
+   * OBSERVABILITY at settle (`civitai_app_block_customcomfy_actual_buzz` /
+   * `_wallclock_seconds`) — they never affect the refund math. Optional so a
+   * pre-deploy record (or any future non-engine settle) still settles cleanly;
+   * the metric emit self-skips when `engine` is absent.
+   */
+  engine?: string;
+  recipe?: string;
+  /**
+   * Server wall-clock (ms epoch) captured at submit. Enables the cheap
+   * submit→terminal-observation WALL-CLOCK metric (`_wallclock_seconds`) — the
+   * truer signal for the step-timeout clip risk (incl. GPU queue-wait). Optional
+   * for the same back-compat reason; the wall-clock emit self-skips when absent.
+   */
+  submittedAt?: number;
 };
 
 /**
@@ -78,13 +99,32 @@ export async function persistCustomComfySettle(input: {
   appSpendKey: string | null;
   devSessionId?: string | null;
   ceiling: number;
+  /** Resolved engine + recipe id, for per-engine settle-time observability. */
+  engine?: string;
+  recipe?: string;
+  /** Submit ms-epoch, for the wall-clock metric. Defaults to now if omitted. */
+  submittedAt?: number;
 }): Promise<void> {
-  const { workflowId, buzzCapKey, appSpendKey, devSessionId = null, ceiling } = input;
+  const {
+    workflowId,
+    buzzCapKey,
+    appSpendKey,
+    devSessionId = null,
+    ceiling,
+    engine,
+    recipe,
+    submittedAt = Date.now(),
+  } = input;
   if (!workflowId) return;
   const record: SettleRecord = { buzzCapKey, appSpendKey, ceiling };
   // Include the dev-session id ONLY when present, so a non-dev submit persists the
   // exact record shape it did before F4 (the dev-session refund leg then no-ops).
   if (devSessionId) record.devSessionId = devSessionId;
+  // Observability-only fields (never affect the refund). Present for every real
+  // customComfy submit going forward; absent-safe at settle.
+  if (engine) record.engine = engine;
+  if (recipe) record.recipe = recipe;
+  if (Number.isFinite(submittedAt)) record.submittedAt = submittedAt;
   try {
     await sysRedis.set(settleKey(workflowId), JSON.stringify(record), {
       EX: SETTLE_TTL_SECONDS,
@@ -136,6 +176,30 @@ export async function settleCustomComfySpend(input: {
 
   const ceiling = Math.ceil(record.ceiling ?? 0);
   const actual = Math.ceil(Number.isFinite(actualCost) ? Math.max(0, actualCost) : 0);
+
+  // ── Per-engine runtime/cost OBSERVABILITY (instrument-ahead-of-demand) ───────
+  // Emitted BEFORE the refund early-return below so a job that spent the FULL
+  // ceiling (actual >= ceiling → refund 0 → the ceiling-pressing case we most
+  // want to see) is still observed. Fail-soft in the metric helpers — a metrics
+  // error can never perturb the refund math that follows. Only for a record that
+  // carries the engine (every real customComfy submit going forward).
+  if (record.engine) {
+    const recipeLabel = record.recipe ?? 'unknown';
+    // GPU-runtime ≈ billed `actual` Buzz. Helper skips a 0/failed/no-op gen.
+    observeCustomComfyActualBuzz(record.engine, recipeLabel, actual);
+    // Wall-clock incl. queue: submit→THIS terminal observation. Emitted
+    // independently of `actual` so a job clipped at its timeout with ~0 accrued
+    // Buzz (the purest clip signal) is still captured. Helper skips a non-positive
+    // value.
+    if (typeof record.submittedAt === 'number') {
+      observeCustomComfyWallclockSeconds(
+        record.engine,
+        recipeLabel,
+        (Date.now() - record.submittedAt) / 1000
+      );
+    }
+  }
+
   const refund = Math.max(0, ceiling - actual);
   if (refund <= 0) return; // nothing to give back (job spent the full ceiling)
 
