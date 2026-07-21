@@ -50,6 +50,17 @@ vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({
   ReviewBlockPreviewHost: () => <div data-testid="review-host-stub" />,
 }));
 
+// The scope-verdicts section renders responsively off `useMediaQuery` (table +
+// horizontal-scroll on desktop, stacked cards on narrow). The real viewport is
+// non-deterministic in browser mode, so we importActual @mantine/hooks and
+// override ONLY useMediaQuery — DEFAULT desktop (false); the narrow branch is
+// only reached after forcing it per test (the BaseModelInput/WorkflowInput
+// media-query pattern).
+vi.mock('@mantine/hooks', async () => {
+  const actual = await vi.importActual<typeof import('@mantine/hooks')>('@mantine/hooks');
+  return { ...actual, useMediaQuery: vi.fn(() => false) };
+});
+
 const showError = vi.fn();
 const showSuccess = vi.fn();
 vi.mock('~/utils/notifications', () => ({
@@ -130,6 +141,10 @@ vi.mock('~/utils/trpc', () => {
 
 const { AgentReviewPanel, AGENT_REVIEW_POLL_MS } = await import('./AgentReviewPanel');
 const { OnsiteReviewModal } = await import('./OnsiteReviewModal');
+const { useMediaQuery } = await import('@mantine/hooks');
+const useMediaQueryMock = vi.mocked(useMediaQuery);
+/** Force the responsive branch: true = narrow/mobile (cards), false = desktop (table). */
+const setNarrow = (narrow: boolean) => useMediaQueryMock.mockReturnValue(narrow);
 
 const ONSITE_PENDING = {
   id: 'onsite-req-1',
@@ -229,6 +244,7 @@ beforeEach(() => {
   mocks.lastAgentOpts = undefined;
   showError.mockClear();
   showSuccess.mockClear();
+  setNarrow(false); // desktop (table + scroll-container) by default
 });
 
 // ---------------------------------------------------------------------------
@@ -437,6 +453,58 @@ describe('AgentReviewPanel — report rendering', () => {
     await expect.element(page.getByText('user:*')).toBeInTheDocument();
     await expect.element(page.getByText('Under-declared scopes')).toBeInTheDocument();
     await expect.element(page.getByText('models:write:self')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RESPONSIVE SCOPE-VERDICTS (table + horizontal-scroll desktop / stacked cards)
+// ---------------------------------------------------------------------------
+
+describe('AgentReviewPanel — responsive scope verdicts', () => {
+  test('desktop: renders the verdicts table inside a horizontal-scroll container (not the card variant)', async () => {
+    setNarrow(false);
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    // The scroll container wraps the table so long scope/evidence columns scroll
+    // horizontally instead of squishing.
+    await expect.element(page.getByTestId('scope-verdicts-scroll')).toBeInTheDocument();
+    await expect.element(page.getByTestId('scope-verdicts-table')).toBeInTheDocument();
+    // The narrow stacked-card variant is NOT rendered on desktop.
+    expect(page.getByTestId('scope-verdicts-cards').elements()).toHaveLength(0);
+
+    // Same data — every scope row, the sensitive badge, and evidence still render.
+    await expect.element(page.getByText('buzz:read:self')).toBeInTheDocument();
+    await expect.element(page.getByTestId('scope-sensitive-badge')).toBeInTheDocument();
+    await expect.element(page.getByText('wallet.js:10')).toBeInTheDocument();
+  });
+
+  test('narrow/mobile: renders stacked per-scope cards instead of the table (same data)', async () => {
+    setNarrow(true);
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    // The card variant renders; the table + its scroll container do NOT.
+    await expect.element(page.getByTestId('scope-verdicts-cards')).toBeInTheDocument();
+    expect(page.getByTestId('scope-verdicts-table').elements()).toHaveLength(0);
+    expect(page.getByTestId('scope-verdicts-scroll').elements()).toHaveLength(0);
+
+    // The card layout carries the same label/value data — scope id, the sensitive
+    // badge, evidence, and the label rows.
+    await expect.element(page.getByText('buzz:read:self')).toBeInTheDocument();
+    await expect.element(page.getByTestId('scope-sensitive-badge')).toBeInTheDocument();
+    await expect.element(page.getByText('wallet.js:10')).toBeInTheDocument();
+    // The stacked-card label rows (present only in the card variant).
+    expect(page.getByText('Justified').elements().length).toBeGreaterThan(0);
+    expect(page.getByText('Evidence').elements().length).toBeGreaterThan(0);
+  });
+
+  test('narrow/mobile: empty scopes still shows the "No scopes assessed" empty state', async () => {
+    setNarrow(true);
+    mocks.agentReport = { ...FULL_REPORT, scopeVerdicts: { scopes: [], overBroad: [], underDeclared: [] } };
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    await expect.element(page.getByText('No scopes assessed')).toBeInTheDocument();
+    expect(page.getByTestId('scope-verdicts-cards').elements()).toHaveLength(0);
   });
 });
 
