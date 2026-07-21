@@ -145,6 +145,12 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
                         // dangerouslySetInnerHTML): raw HTML in adversarial output is
                         // escaped to inert text, normal markdown formats. `size="sm"`
                         // sizing via the sm font-size var on the markdown container.
+                        // `disallowedElements={['img']}` drops markdown image syntax
+                        // (`![](https://…)`) — the agent bundle is adversarial and
+                        // prompt-injectable, and a rendered <img> would fire an
+                        // external fetch from the MODERATOR's browser (tracking
+                        // pixel / IP+UA leak). Links stay (protocol-sanitized +
+                        // click-gated).
                         <div
                           className="markdown-content"
                           style={{
@@ -152,7 +158,9 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
                             overflowWrap: 'anywhere',
                           }}
                         >
-                          <CustomMarkdown>{m.content}</CustomMarkdown>
+                          <CustomMarkdown disallowedElements={['img']}>
+                            {m.content}
+                          </CustomMarkdown>
                         </div>
                       )}
                     </Box>

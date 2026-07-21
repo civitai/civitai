@@ -378,6 +378,33 @@ describe('AgentReviewChat — markdown rendering', () => {
     expect(bubble.textContent).not.toContain('`inline code`');
   });
 
+  test('markdown image syntax renders NO live <img> (adversarial external-fetch guard)', async () => {
+    mocks.agentReport = COMPLETE_REPORT;
+    // Native markdown image: `https` passes react-markdown's protocol filter, so
+    // WITHOUT `disallowedElements={['img']}` this renders a live <img> that fires
+    // an external fetch from the MODERATOR's browser (tracking pixel / IP+UA
+    // leak) on adversarial, prompt-injectable agent output. Must be dropped.
+    mocks.chatReply = 'Look here: ![tracking](https://example.com/pixel.png)';
+    renderPanel();
+
+    await page.getByRole('textbox', { name: 'Ask the review agent' }).fill('embed an image');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const agentMsg = page.getByTestId('chat-agent-msg');
+    await expect.element(agentMsg).toBeInTheDocument();
+
+    // No <img> element anywhere — the image was dropped, so no external fetch.
+    expect(document.querySelectorAll('img').length).toBe(0);
+    const bubble = document.querySelector('[data-testid="chat-agent-msg"]') as HTMLElement;
+    expect(bubble.querySelector('img')).toBeNull();
+    // The surrounding prose still rendered (the reply wasn't blanked). Note:
+    // `disallowedElements` drops the node AND its children, so the image's alt
+    // text ("tracking") is removed too — better still, no attacker-controlled
+    // string is surfaced for the dropped image.
+    expect(bubble.textContent).toContain('Look here');
+    expect(bubble.textContent).not.toContain('tracking');
+  });
+
   test('a user-typed message stays plain text (markdown NOT interpreted)', async () => {
     mocks.agentReport = COMPLETE_REPORT;
     renderPanel();
