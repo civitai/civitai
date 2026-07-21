@@ -30,6 +30,7 @@ import {
   getCommentsInfinite,
   toggleHideComment,
   toggleLockCommentsThread,
+  togglePinComment,
   upsertComment,
 } from './../services/commentsv2.service';
 
@@ -192,6 +193,37 @@ export const toggleLockThreadDetailsHandler = async ({
   }
 };
 
+async function getCommentV2WithEntityOwner({
+  id,
+  entityType,
+}: {
+  id: number;
+  entityType: ToggleHideCommentInput['entityType'];
+}) {
+  const ownerField = entityType === 'challenge' ? 'createdById' : 'userId';
+  // Comic chapter threads use comicProject relation instead of a direct entity relation
+  const threadSelect =
+    entityType === 'comicChapter'
+      ? { comicChapter: { select: { project: { select: { userId: true } } } } }
+      : { [entityType]: { select: { [ownerField]: true } } };
+  const comment = await dbRead.commentV2.findFirst({
+    where: { id },
+    select: {
+      hidden: true,
+      pinnedAt: true,
+      userId: true,
+      thread: { select: threadSelect },
+    },
+  });
+  if (!comment) throw throwNotFoundError(`No comment with id ${id}`);
+  const threadData = comment.thread as any;
+  const entityOwner =
+    entityType === 'comicChapter'
+      ? threadData.comicChapter?.project?.userId
+      : threadData[entityType]?.[ownerField];
+  return { comment, entityOwner };
+}
+
 export const toggleHideCommentHandler = async ({
   input,
   ctx,
@@ -203,39 +235,36 @@ export const toggleHideCommentHandler = async ({
   const { id, entityType } = input;
 
   try {
-    const ownerField = entityType === 'challenge' ? 'createdById' : 'userId';
-    // Comic chapter threads use comicProject relation instead of a direct entity relation
-    const threadSelect =
-      entityType === 'comicChapter'
-        ? { comicChapter: { select: { project: { select: { userId: true } } } } }
-        : { [entityType]: { select: { [ownerField]: true } } };
-    const comment = await dbRead.commentV2.findFirst({
-      where: { id },
-      select: {
-        hidden: true,
-        userId: true,
-        thread: { select: threadSelect },
-      },
-    });
-    if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
-    const threadData = comment.thread as any;
-    const entityOwner =
-      entityType === 'comicChapter'
-        ? threadData.comicChapter?.project?.userId
-        : threadData[entityType]?.[ownerField];
-    if (
-      !isModerator &&
-      // Nasty hack to get around the fact that the thread is not typed
-      entityOwner !== userId
-    )
-      throw throwAuthorizationError();
+    const { comment, entityOwner } = await getCommentV2WithEntityOwner({ id, entityType });
+    if (!isModerator && entityOwner !== userId) throw throwAuthorizationError();
 
     const updatedComment = await toggleHideComment({
-      id: input.id,
+      id,
       currentToggle: comment.hidden ?? false,
     });
 
     return updatedComment;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const togglePinnedCommentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ToggleHideCommentInput;
+  ctx: ProtectedContext;
+}) => {
+  const { id: userId, isModerator } = ctx.user;
+  const { id, entityType } = input;
+
+  try {
+    const { entityOwner } = await getCommentV2WithEntityOwner({ id, entityType });
+    if (!isModerator && entityOwner !== userId) throw throwAuthorizationError();
+
+    return await togglePinComment({ id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
