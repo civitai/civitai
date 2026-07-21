@@ -21,7 +21,7 @@ describe('EventHero', () => {
   test('renders title, challenge-count label, and a back link to /challenges', async () => {
     renderWithProviders(<EventHero event={{ ...base, active: true, endDate: future }} />);
     await expect.element(page.getByText('Creator Showcase')).toBeInTheDocument();
-    await expect.element(page.getByText('Challenges')).toBeInTheDocument();
+    await expect.element(page.getByText('Challenges', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByRole('link')).toHaveAttribute('href', '/challenges');
   });
 

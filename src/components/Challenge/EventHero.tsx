@@ -46,7 +46,7 @@ export function EventHero({ event }: { event: EventHeroData }) {
         href="/challenges"
         className="relative z-10 flex w-fit items-center gap-1 text-sm font-semibold text-white/90 no-underline hover:text-white"
       >
-        <IconArrowLeft size={16} /> Back
+        <IconArrowLeft size={16} /> All Challenges
       </Link>
 
       <div className="relative z-10 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
