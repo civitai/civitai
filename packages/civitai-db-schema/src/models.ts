@@ -918,6 +918,7 @@ export interface ModelVersion {
   nsfwLevel: number;
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig: JsonValue | null;
+  earlyAccessPermanent: boolean;
   uploadType: ModelUploadType;
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;

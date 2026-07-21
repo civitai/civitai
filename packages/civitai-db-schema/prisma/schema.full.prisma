@@ -1041,6 +1041,7 @@ model ModelVersion {
   nsfwLevel            Int               @default(0)
   earlyAccessEndsAt    DateTime?
   earlyAccessConfig    Json?
+  earlyAccessPermanent Boolean           @default(false)
   uploadType           ModelUploadType   @default(Created)
   usageControl         ModelUsageControl @default(Download)
   earlyAccessTimeFrame Int               @default(0)
