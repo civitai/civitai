@@ -10,13 +10,15 @@ import {
   questionMetrics,
 } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 
 export const toggleReaction = async ({
   entityType,
   entityId,
   userId,
   reaction,
-}: ToggleReactionInput & { userId: number }) => {
+  isModerator,
+}: ToggleReactionInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
     await deleteReaction({
@@ -28,6 +30,8 @@ export const toggleReaction = async ({
     });
     return 'removed';
   } else {
+    // Enforce on create only — a user blocked after reacting can still un-react.
+    await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
     await createReaction({ entityType, entityId, userId, reaction });
     return 'created';
   }

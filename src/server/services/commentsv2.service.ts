@@ -10,6 +10,7 @@ import type {
   GetCommentsInfiniteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import type { NsfwLevel } from '~/server/common/enums';
 import { ThreadSort } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -54,9 +55,11 @@ export const upsertComment = async ({
   entityType,
   entityId,
   parentThreadId,
+  isModerator,
   ...data
-}: UpsertCommentV2Input & { userId: number }) => {
+}: UpsertCommentV2Input & { userId: number; isModerator?: boolean }) => {
   await throwOnBlockedLinkDomain(data.content);
+  if (!data.id) await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
   // only check for threads on comment create
   let thread = await dbWrite.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
@@ -161,10 +164,7 @@ export async function bulkSetCommentV2TosViolation({
 
     await Promise.allSettled(
       reports.map((report) =>
-        reportAcceptedReward.apply(
-          { userId: report.userId, reportId: report.id },
-          { ip: actor.ip }
-        )
+        reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip: actor.ip })
       )
     );
 

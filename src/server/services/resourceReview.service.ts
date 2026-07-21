@@ -13,6 +13,7 @@ import {
 } from '~/server/selectors/resourceReview.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   BlockedByUsers,
@@ -129,8 +130,7 @@ export const getResourceReviewsInfinite = async ({
   if (username) {
     const userFindArgs = { where: { username }, select: { id: true } };
     const targetUser =
-      (await dbRead.user.findUnique(userFindArgs)) ??
-      (await dbWrite.user.findUnique(userFindArgs));
+      (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw throwNotFoundError('User not found');
 
@@ -230,9 +230,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
   const cacheable = queryCache(dbRead, 'getRatingTotals', 'v1');
   const result = await cacheable<GetRatingTotalsRow[]>(query, {
     ttl: CacheTTL.hour,
-    tag: modelVersionId
-      ? [`rating:modelVersion:${modelVersionId}`]
-      : [`rating:model:${modelId}`],
+    tag: modelVersionId ? [`rating:modelVersion:${modelVersionId}`] : [`rating:model:${modelId}`],
   });
 
   const transformed = result.reduce(
@@ -322,10 +320,17 @@ const createResourceReviewNotification = async ({
 
 export const upsertResourceReview = async ({
   userId,
+  isModerator,
   ...data
-}: UpsertResourceReviewInput & { userId: number }) => {
+}: UpsertResourceReviewInput & { userId: number; isModerator?: boolean }) => {
   if (data.details) await throwOnBlockedLinkDomain(data.details);
   if (!data.id) {
+    await throwIfBlockedByEntityOwner({
+      userId,
+      entityType: 'model',
+      entityId: data.modelId,
+      isModerator,
+    });
     const ret = await dbWrite.resourceReview
       .create({
         data: { ...data, userId, thread: { create: {} } },
