@@ -28,6 +28,7 @@ import {
   getCommentCount,
   getCommentsThreadDetails2,
   getCommentsInfinite,
+  isViewerContentOwner,
   toggleHideComment,
   toggleLockCommentsThread,
   upsertComment,
@@ -167,10 +168,21 @@ export const getCommentsThreadDetailsHandler = async ({
       (x) => x.id
     );
     const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    // On the owner's own content, don't hide a blocker's engagement from them (they must still
+    // be able to see + report it) — drop blockedByUsers only in that case; keep the anti-
+    // harassment exclusion for every non-owner viewer.
+    const isContentOwner = await isViewerContentOwner({
+      entityType: input.entityType,
+      entityId: input.entityId,
+      userId: ctx.user?.id,
+      blockedByUsers,
+    });
     // De-dupe + cap so the downstream `notIn` / raw `NOT IN` stays under the Postgres
     // bind-param limit (heavily-blocked viewer otherwise → P2029 → 500). Ordering is a
     // load-bearing safety priority — see boundExcludedUserIds.
-    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
+    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
+      isContentOwner,
+    });
 
     return await getCommentsThreadDetails2({ ...input, excludedUserIds });
   } catch (error) {
@@ -255,10 +267,21 @@ export const getCommentsInfiniteHandler = async ({
       (x) => x.id
     );
     const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    // On the owner's own content, don't hide a blocker's engagement from them (they must still
+    // be able to see + report it) — drop blockedByUsers only in that case; keep the anti-
+    // harassment exclusion for every non-owner viewer.
+    const isContentOwner = await isViewerContentOwner({
+      entityType: input.entityType,
+      entityId: input.entityId,
+      userId: ctx.user?.id,
+      blockedByUsers,
+    });
     // De-dupe + cap so the downstream `notIn` / raw `NOT IN` stays under the Postgres
     // bind-param limit (heavily-blocked viewer otherwise → P2029 → 500). Ordering is a
     // load-bearing safety priority — see boundExcludedUserIds.
-    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
+    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
+      isContentOwner,
+    });
 
     return await getCommentsInfinite({ ...input, excludedUserIds });
   } catch (error) {

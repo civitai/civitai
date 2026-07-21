@@ -129,8 +129,7 @@ export const getResourceReviewsInfinite = async ({
   if (username) {
     const userFindArgs = { where: { username }, select: { id: true } };
     const targetUser =
-      (await dbRead.user.findUnique(userFindArgs)) ??
-      (await dbWrite.user.findUnique(userFindArgs));
+      (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw throwNotFoundError('User not found');
 
@@ -230,9 +229,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
   const cacheable = queryCache(dbRead, 'getRatingTotals', 'v1');
   const result = await cacheable<GetRatingTotalsRow[]>(query, {
     ttl: CacheTTL.hour,
-    tag: modelVersionId
-      ? [`rating:modelVersion:${modelVersionId}`]
-      : [`rating:model:${modelId}`],
+    tag: modelVersionId ? [`rating:modelVersion:${modelVersionId}`] : [`rating:model:${modelId}`],
   });
 
   const transformed = result.reduce(
@@ -500,10 +497,23 @@ export const getPagedResourceReviews = async ({
   // the raw NOT IN below (P2029). Same fix + safety-priority order as the comment
   // surfaces; see boundExcludedUserIds.
   const [hiddenUsers, blockedByUsers, blockedUsers] = excludedUsers;
+  // If the viewer owns the model these reviews are on, don't hide a blocker's review/thumb
+  // from them (the owner must still see + report engagement on their own content) — drop
+  // blockedByUsers only then; keep the anti-harassment exclusion for every non-owner viewer.
+  // Skip the lookup unless the viewer has a blocked-by list, the only case it changes anything.
+  let isContentOwner = false;
+  if (userId && blockedByUsers.length) {
+    const modelVersion = await dbRead.modelVersion.findUnique({
+      where: { id: modelVersionId },
+      select: { model: { select: { userId: true } } },
+    });
+    isContentOwner = modelVersion?.model?.userId === userId;
+  }
   const excludedUserIds = boundExcludedUserIds(
     hiddenUsers.map((u) => u.id),
     blockedByUsers.map((u) => u.id),
-    blockedUsers.map((u) => u.id)
+    blockedUsers.map((u) => u.id),
+    { isContentOwner }
   );
   if (excludedUserIds.length) {
     AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);

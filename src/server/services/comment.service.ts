@@ -53,11 +53,25 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  // If the viewer owns the model, don't hide a blocker's comments from them (the owner must
+  // still see + report engagement on their own content) — drop blockedByUsers only then; keep
+  // the anti-harassment exclusion for every non-owner viewer. Skip the lookup unless the
+  // viewer actually has a blocked-by list, since that's the only case it can change anything.
+  let isContentOwner = false;
+  if (user?.id && blockedByUsers.length) {
+    const model = await dbRead.model.findUnique({
+      where: { id: modelId },
+      select: { userId: true },
+    });
+    isContentOwner = model?.userId === user.id;
+  }
   // De-dupe + cap the exclusion list so the `userId: { notIn: [...] }` negation below stays
   // under the Postgres bind-parameter limit (a heavily-blocked viewer's combined list can
   // otherwise overflow → Prisma P2029 → 500). Ordering is a load-bearing safety priority —
   // see boundExcludedUserIds.
-  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
+  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
+    isContentOwner,
+  });
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
@@ -270,10 +284,7 @@ export async function bulkSetCommentTosViolation({
 
     await Promise.allSettled(
       reports.map((report) =>
-        reportAcceptedReward.apply(
-          { userId: report.userId, reportId: report.id },
-          { ip: actor.ip }
-        )
+        reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip: actor.ip })
       )
     );
 
@@ -302,7 +313,9 @@ export async function bulkDeleteComments({ ids }: { ids: number[] }) {
   });
   const result = await dbWrite.comment.deleteMany({ where: { id: { in: ids } } });
 
-  const modelIds = Array.from(new Set(affected.map((c) => c.modelId).filter((v): v is number => !!v)));
+  const modelIds = Array.from(
+    new Set(affected.map((c) => c.modelId).filter((v): v is number => !!v))
+  );
   const userIds = Array.from(
     new Set(affected.map((c) => c.model?.userId).filter((v): v is number => !!v))
   );

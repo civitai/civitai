@@ -31,13 +31,23 @@ export const MAX_EXCLUDED_USER_IDS = 30000;
  * few comments through — far preferable to a hard 500 that breaks the surface entirely, and
  * deliberately preferred over leaking the involuntary blocked-by list. A future refactor
  * MUST NOT silently reorder these spreads.
+ *
+ * `isContentOwner`: set ONLY on surfaces where the viewer is the owner of the content being
+ * engaged with (a creator looking at comments/reviews/reactions on their OWN model, image,
+ * post, etc.). There we DROP `blockedByUsers`: the involuntary "someone blocked me" list
+ * otherwise lets a downvoter/commenter hide their trail on the owner's own content simply by
+ * blocking the owner — and stops the owner from seeing or reporting it. Everywhere else
+ * (viewer is NOT the owner) `blockedByUsers` stays, preserving the anti-harassment guarantee
+ * that a harasser who blocked the viewer cannot resurface to them.
  */
 export function boundExcludedUserIds(
   hiddenUsers: number[],
   blockedByUsers: number[],
-  blockedUsers: number[]
+  blockedUsers: number[],
+  options?: { isContentOwner?: boolean }
 ): number[] {
-  return [...new Set([...hiddenUsers, ...blockedByUsers, ...blockedUsers])].slice(
+  const involuntaryBlockedBy = options?.isContentOwner ? [] : blockedByUsers;
+  return [...new Set([...hiddenUsers, ...involuntaryBlockedBy, ...blockedUsers])].slice(
     0,
     MAX_EXCLUDED_USER_IDS
   );
