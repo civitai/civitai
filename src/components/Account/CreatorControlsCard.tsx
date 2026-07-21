@@ -3,6 +3,7 @@ import { IconBolt } from '@tabler/icons-react';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
 
@@ -14,9 +15,11 @@ import { syncAccount } from '~/utils/sync-account';
  */
 export function CreatorControlsCard() {
   const user = useCurrentUser();
+  const flags = useFeatureFlags();
   const serverDomains = useServerDomains();
   const { requirements } = useCreatorProgramRequirements();
-  const { hideModelBuzz, hideModelDownloads, hideModelGenerations } = useCurrentUserSettings();
+  const { hideModelBuzz, hideModelDownloads, hideModelGenerations, hideDonationGoals } =
+    useCurrentUserSettings();
   const { mutate: mutateSetting, isPending: isLoadingSetting } = useMutateUserSettings();
 
   if (!user) return null;
@@ -31,9 +34,10 @@ export function CreatorControlsCard() {
         <div>
           <Title order={2}>Creator Controls</Title>
           <Text size="sm" c="dimmed">
-            Hide public metrics on your models. These are Creator Program benefits — they only apply
-            while your membership is active. You and moderators always see your real stats on model
-            pages and cards; on search results you&apos;ll see the hidden state, same as the public.
+            Hide public metrics and donation goals on your models. These are Creator Program
+            benefits — they only apply while your membership is active, and revert to visible if it
+            lapses. You and moderators always see your real stats on model pages and cards; on
+            search results you&apos;ll see the hidden state, same as the public.
           </Text>
         </div>
 
@@ -92,6 +96,21 @@ export function CreatorControlsCard() {
           disabled={isLoadingSetting || !isActiveMember}
           styles={{ track: { flex: '0 0 1em' } }}
         />
+
+        {flags.donationGoals && (
+          <>
+            <Divider label="Donation goals" />
+            <Switch
+              name="hideDonationGoals"
+              label="Hide my donation goals from public view"
+              description="Others won't see the progress bar or collected amount on your donation goals. The goal keeps working, and you and moderators can still see it."
+              checked={hideDonationGoals ?? false}
+              onChange={(e) => mutateSetting({ hideDonationGoals: e.target.checked })}
+              disabled={isLoadingSetting || !isActiveMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+          </>
+        )}
       </Stack>
     </Card>
   );

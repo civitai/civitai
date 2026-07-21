@@ -8,8 +8,7 @@ import {
   SignalMessages,
   SignalTopic,
 } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { constants } from '~/server/common/constants';
+import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import type { BuzzCreatorProgramType, BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -265,46 +264,10 @@ export async function hasValidCreatorMembership(userId: number) {
   return !!tier && tier !== 'free' && tier !== 'founder';
 }
 
-// Batched `hasValidCreatorMembership` for read-time metric-privacy gating across a
-// list of model owners (model feed / v1 API / search index). ONE `dbRead` query for
-// all owners — never K per-owner checkouts on the primary pool. Mirrors
-// getHighestTierSubscription + hasValidCreatorMembership: pick each user's highest
-// tier (constants.memberships.tierOrder) and treat non-free / non-founder as valid.
-export async function getValidCreatorMembershipMap(userIds: number[]) {
-  const unique = [...new Set(userIds.filter((id) => !!id))];
-  const result = new Map<number, boolean>();
-  if (unique.length === 0) return result;
-
-  const subscriptions = await dbRead.customerSubscription.findMany({
-    where: {
-      userId: { in: unique },
-      status: { notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'] },
-    },
-    select: {
-      userId: true,
-      metadata: true,
-      product: { select: { metadata: true } },
-    },
-  });
-
-  const tierOrder = constants.memberships.tierOrder as readonly string[];
-  const highestTierByUser = new Map<number, string>();
-  for (const sub of subscriptions) {
-    const subMeta = (sub.metadata ?? {}) as { renewalEmailSent?: boolean };
-    if (subMeta.renewalEmailSent) continue;
-    const productMeta = subscriptionProductMetadataSchema.parse(sub.product.metadata);
-    const tier = (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string;
-    const prev = highestTierByUser.get(sub.userId);
-    if (prev === undefined || tierOrder.indexOf(tier) > tierOrder.indexOf(prev))
-      highestTierByUser.set(sub.userId, tier);
-  }
-
-  for (const id of unique) {
-    const tier = highestTierByUser.get(id);
-    result.set(id, !!tier && tier !== 'free' && tier !== 'founder');
-  }
-  return result;
-}
+// Batched read-time membership gate lives in a dependency-light module so the
+// donation-goals lookup can reuse it without pulling this heavy graph. Re-exported
+// here for the existing metric-privacy callers.
+export { getValidCreatorMembershipMap } from '~/server/services/creator-membership.service';
 
 export async function joinCreatorsProgram(userId: number) {
   const requirements = await getCreatorRequirements(userId);
