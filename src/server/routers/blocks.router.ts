@@ -5386,6 +5386,16 @@ async function submitCustomComfyWorkflow(opts: {
   // and the timeout stamped on the step MUST come from the same budget.
   const { maxBuzz: ceiling, stepTimeoutSeconds } = recipe.budgetFor(params);
 
+  // Resolve the engine + recipe id purely for per-engine settle-time
+  // OBSERVABILITY (persisted in the settle record, read at terminal to emit
+  // `civitai_app_block_customcomfy_actual_buzz` / `_wallclock_seconds`). Mirrors
+  // the recipe's own `params.engine ?? default` resolution — `recipe.engines[0]`
+  // is the declared default (== DEFAULT_ENGINE for seamless-pano). Both labels are
+  // strict enums (engine ∈ 3, recipe ∈ 1) → cardinality-safe. Never affects spend.
+  const engine: string =
+    (params as { engine?: string }).engine ?? recipe.engines[0] ?? 'unknown';
+  const recipeId: string = recipe.id;
+
   // (1) STATIC pre-submit gate — the post-paid analog of the txt2img whatIf
   // `cost > buzzBudget` gate. Because the timeout caps the job at `maxBuzz` and we
   // require `maxBuzz <= buzzBudget`, the per-call budget CANNOT be exceeded.
@@ -5511,6 +5521,10 @@ async function submitCustomComfyWorkflow(opts: {
   // `submitted` is a try-block `const` and is out of scope there. Mirrors the
   // txt2img path (~:3646).
   let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // Captured just before the orchestrator submit → the server-side proxy for the
+  // job's submit instant, so the settle-time wall-clock metric measures
+  // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
+  const submittedAt = Date.now();
   try {
     const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
     // Stamp the SAME per-engine timeout the ceiling above was reserved against —
@@ -5566,6 +5580,10 @@ async function submitCustomComfyWorkflow(opts: {
       appSpendKey: appSpendReserve?.key ?? null,
       ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
       ceiling,
+      // Observability-only (per-engine runtime/cost at settle) — never affects the refund.
+      engine,
+      recipe: recipeId,
+      submittedAt,
     });
     // G6 — persistent output queue (best-effort, non-dev). Same posture as
     // txt2img so a customComfy gen rebuilds in listMyWorkflows on reload.

@@ -4612,12 +4612,16 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
       // The submitted step's timeout matches the reserved ceiling (90s → 00:01:30).
       expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:01:30');
-      // settle record persisted with BOTH reservation keys + the ceiling.
+      // settle record persisted with BOTH reservation keys + the ceiling, plus the
+      // per-engine observability fields (engine/recipe/submittedAt — never affect spend).
       expect(mockPersistCustomComfySettle).toHaveBeenCalledWith({
         workflowId: 'wf_cc_1',
         buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
         appSpendKey: 'system:blocks:app-spend-cap:apb_test:day',
         ceiling: 90,
+        engine: 'zimage-turbo', // ccBody default engine (== recipe default)
+        recipe: 'seamless-pano-360',
+        submittedAt: expect.any(Number),
       });
     });
 
@@ -5016,6 +5020,9 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         appSpendKey: null,
         devSessionId: 'bki_dev',
         ceiling: 90,
+        engine: 'zimage-turbo',
+        recipe: 'seamless-pano-360',
+        submittedAt: expect.any(Number),
       });
     });
 
@@ -5035,6 +5042,9 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         appSpendKey: 'system:blocks:app-spend-cap:apb_test:day',
         devSessionId: 'bki_dev',
         ceiling: 90,
+        engine: 'zimage-turbo',
+        recipe: 'seamless-pano-360',
+        submittedAt: expect.any(Number),
       });
     });
 

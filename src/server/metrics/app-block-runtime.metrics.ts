@@ -147,7 +147,20 @@ type Bundle = {
   requestsTotal: Counter<string>;
   requestDurationSeconds: Histogram<string>;
   rendersTotal: Counter<string>;
+  customComfyActualBuzz: Histogram<string>;
+  customComfyWallclockSeconds: Histogram<string>;
 };
+
+// ── customComfy per-engine runtime/cost buckets ──────────────────────────────
+// Sized for the 0–200 range that straddles the per-engine Buzz ceilings
+// (zimage 90 / flux2 150 / qwen 180) so the ceiling boundaries fall ON bucket
+// edges — a pre-GA `histogram_quantile` p95/p99 then reads directly against the
+// ceiling a gen is fighting.
+const CUSTOMCOMFY_BUZZ_BUCKETS = [10, 20, 30, 45, 60, 90, 120, 150, 180, 200];
+// Wall-clock (submit→terminal-observation) seconds — same ceiling landmarks plus
+// a couple of longer tails to catch a gen that queue-waits toward / past its
+// timeout (the clip-risk the metric exists to surface).
+const CUSTOMCOMFY_WALLCLOCK_BUCKETS = [5, 10, 20, 30, 45, 60, 90, 120, 150, 180, 200, 240];
 
 /**
  * Idempotent: safe to call on every request. Returns the metric instances
@@ -184,5 +197,81 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['app_block_id', 'slot_id', 'result', 'error_class']
   );
 
-  return { requestsTotal, requestDurationSeconds, rendersTotal };
+  // ── customComfy per-engine runtime/cost (App Blocks `customComfy` bridge) ────
+  // Instrument-ahead-of-demand for the pre-GA question "is flux2-klein's real p99
+  // approaching its 150-Buzz / 150s ceiling?". EMPTY until real customComfy volume
+  // accrues (DARK app code, mod-gated), by design.
+  //
+  // Cardinality: engine ∈ {zimage-turbo, flux2-klein, qwen-image} (3) × recipe ∈
+  // {seamless-pano-360} (1) → 4 series/histogram today; both labels are strict
+  // enums resolved server-side from the code-owned recipe registry (never client
+  // input), so they can't blow up regardless of the wire.
+  const customComfyActualBuzz = getOrCreateHistogram(
+    reg,
+    'civitai_app_block_customcomfy_actual_buzz',
+    // GPU-RUNTIME / billed Buzz (≈1 Buzz/GPU-second) — the settled `actual` cost, NOT
+    // wall-clock. Answers "how close to the per-engine ceiling is real spend".
+    'App Block customComfy settled GPU-runtime cost in billed Buzz (≈1 Buzz/GPU-second — NOT wall-clock) by engine and recipe',
+    ['engine', 'recipe'],
+    CUSTOMCOMFY_BUZZ_BUCKETS
+  );
+
+  const customComfyWallclockSeconds = getOrCreateHistogram(
+    reg,
+    'civitai_app_block_customcomfy_wallclock_seconds',
+    // WALL-CLOCK incl. GPU queue-wait: submit→terminal-observation seconds. The truer
+    // signal for the step-timeout clip risk (a fast gen hard-killed at the 150s
+    // wall-clock ceiling while its GPU runtime is well under). Bounded by the ~2s
+    // terminal-poll cadence + excludes the submit round-trip (see settle service).
+    'App Block customComfy wall-clock seconds from submit to terminal observation (incl. GPU queue-wait) by engine and recipe',
+    ['engine', 'recipe'],
+    CUSTOMCOMFY_WALLCLOCK_BUCKETS
+  );
+
+  return {
+    requestsTotal,
+    requestDurationSeconds,
+    rendersTotal,
+    customComfyActualBuzz,
+    customComfyWallclockSeconds,
+  };
+}
+
+/**
+ * Fail-soft emit of the settled GPU-runtime cost (billed `actual` Buzz) for one
+ * customComfy gen. Called from the settle service at terminal. A metrics error
+ * (registry/label) must NEVER perturb settle/refund correctness, so the whole
+ * emit is swallowed. Skips a non-positive/`NaN` actual (failed/no-op/0 gen).
+ */
+export function observeCustomComfyActualBuzz(
+  engine: string,
+  recipe: string,
+  actualBuzz: number
+): void {
+  try {
+    if (!Number.isFinite(actualBuzz) || actualBuzz <= 0) return;
+    const { customComfyActualBuzz } = ensureRegisterAppBlockRuntimeMetrics();
+    customComfyActualBuzz.observe({ engine, recipe }, actualBuzz);
+  } catch {
+    /* instrument-only — never let a metrics error touch the settle path */
+  }
+}
+
+/**
+ * Fail-soft emit of the submit→terminal-observation wall-clock (seconds, incl.
+ * GPU queue-wait) for one customComfy gen. Same never-throw contract as above.
+ * Skips a non-positive/`NaN` value.
+ */
+export function observeCustomComfyWallclockSeconds(
+  engine: string,
+  recipe: string,
+  seconds: number
+): void {
+  try {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    const { customComfyWallclockSeconds } = ensureRegisterAppBlockRuntimeMetrics();
+    customComfyWallclockSeconds.observe({ engine, recipe }, seconds);
+  } catch {
+    /* instrument-only — never let a metrics error touch the settle path */
+  }
 }
