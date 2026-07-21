@@ -807,7 +807,7 @@ export const getCreatorShopReviewQueue = async ({
       cosmetic: {
         createdById: userId ?? { not: null },
         ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
-        ...(username ? { creator: { username: { equals: username, mode: 'insensitive' } } } : {}),
+        ...(username ? { creator: { username: { contains: username, mode: 'insensitive' } } } : {}),
       },
     },
     take: limit + 1,
