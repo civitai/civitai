@@ -3029,7 +3029,7 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
  */
 export async function getChallengeEventById(
   id: number
-): Promise<ChallengeEventListItem & { challengeCount: number }> {
+): Promise<ChallengeEventListItem & { challengeCount: number; active: boolean }> {
   const event = await dbRead.challengeEvent.findUnique({
     where: { id },
     select: {
@@ -3040,6 +3040,7 @@ export async function getChallengeEventById(
       startDate: true,
       endDate: true,
       coverImageId: true,
+      active: true,
       _count: {
         select: {
           challenges: {
@@ -3065,6 +3066,7 @@ export async function getChallengeEventById(
     coverImage: event.coverImageId ? coverMap.get(event.coverImageId) ?? null : null,
     challenges: [],
     challengeCount: event._count.challenges,
+    active: event.active,
   };
 }
 
