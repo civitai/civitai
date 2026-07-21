@@ -69,8 +69,23 @@ vi.mock('~/utils/trpc', () => {
               opts?: { onSuccess?: (d: { reply: string }) => void; onError?: (e: { message: string }) => void }
             ) => {
               mocks.chatMutate(vars);
-              if (mocks.chatError) opts?.onError?.(mocks.chatError);
-              else opts?.onSuccess?.({ reply: mocks.chatReply });
+              if (mocks.chatError) {
+                opts?.onError?.(mocks.chatError);
+                return;
+              }
+              // Simulate the server-side zod cap: agentReviewChatSchema caps
+              // `messages` at .max(20). If the client ever sends more, the real
+              // proc rejects with a raw BAD_REQUEST validation string (the
+              // dead-end the sliding window prevents).
+              const msgs = (vars as { messages?: unknown[] }).messages ?? [];
+              if (msgs.length > 20) {
+                opts?.onError?.({
+                  message:
+                    '[{"code":"too_big","maximum":20,"path":["messages"],"message":"Array must contain at most 20 element(s)"}]',
+                });
+                return;
+              }
+              opts?.onSuccess?.({ reply: mocks.chatReply });
             },
             isPending: mocks.chatPending,
           }),
@@ -215,6 +230,78 @@ describe('AgentReviewChat — error path', () => {
       .toBeInTheDocument();
     // No toast — the error is inline only.
     expect(showError).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SLIDING WINDOW (stay under the server .max(20) cap)
+// ---------------------------------------------------------------------------
+
+// The client sends `MAX_CHAT_HISTORY_SENT` (18) turns max; keep the assertions
+// in sync with that constant without importing it (the mock module boundary).
+const MAX_SENT = 18;
+
+const sendTurn = async (text: string) => {
+  await page.getByRole('textbox', { name: 'Ask the review agent' }).fill(text);
+  await page.getByRole('button', { name: 'Send' }).click();
+};
+
+describe('AgentReviewChat — sliding window', () => {
+  test('a >10-turn conversation stays under the server cap: mutation is called with <=18 messages and never dead-ends', async () => {
+    mocks.agentReport = COMPLETE_REPORT;
+    renderPanel();
+
+    // 11 user turns → full history would be 21 messages (2N-1 = 21 > 20), which
+    // would trip the server's .max(20) cap on the last turn. Each turn appends a
+    // user message AND (via the mock) an assistant reply.
+    for (let i = 1; i <= 11; i++) {
+      await sendTurn(`question number ${i}`);
+      // The reply for this turn rendered — the turn did NOT dead-end.
+      await expect
+        .element(page.getByText('Because scope buzz:read is used in wallet.js:10.').first())
+        .toBeInTheDocument();
+    }
+
+    // Every mutation call sent a windowed payload (<= MAX_SENT), never the full
+    // history — so the server cap can never be tripped.
+    const calls = mocks.chatMutate.mock.calls as Array<[{ messages: unknown[] }]>;
+    expect(calls.length).toBe(11);
+    for (const [vars] of calls) {
+      expect(vars.messages.length).toBeLessThanOrEqual(MAX_SENT);
+    }
+    // The LAST turn — the one that would have exceeded 20 unwindowed — was
+    // clamped to exactly MAX_SENT.
+    expect(calls[calls.length - 1][0].messages.length).toBe(MAX_SENT);
+
+    // No raw validation error dead-ended the chat.
+    expect(
+      page.getByText(/Array must contain at most 20 element/).elements()
+    ).toHaveLength(0);
+    // The full scrollback is still in the UI (the mod sees everything): the very
+    // first question is still rendered even though it dropped from the SENT slice.
+    await expect.element(page.getByText('question number 1', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('question number 11', { exact: true })).toBeInTheDocument();
+  });
+
+  test('the "earlier messages omitted" note renders once history exceeds the cap, and is absent for a short chat', async () => {
+    mocks.agentReport = COMPLETE_REPORT;
+    renderPanel();
+
+    // Short chat: one turn (2 messages) — note absent.
+    await sendTurn('just one question');
+    await expect
+      .element(page.getByText('Because scope buzz:read is used in wallet.js:10.').first())
+      .toBeInTheDocument();
+    expect(page.getByTestId('chat-window-trim-note').elements()).toHaveLength(0);
+
+    // Keep sending until the history exceeds MAX_SENT (18) → note appears.
+    for (let i = 2; i <= 11; i++) {
+      await sendTurn(`question number ${i}`);
+    }
+    await expect.element(page.getByTestId('chat-window-trim-note')).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Earlier messages are no longer included/))
+      .toBeInTheDocument();
   });
 });
 

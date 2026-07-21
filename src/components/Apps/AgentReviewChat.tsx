@@ -24,6 +24,18 @@ import { trpc } from '~/utils/trpc';
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
+/**
+ * Client-side sliding window on the conversation SENT to the agent. The server
+ * schema caps `messages` at 20 (agentReviewChatSchema.messages.max(20)), so a
+ * long chat would otherwise fail the zod cap around the 11th user turn
+ * (2N-1 > 20) with a raw BAD_REQUEST and dead-end. We keep the FULL history in
+ * UI state (the mod still sees the whole scrollback) but only ever send the
+ * last MAX_CHAT_HISTORY_SENT turns — comfortably under the server's 20, so the
+ * cap can never be tripped and the chat works indefinitely. Older turns simply
+ * drop out of the agent's context.
+ */
+export const MAX_CHAT_HISTORY_SENT = 18;
+
 export function AgentReviewChat({ publishRequestId }: { publishRequestId: string }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -41,8 +53,11 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
     const nextMessages: ChatMessage[] = [...messages, { role: 'user', content }];
     setMessages(nextMessages);
     setInput('');
+    // Slide a window over the SENT conversation so we stay under the server's
+    // .max(20) cap no matter how long the chat runs (see MAX_CHAT_HISTORY_SENT).
+    const sentMessages = nextMessages.slice(-MAX_CHAT_HISTORY_SENT);
     chatMut.mutate(
-      { publishRequestId, messages: nextMessages },
+      { publishRequestId, messages: sentMessages },
       {
         onSuccess: (data) => {
           setMessages((prev) => [
@@ -76,6 +91,11 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
         {messages.length > 0 && (
           <ScrollArea.Autosize mah={260} type="auto">
             <Stack gap={6} pr={6}>
+              {messages.length > MAX_CHAT_HISTORY_SENT && (
+                <Text size="xs" c="dimmed" ta="center" data-testid="chat-window-trim-note">
+                  Earlier messages are no longer included in the agent&apos;s context.
+                </Text>
+              )}
               {messages.map((m, i) => {
                 const isUser = m.role === 'user';
                 return (
