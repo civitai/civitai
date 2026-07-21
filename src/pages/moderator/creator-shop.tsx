@@ -267,13 +267,15 @@ function CreatorShopReviewPage() {
 
   return (
     <Stack gap={0} className="w-full">
-      {/* Topbar */}
+      {/* Topbar — sticky within the app shell's scroll container so the queue
+          scrolls under it instead of pushing it off-screen. */}
       <Group
         justify="space-between"
         align="center"
         px="xl"
         py="md"
-        style={{ borderBottom: CREATOR_SHOP_BORDER }}
+        className="sticky top-0 z-10"
+        style={{ borderBottom: CREATOR_SHOP_BORDER, background: 'var(--mantine-color-body)' }}
       >
         <Group gap={10} align="center">
           <IconShieldCheck size={20} color="var(--mantine-color-blue-4)" />
