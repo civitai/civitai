@@ -3073,7 +3073,7 @@ export async function getChallengeEventById(
  */
 export async function getChallengeEvents(input: GetChallengeEventsInput) {
   const where = input.activeOnly ? { active: true, endDate: { gte: new Date() } } : {};
-  return dbRead.challengeEvent.findMany({
+  const events = await dbRead.challengeEvent.findMany({
     where,
     orderBy: { startDate: 'desc' },
     select: {
@@ -3086,9 +3086,16 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
       active: true,
       winnerCooldownDays: true,
       createdAt: true,
+      coverImageId: true,
       _count: { select: { challenges: true } },
     },
   });
+
+  const coverMap = await getEventCoverImages(events.map((e) => e.coverImageId));
+  return events.map(({ coverImageId, ...e }) => ({
+    ...e,
+    coverImage: coverImageId ? coverMap.get(coverImageId) ?? null : null,
+  }));
 }
 
 /**
