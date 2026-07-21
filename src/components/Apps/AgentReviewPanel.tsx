@@ -1,5 +1,6 @@
 import { Alert, Badge, Button, Card, Group, Loader, Stack, Table, Text, ThemeIcon } from '@mantine/core';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { useMediaQuery } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -384,6 +385,18 @@ function MetaLine({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** One label/value row inside a narrow-viewport scope card. */
+function ScopeCardRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Group gap={6} wrap="nowrap" align="flex-start">
+      <Text size="xs" fw={600} c="dimmed" style={{ minWidth: 68, flexShrink: 0 }}>
+        {label}
+      </Text>
+      <div style={{ minWidth: 0, flex: 1 }}>{children}</div>
+    </Group>
+  );
+}
+
 function fmtDate(d: unknown): string | null {
   if (d == null) return null;
   const dt = d instanceof Date ? d : new Date(String(d));
@@ -410,6 +423,12 @@ function ReportBody({
 }) {
   const view = parseAgentReport(report);
   const { codeReview, securityAudit, scopeVerdicts, tokenUsage } = view;
+
+  // Responsive scope-verdicts layout: the 6-column verdicts table squishes at
+  // narrow widths (long monospace scope ids / evidence paths wrap char-by-char).
+  // Below `sm` we render each scope as a stacked label/value card instead; at
+  // wider widths the table scrolls horizontally rather than compressing.
+  const isNarrow = useMediaQuery('(max-width: 768px)');
 
   const cost = formatCostUsd(report.costUsd);
   const started = fmtDate(report.startedAt);
@@ -583,37 +602,29 @@ function ReportBody({
         </Group>
         {scopeVerdicts.scopes.length === 0 ? (
           <NoneFound label="No scopes assessed" />
-        ) : (
-          <Table striped withTableBorder withColumnBorders fz="xs" data-testid="scope-verdicts-table">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Scope</Table.Th>
-                <Table.Th>Used</Table.Th>
-                <Table.Th>Justified</Table.Th>
-                <Table.Th>Sensitive</Table.Th>
-                <Table.Th>Evidence</Table.Th>
-                <Table.Th>Notes</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {scopeVerdicts.scopes.map((s, i) => (
-                <Table.Tr key={i}>
-                  <Table.Td>
+        ) : isNarrow ? (
+          // Narrow / mobile: stacked per-scope cards (label/value rows) — the
+          // 6-col table is unreadable below `sm`.
+          <Stack gap="xs" data-testid="scope-verdicts-cards">
+            {scopeVerdicts.scopes.map((s, i) => (
+              <Card key={i} withBorder padding="xs" radius="sm">
+                <Stack gap={4}>
+                  <ScopeCardRow label="Scope">
                     <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
                       {s.declared ?? '—'}
                     </Text>
-                  </Table.Td>
-                  <Table.Td>
+                  </ScopeCardRow>
+                  <ScopeCardRow label="Used">
                     <Badge size="xs" variant="light" color={verdictColor(s.used)}>
                       {s.used ?? '—'}
                     </Badge>
-                  </Table.Td>
-                  <Table.Td>
+                  </ScopeCardRow>
+                  <ScopeCardRow label="Justified">
                     <Badge size="xs" variant="light" color={verdictColor(s.justificationAccurate)}>
                       {s.justificationAccurate ?? '—'}
                     </Badge>
-                  </Table.Td>
-                  <Table.Td>
+                  </ScopeCardRow>
+                  <ScopeCardRow label="Sensitive">
                     {s.sensitive ? (
                       <Badge
                         size="xs"
@@ -628,8 +639,8 @@ function ReportBody({
                         —
                       </Text>
                     )}
-                  </Table.Td>
-                  <Table.Td>
+                  </ScopeCardRow>
+                  <ScopeCardRow label="Evidence">
                     {s.evidence.length === 0 ? (
                       <Text size="xs" c="dimmed">
                         —
@@ -637,27 +648,101 @@ function ReportBody({
                     ) : (
                       <Stack gap={0}>
                         {s.evidence.map((e, j) => (
-                          <Text
-                            key={j}
-                            size="xs"
-                            ff="monospace"
-                            style={{ wordBreak: 'break-all' }}
-                          >
+                          <Text key={j} size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
                             {e}
                           </Text>
                         ))}
                       </Stack>
                     )}
-                  </Table.Td>
-                  <Table.Td>
+                  </ScopeCardRow>
+                  <ScopeCardRow label="Notes">
                     <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       {s.notes ?? '—'}
                     </Text>
-                  </Table.Td>
+                  </ScopeCardRow>
+                </Stack>
+              </Card>
+            ))}
+          </Stack>
+        ) : (
+          // Wide: keep the table but let it scroll horizontally instead of
+          // squishing the monospace scope/evidence columns.
+          <Table.ScrollContainer minWidth={720} data-testid="scope-verdicts-scroll">
+            <Table striped withTableBorder withColumnBorders fz="xs" data-testid="scope-verdicts-table">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Scope</Table.Th>
+                  <Table.Th>Used</Table.Th>
+                  <Table.Th>Justified</Table.Th>
+                  <Table.Th>Sensitive</Table.Th>
+                  <Table.Th>Evidence</Table.Th>
+                  <Table.Th>Notes</Table.Th>
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
+              </Table.Thead>
+              <Table.Tbody>
+                {scopeVerdicts.scopes.map((s, i) => (
+                  <Table.Tr key={i}>
+                    <Table.Td>
+                      <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
+                        {s.declared ?? '—'}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge size="xs" variant="light" color={verdictColor(s.used)}>
+                        {s.used ?? '—'}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge size="xs" variant="light" color={verdictColor(s.justificationAccurate)}>
+                        {s.justificationAccurate ?? '—'}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      {s.sensitive ? (
+                        <Badge
+                          size="xs"
+                          variant="filled"
+                          color="red"
+                          data-testid="scope-sensitive-badge"
+                        >
+                          sensitive
+                        </Badge>
+                      ) : (
+                        <Text size="xs" c="dimmed">
+                          —
+                        </Text>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      {s.evidence.length === 0 ? (
+                        <Text size="xs" c="dimmed">
+                          —
+                        </Text>
+                      ) : (
+                        <Stack gap={0}>
+                          {s.evidence.map((e, j) => (
+                            <Text
+                              key={j}
+                              size="xs"
+                              ff="monospace"
+                              style={{ wordBreak: 'break-all' }}
+                            >
+                              {e}
+                            </Text>
+                          ))}
+                        </Stack>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {s.notes ?? '—'}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         )}
 
         {scopeVerdicts.overBroad.length > 0 && (
