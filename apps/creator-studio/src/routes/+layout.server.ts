@@ -4,7 +4,7 @@ import { env } from '$env/dynamic/private';
 import type { LayoutServerLoad } from './$types';
 import { resolveMembership, TEST_MEMBERSHIP_COOKIE } from '$lib/server/membership';
 
-const testingIds = [4944, 2043827];
+const testingIds = [4944, 2043827, 1244881];
 
 // Resolve membership once for the whole layout — nav, chrome, and per-page gating all key off it. The logout
 // URL points at the hub because a spoke can't clear the shared cookie itself.
