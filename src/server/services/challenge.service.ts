@@ -2920,7 +2920,8 @@ async function getEventCoverImages(coverImageIds: (number | null)[]) {
  * Get active challenge events with their challenges.
  * Returns events where active=true and endDate >= now, ordered by startDate.
  */
-export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
+export async function getActiveEvents(viewerId?: number): Promise<ChallengeEventListItem[]> {
+  const excludedUserIds = await getChallengeExcludedUserIds(viewerId);
   const events = await dbRead.challengeEvent.findMany({
     where: {
       active: true,
@@ -2939,6 +2940,16 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
         where: {
           visibleAt: { lte: new Date() },
           status: { not: ChallengeStatus.Cancelled },
+          // Block/hide gate — drop user challenges whose creator the viewer blocked/hid.
+          // System/mod event challenges are exempt via the source OR-branch.
+          ...(excludedUserIds.length > 0
+            ? {
+                OR: [
+                  { source: { not: ChallengeSource.User } },
+                  { createdById: { notIn: excludedUserIds } },
+                ],
+              }
+            : {}),
         },
         orderBy: { startsAt: 'asc' },
         select: {
