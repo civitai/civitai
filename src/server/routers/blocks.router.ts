@@ -5301,9 +5301,12 @@ async function submitCustomComfyWorkflow(opts: {
   });
 
   // ── Post-paid budget belt (plan §5.3 — THE crux) ─────────────────────────
-  // `ceiling === recipe.maxBuzz === ceil(stepTimeoutSeconds)` (enforced at
-  // registry load): the step `timeout` physically caps the job at this many Buzz.
-  const ceiling = recipe.maxBuzz;
+  // v1.1: the budget is PER ENGINE — resolve BOTH the ceiling AND the matching
+  // step timeout from the parsed params. `ceiling === maxBuzz === ceil(
+  // stepTimeoutSeconds)` (enforced per-engine at registry load): the step
+  // `timeout` physically caps the job at this many Buzz, so the reservation below
+  // and the timeout stamped on the step MUST come from the same budget.
+  const { maxBuzz: ceiling, stepTimeoutSeconds } = recipe.budgetFor(params);
 
   // (1) STATIC pre-submit gate — the post-paid analog of the txt2img whatIf
   // `cost > buzzBudget` gate. Because the timeout caps the job at `maxBuzz` and we
@@ -5420,7 +5423,7 @@ async function submitCustomComfyWorkflow(opts: {
     }
   }
 
-  // ── Build + submit. `createBlockCustomComfyStep` stamps the recipe's aggressive
+  // ── Build + submit. `createBlockCustomComfyStep` stamps the resolved per-engine
   // `timeout` — the physical Buzz ceiling. On ANY throw AFTER reserving, refund
   // the CEILING (not 0) on ALL reservation keys and re-throw (refund-on-throw,
   // plan §7).
@@ -5432,7 +5435,9 @@ async function submitCustomComfyWorkflow(opts: {
   let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
   try {
     const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
-    const step = createBlockCustomComfyStep(recipe, stepInput);
+    // Stamp the SAME per-engine timeout the ceiling above was reserved against —
+    // the timeout is the physical cap for that reservation (v1.1).
+    const step = createBlockCustomComfyStep(stepInput, stepTimeoutSeconds);
     // Parameterized tags: emit the recipe id + 'customComfy' (NOT 'txt2img'),
     // preserving the `app-block:*` provenance tags the subqueue read depends on.
     const tags = buildWorkflowTags(claims, recipe.id, 'customComfy');

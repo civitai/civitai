@@ -673,11 +673,14 @@ function formatStepTimeout(totalSeconds: number): string {
 
 /**
  * Wrap a recipe's customComfy step input into the `$type:'customComfy'` step,
- * STAMPING the recipe's aggressive `stepTimeoutSeconds` as the step `timeout`
+ * STAMPING the resolved per-engine `stepTimeoutSeconds` as the step `timeout`
  * (formatted `HH:MM:SS`). That timeout is the ONLY deterministic per-job Buzz
  * bound the orchestrator offers: at `job.ExpireAt` the job is canceled and
  * billed for measured runtime, so worst-case Buzz = `ceil(timeout_s × 1)` =
- * `recipe.maxBuzz` (plan §5). This is what makes the post-paid path bounded.
+ * the engine's `maxBuzz` (plan §5). This is what makes the post-paid path
+ * bounded. v1.1: the timeout is PER ENGINE, so the caller resolves it from the
+ * params (`recipe.budgetFor(params).stepTimeoutSeconds`) and threads it in — the
+ * `maxBuzz` reserved against the caps and this timeout MUST move together.
  *
  * Sibling of `createBlockTextToImageStep` (blocks.router.ts) — but a customComfy
  * step is built by DIRECT object construction (the recipe's graph), NOT through
@@ -685,13 +688,13 @@ function formatStepTimeout(totalSeconds: number): string {
  * `createWorkflowStepsFromGraphInput` machinery.
  */
 export function createBlockCustomComfyStep(
-  recipe: AnyBlockRecipe,
-  input: CustomComfyStepInput
+  input: CustomComfyStepInput,
+  stepTimeoutSeconds: number
 ): CustomComfyStepTemplate {
   return {
     $type: 'customComfy',
     name: BLOCK_CUSTOM_COMFY_STEP_NAME,
-    timeout: formatStepTimeout(recipe.stepTimeoutSeconds),
+    timeout: formatStepTimeout(stepTimeoutSeconds),
     input,
   };
 }

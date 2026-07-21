@@ -116,10 +116,23 @@ export interface BlockRecipe<P = unknown> {
   };
   /** v1: 'pinned' (no user checkpoint). Follow-up: 'userPickedSdxl'. */
   checkpointPolicy: 'pinned' | 'userPickedSdxl';
-  /** Hard per-job Buzz ceiling — MUST equal ceil(stepTimeoutSeconds × 1). */
-  maxBuzz: number;
-  /** The aggressive step timeout (seconds) that ENFORCES `maxBuzz` (plan §5). */
-  stepTimeoutSeconds: number;
+  /**
+   * Per-ENGINE post-paid budget for the given params (v1.1). `maxBuzz` is the hard
+   * per-job Buzz ceiling and MUST equal `ceil(stepTimeoutSeconds × 1)` — the
+   * aggressive step `timeout` is the PHYSICAL cap (~1 Buzz/GPU-second), so a lower
+   * `maxBuzz` REQUIRES a proportionally lower `stepTimeoutSeconds` (a lower
+   * reservation under the same timeout would let the job outspend the reservation
+   * and under-count real spend, defeating the cap). The router reserves this
+   * `maxBuzz` against every cap and settles-to-actual (plan §5).
+   */
+  budgetFor(params: P): { maxBuzz: number; stepTimeoutSeconds: number };
+  /**
+   * The same per-engine budget keyed directly by engine id — used by the
+   * module-load invariant loop (which enumerates `engines`, not full params) and
+   * anywhere only the engine is in hand. Same `maxBuzz === ceil(stepTimeoutSeconds)`
+   * contract per engine.
+   */
+  budgetForEngine(engine: string): { maxBuzz: number; stepTimeoutSeconds: number };
   /** Display-only estimate for estimateWorkflow (post-paid has no exact price). */
   estimateBuzz(params: P): number;
   /** Recipe-level negative prompt (the prompt-audit re-point reads this in PR6). */
@@ -165,17 +178,22 @@ export function recipeCivitaiVersionIds(recipe: AnyBlockRecipe): number[] {
   return [...checkpoints, ...loras].map((r) => r.modelVersionId);
 }
 
-// Fail-fast the `maxBuzz == ceil(stepTimeoutSeconds)` invariant at module load —
-// the safety argument (plan §5.4) depends on the step timeout physically capping
-// the job at `maxBuzz`, so a recipe that declares a looser `maxBuzz` than its
-// timeout enforces (or a tighter one it can't guarantee) is a build-time error,
-// not a runtime surprise.
+// Fail-fast the per-engine `maxBuzz == ceil(stepTimeoutSeconds)` invariant at
+// module load — the safety argument (plan §5.4) depends on the step timeout
+// physically capping the job at `maxBuzz`, so a recipe that declares (for ANY
+// engine) a looser `maxBuzz` than its timeout enforces (or a tighter one it can't
+// guarantee) is a build-time error, not a runtime surprise. v1.1: the budget is
+// per-engine, so assert it for EACH of the recipe's engines.
 for (const [id, recipe] of Object.entries(recipeRegistry)) {
-  const enforced = Math.ceil(recipe.stepTimeoutSeconds);
-  if (recipe.maxBuzz !== enforced) {
-    throw new Error(
-      `recipe '${id}': maxBuzz (${recipe.maxBuzz}) must equal ceil(stepTimeoutSeconds) (${enforced}) — ` +
-        'the step timeout is the physical Buzz ceiling (plan §5).'
-    );
+  for (const engine of recipe.engines) {
+    const budget = recipe.budgetForEngine(engine);
+    const enforced = Math.ceil(budget.stepTimeoutSeconds);
+    if (budget.maxBuzz !== enforced) {
+      throw new Error(
+        `recipe '${id}' engine '${engine}': maxBuzz (${budget.maxBuzz}) must equal ` +
+          `ceil(stepTimeoutSeconds) (${enforced}) — the step timeout is the physical ` +
+          'Buzz ceiling (plan §5).'
+      );
+    }
   }
 }
