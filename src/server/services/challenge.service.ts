@@ -2879,9 +2879,9 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
   // Batch-enrich all challenges across all events
   const allChallenges = events.flatMap((e) => e.challenges);
   if (allChallenges.length === 0) {
-    return events.map((e) => ({
+    return events.map(({ coverImageId, ...e }) => ({
       ...e,
-      coverImage: e.coverImageId ? eventCoverMap.get(e.coverImageId) ?? null : null,
+      coverImage: coverImageId ? eventCoverMap.get(coverImageId) ?? null : null,
       challenges: [],
     }));
   }
