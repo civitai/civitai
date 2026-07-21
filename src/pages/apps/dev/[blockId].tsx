@@ -206,6 +206,26 @@ export default function DevTunnelPage(props: DevTunnelProps) {
               the tunnel is bound to your account.
             </Alert>
           </Stack>
+        ) : error != null ? (
+          // DEV-ROUTE-SCOPED auth-failure copy. The dev tunnel mints a self-bound,
+          // forced-SFW token for the OWNER of an app at any status (approved,
+          // suspended, pending, deprecated). If the mint still fails here, the app
+          // isn't runnable in the tunnel — most likely it isn't yours or the tunnel
+          // dropped. This replaces the public host's generic "Couldn't authenticate
+          // this app" (which we deliberately do NOT change) with a message that
+          // makes sense for the dev route. Scoped to THIS route only.
+          <Stack p="md" gap="sm" style={{ maxWidth: 720, margin: '0 auto' }}>
+            <Title order={3}>Can’t run this app in the dev tunnel</Title>
+            <Alert color="red" variant="light">
+              We couldn’t mint a dev token for <Code>{blockId}</Code>. This app isn’t runnable in
+              the dev tunnel — it may be suspended, pending review, or not owned by your account.
+              If you just started the tunnel, reload the page.
+            </Alert>
+            <Text size="sm">
+              Restart your tunnel and reload if the problem persists:
+            </Text>
+            <Code block>civitai app dev:tunnel</Code>
+          </Stack>
         ) : (
           <PageBlockHost
             appBlockId={appBlockId}

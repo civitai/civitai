@@ -479,6 +479,36 @@ export const unarchiveCreatorShopItem = async ({
   });
 };
 
+export const deleteCreatorShopItem = async ({
+  userId,
+  isModerator,
+  id,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  id: number;
+}) => {
+  const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // Hard delete. FK cascades wipe the purchase records (sales totals) and any
+  // official-shop section links. Buyers keep what they bought: UserCosmetic is
+  // keyed by cosmeticId and the Cosmetic row is intentionally left in place.
+  await dbWrite.cosmeticShopItem.delete({ where: { id } });
+
+  // Free its featured slot. Stale ids in other creators' resoldItemIds
+  // self-heal — the lookups drop ids that no longer resolve to an item.
+  if (existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return { id, purchases: existing._count.purchases };
+};
+
 // A creator's own items (any status) for the "Manage your shop" view. The router
 // only lets a moderator pass someone else's userId.
 export const getCreatorShopManageItems = async ({ userId }: { userId: number }) => {

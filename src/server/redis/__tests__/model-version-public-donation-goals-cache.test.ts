@@ -54,6 +54,7 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
     modelVersion: { findMany: vi.fn() },
     donationGoal: { findMany: vi.fn() },
     user: { findMany: vi.fn() },
+    customerSubscription: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
   });
   return { mockDbRead: mk(), mockDbWrite: mk() };
@@ -100,11 +101,20 @@ beforeEach(() => {
   mockDbRead.modelVersion.findMany.mockReset();
   mockDbRead.donationGoal.findMany.mockReset();
   mockDbRead.user.findMany.mockReset().mockResolvedValue([]);
+  mockDbRead.customerSubscription.findMany.mockReset().mockResolvedValue([]);
   mockDbRead.$queryRaw.mockReset();
   mockDbWrite.modelVersion.findMany.mockReset();
   mockDbWrite.donationGoal.findMany.mockReset();
   mockDbWrite.user.findMany.mockReset().mockResolvedValue([]);
+  mockDbWrite.customerSubscription.findMany.mockReset().mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockReset();
+});
+
+// Active CP membership row for `getValidCreatorMembershipMap` (silver tier > free).
+const activeSub = (userId: number) => ({
+  userId,
+  metadata: {},
+  product: { metadata: { tier: 'silver' } },
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -217,17 +227,38 @@ describe('modelVersionPublicDonationGoalsCache', () => {
     expect(res[9].goals.map((g) => g.id)).toEqual([20]); // ended EA goal 21 excluded
   });
 
-  it('hides all goals whose owner opted out via hideDonationGoals', async () => {
+  it("hides an opted-out owner's goals ONLY while they are an active CP member", async () => {
     mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
     mockDbRead.donationGoal.findMany.mockResolvedValue([
       row({ id: 10, userId: 7, modelVersionId: 5 }),
     ]);
     mockDbRead.user.findMany.mockResolvedValue([{ id: 7, settings: { hideDonationGoals: true } }]);
+    mockDbRead.customerSubscription.findMany.mockResolvedValue([activeSub(7)]);
     mockDbRead.$queryRaw.mockResolvedValue([]);
     const cache = buildCache();
 
     const res = await cache.fetch([5]);
 
-    expect(res[5]).toEqual({ modelVersionId: 5, goals: [] }); // owner opted out → nothing public
+    expect(res[5]).toEqual({ modelVersionId: 5, goals: [] }); // active member + opted out → hidden
   });
+
+  it("shows an opted-out owner's goals again when their CP membership has lapsed", async () => {
+    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
+    mockDbRead.donationGoal.findMany.mockResolvedValue([
+      row({ id: 10, userId: 7, modelVersionId: 5 }),
+    ]);
+    mockDbRead.user.findMany.mockResolvedValue([{ id: 7, settings: { hideDonationGoals: true } }]);
+    // No active subscription → lapsed / never-member → the opt-out silently reverts.
+    mockDbRead.customerSubscription.findMany.mockResolvedValue([]);
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    const cache = buildCache();
+
+    const res = await cache.fetch([5]);
+
+    expect(res[5].goals.map((g) => g.id)).toEqual([10]); // no stored flip — publicly visible again
+  });
+
+  // Owner/mod bypass is enforced one level up in `modelVersionDonationGoals`, which
+  // skips this shared public cache entirely for privileged viewers — so an owner/mod
+  // never reaches this lookupFn and always sees their own goals regardless of the flag.
 });

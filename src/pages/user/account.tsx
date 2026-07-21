@@ -19,6 +19,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
+import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { StrikesCard } from '~/components/Account/StrikesCard';
 import { GenerationSettingsCard } from '~/components/Account/GenerationSettingsCard';
@@ -49,6 +50,7 @@ export default function Account() {
           <ContentControlsCard />
           <GenerationSettingsCard />
           {features.canViewNsfw && <ModerationCard />}
+          {features.creatorControls && <CreatorControlsCard />}
           <AccountsCard />
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}

@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import { type BaseModel, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  isBaseModelGenerationSupported,
+} from '~/shared/constants/basemodel.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -11,6 +14,15 @@ import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { dbRead } from '~/server/db/client';
+import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
+import {
+  anyMetricHidden,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveModelHiddenMetrics,
+} from '~/server/utils/model-metric-privacy';
+import type { HiddenModelMetrics } from '~/server/utils/model-metric-privacy';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -58,9 +70,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'id',
     'metrics.collectedCount',
     'metrics.commentCount',
-    'metrics.downloadCount',
     'metrics.thumbsUpCount',
-    'metrics.tippedAmountCount',
+    // Creator Controls: downloads + tipped can be masked in the displayed `metrics`,
+    // so sort on the REAL sort-only mirrors (excluded from displayedAttributes).
+    'sortMetrics.downloadCount',
+    'sortMetrics.tippedAmountCount',
   ];
 
   // Meilisearch stores sorted.
@@ -70,6 +84,54 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       'onIndexSetup :: sortableFieldsAttributesTask created',
       sortableFieldsAttributesTask
     );
+  }
+
+  // Creator Controls: `sortMetrics` holds the REAL download/tipped values used only
+  // for sorting. Excluding it from displayedAttributes keeps the true number out of
+  // every search hit (a masked model's real count is never returned to any client,
+  // including direct Meili queries). Meili whitelists by top-level attribute — nested
+  // children are included with their parent, so only NEW top-level doc keys need to
+  // be added here.
+  const displayedAttributes = [
+    'id',
+    'name',
+    'type',
+    'nsfw',
+    'nsfwLevel',
+    'minor',
+    'sfwOnly',
+    'status',
+    'createdAt',
+    'lastVersionAt',
+    'lastVersionAtUnix',
+    'publishedAt',
+    'locked',
+    'earlyAccessDeadline',
+    'mode',
+    'checkpointType',
+    'availability',
+    'poi',
+    'user',
+    'category',
+    'permissions',
+    'version',
+    'versions',
+    'triggerWords',
+    'fileFormats',
+    'hashes',
+    'tags',
+    'metrics',
+    'rank',
+    'hiddenMetrics',
+    'canGenerate',
+    'cannotPromote',
+    'cosmetic',
+    'images',
+  ];
+
+  if (JSON.stringify(displayedAttributes) !== JSON.stringify(settings.displayedAttributes)) {
+    const displayedAttributesTask = await index.updateDisplayedAttributes(displayedAttributes);
+    console.log('onIndexSetup :: displayedAttributesTask created', displayedAttributesTask);
   }
 
   const rankingRules = [
@@ -153,11 +215,59 @@ type PullDataResult = {
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
 };
+type VersionMetricRow = {
+  generationCount: number;
+  downloadCount: number;
+  thumbsUpCount: number;
+  thumbsDownCount: number;
+};
+
+// Nested per-version metrics ship in `displayedAttributes`, so they must obey the
+// same model-level hide flags as the card — otherwise the raw hidden number leaks.
+// The search-index version selector carries no earned/tipped (buzz) field, so only
+// downloads + generations are maskable here.
+function maskHiddenVersionMetrics<T extends VersionMetricRow | undefined>(
+  metrics: T,
+  hidden: HiddenModelMetrics
+) {
+  if (!metrics) return metrics;
+  return {
+    ...metrics,
+    downloadCount: hidden.downloads ? null : metrics.downloadCount,
+    generationCount: hidden.generations ? null : metrics.generationCount,
+  };
+}
+
 const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
   const unavailableGenResources = await getUnavailableResources();
+
+  // Creator Controls metric privacy: store which model-level metrics are hidden so
+  // the search card can render the "hidden" notice. Effective only while the owner
+  // holds a valid CP membership; the real metrics/rank stay in the doc so sort order
+  // is unchanged (only the displayed number is omitted on the card). This is a
+  // precomputed shared doc, so a membership lapse reverts to visible on the next
+  // reindex rather than instantly.
+  const ownerIds = [...new Set(models.map((m) => m.user.id))];
+  const ownerSettingsRows = ownerIds.length
+    ? await dbRead.user.findMany({
+        where: { id: { in: ownerIds } },
+        select: { id: true, settings: true },
+      })
+    : [];
+  const ownerSettingsMap = new Map<number, unknown>(
+    ownerSettingsRows.map((o) => [o.id, o.settings])
+  );
+  const membershipCandidates = new Set<number>();
+  for (const m of models) {
+    const metaHidden = getMetaMetricPrivacy(m.meta);
+    const defHidden = getUserMetricPrivacyDefaults(ownerSettingsMap.get(m.user.id));
+    if (anyMetricHidden(metaHidden) || anyMetricHidden(defHidden))
+      membershipCandidates.add(m.user.id);
+  }
+  const membershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
 
   const indexReadyRecords = models
     .map((modelRecord) => {
@@ -189,6 +299,15 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
 
+      const hidden = resolveModelHiddenMetrics({
+        modelMeta: meta,
+        userSettings: ownerSettingsMap.get(user.id),
+        isOwnerOrModerator: false,
+        hasValidMembership: membershipMap.get(user.id) ?? false,
+      });
+      const realDownloadCount = metrics?.downloadCount ?? 0;
+      const realTippedAmountCount = metrics?.tippedAmountCount ?? 0;
+
       return {
         ...model,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
@@ -208,7 +327,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         },
         version: {
           ...restVersion,
-          metrics: restVersion.metrics[0],
+          metrics: maskHiddenVersionMetrics(restVersion.metrics[0], hidden),
           hashes: restVersion.hashes.map((hash) => hash.hash),
           hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
           settings: restVersion.settings as RecommendedSettingsSchema,
@@ -217,7 +336,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         versions: modelVersions.map(
           ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
             ...x,
-            metrics: vMetrics[0],
+            metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate:
@@ -246,16 +365,28 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             id: x.id,
             name: x.name,
           })) ?? [],
+        // DISPLAYED metrics — hidden ones masked to null (never leak the real number
+        // to the search hit). Sort order is preserved via `sortMetrics` below.
         metrics: {
           ...metrics,
+          downloadCount: hidden.downloads ? null : realDownloadCount,
+          tippedAmountCount: hidden.buzz ? null : realTippedAmountCount,
         },
         rank: {
-          downloadCount: metrics?.downloadCount ?? 0,
+          downloadCount: hidden.downloads ? null : realDownloadCount,
           thumbsUpCount: metrics.thumbsUpCount ?? 0,
           commentCount: metrics.commentCount ?? 0,
           collectedCount: metrics.collectedCount ?? 0,
-          tippedAmountCount: metrics.tippedAmountCount ?? 0,
+          tippedAmountCount: hidden.buzz ? null : realTippedAmountCount,
         },
+        // SORT-ONLY: REAL values, excluded from `displayedAttributes` (see
+        // onIndexSetup) so sort by most-downloaded / most-tipped keeps the true
+        // order even when the displayed number is masked. Never returned to clients.
+        sortMetrics: {
+          downloadCount: realDownloadCount,
+          tippedAmountCount: realTippedAmountCount,
+        },
+        hiddenMetrics: hidden,
         canGenerate,
         cannotPromote,
         cosmetic: cosmetics[model.id] ?? null,

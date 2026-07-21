@@ -138,6 +138,8 @@ describe('contest entry resource gate (Task 11)', () => {
       validateContestCollectionEntry({
         collectionId: COLLECTION_ID,
         userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
         imageIds: [IMAGE_ID],
         metadata: {},
       })
@@ -159,6 +161,8 @@ describe('contest entry resource gate (Task 11)', () => {
       validateContestCollectionEntry({
         collectionId: COLLECTION_ID,
         userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
         imageIds: [IMAGE_ID],
         metadata: {},
       })
@@ -174,6 +178,8 @@ describe('contest entry resource gate (Task 11)', () => {
       validateContestCollectionEntry({
         collectionId: COLLECTION_ID,
         userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
         imageIds: [IMAGE_ID],
         metadata: {},
       })
@@ -191,6 +197,8 @@ describe('contest entry resource gate (Task 11)', () => {
       validateContestCollectionEntry({
         collectionId: COLLECTION_ID,
         userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
         isModerator: true,
         imageIds: [IMAGE_ID],
         metadata: {},

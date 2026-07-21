@@ -337,6 +337,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
     onSuccess: (result) => {
       queryUtils.challenge.getModeratorList.invalidate();
       queryUtils.challenge.getById.invalidate({ id: result.id });
+      queryUtils.challenge.getForEdit.invalidate({ id: result.id });
       showSuccessNotification({
         message: isEditing ? 'Challenge updated successfully' : 'Challenge created successfully',
       });
@@ -354,6 +355,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
         message: 'Your challenge is being reviewed and will go live once it passes moderation.',
       });
       await queryUtils.challenge.getInfinite.invalidate();
+      await queryUtils.challenge.getUserChallengeForEdit.invalidate({ id: result.id });
       await router.push(`/challenges/${result.id}`);
     },
     onError: (error) => {

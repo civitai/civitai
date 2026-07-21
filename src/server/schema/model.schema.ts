@@ -206,6 +206,9 @@ export const modelUpsertSchema = z.object({
     .looseObject({
       showcaseCollectionId: z.coerce.number().nullish(),
       commentsLocked: z.boolean().default(false),
+      hideBuzz: z.boolean().optional(),
+      hideDownloads: z.boolean().optional(),
+      hideGenerations: z.boolean().optional(),
     })
     .transform((val) => val as ModelMeta | null)
     .nullish(),
@@ -269,6 +272,11 @@ export type ModelMeta = Partial<{
   commentsLocked: boolean;
   profanityMatches: string[];
   profanityEvaluation: Pick<ProfanityEvaluation, 'reason' | 'metrics'>;
+  // Creator Controls: hide public metrics (only while the owner has a valid
+  // Creator Program membership — see server/utils/model-metric-privacy.ts).
+  hideBuzz: boolean;
+  hideDownloads: boolean;
+  hideGenerations: boolean;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

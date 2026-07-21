@@ -92,6 +92,7 @@ import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -863,7 +864,11 @@ export default function ModelDetailsV2({
                     >
                       <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                         <Text className={classes.modelBadgeText}>
-                          {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
+                          {model.hiddenMetrics?.downloads ? (
+                            <HiddenMetricNotice />
+                          ) : (
+                            abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)
+                          )}
                         </Text>
                       </IconBadge>
                     </StatHoverCard>
@@ -875,7 +880,11 @@ export default function ModelDetailsV2({
                       >
                         <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
                           <Text className={classes.modelBadgeText}>
-                            {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}
+                            {model.hiddenMetrics?.generations ? (
+                              <HiddenMetricNotice />
+                            ) : (
+                              abbreviateNumber(model.rank?.generationCountAllTime ?? 0)
+                            )}
                           </Text>
                         </IconBadge>
                       </GenerateButton>
@@ -919,7 +928,11 @@ export default function ModelDetailsV2({
                               }
                             >
                               <Text className={classes.modelBadgeText}>
-                                {abbreviateNumber(buzzEarned)}
+                                {model.hiddenMetrics?.buzz ? (
+                                  <HiddenMetricNotice />
+                                ) : (
+                                  abbreviateNumber(buzzEarned)
+                                )}
                               </Text>
                             </IconBadge>
                           </InteractiveTipBuzzButton>

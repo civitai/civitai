@@ -9,11 +9,14 @@ import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/consta
 export const ModelSearchIndexSortBy = [
   MODELS_SEARCH_INDEX,
   `${MODELS_SEARCH_INDEX}:metrics.thumbsUpCount:desc`,
-  `${MODELS_SEARCH_INDEX}:metrics.downloadCount:desc`,
+  // Creator Controls: sort on the REAL sort-only mirrors — the displayed
+  // `metrics.downloadCount` / `metrics.tippedAmountCount` are masked to null when a
+  // creator hides them, so sorting on those would break the order.
+  `${MODELS_SEARCH_INDEX}:sortMetrics.downloadCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.favoriteCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.commentCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.collectedCount:desc`,
-  `${MODELS_SEARCH_INDEX}:metrics.tippedAmountCount:desc`,
+  `${MODELS_SEARCH_INDEX}:sortMetrics.tippedAmountCount:desc`,
   `${MODELS_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 

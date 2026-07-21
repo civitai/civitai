@@ -290,6 +290,16 @@ const featureFlags = createFeatureFlags({
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
+  // Creator Controls account card (metric-privacy + donation-goal settings UI).
+  // `availability: []` = DARK by default and FAILS CLOSED (empty availability →
+  // static eval false when Flipt is absent/down), so the card does NOT render for
+  // anyone until the `creator-controls` Flipt flag is created + enabled. This gates
+  // ONLY the card render in the account page; the read-side metric-privacy gating
+  // (donation-goals-cache / model-metric-privacy resolvers / model.service etc.)
+  // stays active regardless so existing user settings keep applying even when the
+  // card is hidden. Instant kill-switch / widen lever = the Flipt flag. (Mirrors the
+  // `hiddenPrefsCompact` / `genTabDeferView` `availability: []` precedent.)
+  creatorControls: { availability: [], fliptKey: 'creator-controls' },
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],

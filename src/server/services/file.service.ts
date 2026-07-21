@@ -449,7 +449,7 @@ type ModelVersionFileResult =
   | {
       status: 'early-access';
       details: {
-        deadline: Date;
+        deadline?: Date;
       };
     }
   | {

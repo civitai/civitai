@@ -42,6 +42,7 @@ import {
 import {
   clampTunnelDeclaredScopes,
   FORCED_SFW_CEILING,
+  parseManifestBuzzBudget,
   resolveDevBuzzBudget,
   signDevScopedPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
@@ -468,6 +469,151 @@ async function tryDevTunnelScopedMint(args: {
   return 'handled';
 }
 
+/**
+ * PHASE 2 — App Dev Tunnel: OWNED, NON-APPROVED (real `apb_…`) SCOPED mint.
+ *
+ * The COMPANION to `tryDevTunnelScopedMint`, closing the SSR↔mint asymmetry for an
+ * app that HAS a real AppBlock row but is NOT `approved`. The SSR dev route
+ * (`resolveDevPageBlockForAuthor`) mounts an OWNED app at ANY status → the host
+ * requests a token for `page_<apb_…>`. But `resolvePageBlock` requires
+ * `status:'approved'`, and `tryDevTunnelScopedMint` only rescues the synthetic
+ * `ephemeral-*` namespace — so a previously-approved app that is now suspended /
+ * pending (re-submitted) / deprecated falls through BOTH branches to the bare 404,
+ * which the host renders as "Couldn't authenticate this app". This branch mints a
+ * SCOPED, forced-SFW, self-bound, budget-capped dev token for that case, reusing the
+ * IDENTICAL audited clamp + budget + sign belt as the ephemeral path.
+ *
+ * SECURITY INVARIANTS (ALL required — a failure of any → 'continue' → the SAME bare
+ * 404, no oracle, no mint):
+ *   1. OWNERSHIP — `resolveOwnedNonApprovedPageBlock` enforces `app.userId === caller`
+ *      IN the query. A non-owner requesting a suspended app's token gets the bare 404
+ *      (no cross-user mint, no existence oracle).
+ *   2. ACTIVE DEV TUNNEL — an ACTIVE `getActiveDevTunnel(caller, blockId)` is REQUIRED
+ *      (the SAME check the ephemeral/scoped mint uses). No active tunnel → 404. This is
+ *      NOT a general un-suspend: the app stays non-runnable publicly + without a tunnel.
+ *   3. FLAG-GATED — behind `app-blocks-enabled` (the outer handler's `appBlocks` gate),
+ *      `appBlocksAuthor`, AND the `app-blocks-dev-tunnel` kill-switch, all evaluated for
+ *      the caller. Any off → 404. (No `unsubmitted-spend` flag: unlike a never-reviewed
+ *      ephemeral app, this app's scopes ARE a prior moderator-approved snapshot.)
+ *   4. SELF-BOUND — the token `sub` is the caller (the owner), so at RUNTIME it spends
+ *      the caller's OWN Buzz under `assertViewerIsAppDeveloper(sub)` + the per-call /
+ *      per-session / per-day caps. Budget = the manifest `page.buzzBudgetPerGen` clamped
+ *      to the dev cap (default as the ephemeral path), forced-SFW.
+ *   5. SCOPES — sourced from the app's APPROVED SNAPSHOT (`approvedScopes`), NEVER the
+ *      raw/re-published manifest, then run through the SAME `clampTunnelDeclaredScopes`
+ *      belt (TUNNEL allowlist, no widening). No scope escalation.
+ *   6. NO PUBLIC-PATH BYPASS — this ONLY affects the dev-tunnel mint (gated on an active
+ *      tunnel for the caller). The public run-mint (`resolvePageBlock`) + SSR run page
+ *      still require `status:'approved'` and are untouched — a suspended app stays
+ *      non-runnable publicly.
+ *
+ * The token carries the app's REAL ids (unlike the synthetic ephemeral path), so the
+ * runtime spend-attribution row resolves the real OauthClient and lands as a
+ * `self_spend`-VOIDED row (spender == app owner) — no forged attribution, no bounty.
+ */
+async function tryDevTunnelOwnedNonApprovedMint(args: {
+  req: NextApiRequest & { log?: Logger };
+  res: NextApiResponse;
+  appBlockId: string;
+  blockInstanceId: string;
+  slotId: string;
+  sessionUser: SessionUser | undefined;
+  userId: number | null;
+}): Promise<'handled' | 'continue'> {
+  const { req, res, appBlockId, blockInstanceId, slotId, sessionUser, userId } = args;
+
+  // Cookie-authed author only. This branch is the REAL-id companion to
+  // tryDevTunnelScopedMint — the synthetic ephemeral namespace is handled THERE, so
+  // an `ephemeral-*` id is not ours.
+  if (userId == null || !sessionUser) return 'continue';
+  if (appBlockId.startsWith(EPHEMERAL_APP_ID_PREFIX)) return 'continue';
+  // The instance id is `page_<appBlockId>` by construction; a mismatch is not a
+  // legitimate dev mint.
+  if (blockInstanceId !== `${PAGE_INSTANCE_PREFIX}${appBlockId}`) return 'continue';
+  if (sessionUser.bannedAt) return 'continue';
+
+  // Author capability + dev-tunnel kill-switch (both fail-closed). Dynamic import so
+  // the flag module isn't eager-loaded on the prod-mint import path. NO
+  // unsubmitted-spend flag: the scope source is a prior moderator-approved snapshot,
+  // not a never-reviewed manifest.
+  const { isAppBlocksAuthorEnabled, isAppBlocksDevTunnelEnabled } = await import(
+    '~/server/services/app-blocks-flag'
+  );
+  if (!(await isAppBlocksAuthorEnabled({ user: sessionUser }))) return 'continue';
+  if (!(await isAppBlocksDevTunnelEnabled({ user: sessionUser }))) return 'continue';
+
+  // Soft-delete gate (M1 parity with the prod path + the ephemeral branch).
+  const userRow = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { deletedAt: true, bannedAt: true },
+  });
+  if (!userRow || userRow.deletedAt || userRow.bannedAt) return 'continue';
+
+  // OWNERSHIP + NON-APPROVED resolve (any refusal → bare null → 404, no oracle). The
+  // resolver enforces `app.userId === caller` AND `status != approved` in the query.
+  const app = await BlockRegistry.resolveOwnedNonApprovedPageBlock(appBlockId, userId, {
+    db: 'write',
+  });
+  if (!app) return 'continue';
+
+  // Belt-and-suspenders: the page slot must be a real page slot.
+  if (!isPageSlot(slotId)) return 'continue';
+
+  // ACTIVE dev tunnel REQUIRED (invariant 2). NOT a general un-suspend: without an
+  // active tunnel for (caller, slug) this app cannot mint. Resolved server-side from
+  // (userId, blockId) — the SAME check the ephemeral/scoped mint + the runtime
+  // per-session spend backstop use.
+  const { getActiveDevTunnel } = await import('~/server/services/blocks/dev-tunnel.service');
+  const tunnel = await getActiveDevTunnel(userId, app.blockId);
+  if (!tunnel) return 'continue';
+
+  // SCOPE SOURCE = the app's APPROVED SNAPSHOT (moderator-reviewed, pinned) — NEVER
+  // the raw manifest. Clamped through the SAME tunnel belt as the ephemeral path
+  // (TUNNEL allowlist, no OAuth ceiling, no widening; force-adds user:read:self).
+  const granted = clampTunnelDeclaredScopes(app.approvedScopes);
+  // BUDGET = the manifest's page.buzzBudgetPerGen (clamped to the dev cap), defaulting
+  // as the ephemeral path when absent. Only meaningful if ai:write:budgeted survived.
+  const manifestBudget = parseManifestBuzzBudget(
+    (app.manifest as { page?: unknown }).page
+  );
+  const buzzBudget = resolveDevBuzzBudget(granted, undefined, manifestBudget);
+
+  // SIGN with the app's REAL ids (appId/appBlockId/blockId), the client's page
+  // instance id, self-bound sub, forced-SFW, dev-capped budget, dev:true (4h).
+  const result = await signDevScopedPageToken({
+    userId,
+    signBlockId: app.blockId,
+    signAppId: app.appId,
+    signAppBlockId: app.appBlockId,
+    blockInstanceId,
+    granted,
+    buzzBudget,
+  });
+
+  // MINT-TIME AUDIT (parity with the ephemeral branch): the forensic record of
+  // granting a (possibly spend-capable) dev token to a NON-approved owned app. Never
+  // the token itself.
+  req.log?.info('app-blocks.dev-tunnel.owned-nonapproved-mint', {
+    status: app.status,
+    userId,
+    slug: app.blockId,
+    sessionId: tunnel.sessionId,
+    scopes: granted,
+    spendGranted: granted.includes('ai:write:budgeted'),
+  });
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({
+    token: result.token,
+    expiresAt: result.expiresAt,
+    needsConsent: false,
+    missingScopes: [],
+    domain: null,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+  });
+  return 'handled';
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const cors = setSameOriginCors(req, res);
   if (cors === 'handled') return;
@@ -615,6 +761,22 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         userId,
       });
       if (devMint === 'handled') return;
+      // PHASE 2 (owned non-approved) — a REAL `apb_…` page id the caller OWNS but
+      // that is NOT approved (suspended / pending / deprecated). Same audited belt,
+      // gated on an ACTIVE dev tunnel for the caller; any non-match → 'continue' →
+      // the SAME bare 404 (no oracle). Mutually exclusive with the ephemeral branch
+      // above (that one matches ONLY `ephemeral-*` ids; this one matches ONLY real
+      // ids), so exactly one can ever handle a given request.
+      const ownedMint = await tryDevTunnelOwnedNonApprovedMint({
+        req,
+        res,
+        appBlockId,
+        blockInstanceId,
+        slotId: slotContext.slotId,
+        sessionUser: session?.user,
+        userId,
+      });
+      if (ownedMint === 'handled') return;
       // Missing / not-approved / not-a-page app → 404 (never leaks which).
       res.status(404).json({ error: 'Page app not found' });
       return;

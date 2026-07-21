@@ -7,12 +7,14 @@ export function ManageItemsTable({
   items,
   archiveItem,
   unarchiveItem,
+  deleteItem,
 }: {
   items: CreatorShopManageItem[];
   archiveItem: ReturnType<typeof useMutateCreatorShop>['archiveItem'];
   unarchiveItem: ReturnType<typeof useMutateCreatorShop>['unarchiveItem'];
+  deleteItem: ReturnType<typeof useMutateCreatorShop>['deleteItem'];
 }) {
-  const columns = useManageColumns(archiveItem, unarchiveItem);
+  const columns = useManageColumns(archiveItem, unarchiveItem, deleteItem);
 
   return (
     <Paper withBorder radius="md" className="overflow-hidden">

@@ -264,6 +264,11 @@ export async function hasValidCreatorMembership(userId: number) {
   return !!tier && tier !== 'free' && tier !== 'founder';
 }
 
+// Batched read-time membership gate lives in a dependency-light module so the
+// donation-goals lookup can reuse it without pulling this heavy graph. Re-exported
+// here for the existing metric-privacy callers.
+export { getValidCreatorMembershipMap } from '~/server/services/creator-membership.service';
+
 export async function joinCreatorsProgram(userId: number) {
   const requirements = await getCreatorRequirements(userId);
 

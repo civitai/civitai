@@ -73,6 +73,7 @@ import { getYoutubeRefreshToken } from '~/server/youtube/client';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
+  ChallengeSource,
   CollectionContributorPermission,
   CollectionItemStatus,
   CollectionMode,
@@ -517,10 +518,15 @@ export const saveItemInCollections = async ({
     userId,
     isModerator,
     removeFromCollectionIds,
+    canAccessUserChallenges,
     ...input
   },
 }: {
-  input: AddCollectionItemInput & { userId: number; isModerator?: boolean };
+  input: AddCollectionItemInput & {
+    userId: number;
+    isModerator?: boolean;
+    canAccessUserChallenges?: boolean;
+  };
 }) => {
   const itemKey = Object.keys(inputToCollectionType).find((key) =>
     input.hasOwnProperty(key)
@@ -557,6 +563,7 @@ export const saveItemInCollections = async ({
         collectionId: contestCollection.id,
         userId,
         isModerator,
+        canAccessUserChallenges,
         [`${itemKey}s`]: [input[itemKey]],
       });
     }
@@ -1951,6 +1958,9 @@ export const validateContestCollectionEntry = async ({
   // bulkSaveItems defers the entry-fee charge until AFTER the CollectionItem write (so a failed
   // save can't leave a paid-but-missing entry); every other caller charges here, before its write.
   deferEntryFeeCharge = false,
+  // `userChallenges` for the submitting user. Defaults to denied: entries arrive through the
+  // generic collection mutations, so a caller that forgets to thread the flag must fail closed.
+  canAccessUserChallenges = false,
 }: {
   collectionId: number;
   userId: number;
@@ -1961,6 +1971,7 @@ export const validateContestCollectionEntry = async ({
   imageIds?: number[];
   postIds?: number[];
   deferEntryFeeCharge?: boolean;
+  canAccessUserChallenges?: boolean;
 }) => {
   const user = await dbRead.user.findUnique({
     where: { id: userId },
@@ -1974,6 +1985,19 @@ export const validateContestCollectionEntry = async ({
 
   if (userMeta?.contestBanDetails) {
     throw throwBadRequestError('You are banned from participating in contests');
+  }
+
+  // User-created challenges are still flag-gated, but entries reach this function through the
+  // generic collection mutations, which carry no challenge-specific guard — so a direct link to
+  // the challenge would otherwise be enough to submit. Scoped to source=User: ordinary contest
+  // collections and System/Mod (daily) challenges are unaffected.
+  if (!canAccessUserChallenges) {
+    const gatedChallenge = await dbRead.challenge.findFirst({
+      where: { collectionId, source: ChallengeSource.User },
+      select: { id: true },
+    });
+    if (gatedChallenge)
+      throw throwAuthorizationError('This challenge is not currently available.');
   }
 
   // Challenge creators may not enter their own challenge (self-dealing on the prize pool).
@@ -2317,10 +2341,15 @@ export const bulkSaveItems = async ({
     postIds = [],
     tagId,
     isModerator,
+    canAccessUserChallenges,
   },
   permissions,
 }: {
-  input: BulkSaveCollectionItemsInput & { userId: number; isModerator?: boolean };
+  input: BulkSaveCollectionItemsInput & {
+    userId: number;
+    isModerator?: boolean;
+    canAccessUserChallenges?: boolean;
+  };
   permissions: CollectionContributorPermissionFlags;
 }) => {
   const collection = await dbRead.collection.findUnique({
@@ -2370,6 +2399,7 @@ export const bulkSaveItems = async ({
       collectionId,
       userId,
       isModerator,
+      canAccessUserChallenges,
       articleIds,
       modelIds,
       imageIds,

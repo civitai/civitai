@@ -46,7 +46,7 @@ export function SettingsCard() {
     },
   });
 
-  const { assistantPersonality, hideDonationGoals } = useCurrentUserSettings();
+  const { assistantPersonality } = useCurrentUserSettings();
   const { mutate: mutateSetting, isPending: isLoadingSetting } = useMutateUserSettings();
 
   if (!user) return null;
@@ -201,21 +201,6 @@ export function SettingsCard() {
                 </div>
               </Tooltip>
             </Stack>
-          </>
-        )}
-
-        {flags.donationGoals && (
-          <>
-            <Divider label="Creator Preferences" />
-            <Switch
-              name="hideDonationGoals"
-              label="Hide my donation goals from public view"
-              description="Others won't see the progress bar or collected amount on your donation goals. The goal keeps working, and you and moderators can still see it."
-              checked={hideDonationGoals ?? false}
-              onChange={(e) => mutateSetting({ hideDonationGoals: e.target.checked })}
-              disabled={isLoadingSetting}
-              styles={{ track: { flex: '0 0 1em' } }}
-            />
           </>
         )}
 

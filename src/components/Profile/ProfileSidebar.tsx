@@ -144,16 +144,18 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
   const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
 
-  // Split the badges into the user's highlighted picks (their own section) and
-  // the rest.
-  const highlightedBadgeIds =
-    (profile.privacySettings as PrivacySettingsSchema | null | undefined)?.highlightedBadgeIds ??
-    [];
+  // Drop badges the user chose to hide, then split the rest into their
+  // highlighted picks (their own section) and the others. Hidden wins over
+  // highlighted if stale data ever has a badge in both lists.
+  const privacy = profile.privacySettings as PrivacySettingsSchema | null | undefined;
+  const hiddenSet = new Set(privacy?.hiddenBadgeIds ?? []);
+  const visibleBadges = badges.filter((b) => !hiddenSet.has(b.id));
+  const highlightedBadgeIds = privacy?.highlightedBadgeIds ?? [];
   const highlightedSet = new Set(highlightedBadgeIds);
   const highlightedBadges = highlightedBadgeIds
-    .map((id) => badges.find((b) => b.id === id))
+    .map((id) => visibleBadges.find((b) => b.id === id))
     .filter((b): b is (typeof badges)[number] => !!b);
-  const otherBadges = badges.filter((b) => !highlightedSet.has(b.id));
+  const otherBadges = visibleBadges.filter((b) => !highlightedSet.has(b.id));
 
   const renderBadge = (award: (typeof badges)[number]) => {
     const data = (award.data ?? {}) as BadgeCosmetic['data'];

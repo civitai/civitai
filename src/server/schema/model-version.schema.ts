@@ -441,6 +441,14 @@ export const modelVersionUpsertSchema2 = z.object({
   // Inherit another version's licensing fee (a LicensingRoot for this baseModel).
   // Null falls back to the (baseModel, modelType) rule.
   licensingSourceVersionId: z.number().nullish(),
+  // Creator Controls: per-version metric privacy (merged into ModelVersion.meta).
+  meta: z
+    .object({
+      hideBuzz: z.boolean().optional(),
+      hideDownloads: z.boolean().optional(),
+      hideGenerations: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
