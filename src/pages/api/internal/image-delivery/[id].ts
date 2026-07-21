@@ -1,16 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
-import { dbRead, dbWrite } from '~/server/db/client';
-import { dbReadFallbackCounter, registerCounterWithLabels } from '~/server/prom/client';
+import { registerCounterWithLabels } from '~/server/prom/client';
+import { getCachedImageDeliveryMetadata } from '~/server/services/image-delivery.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({ id: z.string() });
-type ImageRow = {
-  id: number;
-  url: string;
-  hideMeta: boolean;
-};
 
 const imageDeliveryRequestCounter = registerCounterWithLabels({
   name: 'image_delivery_request_total',
@@ -27,28 +22,9 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
 
   const { id } = results.data;
 
-  const query = () => dbRead.$queryRaw<ImageRow[]>`
-    SELECT
-      id,
-      url,
-      "hideMeta"
-    FROM "Image"
-    WHERE url = ${id}
-    LIMIT 1
-  `;
-
-  const [image] = await query().catch(() => {
-    dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
-    return dbWrite.$queryRaw<ImageRow[]>`
-      SELECT
-        id,
-        url,
-        "hideMeta"
-      FROM "Image"
-      WHERE url = ${id}
-      LIMIT 1
-    `;
-  });
+  // `id` is the image url (the raw query keys on `WHERE url = $1`). Read-through Redis cache
+  // fronts the near-immutable url -> {id, url, hideMeta} lookup; fails open to the DB.
+  const image = await getCachedImageDeliveryMetadata(id);
 
   if (!image) {
     imageDeliveryRequestCounter.inc({ status: 'not_found' });

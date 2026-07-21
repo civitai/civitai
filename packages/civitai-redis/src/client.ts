@@ -2081,6 +2081,14 @@ export const REDIS_KEYS = {
     // only (bid submission re-validates the true minimum server-side). See
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
+    // url -> {id, url, hideMeta} lookup backing the internal image-delivery endpoint
+    // (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
+    // `Image WHERE url = $1` single-row read is the highest-volume DB query in the
+    // profile. Keyed by the EXACT url (case/whitespace-sensitive — the WHERE key is not
+    // normalized), positive results only (an unknown url stays uncached so a newly
+    // registered image resolves immediately), busted when `hideMeta` flips in
+    // updatePostImage. See `getCachedImageDeliveryMetadata` in image-delivery.service.
+    IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
