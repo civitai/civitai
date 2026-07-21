@@ -7,6 +7,7 @@ import {
   getCompletedChallengesWithWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
+  getMyParticipatedSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
   getUserUnjudgedEntriesSchema,
@@ -39,6 +40,7 @@ import {
   deleteUserChallenge,
   endChallengeAndPickWinners,
   getActiveEvents,
+  getChallengeEventById,
   getChallengeDetail,
   getChallengeForEdit,
   getChallengeEvents,
@@ -47,6 +49,7 @@ import {
   getDailyChallenges,
   getInfiniteChallenges,
   getModeratorChallenges,
+  getMyParticipated,
   getUpcomingThemes,
   getUserChallengeForEdit,
   getUserEntryCount,
@@ -84,7 +87,12 @@ export const challengeRouter = router({
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) =>
-      getInfiniteChallenges({ ...input, currentUserId: ctx.user?.id, isGreen: ctx.features.isGreen })
+      getInfiniteChallenges({
+        ...input,
+        currentUserId: ctx.user?.id,
+        isGreen: ctx.features.isGreen,
+        canAccessUserChallenges: ctx.features.userChallenges,
+      })
     ),
 
   // Active + next few upcoming daily (System) challenges for the horizontal daily row
@@ -93,13 +101,28 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .query(() => getDailyChallenges()),
 
+  // Current user's recently participated-in challenges (entered or won), recent-first.
+  getMyParticipated: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getMyParticipatedSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input, ctx }) =>
+      getMyParticipated({ ...input, userId: ctx.user.id, isGreen: ctx.features.isGreen })
+    ),
+
   // Get single challenge by ID (public — sensitive fields stripped)
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) =>
-      getChallengeDetail(input.id, ctx.user?.id, ctx.features.isGreen, ctx.user?.isModerator)
+      getChallengeDetail(
+        input.id,
+        ctx.user?.id,
+        ctx.features.isGreen,
+        ctx.user?.isModerator,
+        ctx.features.userChallenges
+      )
     ),
 
   // Get upcoming challenge themes for preview widget
@@ -153,7 +176,9 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite, blockApiKeys: true })
     .input(requestReviewSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input, ctx }) => requestReview(input.challengeId, input.imageIds, ctx.user.id)),
+    .mutation(({ input, ctx }) =>
+      requestReview(input.challengeId, input.imageIds, ctx.user.id, ctx.features.userChallenges)
+    ),
 
   // Get user's unjudged entries for paid review selection
   getUserUnjudgedEntries: protectedProcedure
@@ -292,6 +317,13 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
     .query(() => getActiveEvents()),
+
+  // Public: Get single event by ID
+  getEventById: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(z.object({ id: z.number() }))
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getChallengeEventById(input.id)),
 
   // Moderator: Get all challenge events
   getEvents: moderatorProcedure

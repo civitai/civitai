@@ -1409,6 +1409,7 @@ export interface Image {
   comicProjectHero?: ComicProject[];
   challengesCover?: Challenge[];
   challengeWins?: ChallengeWinner[];
+  challengeEventCovers?: ChallengeEvent[];
   model3dThumbnails?: Model3D[];
   model3dSources?: Model3D[];
   appListingIcons?: AppListing[];
@@ -3747,6 +3748,8 @@ export interface ChallengeEvent {
   endDate: Date;
   active: boolean;
   winnerCooldownDays: number | null;
+  coverImageId: number | null;
+  coverImage?: Image | null;
   createdById: number | null;
   createdBy?: User | null;
   createdAt: Date;

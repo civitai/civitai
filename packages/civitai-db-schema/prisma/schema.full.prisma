@@ -1741,6 +1741,7 @@ model Image {
   comicProjectHero        ComicProject[]         @relation("comicProjectHero")
   challengesCover     Challenge[]           @relation("ChallengeCoverImage")
   challengeWins       ChallengeWinner[]
+  challengeEventCovers ChallengeEvent[]     @relation("ChallengeEventCover")
   model3dThumbnails   Model3D[]             @relation("model3dThumbnail")
   model3dSources      Model3D[]             @relation("model3dSource")
   appListingIcons        AppListing[]           @relation("AppListingIcon")
@@ -5546,6 +5547,8 @@ model ChallengeEvent {
   endDate            DateTime
   active             Boolean  @default(true)
   winnerCooldownDays Int?
+  coverImageId       Int?
+  coverImage         Image?   @relation("ChallengeEventCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   createdById        Int?
   createdBy          User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt          DateTime @default(now())
