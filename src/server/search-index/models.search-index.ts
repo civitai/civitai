@@ -22,6 +22,7 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
+import type { HiddenModelMetrics } from '~/server/utils/model-metric-privacy';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -214,6 +215,29 @@ type PullDataResult = {
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
 };
+type VersionMetricRow = {
+  generationCount: number;
+  downloadCount: number;
+  thumbsUpCount: number;
+  thumbsDownCount: number;
+};
+
+// Nested per-version metrics ship in `displayedAttributes`, so they must obey the
+// same model-level hide flags as the card — otherwise the raw hidden number leaks.
+// The search-index version selector carries no earned/tipped (buzz) field, so only
+// downloads + generations are maskable here.
+function maskHiddenVersionMetrics<T extends VersionMetricRow | undefined>(
+  metrics: T,
+  hidden: HiddenModelMetrics
+) {
+  if (!metrics) return metrics;
+  return {
+    ...metrics,
+    downloadCount: hidden.downloads ? null : metrics.downloadCount,
+    generationCount: hidden.generations ? null : metrics.generationCount,
+  };
+}
+
 const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
@@ -303,7 +327,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         },
         version: {
           ...restVersion,
-          metrics: restVersion.metrics[0],
+          metrics: maskHiddenVersionMetrics(restVersion.metrics[0], hidden),
           hashes: restVersion.hashes.map((hash) => hash.hash),
           hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
           settings: restVersion.settings as RecommendedSettingsSchema,
@@ -312,7 +336,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         versions: modelVersions.map(
           ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
             ...x,
-            metrics: vMetrics[0],
+            metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate:
