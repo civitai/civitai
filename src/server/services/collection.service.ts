@@ -63,6 +63,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -2008,6 +2009,22 @@ export const validateContestCollectionEntry = async ({
     });
     if (ownChallenge) {
       throw throwBadRequestError('You cannot submit entries to your own challenge.');
+    }
+  }
+
+  // A viewer the challenge creator has blocked can't submit an entry — parity with the detail-page
+  // block gate. Scoped to source=User (System/mod challenges have no owner); moderators exempt.
+  if (!isModerator) {
+    const userChallenge = await dbRead.challenge.findFirst({
+      where: { collectionId, source: ChallengeSource.User },
+      select: { createdById: true },
+    });
+    if (userChallenge) {
+      const blocked = await amIBlockedByUser({
+        userId,
+        targetUserId: userChallenge.createdById ?? undefined,
+      });
+      if (blocked) throw throwBadRequestError('This challenge is not available.');
     }
   }
 
