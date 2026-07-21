@@ -463,7 +463,11 @@ export async function getDailyChallenges(limit = 4): Promise<ChallengeListItem[]
 }
 
 export async function getInfiniteChallenges(
-  input: GetInfiniteChallengesInput & { currentUserId?: number; isGreen?: boolean }
+  input: GetInfiniteChallengesInput & {
+    currentUserId?: number;
+    isGreen?: boolean;
+    canAccessUserChallenges?: boolean;
+  }
 ) {
   const {
     query,
@@ -481,6 +485,7 @@ export async function getInfiniteChallenges(
     cursor,
     currentUserId,
     isGreen,
+    canAccessUserChallenges = false,
   } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
@@ -543,6 +548,11 @@ export async function getInfiniteChallenges(
       Prisma.sql`c.status NOT IN ('Completing'::"ChallengeStatus", 'Completed'::"ChallengeStatus", 'Cancelled'::"ChallengeStatus")`
     );
   }
+
+  // User-created challenges stay behind the `userChallenges` flag. Enforced here rather than only
+  // in the feed UI so a hand-rolled `source: ['User']` request can't list them either.
+  if (!canAccessUserChallenges)
+    conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
 
   // Source filter (parameterized)
   if (source && source.length > 0) {
@@ -996,10 +1006,16 @@ export async function getChallengeDetail(
   id: number,
   viewerId?: number,
   isGreen?: boolean,
-  isModerator?: boolean
+  isModerator?: boolean,
+  canAccessUserChallenges = false
 ): Promise<ChallengeDetail | null> {
   const challenge = await getChallengeById(id);
   if (!challenge) return null;
+
+  // User-created challenges are still flag-gated. Hiding them here (rather than only in the UI)
+  // covers the direct-link case: the detail page's SSG prefetch and every client fetch go through
+  // this function, so without the flag the page falls through to its not-found branch.
+  if (challenge.source === ChallengeSource.User && !canAccessUserChallenges) return null;
 
   // Visibility check: only show challenges that are visible to the public. The creator and
   // moderators may preview a not-yet-visible or Cancelled challenge, and are likewise exempt
@@ -2054,11 +2070,17 @@ export async function getUserEntryCount(challengeId: number, userId: number) {
 export async function requestReview(
   challengeId: number,
   imageIds: number[] | undefined,
-  userId: number
+  userId: number,
+  canAccessUserChallenges = false
 ) {
   // 1. Get challenge with reviewCostType + reviewCost
   const challenge = await getChallengeById(challengeId);
   if (!challenge) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  }
+  // Paid review is shared with daily challenges, so the flag is checked per challenge rather than
+  // on the procedure — otherwise this would spend Buzz judging a challenge the caller can't see.
+  if (challenge.source === ChallengeSource.User && !canAccessUserChallenges) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
   }
   if (challenge.status !== ChallengeStatus.Active) {

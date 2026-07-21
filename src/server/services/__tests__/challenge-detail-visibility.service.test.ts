@@ -150,6 +150,9 @@ const makeUserChallenge = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+// Every case below is a User-source challenge, so each call passes canAccessUserChallenges: true —
+// otherwise the flag gate would short-circuit before the gate under test ever ran. The flag gate
+// itself is covered in its own describe at the bottom of this file.
 describe('getChallengeDetail — mod/owner preview of hidden user challenges', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -162,20 +165,20 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
   describe('scan gate (ingestion != Scanned)', () => {
     it('returns the detail for a moderator', async () => {
       mockGetChallengeById.mockResolvedValue(makeUserChallenge());
-      const result = await getChallengeDetail(400, MOD_ID, false, true);
+      const result = await getChallengeDetail(400, MOD_ID, false, true, true);
       expect(result).not.toBeNull();
     });
 
     it('returns the detail for the owner', async () => {
       mockGetChallengeById.mockResolvedValue(makeUserChallenge());
-      const result = await getChallengeDetail(400, OWNER_ID, false, false);
+      const result = await getChallengeDetail(400, OWNER_ID, false, false, true);
       expect(result).not.toBeNull();
     });
 
     it('stays hidden from other users and anonymous', async () => {
       mockGetChallengeById.mockResolvedValue(makeUserChallenge());
-      expect(await getChallengeDetail(400, RANDO_ID, false, false)).toBeNull();
-      expect(await getChallengeDetail(400, undefined, false, undefined)).toBeNull();
+      expect(await getChallengeDetail(400, RANDO_ID, false, false, true)).toBeNull();
+      expect(await getChallengeDetail(400, undefined, false, undefined, true)).toBeNull();
     });
   });
 
@@ -186,7 +189,7 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
       );
       mockDbRead.image.findUnique.mockResolvedValue({ poi: true, ingestion: 'Scanned' });
 
-      const result = await getChallengeDetail(400, MOD_ID, false, true);
+      const result = await getChallengeDetail(400, MOD_ID, false, true, true);
       expect(result).not.toBeNull();
     });
 
@@ -196,7 +199,7 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
       );
       mockDbRead.image.findUnique.mockResolvedValue({ poi: false, ingestion: 'Pending' });
 
-      const result = await getChallengeDetail(400, MOD_ID, false, true);
+      const result = await getChallengeDetail(400, MOD_ID, false, true, true);
       expect(result).not.toBeNull();
     });
 
@@ -206,7 +209,7 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
       );
       mockDbRead.image.findUnique.mockResolvedValue({ poi: true, ingestion: 'Scanned' });
 
-      expect(await getChallengeDetail(400, RANDO_ID, false, false)).toBeNull();
+      expect(await getChallengeDetail(400, RANDO_ID, false, false, true)).toBeNull();
     });
   });
 
@@ -217,7 +220,7 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
       );
 
       // green site viewer + yellow challenge would normally be hidden by domain-currency gate
-      const result = await getChallengeDetail(400, MOD_ID, true, true);
+      const result = await getChallengeDetail(400, MOD_ID, true, true, true);
       expect(result).not.toBeNull();
     });
 
@@ -226,7 +229,7 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
         makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
       );
 
-      const result = await getChallengeDetail(400, OWNER_ID, true, false);
+      const result = await getChallengeDetail(400, OWNER_ID, true, false, true);
       expect(result).not.toBeNull();
     });
 
@@ -235,8 +238,8 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
         makeUserChallenge({ ingestion: 'Scanned', buzzType: 'yellow' })
       );
 
-      expect(await getChallengeDetail(400, RANDO_ID, true, false)).not.toBeNull();
-      expect(await getChallengeDetail(400, undefined, true, false)).not.toBeNull();
+      expect(await getChallengeDetail(400, RANDO_ID, true, false, true)).not.toBeNull();
+      expect(await getChallengeDetail(400, undefined, true, false, true)).not.toBeNull();
     });
 
     it('keeps green challenges hidden from other users on the red site', async () => {
@@ -244,8 +247,47 @@ describe('getChallengeDetail — mod/owner preview of hidden user challenges', (
         makeUserChallenge({ ingestion: 'Scanned', buzzType: 'green' })
       );
 
-      expect(await getChallengeDetail(400, RANDO_ID, false, false)).toBeNull();
-      expect(await getChallengeDetail(400, undefined, false, false)).toBeNull();
+      expect(await getChallengeDetail(400, RANDO_ID, false, false, true)).toBeNull();
+      expect(await getChallengeDetail(400, undefined, false, false, true)).toBeNull();
     });
+  });
+});
+
+// User-created challenges are still behind the `userChallenges` flag. Gating in the service (not
+// just the feed UI) is what closes the direct-link hole: the detail page's SSG prefetch and every
+// client fetch resolve through here, so a viewer without the flag gets nothing to render.
+describe('getChallengeDetail — userChallenges flag gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.$queryRaw.mockResolvedValue([
+      { id: OWNER_ID, username: 'creator', image: null, deletedAt: null },
+    ]);
+  });
+
+  it('hides a fully visible user challenge from a viewer without the flag', async () => {
+    mockGetChallengeById.mockResolvedValue(makeUserChallenge({ ingestion: 'Scanned' }));
+
+    expect(await getChallengeDetail(400, RANDO_ID, false, false, false)).toBeNull();
+  });
+
+  it('hides it even from the owner and a moderator without the flag', async () => {
+    mockGetChallengeById.mockResolvedValue(makeUserChallenge({ ingestion: 'Scanned' }));
+
+    expect(await getChallengeDetail(400, OWNER_ID, false, false, false)).toBeNull();
+    expect(await getChallengeDetail(400, MOD_ID, false, true, false)).toBeNull();
+  });
+
+  it('fails closed when the caller omits the flag entirely', async () => {
+    mockGetChallengeById.mockResolvedValue(makeUserChallenge({ ingestion: 'Scanned' }));
+
+    expect(await getChallengeDetail(400, RANDO_ID, false, false)).toBeNull();
+  });
+
+  it('leaves System (daily) challenges reachable without the flag', async () => {
+    mockGetChallengeById.mockResolvedValue(
+      makeUserChallenge({ ingestion: 'Scanned', source: 'System', buzzType: 'yellow' })
+    );
+
+    expect(await getChallengeDetail(400, RANDO_ID, false, false, false)).not.toBeNull();
   });
 });
