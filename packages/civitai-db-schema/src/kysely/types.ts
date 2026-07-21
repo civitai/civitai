@@ -1845,6 +1845,7 @@ export type Comment = {
   modelId: number;
   locked: Generated<boolean | null>;
   hidden: Generated<boolean | null>;
+  pinnedAt: Timestamp | null;
 };
 export type CommentReaction = {
   id: Generated<number>;

@@ -86,6 +86,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
       parentId: { equals: null },
       tosViolation: !isMod ? false : undefined,
       hidden,
+      pinnedAt: null,
       // OR: [
       //   {
       //     userId: { not: user?.id },
@@ -104,6 +105,38 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   });
 
   return comments;
+};
+
+export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
+  input: { modelId, userId, filterBy, hidden = false },
+  select,
+  user,
+}: {
+  input: GetAllCommentsSchema;
+  select: TSelect;
+  user?: SessionUser;
+}) => {
+  const isMod = user?.isModerator ?? false;
+  if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
+
+  const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
+
+  const db = await getDbWithoutLag('commentModel', modelId);
+  return db.comment.findMany({
+    where: {
+      modelId,
+      userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
+      parentId: { equals: null },
+      tosViolation: !isMod ? false : undefined,
+      hidden,
+      pinnedAt: { not: null },
+    },
+    orderBy: { pinnedAt: 'desc' },
+    select,
+  });
 };
 
 export const getCommentById = <TSelect extends Prisma.CommentSelect>({
@@ -196,6 +229,32 @@ export const toggleHideComment = async ({
   await dbWrite.comment.updateMany({
     where: { id },
     data: { hidden: !hidden },
+  });
+  await preventReplicationLag('commentModel', comment.modelId);
+};
+
+export const togglePinComment = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator: boolean }) => {
+  const AND = [Prisma.sql`c.id = ${id}`, Prisma.sql`c."parentId" IS NULL`];
+  // Only the model owner or a moderator can pin a comment
+  if (!isModerator) AND.push(Prisma.sql`m."userId" = ${userId}`);
+
+  const [comment] = await dbWrite.$queryRaw<{ pinnedAt: Date | null; modelId: number }[]>`
+    SELECT
+      c."pinnedAt", c."modelId"
+    FROM "Comment" c
+    JOIN "Model" m ON m.id = c."modelId"
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
+
+  if (!comment) throw throwNotFoundError(`You don't have permission to pin this comment`);
+
+  await dbWrite.comment.updateMany({
+    where: { id },
+    data: { pinnedAt: comment.pinnedAt ? null : new Date() },
   });
   await preventReplicationLag('commentModel', comment.modelId);
 };
