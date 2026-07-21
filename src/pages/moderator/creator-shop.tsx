@@ -1,10 +1,12 @@
 import {
   Anchor,
+  Autocomplete,
   Badge,
   Button,
   Center,
   Group,
   Loader,
+  MultiSelect,
   Paper,
   ScrollArea,
   Select,
@@ -49,6 +51,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CheckRow, ChecksCard } from '~/components/CreatorShop/ChecksCard';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
+import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -58,10 +61,12 @@ import {
   CREATOR_SHOP_SUBMISSION_FEE,
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import type { CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { daysFromNow } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 
 type StatusFilter = CosmeticShopItemStatus | 'all';
@@ -72,6 +77,7 @@ const statusFilterOptions: { label: string; value: StatusFilter }[] = [
   { label: 'Changes requested', value: CosmeticShopItemStatus.RequestedChanges },
   { label: 'Published', value: CosmeticShopItemStatus.Published },
   { label: 'Rejected', value: CosmeticShopItemStatus.Rejected },
+  { label: 'Archived', value: CosmeticShopItemStatus.Archived },
   { label: 'All statuses', value: 'all' },
 ];
 
@@ -159,14 +165,32 @@ function CreatorShopReviewPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
     CosmeticShopItemStatus.PendingReview
   );
-  const [usernameInput, setUsernameInput] = useState('');
-  const [debouncedUsername] = useDebouncedValue(usernameInput, 300);
+  const [typeFilter, setTypeFilter] = useState<CosmeticType[]>([]);
+  const [creatorInput, setCreatorInput] = useState('');
+  const [debouncedCreator] = useDebouncedValue(creatorInput, 300);
+  // An all-digits creator filter is treated as a userId; anything else matches
+  // the username.
+  const creatorId = /^\d+$/.test(debouncedCreator.trim())
+    ? Number(debouncedCreator.trim())
+    : undefined;
+
+  // Username suggestions for the creator filter's autocomplete.
+  const { data: userOptions } = trpc.user.getAll.useQuery(
+    { query: debouncedCreator.trim(), limit: 10 },
+    { enabled: !!currentUser?.isModerator && !!debouncedCreator.trim() && !creatorId }
+  );
+  const creatorSuggestions = useMemo(
+    () => [...new Set((userOptions ?? []).map((u) => u.username).filter((u): u is string => !!u))],
+    [userOptions]
+  );
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useQueryCreatorShopReviewQueue({
       enabled: !!currentUser?.isModerator,
       status: statusFilter === 'all' ? undefined : statusFilter,
-      username: debouncedUsername,
+      username: creatorId ? undefined : debouncedCreator,
+      userId: creatorId,
+      cosmeticTypes: typeFilter,
     });
   const { reviewItem } = useMutateCreatorShop();
 
@@ -271,13 +295,25 @@ function CreatorShopReviewPage() {
             leftSection={<IconFilter size={16} />}
             comboboxProps={{ withinPortal: true }}
           />
-          <TextInput
+          <MultiSelect
+            size="sm"
+            w={230}
+            data={cosmeticTypeOptions}
+            value={typeFilter}
+            onChange={(v) => setTypeFilter(v as CosmeticType[])}
+            placeholder={typeFilter.length ? undefined : 'All types'}
+            clearable
+            comboboxProps={{ withinPortal: true }}
+          />
+          <Autocomplete
             size="sm"
             w={220}
-            placeholder="Filter by creator"
-            value={usernameInput}
-            onChange={(e) => setUsernameInput(e.currentTarget.value)}
+            placeholder="Creator username or id"
+            value={creatorInput}
+            onChange={setCreatorInput}
+            data={creatorSuggestions}
             leftSection={<IconSearch size={16} />}
+            comboboxProps={{ withinPortal: true }}
           />
         </Group>
       </Group>
@@ -572,61 +608,70 @@ function CreatorShopReviewPage() {
                   </Stack>
                 </Group>
 
-                {/* Actions */}
-                <Group
-                  justify="space-between"
-                  wrap="nowrap"
-                  pt="md"
-                  gap="md"
-                  style={{ borderTop: CREATOR_SHOP_BORDER }}
-                  className="max-md:flex-wrap"
-                >
-                  <TextInput
-                    placeholder="Add a note (required for everything except approval)"
-                    value={reason}
-                    onChange={(e) => setReason(e.currentTarget.value)}
-                    maxLength={1000}
-                    style={{ flex: 1 }}
-                    className="max-md:w-full"
-                  />
-                  <Group gap="sm" wrap="nowrap">
-                    {selected.status === CosmeticShopItemStatus.Published && (
-                      <Button
-                        color="orange"
-                        variant="light"
-                        leftSection={<IconArrowBackUp size={16} />}
-                        loading={reviewItem.isPending}
-                        onClick={() => submitReview('revert')}
-                      >
-                        Revert to pending
-                      </Button>
-                    )}
-                    <Button
-                      variant="default"
-                      loading={reviewItem.isPending}
-                      onClick={() => submitReview('request-changes')}
-                    >
-                      Request changes
-                    </Button>
-                    <Button
-                      color="red"
-                      variant="light"
-                      leftSection={<IconX size={16} />}
-                      loading={reviewItem.isPending}
-                      onClick={() => submitReview('reject')}
-                    >
-                      Reject
-                    </Button>
-                    <Button
-                      color="green"
-                      leftSection={<IconCheck size={16} />}
-                      loading={reviewItem.isPending}
-                      onClick={handleApprove}
-                    >
-                      Approve &amp; Publish
-                    </Button>
+                {/* Actions — archived items are view-only (reviewItem rejects them). */}
+                {selected.status === CosmeticShopItemStatus.Archived ? (
+                  <Group pt="md" style={{ borderTop: CREATOR_SHOP_BORDER }}>
+                    <Text size="sm" c="dimmed">
+                      This item is archived and can&apos;t be reviewed. The creator can restore it
+                      from their shop&apos;s manage view.
+                    </Text>
                   </Group>
-                </Group>
+                ) : (
+                  <Group
+                    justify="space-between"
+                    wrap="nowrap"
+                    pt="md"
+                    gap="md"
+                    style={{ borderTop: CREATOR_SHOP_BORDER }}
+                    className="max-md:flex-wrap"
+                  >
+                    <TextInput
+                      placeholder="Add a note (required for everything except approval)"
+                      value={reason}
+                      onChange={(e) => setReason(e.currentTarget.value)}
+                      maxLength={1000}
+                      style={{ flex: 1 }}
+                      className="max-md:w-full"
+                    />
+                    <Group gap="sm" wrap="nowrap">
+                      {selected.status === CosmeticShopItemStatus.Published && (
+                        <Button
+                          color="orange"
+                          variant="light"
+                          leftSection={<IconArrowBackUp size={16} />}
+                          loading={reviewItem.isPending}
+                          onClick={() => submitReview('revert')}
+                        >
+                          Revert to pending
+                        </Button>
+                      )}
+                      <Button
+                        variant="default"
+                        loading={reviewItem.isPending}
+                        onClick={() => submitReview('request-changes')}
+                      >
+                        Request changes
+                      </Button>
+                      <Button
+                        color="red"
+                        variant="light"
+                        leftSection={<IconX size={16} />}
+                        loading={reviewItem.isPending}
+                        onClick={() => submitReview('reject')}
+                      >
+                        Reject
+                      </Button>
+                      <Button
+                        color="green"
+                        leftSection={<IconCheck size={16} />}
+                        loading={reviewItem.isPending}
+                        onClick={handleApprove}
+                      >
+                        Approve &amp; Publish
+                      </Button>
+                    </Group>
+                  </Group>
+                )}
               </Stack>
             ) : (
               <Center h="100%" py={80}>

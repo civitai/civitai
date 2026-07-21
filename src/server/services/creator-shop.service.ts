@@ -795,15 +795,18 @@ export const getCreatorShopReviewQueue = async ({
   cursor,
   status,
   username,
+  userId,
+  cosmeticTypes,
 }: GetReviewQueueInput) => {
   const items = await dbRead.cosmeticShopItem.findMany({
     where: {
-      // A specific status filters to it; no status = every status except
-      // Archived (the "All" option in the review queue).
+      // A specific status filters to it (including Archived); no status = every
+      // status except Archived (the "All" option in the review queue).
       ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
       // Only creator-submitted items (exclude official/admin cosmetics).
       cosmetic: {
-        createdById: { not: null },
+        createdById: userId ?? { not: null },
+        ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
         ...(username ? { creator: { username: { equals: username, mode: 'insensitive' } } } : {}),
       },
     },

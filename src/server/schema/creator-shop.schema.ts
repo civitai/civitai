@@ -183,9 +183,12 @@ export const getReviewQueueSchema = z.object({
   limit: z.number().min(1).max(100).default(20),
   cursor: z.number().optional(),
   // Defaults to PendingReview in the service; moderators can also review
-  // Published / Rejected, and filter to a single creator.
+  // Published / Rejected / Archived, and filter to a single creator (by
+  // username or id) and/or cosmetic types.
   status: z.enum(CosmeticShopItemStatus).optional(),
   username: z.string().optional(),
+  userId: z.number().optional(),
+  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
 });
 
 export type GetManageItemsInput = z.infer<typeof getManageItemsSchema>;
