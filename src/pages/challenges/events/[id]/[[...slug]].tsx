@@ -37,7 +37,7 @@ function ChallengeEventPage() {
       <MasonryContainer>
         <Stack gap="lg">
           {event && <EventHero event={event} />}
-          <Title order={3}>Challenges</Title>
+          <Title order={2}>Challenges</Title>
           {!Number.isNaN(id) && (
             <ChallengesInfinite filters={{ challengeEventId: id, includeEnded: true }} />
           )}

@@ -25,8 +25,16 @@ type EventHeroData = ChallengeEventListItem & { challengeCount: number; active: 
 export function EventHero({ event }: { event: EventHeroData }) {
   const gradient =
     (event.titleColor && gradientByTitleColor[event.titleColor]) ?? DEFAULT_GRADIENT;
-  const isActive = event.active && new Date(event.endDate) >= new Date();
+  const ended = new Date(event.endDate) < new Date();
+  const isActive = event.active && !ended;
   const count = event.challengeCount;
+  // Key the relative-time line on the actual end date (not `active`), so a mod-deactivated event
+  // whose end date is still in the future doesn't render "Event Ended · Ends in 9 days".
+  const timeLabel = isActive
+    ? `Ends ${daysFromNow(event.endDate)}`
+    : ended
+    ? `Ended ${daysFromNow(event.endDate)}`
+    : null;
 
   return (
     <div className="relative flex min-h-[220px] w-full flex-col justify-between overflow-hidden rounded-lg p-5 sm:min-h-[280px] sm:p-8">
@@ -63,9 +71,11 @@ export function EventHero({ event }: { event: EventHeroData }) {
               />
               {isActive ? 'Active Event' : 'Event Ended'}
             </span>
-            <Text size="sm" c="white" className="opacity-80">
-              {isActive ? `Ends ${daysFromNow(event.endDate)}` : `Ended ${daysFromNow(event.endDate)}`}
-            </Text>
+            {timeLabel && (
+              <Text size="sm" c="white" className="opacity-80">
+                {timeLabel}
+              </Text>
+            )}
           </div>
           <Title order={1} c="white" className="text-2xl drop-shadow sm:text-4xl">
             {event.title}
