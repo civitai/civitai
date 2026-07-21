@@ -67,6 +67,12 @@ import {
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import { getUserSelectableJudges } from '~/server/services/challenge-judge.service';
@@ -365,6 +371,23 @@ type ParticipatedRow = ChallengeCardRow & {
   myEnteredAt: Date;
 };
 
+// The viewer's bounded block/hide exclusion set (hidden ∪ blocked-by ∪ blocked), used to drop
+// user challenges whose creator is on it — parity with comment/review feeds. Empty for anon.
+// Ordering into boundExcludedUserIds is load-bearing (see its doc): hidden, blockedBy, blocked.
+async function getChallengeExcludedUserIds(viewerId?: number): Promise<number[]> {
+  if (!viewerId) return [];
+  const [hidden, blockedBy, blocked] = await Promise.all([
+    HiddenUsers.getCached({ userId: viewerId }),
+    BlockedByUsers.getCached({ userId: viewerId }),
+    BlockedUsers.getCached({ userId: viewerId }),
+  ]);
+  return boundExcludedUserIds(
+    hidden.map((u) => u.id),
+    blockedBy.map((u) => u.id),
+    blocked.map((u) => u.id)
+  );
+}
+
 /**
  * Challenges the current user has entered (CollectionItem) or won (ChallengeWinner), recent-first
  * by entry time. One row per challenge (their latest entry as the representative thumbnail).
@@ -398,6 +421,8 @@ export async function getMyParticipated({
     requested: undefined,
   });
 
+  const excludedUserIds = await getChallengeExcludedUserIds(userId);
+
   const rows = await dbRead.$queryRaw<ParticipatedRow[]>(Prisma.sql`
     WITH my AS (${myEntries})
     SELECT c.id, c.title, c.theme, c.invitation, c."coverImageId", c."startsAt", c."endsAt",
@@ -418,6 +443,11 @@ export async function getMyParticipated({
     LEFT JOIN "ChallengeWinner" cw ON cw."challengeId" = c.id AND cw."userId" = ${userId}
     WHERE c.status IN (${ChallengeStatus.Active}::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus", ${ChallengeStatus.Completed}::"ChallengeStatus")
       AND (c.source <> ${ChallengeSource.User}::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${userId})
+      ${
+        excludedUserIds.length > 0
+          ? Prisma.sql`AND (c.source <> ${ChallengeSource.User}::"ChallengeSource" OR c."createdById" != ALL(${excludedUserIds}::int[]))`
+          : Prisma.empty
+      }
       ${
         effectiveBrowsingLevel > 0
           ? Prisma.sql`AND (c."createdById" = ${userId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = COALESCE(my."myImageId", c."coverImageId") AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
@@ -542,6 +572,15 @@ export async function getInfiniteChallenges(
       ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
+
+  // Block/hide gate: drop user challenges whose creator the viewer has blocked/hidden (or who
+  // blocked the viewer) — parity with comment/review feeds. System/mod challenges are exempt.
+  const excludedUserIds = await getChallengeExcludedUserIds(currentUserId);
+  if (excludedUserIds.length > 0) {
+    conditions.push(
+      Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."createdById" != ALL(${excludedUserIds}::int[]))`
+    );
+  }
 
   // Status filter (parameterized)
   if (status && status.length > 0) {
@@ -3472,6 +3511,14 @@ export async function getCompletedChallengesWithWinners(
       ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
+
+  // Block/hide gate — parity with the feed. System/mod challenges exempt.
+  const excludedUserIds = await getChallengeExcludedUserIds(currentUserId);
+  if (excludedUserIds.length > 0) {
+    conditions.push(
+      Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."createdById" != ALL(${excludedUserIds}::int[]))`
+    );
+  }
 
   // Content level filter — parity with the feed: exclude a challenge whose REAL cover image level
   // doesn't intersect the viewer's effective (green-capped) browsing level, rather than trusting
