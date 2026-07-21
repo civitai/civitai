@@ -3,7 +3,7 @@ import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { cosmeticEntityCaches } from '~/server/redis/caches';
+import { cosmeticEntityCaches, userCosmeticCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
@@ -250,6 +250,59 @@ export async function grantCosmeticsToUsers({ userIds, cosmeticIds }: GrantCosme
     alreadyOwned,
     newlyGranted: totalPairs - alreadyOwned,
   };
+}
+
+/**
+ * Revoke cosmetics from users (moderator tool) — the inverse of
+ * grantCosmeticsToUsers. Deletes every UserCosmetic row for the cross product,
+ * including equipped ones; equipped placements are captured first so entity
+ * caches and search indexes can be refreshed after the rows are gone.
+ */
+export async function revokeCosmeticsFromUsers({
+  userIds,
+  cosmeticIds,
+}: GrantCosmeticsToUsersInput) {
+  const uniqueUserIds = [...new Set(userIds)];
+  const uniqueCosmeticIds = [...new Set(cosmeticIds)];
+
+  const equipped = await dbWrite.userCosmetic.findMany({
+    where: {
+      userId: { in: uniqueUserIds },
+      cosmeticId: { in: uniqueCosmeticIds },
+      equippedToId: { not: null },
+    },
+    select: { equippedToId: true, equippedToType: true },
+  });
+
+  const { count } = await dbWrite.userCosmetic.deleteMany({
+    where: { userId: { in: uniqueUserIds }, cosmeticId: { in: uniqueCosmeticIds } },
+  });
+
+  await userCosmeticCache.refresh(uniqueUserIds);
+
+  const equippedByType = new Map<CosmeticEntity, number[]>();
+  for (const { equippedToId, equippedToType } of equipped) {
+    if (!equippedToId || !equippedToType) continue;
+    equippedByType.set(equippedToType, [
+      ...(equippedByType.get(equippedToType) ?? []),
+      equippedToId,
+    ]);
+  }
+  for (const [type, ids] of equippedByType) {
+    await cosmeticEntityCaches[type].refresh(ids);
+    if (type === 'Model')
+      await modelsSearchIndex.queueUpdate(
+        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
+    if (type === 'Image')
+      await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
+    if (type === 'Article')
+      await articlesSearchIndex.queueUpdate(
+        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
+  }
+
+  return { revoked: count };
 }
 
 /**

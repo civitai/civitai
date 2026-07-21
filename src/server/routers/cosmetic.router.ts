@@ -9,6 +9,7 @@ import {
   getPaginatedCosmetics,
   equipCosmeticToEntity,
   grantCosmeticsToUsers,
+  revokeCosmeticsFromUsers,
   unequipCosmetic,
 } from '~/server/services/cosmetic.service';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
@@ -27,6 +28,9 @@ export const cosmeticRouter = router({
   grantToUsers: moderatorProcedure
     .input(grantCosmeticsToUsersSchema)
     .mutation(({ input }) => grantCosmeticsToUsers(input)),
+  revokeFromUsers: moderatorProcedure
+    .input(grantCosmeticsToUsersSchema)
+    .mutation(({ input }) => revokeCosmeticsFromUsers(input)),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)

@@ -176,6 +176,61 @@ export default function GrantCosmeticsPage() {
     },
   });
 
+  const revokeMutation = trpc.cosmetic.revokeFromUsers.useMutation({
+    onSuccess: (result) => {
+      showSuccessNotification({
+        title: 'Cosmetics revoked',
+        message: `${result.revoked} cosmetic${result.revoked === 1 ? '' : 's'} removed.`,
+      });
+      setSelectedCosmetics(new Map());
+      setSelectedUsers(new Map());
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to revoke cosmetics',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleRevoke = () => {
+    const cosmeticList = [...selectedCosmetics.values()];
+    const userList = [...selectedUsers.values()];
+    if (!cosmeticList.length || !userList.length) return;
+
+    openConfirmModal({
+      title: 'Revoke cosmetics',
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            Remove <strong>{cosmeticList.length}</strong> cosmetic
+            {cosmeticList.length === 1 ? '' : 's'} from <strong>{userList.length}</strong> user
+            {userList.length === 1 ? '' : 's'}?
+          </Text>
+          <Text size="sm">
+            <strong>Cosmetics:</strong> {cosmeticList.map((c) => c.name).join(', ')}
+          </Text>
+          <Text size="sm">
+            <strong>Users:</strong> {userList.map((u) => u.username).join(', ')}
+          </Text>
+          <Text size="xs" c="dimmed">
+            Equipped cosmetics are unequipped and removed. Users that don&apos;t own a cosmetic are
+            skipped.
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: 'Revoke', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      centered: true,
+      onConfirm: () => {
+        revokeMutation.mutate({
+          cosmeticIds: cosmeticList.map((c) => c.id),
+          userIds: userList.map((u) => u.id),
+        });
+      },
+    });
+  };
+
   const handleGrant = () => {
     const cosmeticList = [...selectedCosmetics.values()];
     const userList = [...selectedUsers.values()];
@@ -220,9 +275,9 @@ export default function GrantCosmeticsPage() {
         <Stack gap={0} mb="xl">
           <Title order={1}>Grant Cosmetics</Title>
           <Text size="sm" c="dimmed">
-            Select one or more cosmetics from the list below, add one or more users, and grant every
-            selected cosmetic to every selected user. Already-owned cosmetics are skipped
-            gracefully.
+            Select one or more cosmetics from the list below, add one or more users, and grant (or
+            revoke) every selected cosmetic to every selected user. Already-owned cosmetics are
+            skipped gracefully when granting.
           </Text>
         </Stack>
 
@@ -271,13 +326,24 @@ export default function GrantCosmeticsPage() {
                     } grants)`
                   : 'Select at least one cosmetic and one user'}
               </Text>
-              <Button
-                disabled={!selectedCosmetics.size || !selectedUsers.size}
-                loading={grantMutation.isPending}
-                onClick={handleGrant}
-              >
-                Grant Cosmetics
-              </Button>
+              <Group gap="xs">
+                <Button
+                  color="red"
+                  variant="light"
+                  disabled={!selectedCosmetics.size || !selectedUsers.size}
+                  loading={revokeMutation.isPending}
+                  onClick={handleRevoke}
+                >
+                  Revoke Cosmetics
+                </Button>
+                <Button
+                  disabled={!selectedCosmetics.size || !selectedUsers.size}
+                  loading={grantMutation.isPending}
+                  onClick={handleGrant}
+                >
+                  Grant Cosmetics
+                </Button>
+              </Group>
             </Group>
           </Stack>
         </Paper>

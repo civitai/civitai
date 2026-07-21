@@ -286,11 +286,15 @@ export function ListExistingModal() {
                 <Stack gap="xs">
                   {order.map((item) => (
                     <SortableItem key={item.id} id={item.id}>
-                      <ResoldListRow
-                        item={item}
-                        onRemove={() => handleRemove(item)}
-                        removing={busyId === item.id}
-                      />
+                      {/* SortableItem attaches the drag ref/listeners via cloneElement —
+                          its child must be a DOM element, not a function component. */}
+                      <div>
+                        <ResoldListRow
+                          item={item}
+                          onRemove={() => handleRemove(item)}
+                          removing={busyId === item.id}
+                        />
+                      </div>
                     </SortableItem>
                   ))}
                 </Stack>

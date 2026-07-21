@@ -427,7 +427,7 @@ export const archiveCreatorShopItem = async ({
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Item is already archived');
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
-  return dbWrite.cosmeticShopItem.update({
+  const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
       status: CosmeticShopItemStatus.Archived,
@@ -437,6 +437,20 @@ export const archiveCreatorShopItem = async ({
     },
     select: creatorShopItemSelect,
   });
+
+  // An archived item can't be featured — free up its featured slot (owner must
+  // re-feature it after unarchiving).
+  if (existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return updated;
 };
 
 export const unarchiveCreatorShopItem = async ({
