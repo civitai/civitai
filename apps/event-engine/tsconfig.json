@@ -13,13 +13,12 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node",
+    "moduleResolution": "node10",
     "allowSyntheticDefaultImports": true,
     "incremental": true,
     "tsBuildInfoFile": ".tsbuildinfo",
-    "baseUrl": "./src",
     "paths": {
-      "@/*": ["*"]
+      "@/*": ["./src/*"]
     },
     "noUnusedLocals": false,
     "noUnusedParameters": false

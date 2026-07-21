@@ -2,14 +2,11 @@
 # the pnpm monorepo. Modeled on apps/orchestrator-gateway/Dockerfile (multi-stage node:22-alpine, corepack
 # pnpm, filtered frozen install, `pnpm deploy --prod` runtime) — BUT this app keeps its own `tsc && tsc-alias`
 # build (CJS output) rather than tsup/ESM. Converting to tsup + @civitai/* packages is a documented follow-up
-# (see MIGRATION.md); this Dockerfile is a DRAFT and needs a real build + Zach's DevOps review before use.
+# (see MIGRATION.md).
 #
 # Build with the REPO ROOT as context, pointing at this file:
 #   docker build -f apps/event-engine/Dockerfile -t civitai-event-engine .
 # (Tekton tag-webhook sets CONTEXT_PATH="." and DOCKERFILE_PATH="apps/event-engine/Dockerfile".)
-#
-# PREREQUISITE: run `pnpm install` at the repo root once so pnpm-lock.yaml includes this new app, or the
-# --frozen-lockfile install below will fail.
 #
 # Runtime reads REAL env vars from the deploy secret (.env is dev-only) — DB/CLICKHOUSE/REDIS/MEILI/KAFKA/S3/etc.
 
@@ -18,11 +15,15 @@ FROM node:22-alpine AS deps
 RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@10.28.1 --activate
 WORKDIR /app
 
-# Workspace manifests so the filtered frozen install resolves. This app depends on NO @civitai/* workspace
-# packages yet (it vendors event-engine-common under src/common and ships its own clients), so it does not
-# need `COPY packages`. patches/ is required because the root declares pnpm.patchedDependencies.
+# Workspace manifests so the filtered frozen install AND `pnpm deploy` resolve. This app ITSELF depends on
+# NO @civitai/* workspace packages (it vendors event-engine-common under src/common and ships its own
+# clients) — but the repo-root package.json (a workspace member via `.` in pnpm-workspace.yaml) declares
+# @civitai/{auth,buzz,shared}: workspace:*, and the prod-deps stage's `pnpm deploy --legacy` resolves the
+# root graph. Without packages/ present it fails ERR_PNPM_WORKSPACE_PKG_NOT_FOUND @civitai/auth (mirrors
+# apps/orchestrator-gateway/Dockerfile). patches/ is required because the root declares pnpm.patchedDependencies.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY patches ./patches
+COPY packages ./packages
 COPY apps/event-engine/package.json ./apps/event-engine/package.json
 
 # --ignore-scripts skips the root's `db:generate` (Prisma) — this consumer uses raw pg, not the Prisma client.

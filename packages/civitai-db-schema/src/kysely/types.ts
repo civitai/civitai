@@ -2675,6 +2675,7 @@ export type ModelVersion = {
   nsfwLevel: Generated<number>;
   earlyAccessEndsAt: Timestamp | null;
   earlyAccessConfig: unknown | null;
+  earlyAccessPermanent: Generated<boolean>;
   uploadType: Generated<ModelUploadType>;
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;

@@ -47,12 +47,12 @@ start/stop), `OUTBOX_POLL_*`/`OUTBOX_MAX_ATTEMPTS` config, `outboxPollerMetrics`
   (`pg_try_advisory_lock(25974, 1)`) — a separate key space from the main app's single-bigint
   `pg_advisory_xact_lock(articleId)`, so it can never collide. Self-healing on pod death; `FOR UPDATE SKIP
   LOCKED` + cursor paging are additional safety.
-- **DEFAULT OFF.** It requires an `attempts` int column on `"Outbox"`, added by
+- **DEFAULT ON (opt-out).** It requires an `attempts` int column on `"Outbox"`, added by
   `packages/civitai-db-schema/prisma/migrations/20260720120000_add_outbox_table/` — which also **models the
   pre-existing Outbox table + `OutboxEntity` enum** in `schema.full.prisma` (they existed in the DB but were
-  not in the Prisma schema). **Sequence: apply that migration → run `pnpm db:generate` to regenerate the
-  derived types (`models.ts`, `kysely/*` — NOT hand-edited here) → set `OUTBOX_POLL_ENABLED=true`.** Until the
-  column exists, leave the poller off (its SQL would error each sweep).
+  not in the Prisma schema). **That migration has been applied**, so the poller now runs by default; set
+  `OUTBOX_POLL_ENABLED=false` to disable. (Sequence was: apply migration → `pnpm db:generate` to regenerate
+  the derived types `models.ts`/`kysely/*` — NOT hand-edited here → poller on.)
 
 ## Security
 `.env.example` shipped real-looking production credentials in the source repo; they were **scrubbed to

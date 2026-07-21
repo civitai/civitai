@@ -10,16 +10,23 @@ export const outboxHandler = createEventHandler<OutboxRecord>({
   tables: ['Outbox'],
   operations: ['create'],
   processor: async (ctx) => {
-    const { event, entityType, entityId, details } = ctx.record;
-    // Mark the outbox record as processed/deleted
-    await ctx.actions.outboxRemove(ctx.record.id);
+    const { id, event, entityType, entityId, details } = ctx.record;
 
     const handlers = getOutboxHandlers(entityType, event)
 
-    // Run all matching handlers
+    // Run every matching handler FIRST, then drain (below). If a handler throws
+    // we never reach outboxRemove, so the row survives: the Kafka message isn't
+    // committed and redelivers (at-least-once), and the OutboxPoller can reconcile
+    // the row as a backstop. Removing the row before the handlers ran would drop
+    // the work on any handler failure — including poison-skipped messages — with
+    // nothing left for the poller to retry. Handlers are idempotent, so
+    // re-running on redelivery is safe.
     for (const handler of handlers) {
       await handler.process({ ...ctx, event, entityType, entityId, details });
     }
+
+    // Drain only after every handler succeeded.
+    await ctx.actions.outboxRemove(id);
   },
   debug: (faker) => ({
     sample: () => ({
