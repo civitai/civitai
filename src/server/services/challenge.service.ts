@@ -3092,7 +3092,7 @@ export async function upsertChallengeEvent({
   userId,
   ...input
 }: UpsertChallengeEventInput & { userId: number }) {
-  const { id, ...data } = input;
+  const { id, coverImage, ...data } = input;
 
   if (data.endDate <= data.startDate) {
     throw new TRPCError({
@@ -3101,17 +3101,24 @@ export async function upsertChallengeEvent({
     });
   }
 
+  let coverImageId: number | null | undefined;
+  if (coverImage === null) coverImageId = null;
+  else if (coverImage) {
+    coverImageId = coverImage.id ?? (await createImage({ ...coverImage, userId })).id;
+  }
+
   return dbWrite.$transaction(async (tx) => {
     if (id) {
       return tx.challengeEvent.update({
         where: { id },
-        data,
+        data: { ...data, ...(coverImageId !== undefined ? { coverImageId } : {}) },
       });
     }
 
     return tx.challengeEvent.create({
       data: {
         ...data,
+        coverImageId: coverImageId ?? null,
         createdById: userId,
       },
     });
