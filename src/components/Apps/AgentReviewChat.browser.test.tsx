@@ -37,6 +37,15 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
 
+// The agent bubble now renders through `CustomMarkdown`, which reads
+// `useCurrentUser()` (→ CivitaiSessionContext) for its link-rewrite. The
+// network-free scaffold has no session provider, so boundary-stub the hook (the
+// standard pattern in the sibling Apps tests). Null user is fine — CustomMarkdown
+// only uses `user?.id` (optional-chained).
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => null,
+}));
+
 vi.mock('~/utils/trpc', () => {
   const inert = { invalidate: mocks.invalidate };
   const utils = { blocks: { getAgentReview: inert } };
@@ -334,5 +343,88 @@ describe('AgentReviewChat — sanitization', () => {
     expect((window as any).__chatXssFired).toBeUndefined();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((window as any).__chatXssScript).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MARKDOWN RENDERING (agent replies format markdown, not literal markup)
+// ---------------------------------------------------------------------------
+
+describe('AgentReviewChat — markdown rendering', () => {
+  test('an assistant reply renders markdown (bold / inline code / list) as real HTML, not literal markup', async () => {
+    mocks.agentReport = COMPLETE_REPORT;
+    // A reply exercising three markdown constructs at once.
+    mocks.chatReply = 'Here is **bold text** and `inline code`.\n\n- first item\n- second item';
+    renderPanel();
+
+    await page.getByRole('textbox', { name: 'Ask the review agent' }).fill('format your answer');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    // Anchor on the mounted agent bubble before any sync DOM read (browser-mode
+    // render is async-committed).
+    const agentMsg = page.getByTestId('chat-agent-msg');
+    await expect.element(agentMsg).toBeInTheDocument();
+
+    // The markdown became actual HTML elements, scoped to the agent bubble.
+    const bubble = document.querySelector('[data-testid="chat-agent-msg"]') as HTMLElement;
+    expect(bubble.querySelector('strong')?.textContent).toBe('bold text');
+    expect(bubble.querySelector('code')?.textContent).toBe('inline code');
+    // The `- item` lines became a real bulleted list, not two literal dashes.
+    expect(bubble.querySelectorAll('li').length).toBe(2);
+
+    // The raw markdown SYNTAX is gone from the visible text — it was rendered,
+    // not shown verbatim (the pre-fix plain-<Text> behavior).
+    expect(bubble.textContent).not.toContain('**bold text**');
+    expect(bubble.textContent).not.toContain('`inline code`');
+  });
+
+  test('a user-typed message stays plain text (markdown NOT interpreted)', async () => {
+    mocks.agentReport = COMPLETE_REPORT;
+    renderPanel();
+
+    // User types markdown-ish syntax; it must render verbatim (no <strong>).
+    await page.getByRole('textbox', { name: 'Ask the review agent' }).fill('why **this** scope?');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const userMsg = page.getByTestId('chat-user-msg');
+    await expect.element(userMsg).toBeInTheDocument();
+    const userBubble = document.querySelector('[data-testid="chat-user-msg"]') as HTMLElement;
+    // The literal `**` is preserved and NOT converted to a <strong>.
+    expect(userBubble.textContent).toContain('why **this** scope?');
+    expect(userBubble.querySelector('strong')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THEME-AWARE BUBBLES (light-dark() surfaces, not a fixed light-mode color)
+// ---------------------------------------------------------------------------
+
+describe('AgentReviewChat — theme-aware bubbles', () => {
+  test('bubbles use theme-driven light-dark() surfaces (dark-scheme token present), not a hardcoded hex', async () => {
+    mocks.agentReport = COMPLETE_REPORT;
+    renderPanel();
+
+    await page.getByRole('textbox', { name: 'Ask the review agent' }).fill('hello');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const agentMsg = page.getByTestId('chat-agent-msg');
+    await expect.element(agentMsg).toBeInTheDocument();
+
+    const agentBubble = document.querySelector('[data-testid="chat-agent-msg"]') as HTMLElement;
+    const userBubble = document.querySelector('[data-testid="chat-user-msg"]') as HTMLElement;
+    const agentStyle = agentBubble.getAttribute('style') ?? '';
+    const userStyle = userBubble.getAttribute('style') ?? '';
+
+    // Agent bubble background flips with the color scheme via Mantine's
+    // light-dark() — the dark-scheme surface token is present, so it is NOT the
+    // old fixed light-mode `gray.1` that rendered near-white in dark mode.
+    expect(agentStyle).toContain('light-dark(');
+    expect(agentStyle).toContain('var(--mantine-color-dark-5)');
+    // No hardcoded hex color leaked into the bubble style.
+    expect(agentStyle).not.toMatch(/#[0-9a-fA-F]{3,6}/);
+
+    // User bubble is likewise theme-driven (filled blue accent, light-dark()).
+    expect(userStyle).toContain('light-dark(');
+    expect(userStyle).toContain('var(--mantine-color-blue');
   });
 });

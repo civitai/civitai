@@ -1,6 +1,7 @@
 import { Alert, Box, Button, Card, Group, Loader, ScrollArea, Stack, Text, Textarea } from '@mantine/core';
 import { useState } from 'react';
 import { IconMessageQuestion, IconSend, IconAlertTriangle } from '@tabler/icons-react';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -17,9 +18,12 @@ import { trpc } from '~/utils/trpc';
  * 30–90s) — a "thinking…" indicator covers the wait; streaming SSE is a follow-up.
  *
  * ADVISORY + ADVERSARIAL-SAFE: the reply is derived from an UNTRUSTED bundle, so
- * — exactly like the P2 report — every agent string is rendered as inert React
- * TEXT (no `dangerouslySetInnerHTML`, no HTML/markdown-with-raw-HTML). That is
- * the stored-XSS-at-render contract for adversarial LLM output.
+ * it is rendered through the shared `CustomMarkdown` (react-markdown) — which uses
+ * NO `rehype-raw` and NO `dangerouslySetInnerHTML`, so raw HTML embedded in
+ * adversarial agent output is escaped to inert text rather than parsed into live
+ * DOM. That preserves the stored-XSS-at-render contract for adversarial LLM output
+ * while letting normal markdown (bold, lists, code) format. User-typed messages
+ * stay plain inert text — only the agent's own replies carry markdown.
  */
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -104,19 +108,53 @@ export function AgentReviewChat({ publishRequestId }: { publishRequestId: string
                       data-testid={isUser ? 'chat-user-msg' : 'chat-agent-msg'}
                       style={{
                         maxWidth: '85%',
+                        minWidth: 0,
                         borderRadius: 8,
                         padding: '6px 10px',
+                        // Keep markdown (long paths, urls, code) inside the bubble
+                        // rather than blowing past its max-width.
+                        overflowWrap: 'anywhere',
                       }}
-                      bg={isUser ? 'blue.6' : 'gray.1'}
+                      // Theme-aware bubble surface + text — matches the
+                      // `light-dark(...)` precedent in reviewDiffPanels.tsx. The old
+                      // fixed `gray.1` rendered a near-white agent bubble in dark
+                      // mode; these flip with the color scheme. User = filled accent.
+                      bg={
+                        isUser
+                          ? 'light-dark(var(--mantine-color-blue-6), var(--mantine-color-blue-8))'
+                          : 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5))'
+                      }
+                      c={
+                        isUser
+                          ? 'white'
+                          : 'light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0))'
+                      }
                     >
-                      {/* Inert TEXT — never HTML/markdown. Adversarial-safe. */}
-                      <Text
-                        size="sm"
-                        c={isUser ? 'white' : undefined}
-                        style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                      >
-                        {m.content}
-                      </Text>
+                      {isUser ? (
+                        // User-typed message — plain inert TEXT (no markdown),
+                        // matching the existing convention.
+                        <Text
+                          size="sm"
+                          style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                        >
+                          {m.content}
+                        </Text>
+                      ) : (
+                        // Agent reply — markdown via the shared, XSS-safe
+                        // CustomMarkdown (react-markdown, NO rehype-raw / no
+                        // dangerouslySetInnerHTML): raw HTML in adversarial output is
+                        // escaped to inert text, normal markdown formats. `size="sm"`
+                        // sizing via the sm font-size var on the markdown container.
+                        <div
+                          className="markdown-content"
+                          style={{
+                            fontSize: 'var(--mantine-font-size-sm)',
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          <CustomMarkdown>{m.content}</CustomMarkdown>
+                        </div>
+                      )}
                     </Box>
                   </Group>
                 );
