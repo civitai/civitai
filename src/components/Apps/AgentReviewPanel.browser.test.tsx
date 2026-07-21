@@ -118,6 +118,11 @@ vi.mock('~/utils/trpc', () => {
           },
         },
         startAgentReview: { useMutation: mutation('startAgentReview') },
+        // P3 — the panel mounts <AgentReviewChat> when the pod is up (running/
+        // complete/cost-capped); it calls agentReviewChat.useMutation. Stub it so
+        // the P2 lifecycle/report/sanitization tests (which now render the chat)
+        // don't crash. Chat behavior is covered in AgentReviewChat.browser.test.tsx.
+        agentReviewChat: { useMutation: mutation('agentReviewChat') },
       },
     },
   };

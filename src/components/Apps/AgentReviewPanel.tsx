@@ -17,6 +17,7 @@ import {
   parseAgentReport,
   type AgentFinding,
 } from '~/components/Apps/agentReviewReport';
+import { AgentReviewChat } from '~/components/Apps/AgentReviewChat';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -362,6 +363,12 @@ export function AgentReviewPanel({
       ) : hasReport ? (
         <ReportBody report={report} costCapped={status === 'cost-capped'} />
       ) : null}
+
+      {/* AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal chat with the agent.
+          Shown ONLY while the agent POD is up: running (mid-analysis), complete,
+          or cost-capped. Hidden for failed / torn-down / no-report (no pod to
+          talk to). Inherits the panel's client-flag + onsite-pending gate. */}
+      {(running || hasReport) && <AgentReviewChat publishRequestId={publishRequestId} />}
     </Stack>
   );
 }
