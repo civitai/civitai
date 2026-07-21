@@ -71,11 +71,10 @@ export const config = {
     // processed (created pre-connector, during downtime, or handler failures).
     // Only claims rows older than the grace window so it never races the
     // real-time Kafka path.
-    // DEFAULT OFF (opt-in): the poller REQUIRES an `attempts` int column on the
-    // "Outbox" table (a main-app civitai-db-schema migration that is NOT part of
-    // this repo). Set OUTBOX_POLL_ENABLED=true only AFTER that column exists, or
-    // every sweep will error against the missing column. See MIGRATION.md.
-    outboxPollEnabled: process.env.OUTBOX_POLL_ENABLED === 'true',
+    // DEFAULT ON (opt-out): the poller REQUIRES an `attempts` int column on the
+    // "Outbox" table (civitai-db-schema migration 20260720120000_add_outbox_table,
+    // now applied). Set OUTBOX_POLL_ENABLED=false to disable. See MIGRATION.md.
+    outboxPollEnabled: process.env.OUTBOX_POLL_ENABLED !== 'false',
     outboxPollIntervalMs: parseInt(process.env.OUTBOX_POLL_INTERVAL ?? '300') * 1000,
     outboxPollGraceMs: parseInt(process.env.OUTBOX_POLL_GRACE ?? '300') * 1000,
     outboxPollBatchSize: parseInt(process.env.OUTBOX_POLL_BATCH_SIZE ?? '100'),
