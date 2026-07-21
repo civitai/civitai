@@ -162,6 +162,17 @@ const CUSTOMCOMFY_BUZZ_BUCKETS = [10, 20, 30, 45, 60, 90, 120, 150, 180, 200];
 // timeout (the clip-risk the metric exists to surface).
 const CUSTOMCOMFY_WALLCLOCK_BUCKETS = [5, 10, 20, 30, 45, 60, 90, 120, 150, 180, 200, 240];
 
+// Upper sanity bound on an observed wall-clock sample. The submit→terminal
+// wall-clock is `Date.now() - record.submittedAt`, a derived delta that a
+// clock skew, a stale/corrupt `submittedAt`, or a pathologically long
+// terminal-observation gap could inflate into a junk value far past any real
+// gen. The physical cap is the per-engine step timeout (≤180s today); 600s
+// (~10min) sits comfortably above any real queue-wait + exec for a 180s-max
+// step yet well past the 240s top bucket, so a legitimate slow gen is still
+// observed while a nonsense value is DROPPED (not clamped — a clamp would fold
+// junk onto the +Inf edge and pollute `_sum`/quantiles).
+export const MAX_CUSTOMCOMFY_WALLCLOCK_SECONDS = 600;
+
 /**
  * Idempotent: safe to call on every request. Returns the metric instances
  * (existing or newly created) from the default registry that /api/metrics
@@ -260,7 +271,10 @@ export function observeCustomComfyActualBuzz(
 /**
  * Fail-soft emit of the submit→terminal-observation wall-clock (seconds, incl.
  * GPU queue-wait) for one customComfy gen. Same never-throw contract as above.
- * Skips a non-positive/`NaN` value.
+ * DROPS (does not observe) a value that is non-positive/`NaN` OR above
+ * `MAX_CUSTOMCOMFY_WALLCLOCK_SECONDS` — a junk delta from clock skew / a stale
+ * `submittedAt` would otherwise pollute `_sum` and the tail quantiles. Dropping
+ * (not clamping) keeps the histogram honest.
  */
 export function observeCustomComfyWallclockSeconds(
   engine: string,
@@ -269,6 +283,7 @@ export function observeCustomComfyWallclockSeconds(
 ): void {
   try {
     if (!Number.isFinite(seconds) || seconds <= 0) return;
+    if (seconds > MAX_CUSTOMCOMFY_WALLCLOCK_SECONDS) return;
     const { customComfyWallclockSeconds } = ensureRegisterAppBlockRuntimeMetrics();
     customComfyWallclockSeconds.observe({ engine, recipe }, seconds);
   } catch {

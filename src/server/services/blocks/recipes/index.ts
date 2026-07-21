@@ -102,6 +102,15 @@ export interface BlockRecipe<P = unknown> {
   /** Which engine variants this recipe exposes (drives which builder runs). */
   engines: readonly string[];
   /**
+   * The SINGLE source of truth for "which engine did this submit resolve to?"
+   * (`params.engine ?? <recipe default>`). The per-engine BUDGET (`budgetFor`),
+   * the built graph (`buildStep`), the display estimate (`estimateBuzz`) and the
+   * settle-time METRIC LABEL (blocks.router) MUST all agree on this one value —
+   * so they all derive it here rather than each re-spelling `params.engine ??
+   * engines[0]`. Returns a bounded engine id from `engines` (never client-raw).
+   */
+  resolveEngine(params: P): string;
+  /**
    * PURE builder: bounded params + resolved resources → the customComfy step
    * INPUT. Ported from panorama.ts; builds a ComfyGraph by OBJECT CONSTRUCTION
    * only (the prompt is a leaf string, never templated into the graph).

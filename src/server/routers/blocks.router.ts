@@ -5388,12 +5388,15 @@ async function submitCustomComfyWorkflow(opts: {
 
   // Resolve the engine + recipe id purely for per-engine settle-time
   // OBSERVABILITY (persisted in the settle record, read at terminal to emit
-  // `civitai_app_block_customcomfy_actual_buzz` / `_wallclock_seconds`). Mirrors
-  // the recipe's own `params.engine ?? default` resolution — `recipe.engines[0]`
-  // is the declared default (== DEFAULT_ENGINE for seamless-pano). Both labels are
-  // strict enums (engine ∈ 3, recipe ∈ 1) → cardinality-safe. Never affects spend.
-  const engine: string =
-    (params as { engine?: string }).engine ?? recipe.engines[0] ?? 'unknown';
+  // `civitai_app_block_customcomfy_actual_buzz` / `_wallclock_seconds`). Uses the
+  // recipe's OWN `resolveEngine` — the SAME resolution that drives the CHARGED
+  // ceiling (`budgetFor`) and the built graph — so the observed LABEL can never
+  // drift from what was actually charged/run (a latent mislabel for any future
+  // recipe whose `engines[0] !== its default`). Both labels are strict enums
+  // (engine ∈ 3, recipe ∈ 1) → cardinality-safe. Never affects spend. The
+  // `?? 'unknown'` stays as truly-unreachable defense (resolveEngine always
+  // returns a bounded engine id).
+  const engine: string = recipe.resolveEngine(params) ?? 'unknown';
   const recipeId: string = recipe.id;
 
   // (1) STATIC pre-submit gate — the post-paid analog of the txt2img whatIf
