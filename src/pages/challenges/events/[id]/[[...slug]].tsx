@@ -53,7 +53,9 @@ function ChallengeEventPage() {
           )}
           {event?.description && <Text c="dimmed">{event.description}</Text>}
           <Title order={3}>Challenges</Title>
-          {!Number.isNaN(id) && <ChallengesInfinite filters={{ challengeEventId: id }} />}
+          {!Number.isNaN(id) && (
+            <ChallengesInfinite filters={{ challengeEventId: id, includeEnded: true }} />
+          )}
         </Stack>
       </MasonryContainer>
     </>

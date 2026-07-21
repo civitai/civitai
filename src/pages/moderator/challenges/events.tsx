@@ -78,7 +78,11 @@ const eventFormSchema = z.object({
   endDate: z.date({ error: 'End date is required' }),
   active: z.boolean().default(false),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
-  coverImage: z.object({ id: z.number(), url: z.string() }).passthrough().nullable().optional(),
+  coverImage: z
+    .object({ id: z.number().optional(), url: z.string() })
+    .passthrough()
+    .nullable()
+    .optional(),
 });
 
 type ChallengeEventItem = {
@@ -90,7 +94,7 @@ type ChallengeEventItem = {
   endDate: Date;
   active: boolean;
   winnerCooldownDays: number | null;
-  coverImage: { id: number; url: string } | null;
+  coverImage: { id?: number; url: string } | null;
   _count: { challenges: number };
 };
 

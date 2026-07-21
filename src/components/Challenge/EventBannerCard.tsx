@@ -46,7 +46,7 @@ export function EventBannerCard({
           type={event.coverImage.type}
           width={1600}
           className="absolute inset-0 size-full object-cover"
-          alt={event.title}
+          alt=""
         />
       )}
       <div className={clsx('absolute inset-0 bg-gradient-to-r to-transparent', gradient)} />
