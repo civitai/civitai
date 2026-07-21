@@ -1,22 +1,10 @@
 import { useMemo } from 'react';
-import clsx from 'clsx';
-import { Stack, Title } from '@mantine/core';
-import { ChallengeCard } from '~/components/Cards/ChallengeCard';
 import { ChallengeCardSkeletonRow } from '~/components/Challenge/ChallengeCardSkeletonRow';
+import { EventBannerCard } from '~/components/Challenge/EventBannerCard';
 import { SectionBand } from '~/components/Challenge/SectionBand';
-import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { trpc } from '~/utils/trpc';
-
-const eventTitleColors: Record<string, string> = {
-  blue: 'text-blue-400',
-  purple: 'text-purple-400',
-  red: 'text-red-400',
-  orange: 'text-orange-400',
-  yellow: 'text-yellow-400',
-  green: 'text-green-400',
-  pink: 'text-pink-400',
-};
 
 export function FeaturedChallengeEvents() {
   const {
@@ -47,7 +35,7 @@ export function FeaturedChallengeEvents() {
           ...event,
           challenges: event.challenges.filter((c) => filteredIds.has(c.id)),
         }))
-        .filter((e) => e.challenges.length > 0),
+        .filter((e) => e.challenges.length > 0) ?? [],
     [events, filteredIds]
   );
 
@@ -58,29 +46,28 @@ export function FeaturedChallengeEvents() {
       </SectionBand>
     );
 
-  if (!visibleEvents || visibleEvents.length === 0) return null;
+  if (visibleEvents.length === 0) return null;
+
+  if (visibleEvents.length === 1)
+    return (
+      <SectionBand>
+        <EventBannerCard event={visibleEvents[0]} />
+      </SectionBand>
+    );
 
   return (
     <SectionBand>
-      <Stack gap="md">
-        {visibleEvents.map((event) => (
-          <Stack key={event.id} gap="xs">
-            <Title
-              order={3}
-              className={clsx(event.titleColor && eventTitleColors[event.titleColor])}
-            >
-              {event.title}
-            </Title>
-            <TwScrollX className="flex gap-4">
-              {event.challenges.map((challenge) => (
-                <div key={challenge.id} className="w-[320px] shrink-0">
-                  <ChallengeCard data={challenge} />
-                </div>
-              ))}
-            </TwScrollX>
-          </Stack>
-        ))}
-      </Stack>
+      <Embla loop withIndicators>
+        <Embla.Viewport>
+          <Embla.Container className="-ml-4 flex">
+            {visibleEvents.map((event, index) => (
+              <Embla.Slide key={event.id} index={index} className="flex-[0_0_100%] pl-4">
+                <EventBannerCard event={event} />
+              </Embla.Slide>
+            ))}
+          </Embla.Container>
+        </Embla.Viewport>
+      </Embla>
     </SectionBand>
   );
 }

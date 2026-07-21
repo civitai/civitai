@@ -158,9 +158,7 @@ function ChallengesPage() {
         canonical="/challenges"
       />
 
-      {/* -mt-3 cancels the shared SubNav wrapper's mb-3 so the first band sits flush under the
-          subnav (SubNav in AppLayout.tsx). */}
-      <div className="-mt-3">
+      <div className={styles.sections}>
         <FeaturedChallengeEvents />
 
       <YourChallengesRow />

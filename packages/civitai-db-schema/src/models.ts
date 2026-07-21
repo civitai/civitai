@@ -1406,6 +1406,7 @@ export interface Image {
   comicProjectHero?: ComicProject[];
   challengesCover?: Challenge[];
   challengeWins?: ChallengeWinner[];
+  challengeEventCovers?: ChallengeEvent[];
   model3dThumbnails?: Model3D[];
   model3dSources?: Model3D[];
   appListingIcons?: AppListing[];
@@ -1890,6 +1891,8 @@ export interface AppListing {
   externalUrl: string | null;
   connectClientId: string | null;
   connectClient?: OauthClient | null;
+  connectRequestedScopes: number | null;
+  connectScopeJustifications: JsonValue | null;
   appBlockId: string | null;
   appBlock?: AppBlock | null;
   revisionOfId: string | null;
@@ -2169,7 +2172,9 @@ export interface BlockScopeInvocation {
   appBlockId: string | null;
   appBlock?: AppBlock | null;
   syntheticAppId: string | null;
-  blockInstanceId: string;
+  blockInstanceId: string | null;
+  oauthClientId: string | null;
+  source: string;
   scope: string;
   endpoint: string;
   statusCode: number;
@@ -3714,6 +3719,8 @@ export interface ChallengeEvent {
   endDate: Date;
   active: boolean;
   winnerCooldownDays: number | null;
+  coverImageId: number | null;
+  coverImage?: Image | null;
   createdById: number | null;
   createdBy?: User | null;
   createdAt: Date;

@@ -40,6 +40,7 @@ import {
   deleteUserChallenge,
   endChallengeAndPickWinners,
   getActiveEvents,
+  getChallengeEventById,
   getChallengeDetail,
   getChallengeForEdit,
   getChallengeEvents,
@@ -303,6 +304,13 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
     .query(() => getActiveEvents()),
+
+  // Public: Get single event by ID
+  getEventById: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(z.object({ id: z.number() }))
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ input }) => getChallengeEventById(input.id)),
 
   // Moderator: Get all challenge events
   getEvents: moderatorProcedure

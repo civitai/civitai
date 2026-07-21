@@ -22,6 +22,7 @@ import {
   ChallengeSort,
   challengeJudgingCategoriesSchema,
   parseChallengeMetadata,
+  type ChallengeCoverImage,
   type ChallengeDetail,
   type ChallengeDetailForEdit,
   type ChallengeEventListItem,
@@ -474,6 +475,7 @@ export async function getInfiniteChallenges(
     participation,
     includeEnded,
     excludeEventChallenges,
+    challengeEventId,
     browsingLevel,
     limit,
     cursor,
@@ -567,6 +569,11 @@ export async function getInfiniteChallenges(
   // Exclude challenges that belong to an event (shown in featured section instead)
   if (excludeEventChallenges) {
     conditions.push(Prisma.sql`c."eventId" IS NULL`);
+  }
+
+  // Scope to a single event's challenges (e.g. an event's own challenges page)
+  if (challengeEventId) {
+    conditions.push(Prisma.sql`c."eventId" = ${challengeEventId}`);
   }
 
   // Content level filter — models-style: exclude a challenge outright when its REAL cover image
@@ -2802,6 +2809,30 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 
 // --- Challenge Events ---
 
+// Batch-map event coverImageIds to the ChallengeCoverImage shape (mirrors the challenge-cover
+// mapping in mapChallengeRowsToCards above so both produce identical shapes).
+async function getEventCoverImages(coverImageIds: (number | null)[]) {
+  const ids = coverImageIds.filter(isDefined);
+  if (ids.length === 0) return new Map<number, ChallengeCoverImage>();
+  const images = await dbRead.image.findMany({
+    where: { id: { in: ids } },
+    select: imageSelect,
+  });
+  const map = new Map<number, ChallengeCoverImage>();
+  for (const img of images) {
+    map.set(img.id, {
+      id: img.id,
+      url: img.url,
+      nsfwLevel: img.nsfwLevel,
+      hash: img.hash,
+      width: img.width,
+      height: img.height,
+      type: img.type,
+    });
+  }
+  return map;
+}
+
 /**
  * Get active challenge events with their challenges.
  * Returns events where active=true and endDate >= now, ordered by startDate.
@@ -2820,6 +2851,7 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
       titleColor: true,
       startDate: true,
       endDate: true,
+      coverImageId: true,
       challenges: {
         where: {
           visibleAt: { lte: new Date() },
@@ -2848,10 +2880,16 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     },
   });
 
+  const eventCoverMap = await getEventCoverImages(events.map((e) => e.coverImageId));
+
   // Batch-enrich all challenges across all events
   const allChallenges = events.flatMap((e) => e.challenges);
   if (allChallenges.length === 0) {
-    return events.map((e) => ({ ...e, challenges: [] }));
+    return events.map(({ coverImageId, ...e }) => ({
+      ...e,
+      coverImage: coverImageId ? eventCoverMap.get(coverImageId) ?? null : null,
+      challenges: [],
+    }));
   }
 
   // Get judge user IDs for challenges that have judges
@@ -2931,6 +2969,7 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     titleColor: event.titleColor,
     startDate: event.startDate,
     endDate: event.endDate,
+    coverImage: event.coverImageId ? eventCoverMap.get(event.coverImageId) ?? null : null,
     challenges: event.challenges.map((c) => {
       // createdById can be null (creator account deleted); fall back to the system user (-1).
       const displayUserId = displayUidFor({
@@ -2985,11 +3024,58 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
 }
 
 /**
+ * Get a single challenge event by id, with its cover image and currently-visible challenge count.
+ * The `challenges` array is always empty — the grid loads separately via an infinite query.
+ */
+export async function getChallengeEventById(
+  id: number
+): Promise<ChallengeEventListItem & { challengeCount: number; active: boolean }> {
+  const event = await dbRead.challengeEvent.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      titleColor: true,
+      startDate: true,
+      endDate: true,
+      coverImageId: true,
+      active: true,
+      _count: {
+        select: {
+          challenges: {
+            where: {
+              visibleAt: { lte: new Date() },
+              status: { not: ChallengeStatus.Cancelled },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!event) throw throwNotFoundError('Challenge event not found');
+
+  const coverMap = await getEventCoverImages([event.coverImageId]);
+  return {
+    id: event.id,
+    title: event.title,
+    description: event.description,
+    titleColor: event.titleColor,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    coverImage: event.coverImageId ? coverMap.get(event.coverImageId) ?? null : null,
+    challenges: [],
+    challengeCount: event._count.challenges,
+    active: event.active,
+  };
+}
+
+/**
  * Get all challenge events (for moderator management).
  */
 export async function getChallengeEvents(input: GetChallengeEventsInput) {
   const where = input.activeOnly ? { active: true, endDate: { gte: new Date() } } : {};
-  return dbRead.challengeEvent.findMany({
+  const events = await dbRead.challengeEvent.findMany({
     where,
     orderBy: { startDate: 'desc' },
     select: {
@@ -3002,9 +3088,16 @@ export async function getChallengeEvents(input: GetChallengeEventsInput) {
       active: true,
       winnerCooldownDays: true,
       createdAt: true,
+      coverImageId: true,
       _count: { select: { challenges: true } },
     },
   });
+
+  const coverMap = await getEventCoverImages(events.map((e) => e.coverImageId));
+  return events.map(({ coverImageId, ...e }) => ({
+    ...e,
+    coverImage: coverImageId ? coverMap.get(coverImageId) ?? null : null,
+  }));
 }
 
 /**
@@ -3014,7 +3107,7 @@ export async function upsertChallengeEvent({
   userId,
   ...input
 }: UpsertChallengeEventInput & { userId: number }) {
-  const { id, ...data } = input;
+  const { id, coverImage, ...data } = input;
 
   if (data.endDate <= data.startDate) {
     throw new TRPCError({
@@ -3023,17 +3116,24 @@ export async function upsertChallengeEvent({
     });
   }
 
+  let coverImageId: number | null | undefined;
+  if (coverImage === null) coverImageId = null;
+  else if (coverImage) {
+    coverImageId = coverImage.id ?? (await createImage({ ...coverImage, userId })).id;
+  }
+
   return dbWrite.$transaction(async (tx) => {
     if (id) {
       return tx.challengeEvent.update({
         where: { id },
-        data,
+        data: { ...data, ...(coverImageId !== undefined ? { coverImageId } : {}) },
       });
     }
 
     return tx.challengeEvent.create({
       data: {
         ...data,
+        coverImageId: coverImageId ?? null,
         createdById: userId,
       },
     });
