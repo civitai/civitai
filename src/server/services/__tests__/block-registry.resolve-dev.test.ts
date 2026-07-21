@@ -155,15 +155,17 @@ describe('BlockRegistry.resolveDevPageBlockForAuthor', () => {
     mockDbRead.appBlock.findUnique.mockResolvedValue(null);
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
       submittedByUserId: 555,
-      // Includes page-forbidden + non-allowlisted scopes — the clamp must strip them.
+      // Includes a non-tunnel-allowlisted + an unknown scope — the clamp strips them.
       manifest: {
         scopes: ['ai:write:budgeted', 'buzz:read:self', 'social:tip:self', 'not:a:scope'],
       },
     });
     const res = await BlockRegistry.resolveDevPageBlockForAuthor('money-pending', 555);
-    // Clamp = TUNNEL allowlist − PAGE_FORBIDDEN, + force-granted user:read:self, sorted.
-    // buzz:read:self / social:tip:self are page-forbidden; not:a:scope is unknown.
-    expect(res?.scopes).toEqual(['ai:write:budgeted', 'user:read:self']);
+    // Clamp = TUNNEL allowlist ∩ known − PAGE_FORBIDDEN, + force-granted user:read:self, sorted.
+    // PAGE_FORBIDDEN_SCOPES is now empty (#3103): buzz:read:self is a page-safe,
+    // low-sensitivity self-balance read and IS in the tunnel allowlist, so it
+    // survives. social:tip:self is NOT in the tunnel allowlist; not:a:scope is unknown.
+    expect(res?.scopes).toEqual(['ai:write:budgeted', 'buzz:read:self', 'user:read:self']);
     expect(res?.ephemeralSource).toBe('pending');
   });
 

@@ -58,6 +58,7 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { AnimatedCount, Metrics } from '~/components/Metrics';
+import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import classes from './ModelCategoryCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -131,7 +132,6 @@ function ModelCategoryCardContent({
       )}
     </>
   );
-
 
   const reportOption = {
     key: 'report-model',
@@ -459,7 +459,7 @@ function ModelCategoryCardStats({
       entityType="Model"
       entityId={data.id}
       initial={{
-        downloadCount: data.rank.downloadCount,
+        downloadCount: data.rank.downloadCount ?? 0,
         thumbsUpCount: data.rank.thumbsUpCount,
         commentCount: data.rank.commentCount,
       }}
@@ -491,7 +491,11 @@ function ModelCategoryCardStats({
           )}
           <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
             <Text fz={12}>
-              <AnimatedCount value={m.downloadCount} />
+              {data.hiddenMetrics?.downloads ? (
+                <HiddenMetricNotice size={12} />
+              ) : (
+                <AnimatedCount value={m.downloadCount ?? 0} />
+              )}
             </Text>
           </IconBadge>
         </Group>

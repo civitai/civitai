@@ -29,6 +29,8 @@ import {
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import {
   Form,
   InputCreatableMultiSelect,
@@ -51,12 +53,15 @@ import {
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
   baseModelSupportsClipSkip,
+  defaultBaseModel,
   getActiveBaseModels,
 } from '~/shared/constants/basemodel.constants';
+import { useLastUsedBaseModelStore } from '~/store/last-used-base-model.store';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
   ModelVersionEarlyAccessConfig,
+  ModelVersionMeta,
   ModelVersionUpsertInput,
   RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
@@ -156,6 +161,7 @@ export function ModelVersionUpsertForm({
   id,
   model,
   version,
+  previousBaseModel,
   children,
   onSubmit,
   afterName,
@@ -164,6 +170,17 @@ export function ModelVersionUpsertForm({
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const { hideDonationGoals } = useCurrentUserSettings();
+  const { mutate: mutateUserSettings, isPending: hideDonationGoalsUpdating } =
+    useMutateUserSettings();
+  const { requirements } = useCreatorProgramRequirements();
+  const isActiveCreatorMember = !!requirements?.validMembership;
+  const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
+  const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
+  // For a brand-new version, seed the base model from the previous version (if any),
+  // then the user's last-used selection, then the global default.
+  const initialBaseModel =
+    version?.baseModel ?? previousBaseModel ?? lastUsedBaseModel ?? defaultBaseModel;
   const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
 
@@ -187,7 +204,7 @@ export function ModelVersionUpsertForm({
   const defaultValues: Schema = {
     ...version,
     name: version?.name ?? 'v1.0',
-    baseModel: version?.baseModel ?? 'SD 1.5',
+    baseModel: initialBaseModel,
     baseModelType: hasBaseModelType ? version?.baseModelType ?? 'Standard' : undefined,
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
@@ -222,13 +239,18 @@ export function ModelVersionUpsertForm({
     usageControl: !!version?.usageControl
       ? version?.usageControl ?? ModelUsageControl.Download
       : ModelUsageControl.Download,
+    meta: {
+      hideBuzz: (version?.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
+      hideDownloads: (version?.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
+      hideGenerations: (version?.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
+    },
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
 
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
-  const baseModel = form.watch('baseModel') ?? 'SD 1.5';
+  const baseModel = form.watch('baseModel') ?? initialBaseModel;
   // Non-commercial base models (e.g. Ideogram) can't be monetized — hide the
   // licensing-fee and early-access controls for these versions.
   const isNonCommercial = isNonCommercialBaseModel(baseModel);
@@ -264,7 +286,9 @@ export function ModelVersionUpsertForm({
   );
   const defaultLicensingSourceId = licensingRootsData?.defaultVersionId ?? null;
   // A version that is itself a licensing root is the source, so it doesn't pick a parent.
-  const currentIsLicensingRoot = (licensingRootsData?.roots ?? []).some((r) => r.id === version?.id);
+  const currentIsLicensingRoot = (licensingRootsData?.roots ?? []).some(
+    (r) => r.id === version?.id
+  );
   // Versions flagged NotDerivative (e.g. API-only official checkpoints) aren't
   // fine-tunes, so the form doesn't require/auto-select a parent for them. They
   // can still set their own licensing fee via the fee field above.
@@ -354,6 +378,8 @@ export function ModelVersionUpsertForm({
       return;
     }
 
+    if (data.baseModel) setLastUsedBaseModel(data.baseModel);
+
     const schemaResult = querySchema.safeParse(router.query);
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
@@ -432,6 +458,11 @@ export function ModelVersionUpsertForm({
             ? version?.earlyAccessConfig
             : null,
         recommendedResources: version.recommendedResources ?? [],
+        meta: {
+          hideBuzz: (version.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
+          hideDownloads: (version.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
+          hideGenerations: (version.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
+        },
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
@@ -828,6 +859,15 @@ export function ModelVersionUpsertForm({
                                     isEarlyAccessOver
                                   }
                                 />
+                                <Switch
+                                  label="Hide donation goals from public view"
+                                  description="Others won't see the progress bar or collected amount. The goal still works, and you and moderators can still see it. This applies to all of your donation goals."
+                                  checked={hideDonationGoals ?? false}
+                                  onChange={(e) =>
+                                    mutateUserSettings({ hideDonationGoals: e.target.checked })
+                                  }
+                                  disabled={hideDonationGoalsUpdating}
+                                />
                               </Stack>
                             </Card.Section>
                           )}
@@ -900,6 +940,9 @@ export function ModelVersionUpsertForm({
               allowDeselect={false}
               withAsterisk
               searchable
+              // Select the current value on focus so the user can click and immediately
+              // type to filter (e.g. "wan") instead of clearing the field first.
+              onFocus={(e) => e.currentTarget.select()}
             />
             {hasBaseModelType && (
               <InputSelect
@@ -973,6 +1016,35 @@ export function ModelVersionUpsertForm({
             includeControls={['formatting', 'list', 'link']}
             editorSize="xl"
           />
+          <Stack gap="xs">
+            <Divider label="Version metric privacy" />
+            <Text size="xs" c="dimmed">
+              Hide these stats in this version&apos;s details card. This is a sub-option of the
+              model-level controls — hiding at the model level already hides the model page totals
+              and cards.{' '}
+              {isActiveCreatorMember
+                ? 'You and moderators always see your real stats.'
+                : 'Requires an active Creator Program membership.'}
+            </Text>
+            <InputSwitch
+              name="meta.hideBuzz"
+              label="Hide earned Buzz"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+            <InputSwitch
+              name="meta.hideDownloads"
+              label="Hide download count"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+            <InputSwitch
+              name="meta.hideGenerations"
+              label="Hide generation count"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+          </Stack>
           {acceptsTrainedWords && (
             <Stack gap="xs">
               {!skipTrainedWords && (
@@ -1120,10 +1192,14 @@ type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
+  // Base model of the model's most recent existing version; used to default the
+  // picker when adding a brand-new version to an existing model.
+  previousBaseModel?: string | null;
   // licensingFee comes off a Prisma read as a Decimal; the form coerces it to a number in defaultValues.
-  version?: Omit<Partial<VersionInput>, 'licensingFee'> & {
+  version?: Omit<Partial<VersionInput>, 'licensingFee' | 'meta'> & {
     licensingFee?: number | { valueOf(): string } | null;
     flags?: number;
+    meta?: unknown;
   };
   afterName?: React.ReactNode;
 };

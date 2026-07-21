@@ -168,12 +168,13 @@ export type ReviewCreatorShopItemInput = z.infer<typeof reviewCreatorShopItemSch
 export const reviewCreatorShopItemSchema = z
   .object({
     id: z.number(),
-    // reject = terminal; request-changes = creator can edit & resubmit.
-    action: z.enum(['approve', 'reject', 'request-changes']),
+    // reject = terminal; request-changes = creator can edit & resubmit;
+    // revert = pull a published item back into the review queue.
+    action: z.enum(['approve', 'reject', 'request-changes', 'revert']),
     rejectionReason: z.string().max(1000).optional(),
   })
   .refine((v) => v.action === 'approve' || !!v.rejectionReason?.length, {
-    message: 'A note is required when rejecting or requesting changes',
+    message: 'A note is required when rejecting, requesting changes, or reverting',
     path: ['rejectionReason'],
   });
 

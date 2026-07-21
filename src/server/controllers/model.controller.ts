@@ -12,6 +12,17 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import {
+  getValidCreatorMembershipMap,
+  hasValidCreatorMembership,
+} from '~/server/services/creator-program.service';
+import {
+  anyMetricHidden,
+  getUserMetricPrivacyDefaults,
+  resolveModelHiddenMetrics,
+  resolveVersionHiddenMetrics,
+  type HiddenModelMetrics,
+} from '~/server/utils/model-metric-privacy';
 import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -283,9 +294,32 @@ export const getModelHandler = async ({
         });
     }
 
+    // Creator Controls metric privacy: resolve once per request. Owners/mods bypass;
+    // otherwise flags apply only while the owner holds a valid CP membership.
+    let ownerSettings: unknown = null;
+    let ownerHasMembership = false;
+    if (!isOwner) {
+      const [owner, membership] = await Promise.all([
+        dbRead.user.findUnique({ where: { id: model.user.id }, select: { settings: true } }),
+        hasValidCreatorMembership(model.user.id),
+      ]);
+      ownerSettings = owner?.settings ?? null;
+      ownerHasMembership = membership;
+    }
+    const modelHidden = resolveModelHiddenMetrics({
+      modelMeta: model.meta,
+      userSettings: ownerSettings,
+      isOwnerOrModerator: isOwner,
+      hasValidMembership: ownerHasMembership,
+    });
+    const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
+
     const mappedVersions = filteredVersions.map((version) => {
+      const eaConfig = version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
       let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
       if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
+      const paidAccessGated =
+        !!earlyAccessDeadline || (features.earlyAccessModel && !!eaConfig?.permanent);
 
       const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
       const isDownloadable = version.usageControl === ModelUsageControl.Download || isOwner;
@@ -293,7 +327,7 @@ export const getModelHandler = async ({
         isDownloadable &&
         model.mode !== ModelModifier.Archived &&
         entityAccessForVersion?.hasAccess &&
-        (!earlyAccessDeadline ||
+        (!paidAccessGated ||
           (entityAccessForVersion?.permissions ?? 0) >= EntityAccessPermission.EarlyAccessDownload);
 
       const versionState = versionGenStates.get(version.id);
@@ -333,16 +367,28 @@ export const getModelHandler = async ({
 
       const versionMetrics = version.metrics[0];
 
+      const versionHidden = resolveVersionHiddenMetrics({
+        versionMeta: version.meta,
+        modelMeta: model.meta,
+        userSettings: ownerSettings,
+        isOwnerOrModerator: isOwner,
+        hasValidMembership: ownerHasMembership,
+      });
+
       return {
         ...version,
         licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
         metrics: undefined,
+        hiddenMetrics: versionHidden,
         rank: {
-          generationCountAllTime: versionMetrics?.generationCount ?? 0,
-          downloadCountAllTime: versionMetrics?.downloadCount ?? 0,
+          generationCountAllTime: hideIf(
+            versionHidden.generations,
+            versionMetrics?.generationCount ?? 0
+          ),
+          downloadCountAllTime: hideIf(versionHidden.downloads, versionMetrics?.downloadCount ?? 0),
           thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
           thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
-          earnedAmountAllTime: versionMetrics?.earnedAmount ?? 0,
+          earnedAmountAllTime: hideIf(versionHidden.buzz, versionMetrics?.earnedAmount ?? 0),
         },
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
@@ -400,15 +446,16 @@ export const getModelHandler = async ({
     return {
       ...model,
       metrics: undefined,
+      hiddenMetrics: modelHidden,
       rank: {
-        downloadCountAllTime: metrics?.downloadCount ?? 0,
+        downloadCountAllTime: hideIf(modelHidden.downloads, metrics?.downloadCount ?? 0),
         thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,
         thumbsDownCountAllTime: metrics?.thumbsDownCount ?? 0,
         commentCountAllTime: metrics?.commentCount ?? 0,
-        tippedAmountCountAllTime: metrics?.tippedAmountCount ?? 0,
+        tippedAmountCountAllTime: hideIf(modelHidden.buzz, metrics?.tippedAmountCount ?? 0),
         imageCountAllTime: metrics?.imageCount ?? 0,
         collectedCountAllTime: metrics?.collectedCount ?? 0,
-        generationCountAllTime: metrics?.generationCount ?? 0,
+        generationCountAllTime: hideIf(modelHidden.generations, metrics?.generationCount ?? 0),
       },
       canGenerate: mappedVersions.some((v) => v.canGenerate),
       hasSuggestedResources: suggestedResources > 0,
@@ -1556,8 +1603,29 @@ export const getAssociatedResourcesCardDataHandler = async ({
       }
     );
 
+    const assocIsMod = !!user?.isModerator;
+    const assocOwnerIds = [...new Set(models.map((m) => m.user.id))];
+    const assocOwnerSettings = assocOwnerIds.length
+      ? await dbRead.user.findMany({
+          where: { id: { in: assocOwnerIds } },
+          select: { id: true, settings: true },
+        })
+      : [];
+    const assocOwnerSettingsMap = new Map<number, unknown>(
+      assocOwnerSettings.map((o) => [o.id, o.settings])
+    );
+    const assocMembershipCandidates = new Set<number>();
+    for (const m of models) {
+      const ownerId = m.user.id;
+      if (assocIsMod || ownerId === user?.id) continue;
+      const defHidden = getUserMetricPrivacyDefaults(assocOwnerSettingsMap.get(ownerId));
+      if (anyMetricHidden(m.metricPrivacy) || anyMetricHidden(defHidden))
+        assocMembershipCandidates.add(ownerId);
+    }
+    const assocMembershipMap = await getValidCreatorMembershipMap([...assocMembershipCandidates]);
+
     const completeModels = models
-      .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
+      .map(({ hashes, modelVersions, rank, tagsOnModels, metricPrivacy, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
         const versionImages = images.filter((i) => i.modelVersionId === version.id);
@@ -1567,17 +1635,30 @@ export const getAssociatedResourcesCardDataHandler = async ({
         if (!versionImages.length && !showImageless) return null;
         const canGenerate = associatedGenStates.get(version.id)?.canGenerate ?? false;
 
+        const isOwner = assocIsMod || model.user.id === user?.id;
+        const hiddenMetrics = resolveModelHiddenMetrics({
+          modelMeta: {
+            hideBuzz: metricPrivacy.buzz,
+            hideDownloads: metricPrivacy.downloads,
+            hideGenerations: metricPrivacy.generations,
+          },
+          userSettings: assocOwnerSettingsMap.get(model.user.id),
+          isOwnerOrModerator: isOwner,
+          hasValidMembership: assocMembershipMap.get(model.user.id) ?? false,
+        });
+
         return {
           ...model,
           tags: tagsOnModels.map(({ tagId }) => tagId),
           hashes: hashes.map((h) => h.toLowerCase()),
+          hiddenMetrics,
           rank: {
-            downloadCount: rank?.downloadCountAllTime ?? 0,
+            downloadCount: hiddenMetrics.downloads ? null : rank?.downloadCountAllTime ?? 0,
             thumbsUpCount: rank?.thumbsUpCountAllTime ?? 0,
             thumbsDownCount: rank?.thumbsDownCountAllTime ?? 0,
             commentCount: rank?.commentCountAllTime ?? 0,
             collectedCount: rank?.collectedCountAllTime ?? 0,
-            tippedAmountCount: rank?.tippedAmountCountAllTime ?? 0,
+            tippedAmountCount: hiddenMetrics.buzz ? null : rank?.tippedAmountCountAllTime ?? 0,
           },
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,

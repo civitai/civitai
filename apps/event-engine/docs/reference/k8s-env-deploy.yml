@@ -1,0 +1,54 @@
+name: Update environment variables
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'The environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  KUBECONFIG: .kube/config
+  KUBECONFIG_FILE: ${{ secrets.KUBECONFIG }}
+  KUBENAMESPACE: civitai-${{ github.event.inputs.environment }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout deployment
+        uses: actions/checkout@v3
+
+      - name: Load kubeconfig
+        run: |
+          mkdir -p .kube
+          echo "${{ env.KUBECONFIG_FILE }}" > $KUBECONFIG
+      - run: |
+          curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "starting", "env": "${{ github.event.inputs.environment }}", "server": "main" }' https://user:PASSWORD@node-red.civitai.com/deploy
+      - name: Rollout deployment
+        uses: stefanprodan/kube-tools@v1
+        with:
+          command: |
+            kubectl create configmap civitai-cfg --namespace $KUBENAMESPACE --from-env-file ${{ github.event.inputs.environment }}.env --dry-run=client -o yaml | kubectl apply -f -
+            kubectl rollout restart deployment civitai --namespace $KUBENAMESPACE
+            kubectl -n $KUBENAMESPACE get deployment civitai-trpc && kubectl rollout restart deployment civitai-trpc --namespace $KUBENAMESPACE || echo "no tRPC deployment in $KUBENAMESPACE"
+            kubectl -n $KUBENAMESPACE get deployment civitai-api && kubectl rollout restart deployment civitai-api --namespace $KUBENAMESPACE || echo "no API deployment in $KUBENAMESPACE"
+            kubectl -n $KUBENAMESPACE get deployment civitai-job && kubectl rollout restart deployment civitai-job --namespace $KUBENAMESPACE || echo "no job deployment in $KUBENAMESPACE"
+            kubectl -n $KUBENAMESPACE get deployment civitai-auth && kubectl rollout restart deployment civitai-auth --namespace $KUBENAMESPACE || echo "no auth deployment in $KUBENAMESPACE"
+            kubectl rollout status deployment civitai -w --timeout=15m --namespace $KUBENAMESPACE
+            kubectl -n $KUBENAMESPACE get deployment civitai-trpc && kubectl rollout status deployment civitai-trpc -w --timeout=15m --namespace $KUBENAMESPACE || echo "no tRPC deployment in $KUBENAMESPACE"
+            kubectl -n $KUBENAMESPACE get deployment civitai-api && kubectl rollout status deployment civitai-api -w --timeout=15m --namespace $KUBENAMESPACE || echo "no API deployment in $KUBENAMESPACE"
+            kubectl -n $KUBENAMESPACE get deployment civitai-job && kubectl rollout status deployment civitai-job -w --timeout=15m --namespace $KUBENAMESPACE || echo "no job deployment in $KUBENAMESPACE"
+            kubectl -n $KUBENAMESPACE get deployment civitai-auth && kubectl rollout status deployment civitai-auth -w --timeout=15m --namespace $KUBENAMESPACE || echo "no auth deployment in $KUBENAMESPACE"
+
+      - if: ${{ failure() }}
+        run: |
+          curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "failed", "env": "${{ github.event.inputs.environment }}", "server": "main" }' https://user:PASSWORD@node-red.civitai.com/deploy
+      - run: |
+          curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "succeeded", "env": "${{ github.event.inputs.environment }}", "server": "main" }' https://user:PASSWORD@node-red.civitai.com/deploy

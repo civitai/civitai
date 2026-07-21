@@ -1,9 +1,8 @@
-import { ActionIcon, Center, Divider, Loader, Stack, Text, TextInput, Title } from '@mantine/core';
-import { IconAlertCircle, IconSearch, IconX } from '@tabler/icons-react';
+import { Stack, TextInput, Title } from '@mantine/core';
+import { IconSearch, IconX } from '@tabler/icons-react';
 import React, { useCallback, useMemo, useState } from 'react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AuctionTopSection } from '~/components/Auction/AuctionInfo';
-import { ModelMyBidCard, ModelMyRecurringBidCard } from '~/components/Auction/AuctionPlacementCard';
+import { AuctionMyBidsList } from '~/components/Auction/AuctionMyBidsList';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GetMyBidsReturn, GetMyRecurringBidsReturn } from '~/server/services/auction.service';
@@ -18,23 +17,21 @@ export const AuctionMyBids = () => {
 
   const {
     data: bidData = [],
-    // isLoading: isLoadingBidData,
     isInitialLoading: isInitialLoadingBidData,
-    isRefetching: isRefetchingBidData,
     isError: isErrorBidData,
   } = trpc.auction.getMyBids.useQuery(undefined, { enabled: !!currentUser });
 
   const {
     data: bidRecurringData = [],
-    // isLoading: isLoadingBidRecurringData,
     isInitialLoading: isInitialLoadingBidRecurringData,
-    isRefetching: isRefetchingBidRecurringData,
     isError: isErrorBidRecurringData,
   } = trpc.auction.getMyRecurringBids.useQuery(undefined, { enabled: !!currentUser });
 
-  const isLoadingBidData = isInitialLoadingBidData || isRefetchingBidData;
-  const isLoadingBidRecurringData =
-    isInitialLoadingBidRecurringData || isRefetchingBidRecurringData;
+  // Only the initial load swaps rows for skeletons. Folding in `isRefetching` would
+  // collapse the list on every window-focus refetch and post-bid invalidation, and the
+  // virtualizer clamps the scroll offset to the shrunken list rather than holding place.
+  const isLoadingBidData = isInitialLoadingBidData;
+  const isLoadingBidRecurringData = isInitialLoadingBidRecurringData;
 
   const hasSearchText = useCallback(
     (
@@ -94,99 +91,16 @@ export const AuctionMyBids = () => {
         }
       />
 
-      <Divider my="sm" />
-
-      <Title order={5}>Active Bids</Title>
-      {isLoadingBidData ? (
-        <Center my="lg">
-          <Loader />
-        </Center>
-      ) : isErrorBidData ? (
-        <Center my="lg">
-          <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
-            <Text>There was an error fetching your bid data. Please try again.</Text>
-          </AlertWithIcon>
-        </Center>
-      ) : !activeBids.length ? (
-        <Center my="lg">
-          <Stack gap="xs" className="text-center">
-            <Text>No active bids.</Text>
-            <Text>Choose an auction in the list to get started.</Text>
-          </Stack>
-        </Center>
-      ) : (
-        <Stack>
-          {activeBids.map((ab) => (
-            <ModelMyBidCard
-              key={`${ab.auction.id}-${ab.entityId}`}
-              data={ab}
-              searchText={searchText}
-            />
-          ))}
-        </Stack>
-      )}
-
-      <Divider my="sm" />
-
-      <Title order={5}>Recurring Bids</Title>
-      {isLoadingBidRecurringData ? (
-        <Center my="lg">
-          <Loader />
-        </Center>
-      ) : isErrorBidRecurringData ? (
-        <Center my="lg">
-          <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
-            <Text>There was an error fetching your bid data. Please try again.</Text>
-          </AlertWithIcon>
-        </Center>
-      ) : !recurringBids.length ? (
-        <Center my="lg">
-          <Stack>
-            <Text>No recurring bids.</Text>
-          </Stack>
-        </Center>
-      ) : (
-        <Stack>
-          {recurringBids.map((ab) => (
-            <ModelMyRecurringBidCard
-              key={`${ab.auctionBase.id}-${ab.entityId}`}
-              data={ab}
-              searchText={searchText}
-            />
-          ))}
-        </Stack>
-      )}
-
-      <Divider my="sm" />
-
-      <Title order={5}>Past Bids</Title>
-      {isLoadingBidData ? (
-        <Center my="lg">
-          <Loader />
-        </Center>
-      ) : isErrorBidData ? (
-        <Center my="lg">
-          <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
-            <Text>There was an error fetching your bid data. Please try again.</Text>
-          </AlertWithIcon>
-        </Center>
-      ) : !pastBids.length ? (
-        <Center my="lg">
-          <Stack>
-            <Text>No past bids.</Text>
-          </Stack>
-        </Center>
-      ) : (
-        <Stack>
-          {pastBids.map((ab) => (
-            <ModelMyBidCard
-              key={`${ab.auction.id}-${ab.entityId}`}
-              data={ab}
-              searchText={searchText}
-            />
-          ))}
-        </Stack>
-      )}
+      <AuctionMyBidsList
+        activeBids={activeBids}
+        recurringBids={recurringBids}
+        pastBids={pastBids}
+        isLoadingBids={isLoadingBidData}
+        isErrorBids={isErrorBidData}
+        isLoadingRecurringBids={isLoadingBidRecurringData}
+        isErrorRecurringBids={isErrorBidRecurringData}
+        searchText={searchText}
+      />
     </Stack>
   );
 };

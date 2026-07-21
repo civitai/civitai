@@ -1041,6 +1041,7 @@ model ModelVersion {
   nsfwLevel            Int               @default(0)
   earlyAccessEndsAt    DateTime?
   earlyAccessConfig    Json?
+  earlyAccessPermanent Boolean           @default(false)
   uploadType           ModelUploadType   @default(Created)
   usageControl         ModelUsageControl @default(Download)
   earlyAccessTimeFrame Int               @default(0)
@@ -1740,6 +1741,7 @@ model Image {
   comicProjectHero        ComicProject[]         @relation("comicProjectHero")
   challengesCover     Challenge[]           @relation("ChallengeCoverImage")
   challengeWins       ChallengeWinner[]
+  challengeEventCovers ChallengeEvent[]     @relation("ChallengeEventCover")
   model3dThumbnails   Model3D[]             @relation("model3dThumbnail")
   model3dSources      Model3D[]             @relation("model3dSource")
   appListingIcons        AppListing[]           @relation("AppListingIcon")
@@ -2843,8 +2845,17 @@ model AppReviewAgentReport {
   // (on-site = AppBlockPublishRequest, connect = AppListingPublishRequest) so it
   // is stored as an indexed id, not a FK. Resolved by kind in the service.
   publishRequestId String    @map("publish_request_id")
-  // App identity — EXACTLY ONE is set: `appBlockId` for an on-site App Block,
-  // `oauthClientId` for an external / OAuth-connect app. Plain indexed columns.
+  // The STABLE app key (= blockId), present on EVERY publish request — including a
+  // first version, before any AppBlock row exists. Onsite reports are keyed by
+  // this (see the (slug, version) index); the prior-report chain is scoped by it.
+  slug             String
+  // Report origin: 'onsite' | 'external' (CHECK in the .sql). External/connect is
+  // a later phase; onsite reports write 'onsite'.
+  kind             String    @default("onsite")
+  // App identity — INFORMATIONAL, nullable. `appBlockId` populated when the
+  // on-site AppBlock already exists (else null, e.g. a first version); reserved
+  // `oauthClientId` for the external / OAuth-connect app. No exactly-one invariant
+  // any more — `slug` is the key (the app_key XOR CHECK was dropped).
   appBlockId       String?   @map("app_block_id")
   oauthClientId    String?   @map("oauth_client_id")
   // The reviewed bundle's version (semver) + integrity hash.
@@ -2875,11 +2886,14 @@ model AppReviewAgentReport {
   updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   // "latest prior complete report for this app older than version X" lookups,
-  // one index per app-key kind (on-site vs connect).
-  @@index([appBlockId, version], map: "app_review_agent_reports_app_block_version_idx")
-  @@index([oauthClientId, version], map: "app_review_agent_reports_oauth_client_version_idx")
+  // scoped by the stable slug key.
+  @@index([slug, version], map: "app_review_agent_reports_slug_version_idx")
   // By-review lookup (getAgentReport).
   @@index([publishRequestId], map: "app_review_agent_reports_publish_request_idx")
+  // NB: the status CHECK ('running'|'complete'|'failed'|'torn-down'|'cost-capped'),
+  // the kind CHECK ('onsite'|'external'), and the PARTIAL UNIQUE index on
+  // (publish_request_id) WHERE status='running' live ONLY in the migration .sql —
+  // Prisma cannot express CHECKs or partial-unique indexes.
   @@map("app_review_agent_reports")
 }
 
@@ -5533,6 +5547,8 @@ model ChallengeEvent {
   endDate            DateTime
   active             Boolean  @default(true)
   winnerCooldownDays Int?
+  coverImageId       Int?
+  coverImage         Image?   @relation("ChallengeEventCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   createdById        Int?
   createdBy          User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt          DateTime @default(now())
@@ -7243,4 +7259,25 @@ model ShopifyMerchOrder {
 
   @@index([email])
   @@index([userId])
+}
+
+enum OutboxEntity {
+  Article
+  Image
+  Model
+  Post
+  ModelVersion
+}
+
+/// Transactional outbox for entity lifecycle events, consumed by the event-engine app via Debezium CDC
+/// and its reconciliation poller. Pre-existed in the DB (applied manually); modeled here. `attempts` backs
+/// the poller's retry bookkeeping (park past a max-attempts cap; re-drive via redrive:outbox).
+model Outbox {
+  id         BigInt       @id @default(autoincrement())
+  event      String
+  entityType OutboxEntity
+  entityId   BigInt
+  createdAt  DateTime?    @default(now())
+  details    Json?
+  attempts   Int?
 }

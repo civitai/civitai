@@ -1,0 +1,43 @@
+name: Deploy chopped service
+
+on:
+    workflow_dispatch:
+        inputs:
+            environment:
+                type: choice
+                description: 'Environment to deploy to'
+                required: true
+                default: 'chopped'
+                # options: ['chopped-dev', 'chopped']
+                options: ['chopped']
+
+env:
+    KUBENAMESPACE: civitai-${{ github.event.inputs.environment }}
+    KUBECONFIG: .kube/config
+    KUBECONFIG_FILE: ${{ secrets.KUBECONFIG }}
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        steps:
+        - name: Checkout deployment
+          uses: actions/checkout@v4
+
+        - name: Load kubeconfig
+          run: |
+            mkdir -p .kube
+            echo "${{ env.KUBECONFIG_FILE }}" > $KUBECONFIG
+        - run: |
+            curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "starting", "env": "${{ github.event.inputs.environment }}", "server": "chopped-service" }' https://user:PASSWORD@node-red.civitai.com/deploy
+        - name: Rollout deployment
+          uses: stefanprodan/kube-tools@v1
+          with:
+            command: |
+              kubectl apply -f civitai-${{ github.event.inputs.environment }}-deployment.yml --namespace $KUBENAMESPACE
+              kubectl create configmap chopped-config --namespace $KUBENAMESPACE --from-env-file chopped.env --dry-run=client -o yaml | kubectl apply -f -
+              kubectl rollout restart deployment civitai-chopped --namespace $KUBENAMESPACE
+        - if: ${{ failure() }}
+          run: |
+            curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "failed", "env": "${{ github.event.inputs.environment }}", "server": "chopped-service" }' https://user:PASSWORD@node-red.civitai.com/deploy
+        - run: |
+            curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "succeeded", "env": "${{ github.event.inputs.environment }}", "server": "chopped-service" }' https://user:PASSWORD@node-red.civitai.com/deploy

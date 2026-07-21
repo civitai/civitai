@@ -10,6 +10,7 @@ import {
   Loader,
   Overlay,
   Paper,
+  Skeleton,
   Stack,
   Text,
   TextInput,
@@ -40,7 +41,8 @@ import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
 import { AuctionFiltersDropdown } from '~/components/Auction/AuctionFiltersDropdown';
-import { ModelPlacementCard } from '~/components/Auction/AuctionPlacementCard';
+import { AuctionBidList } from '~/components/Auction/AuctionBidList';
+import { StackedSkeletons } from '~/components/Auction/VirtualRowList';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { AuctionViews, usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -454,14 +456,23 @@ export const AuctionInfo = () => {
     [auctionData?.bids, selectedModel?.id]
   );
 
-  const addBidFn = (entity: GenerationResource) => {
-    setSelectedModel(entity);
+  // Read through a ref: `placeBidInView` flips every time the bid panel crosses the
+  // viewport edge, and a new identity here re-renders every memoized card in the list —
+  // during scrolling, which is the case the memo exists for.
+  const placeBidInViewRef = useRef(placeBidInView);
+  placeBidInViewRef.current = placeBidInView;
 
-    if (!placeBidInView) {
-      const elem = document.getElementById(`scroll-to-bid`);
-      if (elem) elem.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
+  const addBidFn = useCallback(
+    (entity: GenerationResource) => {
+      setSelectedModel(entity);
+
+      if (!placeBidInViewRef.current) {
+        const elem = document.getElementById(`scroll-to-bid`);
+        if (elem) elem.scrollIntoView({ behavior: 'smooth' });
+      }
+    },
+    [setSelectedModel]
+  );
 
   const validFor = auctionData
     ? dayjs(auctionData.validTo).diff(dayjs(auctionData.validFrom), 'day')
@@ -501,7 +512,11 @@ export const AuctionInfo = () => {
         </Center>
       ) : (
         <Stack>
-          <Title order={3}>{auctionData?.auctionBase?.name ?? 'Loading...'}</Title>
+          <Skeleton visible={!auctionData && !selectedAuction} animate>
+            <Title order={3}>
+              {auctionData?.auctionBase?.name ?? selectedAuction?.auctionBase?.name ?? ' '}
+            </Title>
+          </Skeleton>
           {!!auctionData?.auctionBase?.description && (
             <Text size="md" c="dimmed" fs="italic">
               {auctionData.auctionBase.description}
@@ -859,9 +874,7 @@ export const AuctionInfo = () => {
             </Group>
           </Group>
           {isLoadingAuctionData ? (
-            <Center my="lg">
-              <Loader />
-            </Center>
+            <StackedSkeletons count={5} />
           ) : !auctionData ? (
             <Center my="lg">
               <Text>Nothing here</Text>
@@ -871,39 +884,13 @@ export const AuctionInfo = () => {
               <Text>No bids yet. Be the first!</Text>
             </Center>
           ) : (
-            <Stack>
-              {filteredBidsAbove.length ? (
-                filteredBidsAbove.map((b) => (
-                  <ModelPlacementCard
-                    key={b.entityId}
-                    data={b}
-                    aboveThreshold={true}
-                    addBidFn={addBidFn}
-                    searchText={searchText}
-                    canBid={canBid}
-                  />
-                ))
-              ) : (
-                <Center>
-                  <Text>No bids meeting minimum threshold.</Text>
-                </Center>
-              )}
-              {filteredBidsBelow.length > 0 && (
-                <>
-                  <Divider label="Below Threshold" labelPosition="center" />
-                  {filteredBidsBelow.map((b) => (
-                    <ModelPlacementCard
-                      key={b.entityId}
-                      data={b}
-                      aboveThreshold={false}
-                      addBidFn={addBidFn}
-                      searchText={searchText}
-                      canBid={canBid}
-                    />
-                  ))}
-                </>
-              )}
-            </Stack>
+            <AuctionBidList
+              bidsAbove={filteredBidsAbove}
+              bidsBelow={filteredBidsBelow}
+              addBidFn={addBidFn}
+              searchText={searchText}
+              canBid={canBid}
+            />
           )}
         </Stack>
       )}

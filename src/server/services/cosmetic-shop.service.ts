@@ -650,9 +650,16 @@ export const purchaseCosmeticShopItem = async ({
         // Cross-creator resale: when bought through another creator's shop
         // (viaShopUserId) that actually resells this sellable item, split the 70%
         // pool by the item's sellerShare. Verified server-side so credit can't be
-        // spoofed; otherwise the creator keeps the full 70%.
+        // spoofed; otherwise the creator keeps the full 70%. Buying through your
+        // own shop pays no seller share — the kickback would be a self-discount.
         let resellerId: number | undefined;
-        if (viaShopUserId && creatorId && viaShopUserId !== creatorId && meta?.sellableByOthers) {
+        if (
+          viaShopUserId &&
+          creatorId &&
+          viaShopUserId !== creatorId &&
+          viaShopUserId !== userId &&
+          meta?.sellableByOthers
+        ) {
           const viaUser = await dbRead.user.findUnique({
             where: { id: viaShopUserId },
             select: { settings: true },

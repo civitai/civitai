@@ -1,10 +1,12 @@
 import type { ChipProps } from '@mantine/core';
 import {
+  Badge,
   Box,
   Button,
   Center,
   Chip,
   CloseButton,
+  Collapse,
   Divider,
   Group,
   Input,
@@ -15,8 +17,9 @@ import {
   Switch,
   Text,
   Modal,
+  UnstyledButton,
 } from '@mantine/core';
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import {
   Form,
@@ -37,7 +40,7 @@ import type {
 import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
+import { IconChevronDown, IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import {
   constants,
   creatorCardMaxStats,
@@ -58,6 +61,56 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import type { UserWithProfile } from '~/types/router';
+
+// Collapsed-by-default block so optional bulk pickers (badge highlight/hide)
+// don't crowd the modal for users who don't need them.
+function CollapsibleSection({
+  label,
+  description,
+  count,
+  children,
+}: {
+  label: string;
+  description: string;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  const [opened, setOpened] = useState(false);
+  return (
+    <Paper withBorder radius="md" p="sm">
+      <UnstyledButton onClick={() => setOpened((o) => !o)} className="w-full">
+        <Group justify="space-between" wrap="nowrap">
+          <Stack gap={0}>
+            <Group gap={6}>
+              <Text size="sm" fw={500}>
+                {label}
+              </Text>
+              {!!count && (
+                <Badge size="xs" variant="light">
+                  {count}
+                </Badge>
+              )}
+            </Group>
+            <Text size="xs" c="dimmed">
+              {description}
+            </Text>
+          </Stack>
+          <IconChevronDown
+            size={16}
+            style={{
+              flexShrink: 0,
+              transform: opened ? 'rotate(180deg)' : undefined,
+              transition: 'transform 150ms ease',
+            }}
+          />
+        </Group>
+      </UnstyledButton>
+      <Collapse in={opened}>
+        <Box mt="sm">{children}</Box>
+      </Collapse>
+    </Paper>
+  );
+}
 import type { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { userUpdateSchema } from '~/server/schema/user.schema';
 import { isEqual } from 'lodash-es';
@@ -521,20 +574,47 @@ export default function UserProfileEditModal() {
                 data={badges}
                 onShopClick={handleClose}
               />
-              <Input.Wrapper
+              <CollapsibleSection
                 label="Highlighted badges"
                 description="Pin badges to the top of your profile's badge list."
+                count={(privacySettings?.highlightedBadgeIds ?? []).length}
               >
-                <Box mt={4}>
-                  <HighlightedBadgesInput
-                    badges={badges}
-                    value={privacySettings?.highlightedBadgeIds ?? []}
-                    onChange={(highlightedBadgeIds) =>
-                      form.setValue('privacySettings', { ...privacySettings, highlightedBadgeIds })
-                    }
-                  />
-                </Box>
-              </Input.Wrapper>
+                <HighlightedBadgesInput
+                  badges={badges}
+                  value={privacySettings?.highlightedBadgeIds ?? []}
+                  onChange={(highlightedBadgeIds) =>
+                    form.setValue('privacySettings', {
+                      ...privacySettings,
+                      highlightedBadgeIds,
+                      // A pinned badge can't also be hidden.
+                      hiddenBadgeIds: (privacySettings?.hiddenBadgeIds ?? []).filter(
+                        (id) => !highlightedBadgeIds.includes(id)
+                      ),
+                    })
+                  }
+                />
+              </CollapsibleSection>
+              <CollapsibleSection
+                label="Hidden badges"
+                description="Hidden badges won't be shown on your profile."
+                count={(privacySettings?.hiddenBadgeIds ?? []).length}
+              >
+                <HighlightedBadgesInput
+                  variant="hide"
+                  badges={badges}
+                  value={privacySettings?.hiddenBadgeIds ?? []}
+                  onChange={(hiddenBadgeIds) =>
+                    form.setValue('privacySettings', {
+                      ...privacySettings,
+                      hiddenBadgeIds,
+                      // Hiding a badge unpins it.
+                      highlightedBadgeIds: (privacySettings?.highlightedBadgeIds ?? []).filter(
+                        (id) => !hiddenBadgeIds.includes(id)
+                      ),
+                    })
+                  }
+                />
+              </CollapsibleSection>
             </Stack>
             <Stack>
               <InputSelect

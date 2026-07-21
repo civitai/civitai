@@ -1023,7 +1023,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
   // Krea 2 - checkpoint locked, but base/turbo comfy variants support LoRA (medium/large FAL tiers do not); LoRA training via AI-Toolkit
-  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointAndLora },
+  {
+    ecosystemId: ECO.Krea2,
+    supportType: 'generation',
+    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.VAE],
+  },
   { ecosystemId: ECO.Krea2, supportType: 'training', modelTypes: loraOnly },
 
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
@@ -1053,11 +1057,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // HappyHorse - checkpoint only
   { ecosystemId: ECO.HappyHorse, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Anima - checkpoint, LORA and DoRA generation, LORA training
+  // Anima - checkpoint, LORA, DoRA and VAE generation, LORA training
   {
     ecosystemId: ECO.Anima,
     supportType: 'generation',
-    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.DoRA],
+    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.DoRA, ModelType.VAE],
   },
   { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: loraOnly },
 
@@ -4357,6 +4361,12 @@ export const baseModelGroups: string[] = [...new Set(ecosystems.map((x) => x.key
  * Array of active (non-hidden, non-disabled) base model names
  */
 export const activeBaseModels: string[] = getActiveBaseModels().map((x) => x.name);
+
+/**
+ * Default base model for brand-new models/versions that have no prior context
+ * (no previous version, no remembered last-used selection).
+ */
+export const defaultBaseModel: BaseModel = 'Anima';
 
 // -----------------------------------------------------------------------------
 // Constant Exports

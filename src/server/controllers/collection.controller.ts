@@ -221,7 +221,12 @@ export const saveItemHandler = async ({
   const { user, ip } = ctx;
   try {
     const status = await saveItemInCollections({
-      input: { ...input, userId: user.id, isModerator: user.isModerator },
+      input: {
+        ...input,
+        userId: user.id,
+        isModerator: user.isModerator,
+        canAccessUserChallenges: ctx.features.userChallenges,
+      },
     });
 
     if (status === 'added' && input.type) {
@@ -303,7 +308,15 @@ export const bulkSaveItemsHandler = async ({
     if (!(permissions.write || permissions.writeReview))
       throw throwAuthorizationError('You do not have permission to add items to this collection.');
 
-    const resp = await bulkSaveItems({ input: { ...input, userId, isModerator }, permissions });
+    const resp = await bulkSaveItems({
+      input: {
+        ...input,
+        userId,
+        isModerator,
+        canAccessUserChallenges: ctx.features.userChallenges,
+      },
+      permissions,
+    });
 
     for (const imgId of resp.imageIds) {
       await updateEntityMetric({
@@ -530,7 +543,16 @@ export const addSimpleImagePostHandler = async ({
 
     const imageIds = postImages.map((image) => image.id);
 
-    await bulkSaveItems({ input: { collectionId, imageIds, userId, isModerator }, permissions });
+    await bulkSaveItems({
+      input: {
+        collectionId,
+        imageIds,
+        userId,
+        isModerator,
+        canAccessUserChallenges: ctx.features.userChallenges,
+      },
+      permissions,
+    });
 
     return {
       post,

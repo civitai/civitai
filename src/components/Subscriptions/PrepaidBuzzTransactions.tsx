@@ -89,7 +89,7 @@ function PrepaidBuzzTransactionsInner({ buzzType }: { buzzType?: string }) {
     start: datesRef.current.start,
     end: datesRef.current.end,
     limit: 200,
-    accountType: buzzType === 'green' ? 'green' : 'yellow',
+    accountTypes: [buzzType === 'green' ? 'green' : 'yellow'],
   });
 
   const { data: codesData, isLoading: codesLoading } =

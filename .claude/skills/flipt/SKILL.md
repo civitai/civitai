@@ -21,13 +21,37 @@ node .claude/skills/flipt/flipt.mjs <command> [options]
 |---------|-------------|
 | `list` | List all flags |
 | `get <key>` | Get details for a specific flag |
-| `create <key>` | Create a new flag (boolean by default) |
-| `enable <key>` | Enable a flag (set to true) |
-| `disable <key>` | Disable a flag (set to false) |
-| `delete <key>` | Delete a flag (requires confirmation) |
-| `add-variant <flag> <variant>` | Add a variant to an existing flag |
-| `remove-variant <flag> <variant>` | Remove a variant from a flag |
-| `set-rollout <flag> <variant>` | Set rollout rule for a variant |
+| `create` / `enable` / `disable` / `delete` | Refuse with exit 2 and print the GitOps steps — see below |
+| `add-variant` / `remove-variant` / `set-rollout` | Same |
+
+**Reads work over the API; writes are deliberately refused.** This Flipt is
+**v2** (v2.10.0), GitOps-backed by `civitai/flipt-state` (`poll_interval: 30s`,
+so merge → visible takes up to ~30s).
+
+Writes are blocked by choice, not by capability. There is **no Flipt auth at
+all** — the `Authorization: Bearer` value in `.env` is a Traefik ingress bypass
+header, not a Flipt credential, and Flipt applies no authz behind it. The pod
+holds an SSH deploy key for `flipt-state`, and v2's git-write model implies a
+write would **commit and push to `main` directly** — inferred from the manifest,
+not observed. A write path that *may* bypass review on a file gating production
+is reason enough to refuse either way, which is why this skill does. Change flags
+by PR to `civitai/flipt-state`.
+
+Treat that bearer value as a real secret: read it from env, never inline it, and
+don't copy it into anything new.
+
+Flags live at `/api/v2/environments/{env}/namespaces/{ns}/resources/flipt.core.Flag`.
+The environment (`civitai-app`) and namespace (`default`) are discovered at
+runtime — the environment marked `default: true`, then its `default` namespace —
+so a second environment can't silently redirect reads. Override with
+`FLIPT_ENVIRONMENT` / `FLIPT_NAMESPACE` if ever needed.
+
+Responses carry a `revision` equal to the `flipt-state` commit SHA, which is the
+quickest way to confirm a flag change has actually synced:
+
+```bash
+node .claude/skills/flipt/flipt.mjs list --json | head -3   # revision == your commit
+```
 
 ### Options
 
@@ -53,23 +77,9 @@ node .claude/skills/flipt/flipt.mjs list
 # Get a specific flag
 node .claude/skills/flipt/flipt.mjs get gift-card-vendor-waifu-way
 
-# Create a new flag (disabled by default)
-node .claude/skills/flipt/flipt.mjs create my-new-feature -d "Enable new feature for testing"
-
-# Create a flag that's enabled immediately
-node .claude/skills/flipt/flipt.mjs create my-feature --enabled -d "Already enabled feature"
-
-# Enable a flag
-node .claude/skills/flipt/flipt.mjs enable my-new-feature
-
-# Disable a flag
-node .claude/skills/flipt/flipt.mjs disable my-new-feature
-
-# Delete a flag (with confirmation)
-node .claude/skills/flipt/flipt.mjs delete old-flag
-
-# Delete without confirmation
-node .claude/skills/flipt/flipt.mjs delete old-flag --force
+# Creating / toggling a flag goes through GitOps — see below.
+# These commands exit 2 and print the steps:
+node .claude/skills/flipt/flipt.mjs disable my-feature
 
 # JSON output for scripting
 node .claude/skills/flipt/flipt.mjs list --json
@@ -116,7 +126,7 @@ flags:
 
 ## Safety Notes
 
-1. **API changes are temporary**: The Git repo is the source of truth
+1. **Do not write through the API**: it pushes an unreviewed commit to `flipt-state` main
 2. **Test before enabling**: Use segments for gradual rollout
 3. **Coordinate with team**: Others may be editing the same flags
 

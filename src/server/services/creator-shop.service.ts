@@ -427,7 +427,7 @@ export const archiveCreatorShopItem = async ({
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Item is already archived');
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
-  return dbWrite.cosmeticShopItem.update({
+  const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
       status: CosmeticShopItemStatus.Archived,
@@ -437,6 +437,20 @@ export const archiveCreatorShopItem = async ({
     },
     select: creatorShopItemSelect,
   });
+
+  // An archived item can't be featured — free up its featured slot (owner must
+  // re-feature it after unarchiving).
+  if (existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return updated;
 };
 
 export const unarchiveCreatorShopItem = async ({
@@ -463,6 +477,36 @@ export const unarchiveCreatorShopItem = async ({
     },
     select: creatorShopItemSelect,
   });
+};
+
+export const deleteCreatorShopItem = async ({
+  userId,
+  isModerator,
+  id,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  id: number;
+}) => {
+  const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // Hard delete. FK cascades wipe the purchase records (sales totals) and any
+  // official-shop section links. Buyers keep what they bought: UserCosmetic is
+  // keyed by cosmeticId and the Cosmetic row is intentionally left in place.
+  await dbWrite.cosmeticShopItem.delete({ where: { id } });
+
+  // Free its featured slot. Stale ids in other creators' resoldItemIds
+  // self-heal — the lookups drop ids that no longer resolve to an item.
+  if (existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return { id, purchases: existing._count.purchases };
 };
 
 // A creator's own items (any status) for the "Manage your shop" view. The router
@@ -804,12 +848,15 @@ export const reviewCreatorShopItem = async ({
       status: true,
       meta: true,
       title: true,
+      addedById: true,
       cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
     },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
   if (item.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be reviewed');
+  if (action === 'revert' && item.status !== CosmeticShopItemStatus.Published)
+    throw throwBadRequestError('Only published items can be reverted to pending review');
 
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
@@ -829,7 +876,9 @@ export const reviewCreatorShopItem = async ({
           },
           select: creatorShopItemSelect,
         })
-      : // reject = terminal; request-changes = creator can edit & resubmit.
+      : // reject = terminal; request-changes = creator can edit & resubmit;
+        // revert = unpublish back into the review queue. The note is kept on
+        // rejectionReason so both the queue and the creator see why.
         await dbWrite.cosmeticShopItem.update({
           where: { id },
           data: {
@@ -837,6 +886,8 @@ export const reviewCreatorShopItem = async ({
             status:
               action === 'reject'
                 ? CosmeticShopItemStatus.Rejected
+                : action === 'revert'
+                ? CosmeticShopItemStatus.PendingReview
                 : CosmeticShopItemStatus.RequestedChanges,
             rejectionReason: rejectionReason ?? null,
           },
@@ -857,6 +908,17 @@ export const reviewCreatorShopItem = async ({
     });
   }
 
+  // An unpublished item can't stay featured — free up its slot.
+  if (action === 'revert' && item.addedById) {
+    const settings = await getCreatorShopSettings({ userId: item.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: item.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
   // Let the creator know the review outcome (best-effort).
   const creatorId = item.cosmetic.createdById;
   if (creatorId) {
@@ -866,6 +928,8 @@ export const reviewCreatorShopItem = async ({
         ? 'creator-shop-item-approved'
         : action === 'request-changes'
         ? 'creator-shop-item-changes-requested'
+        : action === 'revert'
+        ? 'creator-shop-item-reverted'
         : 'creator-shop-item-rejected';
     await createNotification({
       type,

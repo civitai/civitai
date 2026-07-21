@@ -1,0 +1,91 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  name: debezium-connect-cluster
+  namespace: metric-watcher
+spec:
+  version: 3.9.0
+  replicas: 1
+  bootstrapServers: metric-watcher-cluster-kafka-bootstrap.metric-watcher.svc:9092
+  template:
+    pod:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+  build:
+    output:
+      type: docker
+      image: ghcr.io/civitai/civitai-debezium-connect:latest
+      pushSecret: ghcr-secret
+    plugins:
+      - name: debezium-postgres-connector
+        artifacts:
+          - type: tgz
+            url: https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/2.5.4.Final/debezium-connector-postgres-2.5.4.Final-plugin.tar.gz
+  config:
+    group.id: debezium-connect-cluster
+    config.storage.topic: debezium-connect-cluster-configs
+    config.storage.replication.factor: 1
+    offset.storage.topic: debezium-connect-cluster-offsets
+    offset.storage.replication.factor: 1
+    status.storage.topic: debezium-connect-cluster-status
+    status.storage.replication.factor: 1
+    config.storage.min.insync.replicas: 1
+    offset.storage.min.insync.replicas: 1
+    status.storage.min.insync.replicas: 1
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: false
+    value.converter.schemas.enable: false
+    config.providers: secrets,configmaps
+    config.providers.secrets.class: io.strimzi.kafka.KubernetesSecretConfigProvider
+    config.providers.configmaps.class: io.strimzi.kafka.KubernetesConfigMapConfigProvider
+    # Performance tuning for production
+    offset.flush.interval.ms: 5000           # Commit offsets every 5 seconds (was 60s default)
+    offset.flush.timeout.ms: 5000            # Timeout for offset commits
+    producer.compression.type: gzip          # Enable compression (gzip supported by KafkaJS)
+    producer.batch.size: 32768               # Larger producer batches
+    producer.linger.ms: 100                  # Small delay for batching
+    producer.buffer.memory: 134217728        # 128MB buffer
+    max.request.size: 5242880                # 5MB max message size (was 1MB)
+    producer.max.request.size: 5242880       # 5MB max message size for producer
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  jvmOptions:
+    "-Xmx": "1g"
+    "-Xms": "1g"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: debezium-connect-api
+  namespace: metric-watcher
+spec:
+  selector:
+    app.kubernetes.io/name: kafka-connect
+    app.kubernetes.io/instance: debezium-connect-cluster
+  ports:
+    - name: rest-api
+      port: 8083
+      targetPort: 8083
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: debezium-connect-nodeport
+  namespace: metric-watcher
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: kafka-connect
+    app.kubernetes.io/instance: debezium-connect-cluster
+  ports:
+    - name: rest-api
+      port: 8083
+      targetPort: 8083
+      nodePort: 30083

@@ -84,6 +84,7 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
+import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -185,24 +186,15 @@ export const getServerSideProps = createServerSideProps({
       // Fetch challenge to check slug and prefetch for client hydration
       const challenge = await ssg.challenge.getById.fetch({ id: result.data.id }).catch(() => null);
 
-      // Redirect to canonical slug URL if slug is missing or incorrect
       if (challenge) {
-        const correctSlug = slugit(challenge.title);
-        const currentSlug = result.data.slug?.join('/');
-        // Skip the redirect when the canonical slug is empty — slugit() strips
-        // all non-Latin-alphanumeric chars (strict mode), so CJK/Cyrillic/emoji/
-        // dots-only titles slugify to ''. Redirecting to /challenges/<id>/ (empty
-        // slug) gets trailing-slash-normalized back to /challenges/<id>, which
-        // never matches '' and loops forever (ERR_TOO_MANY_REDIRECTS).
-        if (correctSlug && currentSlug !== correctSlug) {
-          const queryString = buildPassthroughQuery(ctx.query);
-          return {
-            redirect: {
-              destination: `/challenges/${result.data.id}/${correctSlug}${queryString}`,
-              permanent: false,
-            },
-          };
-        }
+        const destination = getCanonicalSlugDestination({
+          basePath: '/challenges',
+          id: result.data.id,
+          title: challenge.title,
+          currentSlug: result.data.slug?.join('/'),
+          queryString: buildPassthroughQuery(ctx.query),
+        });
+        if (destination) return { redirect: { destination, permanent: false } };
       }
     }
 
@@ -550,6 +542,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <Badge size="lg" radius="sm" color="blue">
                 Upcoming
               </Badge>
+            ) : isCancelled ? (
+              <IconBadge size="lg" radius="sm" color="red" icon={<IconX size={16} />}>
+                Cancelled
+              </IconBadge>
             ) : null}
 
             {/* Countdown (active only) */}

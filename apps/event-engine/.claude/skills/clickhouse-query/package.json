@@ -1,0 +1,9 @@
+{
+  "name": "clickhouse-query-skill",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "ClickHouse query skill for Claude Code",
+  "dependencies": {
+    "@clickhouse/client": "^1.8.0"
+  }
+}

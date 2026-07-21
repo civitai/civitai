@@ -55,6 +55,8 @@ import {
   approveRequestSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
+  agentReviewChatSchema,
+  getAgentReviewSchema,
   getPublishRequestDiffSchema,
   getPublishRequestScreenshotsSchema,
   getReviewStatusSchema,
@@ -64,6 +66,7 @@ import {
   mintReviewBlockTokenSchema,
   previewRequestSchema,
   rejectRequestSchema,
+  startAgentReviewSchema,
   teardownPreviewSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
@@ -1456,6 +1459,121 @@ export const blocksRouter = router({
           modUserId: ctx.user.id,
         });
       } catch (err) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW (App Blocks P1) — dispatch an ephemeral, sandboxed
+   * review agent for a PENDING publish request. Provisions the agent pod (pulls
+   * the reviewed bundle, produces a structured report, posts it back), torn down
+   * on the approve/reject decision.
+   *
+   * GATING: moderatorProcedure, NOT appDeveloperProcedure. The agent analyses an
+   * ADVERSARIAL bundle and produces mod decision-support; letting authors trigger
+   * reviews of their own apps is the wrong trust boundary, and every sibling
+   * review op (previewRequest / getReviewStatus / getPublishRequestDiff) is
+   * moderator-gated. The extra `app-blocks-agentic-review` flag check (on top of
+   * moderatorProcedure + the isModerator belt + enforceAppBlocksFlag) makes the
+   * whole feature ship DARK — the flag does not exist in Flipt yet, so
+   * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
+   */
+  startAgentReview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(startAgentReviewSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Agentic review is restricted to civitai team');
+      }
+      const { isAppBlocksAgenticReviewEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('Agentic review is not enabled');
+      }
+      const { startAgentReview } = await import('~/server/services/blocks/agent-review.service');
+      try {
+        return await startAgentReview({
+          publishRequestId: input.publishRequestId,
+          modUserId: ctx.user.id,
+        });
+      } catch (err) {
+        // Preserve a typed TRPCError's CODE (the service raises CONFLICT — "a
+        // review is already running" — which the P2 panel keys on to fall into
+        // the running state); only opaque errors collapse to BAD_REQUEST.
+        if (err instanceof TRPCError) throw err;
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW (App Blocks P2) — READ path. Returns the latest agent
+   * report row for a PENDING publish request (or null). This is the poll + render
+   * source for the `AgentReviewPanel` in the on-site review modal.
+   *
+   * Gated IDENTICALLY to startAgentReview (moderatorProcedure + the isModerator
+   * belt + enforceAppBlocksFlag + the dedicated mod-only `app-blocks-agentic-
+   * review` flag) so it ships DARK — the flag does not exist in Flipt yet, so
+   * isAppBlocksAgenticReviewEnabled fail-closes to false and this rejects.
+   */
+  getAgentReview: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getAgentReviewSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Agentic review is restricted to civitai team');
+      }
+      const { isAppBlocksAgenticReviewEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('Agentic review is not enabled');
+      }
+      const { getAgentReport } = await import(
+        '~/server/services/blocks/app-review-report.service'
+      );
+      return getAgentReport(input.publishRequestId);
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT proxy. A moderator
+   * viewing a live/complete report can ask the SAME ephemeral agent pod follow-up
+   * questions ("why did you flag scope X", "show the call site"). Non-streaming
+   * request/response (v1); streaming SSE is a follow-up.
+   *
+   * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
+   * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
+   * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
+   * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
+   * rejects. The service loads the report, requires the pod to be up
+   * (running|complete|cost-capped → else PRECONDITION_FAILED), proxies to the
+   * pod's in-cluster gateway with the DERIVED bearer, and returns `{ reply }`.
+   */
+  agentReviewChat: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(agentReviewChatSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Agentic review is restricted to civitai team');
+      }
+      const { isAppBlocksAgenticReviewEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('Agentic review is not enabled');
+      }
+      const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
+      try {
+        return await agentReviewChat({
+          publishRequestId: input.publishRequestId,
+          messages: input.messages,
+        });
+      } catch (err) {
+        // Preserve the service's typed codes (PRECONDITION_FAILED = pod not up;
+        // BAD_GATEWAY = agent unreachable/timeout/non-200) so the client can
+        // render the right inline message; only opaque errors collapse to
+        // BAD_REQUEST. NEVER a 500 leak.
+        if (err instanceof TRPCError) throw err;
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
       }
     }),
@@ -5261,9 +5379,25 @@ async function submitCustomComfyWorkflow(opts: {
   });
 
   // ── Post-paid budget belt (plan §5.3 — THE crux) ─────────────────────────
-  // `ceiling === recipe.maxBuzz === ceil(stepTimeoutSeconds)` (enforced at
-  // registry load): the step `timeout` physically caps the job at this many Buzz.
-  const ceiling = recipe.maxBuzz;
+  // v1.1: the budget is PER ENGINE — resolve BOTH the ceiling AND the matching
+  // step timeout from the parsed params. `ceiling === maxBuzz === ceil(
+  // stepTimeoutSeconds)` (enforced per-engine at registry load): the step
+  // `timeout` physically caps the job at this many Buzz, so the reservation below
+  // and the timeout stamped on the step MUST come from the same budget.
+  const { maxBuzz: ceiling, stepTimeoutSeconds } = recipe.budgetFor(params);
+
+  // Resolve the engine + recipe id purely for per-engine settle-time
+  // OBSERVABILITY (persisted in the settle record, read at terminal to emit
+  // `civitai_app_block_customcomfy_actual_buzz` / `_wallclock_seconds`). Uses the
+  // recipe's OWN `resolveEngine` — the SAME resolution that drives the CHARGED
+  // ceiling (`budgetFor`) and the built graph — so the observed LABEL can never
+  // drift from what was actually charged/run (a latent mislabel for any future
+  // recipe whose `engines[0] !== its default`). Both labels are strict enums
+  // (engine ∈ 3, recipe ∈ 1) → cardinality-safe. Never affects spend. The
+  // `?? 'unknown'` stays as truly-unreachable defense (resolveEngine always
+  // returns a bounded engine id).
+  const engine: string = recipe.resolveEngine(params) ?? 'unknown';
+  const recipeId: string = recipe.id;
 
   // (1) STATIC pre-submit gate — the post-paid analog of the txt2img whatIf
   // `cost > buzzBudget` gate. Because the timeout caps the job at `maxBuzz` and we
@@ -5380,14 +5514,25 @@ async function submitCustomComfyWorkflow(opts: {
     }
   }
 
-  // ── Build + submit. `createBlockCustomComfyStep` stamps the recipe's aggressive
+  // ── Build + submit. `createBlockCustomComfyStep` stamps the resolved per-engine
   // `timeout` — the physical Buzz ceiling. On ANY throw AFTER reserving, refund
   // the CEILING (not 0) on ALL reservation keys and re-throw (refund-on-throw,
   // plan §7).
   let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  // Hoisted out of the try so the post-submit spend-attribution closure (which
+  // runs AFTER the try/catch) can read the REALIZED per-account debit —
+  // `submitted` is a try-block `const` and is out of scope there. Mirrors the
+  // txt2img path (~:3646).
+  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  // Captured just before the orchestrator submit → the server-side proxy for the
+  // job's submit instant, so the settle-time wall-clock metric measures
+  // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
+  const submittedAt = Date.now();
   try {
     const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
-    const step = createBlockCustomComfyStep(recipe, stepInput);
+    // Stamp the SAME per-engine timeout the ceiling above was reserved against —
+    // the timeout is the physical cap for that reservation (v1.1).
+    const step = createBlockCustomComfyStep(stepInput, stepTimeoutSeconds);
     // Parameterized tags: emit the recipe id + 'customComfy' (NOT 'txt2img'),
     // preserving the `app-block:*` provenance tags the subqueue read depends on.
     const tags = buildWorkflowTags(claims, recipe.id, 'customComfy');
@@ -5402,6 +5547,7 @@ async function submitCustomComfyWorkflow(opts: {
       },
     });
     snapshot = snapshotFromWorkflow(submitted);
+    realizedTransactions = submitted.transactions;
   } catch (e) {
     await refundBlockBuzzSpend(buzzCapKey, ceiling);
     if (appSpendReserve) {
@@ -5437,6 +5583,10 @@ async function submitCustomComfyWorkflow(opts: {
       appSpendKey: appSpendReserve?.key ?? null,
       ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
       ceiling,
+      // Observability-only (per-engine runtime/cost at settle) — never affects the refund.
+      engine,
+      recipe: recipeId,
+      submittedAt,
     });
     // G6 — persistent output queue (best-effort, non-dev). Same posture as
     // txt2img so a customComfy gen rebuilds in listMyWorkflows on reload.
@@ -5459,7 +5609,149 @@ async function submitCustomComfyWorkflow(opts: {
     }
   }
 
+  // ── Durable audit + attribution (parity with the txt2img path ~:3725,3810).
+  // The customComfy branch early-returned before these writes, so a successful
+  // recipe generation billed real Buzz but left NO durable trail: no
+  // per-user activity row (block_scope_invocations) and no author-bounty basis
+  // (block_spend_attribution). Both are ADDED here, server-derived from the
+  // VERIFIED token claims (never client input), fire-and-forget with each
+  // write's OWN try/catch so an audit failure can never add latency to — or
+  // break — the already-billed submit response.
+
+  // (1) block_scope_invocations — the per-user activity-feed row ("this app ran
+  // a workflow on your behalf"). Fires UNCONDITIONALLY after the submit returns
+  // (even a non-throwing 'failed' snapshot logs, mapped to a 500-ish code),
+  // mirroring the txt2img call. The dev/ephemeral synthetic-app case (a
+  // PRE-APPROVAL app carries a synthetic non-FK `appBlockId`) is handled INSIDE
+  // recordScopeInvocation: `dev` routes the FK-failing insert to the
+  // `appBlockId: null` + `synthetic_app_id` retry so the row persists.
+  {
+    const invocationCost = snapshot.cost?.total ?? ceiling;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        detail: {
+          action: 'workflow.submit',
+          amount:
+            typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+        },
+        // Dev token → route a synthetic non-FK appBlockId to the nullable-appBlockId
+        // + synthetic_app_id path so the pre-approval audit row persists.
+        dev: claims.dev === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  // (2) block_spend_attribution — the author-bounty spend basis (TRACK-ONLY,
+  // status='tracked' / rate_card_version='unrated' / share=0 today; the payout
+  // rail backpays later). One row per generation that spends the viewer's Buzz,
+  // server-derived from the verified block-JWT (appId/appBlockId/blockInstanceId
+  // from the token, spender from `sub`, author looked up from the app's
+  // OauthClient) — no client-supplied attribution, so it is forge-safe.
+  // Idempotent on (workflowId, appBlockId), so a re-poll/retry can't
+  // double-attribute. Reuses the SAME service the txt2img path uses; the
+  // payout-safe currency basis (paid green/yellow vs free blue) is derived off
+  // the REALIZED per-account debit so a future non-zero share only ever accrues
+  // off the user's PAID portion. For a synthetic/ephemeral appId the OauthClient
+  // lookup misses and the write is inert (caught below), matching txt2img.
+  // customComfy carries no `sharedContentKey` (its wire body is
+  // recipe+params `.strict()`), so the base track-row is written without it.
+  //
+  // Only on a REAL workflow id + non-failed status (a failed/whatif sentinel has
+  // no generation to attribute), mirroring the txt2img guard.
+  const spendWorkflowId = snapshot.workflowId;
+  if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        // Fall back to the realized snapshot cost (then the reserved ceiling)
+        // when no paid debit is surfaced — the conservative FREE floor, which
+        // isPayoutEligibleBuzz EXCLUDES → zero bounty (anti-farming preserved).
+        snapshot.cost?.total ?? ceiling
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        // customComfy is recipe-based (no single user-picked model to attribute).
+        modelId: null,
+        // customComfy has no sharedContentKey field (recipe+params only) → omit.
+        sharedContentKey: null,
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
   return { snapshot };
+}
+
+/**
+ * Derive the PAYOUT-SAFE currency basis (buzzType + buzzAmount) for a block
+ * spend-attribution row off the orchestrator's REALIZED per-account
+ * transactions. Mirrors the inline txt2img derivation (~:3871) so a customComfy
+ * generation attributes on the SAME rule without touching that byte-frozen path:
+ *
+ *  - A generation can split across FREE (blue) and PAID (green/yellow) Buzz. The
+ *    orchestrator drains blue FIRST, so `transactions.list` carries one entry
+ *    per charge with `type` (debit/credit), `amount`, and `accountType`.
+ *  - ONLY the paid portion earns — filter to payout-eligible (green/yellow)
+ *    entries, NET debits against same-workflow credits (partial refund /
+ *    correction), and stamp that paid account + net-paid amount.
+ *  - When NO net paid debit is present (blue-only, cache-hit/0-cost, or a
+ *    snapshot returned WITHOUT transactions) fall back to the conservative FREE
+ *    floor (blue + `fallbackCost`), which `isPayoutEligibleBuzz` EXCLUDES → zero
+ *    bounty. Free-Buzz spend can never accrue a bounty; an absent debit never pays.
+ *  - Defensive: if BOTH green and yellow appear (the contract offers only
+ *    ['blue', green|yellow], so at most one paid account is touched today) we
+ *    refuse to conflate them and fall back to the blue floor.
+ *
+ * Forge-safe: `realizedTransactions` is the orchestrator's authoritative
+ * response, never client input.
+ */
+function deriveBlockSpendBasis(
+  realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'],
+  isGreen: boolean,
+  fallbackCost: number
+): { buzzType: BuzzSpendType; buzzAmount: number } {
+  const paidEntries = (realizedTransactions?.list ?? []).filter((t) =>
+    isPayoutEligibleBuzz(t.accountType)
+  );
+  const distinctPaidTypes = new Set(paidEntries.map((t) => t.accountType));
+  const netPaidAmount =
+    distinctPaidTypes.size > 1
+      ? 0
+      : paidEntries.reduce(
+          (sum, t) =>
+            sum + (t.type === 'debit' ? Math.abs(t.amount ?? 0) : -Math.abs(t.amount ?? 0)),
+          0
+        );
+  const hasPaidDebit = distinctPaidTypes.size === 1 && netPaidAmount > 0;
+  const paidType = hasPaidDebit ? (paidEntries[0].accountType as BuzzSpendType) : undefined;
+  // paidType is set iff hasPaidDebit; otherwise the conservative free floor
+  // (getBlockAllowedAccountTypes[0] === 'blue' in both maturity branches).
+  const buzzType: BuzzSpendType = paidType ?? getBlockAllowedAccountTypes(isGreen)[0];
+  const buzzAmount = hasPaidDebit ? netPaidAmount : Math.ceil(fallbackCost);
+  return { buzzType, buzzAmount };
 }
 
 /**

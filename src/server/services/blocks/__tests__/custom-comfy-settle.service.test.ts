@@ -11,7 +11,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * assert the exact GET+DEL idempotency claim and the exact decrBy deltas.
  */
 
-const { mockSysRedis, mockRefundAppSpend, mockRefundDevSessionBuzz } = vi.hoisted(() => ({
+const {
+  mockSysRedis,
+  mockRefundAppSpend,
+  mockRefundDevSessionBuzz,
+  mockObserveActualBuzz,
+  mockObserveWallclock,
+} = vi.hoisted(() => ({
   mockSysRedis: {
     get: vi.fn(async () => null as string | null),
     set: vi.fn(async () => undefined),
@@ -23,6 +29,11 @@ const { mockSysRedis, mockRefundAppSpend, mockRefundDevSessionBuzz } = vi.hoiste
   // (heavy, k8s-client-pulling) dev-tunnel module at its boundary so the settle's
   // third refund is assertable without loading the real service.
   mockRefundDevSessionBuzz: vi.fn(async () => undefined),
+  // Per-engine observability emit — mocked at the metrics-module boundary so the
+  // settle's engine/recipe label + observed value are assertable without the real
+  // prom-client registry.
+  mockObserveActualBuzz: vi.fn(() => undefined),
+  mockObserveWallclock: vi.fn(() => undefined),
 }));
 
 vi.mock('~/server/redis/client', () => ({
@@ -34,6 +45,10 @@ vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
 }));
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   refundDevSessionBuzz: (...a: unknown[]) => mockRefundDevSessionBuzz(...(a as [])),
+}));
+vi.mock('~/server/metrics/app-block-runtime.metrics', () => ({
+  observeCustomComfyActualBuzz: (...a: unknown[]) => mockObserveActualBuzz(...(a as [])),
+  observeCustomComfyWallclockSeconds: (...a: unknown[]) => mockObserveWallclock(...(a as [])),
 }));
 
 import {
@@ -53,6 +68,8 @@ beforeEach(() => {
     mockSysRedis.decrBy,
     mockRefundAppSpend,
     mockRefundDevSessionBuzz,
+    mockObserveActualBuzz,
+    mockObserveWallclock,
   ]) {
     fn.mockReset();
   }
@@ -73,6 +90,9 @@ function seedRecord(
     appSpendKey: string | null;
     devSessionId: string | null;
     ceiling: number;
+    engine: string;
+    recipe: string;
+    submittedAt: number;
   }> = {}
 ) {
   const record = { buzzCapKey: BUZZ_KEY, appSpendKey: APP_KEY, ceiling: 180, ...over };
@@ -91,8 +111,35 @@ describe('persistCustomComfySettle', () => {
     expect(mockSysRedis.set).toHaveBeenCalledTimes(1);
     const [key, value, opts] = mockSysRedis.set.mock.calls[0] as [string, string, { EX: number }];
     expect(key).toBe(`${SETTLE_PREFIX}:wf_1`);
-    expect(JSON.parse(value)).toEqual({ buzzCapKey: BUZZ_KEY, appSpendKey: APP_KEY, ceiling: 180 });
+    // submittedAt defaults to now() when the caller omits it (observability-only).
+    expect(JSON.parse(value)).toEqual({
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      ceiling: 180,
+      submittedAt: expect.any(Number),
+    });
     expect(opts.EX).toBe(25 * 60 * 60);
+  });
+
+  it('carries the engine + recipe + submittedAt when provided (per-engine observability)', async () => {
+    await persistCustomComfySettle({
+      workflowId: 'wf_1',
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      ceiling: 150,
+      engine: 'flux2-klein',
+      recipe: 'seamless-pano-360',
+      submittedAt: 1_700_000_000_000,
+    });
+    const [, value] = mockSysRedis.set.mock.calls[0] as [string, string, { EX: number }];
+    expect(JSON.parse(value)).toEqual({
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      ceiling: 150,
+      engine: 'flux2-klein',
+      recipe: 'seamless-pano-360',
+      submittedAt: 1_700_000_000_000,
+    });
   });
 
   it('F4: persists the dev-session id when a dev tunnel reserved the ceiling', async () => {
@@ -109,6 +156,7 @@ describe('persistCustomComfySettle', () => {
       appSpendKey: null,
       devSessionId: DEV_SESSION_ID,
       ceiling: 180,
+      submittedAt: expect.any(Number),
     });
   });
 
@@ -123,7 +171,12 @@ describe('persistCustomComfySettle', () => {
     const [, value] = mockSysRedis.set.mock.calls[0] as [string, string, { EX: number }];
     const parsed = JSON.parse(value);
     expect(parsed).not.toHaveProperty('devSessionId');
-    expect(parsed).toEqual({ buzzCapKey: BUZZ_KEY, appSpendKey: APP_KEY, ceiling: 180 });
+    expect(parsed).toEqual({
+      buzzCapKey: BUZZ_KEY,
+      appSpendKey: APP_KEY,
+      ceiling: 180,
+      submittedAt: expect.any(Number),
+    });
   });
 
   it('no-ops on an empty workflowId (never writes)', async () => {
@@ -236,5 +289,103 @@ describe('settleCustomComfySpend', () => {
     mockSysRedis.get.mockRejectedValue(new Error('redis down'));
     await expect(settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 })).resolves.toBeUndefined();
     expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
+  });
+
+  // ── Per-engine runtime/cost OBSERVABILITY (instrument-ahead-of-demand) ────────
+  describe('per-engine metric emit', () => {
+    it('observes the settled GPU-runtime (actual Buzz) + wall-clock with engine/recipe labels', async () => {
+      seedRecord({
+        ceiling: 150,
+        engine: 'flux2-klein',
+        recipe: 'seamless-pano-360',
+        submittedAt: 1_700_000_000_000,
+      });
+      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 42 });
+      // GPU-runtime ≈ billed actual Buzz — the ceil'd `actual` (42), labeled by engine.
+      expect(mockObserveActualBuzz).toHaveBeenCalledWith('flux2-klein', 'seamless-pano-360', 42);
+      // Wall-clock incl. queue (submit→terminal observation) — a Number of seconds.
+      expect(mockObserveWallclock).toHaveBeenCalledWith(
+        'flux2-klein',
+        'seamless-pano-360',
+        expect.any(Number)
+      );
+    });
+
+    it('still observes actual Buzz when the job spent the FULL ceiling (emit precedes the refund early-return)', async () => {
+      seedRecord({ ceiling: 150, engine: 'flux2-klein', recipe: 'seamless-pano-360' });
+      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 200 });
+      // refund is 0 (actual 200 >= ceiling 150) — but the ceiling-pressing case is
+      // exactly what we most want to see, so the emit must fire regardless.
+      expect(mockObserveActualBuzz).toHaveBeenCalledWith('flux2-klein', 'seamless-pano-360', 200);
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalled(); // still no refund
+    });
+
+    it('emits actual Buzz but NOT wall-clock when the record has no submittedAt', async () => {
+      seedRecord({ ceiling: 90, engine: 'zimage-turbo', recipe: 'seamless-pano-360' });
+      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 20 });
+      expect(mockObserveActualBuzz).toHaveBeenCalledWith('zimage-turbo', 'seamless-pano-360', 20);
+      expect(mockObserveWallclock).not.toHaveBeenCalled();
+    });
+
+    it('emits NEITHER metric for a legacy record with no engine (back-compat safe)', async () => {
+      seedRecord({ ceiling: 180 }); // pre-deploy record shape — no engine
+      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 });
+      expect(mockObserveActualBuzz).not.toHaveBeenCalled();
+      expect(mockObserveWallclock).not.toHaveBeenCalled();
+      // …but the refund still happens (observability is orthogonal to settle).
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+    });
+
+    it('a `recipe`-less record falls back to the "unknown" recipe label', async () => {
+      seedRecord({ ceiling: 90, engine: 'zimage-turbo' }); // engine but no recipe
+      await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 20 });
+      expect(mockObserveActualBuzz).toHaveBeenCalledWith('zimage-turbo', 'unknown', 20);
+    });
+
+    // ── Finding-1 regression guard: the MONEY path must survive a throwing emit.
+    // The two helpers each carry an internal try/catch, but the never-throw
+    // guarantee on the refund path must NOT depend on that never regressing —
+    // the settle service wraps the emit block in its OWN try/catch. This test
+    // makes the emit THROW and asserts the refund DECRBYs on ALL applicable keys
+    // still fire (settle completes, Buzz refunded). Without the service-level
+    // wrap this throw escapes before the `refund <= 0` check → the DECRBYs never
+    // run → RED. (A real fail-on-revert, not a tautology.)
+    it('still refunds ALL keys when the actual-Buzz emit THROWS (service-level fail-soft)', async () => {
+      mockObserveActualBuzz.mockImplementation(() => {
+        throw new Error('metrics registry exploded');
+      });
+      seedRecord({
+        appSpendKey: APP_KEY,
+        devSessionId: DEV_SESSION_ID,
+        ceiling: 180,
+        engine: 'qwen-image',
+        recipe: 'seamless-pano-360',
+        submittedAt: 1_700_000_000_000,
+      });
+      await expect(
+        settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 })
+      ).resolves.toBeUndefined(); // never throws into poll/cancel
+      // Every refund leg still fires with the correct over-reservation (180-30=150).
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith(DEV_SESSION_ID, 150);
+    });
+
+    it('still refunds when the WALL-CLOCK emit throws (the second emit is also guarded)', async () => {
+      mockObserveWallclock.mockImplementation(() => {
+        throw new Error('metrics registry exploded');
+      });
+      seedRecord({
+        ceiling: 180,
+        engine: 'qwen-image',
+        recipe: 'seamless-pano-360',
+        submittedAt: 1_700_000_000_000,
+      });
+      await expect(
+        settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 })
+      ).resolves.toBeUndefined();
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+    });
   });
 });

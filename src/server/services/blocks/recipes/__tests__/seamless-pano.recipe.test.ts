@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BUDGET_BY_ENGINE,
   ESTIMATE_BUZZ_BY_ENGINE,
   FLUX2_CFG,
   FLUX2_CLIP_AIR,
@@ -20,6 +21,7 @@ import {
   QWEN_LORA_VERSION_ID,
   QWEN_TRIGGER_WORDS,
   QWEN_VAE_AIR,
+  SEAMLESS_PANO_ENGINES,
   SEAM_BAND_PX,
   SEAM_DENOISE,
   SEAM_FEATHER_PX,
@@ -333,9 +335,46 @@ describe('seamlessPano360Recipe contract', () => {
     expect(getRecipe('not-a-recipe')).toBeUndefined();
   });
 
-  it('declares the post-paid ceiling contract: maxBuzz == ceil(stepTimeoutSeconds)', () => {
-    expect(seamlessPano360Recipe.stepTimeoutSeconds).toBe(180);
-    expect(seamlessPano360Recipe.maxBuzz).toBe(Math.ceil(seamlessPano360Recipe.stepTimeoutSeconds));
+  it('declares the per-engine post-paid ceiling contract: maxBuzz == ceil(stepTimeoutSeconds) for EVERY engine', () => {
+    // v1.1: the timeout==ceiling invariant now holds PER ENGINE (the module-load
+    // loop in index.ts asserts this too — re-assert it here as the recipe's own
+    // contract test so a bad table entry fails loudly in the recipe suite).
+    for (const engine of SEAMLESS_PANO_ENGINES) {
+      const budget = BUDGET_BY_ENGINE[engine];
+      expect(budget.maxBuzz).toBe(Math.ceil(budget.stepTimeoutSeconds));
+    }
+  });
+
+  it('resolves the per-engine budget from params (zimage 90 / flux2 150 / qwen 180), default → zimage 90', () => {
+    expect(seamlessPano360Recipe.budgetFor(params('x', undefined, 'zimage-turbo'))).toEqual({
+      maxBuzz: 90,
+      stepTimeoutSeconds: 90,
+    });
+    expect(seamlessPano360Recipe.budgetFor(params('x', undefined, 'flux2-klein'))).toEqual({
+      maxBuzz: 150,
+      stepTimeoutSeconds: 150,
+    });
+    expect(seamlessPano360Recipe.budgetFor(params('x', undefined, 'qwen-image'))).toEqual({
+      maxBuzz: 180,
+      stepTimeoutSeconds: 180,
+    });
+    // No engine → the DEFAULT_ENGINE (zimage) budget.
+    expect(seamlessPano360Recipe.budgetFor(params('x'))).toEqual({
+      maxBuzz: 90,
+      stepTimeoutSeconds: 90,
+    });
+  });
+
+  it('budgetForEngine matches budgetFor and drives the module-load per-engine invariant', () => {
+    expect(seamlessPano360Recipe.budgetForEngine('qwen-image')).toEqual({
+      maxBuzz: 180,
+      stepTimeoutSeconds: 180,
+    });
+    // An unknown engine falls back to the default engine's budget (defensive; the
+    // .strict() schema already rejects unknown engines before this is reached).
+    expect(seamlessPano360Recipe.budgetForEngine('not-an-engine')).toEqual(
+      BUDGET_BY_ENGINE['zimage-turbo']
+    );
   });
 
   it('is pinned (no user checkpoint) and pins the three 360Redmond LoRA versions', () => {

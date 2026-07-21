@@ -27,6 +27,7 @@ import {
   type PresignPartResult,
   type MultipartPart,
   type StorageBackend,
+  type PublicStorageBackend,
 } from './schema';
 
 const DEFAULT_STREAM_CHUNK_SIZE = 100 * 1024 * 1024; // 100MB — matches the monolith's moveAssetFromBlob
@@ -256,12 +257,21 @@ async function post(path: string, body: unknown, config: StorageClientConfig): P
   }
 }
 
-/**
- * Build a storage client bound to `config`. Methods throw `StorageClientError` on a non-2xx/transport
- * failure (after retries). Deletes/head/multipart-control are round-trips; presign methods return a URL
- * for a DIRECT client↔S3 transfer.
- */
-export function createStorageClient(config: StorageClientConfig = {}) {
+export type UploadStreamParams = {
+  key: string;
+  backend?: StorageBackend;
+  bucket?: string;
+  mimeType?: string;
+  chunkSize?: number;
+  partExpiresIn?: number;
+};
+
+export type GetObjectBufferOptions = { signal?: AbortSignal };
+
+// The raw, backend-agnostic client every method of which accepts the FULL `StorageBackend` union. Not
+// exported: consumers get either the CSAM-free `createStorageClient` view or the CSAM-pinned
+// `createCsamStorageClient` — never the ability to name an arbitrary backend on an arbitrary method.
+function buildRawClient(config: StorageClientConfig) {
   return {
     deleteObject: async (input: DeleteObjectInput): Promise<void> => {
       await post('/objects/delete', input, config);
@@ -312,14 +322,7 @@ export function createStorageClient(config: StorageClientConfig = {}) {
     // For large/unknown-size sources (e.g. piping a fetch body to storage). Buffers ~one `chunkSize`
     // part at a time (bounded memory), not the whole object. Aborts the upload on any failure.
     uploadStream: async (
-      params: {
-        key: string;
-        backend?: StorageBackend;
-        bucket?: string;
-        mimeType?: string;
-        chunkSize?: number;
-        partExpiresIn?: number;
-      },
+      params: UploadStreamParams,
       source: AsyncIterable<Uint8Array>,
       options: { onProgress?: (loadedBytes: number) => void; signal?: AbortSignal } = {}
     ): Promise<{ bucket: string; key: string; parts: MultipartPart[] }> => {
@@ -375,7 +378,7 @@ export function createStorageClient(config: StorageClientConfig = {}) {
     // storage service). For server consumers that need the content itself (e.g. dataset reads).
     getObjectBuffer: async (
       input: PresignGetInput,
-      options: { signal?: AbortSignal } = {}
+      options: GetObjectBufferOptions = {}
     ): Promise<ArrayBuffer> => {
       const { url } = presignResult.parse(await post('/presign/get', input, config));
       const fetchImpl = config.fetch ?? globalThis.fetch;
@@ -394,4 +397,73 @@ export function createStorageClient(config: StorageClientConfig = {}) {
   };
 }
 
-export type StorageClient = ReturnType<typeof createStorageClient>;
+type RawStorageClient = ReturnType<typeof buildRawClient>;
+
+// Narrow a method's `input` so `backend` is limited to the CSAM-free `PublicStorageBackend` (keeping its
+// original optionality). Only the first argument carries a backend; trailing args pass through untouched.
+type PublicInput<T> = T extends { backend: StorageBackend }
+  ? Omit<T, 'backend'> & { backend: PublicStorageBackend }
+  : T extends { backend?: StorageBackend }
+  ? Omit<T, 'backend'> & { backend?: PublicStorageBackend }
+  : T;
+
+type PublicMethod<F> = F extends (input: infer I, ...rest: infer R) => infer O
+  ? (input: PublicInput<I>, ...rest: R) => O
+  : F;
+
+// The primary client: every raw method, but with `csam` stripped from every `backend` at the type
+// level. A general consumer holding a `StorageClient` has no typed path to the CSAM evidence bucket.
+export type StorageClient = { [K in keyof RawStorageClient]: PublicMethod<RawStorageClient[K]> };
+
+/**
+ * Build a storage client bound to `config`. Methods throw `StorageClientError` on a non-2xx/transport
+ * failure (after retries). Deletes/head/multipart-control are round-trips; presign methods return a URL
+ * for a DIRECT client↔S3 transfer. Cannot target the CSAM backend — use `createCsamStorageClient`.
+ */
+export function createStorageClient(config: StorageClientConfig = {}): StorageClient {
+  return buildRawClient(config);
+}
+
+// Strip both `backend` (always `csam`) and `bucket` (always the service's configured CSAM bucket) — a
+// CSAM caller can neither pick a different credential set nor point the CSAM creds at another bucket.
+type CsamInput<T> = Omit<T, 'backend' | 'bucket'>;
+
+/**
+ * Build a client LOCKED to the CSAM evidence bucket. A deliberately separate wrapper from
+ * `createStorageClient` so CSAM operations are never reachable from the everyday storage surface: every
+ * method here pins `backend: 'csam'` and drops the `bucket` override, and general code that only imports
+ * `createStorageClient` has no way to read, write, or delete CSAM evidence. Transport (auth, retry,
+ * failure reporting) is shared with the primary client via `config`.
+ */
+export function createCsamStorageClient(config: StorageClientConfig = {}) {
+  const raw = buildRawClient(config);
+  return {
+    getPutUrl: (input: CsamInput<PresignPutInput>): Promise<PresignResult> =>
+      raw.getPutUrl({ ...input, backend: 'csam' }),
+
+    getGetUrl: (input: CsamInput<PresignGetInput>): Promise<PresignResult> =>
+      raw.getGetUrl({ ...input, backend: 'csam' }),
+
+    headObject: (input: CsamInput<HeadObjectInput>): Promise<HeadObjectResult> =>
+      raw.headObject({ ...input, backend: 'csam' }),
+
+    checkFileExists: (input: CsamInput<HeadObjectInput>): Promise<boolean> =>
+      raw.checkFileExists({ ...input, backend: 'csam' }),
+
+    deleteObject: (input: CsamInput<DeleteObjectInput>): Promise<void> =>
+      raw.deleteObject({ ...input, backend: 'csam' }),
+
+    uploadStream: (
+      params: CsamInput<UploadStreamParams>,
+      source: AsyncIterable<Uint8Array>,
+      options?: { onProgress?: (loadedBytes: number) => void; signal?: AbortSignal }
+    ) => raw.uploadStream({ ...params, backend: 'csam' }, source, options),
+
+    getObjectBuffer: (
+      input: CsamInput<PresignGetInput>,
+      options?: GetObjectBufferOptions
+    ): Promise<ArrayBuffer> => raw.getObjectBuffer({ ...input, backend: 'csam' }, options),
+  };
+}
+
+export type CsamStorageClient = ReturnType<typeof createCsamStorageClient>;

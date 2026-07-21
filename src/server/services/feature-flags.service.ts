@@ -290,6 +290,16 @@ const featureFlags = createFeatureFlags({
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
+  // Creator Controls account card (metric-privacy + donation-goal settings UI).
+  // `availability: []` = DARK by default and FAILS CLOSED (empty availability →
+  // static eval false when Flipt is absent/down), so the card does NOT render for
+  // anyone until the `creator-controls` Flipt flag is created + enabled. This gates
+  // ONLY the card render in the account page; the read-side metric-privacy gating
+  // (donation-goals-cache / model-metric-privacy resolvers / model.service etc.)
+  // stays active regardless so existing user settings keep applying even when the
+  // card is hidden. Instant kill-switch / widen lever = the Flipt flag. (Mirrors the
+  // `hiddenPrefsCompact` / `genTabDeferView` `availability: []` precedent.)
+  creatorControls: { availability: [], fliptKey: 'creator-controls' },
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
@@ -339,6 +349,7 @@ const featureFlags = createFeatureFlags({
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['public'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
+  buzzTransactionExport: { availability: ['public'], fliptKey: 'buzz-transaction-export' },
   userPaymentConfiguration: {
     availability: ['granted'],
     fliptKey: 'user-payment-configuration',
@@ -402,6 +413,18 @@ const featureFlags = createFeatureFlags({
   // to mods + a curated cohort via the Flipt `app-blocks-author` flag (created
   // AFTER this merges: absent → static mod-only, identical to today).
   appBlocksAuthor: { availability: ['mod'], fliptKey: 'app-blocks-author' },
+  // App Blocks — AGENTIC MOD CODE-REVIEW panel (P2). CLIENT gate for the
+  // `AgentReviewPanel` in the on-site review modal. `availability: []` = DARK by
+  // default and FAILS CLOSED (empty availability → static eval false when Flipt
+  // is absent/down), so the panel does NOT render for ANYONE — mods included —
+  // until the Flipt `app-blocks-agentic-review` flag is created. This mirrors the
+  // server-side `isAppBlocksAgenticReviewEnabled` fail-closed gate on the
+  // `blocks.startAgentReview` / `getAgentReview` procs, so the whole feature is
+  // inert end-to-end on merge (NOT `['mod']`: that would render the panel for
+  // mods the moment this ships, before the flag exists). The Flipt key is the
+  // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
+  // `genTabDeferView` `availability: []` precedent.)
+  appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

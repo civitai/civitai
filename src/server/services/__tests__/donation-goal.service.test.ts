@@ -14,22 +14,33 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
     mockDbWrite: { donationGoal: mk(), $queryRaw: vi.fn(), $executeRaw: vi.fn() },
   };
 });
-const { mockDonationGoalsBust, mockLogToAxiom } = vi.hoisted(() => ({
+const {
+  mockDonationGoalsBust,
+  mockLogToAxiom,
+  mockBustMvCache,
+  mockDataForModelsRefresh,
+  mockUpdateEaDeadline,
+} = vi.hoisted(() => ({
   mockDonationGoalsBust: vi.fn(),
   mockLogToAxiom: vi.fn(),
+  mockBustMvCache: vi.fn(),
+  mockDataForModelsRefresh: vi.fn(),
+  mockUpdateEaDeadline: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/redis/caches', () => ({
-  dataForModelsCache: { refresh: vi.fn() },
+  dataForModelsCache: { refresh: mockDataForModelsRefresh },
   modelVersionPublicDonationGoalsCache: { bust: mockDonationGoalsBust },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: vi.fn(),
   refundMultiAccountTransaction: vi.fn(),
 }));
-vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: vi.fn() }));
-vi.mock('~/server/services/model.service', () => ({ updateModelEarlyAccessDeadline: vi.fn() }));
+vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: mockBustMvCache }));
+vi.mock('~/server/services/model.service', () => ({
+  updateModelEarlyAccessDeadline: mockUpdateEaDeadline,
+}));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
@@ -50,7 +61,29 @@ const goal = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mockLogToAxiom.mockResolvedValue(undefined);
+  mockUpdateEaDeadline.mockResolvedValue(undefined);
+  mockBustMvCache.mockResolvedValue(undefined);
+  mockDataForModelsRefresh.mockResolvedValue(undefined);
+  mockDonationGoalsBust.mockResolvedValue(undefined);
 });
+
+// Drives the early-access-completion branch: a met goal that is EA-tied and still within its
+// early-access window. `donationGoalById` (called inside checkDonationGoalComplete) does a
+// findUniqueOrThrow + $queryRaw for the total; the branch then updates the goal, reads the
+// modelVersion, runs the EA-deadline $executeRaw, and finally does the two cache side-effects.
+const primeEarlyAccessCompletion = () => {
+  mockDbWrite.donationGoal.findUniqueOrThrow.mockResolvedValueOnce(
+    goal({ isEarlyAccess: true, goalAmount: 1000 })
+  );
+  mockDbWrite.$queryRaw.mockResolvedValueOnce([{ total: 1500 }]); // >= goalAmount → met
+  mockDbWrite.donationGoal.update.mockResolvedValueOnce({});
+  mockDbRead.modelVersion.findUnique.mockResolvedValueOnce({
+    earlyAccessConfig: { timeframe: 7 },
+    earlyAccessEndsAt: new Date('2099-01-01T00:00:00.000Z'), // future → EA still applies
+    modelId: 2,
+  });
+  mockDbWrite.$executeRaw.mockResolvedValueOnce(1);
+};
 
 describe('checkDonationGoalComplete — public cache bust', () => {
   it('busts the public donation-goals cache keyed by modelVersionId after a donation', async () => {
@@ -89,5 +122,86 @@ describe('checkDonationGoalComplete — public cache bust', () => {
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'donation-goal-public-cache-bust-failed' })
     );
+  });
+});
+
+describe('checkDonationGoalComplete — early-access-completion cache side-effects (double-donation guard)', () => {
+  it('runs both EA cache side-effects on completion', async () => {
+    primeEarlyAccessCompletion();
+
+    const result = await checkDonationGoalComplete({ donationGoalId: 10 });
+
+    expect(mockBustMvCache).toHaveBeenCalledWith(5, 2); // (modelVersionId, modelId)
+    expect(mockDataForModelsRefresh).toHaveBeenCalledWith(2);
+    expect(result).toMatchObject({ id: 10, total: 1500, active: false });
+  });
+
+  it('is FAIL-OPEN: a rejecting bustMvCache does NOT reject (never poisons the refund path)', async () => {
+    // bustMvCache does un-wrapped redis work; a transient blip here previously propagated into
+    // donateToGoal's catch → buzz refunded on a committed donation → donor retries → double
+    // donation. It must be swallowed and logged instead.
+    primeEarlyAccessCompletion();
+    mockBustMvCache.mockRejectedValueOnce(new Error('redis down'));
+
+    const result = await checkDonationGoalComplete({ donationGoalId: 10 });
+
+    expect(result).toMatchObject({ id: 10, total: 1500 });
+    expect(mockBustMvCache).toHaveBeenCalledWith(5, 2);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'donation-goal-ea-cache-refresh-failed' })
+    );
+  });
+
+  it('is FAIL-OPEN: a rejecting dataForModelsCache.refresh does NOT reject', async () => {
+    primeEarlyAccessCompletion();
+    mockDataForModelsRefresh.mockRejectedValueOnce(new Error('redis down'));
+
+    const result = await checkDonationGoalComplete({ donationGoalId: 10 });
+
+    expect(result).toMatchObject({ id: 10, total: 1500 });
+    expect(mockDataForModelsRefresh).toHaveBeenCalledWith(2);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'donation-goal-ea-cache-refresh-failed' })
+    );
+  });
+
+  it('does NOT swallow the goal-completion DB write ($executeRaw succeeds) — EA cache guard is scoped to the cache ops only', async () => {
+    // The donationGoal.update + $executeRaw EA-deadline writes are legitimate state changes and
+    // must remain OUTSIDE the fail-open guard so a real DB failure still surfaces (see below).
+    primeEarlyAccessCompletion();
+
+    await checkDonationGoalComplete({ donationGoalId: 10 });
+
+    expect(mockDbWrite.donationGoal.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 10 }, data: { active: false } })
+    );
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('PROPAGATES a donationGoal.update DB failure (goal-completion write is NOT fail-open)', async () => {
+    // A genuine DB-write failure must still throw — silently dropping goal-completion would be
+    // its own bug, and this path is a legitimate error (distinct from the transient-cache class).
+    mockDbWrite.donationGoal.findUniqueOrThrow.mockResolvedValueOnce(
+      goal({ isEarlyAccess: true, goalAmount: 1000 })
+    );
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([{ total: 1500 }]);
+    mockDbWrite.donationGoal.update.mockRejectedValueOnce(new Error('db write failed'));
+
+    await expect(checkDonationGoalComplete({ donationGoalId: 10 })).rejects.toThrow(
+      'db write failed'
+    );
+    // The cache guard never runs — the DB error short-circuits before the side-effects.
+    expect(mockBustMvCache).not.toHaveBeenCalled();
+  });
+
+  it('PROPAGATES an EA-deadline $executeRaw DB failure (EA-unlock write is NOT fail-open)', async () => {
+    primeEarlyAccessCompletion();
+    mockDbWrite.$executeRaw.mockReset();
+    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('executeRaw failed'));
+
+    await expect(checkDonationGoalComplete({ donationGoalId: 10 })).rejects.toThrow(
+      'executeRaw failed'
+    );
+    expect(mockBustMvCache).not.toHaveBeenCalled();
   });
 });

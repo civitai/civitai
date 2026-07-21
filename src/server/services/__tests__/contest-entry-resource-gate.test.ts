@@ -105,7 +105,17 @@ function wireChallengeFindFirst(opts: { hasResourceChallenge: boolean; hasFeeCha
     }
     if ('maxParticipants' in where) return null; // no participant cap configured
     if (where.source === 'User') {
-      return opts.hasFeeChallenge ? { id: 1, entryFee: 100, buzzType: 'yellow' } : null;
+      // The fee-challenge lookup (collection.service.ts) is distinguished by `entryFee`
+      // in its where clause; select: { id, entryFee, buzzType }.
+      if ('entryFee' in where) {
+        return opts.hasFeeChallenge ? { id: 1, entryFee: 100, buzzType: 'yellow' } : null;
+      }
+      // Otherwise this is the assertUserChallengeAcceptingEntries timing gate
+      // (challenge-entry-gate.ts), which runs BEFORE the resource gate and rejects
+      // unless the user challenge is Active. Return an Active challenge so execution
+      // reaches the resource gate under test. ('Active' is ChallengeStatus.Active —
+      // the same literal collection.service uses.)
+      return { status: 'Active' };
     }
     return null;
   });
@@ -128,6 +138,8 @@ describe('contest entry resource gate (Task 11)', () => {
       validateContestCollectionEntry({
         collectionId: COLLECTION_ID,
         userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
         imageIds: [IMAGE_ID],
         metadata: {},
       })
@@ -149,6 +161,8 @@ describe('contest entry resource gate (Task 11)', () => {
       validateContestCollectionEntry({
         collectionId: COLLECTION_ID,
         userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
         imageIds: [IMAGE_ID],
         metadata: {},
       })
@@ -164,6 +178,8 @@ describe('contest entry resource gate (Task 11)', () => {
       validateContestCollectionEntry({
         collectionId: COLLECTION_ID,
         userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
         imageIds: [IMAGE_ID],
         metadata: {},
       })
@@ -181,6 +197,8 @@ describe('contest entry resource gate (Task 11)', () => {
       validateContestCollectionEntry({
         collectionId: COLLECTION_ID,
         userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
         isModerator: true,
         imageIds: [IMAGE_ID],
         metadata: {},

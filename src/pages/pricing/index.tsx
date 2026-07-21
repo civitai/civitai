@@ -17,6 +17,27 @@ import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Button, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconArrowRight, IconPepper } from '@tabler/icons-react';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
+
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  useSession: true,
+  resolver: async ({ ssg, features }) => {
+    // Only the green environment renders the MembershipPlans view, which otherwise
+    // flashes a client-side loading state while it fetches plans. Prefetch that same
+    // query (interval 'month', green buzz) so the plans are present on first paint.
+    if (features?.isGreen && ssg) {
+      await ssg.subscriptions.getPlans.prefetch({
+        interval: 'month',
+        buzzType: 'green',
+        paymentProvider: features.disablePayments
+          ? PaymentProvider.Civitai
+          : PaymentProvider.Stripe,
+      });
+    }
+  },
+});
 
 export default function Pricing() {
   const router = useRouter();

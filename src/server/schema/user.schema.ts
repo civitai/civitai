@@ -282,6 +282,15 @@ export const userSettingsSchema = z.object({
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
+  // Creator opt-out: when true, the public donation-goal display (progress + collected
+  // amount) is hidden from non-owner/non-mod viewers on all of this user's models.
+  hideDonationGoals: z.boolean().optional(),
+  // Creator Controls defaults: baseline metric-privacy for all of this user's
+  // models. Effective only while the user holds a valid Creator Program
+  // membership (see server/utils/model-metric-privacy.ts).
+  hideModelBuzz: z.boolean().optional(),
+  hideModelDownloads: z.boolean().optional(),
+  hideModelGenerations: z.boolean().optional(),
   hideDownloadsSince: z.number().optional(),
   gallerySettings: (
     z.object({
@@ -337,6 +346,10 @@ export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
+  hideDonationGoals: z.boolean().optional(),
+  hideModelBuzz: z.boolean().optional(),
+  hideModelDownloads: z.boolean().optional(),
+  hideModelGenerations: z.boolean().optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),

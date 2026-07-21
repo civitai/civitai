@@ -1,5 +1,6 @@
 import type * as z from 'zod';
 import { seamlessPano360Recipe } from './seamless-pano.recipe';
+import { starterComfyTxt2imgRecipe } from './starter-comfy-txt2img.recipe';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks `customComfy` recipe registry.
@@ -78,6 +79,12 @@ export type RecipeCivitaiResource = {
 // verified Public / Published / non-early-access / non-Private — safe under this
 // invariant.
 //
+// #2 (`starter-comfy-txt2img`): pins NO civitai resources at all — its only model
+// weights are huggingface staticAirs, never a civitai `modelVersionId`. So
+// `recipeCivitaiVersionIds(recipe)` returns `[]` and the entitlement gate has
+// nothing to check → it's skipped entirely, and the recipe is safe by construction
+// (there is no pinned civitai version that could bypass the belt).
+//
 // This is a DOC-INVARIANT, enforced by CODE REVIEW of each new recipe PR — NOT a
 // module-load DB check (there is no DB in this module; the registry loads at
 // import time, before any request context). A robust router-side early-access /
@@ -102,6 +109,15 @@ export interface BlockRecipe<P = unknown> {
   /** Which engine variants this recipe exposes (drives which builder runs). */
   engines: readonly string[];
   /**
+   * The SINGLE source of truth for "which engine did this submit resolve to?"
+   * (`params.engine ?? <recipe default>`). The per-engine BUDGET (`budgetFor`),
+   * the built graph (`buildStep`), the display estimate (`estimateBuzz`) and the
+   * settle-time METRIC LABEL (blocks.router) MUST all agree on this one value —
+   * so they all derive it here rather than each re-spelling `params.engine ??
+   * engines[0]`. Returns a bounded engine id from `engines` (never client-raw).
+   */
+  resolveEngine(params: P): string;
+  /**
    * PURE builder: bounded params + resolved resources → the customComfy step
    * INPUT. Ported from panorama.ts; builds a ComfyGraph by OBJECT CONSTRUCTION
    * only (the prompt is a leaf string, never templated into the graph).
@@ -116,10 +132,23 @@ export interface BlockRecipe<P = unknown> {
   };
   /** v1: 'pinned' (no user checkpoint). Follow-up: 'userPickedSdxl'. */
   checkpointPolicy: 'pinned' | 'userPickedSdxl';
-  /** Hard per-job Buzz ceiling — MUST equal ceil(stepTimeoutSeconds × 1). */
-  maxBuzz: number;
-  /** The aggressive step timeout (seconds) that ENFORCES `maxBuzz` (plan §5). */
-  stepTimeoutSeconds: number;
+  /**
+   * Per-ENGINE post-paid budget for the given params (v1.1). `maxBuzz` is the hard
+   * per-job Buzz ceiling and MUST equal `ceil(stepTimeoutSeconds × 1)` — the
+   * aggressive step `timeout` is the PHYSICAL cap (~1 Buzz/GPU-second), so a lower
+   * `maxBuzz` REQUIRES a proportionally lower `stepTimeoutSeconds` (a lower
+   * reservation under the same timeout would let the job outspend the reservation
+   * and under-count real spend, defeating the cap). The router reserves this
+   * `maxBuzz` against every cap and settles-to-actual (plan §5).
+   */
+  budgetFor(params: P): { maxBuzz: number; stepTimeoutSeconds: number };
+  /**
+   * The same per-engine budget keyed directly by engine id — used by the
+   * module-load invariant loop (which enumerates `engines`, not full params) and
+   * anywhere only the engine is in hand. Same `maxBuzz === ceil(stepTimeoutSeconds)`
+   * contract per engine.
+   */
+  budgetForEngine(engine: string): { maxBuzz: number; stepTimeoutSeconds: number };
   /** Display-only estimate for estimateWorkflow (post-paid has no exact price). */
   estimateBuzz(params: P): number;
   /** Recipe-level negative prompt (the prompt-audit re-point reads this in PR6). */
@@ -132,6 +161,10 @@ export type AnyBlockRecipe = BlockRecipe<any>;
 // The registry object. Its keys ARE the source of truth for the schema enum.
 const recipeRegistry = {
   'seamless-pano-360': seamlessPano360Recipe,
+  // Recipe #2 — the CLI scaffold's demoable starter: a minimal single-step Z-Image
+  // txt2img, no civitai resources (no entitlement gate), ceiling 30. See
+  // starter-comfy-txt2img.recipe.ts.
+  'starter-comfy-txt2img': starterComfyTxt2imgRecipe,
 };
 
 export type RegisteredRecipeId = keyof typeof recipeRegistry & string;
@@ -165,17 +198,22 @@ export function recipeCivitaiVersionIds(recipe: AnyBlockRecipe): number[] {
   return [...checkpoints, ...loras].map((r) => r.modelVersionId);
 }
 
-// Fail-fast the `maxBuzz == ceil(stepTimeoutSeconds)` invariant at module load —
-// the safety argument (plan §5.4) depends on the step timeout physically capping
-// the job at `maxBuzz`, so a recipe that declares a looser `maxBuzz` than its
-// timeout enforces (or a tighter one it can't guarantee) is a build-time error,
-// not a runtime surprise.
+// Fail-fast the per-engine `maxBuzz == ceil(stepTimeoutSeconds)` invariant at
+// module load — the safety argument (plan §5.4) depends on the step timeout
+// physically capping the job at `maxBuzz`, so a recipe that declares (for ANY
+// engine) a looser `maxBuzz` than its timeout enforces (or a tighter one it can't
+// guarantee) is a build-time error, not a runtime surprise. v1.1: the budget is
+// per-engine, so assert it for EACH of the recipe's engines.
 for (const [id, recipe] of Object.entries(recipeRegistry)) {
-  const enforced = Math.ceil(recipe.stepTimeoutSeconds);
-  if (recipe.maxBuzz !== enforced) {
-    throw new Error(
-      `recipe '${id}': maxBuzz (${recipe.maxBuzz}) must equal ceil(stepTimeoutSeconds) (${enforced}) — ` +
-        'the step timeout is the physical Buzz ceiling (plan §5).'
-    );
+  for (const engine of recipe.engines) {
+    const budget = recipe.budgetForEngine(engine);
+    const enforced = Math.ceil(budget.stepTimeoutSeconds);
+    if (budget.maxBuzz !== enforced) {
+      throw new Error(
+        `recipe '${id}' engine '${engine}': maxBuzz (${budget.maxBuzz}) must equal ` +
+          `ceil(stepTimeoutSeconds) (${enforced}) — the step timeout is the physical ` +
+          'Buzz ceiling (plan §5).'
+      );
+    }
   }
 }

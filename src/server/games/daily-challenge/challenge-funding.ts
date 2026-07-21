@@ -28,6 +28,7 @@
  * refund over `challenge-initial-prize-${challengeId}-creator`. Both prefixes end in a
  * non-numeric token so one challenge's refund can't collide with another's (5 vs 50, 51, ...).
  */
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import { logToAxiom } from '~/server/logging/client';
@@ -237,6 +238,27 @@ async function filterChargedImageIds(
  * re-reverse an already-refunded transaction. No-op for non-User challenges, entryFee <= 0, and
  * challenges with no initial prize.
  */
+/**
+ * Reverse one challenge-fund prefix, tolerating the buzz service's 404 (→ TRPCError NOT_FOUND)
+ * when the prefix matches no transactions. A prefix matches nothing for an entryFee challenge that
+ * never took a paid entry (e.g. a cancelled challenge with zero entries), or a prize that was never
+ * actually charged — there is nothing to reverse, so that is a zero-refund no-op, not a failure
+ * that should abort the surrounding void/delete. Returns the count of transactions reversed.
+ */
+async function refundChallengeFundsByPrefix(input: {
+  externalTransactionIdPrefix: string;
+  description: string;
+  details: { challengeId: number };
+}): Promise<number> {
+  try {
+    const { refundedTransactions } = await refundMultiAccountTransaction(input);
+    return refundedTransactions.length;
+  } catch (e) {
+    if (e instanceof TRPCError && e.code === 'NOT_FOUND') return 0;
+    throw e;
+  }
+}
+
 export async function refundUserChallengeFunds(challengeId: number) {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
@@ -253,18 +275,17 @@ export async function refundUserChallengeFunds(challengeId: number) {
   if (challenge.entryFee > 0) {
     // The trailing `-` keeps this prefix from matching another challenge's fees (e.g. challenge 5's
     // `challenge-entry-fee-5-` never matches challenge 50's `challenge-entry-fee-50-...`).
-    const { refundedTransactions } = await refundMultiAccountTransaction({
+    refundedEntries = await refundChallengeFundsByPrefix({
       externalTransactionIdPrefix: `challenge-entry-fee-${challengeId}-`,
       description: 'Challenge cancelled — entry fee refund',
       details: { challengeId },
     });
-    refundedEntries = refundedTransactions.length;
   }
 
   if (challenge.basePrizePool > 0 && challenge.createdById != null) {
     // Reverse the actual escrow charge by its collision-safe prefix (mint-safe) — the `-creator`
     // token makes this prefix unambiguous vs other challenge ids (5 vs 50, 51, ...).
-    await refundMultiAccountTransaction({
+    await refundChallengeFundsByPrefix({
       externalTransactionIdPrefix: `challenge-initial-prize-${challengeId}-creator`,
       description: 'Challenge cancelled — initial prize refund',
       details: { challengeId },

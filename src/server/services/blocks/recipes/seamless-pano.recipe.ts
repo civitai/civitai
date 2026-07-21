@@ -28,6 +28,17 @@ export type SeamlessPanoEngine = (typeof SEAMLESS_PANO_ENGINES)[number];
 /** v1 default engine — cheapest/fastest (Z-Image Turbo, ~20 Buzz display estimate). */
 export const DEFAULT_ENGINE: SeamlessPanoEngine = 'zimage-turbo';
 
+/**
+ * The SINGLE resolution of "which engine did this submit pick" — `params.engine`
+ * or the recipe default. Every per-engine derivation (budget ceiling, built
+ * graph, display estimate, settle-time metric label) funnels through this so the
+ * CHARGED ceiling and the OBSERVED label can never drift. Returns a bounded
+ * `SeamlessPanoEngine` (params.engine is enum-validated by the schema).
+ */
+export function resolveEngine(params: SeamlessPanoParams): SeamlessPanoEngine {
+  return params.engine ?? DEFAULT_ENGINE;
+}
+
 // ── Prompt shaping ───────────────────────────────────────────────────────────
 // The block schema already caps prompt at 1500; we re-clamp here so the ported
 // builders stay byte-identical to the reference oracle for any input.
@@ -127,6 +138,35 @@ export const ESTIMATE_BUZZ_BY_ENGINE: Record<SeamlessPanoEngine, number> = {
   'zimage-turbo': 20,
   'flux2-klein': 45,
   'qwen-image': 150,
+};
+
+// ── Per-engine POST-PAID BUDGET (v1.1) ───────────────────────────────────────
+// The hard per-job Buzz ceiling, sized PER ENGINE. `maxBuzz` MUST equal
+// `ceil(stepTimeoutSeconds × 1)` for EACH entry (asserted at registry load) —
+// the step `timeout` is the PHYSICAL cap (~1 Buzz/GPU-second), so a lower
+// reservation without a matching lower timeout would let the job run past what
+// was reserved and under-count spend. The router reserves `maxBuzz` against every
+// cap and settles-to-actual, so a cheaper engine reserves (and settles) less cap.
+//
+// The three timeout numbers are the ONE reviewer judgment call here (a `timeout`
+// is a HARD kill on a slow gen, so headroom over typical runtime matters):
+//   • qwen-image  180s — UNCHANGED from the single-ceiling v1 (zero regression on
+//                        the priciest engine; ~150 Buzz display estimate).
+//   • zimage-turbo 90s — ≈ 4× the 21-Buzz dogfood-measured actual.
+//   • flux2-klein 150s — ≈ 3.3× its 45-Buzz DISPLAY ESTIMATE. flux2's runtime is
+//                        characterized only by that estimate (no dogfood-measured
+//                        actual like zimage's 21), so 150 gives more margin against
+//                        a hard-kill of a legit gen than 120 did, while still
+//                        cutting over-reservation from the flat 180.
+// All tunable in this one obvious table. The MAX entry (180) still holds the
+// app-manifest invariant `page.buzzBudgetPerGen (200) ≥ recipe ceiling`.
+export const BUDGET_BY_ENGINE: Record<
+  SeamlessPanoEngine,
+  { stepTimeoutSeconds: number; maxBuzz: number }
+> = {
+  'zimage-turbo': { stepTimeoutSeconds: 90, maxBuzz: 90 },
+  'flux2-klein': { stepTimeoutSeconds: 150, maxBuzz: 150 },
+  'qwen-image': { stepTimeoutSeconds: 180, maxBuzz: 180 },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -504,7 +544,7 @@ export function buildFlux2SeamlessGraph(params: SeamlessPanoParams): ComfyGraph 
  * changes if a future prepaid path registers it as a `$type:'comfy'` definition.
  */
 function buildStep(params: SeamlessPanoParams): CustomComfyStepInput {
-  const engine = params.engine ?? DEFAULT_ENGINE;
+  const engine = resolveEngine(params);
   const [resources, workflow] =
     engine === 'flux2-klein'
       ? ([[FLUX2_DIFFUSION_AIR, FLUX2_CLIP_AIR, FLUX2_VAE_AIR, FLUX2_LORA_AIR], buildFlux2SeamlessGraph(params)] as const)
@@ -521,6 +561,7 @@ export const seamlessPano360Recipe: BlockRecipe<SeamlessPanoParams> = {
   id: 'seamless-pano-360',
   paramSchema: seamlessPanoParamSchema,
   engines: SEAMLESS_PANO_ENGINES,
+  resolveEngine,
   buildStep,
   resourceAllowlist: {
     // No civitai checkpoint (DiT engines have no UNet checkpoint; pinned policy).
@@ -546,12 +587,15 @@ export const seamlessPano360Recipe: BlockRecipe<SeamlessPanoParams> = {
     ],
   },
   checkpointPolicy: 'pinned',
-  // THE post-paid budget contract (plan §5): `maxBuzz` MUST equal
-  // ceil(stepTimeoutSeconds × 1). A DiT panorama renders in well under a minute;
-  // 180s is a deliberately tight blast-radius ceiling (vs the reference's loose
-  // 3600s). The step `timeout` physically caps the job at `maxBuzz` Buzz.
-  stepTimeoutSeconds: 180,
-  maxBuzz: 180,
-  estimateBuzz: (params) => ESTIMATE_BUZZ_BY_ENGINE[params.engine ?? DEFAULT_ENGINE],
+  // THE post-paid budget contract (plan §5), now PER ENGINE (v1.1): `maxBuzz` MUST
+  // equal ceil(stepTimeoutSeconds × 1) for the resolved engine. A DiT panorama
+  // renders in well under a minute; each timeout is a deliberately tight
+  // blast-radius ceiling (vs the reference's loose 3600s). The step `timeout`
+  // physically caps the job at `maxBuzz` Buzz. See BUDGET_BY_ENGINE above.
+  budgetForEngine: (engine) =>
+    BUDGET_BY_ENGINE[engine as SeamlessPanoEngine] ?? BUDGET_BY_ENGINE[DEFAULT_ENGINE],
+  budgetFor: (params) =>
+    BUDGET_BY_ENGINE[resolveEngine(params)] ?? BUDGET_BY_ENGINE[DEFAULT_ENGINE],
+  estimateBuzz: (params) => ESTIMATE_BUZZ_BY_ENGINE[resolveEngine(params)],
   negativePrompt: NEGATIVE_PROMPT,
 };

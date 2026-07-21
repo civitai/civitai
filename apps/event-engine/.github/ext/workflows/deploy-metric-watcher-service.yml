@@ -1,0 +1,64 @@
+name: Deploy metric-watcher service
+
+on:
+    workflow_dispatch:
+        inputs:
+            environment:
+                type: choice
+                description: 'Environment to deploy to'
+                required: true
+                default: 'metric-watcher'
+                options: ['metric-watcher']
+
+env:
+    KUBENAMESPACE: ${{ github.event.inputs.environment }}
+    KUBECONFIG: .kube/config
+    KUBECONFIG_FILE: ${{ secrets.KUBECONFIG }}
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        steps:
+        - name: Checkout deployment
+          uses: actions/checkout@v4
+
+        - name: Load kubeconfig
+          run: |
+            mkdir -p .kube
+            echo "${{ env.KUBECONFIG_FILE }}" > $KUBECONFIG
+
+        - name: Send deployment start notification
+          run: |
+            curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "starting", "env": "${{ github.event.inputs.environment }}", "server": "metric-watcher-service" }' https://user:PASSWORD@node-red.civitai.com/deploy
+
+        - name: Update ConfigMap from env file
+          uses: stefanprodan/kube-tools@v1
+          with:
+            command: |
+              # Create/update ConfigMap from env file (contains all config including secrets)
+              kubectl create configmap metric-watcher-cfg \
+                --namespace $KUBENAMESPACE \
+                --from-env-file=${{ github.event.inputs.environment }}.env \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+        - name: Apply deployment configuration
+          uses: stefanprodan/kube-tools@v1
+          with:
+            command: |
+              kubectl apply -f ${{ github.event.inputs.environment }}/09-metric-watcher-app.yml --namespace $KUBENAMESPACE
+
+        - name: Rollout deployment
+          uses: stefanprodan/kube-tools@v1
+          with:
+            command: |
+              kubectl rollout restart deployment metric-event-watcher --namespace $KUBENAMESPACE
+              kubectl rollout status deployment metric-event-watcher --namespace $KUBENAMESPACE --timeout=600s
+
+        - name: Send deployment failure notification
+          if: ${{ failure() }}
+          run: |
+            curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "failed", "env": "${{ github.event.inputs.environment }}", "server": "metric-watcher-service" }' https://user:PASSWORD@node-red.civitai.com/deploy
+
+        - name: Send deployment success notification
+          run: |
+            curl --header "Content-Type: application/json" --request POST --data '{ "type": "deploy", "status": "succeeded", "env": "${{ github.event.inputs.environment }}", "server": "metric-watcher-service" }' https://user:PASSWORD@node-red.civitai.com/deploy

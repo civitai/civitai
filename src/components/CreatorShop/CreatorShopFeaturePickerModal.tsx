@@ -97,7 +97,11 @@ export function CreatorShopFeaturePickerModal({ targetUserId }: { targetUserId?:
 
   const loading = itemsLoading || settingsLoading;
   const publishedItems = items.filter((i) => i.status === CosmeticShopItemStatus.Published);
-  const atCap = selected.length >= CREATOR_SHOP_MAX_FEATURED;
+  // Saved featured ids can reference items that were since archived/unpublished —
+  // those must not consume featured slots (and are dropped on the next save).
+  const publishedIds = new Set(publishedItems.map((i) => i.id));
+  const validSelected = selected.filter((id) => publishedIds.has(id));
+  const atCap = validSelected.length >= CREATOR_SHOP_MAX_FEATURED;
 
   const toggle = (id: number) =>
     setSelected((prev) =>
@@ -105,7 +109,7 @@ export function CreatorShopFeaturePickerModal({ targetUserId }: { targetUserId?:
     );
 
   const handleSave = async () => {
-    await updateSettings.mutateAsync({ userId: targetUserId, featuredItemIds: selected });
+    await updateSettings.mutateAsync({ userId: targetUserId, featuredItemIds: validSelected });
     dialog.onClose();
   };
 
@@ -157,7 +161,7 @@ export function CreatorShopFeaturePickerModal({ targetUserId }: { targetUserId?:
             <Group gap={6} align="center">
               <IconStar size={16} color="var(--mantine-color-yellow-5)" />
               <Text size="sm" fw={500}>
-                {selected.length} of {CREATOR_SHOP_MAX_FEATURED} selected
+                {validSelected.length} of {CREATOR_SHOP_MAX_FEATURED} selected
               </Text>
             </Group>
             {atCap && (
@@ -167,7 +171,7 @@ export function CreatorShopFeaturePickerModal({ targetUserId }: { targetUserId?:
             )}
           </Group>
           <Progress
-            value={(selected.length / CREATOR_SHOP_MAX_FEATURED) * 100}
+            value={(validSelected.length / CREATOR_SHOP_MAX_FEATURED) * 100}
             color="yellow"
             size="xs"
             radius="xl"

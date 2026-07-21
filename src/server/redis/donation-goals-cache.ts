@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { getValidCreatorMembershipMap } from '~/server/services/creator-membership.service';
 
 // A single public (non-owner, non-moderator) donation goal, shaped byte-identically to
 // `modelVersionDonationGoals`' output element: the DonationGoal row fields it selects plus
@@ -83,6 +84,28 @@ export const publicDonationGoalsLookupFn = async (
     },
   });
 
+  // Creator opt-out (Creator Program benefit): an owner can hide the public
+  // donation-goal display for ALL their goals via `hideDonationGoals`. It only takes
+  // effect while the owner holds a valid CP membership — a lapsed/never-member owner's
+  // goals become publicly visible again with no stored flip, mirroring the metric-
+  // privacy gate. Non-owner/non-mod viewers go through this cache; owners/mods bypass
+  // it entirely (see `modelVersionDonationGoals`) and always see their own goals.
+  const ownerIds = [...new Set(goals.map((g) => g.userId))];
+  const hiddenOwnerIds = new Set<number>();
+  if (ownerIds.length > 0) {
+    const owners = await db.user.findMany({
+      where: { id: { in: ownerIds } },
+      select: { id: true, settings: true },
+    });
+    const optedOutOwnerIds = owners
+      .filter((o) => (o.settings as { hideDonationGoals?: boolean } | null)?.hideDonationGoals)
+      .map((o) => o.id);
+    if (optedOutOwnerIds.length > 0) {
+      const membershipMap = await getValidCreatorMembershipMap(optedOutOwnerIds);
+      for (const id of optedOutOwnerIds) if (membershipMap.get(id)) hiddenOwnerIds.add(id);
+    }
+  }
+
   const totalByGoalId = new Map<number, number>();
   const goalIds = goals.map((g) => g.id);
   if (goalIds.length > 0) {
@@ -100,13 +123,17 @@ export const publicDonationGoalsLookupFn = async (
   const result: Record<number, ModelVersionPublicDonationGoalsCacheItem> = {};
   for (const v of versions) result[v.id] = { modelVersionId: v.id, goals: [] };
 
+  const now = new Date();
   for (const goal of goals) {
     const { modelVersionId, ...rest } = goal;
     if (modelVersionId == null) continue;
-    // Public early-access filter, byte-identical to the uncached query's
-    // `isEarlyAccess: version.earlyAccessEndsAt ? undefined : false`: early-access goals are
-    // only shown publicly while the version still has an earlyAccessEndsAt set.
-    if (goal.isEarlyAccess && !earlyAccessById.get(modelVersionId)) continue;
+    if (hiddenOwnerIds.has(goal.userId)) continue;
+    // Public early-access filter: an early-access goal is shown publicly only while the
+    // version's early-access window is still open. Once it has ended (missing or past
+    // `earlyAccessEndsAt`) the goal is hidden from the public — the goal itself keeps
+    // working; owners/mods still see it via the uncached privileged path.
+    const earlyAccessEndsAt = earlyAccessById.get(modelVersionId);
+    if (goal.isEarlyAccess && (!earlyAccessEndsAt || earlyAccessEndsAt <= now)) continue;
     result[modelVersionId].goals.push({ ...rest, total: totalByGoalId.get(goal.id) ?? 0 });
   }
 
