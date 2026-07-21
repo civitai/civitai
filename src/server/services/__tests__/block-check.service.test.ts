@@ -25,6 +25,10 @@ const { mockDb, amIBlockedByUser } = vi.hoisted(() => ({
     comment: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     commentV2: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     thread: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    model3D: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    model3DReview: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    comicChapter: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    comicProject: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
   },
 }));
 
@@ -110,6 +114,25 @@ describe('getBlockCheckOwnerIds — owner resolution per entity type', () => {
     expect(owners).toEqual(expect.arrayContaining([PARENT_AUTHOR, OWNER]));
   });
 
+  it('resolves the model3d owner', async () => {
+    mockDb.model3D.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'model3d', entityId: 1 })).toEqual([OWNER]);
+  });
+
+  it('resolves the model3dReview owner', async () => {
+    mockDb.model3DReview.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    expect(await getBlockCheckOwnerIds({ entityType: 'model3dReview', entityId: 1 })).toEqual([
+      OWNER,
+    ]);
+  });
+
+  it('resolves the comicChapter owner via its project', async () => {
+    mockDb.comicChapter.findUnique.mockResolvedValueOnce({ project: { userId: OWNER } });
+    expect(await getBlockCheckOwnerIds({ entityType: 'comicChapter', entityId: 1 })).toEqual([
+      OWNER,
+    ]);
+  });
+
   it('returns [] for unowned/unknown entity types (no false blocks)', async () => {
     expect(await getBlockCheckOwnerIds({ entityType: 'appListing', entityId: 1 })).toEqual([]);
     expect(await getBlockCheckOwnerIds({ entityType: 'challenge', entityId: 1 })).toEqual([]);
@@ -129,6 +152,22 @@ describe('throwIfBlockedByEntityOwner — enforcement', () => {
       throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'image', entityId: 1 })
     ).rejects.toThrow();
     expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: VIEWER, targetUserId: OWNER });
+  });
+
+  it('rejects a blocked user creating a model3d comment', async () => {
+    mockDb.model3D.findUnique.mockResolvedValueOnce({ userId: OWNER });
+    amIBlockedByUser.mockResolvedValueOnce(true);
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'model3d', entityId: 1 })
+    ).rejects.toThrow();
+  });
+
+  it('rejects a blocked user creating a comicChapter comment', async () => {
+    mockDb.comicChapter.findUnique.mockResolvedValueOnce({ project: { userId: OWNER } });
+    amIBlockedByUser.mockResolvedValueOnce(true);
+    await expect(
+      throwIfBlockedByEntityOwner({ userId: VIEWER, entityType: 'comicChapter', entityId: 1 })
+    ).rejects.toThrow();
   });
 
   it('does not throw when the acting user is NOT blocked', async () => {

@@ -21,7 +21,6 @@ import type { ReactionType } from '../clickhouse/client';
 import { dbRead } from '../db/client';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -226,14 +225,11 @@ export const toggleReactionHandler = async ({
       }
     }
 
-    await throwIfBlockedByEntityOwner({
+    const result = await toggleReaction({
+      ...input,
       userId: ctx.user.id,
-      entityType: input.entityType,
-      entityId: input.entityId,
       isModerator: ctx.user.isModerator,
     });
-
-    const result = await toggleReaction({ ...input, userId: ctx.user.id });
     const trackerEvent = await getTrackerEvent(input, result);
     if (trackerEvent) {
       await ctx.track

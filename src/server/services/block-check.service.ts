@@ -13,6 +13,10 @@ const threadContentSelect = {
   bountyEntryId: true,
   questionId: true,
   answerId: true,
+  model3dId: true,
+  model3dReviewId: true,
+  comicProjectId: true,
+  comicChapterPosition: true,
 } as const;
 
 type ThreadContent = {
@@ -26,6 +30,10 @@ type ThreadContent = {
   bountyEntryId: number | null;
   questionId: number | null;
   answerId: number | null;
+  model3dId: number | null;
+  model3dReviewId: number | null;
+  comicProjectId: number | null;
+  comicChapterPosition: number | null;
 };
 
 async function ownerOfThreadContent(thread: ThreadContent | null): Promise<number | undefined> {
@@ -77,6 +85,24 @@ async function ownerOfThreadContent(thread: ThreadContent | null): Promise<numbe
   if (thread.answerId)
     return (
       await dbRead.answer.findUnique({ where: { id: thread.answerId }, select: { userId: true } })
+    )?.userId;
+  if (thread.model3dId)
+    return (
+      await dbRead.model3D.findUnique({ where: { id: thread.model3dId }, select: { userId: true } })
+    )?.userId;
+  if (thread.model3dReviewId)
+    return (
+      await dbRead.model3DReview.findUnique({
+        where: { id: thread.model3dReviewId },
+        select: { userId: true },
+      })
+    )?.userId;
+  if (thread.comicProjectId)
+    return (
+      await dbRead.comicProject.findUnique({
+        where: { id: thread.comicProjectId },
+        select: { userId: true },
+      })
     )?.userId;
   return undefined;
 }
@@ -181,6 +207,27 @@ export async function getBlockCheckOwnerIds({
         select: { userId: true },
       });
       return r ? [r.userId] : [];
+    }
+    case 'model3d': {
+      const r = await dbRead.model3D.findUnique({
+        where: { id: entityId },
+        select: { userId: true },
+      });
+      return r ? [r.userId] : [];
+    }
+    case 'model3dReview': {
+      const r = await dbRead.model3DReview.findUnique({
+        where: { id: entityId },
+        select: { userId: true },
+      });
+      return r ? [r.userId] : [];
+    }
+    case 'comicChapter': {
+      const r = await dbRead.comicChapter.findUnique({
+        where: { id: entityId },
+        select: { project: { select: { userId: true } } },
+      });
+      return r?.project?.userId ? [r.project.userId] : [];
     }
     case 'comment':
       return ownersForCommentV2(entityId);
