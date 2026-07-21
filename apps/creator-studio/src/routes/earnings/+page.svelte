@@ -116,6 +116,8 @@
         ...(data.prevSeries != null
           ? [
               {
+                // Always a line — even in bar mode — so the comparison overlay reads clearly (868ke4939).
+                type: 'line' as const,
                 label: 'Previous period',
                 data: dates.map((d) => prevByDate.get(shiftIso(d, -span)) ?? 0),
                 borderColor: '#868e96',
@@ -138,6 +140,15 @@
     plugins: { legend: { display: false } },
     scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } },
   };
+
+  // Line (smooth, default) ↔ bar for the trend (868ke4939) — some find the smooth line confusing. The Chart wrapper
+  // fixes its base type at mount, so a {#key chartType} block remounts it on toggle; the previous period stays a line.
+  let chartType = $state<'line' | 'bar'>('line');
+  // Split per-currency (B8) ↔ one combined Total Buzz column (868ke492g) — the "total value of Buzz" view. The
+  // individual split stays the default.
+  let combined = $state(false);
+  // Total buzz for a source across every buzz currency present (yellow + green + …) — the combined column's cell.
+  const buzzTotal = (source: string) => currencies.reduce((sum, c) => sum + cell(source, c), 0);
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -209,57 +220,99 @@
         Buzz earned over time
         <span class="text-xs text-dark-3">· selected sources, this period vs the previous</span>
       </p>
-      <ToggleGroup
-        type="multiple"
-        value={shownSources}
-        onValueChange={(v) => {
-          if (v.length) shownSources = v;
-        }}
-        variant="outline"
-        size="sm"
-        spacing={1.5}
-        class="flex-wrap"
-      >
-        {#each seriesSources as s (s)}
-          <ToggleGroupItem value={s} aria-label={SOURCE_LABEL[s]} class="gap-1.5 text-xs">
-            <span
-              class="inline-block h-2 w-2 rounded-full"
-              style="background:{shownSources.includes(s)
-                ? SOURCE_COLOR[s]
-                : 'transparent'};border:1px solid {SOURCE_COLOR[s]}"
-            ></span>
-            {SOURCE_LABEL[s]}
-          </ToggleGroupItem>
-        {/each}
-      </ToggleGroup>
+      <div class="flex flex-wrap items-center gap-2">
+        <ToggleGroup
+          type="single"
+          value={chartType}
+          onValueChange={(v) => {
+            if (v) chartType = v as 'line' | 'bar';
+          }}
+          variant="outline"
+          size="sm"
+        >
+          <ToggleGroupItem value="line" aria-label="Line chart" class="text-xs">Line</ToggleGroupItem>
+          <ToggleGroupItem value="bar" aria-label="Bar chart" class="text-xs">Bar</ToggleGroupItem>
+        </ToggleGroup>
+        <ToggleGroup
+          type="multiple"
+          value={shownSources}
+          onValueChange={(v) => {
+            if (v.length) shownSources = v;
+          }}
+          variant="outline"
+          size="sm"
+          spacing={1.5}
+          class="flex-wrap"
+        >
+          {#each seriesSources as s (s)}
+            <ToggleGroupItem value={s} aria-label={SOURCE_LABEL[s]} class="gap-1.5 text-xs">
+              <span
+                class="inline-block h-2 w-2 rounded-full"
+                style="background:{shownSources.includes(s)
+                  ? SOURCE_COLOR[s]
+                  : 'transparent'};border:1px solid {SOURCE_COLOR[s]}"
+              ></span>
+              {SOURCE_LABEL[s]}
+            </ToggleGroupItem>
+          {/each}
+        </ToggleGroup>
+      </div>
     </div>
     <div class="h-72">
-      <Chart type="line" data={chartData} options={chartOptions} class="h-full" />
+      {#key chartType}
+        <Chart type={chartType} data={chartData} options={chartOptions} class="h-full" />
+      {/key}
     </div>
   </div>
 
   <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-3 text-sm text-dark-2">By source <span class="text-xs text-dark-3">{periodLabel}</span></p>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <p class="text-sm text-dark-2">By source <span class="text-xs text-dark-3">{periodLabel}</span></p>
+      <ToggleGroup
+        type="single"
+        value={combined ? 'combined' : 'split'}
+        onValueChange={(v: string) => {
+          if (v) combined = v === 'combined';
+        }}
+        variant="outline"
+        size="sm"
+      >
+        <ToggleGroupItem value="split" aria-label="Split by currency" class="text-xs">Split</ToggleGroupItem>
+        <ToggleGroupItem value="combined" aria-label="Combined Buzz total" class="text-xs">Combined</ToggleGroupItem>
+      </ToggleGroup>
+    </div>
     <Table.Root>
       <Table.Header>
         <Table.Row>
           <Table.Head>Source</Table.Head>
-          {#each currencies as c (c)}
-            <Table.Head class="text-right">{currencyMeta(c).label}</Table.Head>
-          {/each}
+          {#if combined}
+            <Table.Head class="text-right">Total Buzz</Table.Head>
+          {:else}
+            {#each currencies as c (c)}
+              <Table.Head class="text-right">{currencyMeta(c).label}</Table.Head>
+            {/each}
+          {/if}
         </Table.Row>
       </Table.Header>
       <Table.Body>
         {#each sources as s (s)}
           <Table.Row>
             <Table.Cell class="text-dark-1">{SOURCE_LABEL[s]}</Table.Cell>
-            {#each currencies as c (c)}
-              {@const v = cell(s, c)}
-              {@const show = hasDisplayValue(v, c)}
+            {#if combined}
+              {@const total = buzzTotal(s)}
+              {@const show = Math.floor(total) >= 1}
               <Table.Cell class="text-right {show ? 'font-medium text-white' : 'text-dark-4'}">
-                {show ? formatAmount(v, c) : '—'}
+                {show ? formatBuzz(total) : '—'}
               </Table.Cell>
-            {/each}
+            {:else}
+              {#each currencies as c (c)}
+                {@const v = cell(s, c)}
+                {@const show = hasDisplayValue(v, c)}
+                <Table.Cell class="text-right {show ? 'font-medium text-white' : 'text-dark-4'}">
+                  {show ? formatAmount(v, c) : '—'}
+                </Table.Cell>
+              {/each}
+            {/if}
           </Table.Row>
         {/each}
       </Table.Body>

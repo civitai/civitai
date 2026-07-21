@@ -60,16 +60,17 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 
 ## Earnings
 
-- [ ] **[todo]** **Combined Green + Yellow buzz** — `CU:868ke492g`. Add a combined total view/column (both convert to
-  money); **keep** the individual-type view too. (`T:43`)
+- [x] **[done]** **Combined Green + Yellow buzz** — `CU:868ke492g`. The "By source" table has a Split↔**Combined**
+  toggle; Combined collapses every buzz currency into one **Total Buzz** column (the "total value of Buzz" view).
+  Split stays the default (B8). (`T:43`)
 - [ ] **[todo]** **Buzz→$ ratio history** — `CU:868ke492x`. Monthly historical buzz→$ conversion. Derive from
   ClickHouse `buzzTransactions`: net bank into `creatorProgramBank` (bank − extract) vs the `compensation` cash grant
   into `cashPending` (amount in **cents**, `externalId` = `comp-pool-unified-YYYY-MM-<userId>`); `ratio =
   cashDollars / netBankedBuzz`, capped at $0.001/buzz; data from **Mar 2025**. Use the comp grant, **not**
   `CashWithdrawal`. (Full queries in the plan doc.) (`T:47`)
-- [ ] **[todo]** **Line ↔ bar chart toggle** — `CU:868ke4939` (alexds9 + MNeMiC). Smooth line is default; add a bar
-  toggle (some find the smooth Earnings graph confusing). When bars are on, the **previous period stays a line**.
-  (`T:54`)
+- [x] **[done]** **Line ↔ bar chart toggle** — `CU:868ke4939` (alexds9 + MNeMiC). Line/Bar toggle on the earnings
+  trend; smooth line default. In bar mode the current period is bars and the **previous period stays a line** (dashed
+  overlay). (`T:54`)
 - [ ] **[done?]** **Per-model earnings filter / buzz-chart filtering** — `CU:868ke494r` (MNeMiC). Ensure per-model
   earnings charts exist in Studio (buzz dashboard already has them), **plus** an optional filter for which transaction
   types show (exclude payouts / transfers / membership buzz / model spend). Briant: "mostly have this" — **verify +
