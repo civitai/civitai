@@ -1,5 +1,6 @@
 import type * as z from 'zod';
 import { seamlessPano360Recipe } from './seamless-pano.recipe';
+import { starterComfyTxt2imgRecipe } from './starter-comfy-txt2img.recipe';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks `customComfy` recipe registry.
@@ -154,6 +155,10 @@ export type AnyBlockRecipe = BlockRecipe<any>;
 // The registry object. Its keys ARE the source of truth for the schema enum.
 const recipeRegistry = {
   'seamless-pano-360': seamlessPano360Recipe,
+  // Recipe #2 — the CLI scaffold's demoable starter: a minimal single-step Z-Image
+  // txt2img, no civitai resources (no entitlement gate), ceiling 30. See
+  // starter-comfy-txt2img.recipe.ts.
+  'starter-comfy-txt2img': starterComfyTxt2imgRecipe,
 };
 
 export type RegisteredRecipeId = keyof typeof recipeRegistry & string;
