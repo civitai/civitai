@@ -475,6 +475,7 @@ export async function getInfiniteChallenges(
     participation,
     includeEnded,
     excludeEventChallenges,
+    challengeEventId,
     browsingLevel,
     limit,
     cursor,
@@ -568,6 +569,11 @@ export async function getInfiniteChallenges(
   // Exclude challenges that belong to an event (shown in featured section instead)
   if (excludeEventChallenges) {
     conditions.push(Prisma.sql`c."eventId" IS NULL`);
+  }
+
+  // Scope to a single event's challenges (e.g. an event's own challenges page)
+  if (challengeEventId) {
+    conditions.push(Prisma.sql`c."eventId" = ${challengeEventId}`);
   }
 
   // Content level filter — models-style: exclude a challenge outright when its REAL cover image
