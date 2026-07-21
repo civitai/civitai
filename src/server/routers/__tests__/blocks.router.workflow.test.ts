@@ -4516,7 +4516,8 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     return validClaims({
       ctx: { entityType: 'none', slotId: 'page' },
       appBlockId: 'apb_test',
-      buzzBudget: 500, // comfortably above the recipe ceiling (180) by default
+      // Comfortably above every per-engine ceiling (zimage 90 default … qwen 180 max).
+      buzzBudget: 500,
       ...over,
     });
   }
@@ -4601,19 +4602,22 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       happySubmit();
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
       expect(result.snapshot.workflowId).toBe('wf_cc_1');
-      // (2) per-user daily cap reserved the CEILING (180), not the 0 estimate.
+      // (2) per-user daily cap reserved the per-engine CEILING (zimage default =
+      // 90), not the 0 estimate.
       expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
+        90
       );
       // (3) per-app aggregate cap reserved the CEILING.
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 180);
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+      // The submitted step's timeout matches the reserved ceiling (90s → 00:01:30).
+      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:01:30');
       // settle record persisted with BOTH reservation keys + the ceiling.
       expect(mockPersistCustomComfySettle).toHaveBeenCalledWith({
         workflowId: 'wf_cc_1',
         buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
         appSpendKey: 'system:blocks:app-spend-cap:apb_test:day',
-        ceiling: 180,
+        ceiling: 90,
       });
     });
 
@@ -4631,11 +4635,11 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     });
 
     it('STATIC gate: recipe ceiling > buzzBudget → failed snapshot, NO reserve, NO submit', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 50 })); // 180 > 50
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 50 })); // zimage 90 > 50
       happyCcResources();
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
       expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      expect(result.snapshot.error).toMatch(/ceiling 180 exceeds budget 50/);
+      expect(result.snapshot.error).toMatch(/ceiling 90 exceeds budget 50/);
       expect(mockSysRedis.incrBy).not.toHaveBeenCalled(); // never reserved
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
@@ -4647,10 +4651,10 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
       expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
       expect(result.snapshot.error).toMatch(/daily Buzz cap/);
-      // refunded the reserved ceiling on the pinned key.
+      // refunded the reserved ceiling (zimage 90) on the pinned key.
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
+        90
       );
       expect(mockReserveAppSpend).not.toHaveBeenCalled(); // never reached the app cap
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
@@ -4668,10 +4672,10 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
       expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
       expect(result.snapshot.error).toMatch(/app daily spend cap/);
-      // per-user daily reservation rolled back.
+      // per-user daily reservation (zimage 90) rolled back.
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
+        90
       );
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
@@ -4685,11 +4689,73 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       ).rejects.toThrow(/orchestrator down/);
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
+        90
       );
-      expect(mockRefundAppSpend).toHaveBeenCalledWith('system:blocks:app-spend-cap:apb_test:day', 180);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith('system:blocks:app-spend-cap:apb_test:day', 90);
       // never persisted a settle record for a submit that threw.
       expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── v1.1: PER-ENGINE budget ceilings. A cheaper engine reserves/settles LESS
+  // cap AND gets a proportionally tighter step timeout (the timeout is the
+  // physical Buzz cap, so the reservation and the timeout MUST move together).
+  describe('submitWorkflow — per-engine budget ceilings (v1.1)', () => {
+    it('qwen-image reserves 180 on both caps and stamps a 00:03:00 timeout', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
+      });
+      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        180
+      );
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 180);
+      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:03:00');
+      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
+        expect.objectContaining({ ceiling: 180 })
+      );
+    });
+
+    it('flux2-klein reserves 120 and stamps a 00:02:00 timeout', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
+      });
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 120);
+      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:02:00');
+    });
+
+    it('the concrete new behavior: at buzzBudget 100, cheap zimage (90) RUNS but qwen (180) is REJECTED', async () => {
+      // Under the old single-180 ceiling this budget gated out EVERY engine; now a
+      // cheaper engine runs under a budget the priciest still can't afford.
+      happyCcResources();
+      happySubmit();
+      // zimage ceiling 90 ≤ 100 → passes the static gate, reserves 90, submits.
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 100 }));
+      const okZimage = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody({ params: { prompt: 'x', engine: 'zimage-turbo' } }),
+      });
+      expect(okZimage.snapshot.workflowId).toBe('wf_cc_1');
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+
+      // qwen ceiling 180 > 100 → rejected at the static gate, NO submit.
+      mockSubmitWorkflow.mockClear();
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 100 }));
+      const rejectedQwen = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
+      });
+      expect(rejectedQwen.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
+      expect(rejectedQwen.snapshot.error).toMatch(/ceiling 180 exceeds budget 100/);
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
   });
 
@@ -4810,7 +4876,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     it('over-budget static gate returns BEFORE submit → NO scope-invocation, NO attribution', async () => {
       vi.mocked(recordScopeInvocation).mockClear();
       mockRecordSpendAttribution.mockClear();
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 50 })); // 180 > 50
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 50 })); // zimage 90 > 50
       happyCcResources();
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
       expect(result.snapshot.status).toBe('failed');
@@ -4844,12 +4910,12 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       happyCcResources();
       happySubmit();
       mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
-      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 180 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 90 });
 
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
       expect(result.snapshot.workflowId).toBe('wf_cc_1');
-      // Reserved the CEILING (180), not the 0 estimate, against the session cap.
-      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 180, 5000);
+      // Reserved the CEILING (zimage default = 90), not the 0 estimate, against the session cap.
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 90, 5000);
       // Dev token → NO per-app reserve, but the settle record carries the session
       // id (so terminal settle refunds ceiling-actual on the session cap too).
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
@@ -4858,7 +4924,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
         appSpendKey: null,
         devSessionId: 'bki_dev',
-        ceiling: 180,
+        ceiling: 90,
       });
     });
 
@@ -4867,17 +4933,17 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       happyCcResources();
       happySubmit();
       mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
-      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 180 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 90 });
 
       await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 180);
-      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 180, 5000);
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
+      expect(mockReserveDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 90, 5000);
       expect(mockPersistCustomComfySettle).toHaveBeenCalledWith({
         workflowId: 'wf_cc_1',
         buzzCapKey: expect.stringMatching(/^system:blocks:buzz-cap:42:/),
         appSpendKey: 'system:blocks:app-spend-cap:apb_test:day',
         devSessionId: 'bki_dev',
-        ceiling: 180,
+        ceiling: 90,
       });
     });
 
@@ -4890,10 +4956,10 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       const result = await caller().submitWorkflow({ blockToken: 'tok', body: ccBody() });
       expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
       expect(result.snapshot.error).toMatch(/dev tunnel session Buzz cap reached/);
-      // The per-user daily CEILING reservation was rolled back.
+      // The per-user daily CEILING (zimage 90) reservation was rolled back.
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
+        90
       );
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
@@ -4903,18 +4969,18 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ dev: true }));
       happyCcResources();
       mockGetActiveDevTunnel.mockResolvedValue({ sessionId: 'bki_dev', spendCapBuzz: 5000 });
-      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 180 });
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 90 });
       mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
 
       await expect(
         caller().submitWorkflow({ blockToken: 'tok', body: ccBody() })
       ).rejects.toThrow(/orchestrator down/);
-      // Daily + dev-session ceiling both refunded on the throw.
+      // Daily + dev-session ceiling (zimage 90) both refunded on the throw.
       expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
+        90
       );
-      expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 180);
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith('bki_dev', 90);
       expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
     });
 
