@@ -19,6 +19,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconAlertTriangle,
+  IconArrowBackUp,
   IconBolt,
   IconBox,
   IconCheck,
@@ -220,9 +221,10 @@ function CreatorShopReviewPage() {
     setReason('');
   };
 
-  // Reject is terminal; request-changes lets the creator edit & resubmit. Both
-  // require a note so the creator knows why.
-  const submitReview = async (action: 'reject' | 'request-changes') => {
+  // Reject is terminal; request-changes lets the creator edit & resubmit;
+  // revert unpublishes a live item back into the queue. All require a note so
+  // the creator knows why.
+  const submitReview = async (action: 'reject' | 'request-changes' | 'revert') => {
     if (!selected) return;
     if (!reason.trim())
       return showErrorNotification({
@@ -580,7 +582,7 @@ function CreatorShopReviewPage() {
                   className="max-md:flex-wrap"
                 >
                   <TextInput
-                    placeholder="Add a note (required to reject or request changes)"
+                    placeholder="Add a note (required for everything except approval)"
                     value={reason}
                     onChange={(e) => setReason(e.currentTarget.value)}
                     maxLength={1000}
@@ -588,6 +590,17 @@ function CreatorShopReviewPage() {
                     className="max-md:w-full"
                   />
                   <Group gap="sm" wrap="nowrap">
+                    {selected.status === CosmeticShopItemStatus.Published && (
+                      <Button
+                        color="orange"
+                        variant="light"
+                        leftSection={<IconArrowBackUp size={16} />}
+                        loading={reviewItem.isPending}
+                        onClick={() => submitReview('revert')}
+                      >
+                        Revert to pending
+                      </Button>
+                    )}
                     <Button
                       variant="default"
                       loading={reviewItem.isPending}

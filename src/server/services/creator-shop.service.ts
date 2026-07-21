@@ -818,12 +818,15 @@ export const reviewCreatorShopItem = async ({
       status: true,
       meta: true,
       title: true,
+      addedById: true,
       cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
     },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
   if (item.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be reviewed');
+  if (action === 'revert' && item.status !== CosmeticShopItemStatus.Published)
+    throw throwBadRequestError('Only published items can be reverted to pending review');
 
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
@@ -843,7 +846,9 @@ export const reviewCreatorShopItem = async ({
           },
           select: creatorShopItemSelect,
         })
-      : // reject = terminal; request-changes = creator can edit & resubmit.
+      : // reject = terminal; request-changes = creator can edit & resubmit;
+        // revert = unpublish back into the review queue. The note is kept on
+        // rejectionReason so both the queue and the creator see why.
         await dbWrite.cosmeticShopItem.update({
           where: { id },
           data: {
@@ -851,6 +856,8 @@ export const reviewCreatorShopItem = async ({
             status:
               action === 'reject'
                 ? CosmeticShopItemStatus.Rejected
+                : action === 'revert'
+                ? CosmeticShopItemStatus.PendingReview
                 : CosmeticShopItemStatus.RequestedChanges,
             rejectionReason: rejectionReason ?? null,
           },
@@ -871,6 +878,17 @@ export const reviewCreatorShopItem = async ({
     });
   }
 
+  // An unpublished item can't stay featured — free up its slot.
+  if (action === 'revert' && item.addedById) {
+    const settings = await getCreatorShopSettings({ userId: item.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: item.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
   // Let the creator know the review outcome (best-effort).
   const creatorId = item.cosmetic.createdById;
   if (creatorId) {
@@ -880,6 +898,8 @@ export const reviewCreatorShopItem = async ({
         ? 'creator-shop-item-approved'
         : action === 'request-changes'
         ? 'creator-shop-item-changes-requested'
+        : action === 'revert'
+        ? 'creator-shop-item-reverted'
         : 'creator-shop-item-rejected';
     await createNotification({
       type,

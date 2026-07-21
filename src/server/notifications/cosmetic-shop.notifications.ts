@@ -26,6 +26,18 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: details.username ? `/user/${details.username as string}/shop/manage` : '/',
     }),
   },
+  'creator-shop-item-reverted': {
+    displayName: 'Creator Shop: Cosmetic unpublished',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: details.reason
+        ? `Your cosmetic "${details.title as string}" was unpublished and returned to review: ${
+            details.reason as string
+          }`
+        : `Your cosmetic "${details.title as string}" was unpublished and returned to review.`,
+      url: details.username ? `/user/${details.username as string}/shop/manage` : '/',
+    }),
+  },
   'creator-shop-item-rejected': {
     displayName: 'Creator Shop: Cosmetic rejected',
     category: NotificationCategory.System,
