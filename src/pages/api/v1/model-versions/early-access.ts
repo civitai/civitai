@@ -9,6 +9,7 @@ import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/mode
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getMaxEarlyAccessDays, getMaxEarlyAccessModels } from '~/server/utils/early-access-helpers';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { env } from '~/env/server';
 import type { SessionUser } from '~/types/session';
 
 // Narrow cross-app write for a model version's early-access config — the creator
@@ -38,6 +39,14 @@ export default AuthedEndpoint(
     }
 
     const { earlyAccessConfig } = input;
+
+    // Permanent access is set only from the Creator Studio (which enforces the tier cap); require the shared token.
+    if (earlyAccessConfig?.permanent && !user.isModerator && req.query.token !== env.WEBHOOK_TOKEN) {
+      return res
+        .status(403)
+        .json({ error: 'Permanent access can only be set from the Creator Studio.' });
+    }
+
     if (earlyAccessConfig?.timeframe && !user.isModerator) {
       const features = getFeatureFlags({ user, req });
       const maxDays = getMaxEarlyAccessDays({ userMeta: user.meta, features });

@@ -31,7 +31,7 @@ export const resourceDataCache = createCachedArray({
          LIMIT 1) AS "vaeId",
         mv."status",
         mv."usageControl",
-        (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        (CASE WHEN mv."availability" = 'EarlyAccess' AND (mv."earlyAccessEndsAt" >= NOW() OR mv."earlyAccessPermanent") THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
         (mv."meta"->'generationAlias'->>'versionId')::int AS "aliasId",
         gc."covered",
         FALSE AS "hasAccess",
