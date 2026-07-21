@@ -29,6 +29,7 @@ const {
   mockReconstruct,
   mockGetPrior,
   mockSign,
+  mockDeriveHooks,
 } = vi.hoisted(() => ({
   mockEnv: {
     APPS_KUBE_NAMESPACE: 'civitai-apps',
@@ -48,6 +49,7 @@ const {
   mockReconstruct: vi.fn(async () => Buffer.from('ZIPBYTES')),
   mockGetPrior: vi.fn(async () => null as { id: string; version: string } | null),
   mockSign: vi.fn(() => 'callback.token'),
+  mockDeriveHooks: vi.fn(() => 'hooks.token'),
 }));
 
 vi.mock('~/env/server', () => ({ env: mockEnv }));
@@ -75,6 +77,7 @@ vi.mock('~/server/services/blocks/app-review-report.service', () => ({
 }));
 vi.mock('~/server/services/blocks/review-session', () => ({
   signAgentCallbackToken: mockSign,
+  deriveAgentHooksToken: mockDeriveHooks,
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppReviewAgentReportId: () => 'arar_TEST',
@@ -208,6 +211,7 @@ describe('startAgentReview — ZIP path', () => {
       CALLBACK_TOKEN: 'callback.token',
       PRIOR_REPORT_JSON_B64: '',
       COST_CAP_USD: '2',
+      HOOKS_TOKEN: 'hooks.token',
     });
 
     // Job metadata labels for teardown selection.
@@ -401,6 +405,7 @@ describe('buildAgentReviewApplyScript', () => {
       'CALLBACK_TOKEN',
       'PRIOR_REPORT_JSON_B64',
       'COST_CAP_USD',
+      'HOOKS_TOKEN',
     ]) {
       expect(script).toContain(v);
     }

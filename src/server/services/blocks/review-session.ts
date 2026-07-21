@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — parent-minted, short-TTL, mod-bound access token.
@@ -304,4 +304,66 @@ export function verifyAgentCallbackToken(
   if (payload.p !== expectedPublishRequestId) return fail;
 
   return { ok: true, publishRequestId: payload.p };
+}
+
+// ---------------------------------------------------------------------------
+// AGENTIC MOD CODE-REVIEW (App Blocks P3, in-modal chat) — the agent pod's
+// GATEWAY secret, DERIVED (no storage / no migration).
+//
+// The moderator's in-modal chat proxies to the review agent pod's OpenClaw
+// gateway (`http://<agentName>.<ns>.svc.cluster.local:18789/v1/chat/completions`).
+// The gateway expects a bearer. Rather than persist a per-review secret, civitai
+// DERIVES it deterministically from NEXTAUTH_SECRET + the publishRequestId:
+//   - `deriveAgentHooksToken(publishRequestId)` is passed to the pod at PROVISION
+//     time (Job env `HOOKS_TOKEN`); the infra template feeds it into the pod's
+//     fetch-bundle init and the pod uses it as its gateway secret basis.
+//   - the gateway BEARER civitai sends on each chat = `sha256("gw-" + hooks)`.
+// Both are pure functions of (NEXTAUTH_SECRET, publishRequestId): the pod holds
+// HOOKS_TOKEN for its whole run and civitai RECOMPUTES the bearer for every chat
+// turn, so they always match without any shared/stored state.
+//
+// DETERMINISTIC (no exp): unlike the `mr` / callback tokens above, these are
+// stable derivations, not short-TTL bearers — the recompute-must-match invariant
+// requires determinism. Domain-separated + distinct construction so neither can
+// ever collide with the `mr` entry token or the callback bearer.
+// ---------------------------------------------------------------------------
+
+/** Domain-separation prefix for the derived per-review agent HOOKS token. Bump
+ *  `v1` if the derivation shape changes (would require an infra-template bump). */
+const AGENT_HOOKS_TOKEN_DOMAIN_PREFIX = 'agent-review-hooks:v1';
+
+export type DeriveAgentHooksTokenOpts = {
+  /** Injected for testability; defaults to env.NEXTAUTH_SECRET. */
+  secret?: string;
+};
+
+/**
+ * Derive the per-review agent HOOKS token: a domain-separated HMAC-SHA256 over
+ * NEXTAUTH_SECRET keyed by the publishRequestId, hex-encoded. Deterministic and
+ * distinct from the `mr` entry token and the callback bearer (different domain
+ * prefix + a plain `:${publishRequestId}` binding, no expiry). Passed to the pod
+ * at provision time as `HOOKS_TOKEN`.
+ */
+export function deriveAgentHooksToken(
+  publishRequestId: string,
+  opts?: DeriveAgentHooksTokenOpts
+): string {
+  const secret = opts?.secret ?? resolveSecret();
+  return createHmac('sha256', secret)
+    .update(`${AGENT_HOOKS_TOKEN_DOMAIN_PREFIX}:${publishRequestId}`)
+    .digest('hex');
+}
+
+/**
+ * The bearer the OpenClaw gateway expects = `sha256("gw-" + hooksToken)` (hex),
+ * where `hooksToken = deriveAgentHooksToken(publishRequestId)`. civitai sends
+ * this on every in-modal chat request; the pod computes the same value from the
+ * HOOKS_TOKEN it was provisioned with, so the two match without shared state.
+ */
+export function deriveAgentGatewayBearer(
+  publishRequestId: string,
+  opts?: DeriveAgentHooksTokenOpts
+): string {
+  const hooks = deriveAgentHooksToken(publishRequestId, opts);
+  return createHash('sha256').update(`gw-${hooks}`).digest('hex');
 }

@@ -172,6 +172,26 @@ export const getAgentReviewSchema = z.object({
 
 export type GetAgentReviewInput = z.infer<typeof getAgentReviewSchema>;
 
+/** One turn of the MOD-ONLY in-modal agent chat (P3). The CLIENT sends the
+ *  running conversation; the server prepends its own grounding system context. */
+export const agentReviewChatMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1).max(4000),
+});
+
+export type AgentReviewChatMessage = z.infer<typeof agentReviewChatMessageSchema>;
+
+/** Input for the MOD-ONLY in-modal agent chat proxy `blocks.agentReviewChat`
+ *  (P3). The client sends the pending request id + the running conversation
+ *  (bounded); the server prepends a grounding system message and proxies to the
+ *  review agent pod's in-cluster gateway. */
+export const agentReviewChatSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  messages: z.array(agentReviewChatMessageSchema).min(1).max(20),
+});
+
+export type AgentReviewChatInput = z.infer<typeof agentReviewChatSchema>;
+
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });

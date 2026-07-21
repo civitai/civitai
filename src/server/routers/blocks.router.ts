@@ -55,6 +55,7 @@ import {
   approveRequestSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
+  agentReviewChatSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
   getPublishRequestScreenshotsSchema,
@@ -1532,6 +1533,49 @@ export const blocksRouter = router({
         '~/server/services/blocks/app-review-report.service'
       );
       return getAgentReport(input.publishRequestId);
+    }),
+
+  /**
+   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT proxy. A moderator
+   * viewing a live/complete report can ask the SAME ephemeral agent pod follow-up
+   * questions ("why did you flag scope X", "show the call site"). Non-streaming
+   * request/response (v1); streaming SSE is a follow-up.
+   *
+   * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
+   * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
+   * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
+   * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
+   * rejects. The service loads the report, requires the pod to be up
+   * (running|complete|cost-capped → else PRECONDITION_FAILED), proxies to the
+   * pod's in-cluster gateway with the DERIVED bearer, and returns `{ reply }`.
+   */
+  agentReviewChat: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(agentReviewChatSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Agentic review is restricted to civitai team');
+      }
+      const { isAppBlocksAgenticReviewEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
+        throw throwAuthorizationError('Agentic review is not enabled');
+      }
+      const { agentReviewChat } = await import('~/server/services/blocks/agent-review.service');
+      try {
+        return await agentReviewChat({
+          publishRequestId: input.publishRequestId,
+          messages: input.messages,
+        });
+      } catch (err) {
+        // Preserve the service's typed codes (PRECONDITION_FAILED = pod not up;
+        // BAD_GATEWAY = agent unreachable/timeout/non-200) so the client can
+        // render the right inline message; only opaque errors collapse to
+        // BAD_REQUEST. NEVER a 500 leak.
+        if (err instanceof TRPCError) throw err;
+        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+      }
     }),
 
   /**

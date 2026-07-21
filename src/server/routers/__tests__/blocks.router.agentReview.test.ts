@@ -27,6 +27,7 @@ const {
   mockIsAgenticEnabled,
   mockGetAgentReport,
   mockStartAgentReview,
+  mockAgentReviewChat,
   mockPreviewRequest,
   mockGetReviewStatus,
   mockMintReviewBlockToken,
@@ -46,6 +47,7 @@ const {
   mockIsAgenticEnabled: vi.fn(),
   mockGetAgentReport: vi.fn(),
   mockStartAgentReview: vi.fn(),
+  mockAgentReviewChat: vi.fn(),
   mockPreviewRequest: vi.fn(),
   mockGetReviewStatus: vi.fn(),
   mockMintReviewBlockToken: vi.fn(),
@@ -76,6 +78,7 @@ vi.mock('~/server/services/blocks/app-review-report.service', () => ({
 }));
 vi.mock('~/server/services/blocks/agent-review.service', () => ({
   startAgentReview: mockStartAgentReview,
+  agentReviewChat: mockAgentReviewChat,
 }));
 vi.mock('~/server/services/blocks/publish-request.service', () => ({
   previewRequest: mockPreviewRequest,
@@ -193,6 +196,8 @@ beforeEach(() => {
   mockGetAgentReport.mockResolvedValue(REPORT);
   mockStartAgentReview.mockReset();
   mockStartAgentReview.mockResolvedValue({ reportId: 'arar_1', status: 'running' });
+  mockAgentReviewChat.mockReset();
+  mockAgentReviewChat.mockResolvedValue({ reply: 'because scope X is used in wallet.js:10' });
 });
 
 describe('blocks.getAgentReview', () => {
@@ -270,5 +275,65 @@ describe('blocks.startAgentReview — CONFLICT preservation', () => {
       TRPCError
     );
     expect(mockStartAgentReview).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.agentReviewChat', () => {
+  const CHAT_INPUT = {
+    publishRequestId: PUBREQ,
+    messages: [{ role: 'user' as const, content: 'why did you flag scope X?' }],
+  };
+
+  it('moderator + flags on: reaches the service with the id + messages, returns the reply', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const res = await caller.agentReviewChat(CHAT_INPUT);
+    expect(res).toEqual({ reply: 'because scope X is used in wallet.js:10' });
+    expect(mockAgentReviewChat).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      messages: CHAT_INPUT.messages,
+    });
+  });
+
+  it('non-moderator: UNAUTHORIZED, service NOT reached', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toBeInstanceOf(TRPCError);
+    expect(mockAgentReviewChat).not.toHaveBeenCalled();
+  });
+
+  it('anonymous: UNAUTHORIZED', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toBeInstanceOf(TRPCError);
+    expect(mockAgentReviewChat).not.toHaveBeenCalled();
+  });
+
+  it('moderator but the agentic-review flag OFF (fail-closed): UNAUTHORIZED (dark)', async () => {
+    mockIsAgenticEnabled.mockResolvedValue(false);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toBeInstanceOf(TRPCError);
+    expect(mockAgentReviewChat).not.toHaveBeenCalled();
+  });
+
+  it('preserves a service PRECONDITION_FAILED (pod not up), not flattened to BAD_REQUEST', async () => {
+    mockAgentReviewChat.mockRejectedValue(
+      new TRPCError({ code: 'PRECONDITION_FAILED', message: 'the review agent is not available' })
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+  });
+
+  it('preserves a service BAD_GATEWAY (agent unreachable), not flattened to BAD_REQUEST', async () => {
+    mockAgentReviewChat.mockRejectedValue(
+      new TRPCError({ code: 'BAD_GATEWAY', message: 'the review agent did not respond' })
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
+  });
+
+  it('an opaque (non-TRPC) service error collapses to BAD_REQUEST (no 500 leak)', async () => {
+    mockAgentReviewChat.mockRejectedValue(new Error('kaboom'));
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.agentReviewChat(CHAT_INPUT)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
