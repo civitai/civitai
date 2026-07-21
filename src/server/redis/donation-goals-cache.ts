@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { getValidCreatorMembershipMap } from '~/server/services/creator-membership.service';
 
 // A single public (non-owner, non-moderator) donation goal, shaped byte-identically to
 // `modelVersionDonationGoals`' output element: the DonationGoal row fields it selects plus
@@ -83,10 +84,12 @@ export const publicDonationGoalsLookupFn = async (
     },
   });
 
-  // Creator opt-out: an owner can hide the public donation-goal display for ALL their
-  // goals via the `hideDonationGoals` user setting. Non-owner/non-mod viewers go through
-  // this cache, so drop those goals here. Owners/mods bypass the cache entirely (see
-  // `modelVersionDonationGoals`) and still see their goals.
+  // Creator opt-out (Creator Program benefit): an owner can hide the public
+  // donation-goal display for ALL their goals via `hideDonationGoals`. It only takes
+  // effect while the owner holds a valid CP membership — a lapsed/never-member owner's
+  // goals become publicly visible again with no stored flip, mirroring the metric-
+  // privacy gate. Non-owner/non-mod viewers go through this cache; owners/mods bypass
+  // it entirely (see `modelVersionDonationGoals`) and always see their own goals.
   const ownerIds = [...new Set(goals.map((g) => g.userId))];
   const hiddenOwnerIds = new Set<number>();
   if (ownerIds.length > 0) {
@@ -94,9 +97,12 @@ export const publicDonationGoalsLookupFn = async (
       where: { id: { in: ownerIds } },
       select: { id: true, settings: true },
     });
-    for (const owner of owners) {
-      const settings = owner.settings as { hideDonationGoals?: boolean } | null;
-      if (settings?.hideDonationGoals) hiddenOwnerIds.add(owner.id);
+    const optedOutOwnerIds = owners
+      .filter((o) => (o.settings as { hideDonationGoals?: boolean } | null)?.hideDonationGoals)
+      .map((o) => o.id);
+    if (optedOutOwnerIds.length > 0) {
+      const membershipMap = await getValidCreatorMembershipMap(optedOutOwnerIds);
+      for (const id of optedOutOwnerIds) if (membershipMap.get(id)) hiddenOwnerIds.add(id);
     }
   }
 

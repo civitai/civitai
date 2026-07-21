@@ -322,9 +322,7 @@ export const getLicensingRoots = async ({
 
 // Field-level early-access requirements (status-independent): a timeframe needs
 // a charge, and each enabled charge needs a price.
-function assertEarlyAccessChargeConfig(
-  config: ModelVersionEarlyAccessConfig | null | undefined
-) {
+function assertEarlyAccessChargeConfig(config: ModelVersionEarlyAccessConfig | null | undefined) {
   if (config?.timeframe && !config.chargeForDownload && !config.chargeForGeneration) {
     throw throwBadRequestError(
       'You must charge for downloads or generations if you set an early access time frame.'
@@ -334,7 +332,9 @@ function assertEarlyAccessChargeConfig(
     throw throwBadRequestError('You must provide a download price when charging for downloads.');
   }
   if (config?.chargeForGeneration && !config.generationPrice) {
-    throw throwBadRequestError('You must provide a generation price when charging for generations.');
+    throw throwBadRequestError(
+      'You must provide a generation price when charging for generations.'
+    );
   }
 }
 
@@ -351,7 +351,9 @@ function mergeEarlyAccessConfigUpdate({
   status: ModelStatus;
 }): ModelVersionEarlyAccessConfig | null | undefined {
   if (status === ModelStatus.Published && !!updatedConfig && !existingConfig) {
-    throw throwBadRequestError('You cannot add early access on a model after it has been published.');
+    throw throwBadRequestError(
+      'You cannot add early access on a model after it has been published.'
+    );
   }
 
   if (status === ModelStatus.Published && updatedConfig && existingConfig) {
@@ -390,6 +392,7 @@ export const upsertModelVersion = async ({
   recommendedResources,
   templateId,
   earlyAccessConfig: updatedEarlyAccessConfig,
+  meta: metaInput,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
@@ -479,6 +482,7 @@ export const upsertModelVersion = async ({
       dbWrite.modelVersion.create({
         data: {
           ...data,
+          meta: (metaInput as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
           flags: flagsOverride,
           availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
             (s) => s === data?.status
@@ -544,6 +548,7 @@ export const upsertModelVersion = async ({
         earlyAccessEndsAt: true,
         earlyAccessConfig: true,
         publishedAt: true,
+        meta: true,
         model: {
           select: {
             id: true,
@@ -585,10 +590,18 @@ export const upsertModelVersion = async ({
       );
     }
 
+    const mergedMeta = metaInput
+      ? {
+          ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
+          ...(metaInput as Record<string, unknown>),
+        }
+      : undefined;
+
     const version = await dbWrite.modelVersion.update({
       where: { id },
       data: {
         ...data,
+        meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
         flags: flagsOverride,
         availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
         earlyAccessConfig:
@@ -1781,7 +1794,6 @@ export const earlyAccessPurchase = async ({
       throw throwBadRequestError('Failed to create Buzz transaction.');
 
     buzzTransactionId = externalTransactionIdPrefix;
-    
 
     await dbWrite.$transaction(
       async (tx) => {

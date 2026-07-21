@@ -24,6 +24,8 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { logToAxiom } from '~/server/logging/client';
+import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
+import { resolveVersionHiddenMetrics } from '~/server/utils/model-metric-privacy';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -182,6 +184,26 @@ export async function prepareModelVersionResponse(
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
   const includeImages = model.mode !== ModelModifier.TakenDown;
 
+  // Creator Controls: gate the version download count (public API — no owner/mod
+  // bypass wired here, matching buildPublicModelResponse). The base query doesn't
+  // carry meta/owner, so fetch the privacy inputs directly.
+  const privacy = await dbRead.modelVersion.findUnique({
+    where: { id: version.id },
+    select: {
+      meta: true,
+      model: { select: { meta: true, userId: true, user: { select: { settings: true } } } },
+    },
+  });
+  const hidden = resolveVersionHiddenMetrics({
+    versionMeta: privacy?.meta,
+    modelMeta: privacy?.model?.meta,
+    userSettings: privacy?.model?.user?.settings,
+    isOwnerOrModerator: false,
+    hasValidMembership: privacy?.model?.userId
+      ? await hasValidCreatorMembership(privacy.model.userId)
+      : false,
+  });
+
   return {
     ...version,
     // licensingFee is a Prisma Decimal; coerce so the public API keeps emitting a number, not a JSON string.
@@ -194,7 +216,7 @@ export async function prepareModelVersionResponse(
       fileType: primaryFile.type,
     }),
     stats: {
-      downloadCount: metrics[0]?.downloadCount ?? 0,
+      downloadCount: hidden.downloads ? null : metrics[0]?.downloadCount ?? 0,
       thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
     },
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
