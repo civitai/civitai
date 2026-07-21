@@ -22,6 +22,7 @@ import {
   ChallengeSort,
   challengeJudgingCategoriesSchema,
   parseChallengeMetadata,
+  type ChallengeCoverImage,
   type ChallengeDetail,
   type ChallengeDetailForEdit,
   type ChallengeEventListItem,
@@ -2802,6 +2803,30 @@ export async function updateChallengeSystemConfig(input: UpdateChallengeConfigIn
 
 // --- Challenge Events ---
 
+// Batch-map event coverImageIds to the ChallengeCoverImage shape (mirrors the challenge-cover
+// mapping in mapChallengeRowsToCards above so both produce identical shapes).
+async function getEventCoverImages(coverImageIds: (number | null)[]) {
+  const ids = coverImageIds.filter(isDefined);
+  if (ids.length === 0) return new Map<number, ChallengeCoverImage>();
+  const images = await dbRead.image.findMany({
+    where: { id: { in: ids } },
+    select: imageSelect,
+  });
+  const map = new Map<number, ChallengeCoverImage>();
+  for (const img of images) {
+    map.set(img.id, {
+      id: img.id,
+      url: img.url,
+      nsfwLevel: img.nsfwLevel,
+      hash: img.hash,
+      width: img.width,
+      height: img.height,
+      type: img.type,
+    });
+  }
+  return map;
+}
+
 /**
  * Get active challenge events with their challenges.
  * Returns events where active=true and endDate >= now, ordered by startDate.
@@ -2820,6 +2845,7 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
       titleColor: true,
       startDate: true,
       endDate: true,
+      coverImageId: true,
       challenges: {
         where: {
           visibleAt: { lte: new Date() },
@@ -2848,10 +2874,16 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     },
   });
 
+  const eventCoverMap = await getEventCoverImages(events.map((e) => e.coverImageId));
+
   // Batch-enrich all challenges across all events
   const allChallenges = events.flatMap((e) => e.challenges);
   if (allChallenges.length === 0) {
-    return events.map((e) => ({ ...e, challenges: [] }));
+    return events.map((e) => ({
+      ...e,
+      coverImage: e.coverImageId ? eventCoverMap.get(e.coverImageId) ?? null : null,
+      challenges: [],
+    }));
   }
 
   // Get judge user IDs for challenges that have judges
@@ -2931,6 +2963,7 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
     titleColor: event.titleColor,
     startDate: event.startDate,
     endDate: event.endDate,
+    coverImage: event.coverImageId ? eventCoverMap.get(event.coverImageId) ?? null : null,
     challenges: event.challenges.map((c) => {
       // createdById can be null (creator account deleted); fall back to the system user (-1).
       const displayUserId = displayUidFor({
@@ -2982,6 +3015,51 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
       };
     }),
   }));
+}
+
+/**
+ * Get a single challenge event by id, with its cover image and currently-visible challenge count.
+ * The `challenges` array is always empty — the grid loads separately via an infinite query.
+ */
+export async function getChallengeEventById(
+  id: number
+): Promise<ChallengeEventListItem & { challengeCount: number }> {
+  const event = await dbRead.challengeEvent.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      titleColor: true,
+      startDate: true,
+      endDate: true,
+      coverImageId: true,
+      _count: {
+        select: {
+          challenges: {
+            where: {
+              visibleAt: { lte: new Date() },
+              status: { not: ChallengeStatus.Cancelled },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!event) throw throwNotFoundError('Challenge event not found');
+
+  const coverMap = await getEventCoverImages([event.coverImageId]);
+  return {
+    id: event.id,
+    title: event.title,
+    description: event.description,
+    titleColor: event.titleColor,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    coverImage: event.coverImageId ? coverMap.get(event.coverImageId) ?? null : null,
+    challenges: [],
+    challengeCount: event._count.challenges,
+  };
 }
 
 /**
