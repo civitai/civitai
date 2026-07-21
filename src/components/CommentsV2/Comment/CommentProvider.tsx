@@ -10,6 +10,7 @@ type CommentV2State = {
   canEdit?: boolean;
   canReply?: boolean;
   canHide?: boolean;
+  canPin?: boolean;
   badge?: CommentV2BadgeProps;
   comment: Comment;
 };
@@ -40,6 +41,7 @@ export function CommentProvider({
   const canReply =
     (currentUser && !isLocked && !isMuted && !forceLocked && !comment.hidden) ?? undefined;
   const canHide = currentUser?.id === resourcerOwnerId || isMod;
+  const canPin = currentUser?.id === resourcerOwnerId || isMod;
   const badge = badges?.find((x) => x.userId === comment.user.id);
   return (
     <CommentV2Context.Provider
@@ -49,6 +51,7 @@ export function CommentProvider({
         canEdit,
         canReply,
         canHide,
+        canPin,
         badge,
         comment,
       }}
