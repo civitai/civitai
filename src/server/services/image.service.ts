@@ -286,44 +286,28 @@ const {
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
 export async function purgeResizeCache({ url }: { url: string }) {
-  // Best-effort: purge resized variants from the image-cache bucket. This is a
-  // cache invalidation, NOT a source-of-truth write — a stale resized variant is
-  // self-healing (re-derived on next request) and must never fail the caller's
-  // mutation. The S3 client here talks to an S3-compatible proxy
-  // (S3_IMAGE_UPLOAD_ENDPOINT); when that proxy returns a non-S3 body (e.g. a
-  // plain-text "404 page not found" from the proxy front-end), the AWS SDK's
-  // deserializer throws `char '4' is not expected.:1:1` which previously
-  // surfaced as a 500 on post.updateImage (hideMeta toggle). Swallow + log so a
-  // flaky/non-conforming cache proxy can't break image edits. (The deleteImage
-  // caller already wraps this in try/catch — this makes the contract intrinsic.)
-  try {
-    const { items } = await getImageS3Client().listObjects({
-      bucket: env.S3_IMAGE_CACHE_BUCKET,
-      prefix: url,
-    });
-    const keys = items.map((x) => x.Key).filter(isDefined);
-    if (keys.length) {
-      await getImageS3Client().deleteManyObjects({
-        bucket: env.S3_IMAGE_CACHE_BUCKET,
-        keys,
-      });
-    }
-  } catch (err) {
-    logToAxiom({
-      type: 'warning',
-      name: 'purge-resize-cache',
-      message: 'resize-cache purge failed',
-      imageKey: url,
-      error: safeError(err),
-    }).catch(() => {
-      // swallow — best effort logging
-    });
-  }
+  // Invalidate the resized/converted variants for this image. Cache
+  // invalidation only — a stale variant is self-healing (re-derived on next
+  // request) and must never fail the caller's mutation.
+  //
+  // NOTE: this used to also do a direct S3 listObjects+deleteManyObjects against
+  // env.S3_IMAGE_CACHE_BUCKET ("civitai-media-cache") via getImageS3Client().
+  // That path was DEAD in prod and has been removed: the cache bucket now lives
+  // on Backblaze B2 (us-west-004) and is owned by the image-cacher service,
+  // while getImageS3Client() points at the DigitalOcean-Spaces object-read proxy
+  // (S3_IMAGE_UPLOAD_ENDPOINT). That proxy does not implement ListObjectsV2 — a
+  // path-style list request returns a plain-text "404 page not found", which the
+  // AWS SDK's XML error deserializer chokes on (`char '4' is not expected.:1:1`).
+  // So the listObjects call ALWAYS threw before deleting anything (fire ~9/min,
+  // fail-soft since #2600) — pure noise + a wasted round-trip on every image
+  // delete / hideMeta toggle. Invalidation is fully handled by the image-cacher
+  // /admin/invalidate call below (L2 Redis SCAN+DEL by prefix + Cloudflare tag
+  // purge), which is the modern owner of the civitai-media-cache bucket.
 
-  // Best-effort: tell image-cacher to invalidate its caches for this UUID
-  // after the source-of-truth deletion (above) has succeeded. If this fails
-  // (network, image-cacher down, etc.) we accept up to 4d of stale L2 entries
-  // — no worse than today's behavior. Never block or throw the delete flow.
+  // Best-effort: tell image-cacher to invalidate its caches for this UUID.
+  // If this fails (network, image-cacher down, etc.) we accept up to 4d of
+  // stale L2 entries — no worse than today's behavior. Never block or throw
+  // the delete flow.
   if (env.IMAGE_CACHER_URL && url) {
     fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?imageKey=${encodeURIComponent(url)}`, {
       method: 'POST',
