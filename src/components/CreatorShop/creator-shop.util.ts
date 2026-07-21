@@ -136,6 +136,16 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to restore item'),
   });
 
+  const deleteItem = trpc.creatorShop.deleteItem.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getManageItems.invalidate();
+      // Deleting can also free a featured slot server-side.
+      await queryUtils.creatorShop.getSettings.invalidate();
+      await queryUtils.creatorShop.getShop.invalidate();
+    },
+    onError: onError('Failed to delete item'),
+  });
+
   const addResoldItem = trpc.creatorShop.addResoldItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getSettings.invalidate();
@@ -189,6 +199,7 @@ export const useMutateCreatorShop = () => {
     updateItem,
     archiveItem,
     unarchiveItem,
+    deleteItem,
     addResoldItem,
     removeResoldItem,
     updateSettings,

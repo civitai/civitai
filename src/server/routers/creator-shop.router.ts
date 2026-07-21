@@ -14,6 +14,7 @@ import {
 } from '~/server/schema/creator-shop.schema';
 import {
   archiveCreatorShopItem,
+  deleteCreatorShopItem,
   getCreatorShop,
   getCreatorShopManageItems,
   getEarlyAccessModelPrices,
@@ -64,6 +65,13 @@ export const creatorShopRouter = router({
   ),
   unarchiveItem: creatorShopProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
     unarchiveCreatorShopItem({
+      id: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
+  deleteItem: creatorShopProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
+    deleteCreatorShopItem({
       id: input.id,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,

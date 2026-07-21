@@ -1,5 +1,6 @@
 import { ActionIcon, Badge, Group, Menu, Stack, Text } from '@mantine/core';
-import { IconArchive, IconArchiveOff, IconDots, IconEdit } from '@tabler/icons-react';
+import { openConfirmModal } from '@mantine/modals';
+import { IconArchive, IconArchiveOff, IconDots, IconEdit, IconTrash } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
@@ -15,6 +16,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 
 type ArchiveMutation = ReturnType<typeof useMutateCreatorShop>['archiveItem'];
 type UnarchiveMutation = ReturnType<typeof useMutateCreatorShop>['unarchiveItem'];
+type DeleteMutation = ReturnType<typeof useMutateCreatorShop>['deleteItem'];
 
 // A column owns both its header cell and how it renders a row cell, so adding /
 // reordering columns is a localized change to this array.
@@ -59,12 +61,39 @@ function ItemActionsMenu({
   item,
   archiveItem,
   unarchiveItem,
+  deleteItem,
 }: {
   item: CreatorShopManageItem;
   archiveItem: ArchiveMutation;
   unarchiveItem: UnarchiveMutation;
+  deleteItem: DeleteMutation;
 }) {
   const isArchived = item.status === CosmeticShopItemStatus.Archived;
+
+  const confirmDelete = () =>
+    openConfirmModal({
+      title: 'Delete shop item',
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            Permanently delete <strong>{item.title}</strong>? This can&apos;t be undone — archive it
+            instead if you might want it back.
+          </Text>
+          {item.purchases > 0 && (
+            <Text size="sm" c="red">
+              This item has <strong>{numberWithCommas(item.purchases)}</strong> sale
+              {item.purchases === 1 ? '' : 's'}. Its purchase records and sales totals will be
+              permanently lost. Buyers keep the cosmetics they purchased.
+            </Text>
+          )}
+        </Stack>
+      ),
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      centered: true,
+      onConfirm: () => deleteItem.mutate({ id: item.id }),
+    });
+
   return (
     <Menu withinPortal position="bottom-end">
       <Menu.Target>
@@ -94,7 +123,6 @@ function ItemActionsMenu({
               {item.status === CosmeticShopItemStatus.RequestedChanges ? 'Edit & resubmit' : 'Edit'}
             </Menu.Item>
             <Menu.Item
-              color="red"
               leftSection={<IconArchive size={16} />}
               disabled={archiveItem.isPending}
               onClick={() => archiveItem.mutate({ id: item.id })}
@@ -103,6 +131,14 @@ function ItemActionsMenu({
             </Menu.Item>
           </>
         )}
+        <Menu.Item
+          color="red"
+          leftSection={<IconTrash size={16} />}
+          disabled={deleteItem.isPending}
+          onClick={confirmDelete}
+        >
+          Delete
+        </Menu.Item>
       </Menu.Dropdown>
     </Menu>
   );
@@ -110,7 +146,8 @@ function ItemActionsMenu({
 
 export function useManageColumns(
   archiveItem: ArchiveMutation,
-  unarchiveItem: UnarchiveMutation
+  unarchiveItem: UnarchiveMutation,
+  deleteItem: DeleteMutation
 ): ManageColumn[] {
   return useMemo(
     () => [
@@ -171,10 +208,15 @@ export function useManageColumns(
         width: 56,
         align: 'right',
         render: (item) => (
-          <ItemActionsMenu item={item} archiveItem={archiveItem} unarchiveItem={unarchiveItem} />
+          <ItemActionsMenu
+            item={item}
+            archiveItem={archiveItem}
+            unarchiveItem={unarchiveItem}
+            deleteItem={deleteItem}
+          />
         ),
       },
     ],
-    [archiveItem, unarchiveItem]
+    [archiveItem, unarchiveItem, deleteItem]
   );
 }
