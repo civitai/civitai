@@ -73,19 +73,26 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 - [x] **[done]** **Line ↔ bar chart toggle** — `CU:868ke4939` (alexds9 + MNeMiC). Line/Bar toggle on the earnings
   trend; smooth line default. In bar mode the current period is bars and the **previous period stays a line** (dashed
   overlay). (`T:54`)
-- [ ] **[done?]** **Per-model earnings filter / buzz-chart filtering** — `CU:868ke494r` (MNeMiC). Ensure per-model
-  earnings charts exist in Studio (buzz dashboard already has them), **plus** an optional filter for which transaction
-  types show (exclude payouts / transfers / membership buzz / model spend). Briant: "mostly have this" — **verify +
-  add the type filter**. (`T:491`)
+- [x] **[done]** **Per-model earnings filter / buzz-chart filtering** — `CU:868ke494r` (MNeMiC). Verified: per-model
+  charts already exist (`/analytics/models` table + `/analytics/models/[modelId]` per-version), and Studio's earnings
+  are curated to *receiving* types only (`RECEIVING_TYPES`) — spend / transfers / payouts / membership buzz are never
+  mixed in. Added the missing piece: a **single source filter** on `/earnings` (a Sources chip bar) that now governs
+  the **whole** section together — the by-source cards, the by-source table, and the trend — not just the trend. When
+  any source is hidden, every affected section is flagged **· filtered** and a yellow callout ("hiding N of M sources
+  … not your full earnings") makes clear the reduced totals aren't the full picture, with a **Show all** reset. (`T:491`)
 
 ## Analytics
 
 - [x] **[done]** **Current-vs-previous period overlay** (30d vs prior 30d) — implemented (`previousRange`). *No CU
   task.* (`T:61`)
-- [ ] **[todo]** **Model + version selection to compare** — `CU:868ke493d` — **explicitly V1** (ClickUp overrides the
-  transcript's "maybe vNext"). Let creators pick a model or its individual **versions** and overlay/compare graphs
-  across metrics (**generations** vs **downloads**) over time; default to top-N versions for the period but allow
-  selecting any version (incl. zero-activity ones). (`T:104`,`T:538`)
+- [x] **[done]** **Model + version selection to compare** — `CU:868ke493d` — **explicitly V1**. Added a **Compare
+  versions** overlay chart to `/analytics/models/[modelId]` (the model is picked by navigating there / the model-ID
+  lookup): a **Generations ↔ Downloads** metric toggle + a version chip multi-select (color-matched to the lines),
+  overlaying one line per selected version over the range. Defaults to the **top 5 versions by activity** in the
+  period but **any version is selectable, including zero-activity ones**. Backed by `getModelVersionSeries`
+  (models-earnings.ts, ownership-checked, Redis-cached per range) reading daily
+  `orchestration.daily_resource_generation_counts` + `default.daily_downloads` per version. Data validated against a
+  real 38-version model. (`T:104`,`T:538`)
 - **[resolved — no]** **NSFW/content-level controls in analytics** — not needed; owner-only views. (`T:181`)
 
 ## Get-paid estimate (non-members)

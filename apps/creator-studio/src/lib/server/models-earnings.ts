@@ -578,3 +578,119 @@ export const getBaseModelPerformance = createCache({
   fetch: fetchBaseModelPerformance,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
+
+// Per-version daily time series for one model (feedback 868ke493d) — the version-comparison overlay chart. Daily
+// generations (`orchestration.daily_resource_generation_counts`) + downloads (`default.daily_downloads`) per version
+// over the range, so the client can overlay any picked versions on either metric. Ownership is enforced from Postgres
+// (returns null when the model isn't the caller's). Every version is returned — including zero-activity ones — so the
+// picker can select them; `total*` drive the default top-N pick. Points are sparse (days with activity only); the
+// client aligns them on the union of dates. `to` (<= today via parseRange) fences out the tables' future-dated junk.
+export type VersionSeriesPoint = { date: string; generations: number; downloads: number };
+export type VersionSeries = {
+  versionId: number;
+  versionName: string | null;
+  baseModel: string | null;
+  points: VersionSeriesPoint[];
+  totalGenerations: number;
+  totalDownloads: number;
+};
+export type ModelVersionSeries = {
+  modelId: number;
+  modelName: string | null;
+  nsfw: boolean;
+  nsfwLevel: number;
+  versions: VersionSeries[];
+};
+
+async function fetchModelVersionSeries({
+  userId,
+  modelId,
+  from,
+  to,
+}: {
+  userId: number;
+  modelId: number;
+  from: string;
+  to: string;
+}): Promise<ModelVersionSeries | null> {
+  const uid = Number(userId);
+  const mid = Number(modelId);
+
+  const model = await dbRead
+    .selectFrom('Model')
+    .where('id', '=', mid)
+    .select(['id', 'name', 'userId', 'nsfw', 'nsfwLevel'])
+    .executeTakeFirst();
+  if (!model || Number(model.userId) !== uid) return null;
+
+  const versions = await dbRead
+    .selectFrom('ModelVersion')
+    .where('modelId', '=', mid)
+    .select(['id', 'name', 'baseModel'])
+    .orderBy('createdAt', 'desc')
+    .execute();
+
+  const base: ModelVersionSeries = {
+    modelId: mid,
+    modelName: model.name ?? null,
+    nsfw: !!model.nsfw,
+    nsfwLevel: Number(model.nsfwLevel ?? 0),
+    versions: versions.map((v) => ({
+      versionId: Number(v.id),
+      versionName: v.name ?? null,
+      baseModel: v.baseModel ?? null,
+      points: [],
+      totalGenerations: 0,
+      totalDownloads: 0,
+    })),
+  };
+  if (!versions.length) return base;
+
+  const idList = versions.map((v) => Number(v.id)).join(',');
+  const ch = getClickhouse();
+  const [genRows, dlRows] = await Promise.all([
+    ch.$query<{ modelVersionId: number | string; date: string; count: number | string }>(
+      `SELECT modelVersionId, toString(createdDate) AS date, sum(count) AS count
+       FROM orchestration.daily_resource_generation_counts
+       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${from}') AND toDate('${to}')
+       GROUP BY modelVersionId, date`
+    ),
+    ch.$query<{ modelVersionId: number | string; date: string; downloads: number | string }>(
+      `SELECT modelVersionId, toString(createdDate) AS date, sum(downloads) AS downloads
+       FROM default.daily_downloads
+       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${from}') AND toDate('${to}')
+       GROUP BY modelVersionId, date`
+    ),
+  ]);
+
+  const byId = new Map(base.versions.map((v) => [v.versionId, v]));
+  const pointsByVersion = new Map<number, Map<string, VersionSeriesPoint>>();
+  const point = (vid: number, date: string) => {
+    let byDate = pointsByVersion.get(vid);
+    if (!byDate) pointsByVersion.set(vid, (byDate = new Map()));
+    let p = byDate.get(date);
+    if (!p) byDate.set(date, (p = { date, generations: 0, downloads: 0 }));
+    return p;
+  };
+  for (const r of genRows) {
+    const vid = Number(r.modelVersionId);
+    if (byId.has(vid)) point(vid, String(r.date)).generations = Number(r.count);
+  }
+  for (const r of dlRows) {
+    const vid = Number(r.modelVersionId);
+    if (byId.has(vid)) point(vid, String(r.date)).downloads = Number(r.downloads);
+  }
+  for (const [vid, byDate] of pointsByVersion) {
+    const v = byId.get(vid)!;
+    v.points = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+    v.totalGenerations = v.points.reduce((s, p) => s + p.generations, 0);
+    v.totalDownloads = v.points.reduce((s, p) => s + p.downloads, 0);
+  }
+  return base;
+}
+
+export const getModelVersionSeries = createCache({
+  name: 'analytics:model-version-series',
+  fetch: fetchModelVersionSeries,
+  ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
+}).get;
