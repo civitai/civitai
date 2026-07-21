@@ -1509,6 +1509,25 @@ export const getModelsWithImagesAndModelVersions = async ({
   return result;
 };
 
+/**
+ * Re-queue a user's published models for search reindex. Creator Controls metric
+ * privacy is baked into the search doc (effective = flag AND active membership), so
+ * a `hideModel*` user-setting flip or a membership lapse must re-run the transform,
+ * otherwise the search cards stay stale (over-hidden after a lapse; user-default
+ * flips invisible until an incidental reindex).
+ */
+export async function queueModelMetricPrivacyReindex(userId: number) {
+  if (!userId) return;
+  const models = await dbRead.model.findMany({
+    where: { userId, status: ModelStatus.Published },
+    select: { id: true },
+  });
+  if (!models.length) return;
+  await modelsSearchIndex.queueUpdate(
+    models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+}
+
 export const getModelVersionsMicro = async ({
   id,
   excludeUnpublished: excludeDrafts,
@@ -3329,6 +3348,16 @@ export async function getModelsWithVersions({
   }
   const apiMembershipMap = await getValidCreatorMembershipMap([...apiMembershipCandidates]);
 
+  // Version-level meta isn't carried by dataForModelsCache, so fetch it to honor the
+  // version-OR-model-OR-user precedence for v1 version stats (a version-only hide).
+  const versionMetaRows = modelVersionIds.length
+    ? await dbRead.modelVersion.findMany({
+        where: { id: { in: modelVersionIds } },
+        select: { id: true, meta: true },
+      })
+    : [];
+  const versionMetaMap = new Map<number, unknown>(versionMetaRows.map((v) => [v.id, v.meta]));
+
   function getStatsForModel(modelId: number, hidden: HiddenModelMetrics) {
     const stats = metrics.find((x) => x.modelId === modelId);
     return {
@@ -3382,7 +3411,18 @@ export async function getModelsWithVersions({
           supportsGeneration: modelVersions.some((x) => x.covered),
           modelVersions: modelVersions.map(
             ({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
-              const stats = getStatsForVersion(version.id, modelHidden);
+              const versionHidden = resolveVersionHiddenMetrics({
+                versionMeta: versionMetaMap.get(version.id),
+                modelMeta: {
+                  hideBuzz: metricPrivacy.buzz,
+                  hideDownloads: metricPrivacy.downloads,
+                  hideGenerations: metricPrivacy.generations,
+                },
+                userSettings: apiOwnerSettingsMap.get(user.id),
+                isOwnerOrModerator: isOwner,
+                hasValidMembership: apiMembershipMap.get(user.id) ?? false,
+              });
+              const stats = getStatsForVersion(version.id, versionHidden);
               const vaeVersionId = vaeMap.get(version.id);
               const vaeFile = vaeVersionId
                 ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)

@@ -153,6 +153,44 @@ describe('resolveVersionHiddenMetrics — precedence (version OR model OR user)'
   });
 });
 
+describe('v1 API version-stats gating (prepareModelVersionResponse / getStatsForVersion)', () => {
+  // v1 exposes only download at the version level; it must honor the version-level
+  // hide even when model + user defaults are clear (the precedence bug), and revert
+  // on lapse. Public API => isOwnerOrModerator: false.
+  it('version-only hide downloads => hidden for a public v1 caller (active member)', () => {
+    const hidden = resolveVersionHiddenMetrics({
+      versionMeta: { hideDownloads: true },
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: true,
+    });
+    expect(hidden.downloads).toBe(true);
+  });
+
+  it('version-only hide reverts to visible when the owner has lapsed', () => {
+    const hidden = resolveVersionHiddenMetrics({
+      versionMeta: { hideDownloads: true },
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: false,
+    });
+    expect(hidden.downloads).toBe(false);
+  });
+
+  it('model-level hide still cascades to version stats in v1', () => {
+    const hidden = resolveVersionHiddenMetrics({
+      versionMeta: {},
+      modelMeta: { hideDownloads: true },
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: true,
+    });
+    expect(hidden.downloads).toBe(true);
+  });
+});
+
 describe('anyMetricHidden', () => {
   it('true when any flag set, false otherwise', () => {
     expect(anyMetricHidden(NONE)).toBe(false);

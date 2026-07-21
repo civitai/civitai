@@ -32,7 +32,8 @@ export function CreatorControlsCard() {
           <Title order={2}>Creator Controls</Title>
           <Text size="sm" c="dimmed">
             Hide public metrics on your models. These are Creator Program benefits — they only apply
-            while your membership is active. You and moderators always see your real stats.
+            while your membership is active. You and moderators always see your real stats on model
+            pages and cards; on search results you&apos;ll see the hidden state, same as the public.
           </Text>
         </div>
 

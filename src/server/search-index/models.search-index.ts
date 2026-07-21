@@ -69,9 +69,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'id',
     'metrics.collectedCount',
     'metrics.commentCount',
-    'metrics.downloadCount',
     'metrics.thumbsUpCount',
-    'metrics.tippedAmountCount',
+    // Creator Controls: downloads + tipped can be masked in the displayed `metrics`,
+    // so sort on the REAL sort-only mirrors (excluded from displayedAttributes).
+    'sortMetrics.downloadCount',
+    'sortMetrics.tippedAmountCount',
   ];
 
   // Meilisearch stores sorted.
@@ -81,6 +83,54 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       'onIndexSetup :: sortableFieldsAttributesTask created',
       sortableFieldsAttributesTask
     );
+  }
+
+  // Creator Controls: `sortMetrics` holds the REAL download/tipped values used only
+  // for sorting. Excluding it from displayedAttributes keeps the true number out of
+  // every search hit (a masked model's real count is never returned to any client,
+  // including direct Meili queries). Meili whitelists by top-level attribute — nested
+  // children are included with their parent, so only NEW top-level doc keys need to
+  // be added here.
+  const displayedAttributes = [
+    'id',
+    'name',
+    'type',
+    'nsfw',
+    'nsfwLevel',
+    'minor',
+    'sfwOnly',
+    'status',
+    'createdAt',
+    'lastVersionAt',
+    'lastVersionAtUnix',
+    'publishedAt',
+    'locked',
+    'earlyAccessDeadline',
+    'mode',
+    'checkpointType',
+    'availability',
+    'poi',
+    'user',
+    'category',
+    'permissions',
+    'version',
+    'versions',
+    'triggerWords',
+    'fileFormats',
+    'hashes',
+    'tags',
+    'metrics',
+    'rank',
+    'hiddenMetrics',
+    'canGenerate',
+    'cannotPromote',
+    'cosmetic',
+    'images',
+  ];
+
+  if (JSON.stringify(displayedAttributes) !== JSON.stringify(settings.displayedAttributes)) {
+    const displayedAttributesTask = await index.updateDisplayedAttributes(displayedAttributes);
+    console.log('onIndexSetup :: displayedAttributesTask created', displayedAttributesTask);
   }
 
   const rankingRules = [
@@ -225,6 +275,15 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
 
+      const hidden = resolveModelHiddenMetrics({
+        modelMeta: meta,
+        userSettings: ownerSettingsMap.get(user.id),
+        isOwnerOrModerator: false,
+        hasValidMembership: membershipMap.get(user.id) ?? false,
+      });
+      const realDownloadCount = metrics?.downloadCount ?? 0;
+      const realTippedAmountCount = metrics?.tippedAmountCount ?? 0;
+
       return {
         ...model,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
@@ -282,22 +341,28 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             id: x.id,
             name: x.name,
           })) ?? [],
+        // DISPLAYED metrics — hidden ones masked to null (never leak the real number
+        // to the search hit). Sort order is preserved via `sortMetrics` below.
         metrics: {
           ...metrics,
+          downloadCount: hidden.downloads ? null : realDownloadCount,
+          tippedAmountCount: hidden.buzz ? null : realTippedAmountCount,
         },
         rank: {
-          downloadCount: metrics?.downloadCount ?? 0,
+          downloadCount: hidden.downloads ? null : realDownloadCount,
           thumbsUpCount: metrics.thumbsUpCount ?? 0,
           commentCount: metrics.commentCount ?? 0,
           collectedCount: metrics.collectedCount ?? 0,
-          tippedAmountCount: metrics.tippedAmountCount ?? 0,
+          tippedAmountCount: hidden.buzz ? null : realTippedAmountCount,
         },
-        hiddenMetrics: resolveModelHiddenMetrics({
-          modelMeta: meta,
-          userSettings: ownerSettingsMap.get(user.id),
-          isOwnerOrModerator: false,
-          hasValidMembership: membershipMap.get(user.id) ?? false,
-        }),
+        // SORT-ONLY: REAL values, excluded from `displayedAttributes` (see
+        // onIndexSetup) so sort by most-downloaded / most-tipped keeps the true
+        // order even when the displayed number is masked. Never returned to clients.
+        sortMetrics: {
+          downloadCount: realDownloadCount,
+          tippedAmountCount: realTippedAmountCount,
+        },
+        hiddenMetrics: hidden,
         canGenerate,
         cannotPromote,
         cosmetic: cosmetics[model.id] ?? null,
