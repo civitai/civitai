@@ -224,7 +224,7 @@ export const togglePinComment = async ({
   userId,
   isModerator,
 }: GetByIdInput & { userId: number; isModerator: boolean }) => {
-  const AND = [Prisma.sql`c.id = ${id}`];
+  const AND = [Prisma.sql`c.id = ${id}`, Prisma.sql`c."parentId" IS NULL`];
   // Only the model owner or a moderator can pin a comment
   if (!isModerator) AND.push(Prisma.sql`m."userId" = ${userId}`);
 
