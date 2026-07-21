@@ -1,8 +1,24 @@
+-- Permanent pay-for-access (CU 868ke4949).
+--
+-- SAFE TO RUN BEFORE THE CODE DEPLOY: purely additive. The new column defaults false, and the rewritten
+-- trigger only takes its new "permanent" branch when a version's earlyAccessConfig carries a `permanent`
+-- flag — which no existing row has and only the (not-yet-deployed) new code writes. So for every current
+-- row the trigger behaves exactly as before, and the running (old) code simply ignores the new column.
+
+-- 1. Additive column. NULL-safe: default false = no behavior change for existing rows.
+ALTER TABLE "ModelVersion"
+  ADD COLUMN IF NOT EXISTS "earlyAccessPermanent" boolean NOT NULL DEFAULT false;
+
+-- 2. Rewrite the early-access trigger with a highest-precedence "permanent" branch. A permanent version
+--    keeps earlyAccessEndsAt NULL (so the auto-expiry job — which filters earlyAccessEndsAt <= NOW() —
+--    never touches it) but stays availability = 'EarlyAccess' so every paywall still gates it. The
+--    "earlyAccessPermanent" column is derived here from the config flag (tracked even before publish, so a
+--    member can configure permanent access on an unpublished version). Behavior for non-permanent rows is
+--    unchanged. Permanent detection uses a text comparison (not ::boolean) so a malformed value can't abort
+--    the transaction.
 CREATE OR REPLACE FUNCTION early_access_ends_at()
 RETURNS TRIGGER AS $$
 DECLARE
-    -- Text comparison instead of a ::boolean cast, so a malformed value (only reachable via raw SQL — the tRPC
-    -- write path is zod-validated) can never raise and abort the enclosing publish/update transaction.
     is_permanent boolean := COALESCE(
         NEW."earlyAccessConfig" IS NOT NULL
         AND (NEW."earlyAccessConfig"->>'permanent') = 'true',
@@ -10,11 +26,6 @@ DECLARE
     );
 BEGIN
     IF is_permanent THEN
-        -- Permanent paid access (highest precedence): gated indefinitely. The column is tracked even before
-        -- publish, so a Creator-Program member can configure permanent access on an unpublished version and have
-        -- it counted/known immediately. Once published, keep "earlyAccessEndsAt" NULL (the auto-expiry job filters
-        -- "earlyAccessEndsAt" <= NOW(), so NULL excludes it) and "availability" = 'EarlyAccess' so every paywall
-        -- still gates it.
         IF NEW."publishedAt" IS NOT NULL THEN
             UPDATE "ModelVersion"
             SET "earlyAccessEndsAt" = NULL,
@@ -46,8 +57,7 @@ BEGIN
                 "earlyAccessPermanent" = false
             WHERE id = NEW.id;
         ELSE
-            -- Unpublished + not permanent: only clear a previously-set permanent flag (e.g. permanent -> off
-            -- before publish); otherwise leave the row untouched, matching the original no-op behavior.
+            -- Unpublished + not permanent: only clear a previously-set permanent flag; otherwise no-op.
             UPDATE "ModelVersion"
             SET "earlyAccessPermanent" = false
             WHERE id = NEW.id
@@ -58,7 +68,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
----
+
 CREATE OR REPLACE TRIGGER trigger_early_access_ends_at
 AFTER INSERT OR UPDATE OF "earlyAccessConfig", "publishedAt" ON "ModelVersion"
 FOR EACH ROW
