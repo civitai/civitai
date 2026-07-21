@@ -1,5 +1,10 @@
 import type { PageServerLoad } from './$types';
-import { getEarningsSummary, getEarningsSeries, getMonthlyEarnings } from '$lib/server/earnings';
+import {
+  getEarningsSummary,
+  getEarningsSeries,
+  getMonthlyEarnings,
+  getBuzzDollarRatio,
+} from '$lib/server/earnings';
 import { getCreatorCash } from '$lib/server/cash';
 import { parseRange, previousRange } from '$lib/date-range';
 
@@ -10,7 +15,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   // `prevSeries` = the previous period's buzz series (trend overlay); `monthly` = last-12-months table, which is
   // independent of the selected range.
   const userId = locals.user.id;
-  const [earnings, prevSeries, cash, monthly] = await Promise.all([
+  const [earnings, prevSeries, cash, monthly, buzzRatio] = await Promise.all([
     Promise.all([
       getEarningsSummary({ userId, ...range }),
       getEarningsSeries({ userId, ...range }),
@@ -18,7 +23,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     getEarningsSeries({ userId, ...prev }).catch(() => null),
     getCreatorCash({ userId }).catch(() => null),
     getMonthlyEarnings({ userId }).catch(() => null),
+    getBuzzDollarRatio({ userId }).catch(() => null),
   ]);
   const [summary, series] = earnings;
-  return { summary, series, prevSeries, cash, monthly, range };
+  return { summary, series, prevSeries, cash, monthly, buzzRatio, range };
 };

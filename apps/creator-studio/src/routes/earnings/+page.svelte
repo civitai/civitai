@@ -149,6 +149,15 @@
   let combined = $state(false);
   // Total buzz for a source across every buzz currency present (yellow + green + …) — the combined column's cell.
   const buzzTotal = (source: string) => currencies.reduce((sum, c) => sum + cell(source, c), 0);
+
+  // Buzz→$ conversion history (868ke492x). `perThousand` is already the capped $-per-1k rate from the server.
+  const usdFmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  const rateFmt = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 3,
+  });
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -353,6 +362,40 @@
                 {/if}
               </Table.Cell>
             {/each}
+          </Table.Row>
+        {/each}
+      </Table.Body>
+    </Table.Root>
+  </div>
+{/if}
+
+{#if data.buzzRatio?.length}
+  <div class="mt-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
+    <p class="mb-1 text-sm text-dark-2">
+      Buzz → $ conversion <span class="text-xs text-dark-3">· what your banked Buzz was worth each month</span>
+    </p>
+    <p class="mb-3 text-xs text-dark-3">
+      Your Creator Program cash payout ÷ the Buzz you banked that month. Capped at $1.00 per 1,000 Buzz. The current
+      month appears once its pool settles.
+    </p>
+    <Table.Root>
+      <Table.Header>
+        <Table.Row>
+          <Table.Head>Month</Table.Head>
+          <Table.Head class="text-right">Banked Buzz</Table.Head>
+          <Table.Head class="text-right">Cash earned</Table.Head>
+          <Table.Head class="text-right">Per 1,000 Buzz</Table.Head>
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {#each data.buzzRatio as r (r.month)}
+          <Table.Row>
+            <Table.Cell class="text-dark-1">{formatMonth(r.month)}</Table.Cell>
+            <Table.Cell class="text-right tabular-nums text-white">{formatBuzz(r.bankedBuzz)}</Table.Cell>
+            <Table.Cell class="text-right tabular-nums text-white">{usdFmt.format(r.usd)}</Table.Cell>
+            <Table.Cell class="text-right font-medium tabular-nums text-green-4">
+              {rateFmt.format(r.perThousand)}
+            </Table.Cell>
           </Table.Row>
         {/each}
       </Table.Body>

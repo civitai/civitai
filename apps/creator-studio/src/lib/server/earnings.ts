@@ -131,3 +131,52 @@ export const getMonthlyEarnings = createCache({
   fetch: fetchMonthly,
   ttlSeconds: 3600,
 }).get;
+
+// Buzz→$ conversion history (feedback 868ke492x) — what a creator's banked Buzz was actually worth in dollars each
+// month. Two ClickHouse inputs per month:
+//   • net banked Buzz = `bank` (creator's yellow/green → creatorProgramBank[Green]) minus un-bank `withdrawal`/`refund`
+//     (creatorProgramBank[Green] → back to the creator). This is what they committed to that month's pool.
+//   • comp cash = the `compensation` grant into `cashPending` (externalId `comp-pool-unified-YYYY-MM-<userId>`), whose
+//     `amount` is in CENTS. This is NOT a CashWithdrawal — it's the pool payout for that month.
+// rate = compUsd / netBankedBuzz, capped at $0.001/Buzz (the pool's hard $1-per-1k ceiling). The current month is
+// naturally excluded: banking has happened but the pool hasn't settled, so there's no comp grant yet (HAVING drops it).
+// Program launched Mar 2025, so nothing earlier exists to query.
+export type BuzzDollarRatio = { month: string; bankedBuzz: number; usd: number; perThousand: number };
+
+async function fetchBuzzRatio({ userId }: { userId: number }): Promise<BuzzDollarRatio[]> {
+  const uid = Number(userId);
+  const rows = await getClickhouse().$query<{
+    month: string;
+    comp_cents: number | string;
+    net_banked: number | string;
+  }>(
+    `SELECT toString(m) AS month,
+            sumIf(amount, kind = 'comp') AS comp_cents,
+            sumIf(amount, kind = 'bank') - sumIf(amount, kind = 'extract') AS net_banked
+     FROM (
+       SELECT toStartOfMonth(date) AS m, amount,
+         multiIf(
+           type = 'compensation' AND toAccountType = 'cashPending' AND externalTransactionId LIKE 'comp-pool-unified-%', 'comp',
+           type = 'bank' AND fromAccountId = ${uid} AND toAccountType IN ('creatorProgramBank','creatorProgramBankGreen'), 'bank',
+           type IN ('withdrawal','refund') AND toAccountId = ${uid} AND fromAccountType IN ('creatorProgramBank','creatorProgramBankGreen'), 'extract',
+           'x') AS kind
+       FROM default.buzzTransactions
+       WHERE (toAccountId = ${uid} OR fromAccountId = ${uid}) AND date >= toDate('2025-03-01')
+     ) WHERE kind != 'x'
+     GROUP BY m
+     HAVING sumIf(amount, kind = 'comp') > 0 AND (sumIf(amount, kind = 'bank') - sumIf(amount, kind = 'extract')) > 0
+     ORDER BY m DESC`
+  );
+  return rows.map((r) => {
+    const usd = Number(r.comp_cents) / 100;
+    const bankedBuzz = Number(r.net_banked);
+    const perThousand = Math.min(usd / bankedBuzz, 0.001) * 1000;
+    return { month: String(r.month), bankedBuzz, usd, perThousand };
+  });
+}
+
+export const getBuzzDollarRatio = createCache({
+  name: 'earnings:buzz-ratio',
+  fetch: fetchBuzzRatio,
+  ttlSeconds: 3600,
+}).get;

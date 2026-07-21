@@ -63,11 +63,13 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 - [x] **[done]** **Combined Green + Yellow buzz** — `CU:868ke492g`. The "By source" table has a Split↔**Combined**
   toggle; Combined collapses every buzz currency into one **Total Buzz** column (the "total value of Buzz" view).
   Split stays the default (B8). (`T:43`)
-- [ ] **[todo]** **Buzz→$ ratio history** — `CU:868ke492x`. Monthly historical buzz→$ conversion. Derive from
-  ClickHouse `buzzTransactions`: net bank into `creatorProgramBank` (bank − extract) vs the `compensation` cash grant
-  into `cashPending` (amount in **cents**, `externalId` = `comp-pool-unified-YYYY-MM-<userId>`); `ratio =
-  cashDollars / netBankedBuzz`, capped at $0.001/buzz; data from **Mar 2025**. Use the comp grant, **not**
-  `CashWithdrawal`. (Full queries in the plan doc.) (`T:47`)
+- [x] **[done]** **Buzz→$ ratio history** — `CU:868ke492x`. New "Buzz → $ conversion" table on `/earnings` (month ·
+  banked Buzz · cash earned · per-1,000-Buzz rate). `getBuzzDollarRatio` (earnings.ts, Redis-cached 1h) derives it from
+  `buzzTransactions`: net bank into `creatorProgramBank[Green]` (`bank` − un-bank `withdrawal`/`refund`) vs the
+  `compensation` grant into `cashPending` (amount in **cents**, `externalId` = `comp-pool-unified-YYYY-MM-<userId>`);
+  `rate = cashDollars / netBankedBuzz`, capped $0.001/Buzz; from **Mar 2025**. Uses the comp grant, **not**
+  `CashWithdrawal`. Recipe validated against real creators (e.g. userId 3865: Jun $140.23 ÷ 201,400 = $0.70/1k). The
+  current month is excluded until its pool settles (no comp grant yet). (`T:47`)
 - [x] **[done]** **Line ↔ bar chart toggle** — `CU:868ke4939` (alexds9 + MNeMiC). Line/Bar toggle on the earnings
   trend; smooth line default. In bar mode the current period is bars and the **previous period stays a line** (dashed
   overlay). (`T:54`)
