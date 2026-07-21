@@ -307,6 +307,7 @@ export const getInfiniteChallengesSchema = z.object({
     .optional(),
   includeEnded: z.boolean().default(false),
   excludeEventChallenges: z.boolean().default(false),
+  challengeEventId: z.number().optional(),
   browsingLevel: z.number().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
 });
@@ -619,6 +620,7 @@ export type ChallengeEventListItem = {
   title: string;
   description: string | null;
   titleColor: string | null;
+  coverImage: ChallengeCoverImage | null;
   startDate: Date;
   endDate: Date;
   challenges: ChallengeListItem[];
@@ -645,6 +647,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   endDate: z.date(),
   active: z.boolean().default(true),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
+  coverImage: imageSchema.nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(
