@@ -264,6 +264,17 @@ export async function hasValidCreatorMembership(userId: number) {
   return !!tier && tier !== 'free' && tier !== 'founder';
 }
 
+// Batched `hasValidCreatorMembership` for read-time metric-privacy gating across a
+// list of model owners. Dedupes and resolves in parallel. Used by the model feed /
+// v1 API where several owners' membership must be checked in one request.
+export async function getValidCreatorMembershipMap(userIds: number[]) {
+  const unique = [...new Set(userIds.filter((id) => !!id))];
+  const entries = await Promise.all(
+    unique.map(async (id) => [id, await hasValidCreatorMembership(id)] as const)
+  );
+  return new Map<number, boolean>(entries);
+}
+
 export async function joinCreatorsProgram(userId: number) {
   const requirements = await getCreatorRequirements(userId);
 

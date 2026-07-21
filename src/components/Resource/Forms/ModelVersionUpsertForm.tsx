@@ -29,6 +29,7 @@ import {
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import {
   Form,
@@ -60,6 +61,7 @@ import type { GenerationResourceSchema } from '~/server/schema/generation.schema
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import type {
   ModelVersionEarlyAccessConfig,
+  ModelVersionMeta,
   ModelVersionUpsertInput,
   RecommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
@@ -171,6 +173,8 @@ export function ModelVersionUpsertForm({
   const { hideDonationGoals } = useCurrentUserSettings();
   const { mutate: mutateUserSettings, isPending: hideDonationGoalsUpdating } =
     useMutateUserSettings();
+  const { requirements } = useCreatorProgramRequirements();
+  const isActiveCreatorMember = !!requirements?.validMembership;
   const lastUsedBaseModel = useLastUsedBaseModelStore((s) => s.lastUsedBaseModel);
   const setLastUsedBaseModel = useLastUsedBaseModelStore((s) => s.setLastUsedBaseModel);
   // For a brand-new version, seed the base model from the previous version (if any),
@@ -235,6 +239,11 @@ export function ModelVersionUpsertForm({
     usageControl: !!version?.usageControl
       ? version?.usageControl ?? ModelUsageControl.Download
       : ModelUsageControl.Download,
+    meta: {
+      hideBuzz: (version?.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
+      hideDownloads: (version?.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
+      hideGenerations: (version?.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
+    },
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -449,6 +458,11 @@ export function ModelVersionUpsertForm({
             ? version?.earlyAccessConfig
             : null,
         recommendedResources: version.recommendedResources ?? [],
+        meta: {
+          hideBuzz: (version.meta as ModelVersionMeta | null)?.hideBuzz ?? false,
+          hideDownloads: (version.meta as ModelVersionMeta | null)?.hideDownloads ?? false,
+          hideGenerations: (version.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
+        },
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
@@ -1002,6 +1016,35 @@ export function ModelVersionUpsertForm({
             includeControls={['formatting', 'list', 'link']}
             editorSize="xl"
           />
+          <Stack gap="xs">
+            <Divider label="Version metric privacy" />
+            <Text size="xs" c="dimmed">
+              Hide these stats in this version&apos;s details card. This is a sub-option of the
+              model-level controls — hiding at the model level already hides the model page totals
+              and cards.{' '}
+              {isActiveCreatorMember
+                ? 'You and moderators always see your real stats.'
+                : 'Requires an active Creator Program membership.'}
+            </Text>
+            <InputSwitch
+              name="meta.hideBuzz"
+              label="Hide earned Buzz"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+            <InputSwitch
+              name="meta.hideDownloads"
+              label="Hide download count"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+            <InputSwitch
+              name="meta.hideGenerations"
+              label="Hide generation count"
+              disabled={!isActiveCreatorMember}
+              styles={{ track: { flex: '0 0 1em' } }}
+            />
+          </Stack>
           {acceptsTrainedWords && (
             <Stack gap="xs">
               {!skipTrainedWords && (
@@ -1153,9 +1196,10 @@ type Props = {
   // picker when adding a brand-new version to an existing model.
   previousBaseModel?: string | null;
   // licensingFee comes off a Prisma read as a Decimal; the form coerces it to a number in defaultValues.
-  version?: Omit<Partial<VersionInput>, 'licensingFee'> & {
+  version?: Omit<Partial<VersionInput>, 'licensingFee' | 'meta'> & {
     licensingFee?: number | { valueOf(): string } | null;
     flags?: number;
+    meta?: unknown;
   };
   afterName?: React.ReactNode;
 };

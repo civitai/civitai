@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import { type BaseModel, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  isBaseModelGenerationSupported,
+} from '~/shared/constants/basemodel.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -11,6 +14,14 @@ import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { dbRead } from '~/server/db/client';
+import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
+import {
+  anyMetricHidden,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveModelHiddenMetrics,
+} from '~/server/utils/model-metric-privacy';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -159,6 +170,31 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
   const unavailableGenResources = await getUnavailableResources();
 
+  // Creator Controls metric privacy: store which model-level metrics are hidden so
+  // the search card can render the "hidden" notice. Effective only while the owner
+  // holds a valid CP membership; the real metrics/rank stay in the doc so sort order
+  // is unchanged (only the displayed number is omitted on the card). This is a
+  // precomputed shared doc, so a membership lapse reverts to visible on the next
+  // reindex rather than instantly.
+  const ownerIds = [...new Set(models.map((m) => m.user.id))];
+  const ownerSettingsRows = ownerIds.length
+    ? await dbRead.user.findMany({
+        where: { id: { in: ownerIds } },
+        select: { id: true, settings: true },
+      })
+    : [];
+  const ownerSettingsMap = new Map<number, unknown>(
+    ownerSettingsRows.map((o) => [o.id, o.settings])
+  );
+  const membershipCandidates = new Set<number>();
+  for (const m of models) {
+    const metaHidden = getMetaMetricPrivacy(m.meta);
+    const defHidden = getUserMetricPrivacyDefaults(ownerSettingsMap.get(m.user.id));
+    if (anyMetricHidden(metaHidden) || anyMetricHidden(defHidden))
+      membershipCandidates.add(m.user.id);
+  }
+  const membershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -256,6 +292,12 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           collectedCount: metrics.collectedCount ?? 0,
           tippedAmountCount: metrics.tippedAmountCount ?? 0,
         },
+        hiddenMetrics: resolveModelHiddenMetrics({
+          modelMeta: meta,
+          userSettings: ownerSettingsMap.get(user.id),
+          isOwnerOrModerator: false,
+          hasValidMembership: membershipMap.get(user.id) ?? false,
+        }),
         canGenerate,
         cannotPromote,
         cosmetic: cosmetics[model.id] ?? null,
