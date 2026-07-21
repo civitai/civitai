@@ -3,10 +3,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { buildChallengeModerationText } from '~/server/games/daily-challenge/challenge-helpers';
 import {
-  buildChallengeModerationText,
   CHALLENGE_MODERATION_LABELS,
-} from '~/server/games/daily-challenge/challenge-helpers';
+  isChallengeTextNsfw,
+} from '~/server/games/daily-challenge/challenge-text-scan';
+import { logToAxiom } from '~/server/logging/client';
 import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { applyChallengeNsfwEscalation } from '~/server/games/daily-challenge/challenge-nsfw-escalation';
 import { ChallengeIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -49,7 +51,7 @@ export const challengeModerationAdapter: ModerationAdapter = {
       priority: 'low',
     }),
 
-  applyResult: async ({ entityId, blocked, triggeredLabels }) => {
+  applyResult: async ({ entityId, blocked, triggeredLabels, output }) => {
     if (blocked) {
       const challenge = await dbRead.challenge.findUnique({
         where: { id: entityId },
@@ -77,8 +79,25 @@ export const challengeModerationAdapter: ModerationAdapter = {
       return;
     }
 
-    // Any of nsfw / suggestive / explicit crossing threshold escalates the challenge.
-    await applyChallengeNsfwEscalation({ entityId, isNsfw: triggeredLabels.length > 0 });
+    const isNsfw = isChallengeTextNsfw({ results: output?.results, triggeredLabels });
+
+    // A clean challenge scan otherwise leaves no trace anywhere, which is how a batch of
+    // under-flagged challenges went unnoticed until testers reported them. Log every verdict with
+    // the scores behind it so near-misses are queryable.
+    logToAxiom({
+      type: isNsfw ? 'warning' : 'info',
+      name: 'challenge-text-scan',
+      challengeId: entityId,
+      isNsfw,
+      scores: (output?.results ?? []).map((r) => ({
+        label: r.label,
+        score: r.score,
+        threshold: r.threshold,
+        topToken: r.topToken,
+      })),
+    });
+
+    await applyChallengeNsfwEscalation({ entityId, isNsfw });
   },
 
   // Terminal scan failure: mark retryable Error (the scan gate keeps the challenge hidden). The

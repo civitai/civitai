@@ -27,6 +27,10 @@ import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
 
+// Lives here rather than in the service util that derives it: the util and the client-side card
+// helpers both need it, and services depend on schema, never the reverse.
+export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered';
+
 // Cover image type for challenges (compatible with ImageGuard2)
 export type ChallengeCoverImage = {
   id: number;
@@ -92,6 +96,20 @@ export type ChallengeListItem = {
     cosmetics?: UserWithCosmetics['cosmetics'] | null;
     deletedAt: Date | null;
   };
+};
+
+// Recently participated-in challenges for the current user (Challenges Center "My Participated" row)
+export const getMyParticipatedSchema = z.object({
+  limit: z.number().min(1).max(20).default(6),
+});
+export type GetMyParticipatedInput = z.infer<typeof getMyParticipatedSchema>;
+
+export type MyParticipatedChallengeItem = ChallengeListItem & {
+  myEntryImage: ChallengeListItem['coverImage'];
+  myPlace: number | null;
+  myResult: MyChallengeResult;
+  isLive: boolean;
+  myEnteredAt: Date;
 };
 
 // Completion summary stored in Challenge.metadata when winners are picked
@@ -292,6 +310,7 @@ export const getInfiniteChallengesSchema = z.object({
     .optional(),
   includeEnded: z.boolean().default(false),
   excludeEventChallenges: z.boolean().default(false),
+  challengeEventId: z.number().optional(),
   browsingLevel: z.number().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
 });
@@ -604,6 +623,7 @@ export type ChallengeEventListItem = {
   title: string;
   description: string | null;
   titleColor: string | null;
+  coverImage: ChallengeCoverImage | null;
   startDate: Date;
   endDate: Date;
   challenges: ChallengeListItem[];
@@ -630,6 +650,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   endDate: z.date(),
   active: z.boolean().default(true),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
+  coverImage: imageSchema.nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(

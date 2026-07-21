@@ -55,9 +55,8 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
-import {
-  getUserResourceReview,
-} from '~/server/services/resourceReview.service';
+import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
+import { getUserResourceReview } from '~/server/services/resourceReview.service';
 import {
   createCustomer,
   deleteCustomerPaymentMethod,
@@ -1423,6 +1422,13 @@ export const setUserSettingHandler = async ({
     };
 
     await setUserSetting(id, newSettings);
+
+    const privacyKeys = ['hideModelBuzz', 'hideModelDownloads', 'hideModelGenerations'] as const;
+    const metricPrivacyChanged = privacyKeys.some(
+      (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
+    );
+    if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+
     return newSettings;
   } catch (error) {
     throw throwDbError(error);

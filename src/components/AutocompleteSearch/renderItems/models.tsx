@@ -7,6 +7,7 @@ import { ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -25,7 +26,7 @@ export const ModelSearchItem = forwardRef<
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { images, user, type, category, metrics, version, nsfw } = hit;
+  const { images, user, type, category, metrics, version, nsfw, hiddenMetrics } = hit;
   const coverImage = images[0];
   const alt = coverImage.name;
 
@@ -97,7 +98,11 @@ export const ModelSearchItem = forwardRef<
             {abbreviateNumber(metrics.commentCount)}
           </IconBadge>
           <IconBadge icon={<IconDownload size={12} stroke={2.5} />}>
-            {abbreviateNumber(metrics.downloadCount)}
+            {hiddenMetrics?.downloads ? (
+              <HiddenMetricNotice size={12} />
+            ) : (
+              abbreviateNumber(metrics.downloadCount ?? 0)
+            )}
           </IconBadge>
         </Group>
       </Stack>

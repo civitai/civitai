@@ -1408,6 +1408,7 @@ export type ChallengeEvent = {
   endDate: Timestamp;
   active: Generated<boolean>;
   winnerCooldownDays: number | null;
+  coverImageId: number | null;
   createdById: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
