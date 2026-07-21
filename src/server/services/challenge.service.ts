@@ -62,7 +62,11 @@ import {
   PrizeMode,
 } from '~/shared/utils/prisma/enums';
 import { createImage, imagesForModelVersionsCache } from '~/server/services/image.service';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import { getUserSelectableJudges } from '~/server/services/challenge-judge.service';
@@ -1016,6 +1020,18 @@ export async function getChallengeDetail(
   // covers the direct-link case: the detail page's SSG prefetch and every client fetch go through
   // this function, so without the flag the page falls through to its not-found branch.
   if (challenge.source === ChallengeSource.User && !canAccessUserChallenges) return null;
+
+  // Block gate: a viewer the creator has blocked can't open the challenge — direct-link parity
+  // with model/article/post detail. Scoped to user challenges (System/mod challenges have no owner
+  // to block); moderators exempt. A creator viewing their own challenge is self-safe:
+  // amIBlockedByUser returns false when targetUserId === userId.
+  if (viewerId != null && isModerator !== true && challenge.source === ChallengeSource.User) {
+    const blocked = await amIBlockedByUser({
+      userId: viewerId,
+      targetUserId: challenge.createdById ?? undefined,
+    });
+    if (blocked) return null;
+  }
 
   // Visibility check: only show challenges that are visible to the public. The creator and
   // moderators may preview a not-yet-visible or Cancelled challenge, and are likewise exempt
