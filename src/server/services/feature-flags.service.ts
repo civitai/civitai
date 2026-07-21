@@ -403,6 +403,18 @@ const featureFlags = createFeatureFlags({
   // to mods + a curated cohort via the Flipt `app-blocks-author` flag (created
   // AFTER this merges: absent → static mod-only, identical to today).
   appBlocksAuthor: { availability: ['mod'], fliptKey: 'app-blocks-author' },
+  // App Blocks — AGENTIC MOD CODE-REVIEW panel (P2). CLIENT gate for the
+  // `AgentReviewPanel` in the on-site review modal. `availability: []` = DARK by
+  // default and FAILS CLOSED (empty availability → static eval false when Flipt
+  // is absent/down), so the panel does NOT render for ANYONE — mods included —
+  // until the Flipt `app-blocks-agentic-review` flag is created. This mirrors the
+  // server-side `isAppBlocksAgenticReviewEnabled` fail-closed gate on the
+  // `blocks.startAgentReview` / `getAgentReview` procs, so the whole feature is
+  // inert end-to-end on merge (NOT `['mod']`: that would render the panel for
+  // mods the moment this ships, before the flag exists). The Flipt key is the
+  // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
+  // `genTabDeferView` `availability: []` precedent.)
+  appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

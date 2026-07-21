@@ -32,6 +32,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
+import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
@@ -251,6 +252,7 @@ function OnsiteReviewModalBody({
   busyRef: { current: boolean };
 }) {
   const utils = trpc.useUtils();
+  const features = useFeatureFlags();
   const [approvalNotes, setApprovalNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
   const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
@@ -375,6 +377,18 @@ function OnsiteReviewModalBody({
             mod-gated preview before approving. Pending requests only; dark
             unless the mod-only review-sandbox flag is enabled. */}
         {mode === 'pending' && <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />}
+
+        {/* AGENTIC MOD CODE-REVIEW (App Blocks P2) — dispatch + poll + render an
+            agent code-review/security-audit report before approving. On-site
+            PENDING only, and DARK unless the mod-only `app-blocks-agentic-review`
+            CLIENT flag is enabled (fail-closed: absent Flipt flag → does not
+            render, so the panel is inert on merge). External/connect requests are
+            out of P2 scope — hidden. */}
+        {mode === 'pending' &&
+          !!features?.appBlocksAgenticReview &&
+          isOnsiteReviewRequest(request) && (
+            <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />
+          )}
 
         {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
             images are an abuse vector → the mod sees them (here, derived from
