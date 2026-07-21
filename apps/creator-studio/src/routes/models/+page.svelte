@@ -196,6 +196,7 @@
   let editing = $state<CreatorModelVersion | null>(null);
   let ea = $state({
     timeframe: 7,
+    permanent: false,
     chargeForDownload: false,
     downloadPrice: MIN_DOWNLOAD_PRICE,
     chargeForGeneration: true,
@@ -212,6 +213,7 @@
     const maxDays = data.maxEarlyAccessDays;
     ea = {
       timeframe: Math.min(c?.timeframe ?? 7, maxDays || Infinity),
+      permanent: c?.permanent ?? false,
       chargeForDownload: c?.chargeForDownload ?? false,
       downloadPrice: c?.downloadPrice ?? MIN_DOWNLOAD_PRICE,
       chargeForGeneration: c?.chargeForGeneration ?? false,
@@ -244,7 +246,7 @@
 {#if !data.canSetFee}
   <JoinUpsell
     class="mb-6"
-    body="Setting licensing fees requires Creator Program membership. You can still review your models below."
+    body="Setting licensing fees requires an active Creator Program membership. You can still review your models below."
   />
 {/if}
 
@@ -692,19 +694,37 @@
             <form method="POST" action="?/setEarlyAccess" use:enhance={eaEnhance} class="flex flex-col gap-4">
               <input type="hidden" name="versionId" value={editing.id} />
 
-              <label class="flex flex-col gap-1 text-sm">
-                <span class="text-dark-1">Early access duration (days)</span>
-                <NumberInput
-                  name="timeframe"
-                  min={0}
-                  max={data.maxEarlyAccessDays}
-                  bind:value={ea.timeframe}
-                  class="w-32"
-                />
-                <span class="text-xs text-dark-3">
-                  Up to {data.maxEarlyAccessDays} day{data.maxEarlyAccessDays === 1 ? '' : 's'} at your creator level — set 0 to turn early access off.
-                </span>
-              </label>
+              {#if data.canSellIndefinitely}
+                <div class="flex flex-col gap-1 rounded-lg border border-dark-4 p-3">
+                  <div class="flex items-center gap-2">
+                    <Checkbox id="ea-perm" name="permanent" bind:checked={ea.permanent} />
+                    <Label for="ea-perm" class="cursor-pointer text-sm font-normal text-white">
+                      Make permanent (no end date)
+                    </Label>
+                  </div>
+                  <span class="text-xs text-dark-3">
+                    Members-only. Access never expires until you turn it off; buyers keep what they paid for.
+                  </span>
+                </div>
+              {/if}
+
+              {#if ea.permanent}
+                <input type="hidden" name="timeframe" value="0" />
+              {:else}
+                <label class="flex flex-col gap-1 text-sm">
+                  <span class="text-dark-1">Early access duration (days)</span>
+                  <NumberInput
+                    name="timeframe"
+                    min={0}
+                    max={data.maxEarlyAccessDays}
+                    bind:value={ea.timeframe}
+                    class="w-32"
+                  />
+                  <span class="text-xs text-dark-3">
+                    Up to {data.maxEarlyAccessDays} day{data.maxEarlyAccessDays === 1 ? '' : 's'} at your creator level — set 0 to turn early access off.
+                  </span>
+                </label>
+              {/if}
 
               <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
                 <div class="flex items-center gap-2">
@@ -769,7 +789,13 @@
                 {/if}
               </div>
 
-              {#if !ea.timeframe}
+              {#if ea.permanent}
+                {#if !ea.chargeForDownload && !ea.chargeForGeneration}
+                  <p class="text-xs text-yellow-5">
+                    Enable a download or generation charge — permanent access needs a price.
+                  </p>
+                {/if}
+              {:else if !ea.timeframe}
                 <p class="text-xs text-dark-3">A duration of 0 turns early access off when you save.</p>
               {:else if !ea.chargeForDownload && !ea.chargeForGeneration}
                 <p class="text-xs text-yellow-5">Enable a download or generation charge to turn on early access.</p>

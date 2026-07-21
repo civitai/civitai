@@ -11,8 +11,21 @@
     active: boolean;
   };
 
-  let { name, image, logoutUrl }: { name: string; image: string | null; logoutUrl: string | null } =
+  let {
+    name,
+    image,
+    logoutUrl,
+    tier = null,
+  }: { name: string; image: string | null; logoutUrl: string | null; tier?: string | null } =
     $props();
+
+  const TIER_LABEL: Record<string, string> = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' };
+  const tierLabel = $derived.by(() => {
+    const key = tier?.toLowerCase();
+    if (!key || key === 'free' || key === 'founder') return undefined;
+    return TIER_LABEL[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+  });
+  const isGold = $derived(tier?.toLowerCase() === 'gold');
 
   let open = $state(false);
   let accounts = $state<DeviceAccount[]>([]);
@@ -66,7 +79,18 @@
       {#if image}<AvatarImage src={image} alt={name} />{/if}
       <AvatarFallback>{initial(name)}</AvatarFallback>
     </Avatar>
-    <span class="min-w-0 flex-1 truncate text-sm" title={name}>{name}</span>
+    <span class="flex min-w-0 flex-1 flex-col">
+      <span class="truncate text-sm leading-tight" title={name}>{name}</span>
+      {#if tierLabel}
+        <span
+          class="truncate text-[10px] font-medium uppercase leading-tight tracking-wide {isGold
+            ? 'text-yellow-5'
+            : 'text-dark-2'}"
+        >
+          {tierLabel} member
+        </span>
+      {/if}
+    </span>
     <IconChevronDown size={14} class="shrink-0 text-dark-3" />
   </Popover.Trigger>
   <Popover.Content align="start" side="top" class="w-56 border-dark-4 bg-dark-7 p-1">

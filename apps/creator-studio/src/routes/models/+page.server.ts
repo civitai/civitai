@@ -10,6 +10,7 @@ import {
 import {
   resolveMembership,
   canSetLicensingFee,
+  canSellIndefinitely,
   TEST_MEMBERSHIP_COOKIE,
 } from '$lib/server/membership';
 import {
@@ -17,9 +18,13 @@ import {
   bulkSetLicensingFee,
   licensingFeeRatioSchema,
 } from '$lib/server/monetization/licensing-fee';
-import { setEarlyAccessConfig, earlyAccessFormSchema } from '$lib/server/monetization/early-access';
+import {
+  setEarlyAccessConfig,
+  earlyAccessFormSchema,
+  countPermanentAccessVersions,
+} from '$lib/server/monetization/early-access';
 import { getModelsScore } from '$lib/server/creator-score';
-import { earlyAccessDaysForScore } from '$lib/monetization/early-access';
+import { earlyAccessDaysForScore, maxPermanentAccessModels } from '$lib/monetization/early-access';
 
 // --- input schemas: every load/action input is zod-validated ---
 const versionIdSchema = z.coerce.number().int().positive();
@@ -94,6 +99,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     perPage,
     pageSizeOptions: PAGE_SIZE_OPTIONS,
     canSetFee: canSetLicensingFee(membership),
+    canSellIndefinitely: canSellIndefinitely(membership),
     maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
     query: {
       q: q ?? '',
@@ -146,7 +152,7 @@ export const actions: Actions = {
 
   // Early access is written through the main app (see monetization/early-access.ts). Not member-gated;
   // ownership + all validation are enforced by the endpoint. We forward the shared session cookie.
-  setEarlyAccess: async ({ request }) => {
+  setEarlyAccess: async ({ request, locals, cookies }) => {
     const form = await request.formData();
     const versionId = versionIdSchema.safeParse(form.get('versionId'));
     if (!versionId.success) return fail(400, { versionId: null, error: 'Invalid version.' });
@@ -154,18 +160,34 @@ export const actions: Actions = {
     // Auth is enforced by the hook; the endpoint re-checks ownership. We forward the session cookie.
     const cookie = request.headers.get('cookie') ?? '';
 
-    // Explicit clear (Turn-off button) OR a 0 / empty duration both mean "turn early access off" —
-    // clearing the config, and skipping the "needs a charge" validation the config path enforces.
+    // A 0/empty duration turns early access off — except permanent access, which is intentionally duration-0.
     const rawTimeframe = Number(form.get('timeframe'));
+    const permanent = ['on', 'true'].includes(String(form.get('permanent')));
     const turnOff =
       clearFlagSchema.parse(form.get('clear')) ||
-      !Number.isFinite(rawTimeframe) ||
-      rawTimeframe <= 0;
+      (!permanent && (!Number.isFinite(rawTimeframe) || rawTimeframe <= 0));
     if (turnOff) {
       const result = await setEarlyAccessConfig(cookie, versionId.data, null);
       if (!result.ok)
         return fail(result.status, { versionId: versionId.data, error: result.error });
       return { versionId: versionId.data, earlyAccessCleared: true };
+    }
+
+    // Permanent access needs an active Creator Program membership and is capped by tier — enforced here (mods excepted).
+    if (permanent && !locals.user.isModerator) {
+      const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+      if (!canSellIndefinitely(membership))
+        return fail(403, {
+          versionId: versionId.data,
+          error: 'Permanent access requires an active Creator Program membership.',
+        });
+      const cap = maxPermanentAccessModels(membership.tier);
+      const current = await countPermanentAccessVersions(locals.user.id, versionId.data);
+      if (current >= cap)
+        return fail(400, {
+          versionId: versionId.data,
+          error: `Your membership allows up to ${cap} permanent paid-access model${cap === 1 ? '' : 's'}.`,
+        });
     }
 
     const config = earlyAccessFormSchema.safeParse(Object.fromEntries(form));

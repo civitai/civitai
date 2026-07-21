@@ -30,8 +30,20 @@ export function earlyAccessDaysForScore(modelsScore: number): number {
   return days;
 }
 
+// Permanent pay-for-access cap by Creator-Program tier (CU 868ke4949).
+export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
+  bronze: 3,
+  silver: 10,
+  gold: Infinity,
+};
+
+export function maxPermanentAccessModels(tier: string | null | undefined): number {
+  return tier ? (PERMANENT_ACCESS_LIMIT_BY_TIER[tier] ?? 0) : 0;
+}
+
 export type EarlyAccessConfig = {
   timeframe: number;
+  permanent?: boolean;
   chargeForDownload: boolean;
   downloadPrice?: number;
   chargeForGeneration: boolean;

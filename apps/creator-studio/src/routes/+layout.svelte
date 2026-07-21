@@ -159,7 +159,12 @@
         </div>
       {/if}
       <div class="px-1 py-1">
-        <AccountSwitcher name={who} image={data.user.image} logoutUrl={data.logoutUrl} />
+        <AccountSwitcher
+          name={who}
+          image={data.user.image}
+          logoutUrl={data.logoutUrl}
+          tier={data.membership.tier}
+        />
       </div>
     </SidebarFooter>
   </Sidebar>
