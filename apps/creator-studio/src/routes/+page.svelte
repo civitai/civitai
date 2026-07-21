@@ -167,7 +167,14 @@
         <CardContent>
           {#if stat.value != null}
             <div class="flex items-baseline gap-2">
-              <p class="text-xl font-semibold text-white">{stat.value}</p>
+              <p
+                class="min-w-0 text-xl font-semibold text-white{stat.label === 'Top-earning model'
+                  ? ' line-clamp-2 break-words'
+                  : ''}"
+                title={stat.label === 'Top-earning model' ? stat.value : undefined}
+              >
+                {stat.value}
+              </p>
               {#if stat.label === 'Buzz earned'}<DeltaChip current={buzzNow} previous={buzzPrev} />{/if}
             </div>
           {:else if stat.pending}
