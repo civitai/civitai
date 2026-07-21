@@ -2,6 +2,8 @@
   import { Chart, chartColor } from '@civitai/ui/components/ui/chart/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
+  import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
+  import { chartType } from '$lib/stores/chart-type';
   import { IconUserPlus, IconHeart, IconMessage } from '@tabler/icons-svelte';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
@@ -42,6 +44,7 @@
         ...(prevSeries.length
           ? [
               {
+                type: 'line' as const,
                 label: data.compare.label,
                 // Stop the comparison line where its (possibly shorter) month ends.
                 data: series.map((p) => {
@@ -101,9 +104,14 @@
   </section>
 
   <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-3 text-sm text-dark-2">New followers over time <span class="text-xs text-dark-3">{periodLabel}</span></p>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <p class="text-sm text-dark-2">New followers over time <span class="text-xs text-dark-3">{periodLabel}</span></p>
+      <ChartTypeToggle />
+    </div>
     <div class="h-64">
-      <Chart type="line" data={lineData(data.analytics.followers, 'New followers', 1, data.analyticsPrev?.followers)} options={commonOptions} class="h-full" />
+      {#key $chartType}
+        <Chart type={$chartType} data={lineData(data.analytics.followers, 'New followers', 1, data.analyticsPrev?.followers)} options={commonOptions} class="h-full" />
+      {/key}
     </div>
   </div>
 {/if}

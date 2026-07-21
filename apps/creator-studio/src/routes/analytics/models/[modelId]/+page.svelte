@@ -4,6 +4,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Chart } from '@civitai/ui/components/ui/chart/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
+  import { chartType } from '$lib/stores/chart-type';
+  import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { IconExternalLink, IconArrowLeft } from '@tabler/icons-svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import { formatRange } from '$lib/date-range';
@@ -117,18 +119,21 @@
         Compare versions
         <span class="text-xs text-dark-3">· {metricLabel[metric].toLowerCase()} over time {periodLabel}</span>
       </p>
-      <ToggleGroup
-        type="single"
-        value={metric}
-        onValueChange={(v: string) => {
-          if (v) metric = v as 'generations' | 'downloads';
-        }}
-        variant="outline"
-        size="sm"
-      >
-        <ToggleGroupItem value="generations" class="text-xs">Generations</ToggleGroupItem>
-        <ToggleGroupItem value="downloads" class="text-xs">Downloads</ToggleGroupItem>
-      </ToggleGroup>
+      <div class="flex flex-wrap items-center gap-2">
+        <ToggleGroup
+          type="single"
+          value={metric}
+          onValueChange={(v: string) => {
+            if (v) metric = v as 'generations' | 'downloads';
+          }}
+          variant="outline"
+          size="sm"
+        >
+          <ToggleGroupItem value="generations" class="text-xs">Generations</ToggleGroupItem>
+          <ToggleGroupItem value="downloads" class="text-xs">Downloads</ToggleGroupItem>
+        </ToggleGroup>
+        <ChartTypeToggle />
+      </div>
     </div>
 
     <ToggleGroup
@@ -156,7 +161,9 @@
 
     {#if compareHasData}
       <div class="h-72">
-        <Chart type="line" data={compareData} options={compareOptions} class="h-full" />
+        {#key $chartType}
+          <Chart type={$chartType} data={compareData} options={compareOptions} class="h-full" />
+        {/key}
       </div>
     {:else}
       <div class="flex h-40 items-center justify-center text-center text-sm text-dark-3">

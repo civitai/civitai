@@ -6,6 +6,8 @@
   import { IconFilter } from '@tabler/icons-svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
+  import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
+  import { chartType } from '$lib/stores/chart-type';
   import { formatRange, dayDiff, shiftIso, eachDayIso } from '$lib/date-range';
   import {
     EARNINGS_SOURCES,
@@ -155,9 +157,6 @@
     scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true } } },
   };
 
-  // Line (smooth, default) ↔ bar for the trend (868ke4939) — some find the smooth line confusing. The Chart wrapper
-  // fixes its base type at mount, so a {#key chartType} block remounts it on toggle; the previous period stays a line.
-  let chartType = $state<'line' | 'bar'>('line');
   // Split per-currency (B8) ↔ one combined Total Buzz column (868ke492g) — the "total value of Buzz" view. The
   // individual split stays the default.
   let combined = $state(false);
@@ -315,22 +314,11 @@
             · filtered</span
           >{/if}
       </p>
-      <ToggleGroup
-        type="single"
-        value={chartType}
-        onValueChange={(v: string) => {
-          if (v) chartType = v as 'line' | 'bar';
-        }}
-        variant="outline"
-        size="sm"
-      >
-        <ToggleGroupItem value="line" aria-label="Line chart" class="text-xs">Line</ToggleGroupItem>
-        <ToggleGroupItem value="bar" aria-label="Bar chart" class="text-xs">Bar</ToggleGroupItem>
-      </ToggleGroup>
+      <ChartTypeToggle />
     </div>
     <div class="h-72">
-      {#key chartType}
-        <Chart type={chartType} data={chartData} options={chartOptions} class="h-full" />
+      {#key $chartType}
+        <Chart type={$chartType} data={chartData} options={chartOptions} class="h-full" />
       {/key}
     </div>
   </div>

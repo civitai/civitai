@@ -2,6 +2,8 @@
   import { Chart, chartColor, createSyncedCrosshair } from '@civitai/ui/components/ui/chart/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
+  import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
+  import { chartType } from '$lib/stores/chart-type';
   import { IconHeart, IconUserPlus, IconPhoto, IconArticle, IconEye } from '@tabler/icons-svelte';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
@@ -49,6 +51,8 @@
         ...(prevSeries.length
           ? [
               {
+                // Always a line — even in bar mode — so the comparison overlay reads clearly.
+                type: 'line' as const,
                 label: data.compare.label,
                 // Stop the comparison line where its month ends (null past compare.to), so a 30-day month doesn't
                 // drop to 0 under a 31-day one.
@@ -130,9 +134,14 @@
   {/if}
 
   <div class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-3 text-sm text-dark-2">Reactions received over time</p>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <p class="text-sm text-dark-2">Reactions received over time</p>
+      <ChartTypeToggle />
+    </div>
     <div class="h-64">
-      <Chart type="line" data={lineData(data.analytics.reactions, 'Reactions', 0, data.analyticsPrev?.reactions)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+      {#key $chartType}
+        <Chart type={$chartType} data={lineData(data.analytics.reactions, 'Reactions', 0, data.analyticsPrev?.reactions)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+      {/key}
     </div>
   </div>
 
@@ -141,7 +150,9 @@
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
         <p class="mb-3 text-sm text-dark-2">{c.title}</p>
         <div class="h-48">
-          <Chart type="line" data={lineData(c.series, c.title, c.color, c.prev)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+          {#key $chartType}
+            <Chart type={$chartType} data={lineData(c.series, c.title, c.color, c.prev)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+          {/key}
         </div>
       </div>
     {/each}
