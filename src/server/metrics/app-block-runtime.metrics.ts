@@ -213,10 +213,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // approaching its 150-Buzz / 150s ceiling?". EMPTY until real customComfy volume
   // accrues (DARK app code, mod-gated), by design.
   //
-  // Cardinality: engine ∈ {zimage-turbo, flux2-klein, qwen-image} (3) × recipe ∈
-  // {seamless-pano-360} (1) → 4 series/histogram today; both labels are strict
-  // enums resolved server-side from the code-owned recipe registry (never client
-  // input), so they can't blow up regardless of the wire.
+  // Cardinality: one `engine` label per recipe's engine(s) + one `recipe` label per
+  // registered recipe — both small server-side enums drawn from the code-owned recipe
+  // registry (never client input). Today that spans e.g. seamless-pano-360's engines
+  // {zimage-turbo, flux2-klein, qwen-image} plus starter-comfy-txt2img's {default}, so
+  // the series count grows by a handful with each new recipe/engine — always trivially
+  // bounded regardless of the wire (labels are free-form + fail-soft, but the values
+  // are enum-resolved from the registry, so they can't blow up).
   const customComfyActualBuzz = getOrCreateHistogram(
     reg,
     'civitai_app_block_customcomfy_actual_buzz',

@@ -2,12 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   STARTER_BUDGET,
-  STARTER_CFG,
   STARTER_COMFY_ENGINES,
   STARTER_ESTIMATE_BUZZ,
   STARTER_HEIGHT,
-  STARTER_SHIFT,
-  STARTER_STEPS,
   STARTER_WIDTH,
   buildStarterTxt2imgGraph,
   starterComfyParamSchema,
@@ -48,7 +45,7 @@ describe('buildStarterTxt2imgGraph (golden: minimal Z-Image txt2img)', () => {
     });
     expect(graph['2']).toEqual({
       class_type: 'ModelSamplingAuraFlow',
-      inputs: { model: ['1', 0], shift: STARTER_SHIFT },
+      inputs: { model: ['1', 0], shift: 3.0 }, // STARTER_SHIFT — pinned literal so drift fails here
     });
     expect(graph['3'].inputs).toMatchObject({ clip_name: ZIMAGE_CLIP_AIR, type: 'lumina2' });
     expect(graph['6'].inputs.vae_name).toBe(ZIMAGE_VAE_AIR);
@@ -72,8 +69,8 @@ describe('buildStarterTxt2imgGraph (golden: minimal Z-Image txt2img)', () => {
       negative: ['5', 0],
       latent_image: ['7', 0],
       seed: 42,
-      steps: STARTER_STEPS,
-      cfg: STARTER_CFG,
+      steps: 8, // STARTER_STEPS — pinned literal (turbo step count) so a constant drift fails here
+      cfg: 1, // STARTER_CFG — pinned literal (guidance off) so a constant drift fails here
       sampler_name: 'euler',
       scheduler: 'simple',
       denoise: 1.0,

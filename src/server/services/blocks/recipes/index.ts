@@ -79,6 +79,12 @@ export type RecipeCivitaiResource = {
 // verified Public / Published / non-early-access / non-Private — safe under this
 // invariant.
 //
+// #2 (`starter-comfy-txt2img`): pins NO civitai resources at all — its only model
+// weights are huggingface staticAirs, never a civitai `modelVersionId`. So
+// `recipeCivitaiVersionIds(recipe)` returns `[]` and the entitlement gate has
+// nothing to check → it's skipped entirely, and the recipe is safe by construction
+// (there is no pinned civitai version that could bypass the belt).
+//
 // This is a DOC-INVARIANT, enforced by CODE REVIEW of each new recipe PR — NOT a
 // module-load DB check (there is no DB in this module; the registry loads at
 // import time, before any request context). A robust router-side early-access /
