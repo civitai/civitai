@@ -6,6 +6,7 @@ import {
   Group,
   Loader,
   MultiSelect,
+  NumberInput,
   Paper,
   ScrollArea,
   Select,
@@ -55,13 +56,14 @@ import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
+  DECORATION_OFFSET_LIMIT,
 } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import type { CosmeticType } from '~/shared/utils/prisma/enums';
-import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { daysFromNow } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -107,6 +109,8 @@ const flagConcerns = [
 ];
 
 const artUrl = (data: unknown) => (data as { url?: string } | null)?.url ?? null;
+
+const ZERO_OFFSETS: CosmeticOffsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 function MoneyTile({
   label,
@@ -205,16 +209,20 @@ function CreatorShopReviewPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [reason, setReason] = useState('');
   const [activeFlags, setActiveFlags] = useState<Set<string>>(() => new Set());
+  const [modOffsets, setModOffsets] = useState<CosmeticOffsets>(ZERO_OFFSETS);
 
   useEffect(() => {
     setSelectedId((cur) => (cur && items.some((i) => i.id === cur) ? cur : items[0]?.id ?? null));
   }, [items]);
 
-  // Load any existing review note when the selection changes, and reset flags.
+  // Load any existing review note + fit offsets when the selection changes.
   useEffect(() => {
     const item = items.find((i) => i.id === selectedId);
     setReason(item?.rejectionReason ?? '');
     setActiveFlags(new Set());
+    setModOffsets(
+      (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? ZERO_OFFSETS
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
@@ -223,6 +231,41 @@ function CreatorShopReviewPage() {
   const checks = selectedMeta.autoChecks ?? [];
   const dims = selectedMeta.imageMeta;
   const isAnimated = !!(selected?.cosmetic.data as { animated?: boolean } | null)?.animated;
+
+  // Fit adjustment (avatar decorations): mods can tweak the per-side pixel
+  // offsets and see the in-context preview update live before saving.
+  const isDecoration = selected?.cosmetic.type === CosmeticType.ProfileDecoration;
+  const storedOffsets =
+    (selected?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
+  const normalizedModOffsets = Object.values(modOffsets).some((v) => v !== 0) ? modOffsets : null;
+  const fitChanged =
+    isDecoration && JSON.stringify(normalizedModOffsets) !== JSON.stringify(storedOffsets);
+  // The service treats offsets as a content change — blocked on published
+  // (revert first) and archived items.
+  const fitEditable =
+    isDecoration &&
+    selected?.status !== CosmeticShopItemStatus.Published &&
+    selected?.status !== CosmeticShopItemStatus.Archived;
+
+  const previewCosmetic = useMemo(() => {
+    if (!selected) return null;
+    if (!isDecoration) return selected.cosmetic as unknown as PreviewCosmetic;
+    const { offsets: _stored, ...rest } = (selected.cosmetic.data ?? {}) as Record<string, unknown>;
+    return {
+      ...selected.cosmetic,
+      data: normalizedModOffsets ? { ...rest, offsets: normalizedModOffsets } : rest,
+    } as unknown as PreviewCosmetic;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, isDecoration, JSON.stringify(normalizedModOffsets)]);
+
+  const queryUtils = trpc.useUtils();
+  const saveFit = trpc.creatorShop.updateItem.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getReviewQueue.invalidate();
+    },
+    onError: (error) =>
+      showErrorNotification({ title: 'Failed to save fit', error: new Error(error.message) }),
+  });
 
   if (currentUser && !currentUser.isModerator) return <NotFound />;
 
@@ -494,10 +537,71 @@ function CreatorShopReviewPage() {
                         In-context preview
                       </Text>
                       <CosmeticPreview
-                        cosmetic={selected.cosmetic as unknown as PreviewCosmetic}
+                        cosmetic={
+                          previewCosmetic ?? (selected.cosmetic as unknown as PreviewCosmetic)
+                        }
                         hideHeader
                       />
                     </div>
+                    {isDecoration && (
+                      <Stack gap={6}>
+                        <Text size="sm" fw={600}>
+                          Fit adjustment
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          Pixel offset per edge (−{DECORATION_OFFSET_LIMIT} to{' '}
+                          {DECORATION_OFFSET_LIMIT}) — negative extends the frame outside the
+                          avatar. The preview above updates live.
+                        </Text>
+                        <Group gap="xs" grow>
+                          {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
+                            <NumberInput
+                              key={side}
+                              size="xs"
+                              label={side.charAt(0).toUpperCase() + side.slice(1)}
+                              min={-DECORATION_OFFSET_LIMIT}
+                              max={DECORATION_OFFSET_LIMIT}
+                              step={1}
+                              allowDecimal={false}
+                              suffix="px"
+                              disabled={!fitEditable}
+                              value={modOffsets[side]}
+                              onChange={(v) =>
+                                setModOffsets((prev) => ({
+                                  ...prev,
+                                  [side]:
+                                    typeof v === 'number'
+                                      ? Math.max(
+                                          -DECORATION_OFFSET_LIMIT,
+                                          Math.min(DECORATION_OFFSET_LIMIT, Math.round(v))
+                                        )
+                                      : 0,
+                                }))
+                              }
+                            />
+                          ))}
+                        </Group>
+                        {fitEditable ? (
+                          <Button
+                            size="compact-sm"
+                            variant="light"
+                            disabled={!fitChanged}
+                            loading={saveFit.isPending}
+                            onClick={() =>
+                              saveFit.mutate({ id: selected.id, offsets: normalizedModOffsets })
+                            }
+                          >
+                            Save fit
+                          </Button>
+                        ) : (
+                          <Text size="xs" c="dimmed">
+                            {selected.status === CosmeticShopItemStatus.Published
+                              ? 'Revert this item to pending to adjust its fit.'
+                              : 'Archived items cannot be adjusted.'}
+                          </Text>
+                        )}
+                      </Stack>
+                    )}
                   </Stack>
 
                   {/* Meta */}

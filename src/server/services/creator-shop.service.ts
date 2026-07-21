@@ -52,6 +52,7 @@ import {
 import type {
   AutoCheck,
   CosmeticImageMeta,
+  CosmeticOffsets,
   GetEarlyAccessPricesInput,
   GetPublicShopItemsInput,
   GetReviewQueueInput,
@@ -103,11 +104,17 @@ const withRemaining = (item: CreatorShopItemRow) => {
 };
 
 // The cosmetic `data` blob is built server-side (never trust client-shaped data).
-const buildCosmeticData = (type: CosmeticType, imageUrl: string, animated?: boolean) => {
+const buildCosmeticData = (
+  type: CosmeticType,
+  imageUrl: string,
+  animated?: boolean,
+  offsets?: CosmeticOffsets | null
+) => {
   if (type === CosmeticType.ProfileBackground)
     return { url: imageUrl, type: MediaType.image, animated: !!animated };
-  if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration)
-    return { url: imageUrl, animated: !!animated };
+  if (type === CosmeticType.ProfileDecoration)
+    return { url: imageUrl, animated: !!animated, ...(offsets ? { offsets } : {}) };
+  if (type === CosmeticType.Badge) return { url: imageUrl, animated: !!animated };
   return { url: imageUrl };
 };
 
@@ -207,6 +214,7 @@ export const submitCreatorShopItem = async ({
   buzzType,
   sellableByOthers,
   sellerShare,
+  offsets,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // The Creator Shop is a Creator Program member benefit.
   await assertCreatorProgramMember(userId);
@@ -243,7 +251,12 @@ export const submitCreatorShopItem = async ({
           type: cosmeticType,
           source: CosmeticSource.Purchase,
           permanentUnlock: true,
-          data: buildCosmeticData(cosmeticType, imageUrl, animated) as Prisma.InputJsonValue,
+          data: buildCosmeticData(
+            cosmeticType,
+            imageUrl,
+            animated,
+            offsets
+          ) as Prisma.InputJsonValue,
           createdById: userId,
         },
       });
@@ -287,7 +300,7 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       status: true,
       meta: true,
       addedById: true,
-      cosmetic: { select: { createdById: true, type: true } },
+      cosmetic: { select: { createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
   });
@@ -309,6 +322,7 @@ export const updateCreatorShopItem = async ({
   animated,
   price,
   availableQuantity,
+  offsets,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   // Rejected is terminal; archived items must be restored before editing.
@@ -317,12 +331,24 @@ export const updateCreatorShopItem = async ({
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be edited');
 
+  // Fit offsets only apply to avatar decorations; undefined = keep, null = clear.
+  const isDecoration = existing.cosmetic.type === CosmeticType.ProfileDecoration;
+  const existingData = (existing.cosmetic.data ?? {}) as {
+    offsets?: CosmeticOffsets;
+  } & Record<string, unknown>;
+  const offsetsChange = isDecoration && offsets !== undefined;
+  const nextOffsets = !isDecoration
+    ? null
+    : offsets === undefined
+    ? existingData.offsets ?? null
+    : offsets;
+
   // Cross-listings point at another creator's shared cosmetic — the seller may
   // never touch its art/name/description, only price & quantity.
   const isOriginalCreator = isModerator || existing.cosmetic.createdById === userId;
   if (
     !isOriginalCreator &&
-    (name !== undefined || description !== undefined || imageUrl !== undefined)
+    (name !== undefined || description !== undefined || imageUrl !== undefined || offsetsChange)
   )
     throw throwBadRequestError(
       "You can only change price and quantity for another creator's cosmetic"
@@ -331,7 +357,10 @@ export const updateCreatorShopItem = async ({
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
   // A live item may already have buyers — only price & quantity may change.
-  if (isPublished && (name !== undefined || description !== undefined || artChanged))
+  if (
+    isPublished &&
+    (name !== undefined || description !== undefined || artChanged || offsetsChange)
+  )
     throw throwBadRequestError('Published items can only change price and quantity');
   // Buyers already have the art — it can't change once sold.
   if (artChanged && existing._count.purchases > 0)
@@ -357,14 +386,20 @@ export const updateCreatorShopItem = async ({
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
     checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
     artwork = {
-      data: buildCosmeticData(existing.cosmetic.type, imageUrl, animated) as Prisma.InputJsonValue,
+      data: buildCosmeticData(
+        existing.cosmetic.type,
+        imageUrl,
+        animated,
+        nextOffsets
+      ) as Prisma.InputJsonValue,
       checks,
       imageMeta,
       imageHash,
     };
   }
 
-  const contentChanged = name !== undefined || description !== undefined || artChanged;
+  const contentChanged =
+    name !== undefined || description !== undefined || artChanged || offsetsChange;
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const base = meta.lastApprovedAmount ?? existing.unitAmount;
   const bigPriceChange =
@@ -379,12 +414,20 @@ export const updateCreatorShopItem = async ({
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
 
   if (contentChanged) {
+    // Offsets-only edits patch the existing data blob; art replacement rebuilds
+    // it (with the effective offsets already folded in above).
+    const { offsets: _prevOffsets, ...restData } = existingData;
+    const patchedData = artwork
+      ? artwork.data
+      : offsetsChange
+      ? ((nextOffsets ? { ...restData, offsets: nextOffsets } : restData) as Prisma.InputJsonValue)
+      : undefined;
     await dbWrite.cosmetic.update({
       where: { id: existing.cosmeticId },
       data: {
         ...(name !== undefined ? { name } : {}),
         ...(description !== undefined ? { description } : {}),
-        ...(artwork ? { data: artwork.data } : {}),
+        ...(patchedData !== undefined ? { data: patchedData } : {}),
       },
     });
   }

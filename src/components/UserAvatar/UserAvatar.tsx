@@ -33,6 +33,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { decorationFrameStyle } from '~/components/UserAvatar/decoration-frame.util';
 import { isBlobUrl } from '~/utils/type-guards';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
@@ -192,18 +193,7 @@ export function UserAvatar({
                 alt=""
                 width={imageSize * 2}
                 original={false}
-                style={{
-                  position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  maxWidth: 'none',
-                  transform: 'translate(-50%,-50%)',
-                  width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
-                  height: decoration.data.offset
-                    ? `calc(100% + ${decoration.data.offset})`
-                    : '100%',
-                  zIndex: 1,
-                }}
+                style={{ ...decorationFrameStyle(decoration.data), zIndex: 1 }}
               />
             )}
             {hasValidProfilePicture && !blockedProfilePicture && !userDeleted ? (

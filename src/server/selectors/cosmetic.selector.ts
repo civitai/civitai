@@ -52,6 +52,9 @@ export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'
     color?: string;
     url?: string;
     offset?: string;
+    // Per-side fit adjustment for creator-shop avatar decorations (see
+    // decorationFrameStyle); wins over the legacy uniform `offset`.
+    offsets?: { top: number; right: number; bottom: number; left: number };
     crop?: string;
     cssFrame?: string;
     glow?: boolean;

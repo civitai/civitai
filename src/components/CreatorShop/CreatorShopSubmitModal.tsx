@@ -28,9 +28,10 @@ import {
   COSMETIC_PRICE_FLOOR,
   CREATOR_SHOP_CREATOR_SHARE,
   CREATOR_SHOP_SUBMISSION_FEE,
+  DECORATION_OFFSET_LIMIT,
   computeCreatorShopSplit,
 } from '~/server/schema/creator-shop.schema';
-import { CosmeticShopItemStatus, type CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem }) {
@@ -49,6 +50,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     animated,
     sellableByOthers,
     sellerShare,
+    offsets,
+    offsetsChanged,
     imageId,
     localUrl,
     checks,
@@ -80,8 +83,9 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     ? name !== (item?.title ?? '') ||
       description !== (item?.description ?? '') ||
       price !== (item?.unitAmount ?? COSMETIC_PRICE_FLOOR) ||
+      offsetsChanged ||
       !!localUrl
-    : !!imageId || !!name.trim() || !!description.trim() || sellableByOthers;
+    : !!imageId || !!name.trim() || !!description.trim() || sellableByOthers || offsetsChanged;
 
   const handleCancel = () => {
     if (!isDirty) return dialog.onClose();
@@ -151,6 +155,42 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               <Stack gap={6}>
                 <Divider label="Preview" labelPosition="left" />
                 <CosmeticPreview cosmetic={previewCosmetic} />
+              </Stack>
+            )}
+
+            {type === CosmeticType.ProfileDecoration && artOk && (
+              <Stack gap={6}>
+                <Divider label="Adjust fit" labelPosition="left" />
+                <Text size="xs" c="dimmed">
+                  Nudge each edge of your frame by up to {DECORATION_OFFSET_LIMIT}px to fit the
+                  avatar. Negative values extend it outside the avatar (bigger); positive values
+                  pull it in. The preview above updates live.
+                </Text>
+                <Group grow>
+                  {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
+                    <NumberInput
+                      key={side}
+                      label={side.charAt(0).toUpperCase() + side.slice(1)}
+                      min={-DECORATION_OFFSET_LIMIT}
+                      max={DECORATION_OFFSET_LIMIT}
+                      step={1}
+                      allowDecimal={false}
+                      suffix="px"
+                      value={offsets[side]}
+                      onChange={(v) =>
+                        form.setOffset(
+                          side,
+                          typeof v === 'number'
+                            ? Math.max(
+                                -DECORATION_OFFSET_LIMIT,
+                                Math.min(DECORATION_OFFSET_LIMIT, Math.round(v))
+                              )
+                            : 0
+                        )
+                      }
+                    />
+                  ))}
+                </Group>
               </Stack>
             )}
 

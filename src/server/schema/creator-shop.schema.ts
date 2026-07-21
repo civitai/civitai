@@ -105,6 +105,23 @@ export const cosmeticImageMetaSchema = z.object({
   hasTransparency: z.boolean(),
 });
 
+// Per-side fit adjustment for avatar decorations, stored on the cosmetic's
+// `data.offsets` as pixels. Negative extends the frame outside the avatar —
+// effectively scaling it up (see decorationFrameStyle).
+export const DECORATION_OFFSET_LIMIT = 5;
+const cosmeticOffsetSideSchema = z
+  .number()
+  .int()
+  .min(-DECORATION_OFFSET_LIMIT)
+  .max(DECORATION_OFFSET_LIMIT);
+export type CosmeticOffsets = z.infer<typeof cosmeticOffsetsSchema>;
+export const cosmeticOffsetsSchema = z.object({
+  top: cosmeticOffsetSideSchema,
+  right: cosmeticOffsetSideSchema,
+  bottom: cosmeticOffsetSideSchema,
+  left: cosmeticOffsetSideSchema,
+});
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z.object({
   cosmeticType: z.enum(CosmeticType),
@@ -121,6 +138,8 @@ export const submitCreatorShopItemSchema = z.object({
   // price (0-70, out of the creator's 70% pool).
   sellableByOthers: z.boolean().default(false),
   sellerShare: z.number().int().min(0).max(70).default(0),
+  // ProfileDecoration only — per-side fit adjustment (ignored for other types).
+  offsets: cosmeticOffsetsSchema.nullish(),
 });
 
 export type UpdateCreatorShopItemInput = z.infer<typeof updateCreatorShopItemSchema>;
@@ -133,6 +152,9 @@ export const updateCreatorShopItemSchema = z.object({
   animated: z.boolean().optional(),
   price: z.number().int().min(COSMETIC_PRICE_FLOOR).optional(),
   availableQuantity: z.number().int().positive().nullish(),
+  // ProfileDecoration only — null clears the adjustment; treated as a content
+  // change (same rules as name/description/artwork).
+  offsets: cosmeticOffsetsSchema.nullish(),
 });
 
 export type GetCreatorShopInput = z.infer<typeof getCreatorShopSchema>;
