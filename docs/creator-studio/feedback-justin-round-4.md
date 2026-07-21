@@ -138,9 +138,16 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 - [ ] **[vNext]** **Audience** — `CU:868ke4vn3`. Broader audience analytics. *(Note: the audience-tab all-time
   reactions/comments charts Briant said he was "already doing" (`T:189`) appear to be landing in V1 analytics — this
   vNext task is the larger expansion; confirm the split.)*
-- **[vNext, no task]** **Multi-period compare** — overlay an arbitrary prior month (e.g. March), not just the previous
-  period. Per the V1 milestone note: lives in vNext, but **pull forward if easily doable on current data** (overlaps
-  the %-vs-last-month work). Agreed it adds noise otherwise. (`T:543`)
+- [x] **[done — pulled forward from vNext]** **Multi-period compare** — reworked into a **month-primary** model across
+  **earnings + all analytics** (per Briant). The shared range control is now **two month pickers** — *Month* (defaults to
+  the current month) and *Compare* (defaults to the prior month) — the 7d/30d presets are gone. The **comparison month
+  is page-wide**: it drives the earnings trend overlay + new per-source **delta chips** (cards & by-source table), and
+  every analytics tab's overlay + delta chips (overview, audience, models, base-models, per-version). Comparison is
+  always a **full calendar month strictly earlier** than the selected one — never the selected or a future month; a
+  now-invalid choice clamps back one month (July/June → pick June → May). Overlay alignment generalized to ordinal
+  offset (`dayDiff`) so any earlier month compares like-for-like. `resolveCompareMonth`/`parseMonthRange`
+  (date-range.ts) shared by every load + the RangeSelector; per-model perf fns now take an explicit compare range
+  instead of an internal previous-period. Note: Images/Videos tabs are top-N lists (no comparison). (`T:543`)
 
 ---
 

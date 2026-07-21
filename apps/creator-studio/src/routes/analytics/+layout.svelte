@@ -13,7 +13,7 @@
     <p>Your content and model performance.</p>
   </div>
   <div class="ml-auto">
-    <RangeSelector range={data.range} />
+    <RangeSelector range={data.range} compare={data.compare} />
   </div>
 </header>
 

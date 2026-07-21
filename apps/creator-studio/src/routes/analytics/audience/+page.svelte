@@ -3,7 +3,7 @@
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import { IconUserPlus, IconHeart, IconMessage } from '@tabler/icons-svelte';
-  import { formatRange, rangeSpanDays, shiftIso } from '$lib/date-range';
+  import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
@@ -24,14 +24,15 @@
   };
 
   function lineData(series: TimePoint[], label: string, colorIndex: number, prevSeries: TimePoint[] = []) {
-    const span = rangeSpanDays(data.range);
+    const delta = dayDiff(data.range.from, data.compare.from);
     const prevByDate = new Map(prevSeries.map((p) => [p.date, p.value]));
     return {
       labels: series.map((p) => mmdd(p.date)),
       datasets: [
         {
           label,
-          data: series.map((p) => p.value),
+          // Gap-filled to month end; stop the line at today so a partial current month doesn't dip to zero.
+          data: series.map((p) => (p.date <= data.through ? p.value : null)),
           borderColor: chartColor(colorIndex),
           backgroundColor: chartColor(colorIndex),
           tension: 0.3,
@@ -41,8 +42,12 @@
         ...(prevSeries.length
           ? [
               {
-                label: 'Previous period',
-                data: series.map((p) => prevByDate.get(shiftIso(p.date, -span)) ?? 0),
+                label: data.compare.label,
+                // Stop the comparison line where its (possibly shorter) month ends.
+                data: series.map((p) => {
+                  const cd = shiftIso(p.date, delta);
+                  return cd <= data.compare.to ? (prevByDate.get(cd) ?? 0) : null;
+                }),
                 borderColor: '#868e96',
                 backgroundColor: '#868e96',
                 borderDash: [4, 4],

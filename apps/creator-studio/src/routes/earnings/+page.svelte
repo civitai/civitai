@@ -6,7 +6,7 @@
   import { IconFilter } from '@tabler/icons-svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
-  import { formatRange, rangeSpanDays, shiftIso } from '$lib/date-range';
+  import { formatRange, dayDiff, shiftIso, eachDayIso } from '$lib/date-range';
   import {
     EARNINGS_SOURCES,
     SOURCE_LABEL,
@@ -94,39 +94,46 @@
 
   // Trend is a buzz-only per-source line chart (cash is USD + lumpy → lives in the panel).
   const seriesSources = $derived(EARNINGS_SOURCES.filter((s) => (data.series ?? []).some((p) => p.source === s)));
-  // The trend collapses the *selected* sources into one total-per-day line. The previous-period line sums the SAME
-  // selection (shifted by the range span, aligned by calendar correspondence) so the comparison is like-for-like.
+  // The trend collapses the *selected* sources into one total-per-day line. The comparison line sums the SAME
+  // selection from the chosen baseline period and lines it up under the current days by ordinal offset (`delta`), so
+  // any earlier period — the immediately-prior one or an arbitrary month — reads like-for-like.
   const chartData = $derived.by(() => {
-    const series = data.series ?? [];
-    const dates = [...new Set(series.map((p) => p.date))].sort();
+    // Full selected month on the x-axis, so a partial current month still renders the whole month. The current line
+    // draws real 0s for elapsed days with no earnings, then `null` (a gap — line stops) for days after `through`.
+    const dates = eachDayIso(data.range);
     const shown = new Set<string>(seriesSources.filter((s) => shownSources.includes(s)));
     const sumSelected = (rows: { date: string; source: string; total: number }[]) => {
       const byDate = new Map<string, number>();
       for (const p of rows) if (shown.has(p.source)) byDate.set(p.date, (byDate.get(p.date) ?? 0) + p.total);
       return byDate;
     };
-    const currentByDate = sumSelected(series);
-    const prevByDate = sumSelected(data.prevSeries ?? []);
-    const span = rangeSpanDays(data.range);
+    const currentByDate = sumSelected(data.series ?? []);
+    const cmpByDate = sumSelected(data.cmpSeries ?? []);
+    const delta = dayDiff(data.range.from, data.compare.from);
     return {
       labels: dates,
       datasets: [
         {
           label: 'This period',
-          data: dates.map((d) => currentByDate.get(d) ?? 0),
+          data: dates.map((d) => (d <= data.through ? (currentByDate.get(d) ?? 0) : null)),
           borderColor: '#4dabf7',
           backgroundColor: '#4dabf7',
           tension: 0.3,
           fill: false,
           pointRadius: dates.length > 45 ? 0 : 2,
         },
-        ...(data.prevSeries != null
+        ...(data.cmpSeries != null
           ? [
               {
-                // Always a line — even in bar mode — so the comparison overlay reads clearly (868ke4939).
+                // The comparison month draws a real 0 for its own no-earnings days, but `null` (a gap) for axis slots
+                // past its last day — e.g. a 30-day June under a 31-day July shouldn't drop to 0 on the 31st. Always a
+                // line — even in bar mode — so the overlay reads clearly (868ke4939).
                 type: 'line' as const,
-                label: 'Previous period',
-                data: dates.map((d) => prevByDate.get(shiftIso(d, -span)) ?? 0),
+                label: data.compare.label,
+                data: dates.map((d) => {
+                  const cd = shiftIso(d, delta);
+                  return cd <= data.compare.to ? (cmpByDate.get(cd) ?? 0) : null;
+                }),
                 borderColor: '#868e96',
                 backgroundColor: '#868e96',
                 borderDash: [4, 4],
@@ -165,6 +172,15 @@
     minimumFractionDigits: 2,
     maximumFractionDigits: 3,
   });
+
+  // Per-source comparison totals (vs the chosen comparison month) for the delta chips on the cards + table.
+  const cmpSourceBuzz = (source: string) =>
+    (data.cmpSummary ?? [])
+      .filter((b) => b.source === source && currencyMeta(b.currency).family === 'buzz')
+      .reduce((s, b) => s + b.total, 0);
+  const cmpCell = (source: string, currency: string) =>
+    (data.cmpSummary ?? []).find((b) => b.source === source && b.currency === currency)?.total ?? 0;
+  const cmpBuzzTotal = (source: string) => currencies.reduce((sum, c) => sum + cmpCell(source, c), 0);
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
@@ -173,7 +189,7 @@
     <p>What you earned and where it came from — shown in the currency received, without conversion.</p>
   </div>
   <div class="ml-auto">
-    <RangeSelector range={data.range} />
+    <RangeSelector range={data.range} compare={data.compare} />
   </div>
 </header>
 
@@ -282,6 +298,9 @@
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
         <p class="text-xs uppercase tracking-wide text-dark-3">{SOURCE_LABEL[st.source]}</p>
         <p class="mt-1 text-xl font-semibold text-white">{formatBuzz(st.total)}</p>
+        <div class="mt-1">
+          <DeltaChip current={st.total} previous={cmpSourceBuzz(st.source)} label="vs {data.compare.label}" />
+        </div>
       </div>
     {/each}
   </section>
@@ -290,7 +309,7 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <p class="text-sm text-dark-2">
         Buzz earned over time
-        <span class="text-xs text-dark-3">· this period vs the previous</span>{#if isFiltered}<span
+        <span class="text-xs text-dark-3">· this month vs {data.compare.label}</span>{#if isFiltered}<span
             class="text-xs font-medium text-yellow-5"
           >
             · filtered</span
@@ -358,15 +377,21 @@
             {#if combined}
               {@const total = buzzTotal(s)}
               {@const show = Math.floor(total) >= 1}
-              <Table.Cell class="text-right {show ? 'font-medium text-white' : 'text-dark-4'}">
-                {show ? formatBuzz(total) : '—'}
+              <Table.Cell class="text-right align-top {show ? 'font-medium text-white' : 'text-dark-4'}">
+                <div>{show ? formatBuzz(total) : '—'}</div>
+                {#if show}
+                  <div class="mt-0.5"><DeltaChip current={total} previous={cmpBuzzTotal(s)} /></div>
+                {/if}
               </Table.Cell>
             {:else}
               {#each currencies as c (c)}
                 {@const v = cell(s, c)}
                 {@const show = hasDisplayValue(v, c)}
-                <Table.Cell class="text-right {show ? 'font-medium text-white' : 'text-dark-4'}">
-                  {show ? formatAmount(v, c) : '—'}
+                <Table.Cell class="text-right align-top {show ? 'font-medium text-white' : 'text-dark-4'}">
+                  <div>{show ? formatAmount(v, c) : '—'}</div>
+                  {#if show}
+                    <div class="mt-0.5"><DeltaChip current={v} previous={cmpCell(s, c)} /></div>
+                  {/if}
                 </Table.Cell>
               {/each}
             {/if}

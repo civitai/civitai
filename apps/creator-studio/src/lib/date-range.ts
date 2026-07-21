@@ -63,6 +63,75 @@ export function shiftIso(isoDate: string, days: number): string {
   return iso(addDays(new Date(`${isoDate}T00:00:00Z`), days));
 }
 
+/** Every calendar day in an inclusive range as ISO 'YYYY-MM-DD' — the full x-axis for a chart, so a partial current
+ *  month still renders the whole month (the series line just stops where the data does). */
+export function eachDayIso(range: DateRange): string[] {
+  const out: string[] = [];
+  let d = new Date(`${range.from}T00:00:00Z`);
+  const end = new Date(`${range.to}T00:00:00Z`);
+  while (d <= end) {
+    out.push(iso(d));
+    d = addDays(d, 1);
+  }
+  return out;
+}
+
+/** Signed day offset from `a` to `b` (b − a), for lining a comparison period's days up under the current ones.
+ *  Generalizes the fixed "one period back" shift: the overlay's day at index i sits under the current day at index i,
+ *  whatever the comparison period's actual calendar position or length. */
+export function dayDiff(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+}
+
+const cmpMonthFmt = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+export type CompareBaseline = { key: string; label: string; range: DateRange };
+
+/** The calendar month containing today. The earnings + analytics pages are month-primary: the whole app compares
+ *  one calendar month against an earlier one, matching the monthly Creator-Program settlement model. */
+export function currentMonthRange(today = new Date()): DateRange {
+  return monthRange(today.getUTCFullYear(), today.getUTCMonth());
+}
+
+/** Parse ?from&to into a **calendar-month** range — snapping to the month that contains `from`, so even a stale
+ *  rolling-window URL resolves to a clean month. Falls back to the current month when absent/invalid. */
+export function parseMonthRange(fromParam: string | null, _toParam: string | null, today = new Date()): DateRange {
+  if (fromParam && ISO_RE.test(fromParam)) {
+    const d = new Date(`${fromParam}T00:00:00Z`);
+    if (!Number.isNaN(d.getTime())) return monthRange(d.getUTCFullYear(), d.getUTCMonth());
+  }
+  return currentMonthRange(today);
+}
+
+/** 'YYYY-MM' key of a month range. */
+export function monthKey(range: DateRange): string {
+  return range.from.slice(0, 7);
+}
+
+/** Shift a 'YYYY-MM' key by N months (negative = earlier). */
+export function shiftMonthKey(key: string, months: number): string {
+  const [y, m] = key.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + months, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Full calendar-month range for a 'YYYY-MM' key. */
+export function monthKeyToRange(key: string): DateRange {
+  const [y, m] = key.split('-').map(Number);
+  return monthRange(y, m - 1);
+}
+
+/** Resolve the comparison **month** from `?cmp` against the selected (primary) month. The comparison is always a
+ *  full calendar month strictly earlier than the selected one — never the selected month itself or a future month.
+ *  Defaults to (and clamps a now-invalid choice back to) the immediately-prior month. Pure, so every load + the
+ *  RangeSelector resolve it identically. */
+export function resolveCompareMonth(cmp: string | null, range: DateRange): CompareBaseline {
+  const primaryKey = monthKey(range);
+  let key = cmp && /^\d{4}-\d{2}$/.test(cmp) ? cmp : '';
+  if (!key || key >= primaryKey) key = shiftMonthKey(primaryKey, -1);
+  const [y, m] = key.split('-').map(Number);
+  return { key, label: cmpMonthFmt.format(Date.UTC(y, m - 1, 1)), range: monthKeyToRange(key) };
+}
+
 /** Percent change of `current` vs `previous`; null when there's no baseline (previous = 0) — "% of zero" is
  *  undefined, so callers show a "new" badge instead. */
 export function pctChange(current: number, previous: number): number | null {

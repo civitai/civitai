@@ -1,7 +1,7 @@
 import { getClickhouse } from '$lib/server/clickhouse';
 import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
-import { rangeTtlSeconds, previousRange } from '$lib/date-range';
+import { rangeTtlSeconds } from '$lib/date-range';
 import { currencyMeta } from '$lib/earnings';
 
 // Per-model earnings — A1 **Part 2**. Reads `orchestration.resourceCompensations`, where the orchestrator now
@@ -156,10 +156,14 @@ async function fetchModelPerformance({
   userId,
   from,
   to,
+  compareFrom,
+  compareTo,
 }: {
   userId: number;
   from: string;
   to: string;
+  compareFrom: string;
+  compareTo: string;
 }): Promise<ModelPerformance[]> {
   const uid = Number(userId);
 
@@ -181,7 +185,7 @@ async function fetchModelPerformance({
   if (!versions.length) return [];
   const idList = versions.map((v) => Number(v.versionId)).join(',');
 
-  const prev = previousRange({ from, to });
+  const prev = { from: compareFrom, to: compareTo };
   const ch = getClickhouse();
   // Each query sums the current + previous window (for the delta chips); `to` also fences out garbage future rows.
   const [earnRows, genRows, dlRows] = await Promise.all([
@@ -313,11 +317,15 @@ async function fetchModelVersionAnalytics({
   modelId,
   from,
   to,
+  compareFrom,
+  compareTo,
 }: {
   userId: number;
   modelId: number;
   from: string;
   to: string;
+  compareFrom: string;
+  compareTo: string;
 }): Promise<ModelVersionAnalytics | null> {
   const uid = Number(userId);
   const mid = Number(modelId);
@@ -356,7 +364,7 @@ async function fetchModelVersionAnalytics({
   };
   if (!versions.length) return base;
 
-  const prev = previousRange({ from, to });
+  const prev = { from: compareFrom, to: compareTo };
   const idList = versions.map((v) => Number(v.id)).join(',');
   const ch = getClickhouse();
   // One query per source, each summing the current + previous window (for the delta chips). The upper bound `to`
@@ -451,10 +459,14 @@ async function fetchBaseModelPerformance({
   userId,
   from,
   to,
+  compareFrom,
+  compareTo,
 }: {
   userId: number;
   from: string;
   to: string;
+  compareFrom: string;
+  compareTo: string;
 }): Promise<BaseModelPerformance[]> {
   const uid = Number(userId);
   const versions = await dbRead
@@ -465,7 +477,7 @@ async function fetchBaseModelPerformance({
     .execute();
   if (!versions.length) return [];
 
-  const prev = previousRange({ from, to });
+  const prev = { from: compareFrom, to: compareTo };
   const idList = versions.map((v) => Number(v.versionId)).join(',');
   const ch = getClickhouse();
   const [earnRows, genRows, dlRows] = await Promise.all([

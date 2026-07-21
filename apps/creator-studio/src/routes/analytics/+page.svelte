@@ -3,7 +3,7 @@
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import { IconHeart, IconUserPlus, IconPhoto, IconArticle, IconEye } from '@tabler/icons-svelte';
-  import { formatRange, rangeSpanDays, shiftIso } from '$lib/date-range';
+  import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
   import type { PageData } from './$types';
 
@@ -28,15 +28,18 @@
   };
 
   function lineData(series: TimePoint[], label: string, colorIndex: number, prevSeries: TimePoint[] = []) {
-    // Prior-period overlay: a muted dashed line, each point aligned to the current date it compares against.
-    const span = rangeSpanDays(data.range);
+    // Comparison-month overlay: a muted dashed line, each day lined up under the current day it compares against
+    // by ordinal offset (delta), so an arbitrary earlier month reads like-for-like.
+    const delta = dayDiff(data.range.from, data.compare.from);
     const prevByDate = new Map(prevSeries.map((p) => [p.date, p.value]));
     return {
       labels: series.map((p) => mmdd(p.date)),
       datasets: [
         {
           label,
-          data: series.map((p) => p.value),
+          // The series is gap-filled to the end of the month; stop the line at today so a partial current month
+          // doesn't read as a drop to zero for days that haven't happened.
+          data: series.map((p) => (p.date <= data.through ? p.value : null)),
           borderColor: chartColor(colorIndex),
           backgroundColor: chartColor(colorIndex),
           tension: 0.3,
@@ -46,8 +49,13 @@
         ...(prevSeries.length
           ? [
               {
-                label: 'Previous period',
-                data: series.map((p) => prevByDate.get(shiftIso(p.date, -span)) ?? 0),
+                label: data.compare.label,
+                // Stop the comparison line where its month ends (null past compare.to), so a 30-day month doesn't
+                // drop to 0 under a 31-day one.
+                data: series.map((p) => {
+                  const cd = shiftIso(p.date, delta);
+                  return cd <= data.compare.to ? (prevByDate.get(cd) ?? 0) : null;
+                }),
                 borderColor: '#868e96',
                 backgroundColor: '#868e96',
                 borderDash: [4, 4],
