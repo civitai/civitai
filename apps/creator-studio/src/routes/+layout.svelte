@@ -109,7 +109,7 @@
                     </a>
                   {/snippet}
                 </SidebarMenuButton>
-                {#if item.children && item.href === activeHref}
+                {#if item.children}
                   <SidebarMenuSub>
                     {#each item.children as sub (sub.href)}
                       {@const active = isNavChildActive(sub.href, page.url.pathname)}
