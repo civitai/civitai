@@ -1,6 +1,6 @@
 {
   "name": "@civitai/event-engine",
-  "version": "1.9.8",
+  "version": "1.9.9",
   "private": true,
   "description": "Kafka consumer that listens to database events from postgres and clickhouse and processes them (metrics, signals, CDC side effects).",
   "main": "dist/index.js",
