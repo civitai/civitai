@@ -180,24 +180,35 @@ export async function settleCustomComfySpend(input: {
   // ── Per-engine runtime/cost OBSERVABILITY (instrument-ahead-of-demand) ───────
   // Emitted BEFORE the refund early-return below so a job that spent the FULL
   // ceiling (actual >= ceiling → refund 0 → the ceiling-pressing case we most
-  // want to see) is still observed. Fail-soft in the metric helpers — a metrics
-  // error can never perturb the refund math that follows. Only for a record that
-  // carries the engine (every real customComfy submit going forward).
-  if (record.engine) {
-    const recipeLabel = record.recipe ?? 'unknown';
-    // GPU-runtime ≈ billed `actual` Buzz. Helper skips a 0/failed/no-op gen.
-    observeCustomComfyActualBuzz(record.engine, recipeLabel, actual);
-    // Wall-clock incl. queue: submit→THIS terminal observation. Emitted
-    // independently of `actual` so a job clipped at its timeout with ~0 accrued
-    // Buzz (the purest clip signal) is still captured. Helper skips a non-positive
-    // value.
-    if (typeof record.submittedAt === 'number') {
-      observeCustomComfyWallclockSeconds(
-        record.engine,
-        recipeLabel,
-        (Date.now() - record.submittedAt) / 1000
-      );
+  // want to see) is still observed. Only for a record that carries the engine
+  // (every real customComfy submit going forward).
+  //
+  // BELT-AND-SUSPENDERS FAIL-SOFT: the two helpers already each wrap their emit
+  // in an internal try/catch, so this is redundant TODAY — but the never-throw
+  // guarantee on the MONEY path (the refund + all three DECRBYs below) must NOT
+  // depend on that internal catch never regressing. Wrapping the whole emit block
+  // here makes the invariant structural at the call site: even if an emit throws
+  // (a future helper edit, a synchronous label-validation error, etc.), the
+  // `refund <= 0` check + every refund below still execute unchanged.
+  try {
+    if (record.engine) {
+      const recipeLabel = record.recipe ?? 'unknown';
+      // GPU-runtime ≈ billed `actual` Buzz. Helper skips a 0/failed/no-op gen.
+      observeCustomComfyActualBuzz(record.engine, recipeLabel, actual);
+      // Wall-clock incl. queue: submit→THIS terminal observation. Emitted
+      // independently of `actual` so a job clipped at its timeout with ~0 accrued
+      // Buzz (the purest clip signal) is still captured. Helper skips a non-positive
+      // value.
+      if (typeof record.submittedAt === 'number') {
+        observeCustomComfyWallclockSeconds(
+          record.engine,
+          recipeLabel,
+          (Date.now() - record.submittedAt) / 1000
+        );
+      }
     }
+  } catch {
+    /* instrument-only — a metrics emit error can NEVER perturb the refund below */
   }
 
   const refund = Math.max(0, ceiling - actual);

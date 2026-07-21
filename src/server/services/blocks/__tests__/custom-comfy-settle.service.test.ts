@@ -341,5 +341,51 @@ describe('settleCustomComfySpend', () => {
       await settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 20 });
       expect(mockObserveActualBuzz).toHaveBeenCalledWith('zimage-turbo', 'unknown', 20);
     });
+
+    // ── Finding-1 regression guard: the MONEY path must survive a throwing emit.
+    // The two helpers each carry an internal try/catch, but the never-throw
+    // guarantee on the refund path must NOT depend on that never regressing —
+    // the settle service wraps the emit block in its OWN try/catch. This test
+    // makes the emit THROW and asserts the refund DECRBYs on ALL applicable keys
+    // still fire (settle completes, Buzz refunded). Without the service-level
+    // wrap this throw escapes before the `refund <= 0` check → the DECRBYs never
+    // run → RED. (A real fail-on-revert, not a tautology.)
+    it('still refunds ALL keys when the actual-Buzz emit THROWS (service-level fail-soft)', async () => {
+      mockObserveActualBuzz.mockImplementation(() => {
+        throw new Error('metrics registry exploded');
+      });
+      seedRecord({
+        appSpendKey: APP_KEY,
+        devSessionId: DEV_SESSION_ID,
+        ceiling: 180,
+        engine: 'qwen-image',
+        recipe: 'seamless-pano-360',
+        submittedAt: 1_700_000_000_000,
+      });
+      await expect(
+        settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 })
+      ).resolves.toBeUndefined(); // never throws into poll/cancel
+      // Every refund leg still fires with the correct over-reservation (180-30=150).
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+      expect(mockRefundDevSessionBuzz).toHaveBeenCalledWith(DEV_SESSION_ID, 150);
+    });
+
+    it('still refunds when the WALL-CLOCK emit throws (the second emit is also guarded)', async () => {
+      mockObserveWallclock.mockImplementation(() => {
+        throw new Error('metrics registry exploded');
+      });
+      seedRecord({
+        ceiling: 180,
+        engine: 'qwen-image',
+        recipe: 'seamless-pano-360',
+        submittedAt: 1_700_000_000_000,
+      });
+      await expect(
+        settleCustomComfySpend({ workflowId: 'wf_1', actualCost: 30 })
+      ).resolves.toBeUndefined();
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(BUZZ_KEY, 150);
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(APP_KEY, 150);
+    });
   });
 });

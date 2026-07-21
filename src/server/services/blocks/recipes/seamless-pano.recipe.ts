@@ -28,6 +28,17 @@ export type SeamlessPanoEngine = (typeof SEAMLESS_PANO_ENGINES)[number];
 /** v1 default engine — cheapest/fastest (Z-Image Turbo, ~20 Buzz display estimate). */
 export const DEFAULT_ENGINE: SeamlessPanoEngine = 'zimage-turbo';
 
+/**
+ * The SINGLE resolution of "which engine did this submit pick" — `params.engine`
+ * or the recipe default. Every per-engine derivation (budget ceiling, built
+ * graph, display estimate, settle-time metric label) funnels through this so the
+ * CHARGED ceiling and the OBSERVED label can never drift. Returns a bounded
+ * `SeamlessPanoEngine` (params.engine is enum-validated by the schema).
+ */
+export function resolveEngine(params: SeamlessPanoParams): SeamlessPanoEngine {
+  return params.engine ?? DEFAULT_ENGINE;
+}
+
 // ── Prompt shaping ───────────────────────────────────────────────────────────
 // The block schema already caps prompt at 1500; we re-clamp here so the ported
 // builders stay byte-identical to the reference oracle for any input.
@@ -533,7 +544,7 @@ export function buildFlux2SeamlessGraph(params: SeamlessPanoParams): ComfyGraph 
  * changes if a future prepaid path registers it as a `$type:'comfy'` definition.
  */
 function buildStep(params: SeamlessPanoParams): CustomComfyStepInput {
-  const engine = params.engine ?? DEFAULT_ENGINE;
+  const engine = resolveEngine(params);
   const [resources, workflow] =
     engine === 'flux2-klein'
       ? ([[FLUX2_DIFFUSION_AIR, FLUX2_CLIP_AIR, FLUX2_VAE_AIR, FLUX2_LORA_AIR], buildFlux2SeamlessGraph(params)] as const)
@@ -550,6 +561,7 @@ export const seamlessPano360Recipe: BlockRecipe<SeamlessPanoParams> = {
   id: 'seamless-pano-360',
   paramSchema: seamlessPanoParamSchema,
   engines: SEAMLESS_PANO_ENGINES,
+  resolveEngine,
   buildStep,
   resourceAllowlist: {
     // No civitai checkpoint (DiT engines have no UNet checkpoint; pinned policy).
@@ -583,7 +595,7 @@ export const seamlessPano360Recipe: BlockRecipe<SeamlessPanoParams> = {
   budgetForEngine: (engine) =>
     BUDGET_BY_ENGINE[engine as SeamlessPanoEngine] ?? BUDGET_BY_ENGINE[DEFAULT_ENGINE],
   budgetFor: (params) =>
-    BUDGET_BY_ENGINE[params.engine ?? DEFAULT_ENGINE] ?? BUDGET_BY_ENGINE[DEFAULT_ENGINE],
-  estimateBuzz: (params) => ESTIMATE_BUZZ_BY_ENGINE[params.engine ?? DEFAULT_ENGINE],
+    BUDGET_BY_ENGINE[resolveEngine(params)] ?? BUDGET_BY_ENGINE[DEFAULT_ENGINE],
+  estimateBuzz: (params) => ESTIMATE_BUZZ_BY_ENGINE[resolveEngine(params)],
   negativePrompt: NEGATIVE_PROMPT,
 };
