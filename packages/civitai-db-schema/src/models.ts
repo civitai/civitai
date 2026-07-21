@@ -2277,6 +2277,7 @@ export interface Comment {
   modelId: number;
   locked: boolean | null;
   hidden: boolean | null;
+  pinnedAt: Date | null;
   comments?: Comment[];
   reactions?: CommentReaction[];
   reports?: CommentReport[];
