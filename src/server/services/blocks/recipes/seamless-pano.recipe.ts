@@ -142,7 +142,11 @@ export const ESTIMATE_BUZZ_BY_ENGINE: Record<SeamlessPanoEngine, number> = {
 //   • qwen-image  180s — UNCHANGED from the single-ceiling v1 (zero regression on
 //                        the priciest engine; ~150 Buzz display estimate).
 //   • zimage-turbo 90s — ≈ 4× the 21-Buzz dogfood-measured actual.
-//   • flux2-klein 120s — ≈ 2.7× its 45-Buzz display estimate.
+//   • flux2-klein 150s — ≈ 3.3× its 45-Buzz DISPLAY ESTIMATE. flux2's runtime is
+//                        characterized only by that estimate (no dogfood-measured
+//                        actual like zimage's 21), so 150 gives more margin against
+//                        a hard-kill of a legit gen than 120 did, while still
+//                        cutting over-reservation from the flat 180.
 // All tunable in this one obvious table. The MAX entry (180) still holds the
 // app-manifest invariant `page.buzzBudgetPerGen (200) ≥ recipe ceiling`.
 export const BUDGET_BY_ENGINE: Record<
@@ -150,7 +154,7 @@ export const BUDGET_BY_ENGINE: Record<
   { stepTimeoutSeconds: number; maxBuzz: number }
 > = {
   'zimage-turbo': { stepTimeoutSeconds: 90, maxBuzz: 90 },
-  'flux2-klein': { stepTimeoutSeconds: 120, maxBuzz: 120 },
+  'flux2-klein': { stepTimeoutSeconds: 150, maxBuzz: 150 },
   'qwen-image': { stepTimeoutSeconds: 180, maxBuzz: 180 },
 };
 

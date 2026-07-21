@@ -345,14 +345,14 @@ describe('seamlessPano360Recipe contract', () => {
     }
   });
 
-  it('resolves the per-engine budget from params (zimage 90 / flux2 120 / qwen 180), default → zimage 90', () => {
+  it('resolves the per-engine budget from params (zimage 90 / flux2 150 / qwen 180), default → zimage 90', () => {
     expect(seamlessPano360Recipe.budgetFor(params('x', undefined, 'zimage-turbo'))).toEqual({
       maxBuzz: 90,
       stepTimeoutSeconds: 90,
     });
     expect(seamlessPano360Recipe.budgetFor(params('x', undefined, 'flux2-klein'))).toEqual({
-      maxBuzz: 120,
-      stepTimeoutSeconds: 120,
+      maxBuzz: 150,
+      stepTimeoutSeconds: 150,
     });
     expect(seamlessPano360Recipe.budgetFor(params('x', undefined, 'qwen-image'))).toEqual({
       maxBuzz: 180,

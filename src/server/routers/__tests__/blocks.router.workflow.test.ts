@@ -4720,7 +4720,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
     });
 
-    it('flux2-klein reserves 120 and stamps a 00:02:00 timeout', async () => {
+    it('flux2-klein reserves 150 and stamps a 00:02:30 timeout', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
       happySubmit();
@@ -4728,8 +4728,99 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         blockToken: 'tok',
         body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
       });
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 120);
-      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:02:00');
+      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 150);
+      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:02:30');
+    });
+
+    // ── Per-engine reserve↔refund SYMMETRY. The refund/rollback tests in the
+    // budget-belt block above only exercise the DEFAULT engine (zimage 90); these
+    // prove a NON-default engine refunds ITS OWN ceiling (qwen 180 / flux2 150),
+    // not the flat 90 — so a cheaper engine can never over-refund and a pricier
+    // one can never under-refund on a deny/throw.
+    it('SYMMETRY: a qwen-image daily-cap breach refunds ITS ceiling (180, not 90) on the pinned key', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      mockSysRedis.incrBy.mockResolvedValue(60000); // reservation pushes over 50k cap
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
+      });
+      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
+      // The reserved qwen ceiling (180) is refunded — NOT the default 90.
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        180
+      );
+      expect(mockSysRedis.decrBy).not.toHaveBeenCalledWith(expect.anything(), 90);
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('SYMMETRY: a flux2-klein app-cap breach refunds ITS ceiling (150) on the per-user key', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: false,
+        reason: 'daily',
+        dailyTotal: 9_999_999,
+        velocityCount: 1,
+      });
+      const result = await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody({ params: { prompt: 'x', engine: 'flux2-klein' } }),
+      });
+      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
+      // The per-user reservation rolled back at flux2's ceiling (150), not 90.
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        150
+      );
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('SYMMETRY: a qwen-image refund-on-throw refunds ITS ceiling (180) on BOTH caps', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
+      await expect(
+        caller().submitWorkflow({
+          blockToken: 'tok',
+          body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
+        })
+      ).rejects.toThrow(/orchestrator down/);
+      // BOTH the per-user daily cap and the per-app aggregate cap refund 180.
+      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
+        180
+      );
+      expect(mockRefundAppSpend).toHaveBeenCalledWith(
+        'system:blocks:app-spend-cap:apb_test:day',
+        180
+      );
+      expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+    });
+
+    // ── Graph-engine ↔ stamped-timeout end-to-end. Within ONE submit, prove the
+    // engine that drove the BUILT customComfy graph is the SAME engine that drove
+    // the STAMPED step timeout — i.e. the reservation/timeout can't be stamped for
+    // one engine while the graph is another's (safe-by-construction, now asserted).
+    it('END-TO-END: a qwen submit stamps 00:03:00 AND the emitted step input is qwen’s graph + resources', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
+      happyCcResources();
+      happySubmit();
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
+      });
+      const step = mockSubmitWorkflow.mock.calls[0][0].body.steps[0];
+      // Stamped timeout = qwen's ceiling (180s).
+      expect(step.timeout).toBe('00:03:00');
+      // The SAME submit's built graph is qwen's — the GGUF loader is qwen-specific
+      // (zimage/flux2 use UNETLoader), and a qwen resource AIR is in the step input.
+      expect(step.input.workflow['1'].class_type).toBe('GGUFLoaderKJ');
+      expect((step.input.resources as string[]).some((r) => r.includes('Qwen-Image'))).toBe(true);
+      // And it is NOT zimage's graph/resources (guards against a mismatched pairing).
+      expect((step.input.resources as string[]).some((r) => r.includes('z_image_turbo'))).toBe(false);
     });
 
     it('the concrete new behavior: at buzzBudget 100, cheap zimage (90) RUNS but qwen (180) is REJECTED', async () => {

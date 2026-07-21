@@ -1506,7 +1506,7 @@ describe('createBlockCustomComfyStep (step wrapper)', () => {
     expect(step.input).toBe(input);
   });
 
-  it('formats the timeout per engine: zimage 90s → 00:01:30, flux2 120s → 00:02:00', () => {
+  it('formats the timeout per engine: zimage 90s → 00:01:30, flux2 150s → 00:02:30', () => {
     const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
     expect(
       createBlockCustomComfyStep(input, recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds)
@@ -1515,7 +1515,7 @@ describe('createBlockCustomComfyStep (step wrapper)', () => {
     expect(
       createBlockCustomComfyStep(input, recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds)
         .timeout
-    ).toBe('00:02:00');
+    ).toBe('00:02:30');
   });
 });
 
