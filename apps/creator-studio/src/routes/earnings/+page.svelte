@@ -3,6 +3,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
+  import { IconFilter } from '@tabler/icons-svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import { formatRange, rangeSpanDays, shiftIso } from '$lib/date-range';
@@ -61,10 +62,22 @@
 
   const hasBuzzEarnings = $derived(currencyTotals.length > 0);
 
+  // One source filter governs the whole earnings section (868ke494r): the by-source cards, the by-source table, and
+  // the trend all read `shownSources`. Default every present source on; reset when the range — and thus the set of
+  // present sources — changes. When any source is hidden, every affected section is flagged (isFiltered) so the
+  // reduced totals aren't misread as the full picture.
+  let shownSources = $state<string[]>([]);
+  $effect(() => {
+    shownSources = [...sources];
+  });
+  const visibleSources = $derived(sources.filter((s) => shownSources.includes(s)));
+  const isFiltered = $derived(sources.length > 0 && visibleSources.length < sources.length);
+  const hiddenCount = $derived(sources.length - visibleSources.length);
+
   // Buzz earned per source (buzz colors summed — same unit) so licensing fees / tips / compensation are legible at
   // a glance, not just the currency split. Cash-denominated source earnings stay in the cash panel + table.
   const sourceTotals = $derived(
-    sources
+    visibleSources
       .map((s) => ({
         source: s,
         total: (data.summary ?? [])
@@ -79,14 +92,8 @@
   const cash = $derived(data.cash);
   const hasCash = $derived(!!cash && (cash.settled > 0 || cash.pending > 0 || cash.withdrawn > 0));
 
-  // Trend is a buzz-only per-source line chart (cash is USD + lumpy → lives in the panel). Chips toggle sources.
+  // Trend is a buzz-only per-source line chart (cash is USD + lumpy → lives in the panel).
   const seriesSources = $derived(EARNINGS_SOURCES.filter((s) => (data.series ?? []).some((p) => p.source === s)));
-  // Visible sources (ToggleGroup value). Default every present source on; resync when the range — and thus the
-  // set of sources — changes.
-  let shownSources = $state<string[]>([]);
-  $effect(() => {
-    shownSources = [...seriesSources];
-  });
   // The trend collapses the *selected* sources into one total-per-day line. The previous-period line sums the SAME
   // selection (shifted by the range span, aligned by calendar correspondence) so the comparison is like-for-like.
   const chartData = $derived.by(() => {
@@ -213,7 +220,63 @@
     {/if}
   </div>
 {:else}
-  <p class="mb-2 text-xs text-dark-3">Earned by source · buzz {periodLabel}</p>
+  {#if sources.length > 1}
+    <section class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-3">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-xs font-medium uppercase tracking-wide text-dark-3">Sources</span>
+        <ToggleGroup
+          type="multiple"
+          value={shownSources}
+          onValueChange={(v) => {
+            if (v.length) shownSources = v;
+          }}
+          variant="outline"
+          size="sm"
+          spacing={1.5}
+          class="flex-wrap"
+        >
+          {#each sources as s (s)}
+            <ToggleGroupItem value={s} aria-label={SOURCE_LABEL[s]} class="gap-1.5 text-xs">
+              <span
+                class="inline-block h-2 w-2 rounded-full"
+                style="background:{shownSources.includes(s)
+                  ? SOURCE_COLOR[s]
+                  : 'transparent'};border:1px solid {SOURCE_COLOR[s]}"
+              ></span>
+              {SOURCE_LABEL[s]}
+            </ToggleGroupItem>
+          {/each}
+        </ToggleGroup>
+        {#if isFiltered}
+          <div class="ml-auto flex items-center gap-2">
+            <span
+              class="inline-flex items-center gap-1 rounded border border-yellow-5/40 bg-yellow-5/10 px-2 py-1 text-xs font-medium text-yellow-5"
+            >
+              <IconFilter size={12} />
+              Filtered · hiding {hiddenCount} of {sources.length} sources
+            </span>
+            <button
+              type="button"
+              onclick={() => (shownSources = [...sources])}
+              class="cursor-pointer text-xs text-blue-4 hover:underline"
+            >
+              Show all
+            </button>
+          </div>
+        {/if}
+      </div>
+      {#if isFiltered}
+        <p class="mt-2 text-xs text-yellow-5/80">
+          The totals and charts below exclude the hidden sources — they aren't your full earnings.
+        </p>
+      {/if}
+    </section>
+  {/if}
+
+  <p class="mb-2 text-xs text-dark-3">
+    Earned by source · buzz {periodLabel}{#if isFiltered}<span class="font-medium text-yellow-5"> · filtered</span
+      >{/if}
+  </p>
   <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
     {#each sourceTotals as st (st.source)}
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
@@ -227,45 +290,24 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <p class="text-sm text-dark-2">
         Buzz earned over time
-        <span class="text-xs text-dark-3">· selected sources, this period vs the previous</span>
+        <span class="text-xs text-dark-3">· this period vs the previous</span>{#if isFiltered}<span
+            class="text-xs font-medium text-yellow-5"
+          >
+            · filtered</span
+          >{/if}
       </p>
-      <div class="flex flex-wrap items-center gap-2">
-        <ToggleGroup
-          type="single"
-          value={chartType}
-          onValueChange={(v) => {
-            if (v) chartType = v as 'line' | 'bar';
-          }}
-          variant="outline"
-          size="sm"
-        >
-          <ToggleGroupItem value="line" aria-label="Line chart" class="text-xs">Line</ToggleGroupItem>
-          <ToggleGroupItem value="bar" aria-label="Bar chart" class="text-xs">Bar</ToggleGroupItem>
-        </ToggleGroup>
-        <ToggleGroup
-          type="multiple"
-          value={shownSources}
-          onValueChange={(v) => {
-            if (v.length) shownSources = v;
-          }}
-          variant="outline"
-          size="sm"
-          spacing={1.5}
-          class="flex-wrap"
-        >
-          {#each seriesSources as s (s)}
-            <ToggleGroupItem value={s} aria-label={SOURCE_LABEL[s]} class="gap-1.5 text-xs">
-              <span
-                class="inline-block h-2 w-2 rounded-full"
-                style="background:{shownSources.includes(s)
-                  ? SOURCE_COLOR[s]
-                  : 'transparent'};border:1px solid {SOURCE_COLOR[s]}"
-              ></span>
-              {SOURCE_LABEL[s]}
-            </ToggleGroupItem>
-          {/each}
-        </ToggleGroup>
-      </div>
+      <ToggleGroup
+        type="single"
+        value={chartType}
+        onValueChange={(v: string) => {
+          if (v) chartType = v as 'line' | 'bar';
+        }}
+        variant="outline"
+        size="sm"
+      >
+        <ToggleGroupItem value="line" aria-label="Line chart" class="text-xs">Line</ToggleGroupItem>
+        <ToggleGroupItem value="bar" aria-label="Bar chart" class="text-xs">Bar</ToggleGroupItem>
+      </ToggleGroup>
     </div>
     <div class="h-72">
       {#key chartType}
@@ -276,7 +318,13 @@
 
   <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-dark-2">By source <span class="text-xs text-dark-3">{periodLabel}</span></p>
+      <p class="text-sm text-dark-2">
+        By source <span class="text-xs text-dark-3">{periodLabel}</span>{#if isFiltered}<span
+            class="text-xs font-medium text-yellow-5"
+          >
+            · filtered</span
+          >{/if}
+      </p>
       <ToggleGroup
         type="single"
         value={combined ? 'combined' : 'split'}
@@ -304,7 +352,7 @@
         </Table.Row>
       </Table.Header>
       <Table.Body>
-        {#each sources as s (s)}
+        {#each visibleSources as s (s)}
           <Table.Row>
             <Table.Cell class="text-dark-1">{SOURCE_LABEL[s]}</Table.Cell>
             {#if combined}
