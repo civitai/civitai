@@ -9,6 +9,7 @@ import { EventHero } from '~/components/Challenge/EventHero';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
 import { removeEmpty } from '~/utils/object-helpers';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -32,21 +33,16 @@ export const getServerSideProps = createServerSideProps({
         .fetch({ id: result.data.id })
         .catch(() => null);
 
-      // Redirect to the canonical slug URL when it's missing or incorrect. Skip when the
-      // canonical slug is empty (see the challenge detail page for the redirect-loop rationale).
-      if (event) {
-        const correctSlug = slugit(event.title);
-        const currentSlug = result.data.slug?.join('/');
-        if (correctSlug && currentSlug !== correctSlug) {
-          const queryString = buildPassthroughQuery(ctx.query);
-          return {
-            redirect: {
-              destination: `/challenges/events/${result.data.id}/${correctSlug}${queryString}`,
-              permanent: false,
-            },
-          };
-        }
-      }
+      if (!event) return { notFound: true };
+
+      const destination = getCanonicalSlugDestination({
+        basePath: '/challenges/events',
+        id: result.data.id,
+        title: event.title,
+        currentSlug: result.data.slug?.join('/'),
+        queryString: buildPassthroughQuery(ctx.query),
+      });
+      if (destination) return { redirect: { destination, permanent: false } };
     }
 
     return { props: removeEmpty(result.data) };
@@ -75,7 +71,7 @@ function ChallengeEventPage() {
       <MasonryContainer>
         <Stack gap="lg">
           {event && <EventHero event={event} />}
-          <Title order={2}>Challenges</Title>
+          <Title order={3}>Challenges</Title>
           {!Number.isNaN(id) && (
             <ChallengesInfinite filters={{ challengeEventId: id, includeEnded: true }} />
           )}

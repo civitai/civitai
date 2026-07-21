@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { ChallengeCardSkeletonRow } from '~/components/Challenge/ChallengeCardSkeletonRow';
 import { EventBannerCard } from '~/components/Challenge/EventBannerCard';
 import { SectionBand } from '~/components/Challenge/SectionBand';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
@@ -39,12 +38,9 @@ export function FeaturedChallengeEvents() {
     [events, filteredIds]
   );
 
-  if (isLoading || loadingPreferences)
-    return (
-      <SectionBand>
-        <ChallengeCardSkeletonRow />
-      </SectionBand>
-    );
+  // No skeleton band: most page loads have no active event, so a placeholder band would appear
+  // and then vanish. Better to have the banner pop in once we know there's one to show.
+  if (isLoading || loadingPreferences) return null;
 
   if (visibleEvents.length === 0) return null;
 

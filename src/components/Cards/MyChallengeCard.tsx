@@ -12,6 +12,7 @@ import clsx from 'clsx';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { slugit } from '~/utils/string-helpers';
 import { getMyChallengeBadge, getMyChallengeCta } from './myChallengeCard.utils';
 import type { MyParticipatedChallengeItem } from '~/server/schema/challenge.schema';
@@ -42,6 +43,11 @@ export const MyChallengeCard = memo(function MyChallengeCard({
   const cta = getMyChallengeCta(myResult, isLive);
   const BadgeIcon = badgeIcons[badge.icon];
   const badgeStyle = badgeStyles[badge.color];
+  const challengeHref = `/challenges/${id}/${slugit(title)}`;
+  // "View entry" goes straight to the user's own image; everything else (results, and the
+  // submit flow "Add another entry" opens from) lives on the challenge page.
+  const ctaHref =
+    cta.kind === 'entry' && myEntryImage ? `/images/${myEntryImage.id}` : challengeHref;
 
   const image = myEntryImage
     ? {
@@ -58,7 +64,7 @@ export const MyChallengeCard = memo(function MyChallengeCard({
 
   return (
     <AspectRatioImageCard
-      href={`/challenges/${id}/${slugit(title)}`}
+      href={challengeHref}
       alt={title}
       aspectRatio="square"
       image={image}
@@ -89,6 +95,10 @@ export const MyChallengeCard = memo(function MyChallengeCard({
                 <>
                   <DaysFromNow date={endsAt} withoutSuffix /> left · Live
                 </>
+              ) : myResult === 'judging' ? (
+                // No judging deadline is exposed, and "Ended 3h ago" next to a Judging badge
+                // reads as a contradiction, so state the phase instead of a date.
+                'Judging'
               ) : (
                 <>
                   Ended <DaysFromNow date={endsAt} />
@@ -114,17 +124,19 @@ export const MyChallengeCard = memo(function MyChallengeCard({
           <Text size="xl" fw={700} lineClamp={2} lh={1.2} c="white">
             {title}
           </Text>
-          {/* Non-interactive: AspectRatioImageCard already renders the whole card as a link
-              to this same challenge, so a nested <button>/<a> here would be an a11y violation. */}
-          <div
+          {/* A real link, not a nested one: AspectRatioImageCard's card link only wraps the
+              image — header/footer are siblings of it. `pointer-events-auto` opts back in from
+              the footer overlay's `pointer-events: none`. */}
+          <NextLink
+            href={ctaHref}
             className={clsx(
-              'flex w-full items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-semibold',
+              'pointer-events-auto flex w-full items-center justify-center gap-1 rounded-md px-3 py-2 text-sm font-semibold no-underline',
               cta.filled === 'blue' ? 'bg-blue-6 text-white' : 'bg-white text-dark-9'
             )}
           >
             {cta.label}
             {cta.kind === 'add' ? <IconPlus size={15} /> : <IconArrowRight size={15} />}
-          </div>
+          </NextLink>
         </div>
       }
     />

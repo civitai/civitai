@@ -161,36 +161,36 @@ function ChallengesPage() {
       <div className={styles.sections}>
         <FeaturedChallengeEvents />
 
-      <YourChallengesRow />
+        <YourChallengesRow />
 
-      <DailyChallengesSection />
+        <DailyChallengesSection />
 
-      {/* Behind the userChallenges flag: with it off, the page shows only the daily-challenge experience. */}
-      {features.userChallenges && (
-        <SectionBand>
-          <Stack gap="md">
-            <Group wrap="wrap" gap="sm">
-              <Group gap="xs" wrap="nowrap" align="center">
-                <IconUsers size={20} color="var(--mantine-color-cyan-7)" />
-                <Title order={3}>Community Challenges</Title>
+        {/* Behind the userChallenges flag: with it off, the page shows only the daily-challenge experience. */}
+        {features.userChallenges && (
+          <SectionBand>
+            <Stack gap="md">
+              <Group wrap="wrap" gap="sm">
+                <Group gap="xs" wrap="nowrap" align="center">
+                  <IconUsers size={20} color="var(--mantine-color-cyan-7)" />
+                  <Title order={3}>Community Challenges</Title>
+                </Group>
+                <Group gap="sm" wrap="wrap" ml="auto">
+                  <ChallengeFeedFilters />
+                </Group>
               </Group>
-              <Group gap="sm" wrap="wrap" ml="auto">
-                <ChallengeFeedFilters />
-              </Group>
-            </Group>
-            <ChallengesInfinite
-              filters={{
-                source: [ChallengeSource.User, ChallengeSource.Mod],
-                sort,
-                status: statusArray.length > 0 ? statusArray : undefined,
-                includeEnded,
-                excludeEventChallenges: true,
-                participation,
-              }}
-            />
-          </Stack>
-        </SectionBand>
-      )}
+              <ChallengesInfinite
+                filters={{
+                  source: [ChallengeSource.User, ChallengeSource.Mod],
+                  sort,
+                  status: statusArray.length > 0 ? statusArray : undefined,
+                  includeEnded,
+                  excludeEventChallenges: true,
+                  participation,
+                }}
+              />
+            </Stack>
+          </SectionBand>
+        )}
       </div>
     </>
   );

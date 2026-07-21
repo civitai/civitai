@@ -2,7 +2,6 @@ import { Button, Group, Stack, Text, Title } from '@mantine/core';
 import { IconSwords, IconChevronRight } from '@tabler/icons-react';
 import Link from 'next/link';
 import { MyChallengeCard } from '~/components/Cards/MyChallengeCard';
-import { ChallengeCardSkeletonRow } from '~/components/Challenge/ChallengeCardSkeletonRow';
 import { SectionBand } from '~/components/Challenge/SectionBand';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -12,7 +11,8 @@ import { trpc } from '~/utils/trpc';
 /**
  * Horizontal row of the current user's recently participated-in challenges, including its own
  * section header so the whole section disappears when there's nothing to show. Renders nothing
- * while logged out or when the user has no entries; shows a skeleton row while fetching.
+ * while logged out, while fetching, or when the user has no entries — most users have no entries,
+ * so a skeleton band here would flash a titled personal section at them and then remove it.
  */
 export function YourChallengesRow() {
   const currentUser = useCurrentUser();
@@ -44,17 +44,7 @@ export function YourChallengesRow() {
   );
 
   if (!currentUser) return null;
-
-  if (isLoading || loadingPreferences)
-    return (
-      <SectionBand>
-        <Stack gap="md">
-          {headerLeft}
-          <ChallengeCardSkeletonRow />
-        </Stack>
-      </SectionBand>
-    );
-
+  if (isLoading || loadingPreferences) return null;
   if (filtered.length === 0) return null;
 
   return (

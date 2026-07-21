@@ -32,8 +32,11 @@ export function EventBannerCard({
     (event.titleColor && gradientByTitleColor[event.titleColor]) ?? DEFAULT_GRADIENT;
   const count = event.challenges.length;
 
-  const content = (
-    <>
+  return (
+    <Link
+      href={`/challenges/events/${event.id}/${slugit(event.title)}`}
+      className="relative flex h-40 w-full overflow-hidden rounded-lg no-underline sm:h-48"
+    >
       {event.coverImage && (
         <EdgeMedia
           src={event.coverImage.url}
@@ -56,14 +59,6 @@ export function EventBannerCard({
           Explore Event <IconArrowRight size={16} />
         </Text>
       </div>
-    </>
-  );
-
-  const className = 'relative flex h-40 w-full overflow-hidden rounded-lg no-underline sm:h-48';
-
-  return (
-    <Link href={`/challenges/events/${event.id}/${slugit(event.title)}`} className={className}>
-      {content}
     </Link>
   );
 }
