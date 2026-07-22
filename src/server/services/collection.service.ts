@@ -1988,20 +1988,24 @@ export const validateContestCollectionEntry = async ({
     throw throwBadRequestError('You are banned from participating in contests');
   }
 
+  // The source=User challenge (if any) that owns this collection. One lookup, reused by the flag
+  // gate, the block gate, and the accepting-entries timing gate below — System/Mod (daily) and
+  // community-contest collections have no such row, so this is null for them.
+  const userChallenge = await dbRead.challenge.findFirst({
+    where: { collectionId, source: ChallengeSource.User },
+    select: { id: true, createdById: true, status: true },
+  });
+
   // User-created challenges are still flag-gated, but entries reach this function through the
   // generic collection mutations, which carry no challenge-specific guard — so a direct link to
   // the challenge would otherwise be enough to submit. Scoped to source=User: ordinary contest
   // collections and System/Mod (daily) challenges are unaffected.
-  if (!canAccessUserChallenges) {
-    const gatedChallenge = await dbRead.challenge.findFirst({
-      where: { collectionId, source: ChallengeSource.User },
-      select: { id: true },
-    });
-    if (gatedChallenge)
-      throw throwAuthorizationError('This challenge is not currently available.');
-  }
+  if (!canAccessUserChallenges && userChallenge)
+    throw throwAuthorizationError('This challenge is not currently available.');
 
-  // Challenge creators may not enter their own challenge (self-dealing on the prize pool).
+  // Challenge creators may not enter their own challenge (self-dealing on the prize pool). Its own
+  // lookup: it filters on createdById across ANY source, so it also catches a System/Mod challenge
+  // the viewer created — which the source=User lookup above would miss.
   if (!isModerator) {
     const ownChallenge = await dbRead.challenge.findFirst({
       where: { collectionId, createdById: userId },
@@ -2014,18 +2018,12 @@ export const validateContestCollectionEntry = async ({
 
   // A viewer the challenge creator has blocked can't submit an entry — parity with the detail-page
   // block gate. Scoped to source=User (System/mod challenges have no owner); moderators exempt.
-  if (!isModerator) {
-    const userChallenge = await dbRead.challenge.findFirst({
-      where: { collectionId, source: ChallengeSource.User },
-      select: { createdById: true },
+  if (!isModerator && userChallenge) {
+    const blocked = await amIBlockedByUser({
+      userId,
+      targetUserId: userChallenge.createdById ?? undefined,
     });
-    if (userChallenge) {
-      const blocked = await amIBlockedByUser({
-        userId,
-        targetUserId: userChallenge.createdById ?? undefined,
-      });
-      if (blocked) throw throwBadRequestError('This challenge is not available.');
-    }
+    if (blocked) throw throwBadRequestError('This challenge is not available.');
   }
 
   // Block re-submitting an image a challenge judge has already scored. Removal
@@ -2058,7 +2056,7 @@ export const validateContestCollectionEntry = async ({
 
   // User challenges accept entries only once Active — makes the entry WRITE agree with the fee
   // CHARGE (which already requires Active). No-op for daily/system/community collections.
-  await assertUserChallengeAcceptingEntries(collectionId);
+  await assertUserChallengeAcceptingEntries(collectionId, userChallenge);
 
   if (!metadata) {
     return;
