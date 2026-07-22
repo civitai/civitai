@@ -15,7 +15,6 @@ import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { dbRead } from '~/server/db/client';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
   anyMetricHidden,
