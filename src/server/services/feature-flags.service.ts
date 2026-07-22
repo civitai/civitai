@@ -425,6 +425,20 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // App Blocks — dedicated per-submission REVIEW PAGE (`/apps/review/<id>`). A
+  // flag-gated, deep-linkable full page that re-hosts the existing on-site review
+  // body (today a modal on `/apps/review`) so mods can open, share, and refresh a
+  // single submission. `availability: ['mod']` (NOT `[]`): mods get the page the
+  // moment this ships — the page is a re-host of the already-live review UI (no
+  // new capability, no unapproved-code execution beyond what the modal already
+  // does), so dogfooding on merge is the intent. A non-mod still fails closed:
+  // 'mod' availability → static false for any non-mod segment AND the page's SSR
+  // gate additionally requires `isAppReviewer`. The Flipt `app-review-page` flag
+  // (created later) is the widen/kill lever; absent → this static mod-only default.
+  // Wired like `appBlocksAgenticReview` (client reads `features.appReviewPage`,
+  // the route SSR resolver reads the same resolved flag) but staged `['mod']`
+  // rather than `[]` because it's a re-host, not a brand-new dark capability.
+  appReviewPage: { availability: ['mod'], fliptKey: 'app-review-page' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
