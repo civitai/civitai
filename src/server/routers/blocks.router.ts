@@ -3657,10 +3657,16 @@ export const blocksRouter = router({
       // reject fail-safe (NO spend).
       //
       // EXCLUSION: skipped for DEV/live-harness tokens (`claims.dev === true`),
-      // which carry a synthetic non-FK appBlockId and already have the
-      // per-session dev-tunnel spend backstop below — so a dev iterating locally
-      // is never clamped by the aggregate cap (matches recordSpendAttribution
-      // being inert for a synthetic appId).
+      // which carry EITHER a synthetic non-FK appBlockId (ephemeral / pre-approval
+      // apps) OR — since #3285 — a real `apb_` id for an owner dev-tunnelling their
+      // OWN suspended/pending/deprecated app. The G8 skip is still safe in both
+      // cases because a dev token is SELF-BOUND: only the owner can spend, and only
+      // their own Buzz, still bounded by the per-user daily cap above + the
+      // per-session dev-tunnel spend backstop below — so a dev iterating locally is
+      // never clamped by the aggregate (anti-Sybil) cap, which exists to bound
+      // MANY viewers funnelling through one PUBLIC app (impossible for a self-bound
+      // dev token). For the synthetic-id case this also matches recordSpendAttribution
+      // being inert for a non-FK appId.
       let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
       if (claims.dev !== true) {
         const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
