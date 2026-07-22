@@ -58,10 +58,15 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  ImageIngestionStatus,
   PoolTrigger,
   PrizeMode,
 } from '~/shared/utils/prisma/enums';
-import { createImage, imagesForModelVersionsCache } from '~/server/services/image.service';
+import {
+  createImage,
+  enqueueImageIngestion,
+  imagesForModelVersionsCache,
+} from '~/server/services/image.service';
 import {
   amIBlockedByUser,
   getCosmeticsForUsers,
@@ -235,6 +240,7 @@ type ChallengeCardRow = {
   endsAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  buzzType: string;
   prizePool: number;
   entryCount: bigint;
   commentCount: bigint;
@@ -267,6 +273,7 @@ const challengeCardQuery = Prisma.sql`
       c."endsAt",
       c.status,
       c.source,
+      c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
       COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
@@ -332,6 +339,7 @@ async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<Chall
       endsAt: item.endsAt,
       status: item.status,
       source: item.source,
+      buzzType: item.buzzType === 'green' ? 'green' : 'yellow',
       createdById: item.createdById,
       prizePool: item.prizePool,
       nsfwLevel: item.nsfwLevel,
@@ -434,7 +442,7 @@ export async function getMyParticipated({
   const rows = await dbRead.$queryRaw<ParticipatedRow[]>(Prisma.sql`
     WITH my AS (${myEntries})
     SELECT c.id, c.title, c.theme, c.invitation, c."coverImageId", c."startsAt", c."endsAt",
-           c.status, c.source, c."prizePool",
+           c.status, c.source, c."buzzType", c."prizePool",
            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') AS "entryCount",
            COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) AS "commentCount",
            c."nsfwLevel", c."allowedNsfwLevel", c."modelVersionIds",
@@ -1941,7 +1949,85 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
   }
 }
 
-// Public-safe judge options for the user challenge form: id/name/bio only (no prompt fields).
+// Moderator-initiated rescan of a challenge's own content: the moderated text and the cover image.
+// `forceRescan` bypasses the contentHash dedup so an unchanged challenge still produces a fresh
+// orchestrator workflow (the dedup is what stranded challenges at Pending in #3160).
+//
+// Deliberately does NOT reset `ingestion`/`scannedAt`: the adapter writes the terminal state when
+// the webhook lands, so a live Active challenge stays visible instead of dropping behind the scan
+// gate for the duration of the scan.
+export async function rescanChallenge({
+  id,
+  moderatorId,
+}: {
+  id: number;
+  moderatorId: number;
+}): Promise<void> {
+  // Primary, not the replica: a mod who edits then immediately rescans would otherwise submit the
+  // pre-edit text and cache a verdict against content that no longer exists.
+  const challenge = await dbWrite.challenge.findUnique({
+    where: { id },
+    select: {
+      title: true,
+      description: true,
+      theme: true,
+      invitation: true,
+      metadata: true,
+      coverImageId: true,
+      createdById: true,
+    },
+  });
+  if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+
+  let coverRequeued = false;
+  if (challenge.coverImageId) {
+    const cover = await dbRead.image.findUnique({
+      where: { id: challenge.coverImageId },
+      select: { id: true, url: true, type: true, ingestion: true },
+    });
+    // Already Pending means a scan is in flight — re-enqueueing would just duplicate it.
+    if (cover && cover.ingestion !== ImageIngestionStatus.Pending) {
+      enqueueImageIngestion({
+        images: [cover],
+        name: 'challenge-rescan-cover',
+        userId: challenge.createdById ?? undefined,
+        lowPriority: true,
+      });
+      coverRequeued = true;
+    }
+  }
+
+  const workflow = await submitTextModeration({
+    entityType: 'Challenge',
+    entityId: id,
+    content: buildChallengeModerationText({
+      ...challenge,
+      themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+    }),
+    labels: [...CHALLENGE_MODERATION_LABELS],
+    priority: 'low',
+    forceRescan: true,
+  });
+
+  await logToAxiom({
+    type: 'info',
+    name: 'challenge-rescan',
+    challengeId: id,
+    moderatorId,
+    coverRequeued,
+    workflowId: workflow?.id ?? null,
+  }).catch(() => undefined);
+
+  // A submit failure resolves to `undefined` rather than throwing (it persists a Failed
+  // EntityModeration row for the retry cron instead), so without this the moderator gets a
+  // "rescan queued" confirmation for a scan that was never submitted.
+  if (!workflow?.id)
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Failed to queue the content rescan. It will be retried automatically.',
+    });
+}
+
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
   const challenge = await dbWrite.challenge.update({
     where: { id },
@@ -2722,7 +2808,9 @@ export async function voidChallenge(challengeId: number) {
     });
     if (claimed.count !== 1) {
       log('Void claim lost (completion or a concurrent void won); skipping refund');
-      return { success: true };
+      // `voided: false` so callers can tell "nothing was refunded" from a real void — reporting a
+      // refund that never happened would tell entrants they got their Buzz back.
+      return { success: true, voided: false };
     }
     log('Challenge status updated to Cancelled');
   }
@@ -2737,7 +2825,7 @@ export async function voidChallenge(challengeId: number) {
     await notifyEntrantsOfCancellation(challenge);
   }
 
-  return { success: true };
+  return { success: true, voided: true };
 }
 
 /**
@@ -2962,6 +3050,7 @@ export async function getActiveEvents(viewerId?: number): Promise<ChallengeEvent
           endsAt: true,
           status: true,
           source: true,
+          buzzType: true,
           nsfwLevel: true,
           allowedNsfwLevel: true,
           prizePool: true,
@@ -3083,6 +3172,7 @@ export async function getActiveEvents(viewerId?: number): Promise<ChallengeEvent
         endsAt: c.endsAt,
         status: c.status,
         source: c.source,
+        buzzType: c.buzzType === 'green' ? ('green' as const) : ('yellow' as const),
         // createdById can be null (creator account deleted); fall back to the system user (-1),
         // matching the displayUserId fallback above.
         createdById: c.createdById ?? -1,
@@ -3577,6 +3667,7 @@ export async function getCompletedChallengesWithWinners(
       endsAt: Date;
       status: ChallengeStatus;
       source: ChallengeSource;
+      buzzType: string;
       prizePool: number;
       entryCount: bigint;
       commentCount: bigint;
@@ -3605,6 +3696,7 @@ export async function getCompletedChallengesWithWinners(
       c."endsAt",
       c.status,
       c.source,
+      c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
       COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
@@ -3744,6 +3836,7 @@ export async function getCompletedChallengesWithWinners(
       endsAt: item.endsAt,
       status: item.status,
       source: item.source,
+      buzzType: item.buzzType === 'green' ? 'green' : 'yellow',
       createdById: item.createdById,
       prizePool: item.prizePool,
       nsfwLevel: item.nsfwLevel,
@@ -3786,12 +3879,26 @@ export async function getWinnerCooldownStatus(
   userId: number
 ): Promise<WinnerCooldownStatus> {
   // 1. Look up challenge's eventId
-  const [challenge] = await dbRead.$queryRaw<[{ eventId: number | null }] | []>`
-    SELECT "eventId" FROM "Challenge" WHERE id = ${challengeId}
+  const [challenge] = await dbRead.$queryRaw<
+    [{ eventId: number | null; source: ChallengeSource }] | []
+  >`
+    SELECT "eventId", "source" FROM "Challenge" WHERE id = ${challengeId}
   `;
 
   if (!challenge) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  }
+
+  // Winner picking never applies the cooldown to user-created challenges (see pickWinners), so
+  // reporting one here would warn participants about a restriction that won't be enforced.
+  if (challenge.source === ChallengeSource.User) {
+    return {
+      onCooldown: false,
+      cooldownEndsAt: null,
+      lastWinDate: null,
+      lastWinChallengeId: null,
+      cooldownDays: 0,
+    };
   }
 
   // 2. Resolve event context

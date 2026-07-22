@@ -68,6 +68,7 @@ export function WinnerPodiumCard({
   isMobile = false,
   compact = false,
   judgeInfo,
+  buzzType,
 }: {
   winner: WinnerPodiumData;
   isFirst: boolean;
@@ -75,6 +76,9 @@ export function WinnerPodiumCard({
   isMobile?: boolean;
   compact?: boolean;
   judgeInfo?: JudgeInfo;
+  // Required, not defaulted: a missing value would silently render yellow, which is the exact bug
+  // this prop exists to fix.
+  buzzType: 'green' | 'yellow';
 }) {
   const [reasonExpanded, setReasonExpanded] = useState(false);
   const colorScheme = useComputedColorScheme('dark');
@@ -136,6 +140,7 @@ export function WinnerPodiumCard({
           {!compact && (
             <CurrencyBadge
               currency={Currency.BUZZ}
+              type={buzzType}
               unitAmount={winner.buzzAwarded}
               size="sm"
               style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}

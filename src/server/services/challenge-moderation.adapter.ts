@@ -103,9 +103,16 @@ export const challengeModerationAdapter: ModerationAdapter = {
   // Terminal scan failure: mark retryable Error (the scan gate keeps the challenge hidden). The
   // generic retry cron re-submits from `retryCount < 9`; the activation job voids past the grace
   // window so escrowed funds aren't stranded forever.
+  //
+  // Scoped to Pending so a failed moderator rescan (`rescanChallenge`) can't downgrade an already
+  // Scanned challenge — that would hide a live one from feeds and 404 its detail page on a
+  // transient orchestrator failure, rather than just leaving the prior verdict in place.
   applyFailure: async ({ entityId }) => {
     await dbWrite.challenge
-      .update({ where: { id: entityId }, data: { ingestion: ChallengeIngestionStatus.Error } })
+      .updateMany({
+        where: { id: entityId, ingestion: ChallengeIngestionStatus.Pending },
+        data: { ingestion: ChallengeIngestionStatus.Error },
+      })
       .catch(() => undefined);
   },
 };
