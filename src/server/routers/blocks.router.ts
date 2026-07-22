@@ -58,6 +58,7 @@ import {
   agentReviewChatSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
+  getPublishRequestSchema,
   getPublishRequestScreenshotsSchema,
   getReviewStatusSchema,
   listApprovedRequestsSchema,
@@ -1353,6 +1354,34 @@ export const blocksRouter = router({
         '~/server/services/blocks/publish-request.service'
       );
       return getPublishRequestDiff({ publishRequestId: input.publishRequestId });
+    }),
+
+  /**
+   * MOD-ONLY single-request fetch — powers the per-submission review PAGE
+   * (`/apps/review/<publishRequestId>`, `appReviewPage` flag). Returns the SAME
+   * hydrated request shape one item of `listPending/Approved/RejectedRequests`
+   * returns, plus the derived `mode`, so the extracted `OnsiteReviewModalBody`
+   * renders on the page identically to the modal path. A missing / withdrawn /
+   * superseded id → NOT_FOUND (fail-closed; never leaks which).
+   *
+   * Same auth shape as the other review reads: `moderatorProcedure` +
+   * `isModerator` belt + `enforceAppBlocksFlag` — no public path.
+   */
+  getPublishRequest: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getPublishRequestSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { getReviewRequestById } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      const result = await getReviewRequestById(input.publishRequestId);
+      if (!result) {
+        throw throwNotFoundError(`Publish request ${input.publishRequestId} not found`);
+      }
+      return result;
     }),
 
   /**

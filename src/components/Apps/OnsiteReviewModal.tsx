@@ -209,7 +209,11 @@ export function OnsiteReviewModal({
 /** Static, per-request modal title (slug + version + a mode/first-version badge).
  *  Derived purely from `selection` — no transient state — so it lives on the
  *  stable shell, not the keyed body. */
-function OnsiteReviewModalTitle({ selection }: { selection: NonNullable<OnsiteReviewSelection> }) {
+export function OnsiteReviewModalTitle({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
   const { request, mode } = selection;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
   return (
@@ -241,8 +245,17 @@ function OnsiteReviewModalTitle({ selection }: { selection: NonNullable<OnsiteRe
  * mutations. The parent keys this on `selection.request.id`, so all of that
  * state is fresh on every request switch — no manual reset needed, and the
  * `onSuccess → onClose` paths are safe because the next open remounts fresh.
+ *
+ * EXPORTED (with {@link OnsiteReviewModalTitle}) so the per-submission review
+ * PAGE (`/apps/review/<id>`, `appReviewPage` flag) can re-host the exact same
+ * body WITHOUT the `<Modal>` shell — the page passes a resolved `selection`, an
+ * `onClose` that redirects to the queue (Q6), and its own `busyRef`. Keep this
+ * server-graph-free and free of modal-only assumptions so the modal and page
+ * stay behaviour-identical (and so an off-site page could reuse the shared
+ * sub-sections later). The modal shell above remains the only caller that wraps
+ * it in `<Modal>`.
  */
-function OnsiteReviewModalBody({
+export function OnsiteReviewModalBody({
   selection,
   onClose,
   busyRef,
