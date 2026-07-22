@@ -489,7 +489,7 @@ export function ModelWizard() {
   };
 
   // File-less ExternalGeneration versions don't need the upload step. Hoisted so the
-  // CreateSteps stepper and the auto-redirect effect agree on the same step layout.
+  // CreateSteps stepper and the auto-resume hook agree on the same step layout.
   const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
 
   useWizardAutoResume({
@@ -502,9 +502,9 @@ export function ModelWizard() {
       if (!hasFiles && !skipFiles) return 3;
       return 4;
     },
-    onResume: (step) => {
+    onResume: (targetStep) => {
       router
-        .replace(getWizardUrl({ id, step, templateId, bountyId, src }), undefined, {
+        .replace(getWizardUrl({ id, step: targetStep, templateId, bountyId, src }), undefined, {
           shallow: true,
         })
         .then();

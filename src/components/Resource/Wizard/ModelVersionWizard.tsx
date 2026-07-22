@@ -325,11 +325,11 @@ export function ModelVersionWizard({ data, previousBaseModel }: Props) {
   const isTraining = modelVersion?.uploadType === ModelUploadType.Trained;
 
   useWizardAutoResume({
-    ready: !isNew && !isTraining && !isInitialLoading && !!modelVersion,
+    ready: !isNew && !isTraining && !!modelVersion,
     resolveStep: () => (!hasFiles && !skipFiles ? 2 : 3),
-    onResume: (step) => {
+    onResume: (targetStep) => {
       router
-        .replace(`/models/${id}/model-versions/${versionId}/wizard?step=${step}`, undefined, {
+        .replace(`/models/${id}/model-versions/${versionId}/wizard?step=${targetStep}`, undefined, {
           shallow: true,
         })
         .then();

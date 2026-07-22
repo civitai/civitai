@@ -1,12 +1,13 @@
 import { describe, expect, test, vi } from 'vitest';
 import { useState } from 'react';
+import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { useWizardAutoResume } from '~/components/Resource/Wizard/useWizardAutoResume';
 
 /**
- * Regression cover for the model-version wizard jumping to the post step as soon
- * as the FIRST of several files finished uploading: that upload invalidates the
- * version query, `hasFiles` flips, and an unguarded resume effect re-fired.
+ * Hook-level cover. The wizard-level regression for the reported bug (the post
+ * step stealing the user mid-upload) lives in
+ * `ModelVersionWizard.autoResume.browser.test.tsx`.
  */
 
 function Harness({
@@ -14,7 +15,7 @@ function Harness({
   onResume,
 }: {
   initialReady: boolean;
-  onResume: (step: number) => void;
+  onResume: (targetStep: number) => void;
 }) {
   const [ready, setReady] = useState(initialReady);
   const [hasFiles, setHasFiles] = useState(false);
@@ -27,6 +28,7 @@ function Harness({
 
   return (
     <div>
+      <span data-testid="has-files">{String(hasFiles)}</span>
       <button data-testid="load" onClick={() => setReady(true)}>
         load
       </button>
@@ -69,11 +71,9 @@ describe('useWizardAutoResume', () => {
     await vi.waitFor(() => expect(onResume).toHaveBeenCalledTimes(1));
     expect(onResume).toHaveBeenCalledWith(2);
 
-    // First of several uploads lands → version query invalidated → `hasFiles` flips.
     click('complete-upload');
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect.element(page.getByTestId('has-files')).toHaveTextContent('true');
 
     expect(onResume).toHaveBeenCalledTimes(1);
-    expect(onResume).not.toHaveBeenCalledWith(3);
   });
 });
