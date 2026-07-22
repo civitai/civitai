@@ -10,7 +10,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
   const compare = resolveCompareMonth(url.searchParams.get('cmp'), range).range;
   // Ownership is enforced inside the read (returns null for a model that isn't the caller's).
   const userId = locals.user.id;
-  const [model, series] = await Promise.all([
+  const [model, series, compareSeries] = await Promise.all([
     getModelVersionAnalytics({
       userId,
       modelId,
@@ -19,7 +19,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
       compareTo: compare.to,
     }),
     getModelVersionSeries({ userId, modelId, ...range }).catch(() => null),
+    // Same per-version series for the comparison month — the chart overlays it as a dashed line per version.
+    getModelVersionSeries({ userId, modelId, ...compare }).catch(() => null),
   ]);
   if (!model) throw error(404, 'Model not found, or not yours');
-  return { model, series };
+  return { model, series, compareSeries };
 };

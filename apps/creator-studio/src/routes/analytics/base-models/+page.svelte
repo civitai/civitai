@@ -17,12 +17,14 @@
   import { formatRange, eachDayIso, shiftIso, dayDiff } from '$lib/date-range';
   import { baseModelTrendSelection } from '$lib/stores/base-model-trend';
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
+  import { analyticsPageSize } from '$lib/stores/analytics-page-size';
+  import PageSizeSelect from '$lib/components/PageSizeSelect.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
-  const PER_PAGE = 25;
+  const perPage = $derived($analyticsPageSize);
 
   // Civitai-wide base-model popularity (4.6): pick base models to compare; each draws a solid current-month line
   // plus a dashed comparison-month line (aligned day-for-day). The creator's own base models are starred, and the
@@ -140,9 +142,9 @@
     const dir = sortDir === 'desc' ? -1 : 1;
     return rows.sort((a, b) => dir * (sortValue(a, sortKey) - sortValue(b, sortKey)));
   });
-  const totalPages = $derived(Math.max(1, Math.ceil(sorted.length / PER_PAGE)));
+  const totalPages = $derived(Math.max(1, Math.ceil(sorted.length / perPage)));
   const curPage = $derived(Math.min(pageNum, totalPages));
-  const pageRows = $derived(sorted.slice((curPage - 1) * PER_PAGE, curPage * PER_PAGE));
+  const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
 </script>
 
 {#if trendHasData}
@@ -238,44 +240,49 @@
     {#snippet pager()}
       <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-dark-3">
         <span>{sorted.length} base models</span>
-        <div class="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Previous page"
-            disabled={curPage <= 1}
-            onclick={() => setPageParam(curPage - 1)}
-            class="inline-flex cursor-pointer items-center rounded border border-dark-4 p-1 hover:text-white disabled:cursor-default disabled:opacity-40"
-          >
-            <IconChevronLeft size={13} />
-          </button>
-          {#each pageWindow(curPage, totalPages) as p, i (i)}
-            {#if p === '…'}
-              <span class="px-1 text-dark-4">…</span>
-            {:else}
+        <div class="flex items-center gap-3">
+          <PageSizeSelect />
+          {#if totalPages > 1}
+            <div class="flex items-center gap-1">
               <button
                 type="button"
-                onclick={() => setPageParam(p)}
-                class="min-w-6 cursor-pointer rounded border px-1.5 py-1 text-center {p === curPage
-                  ? 'border-blue-8 bg-blue-8/20 text-white'
-                  : 'border-dark-4 hover:text-white'}"
+                aria-label="Previous page"
+                disabled={curPage <= 1}
+                onclick={() => setPageParam(curPage - 1)}
+                class="inline-flex cursor-pointer items-center rounded border border-dark-4 p-1 hover:text-white disabled:cursor-default disabled:opacity-40"
               >
-                {p}
+                <IconChevronLeft size={13} />
               </button>
-            {/if}
-          {/each}
-          <button
-            type="button"
-            aria-label="Next page"
-            disabled={curPage >= totalPages}
-            onclick={() => setPageParam(curPage + 1)}
-            class="inline-flex cursor-pointer items-center rounded border border-dark-4 p-1 hover:text-white disabled:cursor-default disabled:opacity-40"
-          >
-            <IconChevronRight size={13} />
-          </button>
+              {#each pageWindow(curPage, totalPages) as p, i (i)}
+                {#if p === '…'}
+                  <span class="px-1 text-dark-4">…</span>
+                {:else}
+                  <button
+                    type="button"
+                    onclick={() => setPageParam(p)}
+                    class="min-w-6 cursor-pointer rounded border px-1.5 py-1 text-center {p === curPage
+                      ? 'border-blue-8 bg-blue-8/20 text-white'
+                      : 'border-dark-4 hover:text-white'}"
+                  >
+                    {p}
+                  </button>
+                {/if}
+              {/each}
+              <button
+                type="button"
+                aria-label="Next page"
+                disabled={curPage >= totalPages}
+                onclick={() => setPageParam(curPage + 1)}
+                class="inline-flex cursor-pointer items-center rounded border border-dark-4 p-1 hover:text-white disabled:cursor-default disabled:opacity-40"
+              >
+                <IconChevronRight size={13} />
+              </button>
+            </div>
+          {/if}
         </div>
       </div>
     {/snippet}
-    {#if totalPages > 1}<div class="mb-3">{@render pager()}</div>{/if}
+    <div class="mb-3">{@render pager()}</div>
     <Table.Root>
       <Table.Header>
         <Table.Row>
