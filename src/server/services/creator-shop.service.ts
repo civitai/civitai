@@ -44,6 +44,9 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   CREATOR_SHOP_SUBMISSION_FEE,
+  MAX_ANIMATION_FPS,
+  MAX_ANIMATION_FRAMES,
+  MIN_ANIMATION_FRAME_DELAY_MS,
   PRICE_REVIEW_THRESHOLD,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
@@ -128,6 +131,8 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   let format: string | undefined;
   let hasTransparency = false;
   let imageHash = '';
+  let frames = 1;
+  let minFrameDelay = Infinity;
   try {
     const res = await fetch(getEdgeUrl(imageUrl, { original: true }));
     if (!res.ok) throw new Error(`fetch ${res.status}`);
@@ -138,6 +143,8 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     height = meta.height ?? 0;
     format = meta.format;
     hasTransparency = !!meta.hasAlpha;
+    frames = meta.pages ?? 1;
+    if (meta.delay?.length) minFrameDelay = Math.min(...meta.delay);
   } catch {
     throw throwBadRequestError('Could not read the uploaded artwork for validation');
   }
@@ -158,6 +165,24 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   ];
   if (req.requireTransparency)
     checks.push({ key: 'transparency', label: 'Transparent background', passed: hasTransparency });
+  if (frames > 1) {
+    checks.push({
+      key: 'frameCount',
+      label: `At most ${MAX_ANIMATION_FRAMES} frames`,
+      passed: frames <= MAX_ANIMATION_FRAMES,
+      detail: `${frames} frames`,
+    });
+    checks.push({
+      key: 'frameRate',
+      label: `At most ${MAX_ANIMATION_FPS} fps`,
+      // A 0ms delay ("as fast as possible") also fails; missing delay info
+      // (Infinity) can't be judged so it passes.
+      passed: minFrameDelay >= MIN_ANIMATION_FRAME_DELAY_MS,
+      detail: Number.isFinite(minFrameDelay)
+        ? `~${Math.round(1000 / Math.max(1, minFrameDelay))} fps peak`
+        : undefined,
+    });
+  }
 
   const imageMeta: CosmeticImageMeta = { width, height, hasTransparency };
   return { checks, imageMeta, imageHash, allPassed: checks.every((c) => c.passed) };

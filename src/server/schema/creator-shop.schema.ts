@@ -28,6 +28,13 @@ export function computeCreatorShopSplit(price: number, sellerShare = 0) {
   return { creatorPool, sellerAmount, creatorAmount, platformCut };
 }
 
+// Animated artwork limits (maximums only — no minimums). Tune freely.
+export const MAX_ANIMATION_FRAMES = 150;
+export const MAX_ANIMATION_FPS = 30;
+// Compare per-frame delays against this instead of computed fps so a 33ms
+// (~30.3fps) encode of a nominal 30fps animation isn't rejected by rounding.
+export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS);
+
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
 export const creatorCosmeticTypes = [
   CosmeticType.Badge,
