@@ -234,12 +234,28 @@ export function createCachedArray<T extends object>({
   // same isolation the degraded path documents (its appendFns reassign/delete
   // top-level fields; shallow is enough). The healthy Redis path is naturally immune
   // (each request decodes its own objects from msgpack); this restores that for L1.
-  function backfillLocal(items: T[]) {
+  // 🔴 INVARIANT: shallow only protects TOP-LEVEL fields — nested refs (e.g. `tags`,
+  // `meta`) are shared with the L1 copy, so consumers MUST treat returned values as
+  // read-only for nested fields (all current consumers map into new objects rather
+  // than mutating in place). `skip` lets a caller withhold ids the Redis layer itself
+  // deliberately did NOT cache (dontCache debounce window / dontCacheFn), so L1 never
+  // pins a value Redis chose not to persist (e.g. a replica-lagged debounced read).
+  function backfillLocal(items: T[], skip?: (x: T) => boolean) {
     if (!localCache) return;
     for (const x of items) {
+      if (skip?.(x)) continue;
       const id = x[idKey] as unknown as number;
       if (id !== undefined && id !== null) localCache.set(id, { ...x });
     }
+  }
+
+  // Drop these ids from THIS pod's L1 on a local bust/refresh/invalidate. Does NOT
+  // fix cross-pod staleness (inherent + accepted for the near-static caches L1 is
+  // enabled on) — it closes the self-pod window where the pod that just processed a
+  // mutation would otherwise keep serving its own pre-mutation L1 copy for localTtl.
+  function dropLocal(ids: number[]) {
+    if (!localCache) return;
+    for (const id of ids) localCache.delete(id);
   }
   // Degraded origin (DB) fetch used when a CLUSTER Redis read rejects. Returns the SAME shape
   // as the healthy `fetch` (decorated by appendFn, cachedAt stripped) but reads nothing from
@@ -352,8 +368,9 @@ export function createCachedArray<T extends object>({
       });
       const degraded = await fetchFromOriginDegraded(distinctIds);
       // Backfill L1 even during a Redis wedge (short TTL; helps bound the DB herd)
-      // and merge any ids we already served from L1 before the read failed.
-      backfillLocal(degraded);
+      // and merge any ids we already served from L1 before the read failed. Honor
+      // dontCacheFn (dontCache is a Redis-hit concept, not reachable on this path).
+      backfillLocal(degraded, dontCacheFn ? (x) => !!dontCacheFn(x) : undefined);
       return localCache ? [...l1Hits, ...degraded] : degraded;
     }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
@@ -518,13 +535,19 @@ export function createCachedArray<T extends object>({
     // Backfill L1 with the FINAL shape (post-appendFn, cachedAt stripped) so a later
     // L1 hit is byte-identical to this return, then prepend the ids already served
     // from L1 above. When there is no L1, l1Hits is empty and we return `final` as-is.
-    backfillLocal(final);
+    // Skip exactly what the Redis write skipped: dontCache (freshly-busted debounce
+    // window — value came from dbRead and may be replica-lagged) and dontCacheFn.
+    backfillLocal(
+      final,
+      (x) => dontCache.has(x[idKey] as unknown as number) || !!dontCacheFn?.(x)
+    );
     return localCache ? [...l1Hits, ...final] : final;
   }
 
   async function bust(id: number | number[], options: { debounceTime?: number } = {}) {
     const ids = Array.isArray(id) ? id : [id];
     if (ids.length === 0) return;
+    dropLocal(ids);
 
     await Promise.all(
       ids.map((id) =>
@@ -543,6 +566,7 @@ export function createCachedArray<T extends object>({
   async function invalidate(id: number | number[], options: { debounceTime?: number } = {}) {
     const ids = Array.isArray(id) ? id : [id];
     if (ids.length === 0) return;
+    dropLocal(ids);
 
     const cacheResults: T[] = [];
     for (const batch of chunk(ids, 200)) {
@@ -578,6 +602,7 @@ export function createCachedArray<T extends object>({
 
   async function refresh(id: number | number[]) {
     const ids = Array.isArray(id) ? id : [id];
+    dropLocal(ids);
 
     try {
       const results = await lookupFn(ids, true);
@@ -615,6 +640,7 @@ export function createCachedArray<T extends object>({
   }
 
   async function flush() {
+    localCache?.clear();
     await clearCacheByPattern(`${key}:*`);
   }
 

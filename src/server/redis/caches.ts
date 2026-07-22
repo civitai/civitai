@@ -1300,12 +1300,11 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
   // working set into misses and stampede dbRead.
   ttl: CacheTTL.hour * 4,
   staleWhileRevalidateTtl: CacheTTL.hour,
-  // L1: generation meta behind a 4h Redis TTL, refresh-only on image edit/delete.
-  // Shortest L1 TTL of the set (10s) because `hideMeta` toggles the prompt to NULL —
-  // a ≤10s cross-pod lag on hide taking effect, on data that was already public.
-  // max 5000: `meta` is the heaviest per-entity value (~2.8KB/key), keep it small.
-  localTtl: 10,
-  localMax: 5000,
+  // NO per-pod L1 here (deliberate): `meta` is gated on `hideMeta`, and when an owner
+  // flips hideMeta false→true the write path calls imageMetaCache.refresh() (meta→NULL).
+  // A per-pod L1 can't observe that cross-pod refresh, so other viewers' pods would keep
+  // serving the old prompt for up to localTtl — a prompt-exposure window on a PRIVACY
+  // control. Not worth it; also the heaviest value, so its exclusion frees the most heap.
 });
 
 type ImageWithMetadata = {

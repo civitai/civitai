@@ -279,6 +279,71 @@ describe('createCachedArray L1 — shared-instance isolation', () => {
   });
 });
 
+describe('createCachedArray L1 — mirrors the Redis-write skip (dontCache/debounce)', () => {
+  it('does NOT L1-cache a freshly-busted (debounce) id so the debounce/replica-lag guard survives', async () => {
+    // Redis returns a debounce marker with a RECENT cachedAt → the id is treated as
+    // `dontCache` (within debounceTime): served from origin (dbRead) but deliberately
+    // NOT written back to Redis. The L1 must skip it too, else it would pin the
+    // possibly replica-lagged read for localTtl.
+    mGetMock.mockResolvedValue([{ id: 1, debounce: true, cachedAt: new Date() }]);
+    const lookupFn = makeLookup();
+    const cache = createCachedArray<Row>({
+      key: 'test:l1debounce' as never,
+      idKey: 'id',
+      lookupFn,
+      localTtl: 60,
+    });
+
+    const first = await cache.fetch([1]);
+    expect(first).toEqual([{ id: 1, name: 'db-1' }]); // served from origin
+    mGetMock.mockClear();
+
+    // Not pinned in L1 → the next read still consults Redis (would be an L1 hit if we
+    // had wrongly cached the debounced value).
+    await cache.fetch([1]);
+    expect(mGetMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createCachedArray L1 — self-pod invalidation', () => {
+  it('bust() drops the id from THIS pod L1 (no self-pod stale serve)', async () => {
+    const lookupFn = makeLookup();
+    const cache = createCachedArray<Row>({
+      key: 'test:l1bust' as never,
+      idKey: 'id',
+      lookupFn,
+      localTtl: 60,
+    });
+
+    await cache.fetch([1]); // warm L1
+    mGetMock.mockClear().mockResolvedValue([]);
+    lookupFn.mockClear();
+
+    await cache.bust(1); // must delete id 1 from L1 (bust == invalidate when SWR on)
+
+    mGetMock.mockClear().mockResolvedValue([]);
+    await cache.fetch([1]); // L1 was dropped → back to Redis
+    expect(mGetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refresh() drops the id from THIS pod L1', async () => {
+    const lookupFn = makeLookup();
+    const cache = createCachedArray<Row>({
+      key: 'test:l1refresh' as never,
+      idKey: 'id',
+      lookupFn,
+      localTtl: 60,
+    });
+
+    await cache.fetch([1]); // warm L1
+    await cache.refresh(1); // re-fetches primary + drops L1
+
+    mGetMock.mockClear().mockResolvedValue([]);
+    await cache.fetch([1]);
+    expect(mGetMock).toHaveBeenCalledTimes(1); // served from Redis, not stale L1
+  });
+});
+
 describe('createCachedObject L1 — keyed Record served from L1', () => {
   it('returns the same keyed Record whether served from Redis or L1', async () => {
     const lookupFn = makeLookup();
