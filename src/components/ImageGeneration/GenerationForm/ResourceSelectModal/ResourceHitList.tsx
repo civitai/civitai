@@ -1,35 +1,30 @@
 import { Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useInstantSearch } from 'react-instantsearch';
+import { useCallback, useMemo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
-import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { constants } from '~/server/common/constants';
-import type { GetFeaturedModels } from '~/server/services/model.service';
-import type { ResourceSelectOptions } from '../resource-select.types';
+import type { TransformedModel } from '~/shared/search/models-transform';
+import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
-import { skipBaseModelForOwnTabs, type Tabs } from './useResourceSelectFilters';
+import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
-import { NoContent } from '~/components/NoContent/NoContent';
 
-export function ResourceHitList({
-  featured,
-  selectedTab,
-}: ResourceSelectOptions & {
-  featured: GetFeaturedModels | undefined;
-  selectedTab?: Tabs;
-}) {
-  const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
-  const startedRef = useRef(false);
-  const { status } = useInstantSearch();
-  const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
+export function ResourceHitList({ query }: { query: string }) {
+  const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
+
+  const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
+    enabled: tab === 'featured',
+  });
+
+  const { items, isLoading, isFetching, isFetchingNextPage, fetchNextPage, hasNextPage } =
+    useResourceSelectInfinite({ query });
+
   const {
     items: models,
     loadingPreferences,
@@ -39,18 +34,15 @@ export function ResourceHitList({
     data: items,
   });
 
-  const loading =
-    status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
-
-  // Use all featured models for position sorting — the Meilisearch query and
-  // version filtering below handle which models actually appear
-  const filteredFeaturedModels = featured;
+  const loading = isLoading || isFetching || loadingPreferences;
 
   const filterVersions = useCallback(
-    (model: SearchIndexDataMap['models'][number]) => {
-      // Mirror the Meili query's base-model relaxation so we don't strip every
+    (model: TransformedModel) => {
+      // Mirror the server query's base-model relaxation so we don't strip every
       // version client-side (e.g. linking a Flux VAE into a Boogu checkpoint).
-      const skipBaseModel = skipBaseModelForOwnTabs(selectedTab, selectSource);
+      // The featured tab is a cross-ecosystem podium (the server returns winners
+      // from any baseModel), so don't re-apply the ecosystem's base-model filter.
+      const skipBaseModel = skipBaseModelForOwnTabs(tab, selectSource) || tab === 'featured';
       const modelBaseModels = resources
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);
@@ -65,7 +57,7 @@ export function ResourceHitList({
         );
       });
     },
-    [canGenerate, resources, excludedIds, selectedTab, selectSource]
+    [canGenerate, resources, excludedIds, tab, selectSource]
   );
 
   // Build podium items from raw items (bypassing hidden preferences) so
@@ -77,13 +69,12 @@ export function ResourceHitList({
     [resources]
   );
   const topItems = useMemo(() => {
-    if (selectedTab !== 'featured' || !filteredFeaturedModels?.length) return [];
+    if (tab !== 'featured' || !featured?.length) return [];
 
-    // Filter to featured entries matching current resource types and ecosystem.
     // For checkpoints, include all ecosystems so auction winners from any baseModel show.
     const isCheckpointOnly =
       resourceTypes.length > 0 && resourceTypes.every((t) => t === 'Checkpoint');
-    const relevantFeatured = filteredFeaturedModels.filter(
+    const relevantFeatured = featured.filter(
       (fm) =>
         resourceTypes.includes(fm.type) &&
         (isCheckpointOnly || resourceBaseModels.size === 0 || resourceBaseModels.has(fm.baseModel))
@@ -104,7 +95,7 @@ export function ResourceHitList({
         const bPos = relevantFeatured.find((fm) => fm.modelId === b.id)!.position;
         return aPos - bPos;
       });
-  }, [selectedTab, filteredFeaturedModels, items, filterVersions, resourceTypes, resourceBaseModels]);
+  }, [tab, featured, items, filterVersions, resourceTypes, resourceBaseModels]);
 
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
@@ -120,10 +111,10 @@ export function ResourceHitList({
       .filter(isDefined)
       .filter((model) => model.versions.length > 0);
 
-    if (selectedTab === 'featured') {
+    if (tab === 'featured') {
       ret.sort((a, b) => {
-        const aPos = filteredFeaturedModels?.find((fm) => fm.modelId === a.id)?.position;
-        const bPos = filteredFeaturedModels?.find((fm) => fm.modelId === b.id)?.position;
+        const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
+        const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
         if (!aPos) return 1;
         if (!bPos) return -1;
         return aPos - bPos;
@@ -131,14 +122,10 @@ export function ResourceHitList({
     }
 
     return ret;
-  }, [canGenerate, filteredFeaturedModels, models, resources, selectedTab, filterVersions]);
-
-  useEffect(() => {
-    if (!startedRef.current && status !== 'idle') startedRef.current = true;
-  }, [status]);
+  }, [canGenerate, featured, models, resources, tab, filterVersions]);
 
   const renderCard = useCallback(
-    ({ data, height }: { data: SearchIndexDataMap['models'][number]; height: number }) => (
+    ({ data, height }: { data: TransformedModel; height: number }) => (
       <ResourceSelectCard data={data} height={height} selectSource={selectSource} />
     ),
     [selectSource]
@@ -177,9 +164,7 @@ export function ResourceHitList({
     );
 
   // Exclude podium items from the main grid
-  const restItems = selectedTab === 'featured'
-    ? filtered.filter((m) => !topItemIds.has(m.id))
-    : filtered;
+  const restItems = tab === 'featured' ? filtered.filter((m) => !topItemIds.has(m.id)) : filtered;
 
   return (
     <div className="flex flex-col gap-3 p-3">
@@ -219,8 +204,8 @@ export function ResourceHitList({
         />
       </MasonryProvider>
 
-      {items.length > 0 && !isLastPage && (
-        <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
+      {items.length > 0 && hasNextPage && (
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
           <Center style={{ height: 36 }} my="md">
             <Loader />
           </Center>

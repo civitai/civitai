@@ -4,9 +4,14 @@ import type {
   ResourceFilter,
   ResourceSelectOptions,
   ResourceSelectSource,
+  ResourceSort,
+  Tabs,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import { useStorage } from '~/hooks/useStorage';
 import type { GenerationResource } from '~/shared/types/generation.types';
+
+const defaultTab: Tabs = 'all';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -16,12 +21,19 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-type ResourceSelectState = Omit<ResourceSelectModalProps, 'options'> & {
+type ResourceSelectState = Omit<ResourceSelectModalProps, 'options' | 'selectSource'> & {
+  selectSource: ResourceSelectSource;
   canGenerate?: boolean;
   excludedIds: number[];
   resources: DeepRequired<ResourceSelectOptions>['resources'];
+  tab: Tabs;
+  setTab: React.Dispatch<React.SetStateAction<Tabs>>;
   filters: ResourceFilter;
   setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
+  sort: ResourceSort;
+  setSort: React.Dispatch<React.SetStateAction<ResourceSort>>;
+  categoryTag?: string;
+  setCategoryTag: React.Dispatch<React.SetStateAction<string | undefined>>;
 };
 
 const ResourceSelectContext = createContext<ResourceSelectState | null>(null);
@@ -37,10 +49,30 @@ export function ResourceSelectProvider({
 }: { children: React.ReactNode } & ResourceSelectModalProps) {
   const dialog = useDialogContext();
   const { generation } = useCurrentUserSettings();
+  const selectSource = props.selectSource ?? 'generation';
+
+  // For modelVersion linking, always start on the 'all' tab (and don't persist)
+  // since 'recent' depends on recommended models that are often empty for new
+  // uploads.
+  const persistTab = selectSource !== 'modelVersion';
+  const [storedTab, setStoredTab] = useStorage<Tabs>({
+    type: 'localStorage',
+    key: 'resource-select-tab',
+    defaultValue: defaultTab,
+    getInitialValueInEffect: false,
+  });
+  const [localTab, setLocalTab] = useState<Tabs>(defaultTab);
+  // useStorage's value widens to `Tabs | undefined`; fall back to the default so
+  // the context always exposes a concrete tab.
+  const tab = (persistTab ? storedTab : localTab) ?? defaultTab;
+  const setTab = persistTab ? setStoredTab : setLocalTab;
+
   const [filters, setFilters] = useState<ResourceFilter>({
     types: [],
     baseModels: [],
   });
+  const [sort, setSort] = useState<ResourceSort>('relevance');
+  const [categoryTag, setCategoryTag] = useState<string | undefined>();
   const resources = (props.options?.resources ?? []).map(
     ({ type, baseModels = [], partialSupport = [] }) => ({
       type,
@@ -79,15 +111,21 @@ export function ResourceSelectProvider({
     <ResourceSelectContext.Provider
       value={{
         ...props,
-        selectSource: props.selectSource ?? 'generation',
+        selectSource,
         canGenerate: props.options?.canGenerate,
         excludedIds: props.options?.excludeIds ?? [],
         resources,
+        tab,
+        setTab,
         filters: {
           types,
           baseModels,
         },
         setFilters,
+        sort,
+        setSort,
+        categoryTag,
+        setCategoryTag,
         onSelect: handleSelect,
       }}
     >
