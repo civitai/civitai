@@ -32,6 +32,7 @@ const {
     mockDbRead: {
       challenge: { findUnique: vi.fn() },
       challengeJudge: { findUnique: vi.fn().mockResolvedValue({ userId: JUDGE_USER_ID }) },
+      image: { findFirst: vi.fn().mockResolvedValue({ id: 1 }) },
     },
     mockDbWrite: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
     mockCreateImage: vi.fn(),
@@ -94,7 +95,23 @@ vi.mock('~/server/services/challenge-category.service', () => ({
   resolveJudgingCategories: vi.fn().mockResolvedValue(null),
 }));
 
-const { upsertChallenge } = await import('~/server/services/challenge.service');
+vi.mock('~/server/services/challenge-eligibility.service', () => ({
+  assertCanCreateUserChallenge: vi.fn(),
+  assertUserInGoodStanding: vi.fn(),
+  assertUserAccountInGoodStanding: vi.fn(),
+}));
+
+vi.mock('~/server/services/challenge-judge.service', () => ({
+  getUserSelectableJudges: vi.fn().mockResolvedValue([{ id: 3 }]),
+}));
+
+vi.mock('~/server/services/text-moderation.service', () => ({
+  submitTextModeration: vi.fn(),
+}));
+
+const { upsertChallenge, upsertUserChallenge } = await import(
+  '~/server/services/challenge.service'
+);
 
 const baseInput = {
   title: 'Test challenge',
@@ -134,6 +151,53 @@ describe('upsertChallenge (create) — collection ownership', () => {
     await expect(upsertChallenge({ ...baseInput, judgeId: 3 } as never)).rejects.toThrow(
       /no challenge judge/i
     );
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('upsertUserChallenge (create) — collection ownership', () => {
+  const userInput = {
+    title: 'User challenge',
+    description: 'A description',
+    startsAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+    endsAt: new Date(Date.now() + 96 * 60 * 60 * 1000),
+    coverImage: { id: 1 },
+    maxEntriesPerUser: 5,
+    entryFee: 0,
+    initialPrizeBuzz: 0,
+    judgeId: 3,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.challengeJudge.findUnique.mockResolvedValue({ userId: JUDGE_USER_ID });
+    mockGetChallengeConfig.mockResolvedValue({ defaultJudgeId: 1 });
+    mockDbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(mockTx));
+  });
+
+  it('assigns the entry collection to the judge account, not the creator', async () => {
+    await upsertUserChallenge({
+      ...userInput,
+      userId: CREATOR_USER_ID,
+      buzzType: 'yellow',
+    } as never);
+
+    expect(mockTx.collection.create).toHaveBeenCalledTimes(1);
+    const callArg = mockTx.collection.create.mock.calls[0][0];
+    expect(callArg.data.userId).toBe(JUDGE_USER_ID);
+    expect(callArg.data.userId).not.toBe(CREATOR_USER_ID);
+  });
+
+  it('does not open a transaction when no judge can be resolved', async () => {
+    mockDbRead.challengeJudge.findUnique.mockResolvedValue(null);
+
+    await expect(
+      upsertUserChallenge({
+        ...userInput,
+        userId: CREATOR_USER_ID,
+        buzzType: 'yellow',
+      } as never)
+    ).rejects.toThrow(/no challenge judge/i);
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
   });
 });

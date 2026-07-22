@@ -1831,12 +1831,14 @@ export async function upsertUserChallenge({
     return updated;
   }
 
+  const collectionOwnerId = await resolveChallengeCollectionOwnerId(judgeId);
+
   const created = await dbWrite.$transaction(async (tx) => {
     const collection = await tx.collection.create({
       data: {
         name: `Challenge: ${rest.title}`,
         description: rest.description || `Entries for challenge: ${rest.title}`,
-        userId,
+        userId: collectionOwnerId,
         mode: CollectionMode.Contest,
         write: CollectionWriteConfiguration.Review,
         read: CollectionReadConfiguration.Public,
