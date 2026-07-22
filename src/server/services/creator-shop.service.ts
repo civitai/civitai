@@ -356,9 +356,12 @@ export const updateCreatorShopItem = async ({
 
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
-  // A live item may already have buyers — only price & quantity may change.
+  // A live item may already have buyers — creators may only change price &
+  // quantity, but moderators can fix name/description/fit post-publish (the
+  // edit stays live; it does not re-enter review).
   if (
     isPublished &&
+    !isModerator &&
     (name !== undefined || description !== undefined || artChanged || offsetsChange)
   )
     throw throwBadRequestError('Published items can only change price and quantity');

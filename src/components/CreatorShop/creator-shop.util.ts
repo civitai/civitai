@@ -149,6 +149,7 @@ export const useMutateCreatorShop = () => {
   const deleteItem = trpc.creatorShop.deleteItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getReviewQueue.invalidate();
       // Deleting can also free a featured slot server-side.
       await queryUtils.creatorShop.getSettings.invalidate();
       await queryUtils.creatorShop.getShop.invalidate();

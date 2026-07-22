@@ -34,10 +34,12 @@ import {
   IconShieldCheck,
   IconSparkles,
   IconTag,
+  IconTrash,
   IconTrendingUp,
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
+import { openConfirmModal } from '@mantine/modals';
 import type { ComponentProps, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -203,7 +205,7 @@ function CreatorShopReviewPage() {
       userId: selectedCreator?.id,
       cosmeticTypes: typeFilter,
     });
-  const { reviewItem } = useMutateCreatorShop();
+  const { reviewItem, deleteItem } = useMutateCreatorShop();
 
   const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -240,12 +242,9 @@ function CreatorShopReviewPage() {
   const normalizedModOffsets = Object.values(modOffsets).some((v) => v !== 0) ? modOffsets : null;
   const fitChanged =
     isDecoration && JSON.stringify(normalizedModOffsets) !== JSON.stringify(storedOffsets);
-  // The service treats offsets as a content change — blocked on published
-  // (revert first) and archived items.
-  const fitEditable =
-    isDecoration &&
-    selected?.status !== CosmeticShopItemStatus.Published &&
-    selected?.status !== CosmeticShopItemStatus.Archived;
+  // Mods may adjust fit at any point, even post-publish; only archived items
+  // are locked server-side.
+  const fitEditable = isDecoration && selected?.status !== CosmeticShopItemStatus.Archived;
 
   const previewCosmetic = useMemo(() => {
     if (!selected) return null;
@@ -311,6 +310,35 @@ function CreatorShopReviewPage() {
       rejectionReason: reason.trim(),
     });
     setReason('');
+  };
+
+  // Same warning as the creator-side manage table: purchase records/totals are
+  // lost, buyers keep their cosmetics, nothing is refunded.
+  const confirmDelete = () => {
+    if (!selected) return;
+    const purchases = selected._count?.purchases ?? 0;
+    openConfirmModal({
+      title: 'Delete shop item',
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            Permanently delete <strong>{selected.title}</strong>? This can&apos;t be undone and
+            removes it from every shop that lists it.
+          </Text>
+          {purchases > 0 && (
+            <Text size="sm" c="red">
+              This item has <strong>{numberWithCommas(purchases)}</strong> sale
+              {purchases === 1 ? '' : 's'}. Its purchase records and sales totals will be
+              permanently lost. Buyers keep the cosmetics they purchased — no refunds are issued.
+            </Text>
+          )}
+        </Stack>
+      ),
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      centered: true,
+      onConfirm: () => deleteItem.mutate({ id: selected.id }),
+    });
   };
 
   const pendingCount = statusFilter === CosmeticShopItemStatus.PendingReview ? items.length : null;
@@ -595,9 +623,7 @@ function CreatorShopReviewPage() {
                           </Button>
                         ) : (
                           <Text size="xs" c="dimmed">
-                            {selected.status === CosmeticShopItemStatus.Published
-                              ? 'Revert this item to pending to adjust its fit.'
-                              : 'Archived items cannot be adjusted.'}
+                            Archived items cannot be adjusted.
                           </Text>
                         )}
                       </Stack>
@@ -765,41 +791,56 @@ function CreatorShopReviewPage() {
                       className="max-md:w-full"
                     />
                     <Group gap="sm" wrap="nowrap">
-                      {selected.status === CosmeticShopItemStatus.Published && (
-                        <Button
-                          color="orange"
-                          variant="light"
-                          leftSection={<IconArrowBackUp size={16} />}
-                          loading={reviewItem.isPending}
-                          onClick={() => submitReview('revert')}
-                        >
-                          Revert to pending
-                        </Button>
+                      {selected.status === CosmeticShopItemStatus.Published ? (
+                        // Already-live items: review verdicts make no sense —
+                        // the mod either pulls it back into the queue or removes it.
+                        <>
+                          <Button
+                            color="orange"
+                            variant="light"
+                            leftSection={<IconArrowBackUp size={16} />}
+                            loading={reviewItem.isPending}
+                            onClick={() => submitReview('revert')}
+                          >
+                            Revert to pending
+                          </Button>
+                          <Button
+                            color="red"
+                            leftSection={<IconTrash size={16} />}
+                            loading={deleteItem.isPending}
+                            onClick={confirmDelete}
+                          >
+                            Delete
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            variant="default"
+                            loading={reviewItem.isPending}
+                            onClick={() => submitReview('request-changes')}
+                          >
+                            Request changes
+                          </Button>
+                          <Button
+                            color="red"
+                            variant="light"
+                            leftSection={<IconX size={16} />}
+                            loading={reviewItem.isPending}
+                            onClick={() => submitReview('reject')}
+                          >
+                            Reject
+                          </Button>
+                          <Button
+                            color="green"
+                            leftSection={<IconCheck size={16} />}
+                            loading={reviewItem.isPending}
+                            onClick={handleApprove}
+                          >
+                            Approve &amp; Publish
+                          </Button>
+                        </>
                       )}
-                      <Button
-                        variant="default"
-                        loading={reviewItem.isPending}
-                        onClick={() => submitReview('request-changes')}
-                      >
-                        Request changes
-                      </Button>
-                      <Button
-                        color="red"
-                        variant="light"
-                        leftSection={<IconX size={16} />}
-                        loading={reviewItem.isPending}
-                        onClick={() => submitReview('reject')}
-                      >
-                        Reject
-                      </Button>
-                      <Button
-                        color="green"
-                        leftSection={<IconCheck size={16} />}
-                        loading={reviewItem.isPending}
-                        onClick={handleApprove}
-                      >
-                        Approve &amp; Publish
-                      </Button>
                     </Group>
                   </Group>
                 )}
