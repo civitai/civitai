@@ -27,6 +27,13 @@
   a {
     @apply text-blue-4 no-underline;
   }
+
+  /* Tailwind v4 preflight drops the default pointer cursor on buttons — restore it for anything clickable. */
+  button:not(:disabled),
+  [role='button']:not(:disabled),
+  select:not(:disabled) {
+    cursor: pointer;
+  }
 }
 
 @layer components {

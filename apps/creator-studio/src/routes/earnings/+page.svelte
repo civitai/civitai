@@ -8,6 +8,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { chartType } from '$lib/stores/chart-type';
+  import { earningsCombined } from '$lib/stores/earnings-combined';
   import { formatRange, dayDiff, shiftIso, eachDayIso } from '$lib/date-range';
   import {
     EARNINGS_SOURCES,
@@ -123,6 +124,8 @@
           tension: 0.3,
           fill: false,
           pointRadius: dates.length > 45 ? 0 : 2,
+          // Higher order = drawn first (underneath), so the current-period bars sit below the comparison line.
+          order: 1,
         },
         ...(data.cmpSeries != null
           ? [
@@ -142,6 +145,8 @@
                 tension: 0.3,
                 fill: false,
                 pointRadius: 0,
+                // Lower order = drawn on top, so the comparison line stays visible over the bars.
+                order: 0,
               },
             ]
           : []),
@@ -158,8 +163,8 @@
   };
 
   // Split per-currency (B8) ↔ one combined Total Buzz column (868ke492g) — the "total value of Buzz" view. The
-  // individual split stays the default.
-  let combined = $state(false);
+  // individual split stays the default; the choice persists to localStorage.
+  const combined = $derived($earningsCombined);
   // Total buzz for a source across every buzz currency present (yellow + green + …) — the combined column's cell.
   const buzzTotal = (source: string) => currencies.reduce((sum, c) => sum + cell(source, c), 0);
 
@@ -336,7 +341,7 @@
         type="single"
         value={combined ? 'combined' : 'split'}
         onValueChange={(v: string) => {
-          if (v) combined = v === 'combined';
+          if (v) earningsCombined.set(v === 'combined');
         }}
         variant="outline"
         size="sm"
@@ -466,5 +471,5 @@
 
 <div class="mt-8 rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
   <strong class="text-dark-2">These totals are creator-level.</strong> For earnings broken down by individual
-  model, see <a href="/analytics" class="underline">Analytics</a>.
+  model, see <a href="/analytics/models" class="underline">Model analytics</a>.
 </div>
