@@ -16,8 +16,11 @@ import {
 import {
   setLicensingFee,
   bulkSetLicensingFee,
+  bulkSetLicensingFeeVaried,
+  previewLicensingFeeChanges,
   licensingFeeRatioSchema,
 } from '$lib/server/monetization/licensing-fee';
+import { parseFeeCsv } from '$lib/server/monetization/fee-csv';
 import {
   setEarlyAccessConfig,
   earlyAccessFormSchema,
@@ -132,6 +135,64 @@ export const actions: Actions = {
     return { versionId: versionId.data };
   },
 
+  // CSV import — dry run (early-access 2.2). Parse + validate the re-uploaded sheet and return the before→after
+  // diff + skipped rows for a confirmation modal; nothing is written here. Bad rows are reported, not fatal.
+  previewFees: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    const file = form.get('file');
+    if (!(file instanceof File) || file.size === 0)
+      return fail(400, { preview: true, error: 'Choose a CSV file to upload.' });
+    if (file.size > 5_000_000)
+      return fail(400, { preview: true, error: 'That file is too large (max 5MB).' });
+
+    const parsed = parseFeeCsv(await file.text());
+    if (!parsed.ok) return fail(400, { preview: true, error: parsed.error });
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await previewLicensingFeeChanges(locals.user.id, membership, parsed.rows);
+    if (!result.ok) return fail(result.status, { preview: true, error: result.error });
+
+    const skipped = [
+      ...parsed.errors,
+      ...result.skipped.map((s) => ({ row: s.row, reason: s.reason })),
+    ].sort((a, b) => (a.row ?? 0) - (b.row ?? 0));
+    return {
+      preview: true,
+      changes: result.changes,
+      unchanged: result.unchanged,
+      skipped,
+    };
+  },
+
+  // CSV import — apply the confirmed changes. Re-validates ownership/limits server-side regardless of the posted
+  // list (the preview is advisory, not trusted).
+  applyFees: async ({ request, locals, cookies }) => {
+    const form = await request.formData();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(String(form.get('changes') ?? ''));
+    } catch {
+      return fail(400, { apply: true, error: 'Could not read the changes to apply.' });
+    }
+    if (!Array.isArray(parsed))
+      return fail(400, { apply: true, error: 'Could not read the changes to apply.' });
+    const entries = parsed
+      .filter(
+        (e): e is { versionId: number; fee: number | null } =>
+          !!e &&
+          Number.isInteger((e as { versionId?: unknown }).versionId) &&
+          ((e as { fee?: unknown }).fee === null ||
+            typeof (e as { fee?: unknown }).fee === 'number')
+      )
+      .map((e) => ({ versionId: e.versionId, fee: e.fee }));
+    if (entries.length === 0) return fail(400, { apply: true, error: 'No changes to apply.' });
+
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+    const result = await bulkSetLicensingFeeVaried(locals.user.id, membership, entries);
+    if (!result.ok) return fail(result.status, { apply: true, error: result.error });
+    return { apply: true, updated: result.updated, skippedCount: result.skipped.length };
+  },
+
   bulkSetFee: async ({ request, locals, cookies }) => {
     const form = await request.formData();
     const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
@@ -186,7 +247,9 @@ export const actions: Actions = {
       if (current >= cap)
         return fail(400, {
           versionId: versionId.data,
-          error: `Your membership allows up to ${cap} permanent paid-access model${cap === 1 ? '' : 's'}.`,
+          error: `Your membership allows up to ${cap} permanent paid-access model${
+            cap === 1 ? '' : 's'
+          }.`,
         });
     }
 

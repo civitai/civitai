@@ -62,6 +62,57 @@ export type CreatorModelsResult = {
   matchingVersionIds: number[];
 };
 
+// Flat per-version row for the CSV fee round-trip — the creator's versions matching the current filters, with the
+// fields the sheet shows (id is the immutable join key on re-upload).
+export type CsvVersionRow = {
+  versionId: number;
+  modelName: string;
+  versionName: string;
+  baseModel: string;
+  modelType: string;
+  licensingFee: number | null;
+};
+
+// Every version matching the page's filters (no pagination) for CSV export. Mirrors getCreatorModels' filters so
+// "export" matches what the creator is currently looking at.
+export async function getCreatorVersionsForCsv(query: ModelsQuery): Promise<CsvVersionRow[]> {
+  const { userId, q, fee, baseModel, type, status, access } = query;
+  let qb = dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .where('m.userId', '=', userId)
+    .where('m.deletedAt', 'is', null);
+  if (q) qb = qb.where('m.name', 'ilike', `%${q}%`);
+  if (type) qb = qb.where('m.type', '=', type as ModelType);
+  if (status === 'published') qb = qb.where('m.status', '=', 'Published');
+  else if (status === 'draft') qb = qb.where('m.status', '=', 'Draft');
+  else if (status !== 'all') qb = qb.where('m.status', '!=', 'Draft');
+  if (baseModel) qb = qb.where('mv.baseModel', '=', baseModel);
+  if (access) qb = qb.where('mv.earlyAccessEndsAt', 'is not', null);
+  if (fee === 'set') qb = qb.where('mv.licensingFee', 'is not', null);
+  if (fee === 'off') qb = qb.where('mv.licensingFee', 'is', null);
+  const rows = await qb
+    .select([
+      'mv.id as versionId',
+      'mv.name as versionName',
+      'mv.baseModel as baseModel',
+      'm.name as modelName',
+      'm.type as modelType',
+      'mv.licensingFee as licensingFee',
+    ])
+    .orderBy('m.name', 'asc')
+    .orderBy('mv.index', 'asc')
+    .execute();
+  return rows.map((r) => ({
+    versionId: r.versionId,
+    modelName: r.modelName,
+    versionName: r.versionName,
+    baseModel: r.baseModel,
+    modelType: r.modelType,
+    licensingFee: r.licensingFee == null ? null : Number(r.licensingFee),
+  }));
+}
+
 export const MODELS_PER_PAGE = 20;
 // Cookie-backed page-size options shared across paged Studio surfaces (868ke493p).
 export const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;

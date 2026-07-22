@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { dbWrite } from '$lib/server/db';
+import { dbRead, dbWrite } from '$lib/server/db';
 import { canSetLicensingFee, type Membership } from '$lib/server/membership';
 import { FEE_IMAGE_OPTIONS } from '$lib/monetization/fee';
 
@@ -137,6 +137,182 @@ export async function setLicensingFee(
 
   await writeFee(userId, [versionId], normalized);
   return { ok: true };
+}
+
+// A per-row fee edit from the CSV round-trip: one target fee per version (null/0 = clear). `row` is the source
+// line number, echoed back in skips/changes so the creator can find the line in their file.
+export type VariedFeeEntry = { versionId: number; fee: number | null; row?: number };
+export type VariedFeeSkip = { versionId: number; row?: number; reason: string };
+export type FeeChange = {
+  versionId: number;
+  row?: number;
+  modelName: string;
+  versionName: string;
+  baseModel: string;
+  current: number | null;
+  next: number | null;
+};
+export type FeePreview =
+  | { ok: false; status: 403; error: string }
+  | { ok: true; changes: FeeChange[]; unchanged: number; skipped: VariedFeeSkip[] };
+
+// Owned (non-deleted) versions among `ids`, with the current fee + names — the preview needs the before value and
+// display labels; doubles as the ownership check.
+async function ownedVersionsWithFee(userId: number, ids: number[]) {
+  if (ids.length === 0) return new Map<number, FeeChange & { modelType: string }>();
+  const rows = await dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .select([
+      'mv.id as versionId',
+      'mv.name as versionName',
+      'm.name as modelName',
+      'mv.baseModel as baseModel',
+      'm.type as modelType',
+      'mv.licensingFee as fee',
+    ])
+    .where('mv.id', 'in', ids)
+    .where('m.userId', '=', userId)
+    .where('m.deletedAt', 'is', null)
+    .execute();
+  return new Map(
+    rows.map((r) => [
+      r.versionId,
+      {
+        versionId: r.versionId,
+        modelName: r.modelName,
+        versionName: r.versionName,
+        baseModel: r.baseModel,
+        modelType: r.modelType as string,
+        current: r.fee == null ? null : Number(r.fee),
+        next: null as number | null,
+      },
+    ])
+  );
+}
+
+// Dry-run of a CSV import: validate every row and compute the before→after diff without writing. Same rules as
+// bulkSetLicensingFeeVaried, so the preview and the apply agree.
+export async function previewLicensingFeeChanges(
+  userId: number,
+  membership: Membership,
+  entries: VariedFeeEntry[]
+): Promise<FeePreview> {
+  if (!canSetLicensingFee(membership))
+    return {
+      ok: false,
+      status: 403,
+      error: 'Creator Program membership is required to set a licensing fee.',
+    };
+
+  const deduped = new Map<number, VariedFeeEntry>();
+  for (const e of entries) deduped.set(e.versionId, e);
+
+  const skipped: VariedFeeSkip[] = [];
+  const normalized = new Map<number, { fee: number | null; row?: number }>();
+  for (const e of deduped.values()) {
+    const n = normalizeFee(e.fee);
+    if (n === undefined) {
+      skipped.push({
+        versionId: e.versionId,
+        row: e.row,
+        reason: `fee must be 0–${MAX_LICENSING_FEE}`,
+      });
+      continue;
+    }
+    normalized.set(e.versionId, { fee: n, row: e.row });
+  }
+
+  const owned = await ownedVersionsWithFee(userId, [...normalized.keys()]);
+  const changes: FeeChange[] = [];
+  let unchanged = 0;
+  for (const [versionId, { fee, row }] of normalized) {
+    const o = owned.get(versionId);
+    if (!o) {
+      skipped.push({ versionId, row, reason: 'not your version' });
+      continue;
+    }
+    if (fee != null && NON_COMMERCIAL_BASE_MODELS.has(o.baseModel)) {
+      skipped.push({ versionId, row, reason: `${o.baseModel} is non-commercial` });
+      continue;
+    }
+    if (o.current === fee) {
+      unchanged++;
+      continue;
+    }
+    changes.push({
+      versionId,
+      row,
+      modelName: o.modelName,
+      versionName: o.versionName,
+      baseModel: o.baseModel,
+      current: o.current,
+      next: fee,
+    });
+  }
+  return { ok: true, changes, unchanged, skipped };
+}
+export type VariedFeeResult =
+  | { ok: true; updated: number; skipped: VariedFeeSkip[] }
+  | { ok: false; status: 403; error: string };
+
+// Apply a set of per-version fees at once (CSV import). Invalid/foreign/non-commercial rows are skipped with a
+// reason rather than failing the whole batch. Writes are grouped by fee value so each distinct value is one
+// UPDATE (reusing writeFee); a later duplicate of the same versionId wins.
+export async function bulkSetLicensingFeeVaried(
+  userId: number,
+  membership: Membership,
+  entries: VariedFeeEntry[]
+): Promise<VariedFeeResult> {
+  if (!canSetLicensingFee(membership))
+    return {
+      ok: false,
+      status: 403,
+      error: 'Creator Program membership is required to set a licensing fee.',
+    };
+
+  const deduped = new Map<number, VariedFeeEntry>();
+  for (const e of entries) deduped.set(e.versionId, e);
+
+  const skipped: VariedFeeSkip[] = [];
+  const normalized = new Map<number, { fee: number | null; row?: number }>();
+  for (const e of deduped.values()) {
+    const n = normalizeFee(e.fee);
+    if (n === undefined) {
+      skipped.push({
+        versionId: e.versionId,
+        row: e.row,
+        reason: `fee must be 0–${MAX_LICENSING_FEE}`,
+      });
+      continue;
+    }
+    normalized.set(e.versionId, { fee: n, row: e.row });
+  }
+
+  const owned = new Map(
+    (await ownedVersions(userId, [...normalized.keys()])).map((v) => [v.id, v])
+  );
+  // Group the applicable versions by their target fee, so each distinct value is a single UPDATE.
+  const byFee = new Map<string, number[]>();
+  for (const [versionId, { fee, row }] of normalized) {
+    const o = owned.get(versionId);
+    if (!o) {
+      skipped.push({ versionId, row, reason: 'not your version' });
+      continue;
+    }
+    if (fee != null && NON_COMMERCIAL_BASE_MODELS.has(o.baseModel)) {
+      skipped.push({ versionId, row, reason: `${o.baseModel} is non-commercial` });
+      continue;
+    }
+    const key = fee == null ? 'null' : String(fee);
+    (byFee.get(key) ?? byFee.set(key, []).get(key)!).push(versionId);
+  }
+
+  let updated = 0;
+  for (const [key, ids] of byFee) {
+    updated += await writeFee(userId, ids, key === 'null' ? null : Number(key));
+  }
+  return { ok: true, updated, skipped };
 }
 
 export async function bulkSetLicensingFee(

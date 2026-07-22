@@ -180,6 +180,56 @@
     }
   };
 
+  // --- CSV import/export ---
+  // Export mirrors the current filters; drop the transient bulk/page params.
+  const exportHref = $derived.by(() => {
+    const params = new URLSearchParams(page.url.searchParams);
+    params.delete('mode');
+    params.delete('page');
+    const qs = params.toString();
+    return `/models/export${qs ? `?${qs}` : ''}`;
+  });
+  type FeeChange = {
+    versionId: number;
+    row?: number;
+    modelName: string;
+    versionName: string;
+    baseModel: string;
+    current: number | null;
+    next: number | null;
+  };
+  let fileInput = $state<HTMLInputElement>();
+  let previewForm = $state<HTMLFormElement>();
+  let applyForm = $state<HTMLFormElement>();
+  let preview = $state<{ changes: FeeChange[]; unchanged: number; skipped: { row?: number; reason: string }[] } | null>(null);
+  let showPreview = $state(false);
+  let applying = $state(false);
+
+  // Upload → dry-run: show the diff + any skipped rows in a modal; nothing is written until the creator confirms.
+  const previewEnhance = () => async (event: { result: any; update: () => Promise<void> }) => {
+    if (fileInput) fileInput.value = '';
+    if (event.result.type === 'success') {
+      preview = event.result.data;
+      showPreview = true;
+    } else if (event.result.type === 'failure') {
+      toast.error(String(event.result.data?.error ?? 'Could not read that file'));
+    }
+  };
+
+  const applyEnhance = () => async (event: { result: any; update: () => Promise<void> }) => {
+    applying = false;
+    if (event.result.type === 'success') {
+      const n = Number(event.result.data?.updated ?? 0);
+      const skip = Number(event.result.data?.skippedCount ?? 0);
+      toast.success(`Updated ${n} fee${n === 1 ? '' : 's'}${skip ? ` · ${skip} skipped` : ''}`);
+      showPreview = false;
+      preview = null;
+      await invalidateAll();
+    } else if (event.result.type === 'failure') {
+      toast.error(String(event.result.data?.error ?? 'Import failed'));
+    }
+  };
+
   const bulkEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
     await event.update({ reset: false });
     if (event.result.type === 'success') {
@@ -385,16 +435,33 @@
     <NativeSelectOption value="recent">Recently updated</NativeSelectOption>
     <NativeSelectOption value="name">Name</NativeSelectOption>
   </NativeSelect>
-  {#if data.canSetFee && data.total > 0 && !bulkMode}
-    <Button
-      href={buildHref({ mode: 'bulk' })}
-      data-sveltekit-replacestate
-      variant="outline"
-      size="sm"
-      class="ml-auto"
-    >
-      Bulk edit fees
-    </Button>
+  {#if data.total > 0 && !bulkMode}
+    <div class="ml-auto flex items-center gap-2">
+      <Button href={exportHref} data-sveltekit-reload variant="outline" size="sm">Export CSV</Button>
+      {#if data.canSetFee}
+        <form
+          bind:this={previewForm}
+          method="POST"
+          action="?/previewFees"
+          enctype="multipart/form-data"
+          use:enhance={previewEnhance}
+          class="contents"
+        >
+          <input
+            bind:this={fileInput}
+            type="file"
+            name="file"
+            accept=".csv,text/csv"
+            class="hidden"
+            onchange={() => previewForm?.requestSubmit()}
+          />
+        </form>
+        <Button variant="outline" size="sm" onclick={() => fileInput?.click()}>Import CSV</Button>
+        <Button href={buildHref({ mode: 'bulk' })} data-sveltekit-replacestate variant="outline" size="sm">
+          Bulk edit fees
+        </Button>
+      {/if}
+    </div>
   {/if}
 </div>
 
@@ -650,6 +717,84 @@
           bulkForm?.requestSubmit();
         }}>Apply</AlertDialogAction
       >
+    </AlertDialogFooter>
+  </AlertDialogContent>
+</AlertDialog>
+
+<AlertDialog bind:open={showPreview}>
+  <AlertDialogContent class="max-w-2xl">
+    <AlertDialogHeader>
+      <AlertDialogTitle>
+        Review changes · {preview?.changes.length ?? 0} to update
+      </AlertDialogTitle>
+      <AlertDialogDescription>
+        {preview?.changes.length ?? 0} fee{preview?.changes.length === 1 ? '' : 's'} will change · {preview?.unchanged ?? 0} unchanged{(preview?.skipped.length ?? 0) > 0 ? ` · ${preview?.skipped.length} skipped` : ''}. Nothing is saved until you confirm.
+      </AlertDialogDescription>
+    </AlertDialogHeader>
+
+    {#if (preview?.changes.length ?? 0) > 0}
+      <div class="max-h-72 overflow-y-auto rounded-lg border border-dark-4">
+        <table class="w-full text-sm">
+          <thead class="sticky top-0 bg-dark-7 text-xs uppercase tracking-wide text-dark-3">
+            <tr>
+              <th class="px-3 py-2 text-left font-medium">Version</th>
+              <th class="px-3 py-2 text-right font-medium">Current</th>
+              <th class="px-3 py-2 text-right font-medium">New</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each (preview?.changes ?? []).slice(0, 100) as c (c.versionId)}
+              <tr class="border-t border-dark-4">
+                <td class="px-3 py-1.5 text-dark-1">
+                  <span class="text-white">{c.modelName}</span>
+                  <span class="text-dark-3">· {c.versionName} · {c.baseModel}</span>
+                </td>
+                <td class="px-3 py-1.5 text-right tabular-nums text-dark-3">{formatFeeRatio(c.current)}</td>
+                <td class="px-3 py-1.5 text-right tabular-nums font-medium text-white">{formatFeeRatio(c.next)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      {#if (preview?.changes.length ?? 0) > 100}
+        <p class="text-xs text-dark-3">Showing the first 100 of {preview?.changes.length} changes — all will be applied.</p>
+      {/if}
+    {:else}
+      <p class="rounded-lg border border-dark-4 p-3 text-sm text-dark-2">No fees would change.</p>
+    {/if}
+
+    {#if (preview?.skipped.length ?? 0) > 0}
+      <details class="rounded-lg border border-dark-4 p-3 text-sm">
+        <summary class="cursor-pointer text-yellow-5">{preview?.skipped.length} row(s) skipped</summary>
+        <ul class="mt-2 max-h-40 space-y-1 overflow-y-auto text-dark-1">
+          {#each preview?.skipped ?? [] as s (s.row)}
+            <li><span class="text-dark-3">Row {s.row}:</span> {s.reason}</li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
+
+    <form
+      bind:this={applyForm}
+      method="POST"
+      action="?/applyFees"
+      use:enhance={applyEnhance}
+      class="contents"
+    >
+      <input type="hidden" name="changes" value={JSON.stringify((preview?.changes ?? []).map((c) => ({ versionId: c.versionId, fee: c.next })))} />
+    </form>
+    <AlertDialogFooter>
+      <AlertDialogCancel onclick={() => (preview = null)}>Cancel</AlertDialogCancel>
+      <AlertDialogAction
+        disabled={(preview?.changes.length ?? 0) === 0 || applying}
+        onclick={(e: Event) => {
+          e.preventDefault();
+          applying = true;
+          applyForm?.requestSubmit();
+        }}
+      >
+        Save {preview?.changes.length ?? 0} change{preview?.changes.length === 1 ? '' : 's'}
+      </AlertDialogAction>
     </AlertDialogFooter>
   </AlertDialogContent>
 </AlertDialog>
