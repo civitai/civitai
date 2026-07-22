@@ -146,9 +146,16 @@ type CachedLookupOptions<T extends object> = {
   // just-created entity still resolves as soon as the Redis notFound marker
   // clears — the L1 never pins a negative.
   localTtl?: number;
-  // Max entries in the per-pod L1 LRU (default 10000). Bounds memory; cold ids
+  // Belt-and-suspenders ENTRY cap for the per-pod L1 LRU (default 10000). Cold ids
   // evict LRU-first and simply fall through to Redis (same as no L1).
   localMax?: number;
+  // 🔴 HARD HEAP CAP: byte budget for this cache's per-pod L1 (deterministic — the
+  // LRU evicts to keep total retained-byte estimate ≤ localMaxBytes, on top of
+  // localMax). Set this on every L1-enabled cache so the pod's total L1 footprint
+  // is bounded regardless of per-value size spikes (this pool is heap-OOM
+  // sensitive). A single value larger than the budget is simply not stored (falls
+  // through to Redis) — never an error. Sizes estimated via roughSizeOf.
+  localMaxBytes?: number;
 };
 /**
  * Physical Redis EX (seconds) for a cached entry. The logical freshness window
@@ -209,6 +216,7 @@ export function createCachedArray<T extends object>({
   staleWhileRevalidateTtl,
   localTtl,
   localMax = 10000,
+  localMaxBytes,
 }: CachedLookupOptions<T>) {
   // Per-pod L1 in front of the Redis per-id cache (opt-in via localTtl). Holds the
   // FINAL resolved per-id value — post-appendFn, cachedAt stripped — so an L1 hit is
@@ -221,6 +229,9 @@ export function createCachedArray<T extends object>({
       ? createLruCache<number, T>({
           name: `${key}:l1`,
           max: localMax,
+          // Deterministic byte cap (roughSizeOf estimator) so the pod's total L1
+          // heap footprint is bounded regardless of per-value size spikes.
+          maxSize: localMaxBytes,
           ttl: localTtl * 1000,
           keyFn: (id) => String(id),
           fetchFn: () => {

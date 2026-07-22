@@ -64,6 +64,7 @@ export const tagIdsForImagesCache = createCachedObject<{
   // edit by ≤15s. Not a visibility gate (feed SQL enforces that). Hot-image set.
   localTtl: 15,
   localMax: 10000,
+  localMaxBytes: 6 * 1024 * 1024, // hard heap cap ~6MB (tag-id arrays are small)
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
@@ -356,6 +357,7 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   // cross-pod delay on a rename/avatar/soft-delete propagating — imperceptible.
   localTtl: 30,
   localMax: 10000,
+  localMaxBytes: 4 * 1024 * 1024, // hard heap cap ~4MB (tiny records)
 });
 
 type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date; status: ModelStatus };
@@ -1516,6 +1518,7 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   // hidden-tag filtering, not a hard visibility gate. max 5000: ~4.2KB/key, heavy.
   localTtl: 15,
   localMax: 5000,
+  localMaxBytes: 16 * 1024 * 1024, // hard heap cap ~16MB (heaviest remaining value)
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
 
@@ -1683,8 +1686,14 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   // L1: which models an image used — attribution metadata, refresh-only on resource
   // edits, 8h Redis TTL. A 30s per-pod L1 only delays a cross-pod resource edit by
   // ≤30s. Not sensitive / not a visibility gate.
+  //
+  // Per-pod L1 total HARD heap ceiling across the 4 enabled caches (localMaxBytes):
+  //   userBasic 4MB + imageResources 12MB + tagIdsForImages 6MB + imageTags 16MB
+  //   = 38MB/pod — well under the heap-headroom alert; byte-bounded so a per-value
+  //   size spike can never blow the cap (deterministic, deploy fleet-wide safely).
   localTtl: 30,
   localMax: 10000,
+  localMaxBytes: 12 * 1024 * 1024, // hard heap cap ~12MB
   lookupFn: async (ids, fromWrite) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};

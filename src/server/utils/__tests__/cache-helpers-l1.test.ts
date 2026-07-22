@@ -187,6 +187,59 @@ describe('createCachedArray L1 — byte-identical + TTL + bounded', () => {
     expect(lookupFn).toHaveBeenCalledTimes(1);
   });
 
+  it('is BYTE-bounded: exceeding localMaxBytes evicts LRU to keep the heap footprint capped', async () => {
+    // Values ~2.1KB each (1000-char name). Budget 5000 bytes → ~2 fit; the entry
+    // cap (localMax) is high so the BYTE cap is the binding constraint.
+    const big = 'x'.repeat(1000);
+    const lookupFn = vi.fn(
+      async (ids: number[]) =>
+        Object.fromEntries(ids.map((id) => [id, { id, name: `${big}-${id}` }])) as Record<string, Row>
+    );
+    const cache = createCachedArray<Row>({
+      key: 'test:l1bytes' as never,
+      idKey: 'id',
+      lookupFn,
+      localTtl: 60,
+      localMax: 10000, // high — byte cap binds first
+      localMaxBytes: 5000,
+    });
+
+    await cache.fetch([1]); // L1 ~2.1KB
+    await cache.fetch([2]); // L1 ~4.2KB
+    await cache.fetch([3]); // would be ~6.3KB > 5000 → evicts LRU (id 1) to fit
+    mGetMock.mockClear().mockResolvedValue([]);
+    lookupFn.mockClear();
+
+    await cache.fetch([1]); // id 1 was byte-evicted → must re-fetch
+    expect(mGetMock).toHaveBeenCalledTimes(1);
+    expect(lookupFn).toHaveBeenCalledWith([1]);
+
+    await cache.fetch([3]); // id 3 still resident → served from L1 (no new origin call)
+    expect(lookupFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('never stores a single value larger than localMaxBytes (falls through to Redis, no throw)', async () => {
+    const huge = 'y'.repeat(10000); // ~20KB, larger than the 4KB budget
+    const lookupFn = vi.fn(
+      async (ids: number[]) =>
+        Object.fromEntries(ids.map((id) => [id, { id, name: `${huge}-${id}` }])) as Record<string, Row>
+    );
+    const cache = createCachedArray<Row>({
+      key: 'test:l1huge' as never,
+      idKey: 'id',
+      lookupFn,
+      localTtl: 60,
+      localMaxBytes: 4000,
+    });
+
+    const first = await cache.fetch([1]); // stored? no — value > budget
+    expect(first[0].name).toBe(`${huge}-1`); // still returned correctly
+    mGetMock.mockClear().mockResolvedValue([]);
+
+    await cache.fetch([1]); // not in L1 → back to Redis (no crash)
+    expect(mGetMock).toHaveBeenCalledTimes(1);
+  });
+
   it('is bounded: exceeding localMax evicts the LRU entry (no unbounded growth)', async () => {
     const lookupFn = makeLookup();
     const cache = createCachedArray<Row>({
