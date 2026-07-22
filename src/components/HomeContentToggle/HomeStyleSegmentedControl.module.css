@@ -1,9 +1,8 @@
 .container {
   position: relative;
-  /* Inset lives on the non-scrolling container so it always holds, unlike
-     padding inside the scroll area which slides out of view. Matches the
-     primary subnav's px-2 py-1. */
-  padding-inline: 8px;
+  /* Vertical inset matches the primary subnav's py-1. Horizontal inset lives on
+     the scroll area (below) so scrolled items bleed to the physical edge instead
+     of being clipped short by container padding. */
   padding-block: 4px;
 
   &:hover {
@@ -21,6 +20,9 @@
   align-items: center;
   gap: 4px;
   max-width: 100%;
+  /* First/last pills rest inset from the edges, but scroll flush to them so
+     partially-scrolled pills bleed to the edge rather than looking truncated. */
+  padding-inline: 8px;
   overflow-x: auto;
   overflow-y: hidden;
 
