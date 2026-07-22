@@ -130,6 +130,20 @@ export default function ReviewQueuePage() {
     mode: TabValue;
   } | null>(null);
 
+  // DUAL-PATH row selection (Phase 1 of the review modal → page migration).
+  // Under the `appReviewPage` flag a row NAVIGATES to the deep-linkable detail
+  // page `/apps/review/<id>`; with the flag off it opens the modal exactly as
+  // before. Fully reversible: flip the flag off (or unset it) to restore the
+  // modal path with zero code change. The report/tabs redesign is Phase 2.
+  const linkToPage = !!features?.appReviewPage;
+  const openRequest = (request: AnyRequest, mode: TabValue) => {
+    if (linkToPage) {
+      void router.push(`/apps/review/${request.id}`);
+      return;
+    }
+    setSelected({ request, mode });
+  };
+
   if (!features?.appBlocks) return <NotFound />;
 
   return (
@@ -167,9 +181,7 @@ export default function ReviewQueuePage() {
           <Tabs.Panel value="pending" pt="md">
             {/* On-site (App Block) queue — deep code review (byte-unchanged). The
                 onsite iframe/preview review lives here and is KEPT as-is. */}
-            <PendingTab
-              onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
-            />
+            <PendingTab onSelect={(r) => openRequest(r, 'pending')} />
             {/* Unified moderator LISTINGS MANAGEMENT table (W13 post-approval mgmt,
                 P2) — all statuses across both kinds, with per-row lifecycle actions.
                 REPLACES the flat off-site pending list (`OffsiteReviewQueue`): a
@@ -180,11 +192,11 @@ export default function ReviewQueuePage() {
           </Tabs.Panel>
 
           <Tabs.Panel value="approved" pt="md">
-            <ApprovedTab onSelect={(r) => setSelected({ request: r, mode: 'approved' })} />
+            <ApprovedTab onSelect={(r) => openRequest(r, 'approved')} />
           </Tabs.Panel>
 
           <Tabs.Panel value="rejected" pt="md">
-            <RejectedTab onSelect={(r) => setSelected({ request: r, mode: 'rejected' })} />
+            <RejectedTab onSelect={(r) => openRequest(r, 'rejected')} />
           </Tabs.Panel>
 
           <Tabs.Panel value="reports" pt="md">
