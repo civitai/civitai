@@ -2811,13 +2811,10 @@ export const removeCollectionItem = async ({
 
   isOwner = item.userId === userId;
 
-  if (
-    !permissions.write &&
-    !permissions.writeReview &&
-    !isOwner &&
-    !permissions.manage &&
-    !isModerator
-  ) {
+  // Deliberately does NOT accept `permissions.write` / `permissions.writeReview`: both are granted
+  // to every authenticated user on a Public/Review-write collection regardless of ownership, so
+  // honoring them here let anyone delete anyone else's item. A write grant authorizes adding.
+  if (!isOwner && !permissions.manage && !isModerator) {
     throw throwAuthorizationError(
       'You do not have permission to remove items from this collection.'
     );
