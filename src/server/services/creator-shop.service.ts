@@ -559,6 +559,8 @@ export const deleteCreatorShopItem = async ({
   isModerator?: boolean;
   id: number;
 }) => {
+  // Deleting wipes purchase records — a moderator-only action; creators archive.
+  if (!isModerator) throw throwAuthorizationError('Only moderators can delete shop items');
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   // Hard delete. FK cascades wipe the purchase records (sales totals) and any
   // official-shop section links. Buyers keep what they bought: UserCosmetic is

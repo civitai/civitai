@@ -9,6 +9,7 @@ import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { statusMeta } from '~/components/CreatorShop/Manage/manage.constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -68,6 +69,7 @@ function ItemActionsMenu({
   unarchiveItem: UnarchiveMutation;
   deleteItem: DeleteMutation;
 }) {
+  const currentUser = useCurrentUser();
   const isArchived = item.status === CosmeticShopItemStatus.Archived;
 
   const confirmDelete = () =>
@@ -131,14 +133,17 @@ function ItemActionsMenu({
             </Menu.Item>
           </>
         )}
-        <Menu.Item
-          color="red"
-          leftSection={<IconTrash size={16} />}
-          disabled={deleteItem.isPending}
-          onClick={confirmDelete}
-        >
-          Delete
-        </Menu.Item>
+        {/* Deleting wipes purchase records — moderator-only; creators archive. */}
+        {currentUser?.isModerator && (
+          <Menu.Item
+            color="red"
+            leftSection={<IconTrash size={16} />}
+            disabled={deleteItem.isPending}
+            onClick={confirmDelete}
+          >
+            Delete
+          </Menu.Item>
+        )}
       </Menu.Dropdown>
     </Menu>
   );
