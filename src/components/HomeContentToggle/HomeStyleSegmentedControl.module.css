@@ -109,9 +109,12 @@
   transition-delay: 500ms;
 }
 
-/* Active pill shows its label permanently, no delay. */
+/* Active pill shows its label permanently; keyboard focus reveals it too (no
+   delay) so a tabbing user isn't left on an unlabeled icon. */
 .container[data-density='2'] .pill[data-active] .tabLabel,
-.container[data-density='3'] .pill[data-active] .tabLabel {
+.container[data-density='3'] .pill[data-active] .tabLabel,
+.container[data-density='2'] .pill:focus-visible .tabLabel,
+.container[data-density='3'] .pill:focus-visible .tabLabel {
   grid-template-columns: 1fr;
   margin-inline-start: 6px;
 }
@@ -133,7 +136,9 @@
 .container[data-density='2'] .pill:not(:has(.tabCount)):hover .tabLabel,
 .container[data-density='3'] .pill:not(:has(.tabCount)):hover .tabLabel,
 .container[data-density='2'] .pill:not(:has(.tabCount))[data-active] .tabLabel,
-.container[data-density='3'] .pill:not(:has(.tabCount))[data-active] .tabLabel {
+.container[data-density='3'] .pill:not(:has(.tabCount))[data-active] .tabLabel,
+.container[data-density='2'] .pill:not(:has(.tabCount)):focus-visible .tabLabel,
+.container[data-density='3'] .pill:not(:has(.tabCount)):focus-visible .tabLabel {
   margin-inline-end: 4px;
 }
 
@@ -146,7 +151,9 @@
   display: inline-flex;
 }
 
-/* Shop tab accent — mirrors the primary subnav's shop highlight. */
+/* Shop tab accent — mirrors HomeContentToggle.module.css `.tabHighlight`. Kept
+   in sync by hand: this bundler's CSS modules reject `composes` here, and a
+   global utility isn't worth the churn for one accent. */
 .tabHighlight {
   background-color: light-dark(
     alpha(var(--mantine-color-yellow-3), 0.3),

@@ -2,7 +2,8 @@ import { Badge, Button, Loader } from '@mantine/core';
 import { useIsomorphicEffect } from '@mantine/hooks';
 import type { IconProps } from '@tabler/icons-react';
 import clsx from 'clsx';
-import React from 'react';
+import type { ReactNode } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import classes from './HomeStyleSegmentedControl.module.css';
@@ -14,10 +15,11 @@ import classes from './HomeStyleSegmentedControl.module.css';
 const MAX_DENSITY = 3;
 
 export function HomeStyleSegmentedControl({ data, value: activePath, loading }: Props) {
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const rootRef = React.useRef<HTMLDivElement>(null);
-  const [density, setDensity] = React.useState(0);
-  const [measureNonce, bumpMeasure] = React.useReducer((x: number) => x + 1, 0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const lastWidthRef = useRef(0);
+  const [density, setDensity] = useState(0);
+  const [measureNonce, bumpMeasure] = useReducer((x: number) => x + 1, 0);
 
   const compact = density >= 2;
 
@@ -25,11 +27,16 @@ export function HomeStyleSegmentedControl({ data, value: activePath, loading }: 
     ([, value]) => value.disabled === undefined || value.disabled === false
   );
 
-  // Reset to comfy on any width change, then the walk-down effect re-tightens.
-  React.useEffect(() => {
+  // Reset to comfy on width change, then the walk-down effect re-tightens. Guard
+  // on width only: a height delta (the horizontal scrollbar appearing/vanishing
+  // as density changes) would otherwise refire the observer and oscillate.
+  useEffect(() => {
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => {
+    const ro = new ResizeObserver((roEntries) => {
+      const width = roEntries[0]?.contentRect.width ?? 0;
+      if (width === lastWidthRef.current) return;
+      lastWidthRef.current = width;
       setDensity(0);
       bumpMeasure();
     });
@@ -98,7 +105,7 @@ export function HomeStyleSegmentedControl({ data, value: activePath, loading }: 
 
 export type DataItem = {
   url: string;
-  icon: (props?: IconProps) => React.ReactNode;
+  icon: (props?: IconProps) => ReactNode;
   disabled?: boolean;
   count?: number;
   label?: string;
