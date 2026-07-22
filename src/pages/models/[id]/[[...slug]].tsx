@@ -40,6 +40,7 @@ import {
   IconRecycle,
   IconReload,
   IconRepeat,
+  IconRosetteDiscountCheck,
   IconTagOff,
   IconTrash,
 } from '@tabler/icons-react';
@@ -653,6 +654,25 @@ export default function ModelDetailsV2({
     toggleCannotPromoteMutation.mutate({ id });
   };
 
+  const setOfficialMutation = trpc.model.setOfficial.useMutation({
+    async onSuccess({ id, isOfficial }) {
+      const prevModel = queryUtils.model.getById.getData({ id });
+      await queryUtils.model.getById.cancel({ id });
+      if (prevModel) {
+        queryUtils.model.getById.setData({ id }, { ...prevModel, isOfficial });
+      }
+      showSuccessNotification({
+        message: isOfficial ? 'Marked as official' : 'Unmarked as official',
+      });
+    },
+    onError(error) {
+      showErrorNotification({ title: 'Failed to update', error: new Error(error.message) });
+    },
+  });
+  const handleSetOfficial = (isOfficial: boolean) => {
+    setOfficialMutation.mutate({ id, isOfficial });
+  };
+
   const view = router.query.view;
   const basicView = view === 'basic' && isModerator;
   const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
@@ -1037,6 +1057,13 @@ export default function ModelDetailsV2({
                               onClick={() => handleToggleCannotPromote()}
                             >
                               {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
+                            </Menu.Item>
+                            <Menu.Item
+                              color="blue"
+                              leftSection={<IconRosetteDiscountCheck size={14} stroke={1.5} />}
+                              onClick={() => handleSetOfficial(!model.isOfficial)}
+                            >
+                              {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
                             </Menu.Item>
                             <Menu.Item
                               color="red.6"

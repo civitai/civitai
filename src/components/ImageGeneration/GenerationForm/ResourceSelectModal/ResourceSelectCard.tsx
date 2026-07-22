@@ -31,7 +31,7 @@ import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersio
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
-import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import type { TransformedModel } from '~/shared/search/models-transform';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -56,7 +56,7 @@ export function ResourceSelectCard({
   height,
   selectSource,
 }: {
-  data: SearchIndexDataMap['models'][number];
+  data: TransformedModel;
   height?: number;
   selectSource?: ResourceSelectSource;
 }) {
@@ -314,8 +314,8 @@ function ModelDetailsPanel({
   selectedVersion,
   selectSource,
 }: {
-  data: SearchIndexDataMap['models'][number];
-  selectedVersion: SearchIndexDataMap['models'][number]['versions'][number];
+  data: TransformedModel;
+  selectedVersion: TransformedModel['versions'][number];
   selectSource?: ResourceSelectSource;
 }) {
   const features = useFeatureFlags();

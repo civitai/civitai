@@ -1,5 +1,4 @@
 import * as z from 'zod';
-import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
@@ -25,9 +24,9 @@ export type ResourceFilter = {
 };
 
 export const resourceSort = {
-  [ModelSearchIndexSortBy[0]]: 'Relevance',
-  [ModelSearchIndexSortBy[1]]: 'Popularity',
-  [ModelSearchIndexSortBy[7]]: 'Newest',
+  relevance: 'Relevance',
+  popularity: 'Popularity',
+  newest: 'Newest',
 } as const;
 export type ResourceSort = keyof typeof resourceSort;
 

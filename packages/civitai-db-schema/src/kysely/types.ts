@@ -2392,6 +2392,7 @@ export type Model = {
   lockedProperties: Generated<string[]>;
   scannedAt: Timestamp | null;
   sfwOnly: Generated<boolean>;
+  isOfficial: Generated<boolean>;
   allowNoCredit: Generated<boolean>;
   allowCommercialUse: Generated<CommercialUse[]>;
   allowDerivatives: Generated<boolean>;

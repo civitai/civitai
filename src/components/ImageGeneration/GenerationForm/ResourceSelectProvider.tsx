@@ -4,6 +4,7 @@ import type {
   ResourceFilter,
   ResourceSelectOptions,
   ResourceSelectSource,
+  ResourceSort,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -16,12 +17,17 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-type ResourceSelectState = Omit<ResourceSelectModalProps, 'options'> & {
+type ResourceSelectState = Omit<ResourceSelectModalProps, 'options' | 'selectSource'> & {
+  selectSource: ResourceSelectSource;
   canGenerate?: boolean;
   excludedIds: number[];
   resources: DeepRequired<ResourceSelectOptions>['resources'];
   filters: ResourceFilter;
   setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
+  sort: ResourceSort;
+  setSort: React.Dispatch<React.SetStateAction<ResourceSort>>;
+  categoryTag?: string;
+  setCategoryTag: React.Dispatch<React.SetStateAction<string | undefined>>;
 };
 
 const ResourceSelectContext = createContext<ResourceSelectState | null>(null);
@@ -41,6 +47,8 @@ export function ResourceSelectProvider({
     types: [],
     baseModels: [],
   });
+  const [sort, setSort] = useState<ResourceSort>('relevance');
+  const [categoryTag, setCategoryTag] = useState<string | undefined>();
   const resources = (props.options?.resources ?? []).map(
     ({ type, baseModels = [], partialSupport = [] }) => ({
       type,
@@ -88,6 +96,10 @@ export function ResourceSelectProvider({
           baseModels,
         },
         setFilters,
+        sort,
+        setSort,
+        categoryTag,
+        setCategoryTag,
         onSelect: handleSelect,
       }}
     >

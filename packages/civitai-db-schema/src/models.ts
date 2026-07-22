@@ -801,6 +801,7 @@ export interface Model {
   lockedProperties: string[];
   scannedAt: Date | null;
   sfwOnly: boolean;
+  isOfficial: boolean;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;

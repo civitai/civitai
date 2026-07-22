@@ -1,9 +1,13 @@
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import { type BaseModel, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  isBaseModelGenerationSupported,
+} from '~/shared/constants/basemodel.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
+import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
@@ -297,6 +301,43 @@ export type ModelSearchIndexRecord = Awaited<
   ReturnType<typeof transformData>
 >['indexReadyRecords'][number] &
   Awaited<ReturnType<typeof transformData>>['indexRecordsWithImages'][number];
+
+// Build the same card-ready records the Meili index holds, but straight from the
+// DB for a handful of ids — so callers (e.g. the official-models pin in the
+// resource picker) don't depend on those docs being present/fresh in Meili.
+// Reuses transformData so the shape stays identical to a search hit.
+export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSearchIndexRecord[]> {
+  if (!ids.length) return [];
+
+  const models = await dbRead.model.findMany({
+    select: modelSearchIndexSelect,
+    where: { id: { in: ids }, status: ModelStatus.Published },
+  });
+  if (!models.length) return [];
+
+  const batchIds = models.map((m) => m.id);
+  const [cosmetics, tags] = await Promise.all([
+    getCosmeticsForEntity({ ids: batchIds, entity: 'Model' }),
+    modelTagCache.fetch(batchIds),
+  ]);
+  const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
+  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
+
+  const { indexReadyRecords, indexRecordsWithImages } = await transformData({
+    models,
+    tags,
+    cosmetics,
+    images,
+  });
+
+  const imagesById = new Map(indexRecordsWithImages.map((r) => [r.id, r.images]));
+  const byId = new Map(
+    indexReadyRecords.map((r) => [r.id, { ...r, images: imagesById.get(r.id) ?? [] }])
+  );
+  // Preserve the caller's id order.
+  return ids.map((id) => byId.get(id)).filter(isDefined) as ModelSearchIndexRecord[];
+}
 
 export const modelsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
