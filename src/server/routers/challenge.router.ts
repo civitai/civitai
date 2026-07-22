@@ -316,7 +316,7 @@ export const challengeRouter = router({
   getActiveEvents: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(() => getActiveEvents()),
+    .query(({ ctx }) => getActiveEvents(ctx.user?.id)),
 
   // Public: Get single event by ID
   getEventById: publicProcedure

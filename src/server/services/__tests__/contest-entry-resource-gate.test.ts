@@ -17,26 +17,39 @@ const REQUIRED_VERSION_ID = 111;
 const COLLECTION_ID = 100;
 const USER_ID = 5;
 const IMAGE_ID = 9001;
+const CREATOR_ID = 4242;
 
-const { mockChargeEntryFees, mockChallengeFindFirst, mockImageResourceNewFindMany, mockDbRead } =
-  vi.hoisted(() => {
-    const mockChargeEntryFees = vi.fn();
-    const mockChallengeFindFirst = vi.fn();
-    const mockImageResourceNewFindMany = vi.fn();
-    const mockDbRead = {
-      user: { findUnique: vi.fn() },
-      challenge: { findFirst: mockChallengeFindFirst },
-      collectionItem: { count: vi.fn(), findFirst: vi.fn() },
-      collection: { findMany: vi.fn() },
-      image: { findMany: vi.fn() },
-      article: { findMany: vi.fn() },
-      model: { findMany: vi.fn() },
-      post: { findMany: vi.fn() },
-      imageResourceNew: { findMany: mockImageResourceNewFindMany },
-      $queryRaw: vi.fn(),
-    };
-    return { mockChargeEntryFees, mockChallengeFindFirst, mockImageResourceNewFindMany, mockDbRead };
-  });
+const {
+  mockChargeEntryFees,
+  mockChallengeFindFirst,
+  mockImageResourceNewFindMany,
+  mockDbRead,
+  mockAmIBlockedByUser,
+} = vi.hoisted(() => {
+  const mockChargeEntryFees = vi.fn();
+  const mockChallengeFindFirst = vi.fn();
+  const mockImageResourceNewFindMany = vi.fn();
+  const mockAmIBlockedByUser = vi.fn(async () => false);
+  const mockDbRead = {
+    user: { findUnique: vi.fn() },
+    challenge: { findFirst: mockChallengeFindFirst },
+    collectionItem: { count: vi.fn(), findFirst: vi.fn() },
+    collection: { findMany: vi.fn() },
+    image: { findMany: vi.fn() },
+    article: { findMany: vi.fn() },
+    model: { findMany: vi.fn() },
+    post: { findMany: vi.fn() },
+    imageResourceNew: { findMany: mockImageResourceNewFindMany },
+    $queryRaw: vi.fn(),
+  };
+  return {
+    mockChargeEntryFees,
+    mockChallengeFindFirst,
+    mockImageResourceNewFindMany,
+    mockDbRead,
+    mockAmIBlockedByUser,
+  };
+});
 
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
@@ -84,6 +97,7 @@ vi.mock('~/server/services/model.service', () => ({
   getModelsWithImagesAndModelVersions: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: mockAmIBlockedByUser }));
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ getPostsInfinite: vi.fn() }));
 
@@ -115,7 +129,7 @@ function wireChallengeFindFirst(opts: { hasResourceChallenge: boolean; hasFeeCha
       // unless the user challenge is Active. Return an Active challenge so execution
       // reaches the resource gate under test. ('Active' is ChallengeStatus.Active —
       // the same literal collection.service uses.)
-      return { status: 'Active' };
+      return { status: 'Active', createdById: CREATOR_ID };
     }
     return null;
   });
@@ -209,5 +223,46 @@ describe('contest entry resource gate (Task 11)', () => {
     // Moderators are also exempt from the entry fee (chargeContestEntryFeesForCollection
     // no-ops for isModerator), so the fee charge is never invoked either.
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateContestCollectionEntry — creator block gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAmIBlockedByUser.mockResolvedValue(false);
+  });
+
+  it('rejects an entry from a viewer the creator has blocked, before charging', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: false, hasFeeChallenge: false });
+    mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+    mockAmIBlockedByUser.mockResolvedValue(true);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        imageIds: [IMAGE_ID],
+        canAccessUserChallenges: true,
+      })
+    ).rejects.toThrow('not available');
+
+    expect(mockAmIBlockedByUser).toHaveBeenCalledWith({ userId: USER_ID, targetUserId: CREATOR_ID });
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
+  it('lets an unblocked viewer proceed past the block gate', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: false, hasFeeChallenge: false });
+    mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+    mockDbRead.$queryRaw.mockResolvedValue([]); // no already-judged image
+    mockAmIBlockedByUser.mockResolvedValue(false);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        imageIds: [IMAGE_ID],
+        canAccessUserChallenges: true,
+      })
+    ).resolves.toBeUndefined();
   });
 });
