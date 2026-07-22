@@ -22,7 +22,7 @@ export async function resolveChallengeCollectionOwnerId(
   if (!judge)
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
-      message: 'No challenge judge is configured.',
+      message: `No challenge judge found for id ${resolvedJudgeId}.`,
     });
 
   return judge.userId;

@@ -44,14 +44,16 @@ describe('resolveChallengeCollectionOwnerId', () => {
     mockGetChallengeConfig.mockResolvedValue({ defaultJudgeId: undefined });
 
     await expect(resolveChallengeCollectionOwnerId(undefined)).rejects.toThrow(
-      /no challenge judge/i
+      'No challenge judge is configured.'
     );
     expect(mockDbRead.challengeJudge.findUnique).not.toHaveBeenCalled();
   });
 
-  it('throws when the resolved judge does not exist', async () => {
+  it('throws naming the id when the resolved judge has no ChallengeJudge row', async () => {
     mockDbRead.challengeJudge.findUnique.mockResolvedValue(null);
 
-    await expect(resolveChallengeCollectionOwnerId(42)).rejects.toThrow(/no challenge judge/i);
+    await expect(resolveChallengeCollectionOwnerId(42)).rejects.toThrow(
+      'No challenge judge found for id 42.'
+    );
   });
 });

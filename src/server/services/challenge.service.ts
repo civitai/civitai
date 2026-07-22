@@ -14,9 +14,9 @@ import {
   getExistingWinnersForRetry,
   resolveEventContext,
 } from '~/server/games/daily-challenge/challenge-helpers';
+import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
-import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import {
   ChallengeParticipation,
@@ -1315,6 +1315,10 @@ export async function upsertChallenge({
     });
   }
 
+  // Resolved before the cover image below: only the create path (no id) needs this, and a
+  // misconfigured judge must not leave an orphaned cover Image behind.
+  const collectionOwnerId = id ? undefined : await resolveChallengeCollectionOwnerId(judgeId);
+
   // Handle cover image - create Image record if needed (like Article does)
   let coverImageId: number;
   if (coverImage.id) {
@@ -1484,8 +1488,6 @@ export async function upsertChallenge({
       ? await tryGenerateThemeElements(data.theme)
       : undefined;
 
-    const collectionOwnerId = await resolveChallengeCollectionOwnerId(judgeId);
-
     // Create new challenge with a Contest Collection for entries
     const challenge = await dbWrite.$transaction(async (tx) => {
       // First create the collection with proper Contest Mode settings
@@ -1493,7 +1495,8 @@ export async function upsertChallenge({
         data: {
           name: `Challenge: ${data.title}`,
           description: data.description || `Entries for challenge: ${data.title}`,
-          userId: collectionOwnerId,
+          // Guaranteed set: this branch only runs when id is falsy (see resolution above).
+          userId: collectionOwnerId!,
           mode: CollectionMode.Contest,
           write: CollectionWriteConfiguration.Review,
           read: CollectionReadConfiguration.Public,
@@ -1639,6 +1642,10 @@ export async function upsertUserChallenge({
   // creator from editing their own challenge.
   if (!id) await assertCanCreateUserChallenge(userId);
   else await assertUserAccountInGoodStanding(userId);
+
+  // Resolved before the cover image below, for the same reason as the eligibility check above:
+  // a misconfigured judge must not leave an orphaned cover Image behind.
+  const collectionOwnerId = id ? undefined : await resolveChallengeCollectionOwnerId(judgeId);
 
   // Cover image: reuse an existing Image or create one from the upload (like the mod path).
   // A reused id must belong to the caller — otherwise anyone could surface another user's
@@ -1831,14 +1838,13 @@ export async function upsertUserChallenge({
     return updated;
   }
 
-  const collectionOwnerId = await resolveChallengeCollectionOwnerId(judgeId);
-
   const created = await dbWrite.$transaction(async (tx) => {
     const collection = await tx.collection.create({
       data: {
         name: `Challenge: ${rest.title}`,
         description: rest.description || `Entries for challenge: ${rest.title}`,
-        userId: collectionOwnerId,
+        // Guaranteed set: this branch only runs when id is falsy (see resolution above).
+        userId: collectionOwnerId!,
         mode: CollectionMode.Contest,
         write: CollectionWriteConfiguration.Review,
         read: CollectionReadConfiguration.Public,
