@@ -28,6 +28,15 @@ export function feeToRatio(perImage: number | null): FeeRatio {
   return { buzz: Math.round((cents * images) / 100), images };
 }
 
+// Civitai's suggested per-image fee by model type (⚡). A gentle downward guide — most generators skip pricier
+// models — not a mirror of what creators actually charge. Checkpoints carry more value than a LoRA; everything
+// else falls back to the LoRA-scale default. Mirrored in the settings "Fee defaults" copy.
+export const SUGGESTED_FEE_PER_IMAGE: Record<string, number> = { Checkpoint: 1 };
+export const DEFAULT_SUGGESTED_FEE_PER_IMAGE = 0.1;
+export function suggestedFeePerImage(modelType: string): number {
+  return SUGGESTED_FEE_PER_IMAGE[modelType] ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE;
+}
+
 // The "N ⚡ per M images" → per-image conversion + validation lives in the backend zod schema
 // (licensingFeeRatioSchema in $lib/server/monetization/licensing-fee). This module stays display-only + shared.
 

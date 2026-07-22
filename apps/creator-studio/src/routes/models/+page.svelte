@@ -40,6 +40,7 @@
   import {
     feeToRatio,
     formatFeeRatio,
+    suggestedFeePerImage,
     FEE_IMAGE_OPTIONS,
     DEFAULT_FEE_IMAGES,
   } from '$lib/monetization/fee';
@@ -141,6 +142,8 @@
   let bulkImages = $state(String(DEFAULT_FEE_IMAGES));
   let showBulkConfirm = $state(false);
   let bulkForm = $state<HTMLFormElement>();
+  // The suggested fee is per model type, so surface a bulk "use suggested" only when the type filter pins one.
+  const bulkSuggested = $derived(data.query.mt ? suggestedFeePerImage(data.query.mt) : undefined);
 
   // Leaving bulk mode (Cancel, or any URL change that drops ?mode=bulk) discards a pending selection.
   $effect(() => {
@@ -194,6 +197,11 @@
 
   // --- Early/paid-access editor (per-version drawer) ---
   let editing = $state<CreatorModelVersion | null>(null);
+  // The parent model's type isn't on the version, so capture it when opening — the fee reference is keyed by it.
+  let editingType = $state('');
+  // Fee inputs are bound (not just seeded) so "Use this" can populate them from the reference.
+  let feeBuzz = $state<number | undefined>();
+  let feeImages = $state(String(DEFAULT_FEE_IMAGES));
   let ea = $state({
     timeframe: 7,
     permanent: false,
@@ -207,7 +215,11 @@
     freeGeneration: false,
   });
 
-  function openEditor(version: CreatorModelVersion) {
+  function openEditor(version: CreatorModelVersion, modelType: string) {
+    editingType = modelType;
+    const r = feeToRatio(version.licensingFee);
+    feeBuzz = r.buzz || undefined;
+    feeImages = String(r.images);
     const c = version.earlyAccessConfig;
     // Clamp the seeded duration to the creator's score-based max so the field starts in-range.
     const maxDays = data.maxEarlyAccessDays;
@@ -456,6 +468,19 @@
       <Button href={buildHref({ mode: null })} data-sveltekit-replacestate variant="outline" size="sm">
         Cancel
       </Button>
+      {#if bulkSuggested !== undefined}
+        {@const sr = feeToRatio(bulkSuggested)}
+        <button
+          type="button"
+          class="text-xs text-blue-4 hover:underline"
+          onclick={() => {
+            bulkBuzz = sr.buzz;
+            bulkImages = String(sr.images);
+          }}
+        >
+          Use suggested ({formatFeeRatio(bulkSuggested)})
+        </button>
+      {/if}
       <span class="text-xs text-dark-1">Empty buzz clears the fee.</span>
     </form>
   </div>
@@ -540,7 +565,7 @@
                   {:else}
                     <button
                       type="button"
-                      onclick={() => openEditor(version)}
+                      onclick={() => openEditor(version, model.type)}
                       class="flex w-full cursor-pointer items-center gap-3 px-5 py-3 text-left hover:bg-dark-6/40"
                     >
                       <span class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -632,7 +657,6 @@
 <Sheet open={editing != null} onOpenChange={(o) => { if (!o) editing = null; }}>
   <SheetContent side="right" class="w-full gap-0 overflow-y-auto p-0 sm:max-w-md">
     {#if editing}
-      {@const ratio = feeToRatio(editing.licensingFee)}
       {@const st = feeStatus(editing.licensingFee)}
       <SheetHeader class="border-b border-dark-4 p-5">
         <SheetTitle class="text-white">{editing.name}</SheetTitle>
@@ -647,12 +671,13 @@
             <span class="text-xs {st.cls}">{st.label}</span>
           </div>
           {#if data.canSetFee}
+            {@const suggested = feeToRatio(suggestedFeePerImage(editingType))}
             <form method="POST" action="?/setFee" use:enhance={setFeeEnhance} class="flex flex-wrap items-center gap-1.5">
               <input type="hidden" name="versionId" value={editing.id} />
               <NumberInput
                 name="buzz"
                 min={0}
-                value={ratio.buzz || undefined}
+                bind:value={feeBuzz}
                 placeholder="Off"
                 aria-label="Buzz for {editing.name}"
                 class="w-16 py-1"
@@ -660,7 +685,7 @@
               <span class="text-xs text-dark-3">⚡ per</span>
               <NativeSelect
                 name="images"
-                value={String(ratio.images)}
+                bind:value={feeImages}
                 aria-label="Images for {editing.name}"
                 class="[&>option]:bg-dark-7 [&>option]:text-white"
               >
@@ -670,6 +695,21 @@
               </NativeSelect>
               <span class="text-xs text-dark-3">images</span>
               <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
+              <p class="w-full text-xs text-dark-3">
+                Suggested for {editingType}: {suggested.buzz} ⚡ / {suggested.images === 1
+                  ? 'image'
+                  : `${suggested.images} images`}
+                <button
+                  type="button"
+                  class="ml-1 text-blue-4 hover:underline"
+                  onclick={() => {
+                    feeBuzz = suggested.buzz;
+                    feeImages = String(suggested.images);
+                  }}
+                >
+                  Use this
+                </button>
+              </p>
               <span class="w-full text-xs text-dark-3">Leave empty to clear the fee.</span>
             </form>
           {:else}

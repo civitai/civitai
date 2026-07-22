@@ -127,9 +127,9 @@
     </CardHeader>
     <CardContent>
       <p class="text-sm text-dark-2">
-        Licensing fees stay off until you set one. When you do, the input is seeded with a suggested default by
-        model type — Checkpoints <strong>1</strong> ⚡ / image, LoRAs <strong>0.1</strong> ⚡ / image — which you
-        can override per version on <a href="/models" class="underline">Models</a>.
+        Licensing fees stay off until you set one. We suggest a fee by model type — Checkpoints
+        <strong>1</strong> ⚡ / image, LoRAs <strong>1</strong> ⚡ / 10 images — which you can apply or override
+        per version on <a href="/models" class="underline">Models</a>.
       </p>
     </CardContent>
   </Card>
