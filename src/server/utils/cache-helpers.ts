@@ -23,6 +23,7 @@ function getCacheClient(target: CacheTarget = 'main'): any {
   return target === 'sys' ? sysRedis : redis;
 }
 import { sleep } from '~/server/utils/concurrency-helpers';
+import { createLruCache } from '~/server/utils/lru-cache';
 import { createLogger } from '~/utils/logging';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -127,6 +128,27 @@ type CachedLookupOptions<T extends object> = {
   // true. Shorten it to cut resident memory for caches whose stale tail is far
   // larger than the sub-second revalidation actually needs.
   staleWhileRevalidateTtl?: number;
+  // --- In-process (per-pod) L1 cache in front of the Redis per-id cache -------
+  // Opt-in. When `localTtl` (SECONDS) is set, resolved per-id values are also
+  // held in a bounded per-pod LRU. An L1 hit skips the ENTIRE Redis GET fan-out
+  // for that id — the win on the hot image-feed hydration path where
+  // redis.packed.mGet decomposes into per-id GETs (no MGET across cluster slots),
+  // so N images = N GETs, each routed through cluster-routing-retry individually.
+  //
+  // 🔴 CORRECTNESS: the L1 is per-pod and CANNOT see a cross-pod `bust`/`refresh`
+  // of the Redis entry, so a mutation propagates with up to `localTtl` extra
+  // staleness on pods holding an L1 copy. Enable ONLY on near-static per-entity
+  // caches whose Redis TTL already tolerates far more staleness than `localTtl`
+  // adds, AND that do not gate content visibility / auth (those are enforced by
+  // the feed SQL, not these hydration caches). Keep `localTtl` SHORT (5–30s) and
+  // strictly < the Redis `ttl`. Only positive results are L1-cached (matching the
+  // Redis layer's positive-only return): a notFound id is never L1-cached, so a
+  // just-created entity still resolves as soon as the Redis notFound marker
+  // clears — the L1 never pins a negative.
+  localTtl?: number;
+  // Max entries in the per-pod L1 LRU (default 10000). Bounds memory; cold ids
+  // evict LRU-first and simply fall through to Redis (same as no L1).
+  localMax?: number;
 };
 /**
  * Physical Redis EX (seconds) for a cached entry. The logical freshness window
@@ -185,7 +207,40 @@ export function createCachedArray<T extends object>({
   dontCacheFn,
   staleWhileRevalidate = true,
   staleWhileRevalidateTtl,
+  localTtl,
+  localMax = 10000,
 }: CachedLookupOptions<T>) {
+  // Per-pod L1 in front of the Redis per-id cache (opt-in via localTtl). Holds the
+  // FINAL resolved per-id value — post-appendFn, cachedAt stripped — so an L1 hit is
+  // byte-identical to what the Redis path returns and needs no further decoration.
+  // Built on the shared createLruCache util; we drive it with get/set (not its
+  // wrapping .fetch) because our access pattern is a batch mGet, not a per-id fetch.
+  // The fetchFn is unused (loud if ever hit).
+  const localCache =
+    localTtl && localTtl > 0
+      ? createLruCache<number, T>({
+          name: `${key}:l1`,
+          max: localMax,
+          ttl: localTtl * 1000,
+          keyFn: (id) => String(id),
+          fetchFn: () => {
+            throw new Error(`createCachedArray L1 fetchFn must not be called [${key}]`);
+          },
+        })
+      : null;
+
+  // Store a SHALLOW CLONE in L1 (and hand out shallow clones on read) so a caller
+  // mutating its returned object cannot corrupt the single shared L1 instance — the
+  // same isolation the degraded path documents (its appendFns reassign/delete
+  // top-level fields; shallow is enough). The healthy Redis path is naturally immune
+  // (each request decodes its own objects from msgpack); this restores that for L1.
+  function backfillLocal(items: T[]) {
+    if (!localCache) return;
+    for (const x of items) {
+      const id = x[idKey] as unknown as number;
+      if (id !== undefined && id !== null) localCache.set(id, { ...x });
+    }
+  }
   // Degraded origin (DB) fetch used when a CLUSTER Redis read rejects. Returns the SAME shape
   // as the healthy `fetch` (decorated by appendFn, cachedAt stripped) but reads nothing from
   // and writes nothing to Redis. DB load is bounded by the per-id single-flight above; a
@@ -254,7 +309,28 @@ export function createCachedArray<T extends object>({
 
   async function fetch(ids: number[]) {
     if (!ids.length) return [] as T[];
-    const distinctIds = [...new Set(ids)];
+    let distinctIds = [...new Set(ids)];
+
+    // --- L1 (per-pod) read -------------------------------------------------------
+    // Serve hot ids from the in-process LRU and drop them from the Redis fan-out.
+    // Only the L1 MISSES flow into the existing Redis path below (via `distinctIds`),
+    // so a full L1 hit returns without a single Redis command.
+    const l1Hits: T[] = [];
+    if (localCache) {
+      const l1Misses: number[] = [];
+      for (const id of distinctIds) {
+        const hit = localCache.get(id);
+        if (hit !== undefined) l1Hits.push({ ...hit });
+        else l1Misses.push(id);
+      }
+      if (l1Hits.length)
+        cacheHitCounter.inc({ cache_name: key, cache_type: 'lruCache' }, l1Hits.length);
+      if (l1Misses.length)
+        cacheMissCounter.inc({ cache_name: key, cache_type: 'lruCache' }, l1Misses.length);
+      if (l1Misses.length === 0) return l1Hits;
+      distinctIds = l1Misses;
+    }
+
     const results = new Set<T>();
     const cacheResults: T[] = [];
     try {
@@ -274,7 +350,11 @@ export function createCachedArray<T extends object>({
         key,
         ids: distinctIds.length,
       });
-      return fetchFromOriginDegraded(distinctIds);
+      const degraded = await fetchFromOriginDegraded(distinctIds);
+      // Backfill L1 even during a Redis wedge (short TTL; helps bound the DB herd)
+      // and merge any ids we already served from L1 before the read failed.
+      backfillLocal(degraded);
+      return localCache ? [...l1Hits, ...degraded] : degraded;
     }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
     const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
@@ -429,11 +509,17 @@ export function createCachedArray<T extends object>({
 
     if (appendFn) await appendFn(results);
 
-    return [...results].map((x) => {
+    const final = [...results].map((x) => {
       // Remove cachedAt from result since this is an internal value
       if ('cachedAt' in x) delete x.cachedAt;
       return x;
     });
+
+    // Backfill L1 with the FINAL shape (post-appendFn, cachedAt stripped) so a later
+    // L1 hit is byte-identical to this return, then prepend the ids already served
+    // from L1 above. When there is no L1, l1Hits is empty and we return `final` as-is.
+    backfillLocal(final);
+    return localCache ? [...l1Hits, ...final] : final;
   }
 
   async function bust(id: number | number[], options: { debounceTime?: number } = {}) {
