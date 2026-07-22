@@ -11,19 +11,19 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import type { TransformedModel } from '~/shared/search/models-transform';
 import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
-import { skipBaseModelForOwnTabs, type Tabs } from './useResourceSelectFilters';
+import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
 
-export function ResourceHitList({ selectedTab, query }: { selectedTab: Tabs; query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, sort } = useResourceSelectContext();
+export function ResourceHitList({ query }: { query: string }) {
+  const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
-    enabled: selectedTab === 'featured',
+    enabled: tab === 'featured',
   });
 
   const { items, isLoading, isFetching, isFetchingNextPage, fetchNextPage, hasNextPage } =
-    useResourceSelectInfinite({ selectedTab, query, sort });
+    useResourceSelectInfinite({ query });
 
   const {
     items: models,
@@ -42,8 +42,7 @@ export function ResourceHitList({ selectedTab, query }: { selectedTab: Tabs; que
       // version client-side (e.g. linking a Flux VAE into a Boogu checkpoint).
       // The featured tab is a cross-ecosystem podium (the server returns winners
       // from any baseModel), so don't re-apply the ecosystem's base-model filter.
-      const skipBaseModel =
-        skipBaseModelForOwnTabs(selectedTab, selectSource) || selectedTab === 'featured';
+      const skipBaseModel = skipBaseModelForOwnTabs(tab, selectSource) || tab === 'featured';
       const modelBaseModels = resources
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);
@@ -58,7 +57,7 @@ export function ResourceHitList({ selectedTab, query }: { selectedTab: Tabs; que
         );
       });
     },
-    [canGenerate, resources, excludedIds, selectedTab, selectSource]
+    [canGenerate, resources, excludedIds, tab, selectSource]
   );
 
   // Build podium items from raw items (bypassing hidden preferences) so
@@ -70,7 +69,7 @@ export function ResourceHitList({ selectedTab, query }: { selectedTab: Tabs; que
     [resources]
   );
   const topItems = useMemo(() => {
-    if (selectedTab !== 'featured' || !featured?.length) return [];
+    if (tab !== 'featured' || !featured?.length) return [];
 
     // For checkpoints, include all ecosystems so auction winners from any baseModel show.
     const isCheckpointOnly =
@@ -96,7 +95,7 @@ export function ResourceHitList({ selectedTab, query }: { selectedTab: Tabs; que
         const bPos = relevantFeatured.find((fm) => fm.modelId === b.id)!.position;
         return aPos - bPos;
       });
-  }, [selectedTab, featured, items, filterVersions, resourceTypes, resourceBaseModels]);
+  }, [tab, featured, items, filterVersions, resourceTypes, resourceBaseModels]);
 
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
@@ -112,7 +111,7 @@ export function ResourceHitList({ selectedTab, query }: { selectedTab: Tabs; que
       .filter(isDefined)
       .filter((model) => model.versions.length > 0);
 
-    if (selectedTab === 'featured') {
+    if (tab === 'featured') {
       ret.sort((a, b) => {
         const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
         const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
@@ -123,7 +122,7 @@ export function ResourceHitList({ selectedTab, query }: { selectedTab: Tabs; que
     }
 
     return ret;
-  }, [canGenerate, featured, models, resources, selectedTab, filterVersions]);
+  }, [canGenerate, featured, models, resources, tab, filterVersions]);
 
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (
@@ -165,8 +164,7 @@ export function ResourceHitList({ selectedTab, query }: { selectedTab: Tabs; que
     );
 
   // Exclude podium items from the main grid
-  const restItems =
-    selectedTab === 'featured' ? filtered.filter((m) => !topItemIds.has(m.id)) : filtered;
+  const restItems = tab === 'featured' ? filtered.filter((m) => !topItemIds.has(m.id)) : filtered;
 
   return (
     <div className="flex flex-col gap-3 p-3">

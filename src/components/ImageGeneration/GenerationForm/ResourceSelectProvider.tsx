@@ -5,9 +5,13 @@ import type {
   ResourceSelectOptions,
   ResourceSelectSource,
   ResourceSort,
+  Tabs,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import { useStorage } from '~/hooks/useStorage';
 import type { GenerationResource } from '~/shared/types/generation.types';
+
+const defaultTab: Tabs = 'all';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -22,6 +26,8 @@ type ResourceSelectState = Omit<ResourceSelectModalProps, 'options' | 'selectSou
   canGenerate?: boolean;
   excludedIds: number[];
   resources: DeepRequired<ResourceSelectOptions>['resources'];
+  tab: Tabs;
+  setTab: React.Dispatch<React.SetStateAction<Tabs>>;
   filters: ResourceFilter;
   setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
   sort: ResourceSort;
@@ -43,6 +49,24 @@ export function ResourceSelectProvider({
 }: { children: React.ReactNode } & ResourceSelectModalProps) {
   const dialog = useDialogContext();
   const { generation } = useCurrentUserSettings();
+  const selectSource = props.selectSource ?? 'generation';
+
+  // For modelVersion linking, always start on the 'all' tab (and don't persist)
+  // since 'recent' depends on recommended models that are often empty for new
+  // uploads.
+  const persistTab = selectSource !== 'modelVersion';
+  const [storedTab, setStoredTab] = useStorage<Tabs>({
+    type: 'localStorage',
+    key: 'resource-select-tab',
+    defaultValue: defaultTab,
+    getInitialValueInEffect: false,
+  });
+  const [localTab, setLocalTab] = useState<Tabs>(defaultTab);
+  // useStorage's value widens to `Tabs | undefined`; fall back to the default so
+  // the context always exposes a concrete tab.
+  const tab = (persistTab ? storedTab : localTab) ?? defaultTab;
+  const setTab = persistTab ? setStoredTab : setLocalTab;
+
   const [filters, setFilters] = useState<ResourceFilter>({
     types: [],
     baseModels: [],
@@ -87,10 +111,12 @@ export function ResourceSelectProvider({
     <ResourceSelectContext.Provider
       value={{
         ...props,
-        selectSource: props.selectSource ?? 'generation',
+        selectSource,
         canGenerate: props.options?.canGenerate,
         excludedIds: props.options?.excludeIds ?? [],
         resources,
+        tab,
+        setTab,
         filters: {
           types,
           baseModels,

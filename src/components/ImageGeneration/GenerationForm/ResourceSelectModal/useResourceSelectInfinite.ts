@@ -1,32 +1,23 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import { uniq } from 'lodash-es';
 import { useMemo } from 'react';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
-import type { ResourceSort } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import type { Tabs } from './useResourceSelectFilters';
 
 const limit = 50;
 
-export function useResourceSelectInfinite({
-  selectedTab,
-  query,
-  sort,
-}: {
-  selectedTab: Tabs;
-  query: string;
-  sort: ResourceSort;
-}) {
+export function useResourceSelectInfinite({ query }: { query: string }) {
   const currentUser = useCurrentUser();
-  const { selectSource, resources, filters, canGenerate, excludedIds, categoryTag } =
+  const { tab, sort, selectSource, resources, filters, canGenerate, excludedIds, categoryTag } =
     useResourceSelectContext();
 
   // recent → generation is the one curated source the server can't resolve on its
   // own (orchestrator history). Fetch it here and pass the model ids down.
-  const isGenerationRecent = selectedTab === 'recent' && selectSource === 'generation';
+  const isGenerationRecent = tab === 'recent' && selectSource === 'generation';
   const { data: generationData } = useGetTextToImageRequests(
     { take: limit },
     { enabled: !!currentUser && isGenerationRecent }
@@ -48,7 +39,7 @@ export function useResourceSelectInfinite({
 
   const queryResult = trpc.model.getResourceSelect.useInfiniteQuery(
     {
-      tab: selectedTab,
+      tab,
       selectSource,
       query: query || undefined,
       sort,
@@ -64,7 +55,7 @@ export function useResourceSelectInfinite({
     {
       enabled,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
     }
   );
 

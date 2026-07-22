@@ -1,48 +1,34 @@
 import { Box, CloseButton, SegmentedControl, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconSettings } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import {
   ResourceSelectFiltersDropdown,
   ResourceSelectSort,
 } from '~/components/ImageGeneration/GenerationForm/ResourceSelectFilters';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import {
+  resourceSelectTabs,
+  type Tabs,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CategoryTagFilters } from './CategoryTagFilters';
 import { ResourceHitList } from './ResourceHitList';
-import type { Tabs } from './useResourceSelectFilters';
-
-const tabs: Tabs[] = ['all', 'featured', 'recent', 'liked', 'official', 'mine'];
-const defaultTab: Tabs = 'all';
 
 export function ResourceSelectModalContent() {
-  const { title, onClose, selectSource } = useResourceSelectContext();
+  const { title, onClose, selectSource, tab, setTab } = useResourceSelectContext();
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
-  // For modelVersion linking, always start on 'all' tab since 'recent' depends on
-  // recommended models which are often empty for new uploads
-  const useLocalStorage = selectSource !== 'modelVersion';
-  const [storedTab, setStoredTab] = useStorage<Tabs>({
-    type: 'localStorage',
-    key: 'resource-select-tab',
-    defaultValue: defaultTab,
-    getInitialValueInEffect: false,
-  });
-  const [localTab, setLocalTab] = useState<Tabs>(defaultTab);
-  const selectedTab = useLocalStorage ? storedTab : localTab;
-  const setSelectedTab = useLocalStorage ? setStoredTab : setLocalTab;
-
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  let allowedTabs = tabs.filter((t) => {
+  let allowedTabs = resourceSelectTabs.filter((t) => {
     return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
   if (!features.auctions) {
@@ -53,6 +39,13 @@ export function ResourceSelectModalContent() {
   if (selectSource !== 'modelVersion') {
     allowedTabs = allowedTabs.filter((t) => t !== 'official');
   }
+
+  // A persisted tab can become disallowed (e.g. 'mine' after logout, or 'featured'
+  // once auctions are off) — fall back to 'all' so we don't render a phantom tab
+  // whose server restriction silently drops.
+  useEffect(() => {
+    if (!allowedTabs.includes(tab)) setTab('all');
+  }, [allowedTabs, tab, setTab]);
 
   function handleClose() {
     dialog.onClose();
@@ -77,8 +70,8 @@ export function ResourceSelectModalContent() {
 
         <div className="flex flex-col gap-3 @sm:flex-row @sm:flex-nowrap @sm:items-center @sm:justify-between @sm:gap-10">
           <SegmentedControl
-            value={selectedTab}
-            onChange={(v) => setSelectedTab(v as Tabs)}
+            value={tab}
+            onChange={(v) => setTab(v as Tabs)}
             data={allowedTabs.map((v) => ({
               value: v,
               label: (
@@ -89,7 +82,7 @@ export function ResourceSelectModalContent() {
           />
           <CategoryTagFilters />
           <div className="flex shrink-0 flex-row items-center justify-end gap-3">
-            {selectedTab !== 'featured' && <ResourceSelectSort />}
+            {tab !== 'featured' && <ResourceSelectSort />}
             <ResourceSelectFiltersDropdown />
             <GenerationSettingsPopover>
               <LegacyActionIcon>
@@ -100,7 +93,7 @@ export function ResourceSelectModalContent() {
         </div>
       </div>
 
-      <ResourceHitList key={selectedTab} selectedTab={selectedTab} query={debouncedSearch} />
+      <ResourceHitList key={tab} query={debouncedSearch} />
     </>
   );
 }

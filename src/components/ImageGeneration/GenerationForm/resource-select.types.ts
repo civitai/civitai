@@ -23,6 +23,23 @@ export type ResourceFilter = {
   baseModels: BaseModel[];
 };
 
+export const resourceSelectTabs = [
+  'all',
+  'featured',
+  'recent',
+  'liked',
+  'official',
+  'mine',
+] as const;
+export type Tabs = (typeof resourceSelectTabs)[number];
+
+// The official/mine tabs let a creator link any of their own / the official
+// component models regardless of base-model match (e.g. a VAE shared across SDXL
+// variants). Mirrors the same predicate on the server picker service.
+export function skipBaseModelForOwnTabs(tab: Tabs | undefined, selectSource?: string): boolean {
+  return (tab === 'mine' || tab === 'official') && selectSource === 'modelVersion';
+}
+
 export const resourceSort = {
   relevance: 'Relevance',
   popularity: 'Popularity',

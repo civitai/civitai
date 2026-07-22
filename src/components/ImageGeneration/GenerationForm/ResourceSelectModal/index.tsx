@@ -1,28 +1,16 @@
 import { Modal } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
-import {
-  ResourceSelectProvider,
-  useResourceSelectContext,
-} from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
+import { ResourceSelectProvider } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { ResourceSelectModalContent } from './ResourceSelectModalContent';
 
 export default function ResourceSelectModal(props: ResourceSelectModalProps) {
-  return (
-    <ResourceSelectProvider {...props}>
-      <ResourceSelectModalWrapper />
-    </ResourceSelectProvider>
-  );
-}
-
-function ResourceSelectModalWrapper() {
   const dialog = useDialogContext();
-  const { onClose } = useResourceSelectContext();
 
   function handleClose() {
     dialog.onClose();
-    onClose?.();
+    props.onClose?.();
   }
 
   return (
@@ -44,7 +32,9 @@ function ResourceSelectModalWrapper() {
         id="resource-select-modal"
         scrollRestore={{ key: 'resource-select-modal', enabled: false }}
       >
-        <ResourceSelectModalContent />
+        <ResourceSelectProvider {...props}>
+          <ResourceSelectModalContent />
+        </ResourceSelectProvider>
       </ScrollArea>
     </Modal>
   );

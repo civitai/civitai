@@ -107,11 +107,15 @@ function buildFilter({
   user,
   featuredModels,
   tabIds,
+  excludeIds,
 }: {
   input: GetResourceSelectInput;
   user: ServiceUser;
   featuredModels?: GetFeaturedModels;
   tabIds: number[] | null;
+  // Ids pinned to the front from Postgres — excluded from the Meili stream so a
+  // naturally-ranked official model isn't emitted twice across pages.
+  excludeIds?: number[];
 }): string | null {
   const { tab, selectSource, canGenerate, resources, filterTypes, filterBaseModels, tagName } =
     input;
@@ -170,6 +174,7 @@ function buildFilter({
     tabIds && inArray('id', tabIds),
     tab === 'mine' && user ? eq('user.id', user.id) : null,
     tab === 'official' ? eq('user.id', constants.system.officialUserId) : null,
+    excludeIds && excludeIds.length > 0 ? not(inArray('id', excludeIds)) : null,
     // Always exclude celebrity-tagged models
     not(eq('tags.name', 'celebrity'))
   );
@@ -219,10 +224,31 @@ export async function getResourceSelectModels(
   input: GetResourceSelectInput,
   { user }: { user: ServiceUser }
 ) {
-  const { tab, query = '', sort, cursor, limit } = input;
+  const { tab, query = '', sort, cursor, limit, filterTypes, filterBaseModels, tagName } = input;
 
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
+
+  // The official pin only applies to the default `all` browse: no search query and
+  // no active facet filters (type/baseModel/category) — otherwise it would force
+  // off-filter models to the front. When active, the matching official ids are
+  // excluded from the Meili stream on EVERY page (so a naturally-ranked official
+  // model isn't emitted twice) and prepended, from Postgres, on the first page.
+  const officialPinActive =
+    tab === 'all' &&
+    !query &&
+    filterTypes.length === 0 &&
+    filterBaseModels.length === 0 &&
+    !tagName;
+
+  // Filtered by type only (cheap, cached). Type-matching ids that don't match the
+  // ecosystem base model aren't in the Meili stream anyway, so excluding them is a
+  // no-op; the actual pin below narrows to base-model matches.
+  const officialIdsForType = officialPinActive
+    ? (await getOfficialModelIds())
+        .filter((m) => input.resources.some((r) => r.type === m.type))
+        .map((m) => m.id)
+    : [];
 
   // Featured tab loads its whole set (client re-sorts by podium position); every
   // other tab paginates via a Meili offset cursor.
@@ -230,7 +256,13 @@ export async function getResourceSelectModels(
   const offset = isFeatured ? 0 : cursor ?? 0;
   const take = isFeatured ? FEATURED_LIMIT : limit;
 
-  const filter = buildFilter({ input, user, featuredModels, tabIds });
+  const filter = buildFilter({
+    input,
+    user,
+    featuredModels,
+    tabIds,
+    excludeIds: officialIdsForType,
+  });
 
   const results = await searchModels(query, {
     filter: filter ?? undefined,
@@ -241,32 +273,21 @@ export async function getResourceSelectModels(
 
   let items = transformModelHits(results.hits);
 
-  // Official pin: prepend official models on the first page of the default `all`
-  // browse, deduped against the page. Sourced straight from Postgres — NOT
-  // through Meili — so they always surface regardless of index freshness. Kept to
-  // the requested type + base-model so an Anima checkpoint picker pins the Anima
-  // model but not, say, a Krea 2 official checkpoint. Skipped once the user is
-  // actively searching so a query isn't polluted by forced pins.
-  if (tab === 'all' && !cursor && !query) {
-    const officialModels = await getOfficialModelIds();
-    const relevantOfficialIds = officialModels
-      .filter((m) => input.resources.some((r) => r.type === m.type))
-      .map((m) => m.id);
-
-    if (relevantOfficialIds.length) {
-      const officialItems = transformModelHits(
-        await getModelSearchIndexRecords(relevantOfficialIds)
-      ).filter((m) => {
-        const baseModels = input.resources
-          .filter((r) => r.type === m.type)
-          .flatMap((r) => r.baseModels);
-        return baseModels.length === 0 || m.versions.some((v) => baseModels.includes(v.baseModel));
-      });
-      if (officialItems.length) {
-        const officialIdSet = new Set(officialItems.map((m) => m.id));
-        items = [...officialItems, ...items.filter((m) => !officialIdSet.has(m.id))];
-      }
-    }
+  // Prepend the official models on the first page only. Sourced straight from
+  // Postgres — NOT through Meili — so they always surface regardless of index
+  // freshness. Kept to the requested type + base-model so an Anima checkpoint
+  // picker pins the Anima model but not, say, a Krea 2 official checkpoint.
+  if (officialPinActive && !cursor && officialIdsForType.length) {
+    const officialItems = transformModelHits(
+      await getModelSearchIndexRecords(officialIdsForType)
+    ).filter((m) => {
+      const baseModels = input.resources
+        .filter((r) => r.type === m.type)
+        .flatMap((r) => r.baseModels);
+      return baseModels.length === 0 || m.versions.some((v) => baseModels.includes(v.baseModel));
+    });
+    // The Meili stream already excludes these ids, so no cross-page dupes.
+    items = [...officialItems, ...items];
   }
 
   const nextCursor = !isFeatured && results.hits.length === take ? offset + take : undefined;
