@@ -93,11 +93,16 @@ export function useQueryCompletedChallengesWithWinners(
 // in collection.service.ts saveItemInCollections. Intentionally stricter than that check, which
 // exempts moderators: a moderator who owns a challenge still sees the blocked button, so the UI
 // never invites self-dealing. Moderators keep the server-side ability if they need it.
-export function useIsChallengeOwner(challenge: Pick<ChallengeDetail, 'createdById' | 'source'>) {
+export function useIsChallengeOwner(
+  // Accepts undefined so callers can resolve ownership before their `!challenge` early return,
+  // which is the only way to keep this a hook rather than a second inline copy of the rule.
+  challenge?: Pick<ChallengeDetail, 'createdById' | 'source'> | null
+) {
   const currentUser = useCurrentUser();
 
   return (
     !!currentUser &&
+    !!challenge &&
     currentUser.id === challenge.createdById &&
     challenge.source === ChallengeSource.User
   );

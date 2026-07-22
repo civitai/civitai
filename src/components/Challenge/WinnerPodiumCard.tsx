@@ -68,7 +68,7 @@ export function WinnerPodiumCard({
   isMobile = false,
   compact = false,
   judgeInfo,
-  buzzType = 'yellow',
+  buzzType,
 }: {
   winner: WinnerPodiumData;
   isFirst: boolean;
@@ -76,7 +76,9 @@ export function WinnerPodiumCard({
   isMobile?: boolean;
   compact?: boolean;
   judgeInfo?: JudgeInfo;
-  buzzType?: 'green' | 'yellow';
+  // Required, not defaulted: a missing value would silently render yellow, which is the exact bug
+  // this prop exists to fix.
+  buzzType: 'green' | 'yellow';
 }) {
   const [reasonExpanded, setReasonExpanded] = useState(false);
   const colorScheme = useComputedColorScheme('dark');

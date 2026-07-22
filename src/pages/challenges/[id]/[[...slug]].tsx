@@ -218,6 +218,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const queryUtils = trpc.useUtils();
   const { deleteChallenge: deleteOwnChallenge, deleting: deletingOwn } = useDeleteUserChallenge();
   const deletingOwnRef = useRef(false);
+  const isOwner = useIsChallengeOwner(challenge);
 
   const handleMutationError = (error: { message: string }) => {
     showErrorNotification({ error: new Error(error.message) });
@@ -307,7 +308,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
   const handleRescan = () => {
     if (!challenge) return;
-    // Only a live green user challenge takes the hold-for-review path on an NSFW verdict
+    // Only a live green user challenge is cancelled outright on an NSFW verdict
     // (computeNsfwEscalation); everything else is just raised to R in place.
     const warnOnNsfw =
       challenge.status === ChallengeStatus.Active &&
@@ -363,10 +364,6 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   // Only User-source challenges carry user-authored text worth reporting
   const canReport = !!currentUser && challenge.source === ChallengeSource.User;
 
-  const isOwner =
-    !!currentUser &&
-    currentUser.id === challenge.createdById &&
-    challenge.source === ChallengeSource.User;
   const isCancelled = challenge.status === ChallengeStatus.Cancelled;
   const canManageOwn =
     features.userChallenges && isOwner && !currentUser?.isModerator && isScheduled;

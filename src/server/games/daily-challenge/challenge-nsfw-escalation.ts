@@ -88,40 +88,44 @@ export async function applyChallengeNsfwEscalation({
     // entrant's pool contribution (the house cut is a separate prefix and stays kept) plus the
     // creator's escrowed prize, and notifies the entrants. Void FIRST so a crash before the
     // scan-state write leaves it Cancelled, never Scanned-and-visible.
-    if (
-      challenge.status === ChallengeStatus.Active ||
-      challenge.status === ChallengeStatus.Cancelled
-    ) {
-      await voidChallenge(entityId);
-      await dbWrite.challenge.update({
-        where: { id: entityId },
-        data: { ingestion: ChallengeIngestionStatus.Blocked, scannedAt: new Date() },
-      });
-      if (challenge.createdById) {
-        await createNotification({
-          userId: challenge.createdById,
-          category: NotificationCategory.System,
-          type: 'system-message',
-          key: `challenge-nsfw-cancelled-${entityId}`,
-          details: {
-            message:
-              'Your challenge was cancelled because its text was flagged as adult content — green challenges must be safe-for-work. Entrants have been refunded and any prize you funded has been returned; you can recreate it on civitai.red.',
-            url: `/challenges/${entityId}`,
-          },
+    if (challenge.status === ChallengeStatus.Active) {
+      // A lost claim means the completion cron won the race and is paying out — fall through to
+      // the hold branch rather than telling the creator about a refund that never happened.
+      const { voided } = await voidChallenge(entityId);
+      if (voided) {
+        await dbWrite.challenge.update({
+          where: { id: entityId },
+          data: { ingestion: ChallengeIngestionStatus.Blocked, scannedAt: new Date() },
         });
+        if (challenge.createdById) {
+          await createNotification({
+            userId: challenge.createdById,
+            category: NotificationCategory.System,
+            type: 'system-message',
+            key: `challenge-nsfw-cancelled-${entityId}`,
+            details: {
+              message:
+                'Your challenge was cancelled because its text was flagged as adult content — green challenges must be safe-for-work. Entrants have been refunded and any prize you funded has been returned; you can recreate it on civitai.red.',
+              url: `/challenges/${entityId}`,
+            },
+          });
+        }
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-nsfw-escalation-voided',
+          message: `Green challenge ${entityId} scanned NSFW while Active; voided and refunded.`,
+          challengeId: entityId,
+          status: String(challenge.status),
+        });
+        return;
       }
-      logToAxiom({
-        type: 'warning',
-        name: 'challenge-nsfw-escalation-voided',
-        message: `Green challenge ${entityId} scanned NSFW while Active; voided and refunded.`,
-        challengeId: entityId,
-        status: String(challenge.status),
-      });
-      return;
     }
 
-    // Completing/Completed: the pool is being (or has been) paid out to winners, so refunding it
-    // would double-spend. Hide it and alert mods to unwind by hand.
+    // Everything else just gets hidden and alerted, never refunded here:
+    //   - Cancelled: whoever cancelled it already owns the refund. Re-voiding would re-enter the
+    //     refund on a webhook redelivery (the callback can redeliver for the same workflow).
+    //   - Completing/Completed, or an Active challenge whose void claim was lost: the pool is in
+    //     payout, so refunding it would double-spend.
     await dbWrite.challenge.update({
       where: { id: entityId },
       data: { ingestion: ChallengeIngestionStatus.Blocked, scannedAt: new Date() },
@@ -132,7 +136,7 @@ export async function applyChallengeNsfwEscalation({
       name: 'challenge-nsfw-escalation-held',
       message: `Green challenge ${entityId} scanned NSFW while ${String(
         challenge.status
-      )}; hidden and held for moderator review — pool already in payout, cannot auto-refund.`,
+      )}; hidden and held for moderator review — not auto-refunded here.`,
       challengeId: entityId,
       status: String(challenge.status),
     });

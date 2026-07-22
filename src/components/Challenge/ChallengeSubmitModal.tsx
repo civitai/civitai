@@ -429,6 +429,11 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   // Everything this submission will charge. The entry fee (judging cut + pool cut) is charged by
   // the server on submit, the guaranteed-review fee only when opted in — the balance check has to
   // cover both or a user without enough Buzz gets through the modal and fails server-side.
+  //
+  // BuzzTransactionButton checks the DOMAIN's Buzz account, which is the right one here only
+  // because a user challenge is domain-gated to its own buzzType (isChallengeHiddenByDomainCurrency)
+  // — nobody who can reach this button is on the other domain. Passing accountTypes wouldn't
+  // help either: useAvailableBuzz strips green/yellow and re-adds the domain's own.
   const guaranteeCost =
     guaranteeReview &&
     challenge?.reviewCostType === ChallengeReviewCostType.PerEntry &&
@@ -669,10 +674,6 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
           {totalBuzzCost > 0 ? (
             <BuzzTransactionButton
               buzzAmount={totalBuzzCost}
-              // Entry fees are charged from the challenge's own Buzz account, so check that
-              // balance rather than the domain default — otherwise a user holding only the other
-              // Buzz type passes the check and the server charge fails.
-              accountTypes={entryFeeInfo ? [buzzType] : undefined}
               onPerformTransaction={handleSubmit}
               loading={loading || requestReviewMutation.isPending}
               disabled={submitCount === 0 || remainingEntries === 0}

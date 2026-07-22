@@ -2028,7 +2028,6 @@ export async function rescanChallenge({
     });
 }
 
-// Public-safe judge options for the user challenge form: id/name/bio only (no prompt fields).
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
   const challenge = await dbWrite.challenge.update({
     where: { id },
@@ -2809,7 +2808,9 @@ export async function voidChallenge(challengeId: number) {
     });
     if (claimed.count !== 1) {
       log('Void claim lost (completion or a concurrent void won); skipping refund');
-      return { success: true };
+      // `voided: false` so callers can tell "nothing was refunded" from a real void — reporting a
+      // refund that never happened would tell entrants they got their Buzz back.
+      return { success: true, voided: false };
     }
     log('Challenge status updated to Cancelled');
   }
@@ -2824,7 +2825,7 @@ export async function voidChallenge(challengeId: number) {
     await notifyEntrantsOfCancellation(challenge);
   }
 
-  return { success: true };
+  return { success: true, voided: true };
 }
 
 /**
