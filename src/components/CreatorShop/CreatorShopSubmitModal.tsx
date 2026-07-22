@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Button,
   Divider,
   Group,
@@ -22,6 +23,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { ArtworkField } from '~/components/CreatorShop/Submit/ArtworkField';
 import { FeeSection } from '~/components/CreatorShop/Submit/FeeSection';
+import { CosmeticStandardsModal } from '~/components/CreatorShop/CosmeticStandardsModal';
 import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
 import { useSubmitCreatorShopForm } from '~/components/CreatorShop/Submit/useSubmitCreatorShopForm';
 import {
@@ -125,7 +127,17 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               <Text size="xs">
                 All cosmetics must be <b>safe-for-work</b> and must not use{' '}
                 <b>copyrighted or trademarked material</b> you don&apos;t own. Submissions that
-                violate this will be rejected.
+                violate this will be rejected. Review the{' '}
+                <Anchor
+                  component="button"
+                  type="button"
+                  size="xs"
+                  fw={600}
+                  onClick={() => dialogStore.trigger({ component: CosmeticStandardsModal })}
+                >
+                  cosmetic quality standards
+                </Anchor>{' '}
+                before submitting.
               </Text>
             </Alert>
             <Select
