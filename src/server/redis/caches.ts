@@ -59,6 +59,12 @@ export const tagIdsForImagesCache = createCachedObject<{
   // unaffected (they revalidate at the 8h logical boundary either way).
   ttl: CacheTTL.hour * 8,
   staleWhileRevalidateTtl: CacheTTL.hour,
+  // L1: image tag-ids are near-static display metadata (busted on scan/tag edits);
+  // an 8h Redis TTL dwarfs a 15s per-pod L1, which only delays a cross-pod tag
+  // edit by ≤15s. Not a visibility gate (feed SQL enforces that). Hot-image set.
+  localTtl: 15,
+  localMax: 10000,
+  localMaxBytes: 6 * 1024 * 1024, // hard heap cap ~6MB (tag-id arrays are small)
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
@@ -345,6 +351,13 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
     return Object.fromEntries(userBasicData.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
+  // L1: username/avatar/deletedAt are cosmetic near-static fields with a 1-day Redis
+  // TTL and refresh-only invalidation (deleteBasicDataForUser). A 30s per-pod L1 is
+  // strictly fresher than what Redis already serves; the only effect is a ≤30s
+  // cross-pod delay on a rename/avatar/soft-delete propagating — imperceptible.
+  localTtl: 30,
+  localMax: 10000,
+  localMaxBytes: 4 * 1024 * 1024, // hard heap cap ~4MB (tiny records)
 });
 
 type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date; status: ModelStatus };
@@ -1289,6 +1302,11 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
   // working set into misses and stampede dbRead.
   ttl: CacheTTL.hour * 4,
   staleWhileRevalidateTtl: CacheTTL.hour,
+  // NO per-pod L1 here (deliberate): `meta` is gated on `hideMeta`, and when an owner
+  // flips hideMeta false→true the write path calls imageMetaCache.refresh() (meta→NULL).
+  // A per-pod L1 can't observe that cross-pod refresh, so other viewers' pods would keep
+  // serving the old prompt for up to localTtl — a prompt-exposure window on a PRIVACY
+  // control. Not worth it; also the heaviest value, so its exclusion frees the most heap.
 });
 
 type ImageWithMetadata = {
@@ -1495,6 +1513,12 @@ export const imageTagsCache = createCachedObject<ImageTagsCacheItem>({
   // before reuse. SWR off → effective Redis EX = 1h. (2026-06-09 redis usage audit)
   ttl: CacheTTL.hour,
   staleWhileRevalidate: false,
+  // L1: votable-tag composites (busted on tag votes/edits). 1h Redis TTL vs a 15s
+  // per-pod L1 → ≤15s cross-pod delay on a tag vote/edit. Display metadata + soft
+  // hidden-tag filtering, not a hard visibility gate. max 5000: ~4.2KB/key, heavy.
+  localTtl: 15,
+  localMax: 5000,
+  localMaxBytes: 16 * 1024 * 1024, // hard heap cap ~16MB (heaviest remaining value)
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
 
@@ -1659,6 +1683,17 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   // the day TTL resided for 48h, generous for a sub-average-hit cache.
   // Effective Redis EX = 16h. (2026-06-09 redis usage audit)
   ttl: CacheTTL.hour * 8,
+  // L1: which models an image used — attribution metadata, refresh-only on resource
+  // edits, 8h Redis TTL. A 30s per-pod L1 only delays a cross-pod resource edit by
+  // ≤30s. Not sensitive / not a visibility gate.
+  //
+  // Per-pod L1 total HARD heap ceiling across the 4 enabled caches (localMaxBytes):
+  //   userBasic 4MB + imageResources 12MB + tagIdsForImages 6MB + imageTags 16MB
+  //   = 38MB/pod — well under the heap-headroom alert; byte-bounded so a per-value
+  //   size spike can never blow the cap (deterministic, deploy fleet-wide safely).
+  localTtl: 30,
+  localMax: 10000,
+  localMaxBytes: 12 * 1024 * 1024, // hard heap cap ~12MB
   lookupFn: async (ids, fromWrite) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
