@@ -16,6 +16,7 @@ import {
 } from '~/server/games/daily-challenge/challenge-helpers';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
+import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import {
   ChallengeParticipation,
@@ -1483,6 +1484,8 @@ export async function upsertChallenge({
       ? await tryGenerateThemeElements(data.theme)
       : undefined;
 
+    const collectionOwnerId = await resolveChallengeCollectionOwnerId(judgeId);
+
     // Create new challenge with a Contest Collection for entries
     const challenge = await dbWrite.$transaction(async (tx) => {
       // First create the collection with proper Contest Mode settings
@@ -1490,7 +1493,7 @@ export async function upsertChallenge({
         data: {
           name: `Challenge: ${data.title}`,
           description: data.description || `Entries for challenge: ${data.title}`,
-          userId,
+          userId: collectionOwnerId,
           mode: CollectionMode.Contest,
           write: CollectionWriteConfiguration.Review,
           read: CollectionReadConfiguration.Public,
