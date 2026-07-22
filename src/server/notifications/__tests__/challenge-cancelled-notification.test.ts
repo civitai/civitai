@@ -195,7 +195,7 @@ describe('voidChallenge — entrant cancellation notification', () => {
     mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 3 });
     mockDbRead.$queryRaw.mockRejectedValue(new Error('transient DB error'));
 
-    await expect(voidChallenge(7)).resolves.toEqual({ success: true });
+    await expect(voidChallenge(7)).resolves.toEqual({ success: true, voided: true });
 
     expect(mockCreateNotification).not.toHaveBeenCalled();
     expect(mockLogToAxiom).toHaveBeenCalledTimes(1);

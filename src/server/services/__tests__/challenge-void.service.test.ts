@@ -54,7 +54,8 @@ describe('voidChallenge', () => {
     mockGetChallengeById.mockResolvedValue(makeChallenge(ChallengeStatus.Active));
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 0 });
     const res = await voidChallenge(1);
-    expect(res).toEqual({ success: true });
+    // `voided: false` is what lets callers avoid reporting a refund that never happened.
+    expect(res).toEqual({ success: true, voided: false });
     expect(mockRefund).not.toHaveBeenCalled();
   });
 
