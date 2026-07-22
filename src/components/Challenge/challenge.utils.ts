@@ -89,15 +89,15 @@ export function useQueryCompletedChallengesWithWinners(
   return { challenges: flatData, ...rest };
 }
 
-// Creators may not enter their own challenge (self-dealing on the prize pool). Mirrors the server
-// rule in collection.service.ts saveItemInCollections, including its moderator exemption — without
-// it a moderator who created a challenge sees a blocked button for a submission the server allows.
+// Creators may not enter their own challenge (self-dealing on the prize pool), enforced server side
+// in collection.service.ts saveItemInCollections. Intentionally stricter than that check, which
+// exempts moderators: a moderator who owns a challenge still sees the blocked button, so the UI
+// never invites self-dealing. Moderators keep the server-side ability if they need it.
 export function useIsChallengeOwner(challenge: Pick<ChallengeDetail, 'createdById' | 'source'>) {
   const currentUser = useCurrentUser();
 
   return (
     !!currentUser &&
-    !currentUser.isModerator &&
     currentUser.id === challenge.createdById &&
     challenge.source === ChallengeSource.User
   );
