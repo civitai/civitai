@@ -123,7 +123,11 @@ async function fetchMonthly({ userId }: { userId: number }): Promise<MonthlyEarn
      GROUP BY month, currency
      ORDER BY month DESC`
   );
-  return rows.map((r) => ({ month: String(r.month), currency: r.currency, total: Number(r.total) }));
+  return rows.map((r) => ({
+    month: String(r.month),
+    currency: r.currency,
+    total: Number(r.total),
+  }));
 }
 
 export const getMonthlyEarnings = createCache({
@@ -137,7 +141,12 @@ export const getMonthlyEarnings = createCache({
 // month parsed from the externalId, NOT the date it was paid — so late true-ups land in the month they belong to,
 // and the current (unsettled) month has no comp yet and drops out. Banked Buzz = `bank` minus un-bank
 // `withdrawal`/`refund`. rate = compUsd / bankedBuzz, capped at $0.001/Buzz. Program launched Mar 2025.
-export type BuzzDollarRatio = { month: string; bankedBuzz: number; usd: number; perThousand: number };
+export type BuzzDollarRatio = {
+  month: string;
+  bankedBuzz: number;
+  usd: number;
+  perThousand: number;
+};
 
 async function fetchBuzzRatio({ userId }: { userId: number }): Promise<BuzzDollarRatio[]> {
   const uid = Number(userId);
@@ -146,6 +155,9 @@ async function fetchBuzzRatio({ userId }: { userId: number }): Promise<BuzzDolla
     comp_cents: number | string;
     net_banked: number | string;
   }>(
+    // comp + extract are credited TO the creator (toAccountId); bank is debited FROM them (fromAccountId). Split
+    // by account column via UNION ALL rather than an `OR` — the table's sort key is (date, fromAccountId,
+    // toAccountId), so each single-column side uses the index; the `OR` can't and full-scans the range (~40x slower).
     `SELECT month,
             sumIf(amount, kind = 'comp') AS comp_cents,
             sumIf(amount, kind = 'bank') - sumIf(amount, kind = 'extract') AS net_banked
@@ -153,14 +165,21 @@ async function fetchBuzzRatio({ userId }: { userId: number }): Promise<BuzzDolla
        SELECT amount,
          multiIf(
            type = 'compensation' AND toAccountType = 'cashPending' AND externalTransactionId LIKE 'comp-pool-unified-%', 'comp',
-           type = 'bank' AND fromAccountId = ${uid} AND toAccountType IN ('creatorProgramBank','creatorProgramBankGreen'), 'bank',
-           type IN ('withdrawal','refund') AND toAccountId = ${uid} AND fromAccountType IN ('creatorProgramBank','creatorProgramBankGreen'), 'extract',
+           type IN ('withdrawal','refund') AND fromAccountType IN ('creatorProgramBank','creatorProgramBankGreen'), 'extract',
            'x') AS kind,
          if(type = 'compensation' AND externalTransactionId LIKE 'comp-pool-unified-%',
             concat(substring(externalTransactionId, 19, 7), '-01'),
             toString(toStartOfMonth(date))) AS month
        FROM default.buzzTransactions
-       WHERE (toAccountId = ${uid} OR fromAccountId = ${uid}) AND date >= toDate('2025-03-01')
+       WHERE toAccountId = ${uid} AND date >= toDate('2025-03-01')
+         AND type IN ('compensation','withdrawal','refund')
+
+       UNION ALL
+
+       SELECT amount, 'bank' AS kind, toString(toStartOfMonth(date)) AS month
+       FROM default.buzzTransactions
+       WHERE fromAccountId = ${uid} AND date >= toDate('2025-03-01')
+         AND type = 'bank' AND toAccountType IN ('creatorProgramBank','creatorProgramBankGreen')
      ) WHERE kind != 'x'
      GROUP BY month
      HAVING sumIf(amount, kind = 'comp') > 0 AND (sumIf(amount, kind = 'bank') - sumIf(amount, kind = 'extract')) > 0

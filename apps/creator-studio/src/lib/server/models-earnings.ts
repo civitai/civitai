@@ -184,6 +184,9 @@ async function fetchModelPerformance({
     .execute();
   if (!versions.length) return [];
   const idList = versions.map((v) => Number(v.versionId)).join(',');
+  // daily_downloads is sorted by (modelId, modelVersionId, …) and unpartitioned, so filtering on modelVersionId
+  // alone full-scans it. Also constrain modelId (the sort-key leader) so the read seeks straight to these models.
+  const modelIdList = [...new Set(versions.map((v) => Number(v.modelId)))].join(',');
 
   const prev = { from: compareFrom, to: compareTo };
   const ch = getClickhouse();
@@ -215,7 +218,7 @@ async function fetchModelPerformance({
          sumIf(downloads, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(downloads, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM default.daily_downloads
-       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
+       WHERE modelId IN (${modelIdList}) AND modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
        GROUP BY modelVersionId`
     ),
   ]);
@@ -383,7 +386,7 @@ async function fetchModelVersionAnalytics({
          sumIf(downloads, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(downloads, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM default.daily_downloads
-       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
+       WHERE modelId = ${mid} AND modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
        GROUP BY modelVersionId`
     ),
     ch.$query<{
@@ -396,7 +399,7 @@ async function fetchModelVersionAnalytics({
          sumIf(amount, date BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(amount, date BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM orchestration.resourceCompensations
-       WHERE modelVersionId IN (${idList}) AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
+       WHERE userId = ${uid} AND modelVersionId IN (${idList}) AND date BETWEEN toDate('${prev.from}') AND toDate('${to}') AND ${CORRUPT_FILTER}
        GROUP BY modelVersionId, accountType`
     ),
   ]);
@@ -479,6 +482,8 @@ async function fetchBaseModelPerformance({
 
   const prev = { from: compareFrom, to: compareTo };
   const idList = versions.map((v) => Number(v.versionId)).join(',');
+  // Constrain modelId (daily_downloads' sort-key leader) so the unpartitioned table isn't full-scanned.
+  const modelIdList = [...new Set(versions.map((v) => Number(v.modelId)))].join(',');
   const ch = getClickhouse();
   const [earnRows, genRows, dlRows] = await Promise.all([
     ch.$query<{
@@ -507,15 +512,17 @@ async function fetchBaseModelPerformance({
          sumIf(downloads, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
          sumIf(downloads, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
        FROM default.daily_downloads
-       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
+       WHERE modelId IN (${modelIdList}) AND modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
        GROUP BY modelVersionId`
     ),
   ]);
 
   const genBy = new Map<number, { cur: number; prev: number }>();
-  for (const r of genRows) genBy.set(Number(r.modelVersionId), { cur: Number(r.cur), prev: Number(r.prev) });
+  for (const r of genRows)
+    genBy.set(Number(r.modelVersionId), { cur: Number(r.cur), prev: Number(r.prev) });
   const dlBy = new Map<number, { cur: number; prev: number }>();
-  for (const r of dlRows) dlBy.set(Number(r.modelVersionId), { cur: Number(r.cur), prev: Number(r.prev) });
+  for (const r of dlRows)
+    dlBy.set(Number(r.modelVersionId), { cur: Number(r.cur), prev: Number(r.prev) });
   const earnBy = new Map<number, { currency: string; cur: number; prev: number }[]>();
   for (const r of earnRows) {
     const vid = Number(r.modelVersionId);
@@ -580,7 +587,8 @@ async function fetchBaseModelPerformance({
     (b) => b.generations > 0 || b.downloads > 0 || b.currencies.some((c) => c.total > 0)
   );
   active.sort(
-    (a, b) => b.generations - a.generations || b.downloads - a.downloads || b.buzzTotal - a.buzzTotal
+    (a, b) =>
+      b.generations - a.generations || b.downloads - a.downloads || b.buzzTotal - a.buzzTotal
   );
   return active;
 }
@@ -670,7 +678,7 @@ async function fetchModelVersionSeries({
     ch.$query<{ modelVersionId: number | string; date: string; downloads: number | string }>(
       `SELECT modelVersionId, toString(createdDate) AS date, sum(downloads) AS downloads
        FROM default.daily_downloads
-       WHERE modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${from}') AND toDate('${to}')
+       WHERE modelId = ${mid} AND modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${from}') AND toDate('${to}')
        GROUP BY modelVersionId, date`
     ),
   ]);
