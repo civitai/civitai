@@ -1,13 +1,16 @@
 import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type {
+  ChallengeDetail,
   GetInfiniteChallengesInput,
   GetCompletedChallengesWithWinnersInput,
 } from '~/server/schema/challenge.schema';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
 
 // Default filter values
 const defaultFilters: Partial<GetInfiniteChallengesInput> = {
@@ -84,6 +87,20 @@ export function useQueryCompletedChallengesWithWinners(
   const flatData = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
 
   return { challenges: flatData, ...rest };
+}
+
+// Creators may not enter their own challenge (self-dealing on the prize pool). Mirrors the server
+// rule in collection.service.ts saveItemInCollections, including its moderator exemption — without
+// it a moderator who created a challenge sees a blocked button for a submission the server allows.
+export function useIsChallengeOwner(challenge: Pick<ChallengeDetail, 'createdById' | 'source'>) {
+  const currentUser = useCurrentUser();
+
+  return (
+    !!currentUser &&
+    !currentUser.isModerator &&
+    currentUser.id === challenge.createdById &&
+    challenge.source === ChallengeSource.User
+  );
 }
 
 // Hook to get winner cooldown status for the current user

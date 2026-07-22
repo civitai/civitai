@@ -13,6 +13,7 @@ import {
   Stack,
   Tabs,
   Text,
+  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -29,6 +30,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CooldownBanner } from '~/components/Challenge/CooldownBanner';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -47,7 +49,16 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
-import { ChallengeReviewCostType, ChallengeStatus, Currency } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeReviewCostType,
+  ChallengeSource,
+  ChallengeStatus,
+  Currency,
+} from '~/shared/utils/prisma/enums';
+import {
+  CHALLENGE_ENTRY_HOUSE_CUT,
+  getEntryPoolContribution,
+} from '~/shared/constants/challenge.constants';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
@@ -396,6 +407,17 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
   const loading =
     uploading || addSimpleImagePostMutation.isPending || bulkSaveItemsMutation.isPending;
 
+  const buzzType = challenge?.buzzType === 'green' ? 'green' : 'yellow';
+  const entryFeeInfo =
+    challenge?.source === ChallengeSource.User && challenge.entryFee > 0
+      ? {
+          entryFee: challenge.entryFee,
+          // Mirrors chargeEntryFees: the house cut is capped at the fee, never exceeds it.
+          houseCut: Math.min(challenge.entryFee, CHALLENGE_ENTRY_HOUSE_CUT),
+          perEntryToPool: getEntryPoolContribution(challenge.entryFee),
+        }
+      : null;
+
   // Count for submit button (users can only select eligible images)
   const submitCount =
     activeTab === 'library'
@@ -403,6 +425,18 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
       : activeTab === 'generator'
       ? generatorSelected.length
       : uploadedFiles.filter((f) => f.status === 'success').length;
+
+  // Everything this submission will charge. The entry fee (judging cut + pool cut) is charged by
+  // the server on submit, the guaranteed-review fee only when opted in — the balance check has to
+  // cover both or a user without enough Buzz gets through the modal and fails server-side.
+  const guaranteeCost =
+    guaranteeReview &&
+    challenge?.reviewCostType === ChallengeReviewCostType.PerEntry &&
+    challenge.reviewCost > 0
+      ? challenge.reviewCost * submitCount
+      : 0;
+  const entryCost = entryFeeInfo ? entryFeeInfo.entryFee * submitCount : 0;
+  const totalBuzzCost = entryCost + guaranteeCost;
 
   return (
     <Modal
@@ -445,7 +479,11 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
         )}
 
         {challenge && (
-          <CooldownBanner challengeId={challengeId} status={challenge.status} />
+          <CooldownBanner
+            challengeId={challengeId}
+            status={challenge.status}
+            source={challenge.source}
+          />
         )}
 
         {nearDeadline && (
@@ -613,9 +651,8 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
           )}
 
         {/* Footer */}
-        <Group
-          gap="xs"
-          justify="flex-end"
+        <Stack
+          gap={8}
           mx="-lg"
           px="lg"
           pt="lg"
@@ -625,14 +662,17 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
             }`,
           }}
         >
+        <Group gap="xs" justify="flex-end">
           <Button variant="default" onClick={handleClose}>
             Cancel
           </Button>
-          {guaranteeReview &&
-          challenge?.reviewCostType === ChallengeReviewCostType.PerEntry &&
-          challenge?.reviewCost ? (
+          {totalBuzzCost > 0 ? (
             <BuzzTransactionButton
-              buzzAmount={challenge.reviewCost * submitCount}
+              buzzAmount={totalBuzzCost}
+              // Entry fees are charged from the challenge's own Buzz account, so check that
+              // balance rather than the domain default — otherwise a user holding only the other
+              // Buzz type passes the check and the server charge fails.
+              accountTypes={entryFeeInfo ? [buzzType] : undefined}
               onPerformTransaction={handleSubmit}
               loading={loading || requestReviewMutation.isPending}
               disabled={submitCount === 0 || remainingEntries === 0}
@@ -651,6 +691,39 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
             </Button>
           )}
         </Group>
+
+          {entryFeeInfo && (
+            <Group gap={4} justify="flex-end" wrap="nowrap">
+              <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={14} />
+              <Text size="xs" c="dimmed">
+                {submitCount > 0 ? (
+                  <>
+                    <b>{totalBuzzCost.toLocaleString()}</b> total
+                  </>
+                ) : (
+                  <>
+                    <b>{entryFeeInfo.entryFee.toLocaleString()}</b> per entry
+                  </>
+                )}{' '}
+                &middot; {(entryFeeInfo.houseCut * Math.max(submitCount, 1)).toLocaleString()}{' '}for AI
+                judging &middot;{' '}
+                {(entryFeeInfo.perEntryToPool * Math.max(submitCount, 1)).toLocaleString()} to the
+                prize pool
+                {guaranteeCost > 0 && (
+                  <> &middot; {guaranteeCost.toLocaleString()} for guaranteed review</>
+                )}
+              </Text>
+              <Tooltip
+                label="The AI judging cost is non-refundable. The prize-pool portion is returned if the challenge is cancelled."
+                maw={260}
+                multiline
+                withArrow
+              >
+                <IconInfoCircle size={14} className="text-dimmed" />
+              </Tooltip>
+            </Group>
+          )}
+        </Stack>
       </Stack>
     </Modal>
   );

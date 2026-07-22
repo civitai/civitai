@@ -68,6 +68,7 @@ export function WinnerPodiumCard({
   isMobile = false,
   compact = false,
   judgeInfo,
+  buzzType = 'yellow',
 }: {
   winner: WinnerPodiumData;
   isFirst: boolean;
@@ -75,6 +76,7 @@ export function WinnerPodiumCard({
   isMobile?: boolean;
   compact?: boolean;
   judgeInfo?: JudgeInfo;
+  buzzType?: 'green' | 'yellow';
 }) {
   const [reasonExpanded, setReasonExpanded] = useState(false);
   const colorScheme = useComputedColorScheme('dark');
@@ -136,6 +138,7 @@ export function WinnerPodiumCard({
           {!compact && (
             <CurrencyBadge
               currency={Currency.BUZZ}
+              type={buzzType}
               unitAmount={winner.buzzAwarded}
               size="sm"
               style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}

@@ -121,18 +121,37 @@ describe('applyChallengeNsfwEscalation', () => {
     expect(mockVoidChallenge).not.toHaveBeenCalled();
   });
 
-  it('green user + nsfw while Active: hides via Blocked + alerts mods, no void, no refund, no cancel notif', async () => {
+  it('green user + nsfw while Active: voids (refunds pool + notifies entrants) and hides via Blocked', async () => {
     mockDbRead.challenge.findUnique.mockResolvedValue(challenge({ status: 'Active' }));
 
     await applyChallengeNsfwEscalation({ entityId: 77, isNsfw: true });
 
+    // voidChallenge owns the Active -> Cancelled claim that keeps the completion cron from paying
+    // winners out of the pool being refunded, plus the entrant refund + cancellation notices.
+    expect(mockVoidChallenge).toHaveBeenCalledWith(77);
+    const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
+    expect(data.ingestion).toBe('Blocked');
+    expect(mockCreateNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'challenge-nsfw-cancelled-77' })
+    );
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'challenge-nsfw-escalation-voided', challengeId: 77 })
+    );
+  });
+
+  it('green user + nsfw while Completing: holds for review instead of refunding a pool in payout', async () => {
+    mockDbRead.challenge.findUnique.mockResolvedValue(challenge({ status: 'Completing' }));
+
+    await applyChallengeNsfwEscalation({ entityId: 78, isNsfw: true });
+
+    // Refunding here would double-spend against the winner payout.
     expect(mockVoidChallenge).not.toHaveBeenCalled();
     const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
     expect(data.ingestion).toBe('Blocked');
     expect(mockCreateNotification).not.toHaveBeenCalled();
     expect(mockCloseChallengeCollection).toHaveBeenCalledWith({ collectionId: 55 });
     expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'challenge-nsfw-escalation-held', challengeId: 77 })
+      expect.objectContaining({ name: 'challenge-nsfw-escalation-held', challengeId: 78 })
     );
   });
 });
