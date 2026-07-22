@@ -70,6 +70,7 @@ vi.mock('~/server/services/model.service', () => ({ getModelsWithVersions: vi.fn
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ getPostsInfinite: vi.fn() }));
+vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
 
 import { getCollectionRandomSeed } from '~/server/services/collection.service';
 

@@ -323,9 +323,13 @@ export const getLicensingRoots = async ({
 // Field-level early-access requirements (status-independent): a timeframe needs
 // a charge, and each enabled charge needs a price.
 function assertEarlyAccessChargeConfig(config: ModelVersionEarlyAccessConfig | null | undefined) {
-  if (config?.timeframe && !config.chargeForDownload && !config.chargeForGeneration) {
+  if (
+    (config?.timeframe || config?.permanent) &&
+    !config.chargeForDownload &&
+    !config.chargeForGeneration
+  ) {
     throw throwBadRequestError(
-      'You must charge for downloads or generations if you set an early access time frame.'
+      'You must charge for downloads or generations if you gate this version behind payment.'
     );
   }
   if (config?.chargeForDownload && !config.downloadPrice) {
@@ -338,9 +342,8 @@ function assertEarlyAccessChargeConfig(config: ModelVersionEarlyAccessConfig | n
   }
 }
 
-// Post-publish guards + merge. Once published a creator can only loosen terms
-// (can't add EA, raise price/timeframe, or change donation goals), and the merge
-// preserves hidden fields the UI never sends back (e.g. buzzTransactionId).
+// Post-publish edits are unrestricted except donation goals: a purchase is a durable entityAccess entitlement not
+// re-evaluated against current config, so changing terms never affects existing buyers (CU 868ke4944).
 function mergeEarlyAccessConfigUpdate({
   existingConfig,
   updatedConfig,
@@ -350,28 +353,7 @@ function mergeEarlyAccessConfigUpdate({
   updatedConfig: ModelVersionEarlyAccessConfig | null | undefined;
   status: ModelStatus;
 }): ModelVersionEarlyAccessConfig | null | undefined {
-  if (status === ModelStatus.Published && !!updatedConfig && !existingConfig) {
-    throw throwBadRequestError(
-      'You cannot add early access on a model after it has been published.'
-    );
-  }
-
   if (status === ModelStatus.Published && updatedConfig && existingConfig) {
-    if (
-      updatedConfig.chargeForDownload &&
-      (updatedConfig.downloadPrice as number) > (existingConfig.downloadPrice as number)
-    ) {
-      throw throwBadRequestError(
-        'You cannot increase the download price on a model after it has been published.'
-      );
-    }
-
-    if (updatedConfig.timeframe > existingConfig.timeframe) {
-      throw throwBadRequestError(
-        'You cannot increase the early access time frame for a published early access model version.'
-      );
-    }
-
     if (
       updatedConfig.donationGoalEnabled !== existingConfig.donationGoalEnabled ||
       updatedConfig.donationGoal !== existingConfig.donationGoal
@@ -1695,6 +1677,7 @@ export const earlyAccessPurchase = async ({
       id: true,
       earlyAccessEndsAt: true,
       earlyAccessConfig: true,
+      earlyAccessPermanent: true,
       status: true,
       name: true,
       model: {
@@ -1718,7 +1701,10 @@ export const earlyAccessPurchase = async ({
 
   const earlyAccesConfig = modelVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
 
-  if (!earlyAccesConfig || !modelVersion.earlyAccessEndsAt) {
+  if (
+    !earlyAccesConfig ||
+    (!modelVersion.earlyAccessEndsAt && !modelVersion.earlyAccessPermanent)
+  ) {
     throw throwBadRequestError('This model version does not have early access enabled.');
   }
 
@@ -1732,7 +1718,7 @@ export const earlyAccessPurchase = async ({
     throw throwBadRequestError('You can only purchase early access for published models.');
   }
 
-  if (modelVersion.earlyAccessEndsAt < new Date()) {
+  if (modelVersion.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt < new Date()) {
     throw throwBadRequestError('This model is public and does not require purchase.');
   }
 

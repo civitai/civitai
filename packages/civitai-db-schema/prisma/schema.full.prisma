@@ -3445,6 +3445,7 @@ model Comment {
   modelId      Int
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
+  pinnedAt     DateTime?
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]

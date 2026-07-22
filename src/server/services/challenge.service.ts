@@ -62,7 +62,17 @@ import {
   PrizeMode,
 } from '~/shared/utils/prisma/enums';
 import { createImage, imagesForModelVersionsCache } from '~/server/services/image.service';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import { getUserSelectableJudges } from '~/server/services/challenge-judge.service';
@@ -361,6 +371,31 @@ type ParticipatedRow = ChallengeCardRow & {
   myEnteredAt: Date;
 };
 
+// The viewer's bounded block/hide exclusion set (hidden ∪ blocked-by ∪ blocked), used to drop
+// user challenges whose creator is on it — parity with comment/review feeds. Empty for anon.
+// Ordering into boundExcludedUserIds is load-bearing (see its doc): hidden, blockedBy, blocked.
+async function getChallengeExcludedUserIds(viewerId?: number): Promise<number[]> {
+  if (!viewerId) return [];
+  const [hidden, blockedBy, blocked] = await Promise.all([
+    HiddenUsers.getCached({ userId: viewerId }),
+    BlockedByUsers.getCached({ userId: viewerId }),
+    BlockedUsers.getCached({ userId: viewerId }),
+  ]);
+  return boundExcludedUserIds(
+    hidden.map((u) => u.id),
+    blockedBy.map((u) => u.id),
+    blocked.map((u) => u.id)
+  );
+}
+
+// Raw-SQL predicate (aliased `c`) dropping user challenges whose creator is in the viewer's
+// exclusion set; System/mod rows always pass via the source guard. Returns null when the set is
+// empty so callers can skip pushing it. Shared by the three raw feeds to keep the scoping in sync.
+function challengeCreatorBlockSql(excludedUserIds: number[]): Prisma.Sql | null {
+  if (excludedUserIds.length === 0) return null;
+  return Prisma.sql`(c.source <> ${ChallengeSource.User}::"ChallengeSource" OR c."createdById" != ALL(${excludedUserIds}::int[]))`;
+}
+
 /**
  * Challenges the current user has entered (CollectionItem) or won (ChallengeWinner), recent-first
  * by entry time. One row per challenge (their latest entry as the representative thumbnail).
@@ -394,6 +429,8 @@ export async function getMyParticipated({
     requested: undefined,
   });
 
+  const blockSql = challengeCreatorBlockSql(await getChallengeExcludedUserIds(userId));
+
   const rows = await dbRead.$queryRaw<ParticipatedRow[]>(Prisma.sql`
     WITH my AS (${myEntries})
     SELECT c.id, c.title, c.theme, c.invitation, c."coverImageId", c."startsAt", c."endsAt",
@@ -414,6 +451,7 @@ export async function getMyParticipated({
     LEFT JOIN "ChallengeWinner" cw ON cw."challengeId" = c.id AND cw."userId" = ${userId}
     WHERE c.status IN (${ChallengeStatus.Active}::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus", ${ChallengeStatus.Completed}::"ChallengeStatus")
       AND (c.source <> ${ChallengeSource.User}::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${userId})
+      ${blockSql ? Prisma.sql`AND ${blockSql}` : Prisma.empty}
       ${
         effectiveBrowsingLevel > 0
           ? Prisma.sql`AND (c."createdById" = ${userId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = COALESCE(my."myImageId", c."coverImageId") AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
@@ -538,6 +576,11 @@ export async function getInfiniteChallenges(
       ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
+
+  // Block/hide gate: drop user challenges whose creator the viewer has blocked/hidden (or who
+  // blocked the viewer) — parity with comment/review feeds. System/mod challenges are exempt.
+  const blockSql = challengeCreatorBlockSql(await getChallengeExcludedUserIds(currentUserId));
+  if (blockSql) conditions.push(blockSql);
 
   // Status filter (parameterized)
   if (status && status.length > 0) {
@@ -1016,6 +1059,18 @@ export async function getChallengeDetail(
   // covers the direct-link case: the detail page's SSG prefetch and every client fetch go through
   // this function, so without the flag the page falls through to its not-found branch.
   if (challenge.source === ChallengeSource.User && !canAccessUserChallenges) return null;
+
+  // Block gate: a viewer the creator has blocked can't open the challenge — direct-link parity
+  // with model/article/post detail. Scoped to user challenges (System/mod challenges have no owner
+  // to block); moderators exempt. A creator viewing their own challenge is self-safe:
+  // amIBlockedByUser returns false when targetUserId === userId.
+  if (viewerId != null && isModerator !== true && challenge.source === ChallengeSource.User) {
+    const blocked = await amIBlockedByUser({
+      userId: viewerId,
+      targetUserId: challenge.createdById ?? undefined,
+    });
+    if (blocked) return null;
+  }
 
   // Visibility check: only show challenges that are visible to the public. The creator and
   // moderators may preview a not-yet-visible or Cancelled challenge, and are likewise exempt
@@ -2865,7 +2920,8 @@ async function getEventCoverImages(coverImageIds: (number | null)[]) {
  * Get active challenge events with their challenges.
  * Returns events where active=true and endDate >= now, ordered by startDate.
  */
-export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
+export async function getActiveEvents(viewerId?: number): Promise<ChallengeEventListItem[]> {
+  const excludedUserIds = await getChallengeExcludedUserIds(viewerId);
   const events = await dbRead.challengeEvent.findMany({
     where: {
       active: true,
@@ -2884,6 +2940,16 @@ export async function getActiveEvents(): Promise<ChallengeEventListItem[]> {
         where: {
           visibleAt: { lte: new Date() },
           status: { not: ChallengeStatus.Cancelled },
+          // Block/hide gate — drop user challenges whose creator the viewer blocked/hid.
+          // System/mod event challenges are exempt via the source OR-branch.
+          ...(excludedUserIds.length > 0
+            ? {
+                OR: [
+                  { source: { not: ChallengeSource.User } },
+                  { createdById: { notIn: excludedUserIds } },
+                ],
+              }
+            : {}),
         },
         orderBy: { startsAt: 'asc' },
         select: {
@@ -3456,6 +3522,10 @@ export async function getCompletedChallengesWithWinners(
       ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
+
+  // Block/hide gate — parity with the feed. System/mod challenges exempt.
+  const blockSql = challengeCreatorBlockSql(await getChallengeExcludedUserIds(currentUserId));
+  if (blockSql) conditions.push(blockSql);
 
   // Content level filter — parity with the feed: exclude a challenge whose REAL cover image level
   // doesn't intersect the viewer's effective (green-capped) browsing level, rather than trusting

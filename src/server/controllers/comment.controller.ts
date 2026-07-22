@@ -18,11 +18,14 @@ import {
   getCommentById,
   getCommentReactions,
   getComments,
+  getPinnedComments,
   toggleHideComment,
+  togglePinComment,
   updateCommentById,
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
+import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -50,8 +53,20 @@ export const getCommentsInfiniteHandler = async ({
     select: getAllCommentsSelect,
   });
 
-  const commentIds = comments.map((c) => c.id);
-  if (commentIds.length === 0) return { comments: [], nextCursor: undefined };
+  let nextCursor: number | undefined;
+  if (comments.length > input.limit) {
+    const nextItem = comments.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  // Pinned comments surface at the top of the first page only.
+  const pinnedComments = !input.cursor
+    ? await getPinnedComments({ input, user, select: getAllCommentsSelect })
+    : [];
+
+  const allComments = [...pinnedComments, ...comments];
+  const commentIds = allComments.map((c) => c.id);
+  if (commentIds.length === 0) return { comments: [], nextCursor };
 
   const counts = await dbRead.$queryRaw<{ id: number; count: number }[]>`
     SELECT
@@ -63,15 +78,9 @@ export const getCommentsInfiniteHandler = async ({
   `;
   const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
 
-  let nextCursor: number | undefined;
-  if (comments.length > input.limit) {
-    const nextItem = comments.pop();
-    nextCursor = nextItem?.id;
-  }
-
   return {
     nextCursor,
-    comments: comments.map((c) => ({
+    comments: allComments.map((c) => ({
       ...c,
       _count: { comments: countsMap[c.id] ?? 0 },
     })),
@@ -103,6 +112,21 @@ export const upsertCommentHandler = async ({
     await throwOnBlockedLinkDomain(input.content);
     const { ownerId, locked } = ctx;
     const { modelId } = input;
+
+    if (!input.commentId && !ctx.user.isModerator) {
+      const parentAuthorId = input.parentId
+        ? (
+            await dbRead.comment.findUnique({
+              where: { id: input.parentId },
+              select: { userId: true },
+            })
+          )?.userId
+        : undefined;
+      await throwIfBlockedByOwners({
+        userId: ctx.user.id,
+        ownerIds: [ownerId, parentAuthorId],
+      });
+    }
 
     // Get model and at least 2 version to confirm access.
     // If model has 1 version, check access to that version. Otherwise, ignore.
@@ -172,6 +196,24 @@ export const toggleHideCommentHandler = async ({
 }) => {
   try {
     await toggleHideComment({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator ?? false,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const togglePinCommentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    await togglePinComment({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator ?? false,

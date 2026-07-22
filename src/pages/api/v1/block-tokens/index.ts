@@ -483,6 +483,17 @@ async function tryDevTunnelScopedMint(args: {
  * SCOPED, forced-SFW, self-bound, budget-capped dev token for that case, reusing the
  * IDENTICAL audited clamp + budget + sign belt as the ephemeral path.
  *
+ * PRODUCT INTENT (confirmed — this is NOT a suspension bypass or a bug): a suspended
+ * (or pending / deprecated) app is DELIBERATELY still runnable by its OWNER, in the
+ * owner's OWN dev tunnel ONLY — never publicly. Suspension blocks the PUBLIC listing +
+ * public run, NOT the owner's own dev-tunnel dogfood: the owner must be able to keep
+ * iterating on / diagnosing a suspended app to get it back into review. The action is
+ * fully contained — self-bound (owner spends only their own Buzz), forced-SFW,
+ * dev-budget-capped, tunnel- AND flag-gated, NON-public, with no cross-user spend and no
+ * bounty attribution (the runtime row self-voids), and scope power bounded to the prior
+ * moderator-`approvedScopes` snapshot (never the re-published manifest). A future
+ * reader/moderator should NOT mistake this for a suspension escape hatch.
+ *
  * SECURITY INVARIANTS (ALL required — a failure of any → 'continue' → the SAME bare
  * 404, no oracle, no mint):
  *   1. OWNERSHIP — `resolveOwnedNonApprovedPageBlock` enforces `app.userId === caller`
@@ -570,6 +581,16 @@ async function tryDevTunnelOwnedNonApprovedMint(args: {
   // SCOPE SOURCE = the app's APPROVED SNAPSHOT (moderator-reviewed, pinned) — NEVER
   // the raw manifest. Clamped through the SAME tunnel belt as the ephemeral path
   // (TUNNEL allowlist, no OAuth ceiling, no widening; force-adds user:read:self).
+  //
+  // 🔴 LOAD-BEARING INVARIANT — the spend safety of this whole branch rests on:
+  //   `approvedScopes` is non-empty  ⟹  the app was moderator-approved at some point.
+  // `approvedScopes` is written ONLY by the mod-approval flow (it snapshots the scopes a
+  // moderator signed off on). A NEVER-approved app therefore has `approvedScopes = []`,
+  // and `clampTunnelDeclaredScopes([])` cannot invent `ai:write:budgeted` — so its dev
+  // token is READ-ONLY and can spend NOTHING. That is the only thing stopping this branch
+  // from minting a spend-capable token for an app no moderator ever vetted. Any future
+  // code that writes `approvedScopes` OUTSIDE the mod-approval flow (e.g. copying the raw
+  // manifest scopes into it) would silently break dev-tunnel spend safety here.
   const granted = clampTunnelDeclaredScopes(app.approvedScopes);
   // BUDGET = the manifest's page.buzzBudgetPerGen (clamped to the dev cap), defaulting
   // as the ephemeral path when absent. Only meaningful if ai:write:budgeted survived.

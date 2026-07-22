@@ -1543,14 +1543,15 @@ export const getModelVersionsMicro = async ({
       name: true,
       index: true,
       earlyAccessEndsAt: true,
+      earlyAccessPermanent: true,
       createdAt: true,
       publishedAt: true,
     },
   });
 
-  return versions.map(({ earlyAccessEndsAt, ...v }) => ({
+  return versions.map(({ earlyAccessEndsAt, earlyAccessPermanent, ...v }) => ({
     ...v,
-    isEarlyAccess: earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt),
+    isEarlyAccess: earlyAccessPermanent || (!!earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt)),
   }));
 };
 

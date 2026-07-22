@@ -39,11 +39,11 @@ export function FeeSection({
           {numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} Buzz submission fee
         </Text>
         <Text size="xs" c="dimmed">
-          Charged when you submit for review.{' '}
+          Charged when you submit for review. If we ask for changes, you can revise and resubmit at{' '}
           <Text span fw={700} c="dimmed">
-            Non-refundable
+            no extra cost
           </Text>
-          , even if the item isn&apos;t approved.
+          . The fee only applies once your item is accepted or rejected for a policy violation.
         </Text>
         {!canAffordFee && (
           <Text size="xs" c="red" fw={600} mt={4}>

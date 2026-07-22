@@ -39,7 +39,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
             <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
               <CreateComment key={activeComment?.id} borderless />
               {data?.map((comment) => (
-                <Comment key={comment.id} comment={comment} borderless />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={userId} borderless />
               ))}
               {showMore && (
                 <Center>
@@ -49,7 +49,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
                 </Center>
               )}
               {created.map((comment) => (
-                <Comment key={comment.id} comment={comment} borderless />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={userId} borderless />
               ))}
             </Stack>
           </Stack>

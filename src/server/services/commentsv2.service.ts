@@ -10,6 +10,7 @@ import type {
   GetCommentsInfiniteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import type { NsfwLevel } from '~/server/common/enums';
 import { ThreadSort } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -49,14 +50,114 @@ export async function getJudgeCommentForImage({
   return result[0]?.content ?? null;
 }
 
+/**
+ * Resolve the owner (creator) userId of the entity a comment thread hangs off of, so callers
+ * can tell whether the current viewer is looking at engagement on their OWN content. Returns
+ * null for entity types we can't cheaply resolve — callers treat that as "not the owner",
+ * which keeps the anti-harassment `blockedByUsers` exclusion in place (the safe default).
+ */
+export async function getThreadEntityOwnerId({
+  entityType,
+  entityId,
+}: {
+  entityType: CommentConnectorInput['entityType'];
+  entityId: number;
+}): Promise<number | null> {
+  const findUserId = async (row: Promise<{ userId: number | null } | null>) =>
+    (await row)?.userId ?? null;
+
+  switch (entityType) {
+    case 'image':
+      return findUserId(
+        dbRead.image.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'post':
+      return findUserId(
+        dbRead.post.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'model':
+      return findUserId(
+        dbRead.model.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'article':
+      return findUserId(
+        dbRead.article.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'bounty':
+      return findUserId(
+        dbRead.bounty.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'bountyEntry':
+      return findUserId(
+        dbRead.bountyEntry.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'review':
+      return findUserId(
+        dbRead.resourceReview.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'comment':
+      return findUserId(
+        dbRead.commentV2.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'question':
+      return findUserId(
+        dbRead.question.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'answer':
+      return findUserId(
+        dbRead.answer.findUnique({ where: { id: entityId }, select: { userId: true } })
+      );
+    case 'challenge': {
+      const row = await dbRead.challenge.findUnique({
+        where: { id: entityId },
+        select: { createdById: true },
+      });
+      return row?.createdById ?? null;
+    }
+    case 'comicChapter': {
+      const row = await dbRead.comicChapter.findUnique({
+        where: { id: entityId },
+        select: { project: { select: { userId: true } } },
+      });
+      return row?.project?.userId ?? null;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether `userId` owns the entity this comment thread hangs off of. Skips the lookup unless a
+ * viewer is present AND has a non-empty blocked-by list — dropping `blockedByUsers` only
+ * matters (and only for the owner) in that case, so the extra query stays off the hot path for
+ * everyone else.
+ */
+export async function isViewerContentOwner({
+  entityType,
+  entityId,
+  userId,
+  blockedByUsers,
+}: {
+  entityType: CommentConnectorInput['entityType'];
+  entityId: number;
+  userId?: number;
+  blockedByUsers: number[];
+}): Promise<boolean> {
+  if (!userId || !blockedByUsers.length) return false;
+  const ownerId = await getThreadEntityOwnerId({ entityType, entityId });
+  return ownerId === userId;
+}
+
 export const upsertComment = async ({
   userId,
   entityType,
   entityId,
   parentThreadId,
+  isModerator,
   ...data
-}: UpsertCommentV2Input & { userId: number }) => {
+}: UpsertCommentV2Input & { userId: number; isModerator?: boolean }) => {
   await throwOnBlockedLinkDomain(data.content);
+  if (!data.id) await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
   // only check for threads on comment create
   let thread = await dbWrite.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
@@ -161,10 +262,7 @@ export async function bulkSetCommentV2TosViolation({
 
     await Promise.allSettled(
       reports.map((report) =>
-        reportAcceptedReward.apply(
-          { userId: report.userId, reportId: report.id },
-          { ip: actor.ip }
-        )
+        reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip: actor.ip })
       )
     );
 
