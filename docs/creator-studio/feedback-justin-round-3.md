@@ -21,14 +21,14 @@ Captured 2026-07-16, spanning **Dashboard / Models / Earnings / Analytics / Sett
 ## Earnings
 - [x] **E1 — Surface licensing fees.** Added an **"Earned by source" cards row** (License fees / Tips / Compensation / Access / Cosmetic, buzz-summed) so sources are legible, not just currency.
 - [x] **E2 — Cash panel contrast.** Green panel now uses **white values + light-green labels** (was gray-on-green).
-- [ ] **E3 — Month selector. 🔧** Add the ability to **jump to specific months** (like the Buzz dashboard) for month-over-month, instead of only rolling 7/30/90-day windows. *(Data-layer change: date-range queries instead of last-N-days.)*
+- [x] **E3 — Month selector.** ✅ Reworked into a **month-primary** model — earnings + every analytics tab use two month pickers (Month + Compare); the 7/30/90-day presets are gone (`parseMonthRange`/`resolveCompareMonth`).
 - [x] **E4 — Chart source filter.** Trend chart is now **per-source** with **toggle chips** (server series switched to per-source, buzz-only).
-- [ ] **E5 — Per-model earnings. 🚧** Blocked on A1 Part 2 (owner-keyed rollup); the in-spoke fallback is scoped ([shop/analytics plans]) but paused. Reference the Buzz dashboard's per-model impl when built.
+- [x] **E5 — Per-model earnings.** ✅ Owner-stamping shipped; `/analytics/models` per-model table + `/analytics/models/[modelId]` per-version drill-down (`getModelEarnings`/`getModelPerformance`).
 
 ## Analytics
 - [x] **A1 — Synced tooltip.** The crosshair now **drives each chart's tooltip** at the hovered index (via `createSyncedCrosshair`'s new `syncTooltip`), so one hover shows the value on every chart.
 - [x] **A2 — Top-images thumbnails.** Replaced the ID table with a **thumbnail grid** (CF url + reaction overlay, NSFW-blurred; `topImages` enriched with `url`/`nsfwLevel` from Postgres).
 
 ## Settings
-- [ ] **S1 — Fee defaults for v1? 🟢** Decision (revisits round-2 #17 / B9): let creators set **default fees that seed new versions** as they publish. In or out for v1?
+- [~] **S1 — Fee defaults for v1?** **Decided: OUT for v1** (2026-07-22, per Briant) — not doing default fees that seed new versions. (A static per-type suggested-fee *reference* shipped instead — see round-1 2.3.)
 - [ ] **S2 — Per-ecosystem fee rules. ⏭** "Always charge X for my Anima LoRAs / Pony LoRAs" — per-base-model/ecosystem default **rules**. Net-new system; explicitly a **later** follow-up (achievable today via bulk-edit + M3/M4 filters in the meantime).

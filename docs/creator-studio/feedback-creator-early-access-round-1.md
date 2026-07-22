@@ -20,12 +20,15 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
 
 - [x] **2.1 — Rename (it only handles license fees)** ✅ — nav + heading + dashboard card now say "Licensing"
       (route stays `/models`).
-- [ ] **2.2 — Easier bulk control of license fees** 🔴 — the core pain for a 381-model creator. A bulk mode exists
-      (Option C multi-select), but they want a spreadsheet-style table. Real build.
-- [ ] **2.3 — Spreadsheet table (base model · type · Civitai reference price · your price) + recommended default**
-      🔴 (table) / 🟢 (static reference) — the full edit-in-place table is large. A *static* per-type suggested
-      default (LoRA 0.1 / checkpoint 1) as a reference column is small, but **none exists in the repo yet**; a
-      *data-driven* "average fee across Civitai" is 🟡 (cross-creator query).
+- [x] **2.2 — Easier bulk control of license fees** ✅ — CSV round-trip: **Export CSV** (filtered to the current
+      view) → edit the single per-image `fee` column in Excel/Sheets → **Import CSV** with a dry-run preview
+      (before→after diff + skipped rows with reasons) before anything is written. Alongside the existing bulk
+      multi-select + base-model/type filters + page size. (Chose the spreadsheet download over an in-browser grid —
+      more powerful for the 381-model creator, no fragile client state.)
+- [x] **2.3 — Recommended fee reference + spreadsheet** ✅ — static per-type **suggested fee** (Checkpoint 1 ⚡/img,
+      LoRA-scale 1 ⚡/10 img) shown in the fee editor + bulk bar (one-click apply) and as a read-only `recommendedFee`
+      column in the export CSV. A descriptive *crowd-median* was prototyped then dropped — it anchored fees upward
+      (real median ≈ 3 ⚡/img, higher than desired). The full edit-in-place grid was superseded by the CSV (2.2).
 
 ## 3. Earnings
 
@@ -34,9 +37,8 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
       calendar correspondence. (Released-model markers not done — separate item.)
 - [ ] **3.2 — "The more I look at Earnings, the more confusing it becomes"** 💬 — vague; the concrete asks below
       (3.3–3.5) plus 3.1 are the actionable parts. Revisit overall IA after those land.
-- [ ] **3.3 — Option to see Green + Yellow Buzz combined** 🟢💬 — trivial to sum (both convert to cash), but it
-      revisits the deliberate "never merge currencies" decision (B8). Plan: add an **optional combined toggle**, not
-      a replacement. Needs a quick product yes/no.
+- [x] **3.3 — Option to see Green + Yellow Buzz combined** ✅ — the "By source" table has a Split↔**Combined** toggle;
+      Combined collapses every buzz currency into one **Total Buzz** column. Split stays the default (B8).
 - [x] **3.4 — Monthly performance table (this month vs others)** ✅ — last-12-months table on `/earnings`
       (`getMonthlyEarnings`, `GROUP BY month` on owner-keyed `buzzTransactions`), currencies split, current month
       highlighted, each cell showing a % delta vs the same currency the month before. Independent of the range
@@ -62,7 +64,9 @@ Effort tiers reflect the current codebase (verified 2026-07-17): the Chart wrapp
       A model-id input jumps to another model; reached by clicking a model in the per-model performance table.
 - [x] **4.6 — Compare base models (creator-specific)** ✅ — `/analytics/base-models` tab (`getBaseModelPerformance`):
       the creator's generations / downloads / buzz grouped by base model, with % deltas + model counts. The
-      **Civitai-wide** base-model trend (platform usage) is still open — needs a global, non-owner-scoped query.
+      **Civitai-wide** base-model trend (platform usage) is now shipped too ✅ — a top-N platform trend chart with a
+      comparison-month overlay + localStorage base-model toggles (`getBaseModelTrends`, joins `civitai_pg.ModelVersion`).
+      Caveats + ecosystem-rollup follow-up captured in `base-model-analytics-notes.md`.
 
 ## 5. Generic
 

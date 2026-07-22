@@ -134,8 +134,9 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
   Add a per-account hide toggle (user-settings JSON) + one service-side filter, plus a bulk-deactivate-old-goals
   mutation + button. **Watch-out:** don't deactivate EA goals still inside their EA window. (Transcript had Justin
   "clarifying" — ClickUp shows it scoped and owned by him.) (`T:467`)
-- [ ] **[justin]** **CSV export of buzz transactions** — `CU:868ke491n` (Justin, priority **low**). Creator-studio-
-  tagged; not discussed in the transcript.
+- [~] **[justin]** **CSV export of buzz transactions** — `CU:868ke491n` (Justin, priority **low**). **Won't build in
+  the spoke** (2026-07-22, per Briant): buzz-transaction CSV export was recently added to the **main app**, so
+  duplicating it in Creator Studio isn't warranted.
 
 ## vNext (post-V1 — milestone `868ke495b`)
 
