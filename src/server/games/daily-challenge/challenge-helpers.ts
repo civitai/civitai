@@ -435,17 +435,24 @@ export type CreateChallengeInput = {
 export async function createChallengeCollection(input: {
   title: string;
   description?: string;
-  userId: number;
+  judgeId?: number | null;
   startsAt: Date;
   endsAt: Date;
   maxEntriesPerUser: number;
   allowedNsfwLevel?: number; // Bitwise NSFW levels (default 1 = PG only)
 }): Promise<number> {
+  // Dynamic import: this file -> challenge-collection-owner -> daily-challenge.utils imports
+  // closeChallengeCollection etc. back from this file, so a static import here is a require cycle.
+  const { resolveChallengeCollectionOwnerId } = await import(
+    '~/server/games/daily-challenge/challenge-collection-owner'
+  );
+  const userId = await resolveChallengeCollectionOwnerId(input.judgeId);
+
   const collection = await dbWrite.collection.create({
     data: {
       name: `Challenge: ${input.title}`,
       description: input.description || `Entries for challenge: ${input.title}`,
-      userId: input.userId,
+      userId,
       mode: CollectionMode.Contest,
       metadata: {
         maxItemsPerUser: input.maxEntriesPerUser,
@@ -702,7 +709,7 @@ export async function createChallengeWithCollection(
   const collectionId = await createChallengeCollection({
     title: input.title,
     description: input.description,
-    userId: input.createdById,
+    judgeId: input.judgeId,
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     maxEntriesPerUser: input.maxEntriesPerUser ?? 20,
