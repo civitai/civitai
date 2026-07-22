@@ -1,5 +1,9 @@
 <script lang="ts">
   import * as Table from '@civitai/ui/components/ui/table/index.js';
+  import { Chart } from '@civitai/ui/components/ui/chart/index.js';
+  import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
+  import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
+  import { chartType } from '$lib/stores/chart-type';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import {
     IconArrowUp,
@@ -10,7 +14,8 @@
   } from '@tabler/icons-svelte';
   import { page } from '$app/state';
   import { setSortParam, setPageParam, pageWindow } from '$lib/table-nav';
-  import { formatRange } from '$lib/date-range';
+  import { formatRange, eachDayIso, shiftIso, dayDiff } from '$lib/date-range';
+  import { baseModelTrendSelection } from '$lib/stores/base-model-trend';
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import type { PageData } from './$types';
 
@@ -18,6 +23,97 @@
   const num = (n: number) => n.toLocaleString();
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
   const PER_PAGE = 25;
+
+  // Civitai-wide base-model popularity (4.6): pick base models to compare; each draws a solid current-month line
+  // plus a dashed comparison-month line (aligned day-for-day). The creator's own base models are starred, and the
+  // selection persists to localStorage.
+  const TREND_COLORS = [
+    '#4dabf7', '#f783ac', '#ffa94d', '#69db7c', '#a78bfa', '#63e6be', '#ff8787', '#ffd43b', '#4dd4c4', '#e599f7',
+    '#74c0fc', '#faa2c1', '#ffc078', '#8ce99a', '#b197fc', '#96f2d7', '#ffa8a8', '#ffe066', '#66d9e8', '#eebefa',
+  ];
+  const DEFAULT_SHOWN = 6;
+  const mmdd = (d: string) => (d.length >= 10 ? d.slice(5, 10) : d);
+  let trendMetric = $state<'generations' | 'downloads'>('generations');
+  const trends = $derived(data.platformTrends ?? []);
+  const ownSet = $derived(new Set(data.ownBaseModels ?? []));
+  const compareByBase = $derived(
+    new Map((data.platformTrendsCompare ?? []).map((t) => [t.baseModel, t]))
+  );
+  // The togglable universe (top platform base models this month). Effective selection = saved picks that still
+  // exist this month, else the top few.
+  const universe = $derived(trends.map((t) => t.baseModel));
+  const selected = $derived.by(() => {
+    const saved = $baseModelTrendSelection.filter((bm) => universe.includes(bm));
+    return saved.length ? saved : universe.slice(0, DEFAULT_SHOWN);
+  });
+  // Colour keyed to a base model's position in the selected set, so its chip dot matches its line.
+  const colorOf = $derived(new Map(selected.map((bm, i) => [bm, TREND_COLORS[i % TREND_COLORS.length]])));
+  const shownTrends = $derived(
+    selected
+      .map((bm) => trends.find((t) => t.baseModel === bm))
+      .filter((t): t is (typeof trends)[number] => t != null)
+  );
+
+  // Full-month x-axis so a partial current month still renders whole; each line stops at `through` (last day with
+  // data) rather than dropping to zero for days that haven't happened.
+  const trendDates = $derived(eachDayIso(data.range));
+  const compareDelta = $derived(dayDiff(data.range.from, data.compare.from));
+  const trendData = $derived.by(() => {
+    const current = shownTrends.map((t) => {
+      const color = colorOf.get(t.baseModel);
+      const byDate = new Map(t.points.map((p) => [p.date, p[trendMetric]]));
+      const own = ownSet.has(t.baseModel);
+      return {
+        label: own ? `★ ${t.baseModel}` : t.baseModel,
+        data: trendDates.map((d) => (d <= data.through ? (byDate.get(d) ?? 0) : null)),
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: own ? 2.75 : 1.5,
+        tension: 0.3,
+        fill: false,
+        pointRadius: 0,
+      };
+    });
+    const compare = shownTrends.map((t) => {
+      const color = colorOf.get(t.baseModel);
+      const byDate = new Map((compareByBase.get(t.baseModel)?.points ?? []).map((p) => [p.date, p[trendMetric]]));
+      return {
+        type: 'line' as const,
+        label: `${t.baseModel} (${data.compare.label})`,
+        data: trendDates.map((d) => {
+          const cd = shiftIso(d, compareDelta);
+          return cd <= data.compare.to ? (byDate.get(cd) ?? 0) : null;
+        }),
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 1.25,
+        borderDash: [4, 4],
+        tension: 0.3,
+        fill: false,
+        pointRadius: 0,
+      };
+    });
+    return { labels: trendDates.map(mmdd), datasets: [...current, ...compare] };
+  });
+  const trendHasData = $derived(trends.length > 0);
+  // Legend shows only the solid current-month lines — the dashed comparison twins would just double every entry.
+  const trendOptions = $derived({
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index' as const, intersect: false },
+    plugins: {
+      legend: {
+        display: true,
+        position: 'bottom' as const,
+        labels: {
+          boxWidth: 12,
+          font: { size: 11 },
+          filter: (item: { datasetIndex?: number }) => (item.datasetIndex ?? 0) < shownTrends.length,
+        },
+      },
+    },
+    scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true, maxRotation: 0 } }, y: { beginAtZero: true } },
+  });
 
   const currencies = $derived(
     data.baseModels
@@ -49,10 +145,72 @@
   const pageRows = $derived(sorted.slice((curPage - 1) * PER_PAGE, curPage * PER_PAGE));
 </script>
 
+{#if trendHasData}
+  <div class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <p class="text-sm text-dark-2">
+        Civitai-wide base-model usage
+        <span class="text-xs text-dark-3">
+          · {trendMetric} {periodLabel} · dashed = {data.compare.label} · ★ marks yours
+        </span>
+      </p>
+      <div class="flex flex-wrap items-center gap-2">
+        <ToggleGroup
+          type="single"
+          value={trendMetric}
+          onValueChange={(v: string) => {
+            if (v) trendMetric = v as 'generations' | 'downloads';
+          }}
+          variant="outline"
+          size="sm"
+        >
+          <ToggleGroupItem value="generations" class="text-xs">Generations</ToggleGroupItem>
+          <ToggleGroupItem value="downloads" class="text-xs">Downloads</ToggleGroupItem>
+        </ToggleGroup>
+        <ChartTypeToggle />
+      </div>
+    </div>
+
+    <ToggleGroup
+      type="multiple"
+      value={selected}
+      onValueChange={(v: string[]) => baseModelTrendSelection.set(v)}
+      variant="outline"
+      size="sm"
+      spacing={1.5}
+      class="mb-3 flex-wrap"
+    >
+      {#each universe as bm (bm)}
+        {@const color = colorOf.get(bm)}
+        <ToggleGroupItem value={bm} class="gap-1.5 text-xs">
+          <span
+            class="inline-block h-2 w-2 rounded-full"
+            style="background:{color ?? 'transparent'};border:1px solid {color ?? '#4a4a4a'}"
+          ></span>
+          {ownSet.has(bm) ? `★ ${bm}` : bm}
+        </ToggleGroupItem>
+      {/each}
+    </ToggleGroup>
+
+    {#if shownTrends.length > 0}
+      <div class="h-72">
+        {#key $chartType}
+          <Chart type={$chartType} data={trendData} options={trendOptions} class="h-full" />
+        {/key}
+      </div>
+    {:else}
+      <div class="flex h-40 items-center justify-center text-center text-sm text-dark-3">
+        Pick one or more base models to compare.
+      </div>
+    {/if}
+  </div>
+{/if}
+
 {#if data.baseModels && data.baseModels.length > 0}
   <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-3 text-sm text-dark-2">
-      Performance by base model <span class="text-xs text-dark-3">{periodLabel} · click a column to sort</span>
+    <p class="text-sm font-medium text-white">Your base models</p>
+    <p class="mb-3 text-xs text-dark-3">
+      Your own generations, downloads &amp; earnings by base model {periodLabel} · click a column to sort
     </p>
     {#snippet sortHead(key: string, label: string)}
       {@const active = sortKey === key}
@@ -174,6 +332,6 @@
   <div class="placeholder">Base-model performance is temporarily unavailable — please try again shortly.</div>
 {:else}
   <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-    <strong class="text-dark-2">Base models</strong> — no model activity {periodLabel} yet.
+    <strong class="text-dark-2">Your base models</strong> — no model activity {periodLabel} yet.
   </div>
 {/if}
