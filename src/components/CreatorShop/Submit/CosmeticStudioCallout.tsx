@@ -40,7 +40,7 @@ export function CosmeticStudioCallout() {
             Don&apos;t have cosmetic artwork yet?
           </Text>
           <Text size="xs" c="dimmed">
-            Design one that meets the standards in the free Cosmetic Studio, then upload it here.
+            Design one that meets the standards in the Cosmetic Studio, then upload it here.
           </Text>
         </Stack>
         <Button
