@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
+  import { SvelteSet } from 'svelte/reactivity';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -136,7 +137,8 @@
 
   // --- Bulk mode ---
   const bulkMode = $derived(data.canSetFee && page.url.searchParams.get('mode') === 'bulk');
-  let selected = $state<Set<number>>(new Set());
+  // A reactive Set — in-place add/delete/clear stay fine-grained (no reassign-to-mutate).
+  const selected = new SvelteSet<number>();
   // Bulk editor defaults to 1 ⚡ per DEFAULT_FEE_IMAGES (10) images.
   let bulkBuzz = $state<number | undefined>(1);
   let bulkImages = $state(String(DEFAULT_FEE_IMAGES));
@@ -147,22 +149,26 @@
 
   // Leaving bulk mode (Cancel, or any URL change that drops ?mode=bulk) discards a pending selection.
   $effect(() => {
-    if (!bulkMode && selected.size > 0) selected = new Set();
+    if (!bulkMode && selected.size > 0) selected.clear();
   });
 
   function toggleVersion(id: number) {
-    const next = new Set(selected);
-    next.has(id) ? next.delete(id) : next.add(id);
-    selected = next;
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
   }
   function allSelected(model: CreatorModel) {
     return model.versions.length > 0 && model.versions.every((v) => selected.has(v.id));
   }
   function toggleModel(model: CreatorModel) {
-    const next = new Set(selected);
     const all = allSelected(model);
-    for (const v of model.versions) all ? next.delete(v.id) : next.add(v.id);
-    selected = next;
+    for (const v of model.versions) {
+      if (all) selected.delete(v.id);
+      else selected.add(v.id);
+    }
+  }
+  function selectAll(ids: number[]) {
+    selected.clear();
+    for (const id of ids) selected.add(id);
   }
 
   const setFeeEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
@@ -235,7 +241,7 @@
     if (event.result.type === 'success') {
       const n = Number(event.result.data?.updated ?? 0);
       toast.success(`Updated ${n} version${n === 1 ? '' : 's'}`);
-      selected = new Set();
+      selected.clear();
     } else if (event.result.type === 'failure') {
       toast.error(String(event.result.data?.error ?? 'Failed'));
     }
@@ -493,14 +499,14 @@
       <Button
         variant="outline"
         size="xs"
-        onclick={() => (selected = new Set(data.matchingVersionIds))}
+        onclick={() => (selectAll(data.matchingVersionIds))}
         title="Select every version matching the current filters (all pages)"
       >
         Select all {data.matchingVersionIds.length}
       </Button>
     {/if}
     {#if selected.size > 0}
-      <Button variant="outline" size="xs" onclick={() => (selected = new Set())}>Clear</Button>
+      <Button variant="outline" size="xs" onclick={() => selected.clear()}>Clear</Button>
     {/if}
     <form bind:this={bulkForm} method="POST" action="?/bulkSetFee" use:enhance={bulkEnhance} class="contents">
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
