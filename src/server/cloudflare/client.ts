@@ -45,7 +45,17 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
   );
 
   const tasks = chunk(urls, PURGE_BATCH_SIZE).map((files) => async () => {
-    client.zones.purgeCache(env.CF_ZONE_ID!, { files });
+    // Await the CF call so its outcome is reflected in the promise the
+    // concurrency helper awaits — an un-awaited call resolves the task
+    // immediately and any rejection (429 / timeout / auth) escapes as an
+    // unhandled promise rejection. Kept best-effort: a batch failure is logged
+    // and swallowed here so it never propagates to callers (purgeCache is
+    // fire-and-forget for every caller) and doesn't abort the remaining batches.
+    try {
+      await client.zones.purgeCache(env.CF_ZONE_ID!, { files });
+    } catch (error) {
+      log('Failed to purge', files.length, 'URLs from Cloudflare', error);
+    }
   });
   let purged = 0;
   await limitConcurrency(tasks, {

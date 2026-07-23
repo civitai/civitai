@@ -88,7 +88,9 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
-  ingestModelById: vi.fn(),
+  // publish runs `ingestModelById(...).catch(...)` fire-and-forget, so the mock
+  // must return a promise.
+  ingestModelById: vi.fn().mockResolvedValue(undefined),
   updateModelLastVersionAt: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({
@@ -109,6 +111,7 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocations: vi.fn() })
 
 import {
   deleteVersionById,
+  publishModelVersionById,
   unpublishModelVersionById,
 } from '~/server/services/model-version.service';
 
@@ -192,6 +195,11 @@ describe('deleteVersionById — by-hash edge-cache purge', () => {
     expect(mockPurgeCache).not.toHaveBeenCalled();
   });
 
+  // Defensive guard test: post-fix, purgeCache swallows Cloudflare failures
+  // internally (see client.purgeCache.test.ts), so a real CF error no longer
+  // rejects to this caller. This still guards the caller against the by-hash
+  // helper throwing for any OTHER reason (getBaseUrl, hash resolution, etc.) —
+  // a purge-path throw must never fail the already-committed delete.
   it('does not fail the delete if the purge throws (best-effort)', async () => {
     stubDeleteRows([{ url: 'https://b2/model/7/a.safetensors', hashes: ['ABC123'] }]);
     mockPurgeCache.mockRejectedValue(new Error('cloudflare down'));
@@ -235,6 +243,9 @@ describe('unpublishModelVersionById — by-hash edge-cache purge', () => {
     );
   });
 
+  // Defensive guard test (see the delete equivalent above): purgeCache swallows
+  // Cloudflare failures internally now, so this asserts the caller stays
+  // best-effort against any other throw from the purge path.
   it('does not fail the unpublish if the purge throws (best-effort)', async () => {
     stubUnpublish();
     mockPurgeCache.mockRejectedValue(new Error('cloudflare down'));
@@ -243,6 +254,70 @@ describe('unpublishModelVersionById — by-hash edge-cache purge', () => {
       id: VERSION_ID,
       user: { id: USER_ID } as never,
     });
+
+    expect(result).toMatchObject({ id: VERSION_ID });
+    expect(mockPurgeCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('publishModelVersionById — by-hash edge-cache purge', () => {
+  // The highest-frequency mutation path. Publishing evicts any cached by-hash
+  // 404 so the freshly-published version resolves immediately. Rows still exist
+  // on publish, so hashes are resolved via modelFileHash.findMany.
+  function stubPublish() {
+    // currentVersion read (findUniqueOrThrow, then post-tx reads use dbWrite).
+    mockDb.modelVersion.findUniqueOrThrow.mockResolvedValue({
+      id: VERSION_ID,
+      name: 'v1',
+      baseModel: 'SD 1.5',
+      earlyAccessConfig: null,
+      model: {
+        userId: USER_ID,
+        name: 'model',
+        availability: 'Public',
+        publishedAt: new Date('2020-01-01'), // already published → skip Model update
+        nsfw: false,
+        meta: {},
+      },
+    });
+    // In-transaction update returns the shape the post-commit code reads.
+    mockDb.modelVersion.update.mockResolvedValue({
+      id: VERSION_ID,
+      modelId: MODEL_ID,
+      baseModel: 'SD 1.5',
+      model: { userId: USER_ID, id: MODEL_ID, type: 'Checkpoint', nsfw: false },
+    });
+    mockDb.$executeRaw.mockResolvedValue(0);
+    mockDb.post.findMany.mockResolvedValue([]);
+    mockDb.image.findMany.mockResolvedValue([]);
+    // Rows still exist on publish — resolved by-hash via modelFileHash.findMany.
+    mockDb.modelFileHash.findMany.mockResolvedValue([{ hash: 'CAFED00D' }]);
+  }
+
+  it('resolves the version hashes and purges the by-hash URL(s) on publish', async () => {
+    stubPublish();
+
+    await publishModelVersionById({ id: VERSION_ID });
+
+    expect(mockDb.modelFileHash.findMany).toHaveBeenCalledWith({
+      where: { file: { modelVersionId: VERSION_ID } },
+      select: { hash: true },
+    });
+    expect(mockPurgeCache).toHaveBeenCalledTimes(1);
+    const arg = mockPurgeCache.mock.calls[0][0] as { urls: string[] };
+    expect(new Set(arg.urls)).toEqual(
+      new Set([
+        'https://civitai.com/api/v1/model-versions/by-hash/CAFED00D',
+        'https://civitai.com/api/v1/model-versions/by-hash/cafed00d',
+      ])
+    );
+  });
+
+  it('does not fail the publish if the purge throws (best-effort)', async () => {
+    stubPublish();
+    mockPurgeCache.mockRejectedValue(new Error('cloudflare down'));
+
+    const result = await publishModelVersionById({ id: VERSION_ID });
 
     expect(result).toMatchObject({ id: VERSION_ID });
     expect(mockPurgeCache).toHaveBeenCalledTimes(1);
