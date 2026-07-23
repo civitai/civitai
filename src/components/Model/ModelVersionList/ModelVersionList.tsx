@@ -25,6 +25,7 @@ import classes from './ModelVersionList.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -78,7 +79,8 @@ export function ModelVersionList({
       if (!el || !viewport) return;
 
       const startPad = 40;
-      const delta = el.getBoundingClientRect().left - viewport.getBoundingClientRect().left - startPad;
+      const delta =
+        el.getBoundingClientRect().left - viewport.getBoundingClientRect().left - startPad;
       if (delta !== 0) viewport.scrollBy({ left: delta, behavior: 'smooth' });
     });
 
@@ -246,6 +248,7 @@ export function ModelVersionList({
                 active={active}
                 published={published}
                 canGenerate={version.canGenerate}
+                generationDisabled={isGenerationDisabled(version.flags ?? 0)}
                 showToggleCoverage={showToggleCoverage}
               />
             </Button.Group>

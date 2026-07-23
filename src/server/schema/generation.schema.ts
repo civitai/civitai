@@ -24,18 +24,6 @@ import { imageSchema } from './image.schema';
 //   name: z.string(),
 // });
 
-export type GetGenerationResourcesInput = z.infer<typeof getGenerationResourcesSchema>;
-export const getGenerationResourcesSchema = z.object({
-  limit: z.number().default(10),
-  page: z.number().default(1),
-  query: z.string().optional(),
-  types: z.enum(ModelType).array().optional(),
-  notTypes: z.enum(ModelType).array().optional(),
-  ids: z.number().array().optional(),
-  baseModel: z.string().optional(),
-  supported: z.boolean().optional(),
-});
-
 /**
  * Operator-controlled generator config, persisted to Redis (hash field
  * `generation:ecosystem-config`). All GATING now lives in the gate-rules model

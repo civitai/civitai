@@ -431,8 +431,17 @@ export const deleteImageById = async ({
     ]);
 
     return image;
-  } catch {
-    // Ignore errors
+  } catch (error) {
+    // The row may already be gone from the DB while cleanup (search-index delete,
+    // cache busts, S3) failed — swallowing that silently leaves the image visible
+    // in search/feeds forever, which then 500s anything that FKs to it (reports).
+    await logToAxiom({
+      type: 'error',
+      name: 'delete-image-cleanup-failed',
+      message: 'deleteImageById failed; image may remain indexed',
+      imageId: id,
+      error: safeError(error),
+    }).catch(() => undefined);
   }
 };
 
@@ -452,7 +461,7 @@ export async function deleteImages(ids: number[], updatePosts = true) {
     const imageIds = results.map((x) => x.id);
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
-    const invalidateExistence = invalidateManyImageExistence(idsForPostUpdate);
+    const invalidateExistence = invalidateManyImageExistence(imageIds);
 
     await Promise.all([
       queueImageSearchIndexUpdate({

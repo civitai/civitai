@@ -55,6 +55,7 @@ export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersi
   nsfwLevel: true,
   earlyAccessEndsAt: true,
   createdAt: true,
+  flags: true,
   generationCoverage: { select: { covered: true } },
   trainedWords: true,
   baseModel: true,

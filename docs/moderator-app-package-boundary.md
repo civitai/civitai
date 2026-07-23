@@ -210,7 +210,7 @@ Verified closures, with two corrections to the sub-analyses:
 - Own tRPC client + session/feature-flags glue. Vendor-copy the COUPLED UI primitives.
 - Port the **7 Easy** pages first (to-ingest, rating-review, downleveled, ingestion-error, comics-review, strikes, training-data/index) as proof-of-concept.
 
-**Phase 4 — Medium pages**, then **Phase 5 — Hard pages** (`images`, `auditor`, `scanner-audit/[mode]/[label]`, `generation`, `generation-restrictions`) once their specific couplings (PromptHighlight ✅ already cleared, profanity ✅ cleared, scanner-content ✅ clean, `useUnsupportedResources`/`ResourceSelectHandler` modal-trigger, `UserGenerationsDrawer`) are addressed.
+**Phase 4 — Medium pages**, then **Phase 5 — Hard pages** (`images`, `auditor`, `scanner-audit/[mode]/[label]`, `generation-restrictions`) once their specific couplings (PromptHighlight ✅ already cleared, profanity ✅ cleared, scanner-content ✅ clean, `UserGenerationsDrawer`) are addressed. (`generation` ✅ removed — the page no longer exists.)
 
 ---
 

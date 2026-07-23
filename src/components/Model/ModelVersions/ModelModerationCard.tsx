@@ -11,6 +11,7 @@ import {
 import { useLocalStorage } from '@mantine/hooks';
 import { IconShieldCheck, IconShieldHalfFilled } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { getModelVersionFlagLabels } from '~/shared/constants/model-version-flags.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
@@ -19,7 +20,17 @@ import classes from './ModelVersionDetails.module.scss';
 // (minor/POI/nsfw flags, locked properties, profanity lock, unpublish/takedown)
 // that mods otherwise can't see since they bypass the enforcement filters.
 // Collapsible + persisted, styled to match the version-details card.
-export function ModelModerationCard({ modelId }: { modelId: number }) {
+//
+// `versionFlags` is the one VERSION-scoped input — the bitwise `ModelVersion.flags`
+// of the version currently selected on the page, not the model as a whole. Its
+// badges come from `modelVersionFlagLabels`, so a new flag surfaces here for free.
+export function ModelModerationCard({
+  modelId,
+  versionFlags,
+}: {
+  modelId: number;
+  versionFlags?: number;
+}) {
   const colorScheme = useComputedColorScheme('dark');
   const { data, isLoading } = trpc.moderator.models.getModerationDetail.useQuery({ id: modelId });
   const [open, setOpen] = useLocalStorage<string[]>({
@@ -35,6 +46,8 @@ export function ModelModerationCard({ modelId }: { modelId: number }) {
   if (data?.cannotPublish) flags.push({ label: 'Cannot publish', color: 'orange' });
   if (data?.cannotPromote) flags.push({ label: 'Promo banned', color: 'orange' });
   if (data?.commentsLocked) flags.push({ label: 'Comments locked', color: 'gray' });
+  for (const label of getModelVersionFlagLabels(versionFlags ?? 0))
+    flags.push({ label, color: 'orange' });
 
   const locked = data?.lockedProperties ?? [];
   const hasFooter = !!(

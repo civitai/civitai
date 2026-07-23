@@ -115,6 +115,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       trainedWords: true,
       trainingStatus: true,
       trainingDetails: true,
+      flags: true,
       inaccurate: true,
       baseModel: true,
       baseModelType: true,

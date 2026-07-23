@@ -26,6 +26,7 @@ import {
   updateReportById,
 } from '~/server/services/report.service';
 import {
+  isPrismaForeignKeyViolation,
   throwAuthorizationError,
   throwDbCustomError,
   throwDbError,
@@ -60,6 +61,12 @@ export async function createReportHandler({
 
     return result;
   } catch (e) {
+    // The reported entity was deleted between the client rendering it and the
+    // report landing, so the entity-report FK has nothing to point at. Search
+    // can legitimately serve a deleted image until its index delete is batched
+    // through, so this is a reachable user path, not a server fault.
+    if (isPrismaForeignKeyViolation(e))
+      throw throwNotFoundError('The content you are trying to report no longer exists');
     throw throwDbError(e);
   }
 }

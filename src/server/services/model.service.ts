@@ -94,7 +94,6 @@ import {
   saveItemInCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
@@ -174,6 +173,7 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { isDev } from '~/env/other';
 import { userUpdateCounter } from '~/server/prom/client';
 import { pgDbRead } from '~/server/db/pgDb';
@@ -246,6 +246,7 @@ type ModelRaw = {
     publishedAt: Date | null;
     status: ModelStatus;
     covered: boolean;
+    flags: number;
   }[];
   userId: number;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
@@ -1414,8 +1415,6 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
-  const unavailableGenResources = await getUnavailableResources();
-
   // Creator Controls metric privacy for the card feed. Fetch owner defaults once,
   // then only resolve CP membership for owners who actually have a hide flag set
   // (keeps the common no-flags case free of membership lookups).
@@ -1475,7 +1474,7 @@ export const getModelsWithImagesAndModelVersions = async ({
 
         const canGenerate =
           !!version?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1 &&
+          !isGenerationDisabled(version.flags) &&
           isBaseModelGenerationSupported(version.baseModel, model.type);
 
         const isOwner = isMod || model.user.id === user?.id;
