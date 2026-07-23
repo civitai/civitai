@@ -100,3 +100,20 @@ export async function countPermanentAccessVersions(
   const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
   return Number(row?.count ?? 0);
 }
+
+// Counts versions in a *currently running* timed early-access window (permanent ones are capped separately, by
+// tier). Score gates how many can run at once — EARLY_ACCESS_CONFIG.scoreQuantityUnlock.
+export async function countActiveEarlyAccessVersions(
+  userId: number,
+  excludeVersionId?: number
+): Promise<number> {
+  let query = dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .where('m.userId', '=', userId)
+    .where('mv.earlyAccessEndsAt', '>', new Date())
+    .where(sql<boolean>`coalesce(mv."earlyAccessConfig"->>'permanent', 'false') != 'true'`);
+  if (excludeVersionId != null) query = query.where('mv.id', '!=', excludeVersionId);
+  const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
+  return Number(row?.count ?? 0);
+}

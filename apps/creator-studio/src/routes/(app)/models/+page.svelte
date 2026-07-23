@@ -81,6 +81,14 @@
   // Early-access chip: shown (green) only while a window is actually active, so it clearly means
   // "early access is on" and nothing else.
   const eaChipCls = 'border-green-5/30 bg-green-5/10 text-green-5';
+  // Permanent (sold indefinitely) is a different product from a timed early-access window — distinct colour so
+  // the two never read as the same thing.
+  const permChipCls = 'border-blue-4/30 bg-blue-4/10 text-blue-3';
+  // Permanent access is capped by CP tier (null cap = unlimited); concurrent early access by models score.
+  const permAtCap = $derived(
+    data.permanentCap !== null && data.permanentCap > 0 && data.permanentUsed >= data.permanentCap
+  );
+  const eaAtCap = $derived(data.earlyAccessCap > 0 && data.earlyAccessUsed >= data.earlyAccessCap);
 
   // Version status as a distinct tag (M5) — green when Published, dim for Draft/other — so it reads as a badge
   // rather than blending into the base-model text.
@@ -317,6 +325,36 @@
     body="Setting licensing fees requires an active Creator Program membership. You can still review your models below."
   />
 {/if}
+
+<div
+  class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-dark-5 bg-dark-6/40 px-3 py-2 text-xs"
+>
+  <span class="flex items-center gap-1.5">
+    <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
+    <span class="text-dark-2">Permanent access</span>
+    {#if data.permanentCap === 0}
+      <span class="font-medium text-dark-3">Not available on your tier</span>
+    {:else if data.permanentCap === null}
+      <span class="font-medium text-white">{data.permanentUsed} set · unlimited</span>
+    {:else}
+      <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
+        {data.permanentUsed} of {data.permanentCap} set{permAtCap ? ' · limit reached' : ''}
+      </span>
+    {/if}
+  </span>
+  <span class="flex items-center gap-1.5">
+    <span class="inline-block h-2 w-2 rounded-full bg-green-5"></span>
+    <span class="text-dark-2">Early access</span>
+    {#if data.earlyAccessCap === 0}
+      <span class="font-medium text-dark-3">Not unlocked yet — grows with your creator score</span>
+    {:else}
+      <span class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}">
+        {data.earlyAccessUsed} of {data.earlyAccessCap} active{eaAtCap ? ' · limit reached' : ''}
+      </span>
+      <span class="text-dark-3">· up to {data.maxEarlyAccessDays} days</span>
+    {/if}
+  </span>
+</div>
 
 <!-- Search / filter / sort -->
 <div class="mb-4 flex flex-wrap items-center gap-2">
@@ -670,8 +708,20 @@
                         <Badge variant="secondary" class="text-[10px]">{version.baseModel}</Badge>
                       </span>
                       <span class="flex shrink-0 items-center gap-2">
-                        {#if version.hasEarlyAccess}
-                          <Badge variant="outline" class={eaChipCls} title="Early access is on">
+                        {#if version.earlyAccessConfig?.permanent}
+                          <Badge
+                            variant="outline"
+                            class={permChipCls}
+                            title="Sold indefinitely — paid access with no end date"
+                          >
+                            Permanent
+                          </Badge>
+                        {:else if version.hasEarlyAccess}
+                          <Badge
+                            variant="outline"
+                            class={eaChipCls}
+                            title="Timed early access — becomes free when the window ends"
+                          >
                             Early access
                           </Badge>
                         {/if}
@@ -908,6 +958,7 @@
               <input type="hidden" name="versionId" value={editing.id} />
 
               {#if data.canSellIndefinitely}
+                {@const permBlocked = permAtCap && !editing.earlyAccessConfig?.permanent}
                 <div class="flex flex-col gap-1 rounded-lg border border-dark-4 p-3">
                   <div class="flex items-center gap-2">
                     <Checkbox id="ea-perm" name="permanent" bind:checked={ea.permanent} />
@@ -917,6 +968,15 @@
                   </div>
                   <span class="text-xs text-dark-3">
                     Members-only. Access never expires until you turn it off; buyers keep what they paid for.
+                  </span>
+                  <span class="text-xs {permBlocked ? 'text-yellow-5' : 'text-dark-3'}">
+                    {#if data.permanentCap === null}
+                      {data.permanentUsed} set · unlimited on your tier
+                    {:else}
+                      {data.permanentUsed} of {data.permanentCap} permanent versions set{permBlocked
+                        ? ' — limit reached for your tier'
+                        : ''}
+                    {/if}
                   </span>
                 </div>
               {/if}

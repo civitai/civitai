@@ -30,6 +30,26 @@ export function earlyAccessDaysForScore(modelsScore: number): number {
   return days;
 }
 
+// How many versions can be in early access *at the same time* — mirrors EARLY_ACCESS_CONFIG.scoreQuantityUnlock.
+// Separate from the duration unlock above: score gates both how long and how many. 30-day flag tier omitted.
+export const EARLY_ACCESS_QUANTITY_UNLOCK: ReadonlyArray<readonly [number, number]> = [
+  [40000, 1],
+  [65000, 2],
+  [90000, 4],
+  [125000, 6],
+  [200000, 8],
+  [250000, 20],
+];
+
+// Concurrent early-access slots the given models score unlocks. 0 = early access unavailable.
+export function earlyAccessQuantityForScore(modelsScore: number): number {
+  let quantity = 0;
+  for (const [score, unlocked] of EARLY_ACCESS_QUANTITY_UNLOCK) {
+    if (modelsScore >= score) quantity = unlocked;
+  }
+  return quantity;
+}
+
 // Permanent pay-for-access cap by Creator-Program tier (CU 868ke4949).
 export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
   bronze: 3,
@@ -38,7 +58,7 @@ export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
 };
 
 export function maxPermanentAccessModels(tier: string | null | undefined): number {
-  return tier ? (PERMANENT_ACCESS_LIMIT_BY_TIER[tier] ?? 0) : 0;
+  return tier ? PERMANENT_ACCESS_LIMIT_BY_TIER[tier] ?? 0 : 0;
 }
 
 export type EarlyAccessConfig = {

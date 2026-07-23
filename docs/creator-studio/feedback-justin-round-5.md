@@ -65,11 +65,26 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 
 ## Licensing page
 
-- [ ] **[todo]** **Early Access vs. permanent sales must be visually distinct** — from creator feedback
+- [x] **[todo]** **Early Access vs. permanent sales must be visually distinct** — done. From creator feedback
   (alexds9, Discord 2026-07-23): if the UI doesn't clearly show the difference between **Early Access** and
-  **permanent sales**, it will confuse users on release, and _"every point of confusion will be weaponized"_
-  by critics. Make the distinction unambiguous in the licensing/access UI (labels, states, pricing rows).
-  Wants a **solid, unambiguous core** even if the initial release is minimal.
+  **permanent sales**, it will confuse users on release, and _"every point of confusion will be weaponized"_.
+  - **Distinct badges** in the version list: **Permanent** (blue — "sold indefinitely, no end date") vs
+    **Early access** (green — "timed window, becomes free when it ends"). Previously *both* rendered the same
+    "Early access" chip — and permanent versions may have shown **no badge at all**, since `hasEarlyAccess` is
+    derived from `earlyAccessEndsAt !== null` and permanent is intentionally duration-0/no-end-date. The badge
+    now keys off `earlyAccessConfig.permanent` directly, so it's correct either way.
+- [x] **[todo]** **Access allowance indicator (how many already set)** — done. The two limits work
+  *differently*, so the indicator states each honestly:
+  - **Permanent** — a **count** cap by Creator-Program **tier** (`bronze 3 / silver 10 / gold unlimited`,
+    0 without a tier): shows `X of Y set`, amber at the cap, plus remaining capacity on the "Make permanent"
+    checkbox so the cap isn't a save-time surprise.
+  - **Early access** — score-gated **two** ways: `X of Y active` (concurrent count) **and** `up to N days`.
+    **The count cap was missing entirely from creator-studio** — it only mirrored
+    `EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock` (days) and not `scoreQuantityUnlock`
+    (40k→1, 65k→2, 90k→4, 125k→6, 200k→8, 250k→20). Added `EARLY_ACCESS_QUANTITY_UNLOCK` +
+    `earlyAccessQuantityForScore()` and a `countActiveEarlyAccessVersions()` server counter.
+  - _Note: the main app's `/api/v1/model-versions/early-access` remains the enforcement source of truth for the
+    early-access quantity cap; creator-studio surfaces it so creators aren't surprised by a rejection._
 - [x] **[polish]** **Consistent filter styling** — the filter elements have different rounding /
   dimensions / background colors. Make them all consistent. (`T:405–415`)
 - [x] **[polish]** **Consistent top-right buttons** — export/import (and others): make casing
@@ -180,11 +195,21 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 ## Analytics — Audience tab
 
 - [~] **[todo]** **Add over-time charts to match header cards** — followers-over-time + **reactions-received-
-  over-time** now render side-by-side (reactions series already came from `getContentAnalytics`). **Comments-
-  over-time is NOT done**: comments have no fast period-scoped source (`getAllTimeTotals` is all-time only, from
-  the `image_metrics_user` rollup) — a dated chart needs a new source (Postgres `CommentV2` by date, or a
-  ClickHouse rollup). "Per-month graph" (longer monthly trend vs the current daily-in-month) also deferred.
-  (`T:940–954`)
+  over-time** render side-by-side. **Comments-over-time is DEFERRED** — and investigating it (2026-07-23)
+  surfaced a deeper problem worth fixing first:
+  - **The comments metric itself is wrong (image-only).** The all-time number comes from `image_metrics_user`,
+    which counts comments on the creator's **images only**. But comments span Model / Post / Article / Comment
+    (reply) / Review / Bounty too — and platform-wide **Model comments are the largest bucket** (~31k/30d vs
+    ~28k image). So for a model creator the current "comments" number undercounts badly.
+  - **Root cause:** `reactions` carries a denormalized `ownerId` (so "reactions received" is a clean, fast,
+    all-types query), but `comments` has **no owner column** — only `type` + `entityId` + commenter `userId`.
+    A correct "comments received" would need per-entity-type owner resolution (a fragile multi-join), which is
+    why the rollup punted to images-only.
+  - **Proper fix:** denormalize an **`ownerId` onto comment events at ingest** (mirror `reactions.ownerId`).
+    Then "comments received" = `comments WHERE ownerId = uid` across all types — correct _and_ fast — and it
+    fixes the all-time number too. This is a tracking-pipeline change + backfill; batch it with the owner-keyed
+    rollup (A1), not this UI task. Until then, the surfaced all-time comments number is **image-only** (should
+    be labeled as such if kept). "Per-month graph" (longer monthly trend) also deferred. (`T:940–954`)
 - [x] **[polish]** **Card color matches dashboard** — the audience cards' color differs from the
   dashboard stat cards; align (covered by the global card-color item). (`T:956–959`)
 

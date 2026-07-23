@@ -25,9 +25,14 @@ import {
   setEarlyAccessConfig,
   earlyAccessFormSchema,
   countPermanentAccessVersions,
+  countActiveEarlyAccessVersions,
 } from '$lib/server/monetization/early-access';
 import { getModelsScore } from '$lib/server/creator-score';
-import { earlyAccessDaysForScore, maxPermanentAccessModels } from '$lib/monetization/early-access';
+import {
+  earlyAccessDaysForScore,
+  earlyAccessQuantityForScore,
+  maxPermanentAccessModels,
+} from '$lib/monetization/early-access';
 
 // --- input schemas: every load/action input is zod-validated ---
 const versionIdSchema = z.coerce.number().int().positive();
@@ -81,7 +86,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     cookies.set(PAGE_SIZE_COOKIE, String(perPage), { path: '/', maxAge: PAGE_SIZE_MAX_AGE });
   }
 
-  const [result, modelsScore] = await Promise.all([
+  const [result, modelsScore, permanentUsed, earlyAccessUsed] = await Promise.all([
     getCreatorModels({
       userId: locals.user.id,
       q,
@@ -96,14 +101,23 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       withMatchingVersionIds: bulkMode,
     }),
     getModelsScore(locals.user.id),
+    countPermanentAccessVersions(locals.user.id),
+    countActiveEarlyAccessVersions(locals.user.id),
   ]);
+  const permanentCap = maxPermanentAccessModels(membership.tier);
   return {
     ...result,
     perPage,
     pageSizeOptions: PAGE_SIZE_OPTIONS,
     canSetFee: canSetLicensingFee(membership),
     canSellIndefinitely: canSellIndefinitely(membership),
+    // Score gates early access two ways: how long a window can run, and how many can run at once.
     maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
+    earlyAccessUsed,
+    earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
+    permanentUsed,
+    // null cap = unlimited (gold); Infinity wouldn't survive as a plain number.
+    permanentCap: Number.isFinite(permanentCap) ? permanentCap : null,
     query: {
       q: q ?? '',
       fee: parsed.fee ?? '',
