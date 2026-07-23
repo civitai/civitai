@@ -150,6 +150,7 @@ vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
   getChallengeBuzzType: vi.fn(async () => 'yellow'),
   buildWinnerPayoutTransactions: vi.fn(() => []),
+  reportPoolFundingShortfall: vi.fn(),
 }));
 
 vi.mock('~/utils/logging', () => ({

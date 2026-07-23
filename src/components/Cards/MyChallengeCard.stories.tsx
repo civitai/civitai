@@ -1,5 +1,5 @@
 import { ChallengeSource, ChallengeStatus, MediaType } from '~/shared/utils/prisma/enums';
-import type { MyParticipatedChallengeItem } from '~/server/schema/challenge.schema';
+import type { MyChallengeItem } from '~/server/schema/challenge.schema';
 import { MyChallengeCard } from './MyChallengeCard';
 
 const now = new Date();
@@ -15,7 +15,7 @@ const baseImage = {
   type: MediaType.image,
 };
 
-const baseChallenge: MyParticipatedChallengeItem = {
+const baseChallenge: MyChallengeItem = {
   id: 101,
   title: 'Cybernetic Dreams',
   theme: 'Neon-soaked futures',
@@ -42,14 +42,13 @@ const baseChallenge: MyParticipatedChallengeItem = {
     cosmetics: null,
     deletedAt: null,
   },
-  myEntryImage: baseImage,
   myPlace: null,
   myResult: 'entered',
   isLive: false,
-  myEnteredAt: daysFromNow(-5),
+  myActivityAt: daysFromNow(-5),
 };
 
-const wrap = (data: MyParticipatedChallengeItem) => (
+const wrap = (data: MyChallengeItem) => (
   <div style={{ width: 320 }}>
     <MyChallengeCard data={data} />
   </div>
@@ -93,4 +92,28 @@ export const EnteredEnded = () =>
     myPlace: null,
     myResult: 'entered',
     isLive: false,
+  });
+
+/** Hosting state: scheduled, not yet started — grape crown badge, "Starts …" chip, "Manage" CTA */
+export const HostingScheduled = () =>
+  wrap({
+    ...baseChallenge,
+    status: ChallengeStatus.Scheduled,
+    myPlace: null,
+    myResult: 'hosting',
+    isLive: false,
+    startsAt: daysFromNow(2),
+    endsAt: daysFromNow(9),
+  });
+
+/** Hosting state: live — grape crown badge, "… left · Live" chip, "View entries" CTA */
+export const HostingLive = () =>
+  wrap({
+    ...baseChallenge,
+    status: ChallengeStatus.Active,
+    myPlace: null,
+    myResult: 'hosting',
+    isLive: true,
+    startsAt: daysFromNow(-2),
+    endsAt: daysFromNow(3),
   });

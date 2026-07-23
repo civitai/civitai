@@ -220,9 +220,28 @@ describe('contest entry resource gate (Task 11)', () => {
     ).resolves.toBeUndefined();
 
     expect(mockImageResourceNewFindMany).not.toHaveBeenCalled();
-    // Moderators are also exempt from the entry fee (chargeContestEntryFeesForCollection
-    // no-ops for isModerator), so the fee charge is never invoked either.
-    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
+  it('charges moderators the entry fee — the resource-gate bypass is not a fee exemption', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: false, hasFeeChallenge: true });
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        canAccessUserChallenges: true,
+        isModerator: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).resolves.toBeUndefined();
+
+    // A fee-exempt entry still competes for the prizes, so it would pay out from a pool it
+    // never funded (challenge 413: 2 mod entries, prizePool 0).
+    expect(mockChargeEntryFees).toHaveBeenCalledTimes(1);
+    expect(mockChargeEntryFees).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, imageIds: [IMAGE_ID], entryFee: 100 })
+    );
   });
 });
 

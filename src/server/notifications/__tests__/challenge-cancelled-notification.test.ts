@@ -95,6 +95,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
+  reportPoolFundingShortfall: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,

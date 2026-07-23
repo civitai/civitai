@@ -46,7 +46,6 @@ import {
 import {
   CreatorProgramCapsInfoModal,
   openCompensationPoolModal,
-  openCreatorScoreModal,
   openEarningEstimateModal,
   openExtractionFeeModal,
   openPhasesModal,
@@ -343,20 +342,17 @@ const JoinCreatorProgramCard = () => {
               requirements?.score.min ?? 10000
             )}`}
             content={
-              <>
-                <p className="my-0">
-                  Your current{' '}
-                  <Anchor
-                    onClick={() => {
-                      openCreatorScoreModal();
-                    }}
-                    inherit
-                  >
-                    Creator Score
-                  </Anchor>{' '}
-                  is {abbreviateNumber(requirements?.score.current ?? 0)}.
-                </p>
-              </>
+              <p className="my-0">
+                Your current{' '}
+                <Anchor component={NextLink} href="/user/account#creator-score" inherit>
+                  Creator Score
+                </Anchor>{' '}
+                is{' '}
+                <Anchor component={NextLink} href="/user/account#creator-score" inherit>
+                  {abbreviateNumber(requirements?.score.current ?? 0)}
+                </Anchor>
+                .
+              </p>
             }
           />
           <CreatorProgramRequirement
