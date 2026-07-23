@@ -4,3 +4,6 @@ export const CREATOR_SHOP_BORDER = '1px solid var(--mantine-color-default-border
 // (src/static-content/cosmetic-standards.md, served via content.get — also
 // browsable at /content/cosmetic-standards).
 export const COSMETIC_STANDARDS_SLUG = 'cosmetic-standards';
+
+// Standalone tool for designing cosmetics that meet the standards below.
+export const COSMETIC_STUDIO_URL = 'https://cosmetic-studio.civitai.com/';

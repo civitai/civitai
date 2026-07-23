@@ -31,7 +31,7 @@ import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { capitalize } from 'lodash-es';
 import type { HTMLProps } from 'react';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   useBankedBuzz,
   useCompensationPool,
@@ -65,6 +65,7 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
+import { useSpotlight } from '~/hooks/useSpotlight';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -182,21 +183,9 @@ const MembershipLapsedCard = () => {
   // session across when the current domain differs.
   const renewUrl = syncAccount(`//${serverDomains.green}/pricing`);
 
-  // Spotlight effect — refs + direct DOM writes to avoid re-renders on mouse move.
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(400px circle at ${x}px ${y}px, light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04)), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    color: 'light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04))',
+  });
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-gray-2 bg-gray-0 dark:border-dark-4 dark:bg-dark-5 sm:flex-row">
