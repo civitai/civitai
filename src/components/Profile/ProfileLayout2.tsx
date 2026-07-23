@@ -1,7 +1,7 @@
 import { trpc } from '~/utils/trpc';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useMemo } from 'react';
 
 import { Box, Menu, Text } from '@mantine/core';
 import { IconBan, IconDotsVertical, IconFlag } from '@tabler/icons-react';
@@ -14,6 +14,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { env } from '~/env/client';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useSpotlight } from '~/hooks/useSpotlight';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -185,20 +186,10 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
 }
 
 function BlockedByThemPanel({ user }: { user: Partial<UserWithCosmetics> & { id: number } }) {
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(239,68,68,0.18), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    size: 250,
+    color: 'rgba(239,68,68,0.18)',
+  });
 
   return (
     <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
