@@ -8,7 +8,7 @@ import { getGetPaidEstimate } from '$lib/server/creator-program';
 // with their current creator score against the requirement + a "your Buzz could be worth $X" estimate (868ke4941).
 export const load: PageServerLoad = async ({ parent, locals }) => {
   const { membership } = await parent();
-  if (membership.isCreatorProgramMember) redirect(303, '/');
+  if (membership.isCreatorProgramMember) redirect(303, '/dashboard');
   const [creatorScore, estimate] = await Promise.all([
     getCreatorScore(locals.user.id),
     // Degrades independently — a ClickHouse/buzz-service hiccup shouldn't blank the whole join page.

@@ -10,19 +10,19 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 
 ## Public landing page (unauthenticated + SEO)
 
-- [ ] **[todo]** **Public marketing landing page for non-authed users** — visitors to `creator.civitai.com`
-  who aren't signed in currently hit the auth gate; instead serve a **public, server-rendered landing page**
-  that pitches Creator Studio (monetize your models via licensing fees, analytics on real usage, Creator
-  Program payouts) with a clear **Sign in / Join** CTA. Requirements:
-  - **Public route** — render without an authed session (don't redirect/403 unauthenticated GETs to `/`);
-    keep the app's authed routes gated as-is. Authed users can be sent straight to the dashboard.
-  - **SEO-rich** — real `<title>` + meta description, Open Graph / Twitter-card tags, canonical URL,
-    semantic headings, and JSON-LD structured data. Prerender it (static, cache-friendly) so crawlers get
-    full HTML, not a client-only shell. Add to `sitemap.xml` / `robots.txt` as appropriate.
-    _(Confirm: is SvelteKit prerender enabled per-route, and does the current `hooks.server.ts` auth guard
-    allow this path through unauthenticated?)_
-  - **Content** — value prop, how licensing/earnings work, maybe a few headline stats, and the join flow;
-    reuse existing `/join` copy where it fits.
+- [x] **[todo]** **Public marketing landing page for non-authed users** — done. The root `/` is now a public,
+  SSR landing page (hero + feature cards for licensing fees / analytics / Creator Program payouts + CTAs). The
+  dashboard moved to `/dashboard`. All authed routes live in a SvelteKit **`(app)` route group** (URLs
+  unchanged) whose layout owns the sidebar shell + requires a user; the landing sits outside the group under a
+  bare root layout, so logged-out visitors get marketing chrome only and gated pages keep a non-null user type.
+  - **Public route** — `hooks.server.ts` `OPTIONAL_AUTH_PATHS` lets `/` through logged-out (attaching a user
+    when present); every other route stays gated. Signed-in visitors to `/` are redirected to `/dashboard`.
+  - **SEO** — real `<title>` + meta description, `robots: index,follow`, canonical, Open Graph + Twitter tags,
+    and JSON-LD (`WebApplication`). Removed the global `noindex` from `app.html` (authed pages stay private
+    behind the guard, so they aren't crawlable regardless). SSR gives crawlers full HTML — chose SSR over
+    prerender so the same `/` can redirect signed-in users server-side (no client flash).
+  - CTAs point at `/dashboard`, which trips the guard's login redirect and returns the visitor after sign-in.
+  - _Note: dev server needs a restart to pick up the `hooks.server.ts` change (hooks don't hot-reload)._
 
 ---
 
@@ -65,6 +65,11 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 
 ## Licensing page
 
+- [ ] **[todo]** **Early Access vs. permanent sales must be visually distinct** — from creator feedback
+  (alexds9, Discord 2026-07-23): if the UI doesn't clearly show the difference between **Early Access** and
+  **permanent sales**, it will confuse users on release, and _"every point of confusion will be weaponized"_
+  by critics. Make the distinction unambiguous in the licensing/access UI (labels, states, pricing rows).
+  Wants a **solid, unambiguous core** even if the initial release is minimal.
 - [x] **[polish]** **Consistent filter styling** — the filter elements have different rounding /
   dimensions / background colors. Make them all consistent. (`T:405–415`)
 - [x] **[polish]** **Consistent top-right buttons** — export/import (and others): make casing

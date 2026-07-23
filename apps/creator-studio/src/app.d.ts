@@ -5,9 +5,9 @@ declare global {
   namespace App {
     // interface Error {}
     interface Locals {
-      // Non-optional: the spoke guard (hooks.server.ts) redirects unauthenticated requests before any load
-      // runs, so every gated route has a user. Public endpoints (e.g. /favicon.svg) don't read it. Revisit
-      // if we add routes for logged-out users.
+      // The spoke guard (hooks.server.ts) redirects unauthenticated requests before any load runs, so every
+      // route in the (app) group has a user — hence the non-optional type. The one exception is the public
+      // landing (`/`), reachable logged-out; its loader treats `locals.user` as possibly-absent at runtime.
       user: SessionUser;
     }
     // interface PageData {}

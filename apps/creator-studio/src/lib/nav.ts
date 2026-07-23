@@ -25,7 +25,7 @@ export type NavItem = {
 };
 
 export const NAV: NavItem[] = [
-  { href: '/', label: 'Dashboard', icon: IconLayoutDashboard },
+  { href: '/dashboard', label: 'Dashboard', icon: IconLayoutDashboard },
   { href: '/models', label: 'Licensing', icon: IconLicense, memberOnly: true },
   { href: '/earnings', label: 'Earnings', icon: IconCoin },
   {
