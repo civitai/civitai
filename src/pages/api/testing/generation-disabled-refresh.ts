@@ -1,11 +1,11 @@
 /**
  * Debug endpoint: refresh caches + search index for versions carrying the
- * `ModelVersionFlag.DisableGeneration` bit.
+ * `ModelVersionFlag.GenerationDisabled` bit.
  * =============================================================================
  *
- * Why this exists: the DisableGeneration flag is baked into cached version/model
+ * Why this exists: the GenerationDisabled flag is baked into cached version/model
  * rows (`resourceDataCache`, `dataForModelsCache`) and into the models search
- * index doc's `canGenerate`. `toggleUnavailableResource` refreshes all of that
+ * index doc's `canGenerate`. `toggleGenerationDisabled` refreshes all of that
  * via `bustMvCache`. Bits set DIRECTLY in the DB (a manual `UPDATE ... SET flags`)
  * bypass that, so those versions keep serving stale "generatable" data until the
  * caches expire (1h / 24h) — and the search doc never self-corrects at all.
@@ -76,7 +76,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       `
     : await dbRead.$queryRaw<{ id: number; modelId: number }[]>`
         SELECT "id", "modelId" FROM "ModelVersion"
-        WHERE (flags & ${ModelVersionFlag.DisableGeneration}) <> 0
+        WHERE (flags & ${ModelVersionFlag.GenerationDisabled}) <> 0
       `;
 
   const versionIds = versions.map((v) => v.id);

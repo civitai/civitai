@@ -836,7 +836,7 @@ export async function getGenerationConfig(
   };
 }
 
-export async function toggleUnavailableResource({
+export async function toggleGenerationDisabled({
   id,
   isModerator,
 }: GetByIdInput & { isModerator?: boolean }) {
@@ -847,7 +847,7 @@ export async function toggleUnavailableResource({
   // would clobber a concurrent write to those other bits.
   const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
     UPDATE "ModelVersion"
-    SET flags = flags # ${ModelVersionFlag.DisableGeneration}
+    SET flags = flags # ${ModelVersionFlag.GenerationDisabled}
     WHERE id = ${id}
     RETURNING "modelId", flags
   `;
@@ -1001,7 +1001,7 @@ export type ResolveCanGenerateVersion = {
   covered: boolean | null | undefined;
   modelUserId: number;
   modelType: ModelType;
-  /** ModelVersion.flags — the DisableGeneration bit gates canGenerate. */
+  /** ModelVersion.flags — the GenerationDisabled bit gates canGenerate. */
   flags: number;
   /**
    * Generation alias from `meta.generationAlias`, supplied by the caller (which

@@ -155,7 +155,6 @@ import {
   getResourceData,
   resolveCanGenerateForVersions,
 } from '../services/generation/generation.service';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 
 // TODO.Briant - determine all the logic to check when getting model versions
 /*
@@ -395,7 +394,10 @@ export const getModelHandler = async ({
         earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
         canDownload,
         canGenerate,
-        generationDisabled: isGenerationDisabled(version.flags),
+        // Raw flags are mod-only — they also carry payout/licensing state that
+        // isn't public. `...version` spreads the real value in, so overwrite it
+        // for everyone else.
+        flags: ctx.user?.isModerator ? version.flags : undefined,
         wildcardSetId,
         files: files as Array<
           Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }

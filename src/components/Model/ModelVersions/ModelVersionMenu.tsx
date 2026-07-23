@@ -66,7 +66,7 @@ export function ModelVersionMenu({
     enqueuNsfwLevelUpdateMutation.mutate({ id: modelVersionId });
   }
 
-  const toggleUnavailableResourceMutation = trpc.generation.toggleUnavailableResource.useMutation({
+  const toggleGenerationDisabledMutation = trpc.generation.toggleGenerationDisabled.useMutation({
     onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
     onError: (error) =>
       showErrorNotification({
@@ -75,26 +75,25 @@ export function ModelVersionMenu({
       }),
   });
 
-  // Confirmed: this takes the version out of the generator site-wide for every
-  // user, and the menu item sits one row below "Bust Cache".
+  // "Unblock" rather than "enable": clearing the flag only removes the moderator
+  // block — coverage, status and base-model support still decide whether the
+  // version can actually generate.
   const handleToggleGeneration = () => {
+    const label = generationDisabled ? 'Unblock generation' : 'Block generation';
     dialogStore.trigger({
-      id: 'toggle-generation-disabled',
+      id: 'toggle-generation-blocked',
       component: ConfirmDialog,
       props: {
-        title: generationDisabled ? 'Enable generation' : 'Disable generation',
+        title: label,
         message: generationDisabled
-          ? 'This version will be available in the generator again.'
+          ? 'Removes the moderator block on this version. Whether it can actually generate still depends on coverage and base-model support.'
           : 'This version will be blocked from the generator for everyone. Existing generations are unaffected.',
-        labels: {
-          cancel: 'Cancel',
-          confirm: generationDisabled ? 'Enable generation' : 'Disable generation',
-        },
+        labels: { cancel: 'Cancel', confirm: label },
         confirmProps: { color: generationDisabled ? 'blue' : 'red' },
         // Error is surfaced by the mutation's onError — swallow the rejection so
         // the dialog still closes and clears its loading state.
         onConfirm: () =>
-          toggleUnavailableResourceMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
+          toggleGenerationDisabledMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
       },
     });
   };
@@ -261,9 +260,9 @@ export function ModelVersionMenu({
 
         {currentUser?.isModerator && (
           <Menu.Item
-            disabled={toggleUnavailableResourceMutation.isPending}
+            disabled={toggleGenerationDisabledMutation.isPending}
             leftSection={
-              toggleUnavailableResourceMutation.isPending ? (
+              toggleGenerationDisabledMutation.isPending ? (
                 <Loader size="xs" />
               ) : (
                 <IconPlaylistX size={14} stroke={1.5} />
@@ -276,7 +275,7 @@ export function ModelVersionMenu({
               handleToggleGeneration();
             }}
           >
-            {generationDisabled ? 'Enable generation' : 'Disable generation'}
+            {generationDisabled ? 'Unblock generation' : 'Block generation'}
           </Menu.Item>
         )}
 

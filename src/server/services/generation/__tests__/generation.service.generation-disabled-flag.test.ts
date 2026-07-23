@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 /**
- * Regression guard for the DisableGeneration flag gate.
+ * Regression guard for the GenerationDisabled flag gate.
  *
  * The generation blacklist lives on `ModelVersion.flags` (bit 1 / value 2). This
  * matrix pins the ONE thing that must never silently regress: a version carrying
@@ -73,17 +73,17 @@ const canGenerate = (flags: number) =>
     hiddenGates: noHiddenGates,
   });
 
-describe('getResourceCanGenerate — DisableGeneration flag', () => {
+describe('getResourceCanGenerate — GenerationDisabled flag', () => {
   it('allows generation when no flags are set', () => {
     expect(canGenerate(ModelVersionFlag.None)).toBe(true);
   });
 
-  it('BLOCKS generation when DisableGeneration is set', () => {
-    expect(canGenerate(ModelVersionFlag.DisableGeneration)).toBe(false);
+  it('BLOCKS generation when GenerationDisabled is set', () => {
+    expect(canGenerate(ModelVersionFlag.GenerationDisabled)).toBe(false);
   });
 
-  it('blocks when DisableGeneration is combined with another flag', () => {
-    expect(canGenerate(ModelVersionFlag.DisableGeneration | ModelVersionFlag.DisablePayout)).toBe(
+  it('blocks when GenerationDisabled is combined with another flag', () => {
+    expect(canGenerate(ModelVersionFlag.GenerationDisabled | ModelVersionFlag.DisablePayout)).toBe(
       false
     );
   });
@@ -95,7 +95,7 @@ describe('getResourceCanGenerate — DisableGeneration flag', () => {
 
   it('blocks a moderator too — the flag is not a visibility gate', () => {
     const result = getResourceCanGenerate({
-      resource: { ...baseResource, flags: ModelVersionFlag.DisableGeneration },
+      resource: { ...baseResource, flags: ModelVersionFlag.GenerationDisabled },
       user: { id: 123, isModerator: true },
       hiddenGates: noHiddenGates,
     });
