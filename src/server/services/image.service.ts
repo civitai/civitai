@@ -221,13 +221,7 @@ import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import {
-  FLIPT_FEATURE_FLAGS,
-  getFliptBoolean,
-  getFliptVariant,
-  imageMetricAggSource,
-  isFlipt,
-} from '../flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
@@ -2929,11 +2923,7 @@ export async function getImagesFromFeedSearch(
       },
       clickhouse as IClickhouseClient,
       pgDbWrite as IDbClient,
-      new MetricService(
-        clickhouse as IClickhouseClient,
-        redis as unknown as IRedisClient,
-        imageMetricAggSource
-      ),
+      new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
       new CacheService(
         redis as unknown as IRedisClient,
         pgDbWrite as IDbClient,
@@ -4771,8 +4761,7 @@ let _imageMetricService: MetricService | null = null;
 const getImageMetricService = () =>
   (_imageMetricService ??= new MetricService(
     clickhouse as IClickhouseClient,
-    redis as unknown as IRedisClient,
-    imageMetricAggSource
+    redis as unknown as IRedisClient
   ));
 
 type ImageMetricsObject = Record<
