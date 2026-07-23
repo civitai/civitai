@@ -230,8 +230,9 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 
 ## Generation & training
 
-### `generation/generation.service.ts`  ·  used by: generation, generation-config
-- [ ] `getGenerationResources` — *Postgres + search index*
+### `generation/generation.service.ts`  ·  used by: generation-config
+- ~~`getGenerationResources`~~ — **removed** along with the `/moderator/generation` page; the
+  generation blacklist now lives on the `ModelVersion.flags` `GenerationDisabled` bit.
 - [ ] `getGenerationEcosystemConfig` — *Redis sysRedis + Flipt (`GENERATION_TESTING`)*
 - [ ] `setGenerationEcosystemConfig`
 - [ ] `getGateRules`

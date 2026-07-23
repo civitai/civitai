@@ -176,7 +176,7 @@ Tier D contents (EdgeMedia, ImageGuard2, MasonryColumns, NextLink, etc.). Promot
 **Phase 1** — Refactor the 6 Tier F blockers **in place** in the main app:
 - ~~Extract `useUnsupportedResources` from generation form coupling~~ — resolved: the hook and its
   only consumer (`/moderator/generation`) were removed when the generation blacklist moved to the
-  `ModelVersionFlag.DisableGeneration` bit.
+  `ModelVersionFlag.GenerationDisabled` bit.
 - Extract `PromptHighlight` from metadata-audit coupling
 - Refactor `useReportCsamImages` to depend on a dialog-system interface, not the concrete main-app dialog store
 - Decide: scanner-content service satellite-owned, or tRPC-proxied to main app?
