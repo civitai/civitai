@@ -300,6 +300,23 @@ const featureFlags = createFeatureFlags({
   // card is hidden. Instant kill-switch / widen lever = the Flipt flag. (Mirrors the
   // `hiddenPrefsCompact` / `genTabDeferView` `availability: []` precedent.)
   creatorControls: { availability: [], fliptKey: 'creator-controls' },
+  // Read-time gate for the Creator-Controls metric-privacy RESOLUTION (#3266): the
+  // per-request synchronous work that hides a CP member's model/version metrics —
+  // the batched `getValidCreatorMembershipMap` (a `subscriptionProductMetadataSchema`
+  // Zod parse per subscription), the owner-settings lookups, and the per-item
+  // `resolveModel/VersionHiddenMetrics`. Default ON: `availability: ['public']` keeps
+  // it enabled for everyone AND fails OPEN (ON) when Flipt is absent/down, so merging
+  // + releasing is a pure no-op — the privacy feature keeps working exactly as today.
+  // Flipt is authoritative when the `model-metric-privacy-readtime` flag exists:
+  // flipping it OFF makes every gated read path SKIP that work entirely and return the
+  // RAW (pre-#3266) metrics, for a controlled A/B of its request-path cost. OFF briefly
+  // re-exposes CP members' hidden metrics for the test window (accepted, keep it short).
+  // NOT `[]`: that would fail CLOSED and default the feature off. (Mirrors the
+  // `challengePlatform` / `animaControlnet` `['public']` + fliptKey fail-open precedent.)
+  modelMetricPrivacyReadtime: {
+    availability: ['public'],
+    fliptKey: 'model-metric-privacy-readtime',
+  },
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
