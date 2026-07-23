@@ -160,8 +160,7 @@ function mockUpdateReturns(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
-  mockDbRead.$queryRaw.mockResolvedValue([]);
-  mockDbWrite.$executeRaw.mockResolvedValue(undefined);
+  mockDbWrite.$queryRaw.mockResolvedValue([]);
   mockUpdateReturns();
 });
 
@@ -226,13 +225,13 @@ describe('setModelMinor — set', () => {
     // on this write — only sfwOnly does. The fan-out must still fire.
     mockBefore({ minor: true, sfwOnly: false, lockedProperties: [] });
     mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
-    mockDbRead.$queryRaw.mockResolvedValue([{ id: 900 }]);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ id: 900 }]);
 
     await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
     expect(mockImagesQueueUpdate).toHaveBeenCalled();
   });
 
@@ -240,6 +239,34 @@ describe('setModelMinor — set', () => {
     mockBefore({});
 
     await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(MODERATOR_ID, {
+      entityType: 'model',
+      entityId: MODEL_ID,
+      activity: 'setMinor',
+    });
+  });
+});
+
+describe('setModelMinor — audit ordering', () => {
+  it('records the mod activity before running the fan-out', async () => {
+    mockBefore({});
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockTrackModActivity.mock.invocationCallOrder[0]).toBeLessThan(
+      mockModelTagRefresh.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('keeps the audit record when the fan-out throws — the flag write already committed', async () => {
+    mockBefore({});
+    mockDbWrite.modelVersion.findMany.mockRejectedValue(new Error('too many bind parameters'));
+
+    await expect(
+      setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID })
+    ).rejects.toThrow();
 
     expect(mockTrackModActivity).toHaveBeenCalledWith(MODERATOR_ID, {
       entityType: 'model',
@@ -278,13 +305,13 @@ describe('setModelMinor — unset', () => {
   it('triggers the side-effect fan-out (applyModelFlagSideEffects)', async () => {
     mockBefore({ minor: true, sfwOnly: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
     mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
-    mockDbRead.$queryRaw.mockResolvedValue([{ id: 900 }]);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ id: 900 }]);
 
     await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
     expect(mockImagesQueueUpdate).toHaveBeenCalled();
   });
 

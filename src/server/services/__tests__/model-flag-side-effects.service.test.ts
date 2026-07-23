@@ -27,14 +27,21 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
   };
 });
 
-const { mockModelTagRefresh, mockModelVotableBust, mockRedisDel, mockModelsQueueUpdate, mockImagesQueueUpdate } =
-  vi.hoisted(() => ({
-    mockModelTagRefresh: vi.fn(),
-    mockModelVotableBust: vi.fn(),
-    mockRedisDel: vi.fn(),
-    mockModelsQueueUpdate: vi.fn(),
-    mockImagesQueueUpdate: vi.fn(),
-  }));
+const {
+  mockModelTagRefresh,
+  mockModelVotableBust,
+  mockRedisDel,
+  mockModelsQueueUpdate,
+  mockImagesQueueUpdate,
+  mockBustMvCache,
+} = vi.hoisted(() => ({
+  mockModelTagRefresh: vi.fn(),
+  mockModelVotableBust: vi.fn(),
+  mockRedisDel: vi.fn(),
+  mockModelsQueueUpdate: vi.fn(),
+  mockImagesQueueUpdate: vi.fn(),
+  mockBustMvCache: vi.fn(),
+}));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
@@ -90,7 +97,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
-  bustMvCache: vi.fn(),
+  bustMvCache: mockBustMvCache,
   bustPublicModelResponseCache: vi.fn(),
   createModelVersionPostFromTraining: vi.fn(),
   publishModelVersionsWithEarlyAccess: vi.fn(),
@@ -132,12 +139,17 @@ const baseAfter = {
   gallerySettings: { level: 1 },
 };
 
+// $queryRaw is called as a template tag: [strings, ...values].
+function imageUpdateCall() {
+  const [strings, ...values] = mockDbWrite.$queryRaw.mock.calls[0];
+  return { sql: (strings as string[]).join('?'), values };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
-  mockDbRead.$queryRaw.mockResolvedValue([{ id: 900 }]);
+  mockDbWrite.$queryRaw.mockResolvedValue([{ id: 900 }]);
   mockDbWrite.model.update.mockResolvedValue({});
-  mockDbWrite.$executeRaw.mockResolvedValue(undefined);
 });
 
 describe('applyModelFlagSideEffects — image propagation', () => {
@@ -151,10 +163,42 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       where: { modelId: 42 },
       select: { id: true },
     });
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
     expect(mockImagesQueueUpdate).toHaveBeenCalledWith([
       { id: 900, action: SearchIndexUpdateQueueAction.Update },
     ]);
+  });
+
+  it('writes the new minor/poi values and never binds one parameter per image id', async () => {
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, minor: true, poi: true },
+    });
+
+    const { sql, values } = imageUpdateCall();
+    expect(sql).toContain('UPDATE "Image"');
+    expect(sql).toContain('RETURNING i.id');
+    // minor, poi, then the version-id list — the image ids are never parameters.
+    expect(values.slice(0, 2)).toEqual([true, true]);
+    expect(values).toHaveLength(3);
+  });
+
+  it('writes minor: false when a model is unflagged', async () => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, minor: true, poi: true },
+      after: { ...baseAfter, minor: false, poi: false },
+    });
+
+    expect(imageUpdateCall().values.slice(0, 2)).toEqual([false, false]);
+  });
+
+  it('busts the model-version cache so generation stops reporting the old flags', async () => {
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, minor: true },
+    });
+
+    expect(mockBustMvCache).toHaveBeenCalledWith([100], 42);
   });
 
   it('skips image propagation entirely when neither minor nor poi changed', async () => {
@@ -164,8 +208,9 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     });
 
     expect(mockDbWrite.modelVersion.findMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(mockImagesQueueUpdate).not.toHaveBeenCalled();
+    expect(mockBustMvCache).not.toHaveBeenCalled();
   });
 
   it('does not touch images (no query, no update) when the model has no versions', async () => {
@@ -176,9 +221,21 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       after: { ...baseAfter, poi: true },
     });
 
-    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
-    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(mockImagesQueueUpdate).not.toHaveBeenCalled();
+    expect(mockBustMvCache).not.toHaveBeenCalled();
+  });
+
+  it('still busts the version cache when the update matched no images', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValue([]);
+
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, minor: true },
+    });
+
+    expect(mockImagesQueueUpdate).not.toHaveBeenCalled();
+    expect(mockBustMvCache).toHaveBeenCalledWith([100], 42);
   });
 });
 

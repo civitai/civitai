@@ -13,6 +13,7 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
     create: vi.fn(),
     update: vi.fn(),
     updateMany: vi.fn(),
+    count: vi.fn(),
   });
   return {
     mockDbRead: { model: mk(), modelVersion: mk(), $queryRaw: vi.fn() },
@@ -25,10 +26,12 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
   };
 });
 
-const { mockEvaluateContent, mockThrowOnBlockedLinkDomain } = vi.hoisted(() => ({
-  mockEvaluateContent: vi.fn(),
-  mockThrowOnBlockedLinkDomain: vi.fn(),
-}));
+const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockGetHighestTierSubscription } =
+  vi.hoisted(() => ({
+    mockEvaluateContent: vi.fn(),
+    mockThrowOnBlockedLinkDomain: vi.fn(),
+    mockGetHighestTierSubscription: vi.fn(),
+  }));
 
 vi.mock('~/libs/profanity-simple', () => ({
   createProfanityFilter: () => ({ evaluateContent: mockEvaluateContent }),
@@ -44,7 +47,7 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class 
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
 vi.mock('~/server/metrics', () => ({ modelMetrics: {} }));
 vi.mock('~/server/redis/caches', () => ({
-  dataForModelsCache: {},
+  dataForModelsCache: { refresh: vi.fn() },
   modelTagCache: { refresh: vi.fn() },
   modelVotableTagsCache: { bust: vi.fn() },
   userBasicCache: {},
@@ -95,7 +98,9 @@ vi.mock('~/server/services/model-version.service', () => ({
   publishModelVersionsWithEarlyAccess: vi.fn(),
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: vi.fn() }));
-vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
+vi.mock('~/server/services/subscriptions.service', () => ({
+  getHighestTierSubscription: mockGetHighestTierSubscription,
+}));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
   deleteBasicDataForUser: vi.fn(),
@@ -109,7 +114,11 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import { MINOR_LOCKED_PROPERTIES, upsertModel } from '~/server/services/model.service';
+import {
+  MINOR_LOCKED_PROPERTIES,
+  privateModelFromTraining,
+  upsertModel,
+} from '~/server/services/model.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 
@@ -164,6 +173,17 @@ function upsert(input: Partial<ModelUpsertInput> & { userId: number; isModerator
   return upsertModel({ ...baseInput, ...input } as Parameters<typeof upsertModel>[0]);
 }
 
+function privateFromTraining(
+  input: Partial<ModelUpsertInput> & { user: { id: number; isModerator: boolean } }
+) {
+  return privateModelFromTraining({
+    ...baseInput,
+    id: MODEL_ID,
+    sfwOnly: true,
+    ...input,
+  } as Parameters<typeof privateModelFromTraining>[0]);
+}
+
 function updateData() {
   return mockDbWrite.model.update.mock.calls[0][0].data as Record<string, unknown>;
 }
@@ -176,9 +196,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockEvaluateContent.mockReturnValue(cleanEvaluation);
   mockStored();
+  mockDbRead.model.count.mockResolvedValue(0);
+  mockGetHighestTierSubscription.mockResolvedValue({ tier: 'gold' });
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
-  mockDbRead.$queryRaw.mockResolvedValue([]);
-  mockDbWrite.$executeRaw.mockResolvedValue(undefined);
+  mockDbWrite.$queryRaw.mockResolvedValue([]);
   mockDbWrite.model.create.mockResolvedValue({
     id: MODEL_ID,
     nsfwLevel: 1,
@@ -200,6 +221,7 @@ beforeEach(() => {
       meta: null,
       availability: 'Public',
       ...data,
+      modelVersions: [],
     })
   );
 });
@@ -369,16 +391,91 @@ describe('upsertModel — profanity lock', () => {
     expect(data).not.toHaveProperty('lockedProperties');
   });
 
-  it('does not override a DB-locked nsfw, even when the filter trips', async () => {
+  it('records the detection but does not override a DB-locked nsfw', async () => {
     mockStored({ minor: true, nsfw: false, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
     mockEvaluateContent.mockReturnValue(profaneEvaluation);
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
 
     const data = updateData();
+    expect(data.meta).toEqual(
+      expect.objectContaining({
+        profanityMatches: ['badword'],
+        profanityEvaluation: expect.objectContaining({ reason: profaneEvaluation.reason }),
+      })
+    );
     expect(data).not.toHaveProperty('nsfw');
-    expect(data.meta).not.toHaveProperty('profanityMatches');
     expect(data).not.toHaveProperty('lockedProperties');
+  });
+});
+
+describe('privateModelFromTraining — lock enforcement', () => {
+  const owner = { id: OWNER_ID, isModerator: false };
+  const moderator = { id: MODERATOR_ID, isModerator: true };
+
+  it('strips a DB-locked field even when the client claims no locks', async () => {
+    mockStored({ minor: true, sfwOnly: true, lockedProperties: ['minor'] });
+
+    await privateFromTraining({ user: owner, minor: false, lockedProperties: [] });
+
+    expect(updateData()).not.toHaveProperty('minor');
+  });
+
+  it('never lets a non-moderator write lockedProperties — the stored locks must survive', async () => {
+    // The worse half of the bug: passing the client array through to the write would
+    // replace the stored locks with [], permanently unlocking the model.
+    mockStored({ minor: true, sfwOnly: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+
+    await privateFromTraining({
+      user: owner,
+      minor: false,
+      nsfw: true,
+      lockedProperties: [],
+    });
+
+    const data = updateData();
+    expect(data).not.toHaveProperty('lockedProperties');
+    expect(data).not.toHaveProperty('minor');
+    expect(data).not.toHaveProperty('nsfw');
+  });
+
+  it('reads the stored locks from the DB row', async () => {
+    await privateFromTraining({ user: owner, lockedProperties: [] });
+
+    expect(mockDbRead.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ lockedProperties: true }) })
+    );
+  });
+
+  it('still honors locks the client claims on top of the DB row', async () => {
+    mockStored({ lockedProperties: [] });
+
+    await privateFromTraining({ user: owner, poi: true, lockedProperties: ['poi'] });
+
+    expect(updateData()).not.toHaveProperty('poi');
+  });
+
+  it('lets a moderator write lockedProperties and the locked values themselves', async () => {
+    mockStored({ lockedProperties: [] });
+
+    await privateFromTraining({
+      user: moderator,
+      minor: true,
+      lockedProperties: [...MINOR_LOCKED_PROPERTIES],
+    });
+
+    const data = updateData();
+    expect(data.minor).toBe(true);
+    expect(data.lockedProperties).toEqual(MINOR_LOCKED_PROPERTIES);
+  });
+
+  it('returns null and writes nothing when the caller is neither owner nor moderator', async () => {
+    mockStored({ userId: 999, lockedProperties: ['minor'] });
+
+    const result = await privateFromTraining({ user: owner, minor: false });
+
+    expect(result).toBeNull();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 });
 

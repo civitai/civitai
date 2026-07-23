@@ -2024,7 +2024,6 @@ export async function applyModelFlagSideEffects({
   }
 
   if (minorChanged || poiChanged) {
-    // Update all images:
     const modelVersions = await dbWrite.modelVersion.findMany({
       where: { modelId: id },
       select: { id: true },
@@ -2033,28 +2032,25 @@ export async function applyModelFlagSideEffects({
     const modelVersionIds = modelVersions.map(({ id }) => id);
 
     if (modelVersionIds.length !== 0) {
-      const imageIds = await dbRead.$queryRaw<{ id: number }[]>`
-        SELECT i.id
-        FROM "Image" i
-        JOIN "Post" p ON i."postId" = p.id
-        WHERE p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
+      // Set-based on purpose: a gallery can hold hundreds of thousands of images, and
+      // binding one parameter per image id blows past Postgres' 65535 parameter limit.
+      const updatedImages = await dbWrite.$queryRaw<{ id: number }[]>`
+        UPDATE "Image" i
+          SET minor = ${after.minor},
+              poi = ${after.poi}
+        FROM "Post" p
+        WHERE i."postId" = p.id
+          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
+        RETURNING i.id
       `;
 
-      if (imageIds.length !== 0) {
-        await dbWrite.$executeRaw`
-          UPDATE "Image"
-            SET minor = ${after.minor},
-                poi = ${after.poi}
-          WHERE id IN (${Prisma.join(
-            imageIds.map(({ id }) => id),
-            ','
-          )})
-        `;
-
+      if (updatedImages.length !== 0) {
         await imagesSearchIndex.queueUpdate(
-          imageIds.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+          updatedImages.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
         );
       }
+
+      await bustMvCache(modelVersionIds, id);
     }
   }
 }
@@ -2119,14 +2115,40 @@ export async function setModelMinor({
   });
 
   await preventReplicationLag('model', id);
-  await applyModelFlagSideEffects({ before, after: result });
+  // Audit before the fan-out: the flag write has already committed, so a fan-out
+  // failure must not cost us the record of who flipped it.
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
     activity: minor ? 'setMinor' : 'unsetMinor',
   });
+  await applyModelFlagSideEffects({ before, after: result });
 
   return result;
+}
+
+/**
+ * Locks come from the stored row, never the payload: enforcing against a client-supplied
+ * `lockedProperties` lets a creator unlock their own model, and letting that array reach
+ * the write erases the stored locks outright.
+ */
+function enforceLockedProperties<T extends { lockedProperties?: string[] }>({
+  data,
+  storedLockedProperties,
+  isModerator,
+}: {
+  data: T;
+  storedLockedProperties?: string[] | null;
+  isModerator?: boolean;
+}) {
+  if (isModerator) return;
+
+  const lockedProperties = uniq([
+    ...(storedLockedProperties ?? []),
+    ...(data.lockedProperties ?? []),
+  ]);
+  for (const prop of lockedProperties) delete (data as Record<string, unknown>)[prop];
+  delete (data as Record<string, unknown>).lockedProperties;
 }
 
 export const upsertModel = async (
@@ -2171,28 +2193,16 @@ export const upsertModel = async (
         })
       : null;
 
-  // Locks must come from the stored row: `data.lockedProperties` is client-supplied, so
-  // enforcing against it lets a creator unlock their own model by posting an empty array.
-  if (!isModerator) {
-    const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
-    const lockedProperties = uniq([...storedLockedProperties, ...(data.lockedProperties ?? [])]);
-    for (const prop of lockedProperties) {
-      const key = prop as keyof typeof data;
-      if (data[key] !== undefined) delete data[key];
-    }
-    delete data.lockedProperties;
+  const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
+  enforceLockedProperties({ data, storedLockedProperties, isModerator });
 
+  if (!isModerator) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // If profanity exceeds thresholds, mark model as NSFW. Skip when nsfw is DB-locked:
-    // a moderator has already made the call on this field (e.g. minor-flagging sets
-    // nsfw: false), and the automated filter must not override that. Must check
-    // `storedLockedProperties`, not the client-tainted `lockedProperties` union — otherwise
-    // any caller can suppress this safety net by claiming a `'nsfw'` lock in their own input.
-    if (evaluation.shouldMarkNSFW && !data.nsfw && !storedLockedProperties.includes('nsfw')) {
+    if (evaluation.shouldMarkNSFW && !data.nsfw) {
       meta = {
         ...(meta ?? {}),
         profanityMatches: evaluation.matchedWords,
@@ -2201,8 +2211,12 @@ export const upsertModel = async (
           metrics: evaluation.metrics,
         },
       };
-      data.nsfw = true;
-      data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
+      // A stored nsfw lock is a moderator's call (minor-flagging sets it false): keep the
+      // detection for review, but never let the filter overturn it.
+      if (!storedLockedProperties.includes('nsfw')) {
+        data.nsfw = true;
+        data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
+      }
     }
   }
 
@@ -4085,11 +4099,26 @@ export const privateModelFromTraining = async ({
 }: PrivateModelFromTrainingInput & {
   user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
 }) => {
-  if (!input.user.isModerator) {
-    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
-  }
-
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
+
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+      lockedProperties: true,
+    },
+  });
+
+  if (!model) return null;
+
+  const isOwner = model.userId === user.id || user.isModerator;
+  if (!isOwner) return null;
+
+  enforceLockedProperties({
+    data,
+    storedLockedProperties: model.lockedProperties,
+    isModerator: user.isModerator,
+  });
 
   const totalPrivateModels = await dbRead.model.count({
     where: {
@@ -4110,27 +4139,6 @@ export const privateModelFromTraining = async ({
   if (totalPrivateModels >= maxPrivateModels) {
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
-
-  // don't allow updating of locked properties
-  if (!user.isModerator) {
-    const lockedProperties = data.lockedProperties ?? [];
-    for (const prop of lockedProperties) {
-      const key = prop as keyof typeof data;
-      if (data[key] !== undefined) delete data[key];
-    }
-  }
-
-  const model = await dbRead.model.findUnique({
-    where: { id },
-    select: {
-      userId: true,
-    },
-  });
-
-  if (!model) return null;
-
-  const isOwner = model.userId === user.id || user.isModerator;
-  if (!isOwner) return null;
 
   try {
     const result = await dbWrite.model.update({
