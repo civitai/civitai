@@ -210,14 +210,27 @@ export const getHomeBlockData = async ({
 }): Promise<HomeBlockWithData | null> => {
   const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
 
+  // System block is source of truth for content selection; cloned user blocks read through to
+  // source so mods only update the singleton and clones stay in sync. Fetched once here so each
+  // case can reuse it rather than fetch the source per block type.
+  let sourceMetadata: HomeBlockMetaSchema | undefined;
+  if (homeBlock.sourceId) {
+    const source = await dbRead.homeBlock.findUnique({
+      where: { id: homeBlock.sourceId },
+      select: { metadata: true },
+    });
+    sourceMetadata = (source?.metadata || undefined) as HomeBlockMetaSchema | undefined;
+  }
+
   switch (homeBlock.type) {
     case HomeBlockType.Collection: {
-      if (!metadata.collection || !metadata.collection.id) {
+      const collectionMeta = sourceMetadata?.collection ?? metadata.collection;
+      if (!collectionMeta || !collectionMeta.id) {
         return null;
       }
 
       const collection = await getCollectionById({
-        input: { id: metadata.collection.id },
+        input: { id: collectionMeta.id },
       });
 
       if (!collection) {
@@ -230,9 +243,9 @@ export const getHomeBlockData = async ({
             user,
             input: {
               collectionId: collection.id,
-              limit: input.limit || metadata.collection.limit,
+              limit: input.limit || collectionMeta.limit,
               browsingLevel: sfwBrowsingLevelsFlag,
-              collectionTagId: metadata.collection.tagId,
+              collectionTagId: collectionMeta.tagId,
             },
           });
 
@@ -247,11 +260,12 @@ export const getHomeBlockData = async ({
       };
     }
     case HomeBlockType.Leaderboard: {
-      if (!metadata.leaderboards) {
+      const leaderboards = sourceMetadata?.leaderboards ?? metadata.leaderboards;
+      if (!leaderboards) {
         return null;
       }
 
-      const leaderboardIds = metadata.leaderboards.map((leaderboard) => leaderboard.id);
+      const leaderboardIds = leaderboards.map((leaderboard) => leaderboard.id);
 
       const leaderboardsWithResults = await getLeaderboardsWithResults({
         ids: leaderboardIds,
@@ -262,24 +276,22 @@ export const getHomeBlockData = async ({
         ...homeBlock,
         metadata,
         leaderboards: leaderboardsWithResults.sort((a, b) => {
-          if (!metadata.leaderboards) {
-            return 0;
-          }
-
-          const aIndex = metadata.leaderboards.find((item) => item.id === a.id)?.index ?? 0;
-          const bIndex = metadata.leaderboards.find((item) => item.id === b.id)?.index ?? 0;
+          const aIndex = leaderboards.find((item) => item.id === a.id)?.index ?? 0;
+          const bIndex = leaderboards.find((item) => item.id === b.id)?.index ?? 0;
 
           return aIndex - bIndex;
         }),
       };
     }
     case HomeBlockType.CosmeticShop: {
-      if (!metadata.cosmeticShopSection) {
+      const cosmeticShopSectionMeta =
+        sourceMetadata?.cosmeticShopSection ?? metadata.cosmeticShopSection;
+      if (!cosmeticShopSectionMeta) {
         return null;
       }
 
       const data = await getShopSectionsWithItems({
-        sectionId: metadata.cosmeticShopSection.id,
+        sectionId: cosmeticShopSectionMeta.id,
       });
 
       const [cosmeticShopSection] = data;
@@ -295,17 +307,7 @@ export const getHomeBlockData = async ({
       };
     }
     case HomeBlockType.FeaturedCollections: {
-      // System block is source of truth for pool; cloned user blocks read through to source
-      // so mods only update the singleton and clones stay in sync.
-      let effectivePool = metadata.featuredCollections;
-      if (homeBlock.sourceId) {
-        const source = await dbRead.homeBlock.findUnique({
-          where: { id: homeBlock.sourceId },
-          select: { metadata: true },
-        });
-        const sourceMeta = (source?.metadata || {}) as HomeBlockMetaSchema;
-        effectivePool = sourceMeta.featuredCollections ?? effectivePool;
-      }
+      const effectivePool = sourceMetadata?.featuredCollections ?? metadata.featuredCollections;
       if (!effectivePool?.collectionIds?.length) return null;
 
       const state = await getFeaturedCollectionsState();
