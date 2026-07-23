@@ -98,8 +98,8 @@ export default defineConfig({
           // `@vitest/browser` seeds optimizeDeps.entries from EVERY `*.browser.test.tsx` file
           // (globTestFiles), not just the one you ran. The review app-listing browser tests
           // (src/tests/pages/apps/review/review-{detail-page,queue-nav}.browser.test.tsx, from
-          // #3298 on main) `await import('~/pages/apps/review/[publishRequestId]')`, which pulls
-          // in `createServerSideProps` -> `appRouter` -> app-listing-assets.service.ts's
+          // #3298 on main) each import their page, which pulls in `createServerSideProps` ->
+          // `appRouter` -> app-listing-assets.service.ts's
           // `await import('sharp')`. Those tests `vi.mock` `server-side-helpers` so `sharp` is
           // never evaluated at runtime — but esbuild's static scan follows the import anyway and
           // can't pre-bundle sharp's native binding (a template-literal `require` of a `.node`
