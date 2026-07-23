@@ -25,6 +25,7 @@ const baseChallenge: MyParticipatedChallengeItem = {
   endsAt: daysFromNow(-1),
   status: ChallengeStatus.Completed,
   source: ChallengeSource.System,
+  buzzType: 'yellow',
   nsfwLevel: 1,
   allowedNsfwLevel: 31,
   prizePool: 10000,

@@ -28,6 +28,13 @@ export function computeCreatorShopSplit(price: number, sellerShare = 0) {
   return { creatorPool, sellerAmount, creatorAmount, platformCut };
 }
 
+// Animated artwork limits (maximums only — no minimums). Tune freely.
+export const MAX_ANIMATION_FRAMES = 150;
+export const MAX_ANIMATION_FPS = 30;
+// Compare per-frame delays against this instead of computed fps so a 33ms
+// (~30.3fps) encode of a nominal 30fps animation isn't rejected by rounding.
+export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS);
+
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
 export const creatorCosmeticTypes = [
   CosmeticType.Badge,
@@ -105,6 +112,23 @@ export const cosmeticImageMetaSchema = z.object({
   hasTransparency: z.boolean(),
 });
 
+// Per-side fit adjustment for avatar decorations, stored on the cosmetic's
+// `data.offsets` as pixels. Negative extends the frame outside the avatar —
+// effectively scaling it up (see decorationFrameStyle).
+export const DECORATION_OFFSET_LIMIT = 5;
+const cosmeticOffsetSideSchema = z
+  .number()
+  .int()
+  .min(-DECORATION_OFFSET_LIMIT)
+  .max(DECORATION_OFFSET_LIMIT);
+export type CosmeticOffsets = z.infer<typeof cosmeticOffsetsSchema>;
+export const cosmeticOffsetsSchema = z.object({
+  top: cosmeticOffsetSideSchema,
+  right: cosmeticOffsetSideSchema,
+  bottom: cosmeticOffsetSideSchema,
+  left: cosmeticOffsetSideSchema,
+});
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z.object({
   cosmeticType: z.enum(CosmeticType),
@@ -121,6 +145,8 @@ export const submitCreatorShopItemSchema = z.object({
   // price (0-70, out of the creator's 70% pool).
   sellableByOthers: z.boolean().default(false),
   sellerShare: z.number().int().min(0).max(70).default(0),
+  // ProfileDecoration only — per-side fit adjustment (ignored for other types).
+  offsets: cosmeticOffsetsSchema.nullish(),
 });
 
 export type UpdateCreatorShopItemInput = z.infer<typeof updateCreatorShopItemSchema>;
@@ -133,6 +159,9 @@ export const updateCreatorShopItemSchema = z.object({
   animated: z.boolean().optional(),
   price: z.number().int().min(COSMETIC_PRICE_FLOOR).optional(),
   availableQuantity: z.number().int().positive().nullish(),
+  // ProfileDecoration only — null clears the adjustment; treated as a content
+  // change (same rules as name/description/artwork).
+  offsets: cosmeticOffsetsSchema.nullish(),
 });
 
 export type GetCreatorShopInput = z.infer<typeof getCreatorShopSchema>;
@@ -183,9 +212,12 @@ export const getReviewQueueSchema = z.object({
   limit: z.number().min(1).max(100).default(20),
   cursor: z.number().optional(),
   // Defaults to PendingReview in the service; moderators can also review
-  // Published / Rejected, and filter to a single creator.
+  // Published / Rejected / Archived, and filter to a single creator (by
+  // username or id) and/or cosmetic types.
   status: z.enum(CosmeticShopItemStatus).optional(),
   username: z.string().optional(),
+  userId: z.number().optional(),
+  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
 });
 
 export type GetManageItemsInput = z.infer<typeof getManageItemsSchema>;

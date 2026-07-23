@@ -801,6 +801,7 @@ export interface Model {
   lockedProperties: string[];
   scannedAt: Date | null;
   sfwOnly: boolean;
+  isOfficial: boolean;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -2277,6 +2278,7 @@ export interface Comment {
   modelId: number;
   locked: boolean | null;
   hidden: boolean | null;
+  pinnedAt: Date | null;
   comments?: Comment[];
   reactions?: CommentReaction[];
   reports?: CommentReport[];

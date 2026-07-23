@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 import type { GetPublicShopItemsInput } from '~/server/schema/creator-shop.schema';
-import type { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 // Matches getEarlyAccessPricesSchema.modelVersionIds.max(200).
@@ -89,14 +89,24 @@ export const useQueryEarlyAccessPrices = (modelVersionIds: number[]) => {
 export const useQueryCreatorShopReviewQueue = ({
   status,
   username,
+  userId,
+  cosmeticTypes,
   enabled = true,
 }: {
   status?: CosmeticShopItemStatus | undefined;
   username?: string;
+  userId?: number;
+  cosmeticTypes?: CosmeticType[];
   enabled?: boolean;
 } = {}) =>
   trpc.creatorShop.getReviewQueue.useInfiniteQuery(
-    { limit: 20, status, username: username?.trim() || undefined },
+    {
+      limit: 20,
+      status,
+      username: username?.trim() || undefined,
+      userId,
+      cosmeticTypes: cosmeticTypes?.length ? cosmeticTypes : undefined,
+    },
     { enabled, getNextPageParam: (lastPage) => lastPage.nextCursor }
   );
 
@@ -139,6 +149,7 @@ export const useMutateCreatorShop = () => {
   const deleteItem = trpc.creatorShop.deleteItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
+      await queryUtils.creatorShop.getReviewQueue.invalidate();
       // Deleting can also free a featured slot server-side.
       await queryUtils.creatorShop.getSettings.invalidate();
       await queryUtils.creatorShop.getShop.invalidate();

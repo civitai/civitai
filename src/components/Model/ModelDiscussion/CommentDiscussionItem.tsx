@@ -1,6 +1,11 @@
 import { Badge, Button, Card, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons-react';
+import {
+  IconExclamationCircle,
+  IconLock,
+  IconMessageCircle2,
+  IconPinned,
+} from '@tabler/icons-react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -90,7 +95,16 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
           withUsername
           linkToProfile
         />
-        <CommentDiscussionMenu comment={comment} hideLockOption modelUserId={modelUserId} />
+        <Group gap={4} wrap="nowrap">
+          {comment.pinnedAt && (
+            <Tooltip label="Pinned">
+              <ThemeIcon size="sm" color="orange">
+                <IconPinned size={16} stroke={2} />
+              </ThemeIcon>
+            </Tooltip>
+          )}
+          <CommentDiscussionMenu comment={comment} hideLockOption modelUserId={modelUserId} />
+        </Group>
       </Group>
 
       <ContentClamp maxHeight={100}>

@@ -885,6 +885,7 @@ model Model {
   lockedProperties    String[]        @default([])
   scannedAt           DateTime?
   sfwOnly             Boolean         @default(false)
+  isOfficial          Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -3445,6 +3446,7 @@ model Comment {
   modelId      Int
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
+  pinnedAt     DateTime?
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]

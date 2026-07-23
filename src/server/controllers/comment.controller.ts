@@ -18,7 +18,9 @@ import {
   getCommentById,
   getCommentReactions,
   getComments,
+  getPinnedComments,
   toggleHideComment,
+  togglePinComment,
   updateCommentById,
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
@@ -51,8 +53,20 @@ export const getCommentsInfiniteHandler = async ({
     select: getAllCommentsSelect,
   });
 
-  const commentIds = comments.map((c) => c.id);
-  if (commentIds.length === 0) return { comments: [], nextCursor: undefined };
+  let nextCursor: number | undefined;
+  if (comments.length > input.limit) {
+    const nextItem = comments.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  // Pinned comments surface at the top of the first page only.
+  const pinnedComments = !input.cursor
+    ? await getPinnedComments({ input, user, select: getAllCommentsSelect })
+    : [];
+
+  const allComments = [...pinnedComments, ...comments];
+  const commentIds = allComments.map((c) => c.id);
+  if (commentIds.length === 0) return { comments: [], nextCursor };
 
   const counts = await dbRead.$queryRaw<{ id: number; count: number }[]>`
     SELECT
@@ -64,15 +78,9 @@ export const getCommentsInfiniteHandler = async ({
   `;
   const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
 
-  let nextCursor: number | undefined;
-  if (comments.length > input.limit) {
-    const nextItem = comments.pop();
-    nextCursor = nextItem?.id;
-  }
-
   return {
     nextCursor,
-    comments: comments.map((c) => ({
+    comments: allComments.map((c) => ({
       ...c,
       _count: { comments: countsMap[c.id] ?? 0 },
     })),
@@ -188,6 +196,24 @@ export const toggleHideCommentHandler = async ({
 }) => {
   try {
     await toggleHideComment({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator ?? false,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const togglePinCommentHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    await togglePinComment({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator ?? false,

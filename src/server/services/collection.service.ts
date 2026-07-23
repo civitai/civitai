@@ -63,6 +63,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -1987,20 +1988,24 @@ export const validateContestCollectionEntry = async ({
     throw throwBadRequestError('You are banned from participating in contests');
   }
 
+  // The source=User challenge (if any) that owns this collection. One lookup, reused by the flag
+  // gate, the block gate, and the accepting-entries timing gate below — System/Mod (daily) and
+  // community-contest collections have no such row, so this is null for them.
+  const userChallenge = await dbRead.challenge.findFirst({
+    where: { collectionId, source: ChallengeSource.User },
+    select: { id: true, createdById: true, status: true },
+  });
+
   // User-created challenges are still flag-gated, but entries reach this function through the
   // generic collection mutations, which carry no challenge-specific guard — so a direct link to
   // the challenge would otherwise be enough to submit. Scoped to source=User: ordinary contest
   // collections and System/Mod (daily) challenges are unaffected.
-  if (!canAccessUserChallenges) {
-    const gatedChallenge = await dbRead.challenge.findFirst({
-      where: { collectionId, source: ChallengeSource.User },
-      select: { id: true },
-    });
-    if (gatedChallenge)
-      throw throwAuthorizationError('This challenge is not currently available.');
-  }
+  if (!canAccessUserChallenges && userChallenge)
+    throw throwAuthorizationError('This challenge is not currently available.');
 
-  // Challenge creators may not enter their own challenge (self-dealing on the prize pool).
+  // Challenge creators may not enter their own challenge (self-dealing on the prize pool). Its own
+  // lookup: it filters on createdById across ANY source, so it also catches a System/Mod challenge
+  // the viewer created — which the source=User lookup above would miss.
   if (!isModerator) {
     const ownChallenge = await dbRead.challenge.findFirst({
       where: { collectionId, createdById: userId },
@@ -2009,6 +2014,16 @@ export const validateContestCollectionEntry = async ({
     if (ownChallenge) {
       throw throwBadRequestError('You cannot submit entries to your own challenge.');
     }
+  }
+
+  // A viewer the challenge creator has blocked can't submit an entry — parity with the detail-page
+  // block gate. Scoped to source=User (System/mod challenges have no owner); moderators exempt.
+  if (!isModerator && userChallenge) {
+    const blocked = await amIBlockedByUser({
+      userId,
+      targetUserId: userChallenge.createdById ?? undefined,
+    });
+    if (blocked) throw throwBadRequestError('This challenge is not available.');
   }
 
   // Block re-submitting an image a challenge judge has already scored. Removal
@@ -2041,7 +2056,7 @@ export const validateContestCollectionEntry = async ({
 
   // User challenges accept entries only once Active — makes the entry WRITE agree with the fee
   // CHARGE (which already requires Active). No-op for daily/system/community collections.
-  await assertUserChallengeAcceptingEntries(collectionId);
+  await assertUserChallengeAcceptingEntries(collectionId, userChallenge);
 
   if (!metadata) {
     return;
@@ -2796,13 +2811,10 @@ export const removeCollectionItem = async ({
 
   isOwner = item.userId === userId;
 
-  if (
-    !permissions.write &&
-    !permissions.writeReview &&
-    !isOwner &&
-    !permissions.manage &&
-    !isModerator
-  ) {
+  // Deliberately does NOT accept `permissions.write` / `permissions.writeReview`: both are granted
+  // to every authenticated user on a Public/Review-write collection regardless of ownership, so
+  // honoring them here let anyone delete anyone else's item. A write grant authorizes adding.
+  if (!isOwner && !permissions.manage && !isModerator) {
     throw throwAuthorizationError(
       'You do not have permission to remove items from this collection.'
     );

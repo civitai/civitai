@@ -59,6 +59,7 @@ import {
   upsertChallenge,
   upsertUserChallenge,
   upsertChallengeEvent,
+  rescanChallenge,
   voidChallenge,
   getActiveJudges,
   getChallengeSystemConfig,
@@ -272,6 +273,12 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => voidChallenge(input.id)),
 
+  // Moderator: Re-run the content scan (moderated text + cover image) for a challenge
+  rescan: moderatorProcedure
+    .input(challengeQuickActionSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => rescanChallenge({ id: input.id, moderatorId: ctx.user.id })),
+
   // Active judges for the challenge form dropdowns. Any authenticated user may call it; the service
   // returns the full list (with sensitive fields) to moderators and the public, SFW-selectable subset
   // to everyone else, based on the real ctx.user.isModerator.
@@ -316,7 +323,7 @@ export const challengeRouter = router({
   getActiveEvents: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(() => getActiveEvents()),
+    .query(({ ctx }) => getActiveEvents(ctx.user?.id)),
 
   // Public: Get single event by ID
   getEventById: publicProcedure

@@ -79,6 +79,7 @@ export type ChallengeListItem = {
   endsAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  buzzType: 'green' | 'yellow';
   nsfwLevel: number;
   allowedNsfwLevel: number;
   prizePool: number;

@@ -65,6 +65,7 @@ import type {
   PublishModelSchema,
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
+  SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   TransferModelOwnershipInput,
@@ -4308,6 +4309,30 @@ export const toggleCannotPublish = async ({
     id: updated.id,
     meta: updated.meta as ModelMeta | null,
   };
+};
+
+export const setModelOfficial = async ({
+  id,
+  isOfficial,
+  isModerator,
+}: SetModelOfficialInput & {
+  isModerator: boolean;
+}) => {
+  if (!isModerator) throw throwAuthorizationError();
+
+  const model = await getModel({ id, select: { id: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+  const updated = await dbWrite.model.update({
+    where: { id },
+    data: { isOfficial },
+    select: { id: true, isOfficial: true },
+  });
+
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.OFFICIAL_MODELS);
+
+  return updated;
 };
 
 export async function getTopWeeklyEarners(fresh = false) {

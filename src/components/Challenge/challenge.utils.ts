@@ -1,13 +1,16 @@
 import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type {
+  ChallengeDetail,
   GetInfiniteChallengesInput,
   GetCompletedChallengesWithWinnersInput,
 } from '~/server/schema/challenge.schema';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
 
 // Default filter values
 const defaultFilters: Partial<GetInfiniteChallengesInput> = {
@@ -84,6 +87,25 @@ export function useQueryCompletedChallengesWithWinners(
   const flatData = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
 
   return { challenges: flatData, ...rest };
+}
+
+// Creators may not enter their own challenge (self-dealing on the prize pool), enforced server side
+// in collection.service.ts saveItemInCollections. Intentionally stricter than that check, which
+// exempts moderators: a moderator who owns a challenge still sees the blocked button, so the UI
+// never invites self-dealing. Moderators keep the server-side ability if they need it.
+export function useIsChallengeOwner(
+  // Accepts undefined so callers can resolve ownership before their `!challenge` early return,
+  // which is the only way to keep this a hook rather than a second inline copy of the rule.
+  challenge?: Pick<ChallengeDetail, 'createdById' | 'source'> | null
+) {
+  const currentUser = useCurrentUser();
+
+  return (
+    !!currentUser &&
+    !!challenge &&
+    currentUser.id === challenge.createdById &&
+    challenge.source === ChallengeSource.User
+  );
 }
 
 // Hook to get winner cooldown status for the current user

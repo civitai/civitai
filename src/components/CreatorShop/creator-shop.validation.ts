@@ -1,5 +1,8 @@
 import type { AutoCheck } from '~/server/schema/creator-shop.schema';
 import {
+  MAX_ANIMATION_FPS,
+  MAX_ANIMATION_FRAMES,
+  MIN_ANIMATION_FRAME_DELAY_MS,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
   cosmeticImageRequirements,
@@ -42,6 +45,39 @@ function detectTransparency(img: HTMLImageElement, width: number, height: number
   return transparent / total > 0.02;
 }
 
+// Frame stats for an animated WebP, parsed from the RIFF container's ANMF
+// chunks (the browser can't expose frame counts/delays through <img>/canvas).
+// Returns null for static or non-WebP files. Mirrors the server's sharp-based
+// frame checks in validateArtwork.
+async function getWebPAnimationStats(
+  file: File
+): Promise<{ frames: number; minDelayMs: number } | null> {
+  if (file.type !== 'image/webp') return null;
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const fourcc = (o: number) => String.fromCharCode(buf[o], buf[o + 1], buf[o + 2], buf[o + 3]);
+  const u32 = (o: number) =>
+    (buf[o] | (buf[o + 1] << 8) | (buf[o + 2] << 16) | (buf[o + 3] << 24)) >>> 0;
+  if (buf.length < 12 || fourcc(0) !== 'RIFF' || fourcc(8) !== 'WEBP') return null;
+
+  let frames = 0;
+  let minDelayMs = Infinity;
+  let offset = 12;
+  while (offset + 8 <= buf.length) {
+    const id = fourcc(offset);
+    const size = u32(offset + 4);
+    // ANMF payload: x(3) y(3) w(3) h(3) duration(3, little-endian ms) flags(1)
+    if (id === 'ANMF' && offset + 8 + 16 <= buf.length) {
+      frames++;
+      const d = offset + 8 + 12;
+      minDelayMs = Math.min(minDelayMs, buf[d] | (buf[d + 1] << 8) | (buf[d + 2] << 16));
+    }
+    // Chunks are padded to even sizes.
+    offset += 8 + size + (size % 2);
+  }
+  if (frames <= 1) return null;
+  return { frames, minDelayMs: Number.isFinite(minDelayMs) ? minDelayMs : 0 };
+}
+
 /**
  * Runs the pre-submit artwork checks a creator sees before they can pay the fee.
  * Returns the per-check results (also persisted to item meta for moderators).
@@ -80,6 +116,22 @@ export async function validateCosmeticImage(
   ];
   if (req.requireTransparency)
     checks.push({ key: 'transparency', label: 'Transparent background', passed: hasTransparency });
+  const animation = validFormat ? await getWebPAnimationStats(file) : null;
+  if (animation) {
+    checks.push({
+      key: 'frameCount',
+      label: `At most ${MAX_ANIMATION_FRAMES} frames`,
+      passed: animation.frames <= MAX_ANIMATION_FRAMES,
+      detail: `${animation.frames} frames`,
+    });
+    checks.push({
+      key: 'frameRate',
+      label: `At most ${MAX_ANIMATION_FPS} fps`,
+      // A 0ms delay ("as fast as possible") also fails.
+      passed: animation.minDelayMs >= MIN_ANIMATION_FRAME_DELAY_MS,
+      detail: `~${Math.round(1000 / Math.max(1, animation.minDelayMs))} fps peak`,
+    });
+  }
   checks.push({
     key: 'size',
     label: `Under ${formatBytes(maxSize)}`,

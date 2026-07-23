@@ -19,6 +19,7 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { getInitials } from '~/utils/string-helpers';
 import classes from './UserAvatarSimple.module.scss';
+import { decorationFrameStyle } from '~/components/UserAvatar/decoration-frame.util';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -90,14 +91,9 @@ export function UserAvatarSimple({
               type="image"
               name="user avatar decoration"
               alt=""
-              className="absolute left-1/2 top-1/2 z-[2]"
+              className="z-[2]"
               loading="lazy"
-              style={{
-                maxWidth: 'none',
-                width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
-                height: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
-                transform: 'translate(-50%, -50%)',
-              }}
+              style={decorationFrameStyle(decoration.data)}
               optimized
               width={96}
               original={false}

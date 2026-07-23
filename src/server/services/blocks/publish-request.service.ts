@@ -1992,6 +1992,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     typeof request.deployState === 'string' && request.deployState.startsWith('preview-');
 
   const manifest = request.manifest as Record<string, unknown>;
+  // `manifestScopes` is written to `AppBlock.approvedScopes` on the three approve paths
+  // below (create / P2002-retry / subsequent-version). 🔴 This mod-approval flow is the
+  // ONLY place that writes `approvedScopes` — a load-bearing invariant the dev-tunnel
+  // owned-non-approved mint relies on (block-tokens/index.ts): a NEVER-approved app has
+  // `approvedScopes = []` ⟹ its dev token is read-only + cannot spend. Writing
+  // `approvedScopes` anywhere OUTSIDE this approval flow would break that safety.
   const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
   const manifestContentRating =
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
@@ -3221,6 +3227,110 @@ export async function resolveReviewPreviewTarget(
   if (!row) return null;
   if (row.status !== 'pending') return null;
   return { id: row.id, slug: row.slug };
+}
+
+/** The review-page modes a single request can be opened in. Mirrors the modal's
+ *  `mode` union minus `reports` (reports are off-site listings, not publish
+ *  requests). A row in any OTHER status (`withdrawn`, superseded) is not a
+ *  reviewable detail and resolves to `null`. */
+export type ReviewRequestMode = 'pending' | 'approved' | 'rejected';
+
+function reviewModeForStatus(status: string): ReviewRequestMode | null {
+  if (status === 'pending') return 'pending';
+  if (status === 'approved') return 'approved';
+  if (status === 'rejected') return 'rejected';
+  return null;
+}
+
+/**
+ * SSR fail-close resolver for the per-submission review PAGE
+ * (`/apps/review/<publishRequestId>`) — the page analogue of
+ * {@link resolveReviewPreviewTarget}, but valid for pending/approved/rejected
+ * (the page shows history too, not only the live-preview-able pending state).
+ *
+ * Returns `{ id, status }` ONLY for an existing request in a reviewable status;
+ * `null` for a missing / withdrawn / superseded row so the page's
+ * `getServerSideProps` 404s without leaking which. Cheap (id+status only) so the
+ * SSR gate stays light; the full request payload is fetched client-side via
+ * {@link getReviewRequestById} (keeps the big manifest/diff blobs off the SSR
+ * props, and Dates on the tRPC/superjson path instead of hand-serialized).
+ *
+ * NO AUTHORIZATION here (like `resolveReviewPreviewTarget`) — leaks a slug/status
+ * by id, so EVERY caller MUST already be moderator-gated (the page resolver runs
+ * `isAppReviewer` before calling).
+ */
+export async function resolveReviewRequestTarget(
+  publishRequestId: string
+): Promise<{ id: string; status: ReviewRequestMode } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { id: true, status: true },
+  });
+  if (!row) return null;
+  const mode = reviewModeForStatus(row.status);
+  if (!mode) return null;
+  return { id: row.id, status: mode };
+}
+
+/**
+ * Single-request fetch for the review PAGE. Returns the SAME hydrated shape one
+ * item of `listPending/Approved/RejectedRequests` returns (so the extracted
+ * `OnsiteReviewModalBody` renders identically to the modal path), plus the
+ * derived `mode`. Includes the reviewer profile + approval-notes / rejection-
+ * reason so an approved/rejected detail shows the same read-only history the
+ * list tabs surface. Returns `null` for a missing / non-reviewable row.
+ *
+ * MOD-ONLY: like the list builders it performs no authorization — the router
+ * (`moderatorProcedure` + `enforceAppBlocksFlag`) gates it.
+ */
+export async function getReviewRequestById(publishRequestId: string): Promise<{
+  mode: ReviewRequestMode;
+  request: Record<string, unknown>;
+} | null> {
+  const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
+    import('~/server/db/client'),
+    import('./forgejo.service'),
+  ]);
+  const r = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      version: true,
+      status: true,
+      submittedAt: true,
+      reviewedAt: true,
+      approvalNotes: true,
+      rejectionReason: true,
+      bundleSizeBytes: true,
+      bundleSha256: true,
+      manifest: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      forgejoCommitSha: true,
+      submittedBy: { select: { id: true, username: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, image: true } },
+    },
+  });
+  if (!r) return null;
+  const mode = reviewModeForStatus(r.status);
+  if (!mode) return null;
+
+  // Match the list builders' row mapping exactly (bundle bigint → string,
+  // Forgejo review-repo deep link, push-row canonical-commit link).
+  const { status, ...rest } = r;
+  const request = {
+    ...rest,
+    bundleSizeBytes: r.bundleSizeBytes.toString(),
+    reviewRepoUrl: reviewRepoUrl(r.slug),
+    pushCommitUrl:
+      !r.bundleSha256 && r.forgejoCommitSha
+        ? repoCommitUrl(r.slug, r.forgejoCommitSha)
+        : null,
+  };
+  return { mode, request };
 }
 
 export type MintReviewBlockTokenResult = {

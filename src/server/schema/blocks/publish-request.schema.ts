@@ -131,6 +131,14 @@ export const getPublishRequestDiffSchema = z.object({
 
 export type GetPublishRequestDiffInput = z.infer<typeof getPublishRequestDiffSchema>;
 
+/** Input for the MOD-ONLY `blocks.getPublishRequest` — single-request fetch that
+ *  powers the per-submission review PAGE (`/apps/review/<publishRequestId>`). */
+export const getPublishRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type GetPublishRequestInput = z.infer<typeof getPublishRequestSchema>;
+
 /** Input for the MOD-ONLY review-sandbox `blocks.previewRequest` /
  *  `blocks.getReviewStatus` (#2831). */
 export const previewRequestSchema = z.object({

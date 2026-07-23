@@ -11,7 +11,11 @@ import {
 } from '~/components/CreatorShop/Submit/submit.util';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
-import type { AutoCheck, UpdateCreatorShopItemInput } from '~/server/schema/creator-shop.schema';
+import type {
+  AutoCheck,
+  CosmeticOffsets,
+  UpdateCreatorShopItemInput,
+} from '~/server/schema/creator-shop.schema';
 import {
   COSMETIC_PRICE_FLOOR,
   CREATOR_SHOP_CREATOR_SHARE,
@@ -52,6 +56,17 @@ export function useSubmitCreatorShopForm({
   );
   const [sellableByOthers, setSellableByOthers] = useState(false);
   const [sellerShare, setSellerShare] = useState(0);
+  // Avatar-decoration fit adjustment (per side, -5..5); all-zero = none stored.
+  const [offsets, setOffsetsState] = useState<CosmeticOffsets>(
+    (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? {
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+    }
+  );
+  const setOffset = (side: keyof CosmeticOffsets, value: number) =>
+    setOffsetsState((prev) => ({ ...prev, [side]: value }));
 
   // Buyers already own the art once an item is published or sold — lock it.
   const artLocked =
@@ -123,6 +138,15 @@ export function useSubmitCreatorShopForm({
 
   const canSubmit = artOk && !!name.trim() && price >= COSMETIC_PRICE_FLOOR && canAffordFee;
 
+  const isDecoration = type === CosmeticType.ProfileDecoration;
+  const hasOffsets = Object.values(offsets).some((v) => v !== 0);
+  // null clears a previously stored adjustment; undefined = nothing to store.
+  const normalizedOffsets = isDecoration && hasOffsets ? offsets : null;
+  const existingOffsets =
+    (item?.cosmetic.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
+  const offsetsChanged =
+    isDecoration && JSON.stringify(normalizedOffsets) !== JSON.stringify(existingOffsets);
+
   const handleSubmit = async () => {
     if (!canSubmit || !imageId) {
       showErrorNotification({
@@ -147,6 +171,7 @@ export function useSubmitCreatorShopForm({
           payload.imageUrl = imageId;
           payload.animated = animated;
         }
+        if (offsetsChanged) payload.offsets = normalizedOffsets;
         await updateItem.mutateAsync(payload);
       } else {
         await submitItem.mutateAsync({
@@ -160,6 +185,7 @@ export function useSubmitCreatorShopForm({
           buzzType,
           sellableByOthers,
           sellerShare: sellableByOthers ? sellerShare : 0,
+          offsets: normalizedOffsets,
         });
       }
       resetFiles();
@@ -175,7 +201,7 @@ export function useSubmitCreatorShopForm({
     type,
     source: CosmeticSource.Purchase,
     description: description || null,
-    data: imageId ? buildData(type, imageId, animated) : {},
+    data: imageId ? buildData(type, imageId, animated, normalizedOffsets) : {},
   } as unknown as PreviewCosmetic;
 
   const earn = Math.floor(price * CREATOR_SHOP_CREATOR_SHARE);
@@ -201,6 +227,9 @@ export function useSubmitCreatorShopForm({
     setSellableByOthers,
     sellerShare,
     setSellerShare,
+    offsets,
+    setOffset,
+    offsetsChanged,
     imageId,
     localUrl,
     checks,

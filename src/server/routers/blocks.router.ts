@@ -58,6 +58,7 @@ import {
   agentReviewChatSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
+  getPublishRequestSchema,
   getPublishRequestScreenshotsSchema,
   getReviewStatusSchema,
   listApprovedRequestsSchema,
@@ -1353,6 +1354,34 @@ export const blocksRouter = router({
         '~/server/services/blocks/publish-request.service'
       );
       return getPublishRequestDiff({ publishRequestId: input.publishRequestId });
+    }),
+
+  /**
+   * MOD-ONLY single-request fetch — powers the per-submission review PAGE
+   * (`/apps/review/<publishRequestId>`, `appReviewPage` flag). Returns the SAME
+   * hydrated request shape one item of `listPending/Approved/RejectedRequests`
+   * returns, plus the derived `mode`, so the extracted `OnsiteReviewModalBody`
+   * renders on the page identically to the modal path. A missing / withdrawn /
+   * superseded id → NOT_FOUND (fail-closed; never leaks which).
+   *
+   * Same auth shape as the other review reads: `moderatorProcedure` +
+   * `isModerator` belt + `enforceAppBlocksFlag` — no public path.
+   */
+  getPublishRequest: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getPublishRequestSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { getReviewRequestById } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      const result = await getReviewRequestById(input.publishRequestId);
+      if (!result) {
+        throw throwNotFoundError(`Publish request ${input.publishRequestId} not found`);
+      }
+      return result;
     }),
 
   /**
@@ -3657,10 +3686,16 @@ export const blocksRouter = router({
       // reject fail-safe (NO spend).
       //
       // EXCLUSION: skipped for DEV/live-harness tokens (`claims.dev === true`),
-      // which carry a synthetic non-FK appBlockId and already have the
-      // per-session dev-tunnel spend backstop below — so a dev iterating locally
-      // is never clamped by the aggregate cap (matches recordSpendAttribution
-      // being inert for a synthetic appId).
+      // which carry EITHER a synthetic non-FK appBlockId (ephemeral / pre-approval
+      // apps) OR — since #3285 — a real `apb_` id for an owner dev-tunnelling their
+      // OWN suspended/pending/deprecated app. The G8 skip is still safe in both
+      // cases because a dev token is SELF-BOUND: only the owner can spend, and only
+      // their own Buzz, still bounded by the per-user daily cap above + the
+      // per-session dev-tunnel spend backstop below — so a dev iterating locally is
+      // never clamped by the aggregate (anti-Sybil) cap, which exists to bound
+      // MANY viewers funnelling through one PUBLIC app (impossible for a self-bound
+      // dev token). For the synthetic-id case this also matches recordSpendAttribution
+      // being inert for a non-FK appId.
       let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
       if (claims.dev !== true) {
         const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');

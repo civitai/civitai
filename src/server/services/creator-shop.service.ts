@@ -44,6 +44,9 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   CREATOR_SHOP_SUBMISSION_FEE,
+  MAX_ANIMATION_FPS,
+  MAX_ANIMATION_FRAMES,
+  MIN_ANIMATION_FRAME_DELAY_MS,
   PRICE_REVIEW_THRESHOLD,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
@@ -52,6 +55,7 @@ import {
 import type {
   AutoCheck,
   CosmeticImageMeta,
+  CosmeticOffsets,
   GetEarlyAccessPricesInput,
   GetPublicShopItemsInput,
   GetReviewQueueInput,
@@ -103,11 +107,17 @@ const withRemaining = (item: CreatorShopItemRow) => {
 };
 
 // The cosmetic `data` blob is built server-side (never trust client-shaped data).
-const buildCosmeticData = (type: CosmeticType, imageUrl: string, animated?: boolean) => {
+const buildCosmeticData = (
+  type: CosmeticType,
+  imageUrl: string,
+  animated?: boolean,
+  offsets?: CosmeticOffsets | null
+) => {
   if (type === CosmeticType.ProfileBackground)
     return { url: imageUrl, type: MediaType.image, animated: !!animated };
-  if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration)
-    return { url: imageUrl, animated: !!animated };
+  if (type === CosmeticType.ProfileDecoration)
+    return { url: imageUrl, animated: !!animated, ...(offsets ? { offsets } : {}) };
+  if (type === CosmeticType.Badge) return { url: imageUrl, animated: !!animated };
   return { url: imageUrl };
 };
 
@@ -121,6 +131,8 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   let format: string | undefined;
   let hasTransparency = false;
   let imageHash = '';
+  let frames = 1;
+  let minFrameDelay = Infinity;
   try {
     const res = await fetch(getEdgeUrl(imageUrl, { original: true }));
     if (!res.ok) throw new Error(`fetch ${res.status}`);
@@ -131,6 +143,8 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     height = meta.height ?? 0;
     format = meta.format;
     hasTransparency = !!meta.hasAlpha;
+    frames = meta.pages ?? 1;
+    if (meta.delay?.length) minFrameDelay = Math.min(...meta.delay);
   } catch {
     throw throwBadRequestError('Could not read the uploaded artwork for validation');
   }
@@ -151,6 +165,24 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   ];
   if (req.requireTransparency)
     checks.push({ key: 'transparency', label: 'Transparent background', passed: hasTransparency });
+  if (frames > 1) {
+    checks.push({
+      key: 'frameCount',
+      label: `At most ${MAX_ANIMATION_FRAMES} frames`,
+      passed: frames <= MAX_ANIMATION_FRAMES,
+      detail: `${frames} frames`,
+    });
+    checks.push({
+      key: 'frameRate',
+      label: `At most ${MAX_ANIMATION_FPS} fps`,
+      // A 0ms delay ("as fast as possible") also fails; missing delay info
+      // (Infinity) can't be judged so it passes.
+      passed: minFrameDelay >= MIN_ANIMATION_FRAME_DELAY_MS,
+      detail: Number.isFinite(minFrameDelay)
+        ? `~${Math.round(1000 / Math.max(1, minFrameDelay))} fps peak`
+        : undefined,
+    });
+  }
 
   const imageMeta: CosmeticImageMeta = { width, height, hasTransparency };
   return { checks, imageMeta, imageHash, allPassed: checks.every((c) => c.passed) };
@@ -207,6 +239,7 @@ export const submitCreatorShopItem = async ({
   buzzType,
   sellableByOthers,
   sellerShare,
+  offsets,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // The Creator Shop is a Creator Program member benefit.
   await assertCreatorProgramMember(userId);
@@ -243,7 +276,12 @@ export const submitCreatorShopItem = async ({
           type: cosmeticType,
           source: CosmeticSource.Purchase,
           permanentUnlock: true,
-          data: buildCosmeticData(cosmeticType, imageUrl, animated) as Prisma.InputJsonValue,
+          data: buildCosmeticData(
+            cosmeticType,
+            imageUrl,
+            animated,
+            offsets
+          ) as Prisma.InputJsonValue,
           createdById: userId,
         },
       });
@@ -287,7 +325,7 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       status: true,
       meta: true,
       addedById: true,
-      cosmetic: { select: { createdById: true, type: true } },
+      cosmetic: { select: { createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
   });
@@ -309,6 +347,7 @@ export const updateCreatorShopItem = async ({
   animated,
   price,
   availableQuantity,
+  offsets,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   // Rejected is terminal; archived items must be restored before editing.
@@ -317,12 +356,24 @@ export const updateCreatorShopItem = async ({
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be edited');
 
+  // Fit offsets only apply to avatar decorations; undefined = keep, null = clear.
+  const isDecoration = existing.cosmetic.type === CosmeticType.ProfileDecoration;
+  const existingData = (existing.cosmetic.data ?? {}) as {
+    offsets?: CosmeticOffsets;
+  } & Record<string, unknown>;
+  const offsetsChange = isDecoration && offsets !== undefined;
+  const nextOffsets = !isDecoration
+    ? null
+    : offsets === undefined
+    ? existingData.offsets ?? null
+    : offsets;
+
   // Cross-listings point at another creator's shared cosmetic — the seller may
   // never touch its art/name/description, only price & quantity.
   const isOriginalCreator = isModerator || existing.cosmetic.createdById === userId;
   if (
     !isOriginalCreator &&
-    (name !== undefined || description !== undefined || imageUrl !== undefined)
+    (name !== undefined || description !== undefined || imageUrl !== undefined || offsetsChange)
   )
     throw throwBadRequestError(
       "You can only change price and quantity for another creator's cosmetic"
@@ -330,8 +381,14 @@ export const updateCreatorShopItem = async ({
 
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
-  // A live item may already have buyers — only price & quantity may change.
-  if (isPublished && (name !== undefined || description !== undefined || artChanged))
+  // A live item may already have buyers — creators may only change price &
+  // quantity, but moderators can fix name/description/fit post-publish (the
+  // edit stays live; it does not re-enter review).
+  if (
+    isPublished &&
+    !isModerator &&
+    (name !== undefined || description !== undefined || artChanged || offsetsChange)
+  )
     throw throwBadRequestError('Published items can only change price and quantity');
   // Buyers already have the art — it can't change once sold.
   if (artChanged && existing._count.purchases > 0)
@@ -357,14 +414,20 @@ export const updateCreatorShopItem = async ({
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
     checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
     artwork = {
-      data: buildCosmeticData(existing.cosmetic.type, imageUrl, animated) as Prisma.InputJsonValue,
+      data: buildCosmeticData(
+        existing.cosmetic.type,
+        imageUrl,
+        animated,
+        nextOffsets
+      ) as Prisma.InputJsonValue,
       checks,
       imageMeta,
       imageHash,
     };
   }
 
-  const contentChanged = name !== undefined || description !== undefined || artChanged;
+  const contentChanged =
+    name !== undefined || description !== undefined || artChanged || offsetsChange;
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const base = meta.lastApprovedAmount ?? existing.unitAmount;
   const bigPriceChange =
@@ -379,12 +442,20 @@ export const updateCreatorShopItem = async ({
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
 
   if (contentChanged) {
+    // Offsets-only edits patch the existing data blob; art replacement rebuilds
+    // it (with the effective offsets already folded in above).
+    const { offsets: _prevOffsets, ...restData } = existingData;
+    const patchedData = artwork
+      ? artwork.data
+      : offsetsChange
+      ? ((nextOffsets ? { ...restData, offsets: nextOffsets } : restData) as Prisma.InputJsonValue)
+      : undefined;
     await dbWrite.cosmetic.update({
       where: { id: existing.cosmeticId },
       data: {
         ...(name !== undefined ? { name } : {}),
         ...(description !== undefined ? { description } : {}),
-        ...(artwork ? { data: artwork.data } : {}),
+        ...(patchedData !== undefined ? { data: patchedData } : {}),
       },
     });
   }
@@ -488,6 +559,8 @@ export const deleteCreatorShopItem = async ({
   isModerator?: boolean;
   id: number;
 }) => {
+  // Deleting wipes purchase records — a moderator-only action; creators archive.
+  if (!isModerator) throw throwAuthorizationError('Only moderators can delete shop items');
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   // Hard delete. FK cascades wipe the purchase records (sales totals) and any
   // official-shop section links. Buyers keep what they bought: UserCosmetic is
@@ -795,16 +868,19 @@ export const getCreatorShopReviewQueue = async ({
   cursor,
   status,
   username,
+  userId,
+  cosmeticTypes,
 }: GetReviewQueueInput) => {
   const items = await dbRead.cosmeticShopItem.findMany({
     where: {
-      // A specific status filters to it; no status = every status except
-      // Archived (the "All" option in the review queue).
+      // A specific status filters to it (including Archived); no status = every
+      // status except Archived (the "All" option in the review queue).
       ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
       // Only creator-submitted items (exclude official/admin cosmetics).
       cosmetic: {
-        createdById: { not: null },
-        ...(username ? { creator: { username: { equals: username, mode: 'insensitive' } } } : {}),
+        createdById: userId ?? { not: null },
+        ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
+        ...(username ? { creator: { username: { contains: username, mode: 'insensitive' } } } : {}),
       },
     },
     take: limit + 1,
