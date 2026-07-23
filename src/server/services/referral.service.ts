@@ -7,6 +7,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { bustCreatorMembershipValidCache } from '~/server/services/creator-membership.service';
 import type { ProductTier } from '~/server/schema/subscriptions.schema';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -1235,6 +1236,16 @@ export async function redeemTokens(params: { userId: number; offerIndex: number 
       select: { id: true, createdAt: true, tokensSpent: true, rewardType: true, metadata: true },
     });
   });
+
+  // The referral grant just flipped this user's creator-membership validity: they
+  // now hold a valid, non-founder tier. Bust the read-time membership-validity cache
+  // (#3322) so any hidden-metric flags they've set take effect on the next read
+  // immediately, matching how stripe/paddle activation invalidates it via
+  // invalidateSubscriptionCaches — rather than waiting out the cache's short TTL
+  // backstop. Done AFTER the transaction commits (once, for the granted user) so the
+  // re-query reads a durable grant. Fail-open: the helper swallows Redis errors, so a
+  // bust failure can never surface to the caller after the grant has committed.
+  await bustCreatorMembershipValidCache(userId);
 
   emitSignal(userId, SignalMessages.ReferralTierGranted, {
     redemptionId: redemption.id,
