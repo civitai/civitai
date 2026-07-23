@@ -36,12 +36,17 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 
 // Stub the extracted body/title so we assert the SHELL wiring (props + gate),
-// not re-run the body's own covered behaviour.
-vi.mock('~/components/Apps/OnsiteReviewModal', () => ({
-  OnsiteReviewModalBody: (props: { selection: any; onClose: () => void }) => {
+// not re-run the body's own covered behaviour. The page renders the review body
+// via `ReviewDetailView` (which owns the real approve/reject `ReviewActionBar`,
+// covered by its own tests); stub it so this shell test doesn't pull that live
+// trpc-backed action bar. The title still comes from `OnsiteReviewModal`.
+vi.mock('~/components/Apps/ReviewDetailView', () => ({
+  ReviewDetailView: (props: { selection: any; onClose: () => void }) => {
     state.bodyProps.last = props;
     return <div data-testid="review-body">body:{props.selection.request.id}:{props.selection.mode}</div>;
   },
+}));
+vi.mock('~/components/Apps/OnsiteReviewModal', () => ({
   OnsiteReviewModalTitle: ({ selection }: { selection: any }) => (
     <div data-testid="review-title">{selection.request.slug}</div>
   ),

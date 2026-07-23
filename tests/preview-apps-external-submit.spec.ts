@@ -67,15 +67,46 @@ type PendingItem = {
 };
 type PendingList = { items: PendingItem[]; nextCursor: string | null };
 
-const submitInput = {
-  slug: SLUG,
-  name: 'CI Smoke — external app (P3a)',
-  externalUrl: EXTERNAL_URL,
-  tagline: 'a pure external-link app',
-  category: 'utility',
-  contentRating: 'g',
-  changelog: 'ci-smoke submit',
-};
+function submitInput(connectClientId: string) {
+  return {
+    slug: SLUG,
+    name: 'CI Smoke — external app (P3a)',
+    externalUrl: EXTERNAL_URL,
+    tagline: 'a pure external-link app',
+    category: 'utility',
+    contentRating: 'g',
+    changelog: 'ci-smoke submit',
+    // W13 merged external+connect model (#3227): every external listing links the
+    // caller's OWN OAuth client. This pure external-link app discloses NO scopes,
+    // so an empty requested-scope mask (0) + empty justifications is the minimal
+    // valid connect shape (0 ⊆ any client ceiling; no scopes → no justifications).
+    connectClientId,
+    requestedScopes: 0,
+    scopeJustifications: {},
+  };
+}
+
+/**
+ * The W13 merged external+connect model requires every external listing to link
+ * the caller's OWN OAuth client (existence/ownership/not-app-block checked in the
+ * service). Create a throwaway client per test and delete it on cleanup —
+ * self-cleaning like the draft listing + slug.
+ */
+async function createConnectClient(request: APIRequestContext): Promise<string> {
+  const res = await trpcMutation<{ clientId: string }>(request, 'oauthClient.create', {
+    name: 'CI Smoke — external-listing connect client',
+    redirectUris: ['https://example.com/ci-smoke-oauth-callback'],
+  });
+  return res.clientId;
+}
+
+async function deleteConnectClient(
+  request: APIRequestContext,
+  clientId: string | null
+): Promise<void> {
+  if (!clientId) return;
+  await trpcMutation(request, 'oauthClient.delete', { id: clientId }).catch(() => {});
+}
 
 /** Page the oldest-first pending queue to find our row by slug (it's the newest). */
 async function findPendingBySlug(
@@ -129,15 +160,17 @@ test.describe('App Blocks P3a: off-site submit → mod queue → withdraw (mod, 
     });
 
     let publishRequestId: string | null = null;
+    let clientId: string | null = null;
     try {
       // Pre-clean any leftover pending row for this preview's slug (prior crashed run).
       await withdrawPendingForSlug(authorRequest, modRequest, SLUG);
+      clientId = await createConnectClient(authorRequest);
 
       // SUBMIT as mod (author via the app-blocks-author mod floor) — creates a draft AppListing + pending request.
       const result = await trpcMutation<SubmitResult>(
         authorRequest,
         'appListings.submitExternalListing',
-        submitInput
+        submitInput(clientId)
       );
       publishRequestId = result.publishRequestId;
       expect(typeof result.publishRequestId, 'submit returns a publishRequestId').toBe('string');
@@ -170,6 +203,7 @@ test.describe('App Blocks P3a: off-site submit → mod queue → withdraw (mod, 
       } else {
         await withdrawPendingForSlug(authorRequest, modRequest, SLUG);
       }
+      await deleteConnectClient(authorRequest, clientId);
       await modRequest.dispose();
     }
   });
