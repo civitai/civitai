@@ -72,8 +72,13 @@ export const centsToUsd = (cents: number) => cents / CASH_CENTS_PER_USD;
 
 // Buzz is a whole-unit currency — the underlying compensation amounts are fractional (Float64), but we never show
 // partial buzz, so floor before formatting. (Cash is real USD cents and keeps its precision.)
+// `buzzNumber` is the count alone (no ⚡); `formatBuzz` prefixes the ⚡ for plain-string contexts. For rich
+// rendering with a properly-sized icon, use the <BuzzAmount> component.
+export function buzzNumber(amount: number): string {
+  return nf.format(Math.floor(amount));
+}
 export function formatBuzz(amount: number): string {
-  return `⚡ ${nf.format(Math.floor(amount))}`;
+  return `⚡ ${buzzNumber(amount)}`;
 }
 
 // Whether an amount is worth showing at all: buzz under 1 floors to 0, so it renders as nothing (`—`) rather than

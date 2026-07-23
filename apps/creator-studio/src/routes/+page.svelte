@@ -17,7 +17,19 @@
   } from '@tabler/icons-svelte';
   import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
+  import BuzzAmount from '$lib/components/BuzzAmount.svelte';
   import type { PageData } from './$types';
+
+  type Stat = {
+    label: string;
+    value: string | null;
+    pending: boolean;
+    hint: string;
+    icon: typeof IconBolt;
+    color: string;
+    // When present, the value is a buzz amount rendered via <BuzzAmount>; otherwise `value` is shown verbatim.
+    buzz?: number;
+  };
 
   let { data }: { data: PageData } = $props();
   const name = $derived(data.user.username ?? 'creator');
@@ -51,7 +63,7 @@
   );
   // Cash is Creator-Program-only; hide those cards for non-members (they'd be a meaningless $0 — or a stuck
   // skeleton if the buzz service has no cash account for them).
-  const cashStats = $derived(
+  const cashStats: Stat[] = $derived(
     data.membership.isCreatorProgramMember
       ? [
           {
@@ -82,22 +94,33 @@
       : []
   );
   const topModel = $derived(data.topModels?.[0] ?? null);
-  const stats = $derived([
+  // The model name is the subtext under the top-earning card's buzz value.
+  const topModelName = $derived(
+    topModel
+      ? (topModel.modelName ?? topModel.versionName ?? `Version ${topModel.modelVersionId}`)
+      : null
+  );
+  // The buzz currencies summed into "Buzz earned" — shown as coloured dots so the legend fits one line.
+  const buzzLegend = ['#ffd43b', '#4dabf7', '#40c057'];
+  const stats: Stat[] = $derived([
     {
       label: 'Buzz earned',
-      value: data.earnings ? formatBuzz(sumWhere((c) => currencyMeta(c).family === 'buzz')) : null,
+      value: data.earnings ? formatBuzz(buzzNow) : null,
+      buzz: buzzNow,
       pending: false,
-      hint: 'Yellow, blue & green — last 30 days',
+      hint: 'Last 30 days',
       icon: IconBolt,
       color: '#f59f00',
     },
     ...cashStats,
     {
       label: 'Top-earning model',
-      value: topModel ? (topModel.modelName ?? topModel.versionName ?? `Version ${topModel.modelVersionId}`) : null,
+      // Buzz earned is the headline; the model name is the subtext (see topModelName).
+      value: topModel ? formatBuzz(topModel.buzzTotal) : null,
+      buzz: topModel?.buzzTotal,
       // Loaded-but-empty shows the em dash; a failed load (null) falls through to the skeleton.
       pending: data.topModels != null && !topModel,
-      hint: topModel ? `${formatBuzz(topModel.buzzTotal)} — last 30 days` : 'No model earnings yet',
+      hint: topModel ? 'Last 30 days' : 'No model earnings yet',
       icon: IconTrophy,
       color: '#ff922b',
     },
@@ -167,13 +190,8 @@
         <CardContent>
           {#if stat.value != null}
             <div class="flex items-baseline gap-2">
-              <p
-                class="min-w-0 text-xl font-semibold text-white{stat.label === 'Top-earning model'
-                  ? ' line-clamp-2 break-words'
-                  : ''}"
-                title={stat.label === 'Top-earning model' ? stat.value : undefined}
-              >
-                {stat.value}
+              <p class="text-xl font-semibold text-white">
+                {#if stat.buzz != null}<BuzzAmount amount={stat.buzz} />{:else}{stat.value}{/if}
               </p>
               {#if stat.label === 'Buzz earned'}<DeltaChip current={buzzNow} previous={buzzPrev} />{/if}
             </div>
@@ -182,7 +200,22 @@
           {:else}
             <Skeleton class="h-7 w-24" />
           {/if}
-          <p class="mt-2 text-xs text-dark-3">{stat.hint}</p>
+          {#if stat.label === 'Top-earning model' && topModelName}
+            <!-- Model name + compact scope on one line, so this card stays the same height as the others. -->
+            <p class="mt-2 flex items-baseline gap-1 text-xs">
+              <span class="truncate text-dark-2" title={topModelName}>{topModelName}</span>
+              <span class="shrink-0 text-dark-4">· 30d</span>
+            </p>
+          {:else}
+            <p class="mt-2 flex items-center gap-1 text-xs text-dark-3">
+              {#if stat.label === 'Buzz earned'}
+                {#each buzzLegend as c (c)}
+                  <span class="inline-block h-2 w-2 rounded-full" style="background:{c}"></span>
+                {/each}
+              {/if}
+              <span>{stat.hint}</span>
+            </p>
+          {/if}
         </CardContent>
       </Card>
     {/each}

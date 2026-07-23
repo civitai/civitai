@@ -21,6 +21,11 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
   "select all", per-page selector) should show `cursor: pointer` unless disabled. (`T:510–516`)
 - [ ] **[global] [todo]** **Page-size selector on every paginated page** — every page with pagination
   needs a page-size selector (see specific pages below). (`T:807–810`, `T:856–866`)
+- [ ] **[global] [todo]** **Adopt `<BuzzAmount>` for buzz displays** — new `$lib/components/BuzzAmount.svelte`
+  renders a buzz amount with the ⚡ sized in `em` + tucked against the number (currency-symbol style), reusable
+  in any font-size context. Sweep the remaining buzz displays onto it: **earnings** source cards + buzz→$ table +
+  monthly-performance cells, and the **analytics/models/base-models** currency columns (buzz family only — those
+  cells use `formatAmount`, which also handles cash, so adopt selectively). Dashboard already uses it.
 
 ## Dashboard
 
