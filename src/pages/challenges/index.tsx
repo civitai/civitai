@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Stack, Title, Group, Button, SegmentedControl } from '@mantine/core';
-import { IconTrophy, IconUsers } from '@tabler/icons-react';
+import { IconTrophy, IconUsers, IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
@@ -12,6 +12,7 @@ import { FeaturedChallengeEvents } from '~/components/Challenge/FeaturedChalleng
 import { SectionBand } from '~/components/Challenge/SectionBand';
 import { YourChallengesRow } from '~/components/Challenge/YourChallengesRow';
 import { ChallengeFeedFilters } from '~/components/Filters/FeedFilters/ChallengeFeedFilters';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import {
@@ -40,6 +41,24 @@ const statusMap: Record<string, ChallengeStatus> = {
 };
 
 type MyChallengeStatus = 'Scheduled' | 'Active' | 'Completed' | 'Cancelled';
+type Engagement = 'participated' | 'created';
+
+const engagementStatuses: Record<Engagement, MyChallengeStatus[]> = {
+  // You can't enter a challenge that hasn't started, and a cancelled one you entered is a refund,
+  // not a thing to browse — so Participated gets a narrower set than Created.
+  participated: ['Active', 'Completed'],
+  created: ['Scheduled', 'Active', 'Completed', 'Cancelled'],
+};
+
+const myStatusFilters: Record<MyChallengeStatus, Partial<GetInfiniteChallengesInput>> = {
+  Scheduled: { status: [ChallengeStatus.Scheduled], includeEnded: false },
+  Active: { status: [ChallengeStatus.Active], includeEnded: false },
+  Completed: {
+    status: [ChallengeStatus.Completing, ChallengeStatus.Completed],
+    includeEnded: true,
+  },
+  Cancelled: { status: [ChallengeStatus.Cancelled], includeEnded: true },
+};
 
 function ChallengesPage() {
   const router = useRouter();
@@ -71,82 +90,78 @@ function ChallengesPage() {
   const includeEnded = statusFilters.includes('completed');
   const participation = parseParticipationQuery(router.query.participation);
 
-  const mine = router.query.engagement === 'created';
-  const [myStatus, setMyStatus] = useState<MyChallengeStatus>('Scheduled');
+  const rawEngagement = router.query.engagement;
+  const isPersonalView = rawEngagement != null;
+  const engagement: Engagement = rawEngagement === 'created' ? 'created' : 'participated';
+  const [myStatus, setMyStatus] = useState<MyChallengeStatus>('Active');
 
-  const myStatusFilters: Record<MyChallengeStatus, Partial<GetInfiniteChallengesInput>> = {
-    Scheduled: { status: [ChallengeStatus.Scheduled], includeEnded: false },
-    Active: { status: [ChallengeStatus.Active], includeEnded: false },
-    Completed: { status: [ChallengeStatus.Completed], includeEnded: true },
-    Cancelled: { status: [ChallengeStatus.Cancelled], includeEnded: true },
+  const handleEngagementChange = (next: string) => {
+    // Status sets differ per engagement — carry the selection over only when it's still valid,
+    // otherwise fall back to the first option so the feed can't query an impossible combination.
+    const allowed = engagementStatuses[next as Engagement];
+    if (!allowed.includes(myStatus)) setMyStatus(allowed[0]);
+    router.replace(
+      { pathname: '/challenges', query: { ...router.query, engagement: next } },
+      undefined,
+      { shallow: true }
+    );
   };
 
-  const participated = router.query.engagement === 'participated';
-  const [participatedStatus, setParticipatedStatus] = useState<'Active' | 'Completed'>('Active');
-  const participatedStatusFilters: Record<string, Partial<GetInfiniteChallengesInput>> = {
-    Active: { status: [ChallengeStatus.Active], includeEnded: false },
-    Completed: {
-      status: [ChallengeStatus.Completing, ChallengeStatus.Completed],
-      includeEnded: true,
-    },
-  };
+  if (isPersonalView) {
+    if (!currentUser) return <NotFound />;
+    if (engagement === 'created' && !features.userChallenges) return <NotFound />;
 
-  if (mine) {
-    if (!currentUser || !features.userChallenges) return <NotFound />;
+    const personalFilters: Partial<GetInfiniteChallengesInput> =
+      engagement === 'created'
+        ? { userId: currentUser.id, source: [ChallengeSource.User], excludeEventChallenges: true }
+        : { participation: ChallengeParticipation.Entered };
+
     return (
       <MasonryContainer>
         <Stack gap="xs">
-          <Stack gap="xl" align="flex-start">
+          <Stack gap="xl" align="flex-start" w="100%">
             <Group justify="space-between" w="100%" wrap="nowrap" gap="sm">
-              <Title>My Challenges</Title>
+              <Group gap="sm" wrap="nowrap">
+                <LegacyActionIcon
+                  component={Link}
+                  href="/challenges"
+                  variant="subtle"
+                  color="gray"
+                  aria-label="Back to challenges"
+                >
+                  <IconArrowLeft size={20} />
+                </LegacyActionIcon>
+                <Title>Your Challenges</Title>
+              </Group>
               {createChallengeButton}
             </Group>
-            <SegmentedControl
-              classNames={styles}
-              transitionDuration={0}
-              radius="xl"
-              data={['Scheduled', 'Active', 'Completed', 'Cancelled']}
-              value={myStatus}
-              onChange={(v) => setMyStatus(v as MyChallengeStatus)}
-              withItemsBorders={false}
-            />
+            <Group justify="space-between" w="100%" wrap="wrap" gap="sm">
+              <SegmentedControl
+                classNames={styles}
+                transitionDuration={0}
+                radius="xl"
+                data={[
+                  { label: 'Participated', value: 'participated' },
+                  { label: 'Created', value: 'created' },
+                ]}
+                value={engagement}
+                onChange={handleEngagementChange}
+                withItemsBorders={false}
+              />
+              <SegmentedControl
+                classNames={styles}
+                transitionDuration={0}
+                radius="xl"
+                data={engagementStatuses[engagement]}
+                value={myStatus}
+                onChange={(v) => setMyStatus(v as MyChallengeStatus)}
+                withItemsBorders={false}
+              />
+            </Group>
           </Stack>
           <ChallengesInfinite
-            filters={{
-              userId: currentUser.id,
-              source: [ChallengeSource.User],
-              excludeEventChallenges: true,
-              ...myStatusFilters[myStatus],
-            }}
-            emptyAction={createChallengeButton}
-          />
-        </Stack>
-      </MasonryContainer>
-    );
-  }
-
-  if (participated) {
-    if (!currentUser) return <NotFound />;
-    return (
-      <MasonryContainer>
-        <Stack gap="xs">
-          <Stack gap="xl" align="flex-start">
-            <Title>Challenges You&apos;ve Entered</Title>
-            <SegmentedControl
-              classNames={styles}
-              transitionDuration={0}
-              radius="xl"
-              data={['Active', 'Completed']}
-              value={participatedStatus}
-              onChange={(v) => setParticipatedStatus(v as 'Active' | 'Completed')}
-              withItemsBorders={false}
-            />
-          </Stack>
-          <ChallengesInfinite
-            filters={{
-              participation: ChallengeParticipation.Entered,
-              ...participatedStatusFilters[participatedStatus],
-            }}
+            filters={{ ...personalFilters, ...myStatusFilters[myStatus] }}
+            emptyAction={engagement === 'created' ? createChallengeButton : undefined}
           />
         </Stack>
       </MasonryContainer>
