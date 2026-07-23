@@ -1,10 +1,10 @@
 import type { PageServerLoad } from './$types';
 import { getContentAnalytics, getAllTimeTotals } from '$lib/server/analytics';
-import { parseMonthRange, resolveCompareMonth } from '$lib/date-range';
+import { readAnalyticsPeriod } from '$lib/server/analytics-period';
 
-export const load: PageServerLoad = async ({ locals, url }) => {
-  const range = parseMonthRange(url.searchParams.get('from'), url.searchParams.get('to'));
-  const prev = resolveCompareMonth(url.searchParams.get('cmp'), range).range;
+export const load: PageServerLoad = async ({ locals, cookies }) => {
+  const { range, compare } = readAnalyticsPeriod(cookies);
+  const prev = compare.range;
   const userId = locals.user.id;
   const [analytics, analyticsPrev, allTime] = await Promise.all([
     getContentAnalytics({ userId, ...range }).catch(() => null),

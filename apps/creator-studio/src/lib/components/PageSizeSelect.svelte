@@ -7,7 +7,7 @@
   Per page
   <NativeSelect
     aria-label="Rows per page"
-    value={String($analyticsPageSize)}
+    value={String(analyticsPageSize.value)}
     onchange={(e) => analyticsPageSize.set(Number(e.currentTarget.value))}
     class="h-7 py-0 text-xs [&>option]:bg-dark-7 [&>option]:text-white"
   >

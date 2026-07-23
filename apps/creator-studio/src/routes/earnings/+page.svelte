@@ -164,7 +164,7 @@
 
   // Split per-currency (B8) ↔ one combined Total Buzz column (868ke492g) — the "total value of Buzz" view. The
   // individual split stays the default; the choice persists to localStorage.
-  const combined = $derived($earningsCombined);
+  const combined = $derived(earningsCombined.value);
   // Total buzz for a source across every buzz currency present (yellow + green + …) — the combined column's cell.
   const buzzTotal = (source: string) => currencies.reduce((sum, c) => sum + cell(source, c), 0);
 
@@ -322,8 +322,8 @@
       <ChartTypeToggle />
     </div>
     <div class="h-72">
-      {#key $chartType}
-        <Chart type={$chartType} data={chartData} options={chartOptions} class="h-full" />
+      {#key chartType.value}
+        <Chart type={chartType.value} data={chartData} options={chartOptions} class="h-full" />
       {/key}
     </div>
   </div>

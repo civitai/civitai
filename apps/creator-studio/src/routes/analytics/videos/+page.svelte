@@ -1,6 +1,7 @@
 <script lang="ts">
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { formatRange } from '$lib/date-range';
+  import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -9,6 +10,8 @@
   let showAll = $state(false);
   const shown = $derived(data.videos ? (showAll ? data.videos : data.videos.slice(0, 15)) : []);
 </script>
+
+<AnalyticsHeader range={data.range} compare={data.compare} showCompare={false} />
 
 {#if data.videos === null}
   <div class="placeholder">Videos are temporarily unavailable — please try again shortly.</div>

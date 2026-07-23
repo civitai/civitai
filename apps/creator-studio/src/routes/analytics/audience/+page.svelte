@@ -7,6 +7,7 @@
   import { IconUserPlus, IconHeart, IconMessage } from '@tabler/icons-svelte';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
+  import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -65,6 +66,8 @@
   }
 </script>
 
+<AnalyticsHeader range={data.range} compare={data.compare} />
+
 {#if !data.analytics}
   <div class="placeholder">Audience analytics are temporarily unavailable — please try again shortly.</div>
 {:else}
@@ -109,8 +112,8 @@
       <ChartTypeToggle />
     </div>
     <div class="h-64">
-      {#key $chartType}
-        <Chart type={$chartType} data={lineData(data.analytics.followers, 'New followers', 1, data.analyticsPrev?.followers)} options={commonOptions} class="h-full" />
+      {#key chartType.value}
+        <Chart type={chartType.value} data={lineData(data.analytics.followers, 'New followers', 1, data.analyticsPrev?.followers)} options={commonOptions} class="h-full" />
       {/key}
     </div>
   </div>

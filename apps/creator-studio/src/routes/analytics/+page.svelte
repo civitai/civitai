@@ -7,6 +7,7 @@
   import { IconHeart, IconUserPlus, IconPhoto, IconArticle, IconEye } from '@tabler/icons-svelte';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
   import type { TimePoint } from '$lib/server/analytics';
+  import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -101,6 +102,8 @@
   );
 </script>
 
+<AnalyticsHeader range={data.range} compare={data.compare} />
+
 {#if !data.analytics}
   <div class="placeholder">Analytics are temporarily unavailable — please try again shortly.</div>
 {:else if !hasActivity}
@@ -139,8 +142,8 @@
       <ChartTypeToggle />
     </div>
     <div class="h-64">
-      {#key $chartType}
-        <Chart type={$chartType} data={lineData(data.analytics.reactions, 'Reactions', 0, data.analyticsPrev?.reactions)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+      {#key chartType.value}
+        <Chart type={chartType.value} data={lineData(data.analytics.reactions, 'Reactions', 0, data.analyticsPrev?.reactions)} options={commonOptions} plugins={[crosshair]} class="h-full" />
       {/key}
     </div>
   </div>
@@ -150,8 +153,8 @@
       <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
         <p class="mb-3 text-sm text-dark-2">{c.title}</p>
         <div class="h-48">
-          {#key $chartType}
-            <Chart type={$chartType} data={lineData(c.series, c.title, c.color, c.prev)} options={commonOptions} plugins={[crosshair]} class="h-full" />
+          {#key chartType.value}
+            <Chart type={chartType.value} data={lineData(c.series, c.title, c.color, c.prev)} options={commonOptions} plugins={[crosshair]} class="h-full" />
           {/key}
         </div>
       </div>

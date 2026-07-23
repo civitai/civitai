@@ -9,6 +9,7 @@
   import { formatRange, eachDayIso, shiftIso, dayDiff } from '$lib/date-range';
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import { modelUrl } from '$lib/model-url';
+  import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -119,6 +120,8 @@
   const civitaiUrl = $derived(modelUrl(data.model.modelId, data.model));
 </script>
 
+<AnalyticsHeader range={data.range} compare={data.compare} />
+
 <div class="mb-4 flex flex-wrap items-start gap-3">
   <div>
     <a href="/analytics/models" class="mb-1 inline-flex items-center gap-1 text-xs text-dark-2 hover:text-white">
@@ -185,8 +188,8 @@
 
     {#if compareHasData}
       <div class="h-72">
-        {#key $chartType}
-          <Chart type={$chartType} data={compareData} options={compareOptions} class="h-full" />
+        {#key chartType.value}
+          <Chart type={chartType.value} data={compareData} options={compareOptions} class="h-full" />
         {/key}
       </div>
     {:else}

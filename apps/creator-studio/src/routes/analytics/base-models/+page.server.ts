@@ -1,11 +1,11 @@
 import type { PageServerLoad } from './$types';
 import { getBaseModelPerformance } from '$lib/server/models-earnings';
 import { getBaseModelTrends } from '$lib/server/base-model-trends';
-import { parseMonthRange, resolveCompareMonth } from '$lib/date-range';
+import { readAnalyticsPeriod } from '$lib/server/analytics-period';
 
-export const load: PageServerLoad = async ({ locals, url }) => {
-  const range = parseMonthRange(url.searchParams.get('from'), url.searchParams.get('to'));
-  const compare = resolveCompareMonth(url.searchParams.get('cmp'), range).range;
+export const load: PageServerLoad = async ({ locals, cookies }) => {
+  const { range, compare: baseline } = readAnalyticsPeriod(cookies);
+  const compare = baseline.range;
   const [baseModels, platformTrends] = await Promise.all([
     getBaseModelPerformance({
       userId: locals.user.id,

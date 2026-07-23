@@ -24,6 +24,7 @@
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import AccountSwitcher from '$lib/components/AccountSwitcher.svelte';
   import { activeNavHref, isNavChildActive, navForMember } from '$lib/nav';
+  import { refetching } from '$lib/state/refetching.svelte';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -34,11 +35,9 @@
   const who = $derived(data.user.username ?? `user #${data.user.id}`);
   // Any load in flight — a real page nav or an in-place query change (e.g. the analytics range selector, which
   // re-runs the server load without leaving the route). Drives the top progress bar.
-  const isNavigating = $derived(!!navigating.to);
+  const isNavigating = $derived(!!navigating.to || refetching.active);
   // Exactly one active item — longest matching href wins so a parent doesn't also light up on a child route.
   const activeHref = $derived(activeNavHref(page.url.pathname));
-  // Preserve the range (from/to) when switching between a section's sub-pages.
-  const qs = $derived(page.url.search);
 
   // Moderator-only membership simulator. The `cs-test-membership` cookie is read (mod-gated) by the server
   // resolver in $lib/server/membership; here we just set/clear it and re-run the loads.
@@ -117,7 +116,7 @@
                         <SidebarMenuSubButton isActive={active}>
                           {#snippet child({ props })}
                             <a
-                              href="{sub.href}{qs}"
+                              href={sub.href}
                               {...props}
                               data-active={active ? true : undefined}
                               class={`${props.class ?? ''} text-sidebar-foreground data-active:text-sidebar-accent-foreground`}

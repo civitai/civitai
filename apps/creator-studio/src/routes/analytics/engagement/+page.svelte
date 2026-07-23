@@ -13,11 +13,12 @@
   import { modelUrl } from '$lib/model-url';
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import PageSizeSelect from '$lib/components/PageSizeSelect.svelte';
+  import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
-  const perPage = $derived($analyticsPageSize);
+  const perPage = $derived(analyticsPageSize.value);
 
   // Sort + page live in the URL (shallow routing). Default: most-downvoted first — the models to review.
   const sortKey = $derived(page.url.searchParams.get('sort') ?? 'downvotes');
@@ -36,6 +37,8 @@
   const curPage = $derived(Math.min(pageNum, totalPages));
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
 </script>
+
+<AnalyticsHeader />
 
 {#if data.engagement === null}
   <div class="placeholder">Engagement is temporarily unavailable — please try again shortly.</div>

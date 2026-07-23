@@ -19,12 +19,13 @@
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import PageSizeSelect from '$lib/components/PageSizeSelect.svelte';
+  import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
-  const perPage = $derived($analyticsPageSize);
+  const perPage = $derived(analyticsPageSize.value);
 
   // Civitai-wide base-model popularity (4.6): pick base models to compare; each draws a solid current-month line
   // plus a dashed comparison-month line (aligned day-for-day). The creator's own base models are starred, and the
@@ -45,7 +46,7 @@
   // exist this month, else the top few.
   const universe = $derived(trends.map((t) => t.baseModel));
   const selected = $derived.by(() => {
-    const saved = $baseModelTrendSelection.filter((bm) => universe.includes(bm));
+    const saved = baseModelTrendSelection.value.filter((bm) => universe.includes(bm));
     return saved.length ? saved : universe.slice(0, DEFAULT_SHOWN);
   });
   // Colour keyed to a base model's position in the selected set, so its chip dot matches its line.
@@ -147,6 +148,8 @@
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
 </script>
 
+<AnalyticsHeader range={data.range} compare={data.compare} />
+
 {#if trendHasData}
   <div class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -196,8 +199,8 @@
 
     {#if shownTrends.length > 0}
       <div class="h-72">
-        {#key $chartType}
-          <Chart type={$chartType} data={trendData} options={trendOptions} class="h-full" />
+        {#key chartType.value}
+          <Chart type={chartType.value} data={trendData} options={trendOptions} class="h-full" />
         {/key}
       </div>
     {:else}

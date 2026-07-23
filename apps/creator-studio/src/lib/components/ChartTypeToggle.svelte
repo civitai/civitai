@@ -5,9 +5,9 @@
 
 <ToggleGroup
   type="single"
-  value={$chartType}
+  value={chartType.value}
   onValueChange={(v: string) => {
-    if (v) $chartType = v as 'line' | 'bar';
+    if (v) chartType.set(v as 'line' | 'bar');
   }}
   variant="outline"
   size="sm"

@@ -14,12 +14,13 @@
   import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import PageSizeSelect from '$lib/components/PageSizeSelect.svelte';
+  import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const num = (n: number) => n.toLocaleString();
   const periodLabel = $derived(`for ${formatRange(data.range)}`);
-  const perPage = $derived($analyticsPageSize);
+  const perPage = $derived(analyticsPageSize.value);
 
   const modelCurrencies = $derived(
     data.modelPerformance
@@ -47,6 +48,8 @@
   const curPage = $derived(Math.min(pageNum, totalPages));
   const pageRows = $derived(sorted.slice((curPage - 1) * perPage, curPage * perPage));
 </script>
+
+<AnalyticsHeader range={data.range} compare={data.compare} />
 
 {#if data.modelPerformance && data.modelPerformance.length > 0}
   <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
