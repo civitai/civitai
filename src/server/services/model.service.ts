@@ -2187,8 +2187,10 @@ export const upsertModel = async (
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // If profanity exceeds thresholds, mark model as NSFW
-    if (evaluation.shouldMarkNSFW && !data.nsfw) {
+    // If profanity exceeds thresholds, mark model as NSFW. Skip when nsfw is DB-locked:
+    // a moderator has already made the call on this field (e.g. minor-flagging sets
+    // nsfw: false), and the automated filter must not override that.
+    if (evaluation.shouldMarkNSFW && !data.nsfw && !lockedProperties.includes('nsfw')) {
       meta = {
         ...(meta ?? {}),
         profanityMatches: evaluation.matchedWords,

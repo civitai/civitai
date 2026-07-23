@@ -285,6 +285,14 @@ describe('upsertModel — non-moderator lock enforcement', () => {
     expect(data).not.toHaveProperty('lockedProperties');
     expect(mockDbRead.model.findUnique).not.toHaveBeenCalled();
   });
+
+  it('selects lockedProperties on the stored-row lookup — the field the whole fix depends on', async () => {
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    expect(mockDbRead.model.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ lockedProperties: true }) })
+    );
+  });
 });
 
 describe('upsertModel — ownership guard', () => {
@@ -342,6 +350,18 @@ describe('upsertModel — profanity lock', () => {
 
     const data = updateData();
     expect(data.nsfw).toBeUndefined();
+    expect(data).not.toHaveProperty('lockedProperties');
+  });
+
+  it('does not override a DB-locked nsfw, even when the filter trips', async () => {
+    mockStored({ minor: true, nsfw: false, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    const data = updateData();
+    expect(data).not.toHaveProperty('nsfw');
+    expect(data.meta).not.toHaveProperty('profanityMatches');
     expect(data).not.toHaveProperty('lockedProperties');
   });
 });
