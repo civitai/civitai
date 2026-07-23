@@ -9,8 +9,9 @@ import {
   reemitPostsScannedCounter,
   reemitRunDurationHistogram,
   reemitRunsCounter,
+  reemitSkippedRateLimitCounter,
 } from '~/server/prom/client';
-import { createJob } from './job';
+import { createJob, getJobDate } from './job';
 
 // BitDex publish re-emitter: a periodic job that re-asserts the per-image publish
 // values and ingested sortAt for every image whose parent Post was published in the
@@ -21,6 +22,18 @@ import { createJob } from './job';
 const DEFAULT_LOOKBACK_SECS = 15 * 60;
 const DEFAULT_SETTLE_SECS = 10; // must stay << lookback
 const CADENCE_CRON = '*/5 * * * *';
+
+// The job body is written for the */5 cadence above, but the external scheduler
+// currently fires it every 1-2 minutes. Each fire emits 600-1300 same-value ops
+// that BitDex has to churn through bucket-maintenance for, so an over-firing
+// scheduler amplifies load with no healing benefit. A little under the cron
+// period so a run that lands slightly early on the intended */5 tick still passes.
+const DEFAULT_MIN_INTERVAL_SECS = 270;
+
+// keyValue key holding the epoch-ms of the last successful emit. Shared across
+// pods (DB-backed), so the rate-limit spaces out emits fleet-wide, not per pod —
+// the cross-pod run lock only serializes concurrent runs, it does not space them.
+const REEMIT_LAST_RUN_KEY = 'reemit-bitdex-ops:last-run';
 
 function parsePositiveSecs(raw: string | undefined, fallback: number): number {
   const n = parseInt(raw ?? '', 10);
@@ -35,6 +48,12 @@ export function getReemitConfig(): ReemitConfig {
     lookbackSecs: parsePositiveSecs(process.env.REEMIT_LOOKBACK_SECS, DEFAULT_LOOKBACK_SECS),
     settleSecs: parsePositiveSecs(process.env.REEMIT_SETTLE_SECS, DEFAULT_SETTLE_SECS),
   };
+}
+
+// Kept separate from ReemitConfig so the SQL builder and its tests stay untouched;
+// this knob only gates whether the job runs, it is not part of the emit statement.
+export function getReemitMinIntervalSecs(): number {
+  return parsePositiveSecs(process.env.REEMIT_MIN_INTERVAL_SECS, DEFAULT_MIN_INTERVAL_SECS);
 }
 
 export type ReemitResult = { postsScanned: number; imagesEmitted: number };
@@ -87,6 +106,17 @@ export const reemitBitdexOps = createJob(
   'reemit-bitdex-ops',
   CADENCE_CRON,
   async () => {
+    // Self rate-limit, ahead of the flag check: an over-firing scheduler is
+    // wasteful whether or not the feature is on, and lastRun is only written
+    // after a successful emit — so the skip can only ever trip while enabled.
+    const minIntervalSecs = getReemitMinIntervalSecs();
+    const [lastRun, setLastRun] = await getJobDate(REEMIT_LAST_RUN_KEY);
+    const sinceLastRunSecs = (Date.now() - lastRun.getTime()) / 1000;
+    if (sinceLastRunSecs < minIntervalSecs) {
+      reemitSkippedRateLimitCounter?.inc();
+      return;
+    }
+
     // Default-off: registered and scheduled but no-ops until the flag is flipped on.
     const enabled = await isFlipt(FLIPT_FEATURE_FLAGS.BITDEX_PUBLISH_REEMITTER);
     if (!enabled) return;
@@ -106,6 +136,10 @@ export const reemitBitdexOps = createJob(
       throw e; // createJob logs job-error to Axiom and marks the run failed
     }
     const durationSec = (Date.now() - start) / 1000;
+
+    // Only a successful emit advances the rate-limit window: a failed run leaves
+    // lastRun untouched so the next fire can retry immediately instead of waiting.
+    await setLastRun();
 
     reemitRunsCounter?.inc();
     reemitPostsScannedCounter?.inc(postsScanned);

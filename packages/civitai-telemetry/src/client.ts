@@ -255,6 +255,10 @@ export const reemitRunDurationHistogram = registerHistogram({
   help: 'Wall-clock duration of the BitDex publish re-emitter INSERT...SELECT emit statement',
   buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
 });
+export const reemitSkippedRateLimitCounter = registerCounter({
+  name: 'reemit_skipped_rate_limit_total',
+  help: 'BitDex publish re-emitter fires skipped by the self rate-limit because too little time has passed since the last successful emit (external scheduler over-firing)',
+});
 
 // Creator compensation metrics
 export const creatorCompCreatorsPaidCounter = registerCounterWithLabels({
