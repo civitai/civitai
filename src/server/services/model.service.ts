@@ -2152,13 +2152,35 @@ export const upsertModel = async (
   } = input;
   let { meta } = input;
 
-  // don't allow updating of locked properties
+  const beforeUpdate =
+    id && !templateId
+      ? await dbRead.model.findUnique({
+          where: { id },
+          select: {
+            name: true,
+            description: true,
+            poi: true,
+            userId: true,
+            minor: true,
+            sfwOnly: true,
+            nsfw: true,
+            lockedProperties: true,
+            gallerySettings: true,
+            meta: true,
+          },
+        })
+      : null;
+
+  // Locks must come from the stored row: `data.lockedProperties` is client-supplied, so
+  // enforcing against it lets a creator unlock their own model by posting an empty array.
   if (!isModerator) {
-    const lockedProperties = data.lockedProperties ?? [];
+    const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
+    const lockedProperties = uniq([...storedLockedProperties, ...(data.lockedProperties ?? [])]);
     for (const prop of lockedProperties) {
       const key = prop as keyof typeof data;
       if (data[key] !== undefined) delete data[key];
     }
+    delete data.lockedProperties;
 
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
@@ -2176,10 +2198,7 @@ export const upsertModel = async (
         },
       };
       data.nsfw = true;
-      data.lockedProperties =
-        data.lockedProperties && !data.lockedProperties.includes('nsfw')
-          ? [...data.lockedProperties, 'nsfw']
-          : ['nsfw'];
+      data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
     }
   }
 
@@ -2265,20 +2284,6 @@ export const upsertModel = async (
     }
     return { ...result, meta: modelMeta };
   } else {
-    const beforeUpdate = await dbRead.model.findUnique({
-      where: { id },
-      select: {
-        name: true,
-        description: true,
-        poi: true,
-        userId: true,
-        minor: true,
-        sfwOnly: true,
-        nsfw: true,
-        gallerySettings: true,
-        meta: true,
-      },
-    });
     if (!beforeUpdate) return null;
 
     const isOwner = beforeUpdate.userId === userId || isModerator;
