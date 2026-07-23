@@ -2,110 +2,8 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
-// =============================================================================
-// MULTI-QUERY tRPC MOCK + ZUSTAND-STORE MOCK PATTERN
-// =============================================================================
-//
-// MetadataExtractionPanel is the first generation input driven by a zustand
-// STORE + TWO tRPC queries (and NO props). It extends the single-query
-// VideoInput tRPC template two ways, both established here as reusable
-// deliverables for the next store-backed / multi-query test.
-//
-// SCOPE (be honest): these tests cover the component's STORE<->QUERY WIRING (the
-// `enabled` gates, the comfy-strip query arg, the resolved->store sync action)
-// and its RENDER BRANCHES (loaders, the Resources card, the JSON dump). They do
-// NOT cover the metadata-extraction-from-drop flow: `droppedMedia` is internal
-// state set only by a real drop event, so the EXIF-parse effect, the server
-// `getGenerationData` path, and the file->dataURL handling are unreachable in a
-// bare render and intentionally untested here (would need a simulated drag-drop
-// with custom dataTransfer — a separate rung).
-//
-// -----------------------------------------------------------------------------
-// (1) MULTI-QUERY tRPC MOCK
-// -----------------------------------------------------------------------------
-// Same shape as VideoInput's `vi.mock('~/utils/trpc', ...)`, but the factory
-// declares EVERY procedure the component touches, each with its own vi.fn()
-// useQuery so the two queries are driven INDEPENDENTLY per test:
-//
-//   vi.mock('~/utils/trpc', () => ({
-//     trpc: { generation: {
-//       getGenerationData: { useQuery: vi.fn() },   // server-side (on-site drop) path
-//       resolveImageMeta:  { useQuery: vi.fn() },    // client-side EXIF path
-//     } },
-//   }));
-//
-// Grep rule (from VideoInput): an uncovered `trpc.*` access is `undefined` here
-// but THROWS in the real app. The component accesses exactly these two
-// procedures (lines ~240 + ~272) — both covered.
-//
-// GATE CAVEAT: this stub returns the supplied `data`/`isFetching` REGARDLESS of
-// the `enabled` option — unlike production, where a disabled query yields
-// `data: undefined`. So a data/render/sync test would still "work" against a
-// wrongly-disabled query. The real `enabled` gate is therefore pinned ONLY by
-// the dedicated arg-level assertions (the `expect(opts.enabled).toBe(...)`
-// checks); when a behavior test relies on a query being enabled, also assert
-// `opts.enabled === true` so its positive path proves prod would run it.
-//
-// Each query's useQuery returns DIFFERENT fields, so they get different stubs:
-//   - getGenerationData -> { data: serverData, isFetching }
-//   - resolveImageMeta  -> { data: resolved,   isFetching }
-// `queryResult()` supplies the union so either can be driven without re-typing.
-//
-// GATING TEETH: both queries are conditional via `enabled`, asserted from the
-// last useQuery call's options arg (render-stable per test, same caveat as
-// VideoInput):
-//   - getGenerationData.enabled === !!droppedMedia
-//   - resolveImageMeta.enabled  === hasMetadata && !droppedMedia
-// droppedMedia is internal component state (set only by a drop event), so in a
-// bare render it is always undefined => getGenerationData is always disabled and
-// resolveImageMeta's gate reduces to `hasMetadata` (store.metadata non-empty).
-// That makes store.metadata the lever for resolveImageMeta's enabled flag — the
-// store and the query are coupled, which is exactly the data-driven contract
-// this rung pins.
-//
-// -----------------------------------------------------------------------------
-// (2) ZUSTAND-STORE MOCK  (the new reusable pattern)
-// -----------------------------------------------------------------------------
-// The component calls the hook BARE — `const store = useMetadataExtractionStore()`
-// (no selector) — and reads the WHOLE state object (store.metadata,
-// store.fileUrl, store.isExtracting, store.isResolving, store.resolvedResources)
-// plus actions (store.clear/setFileUrl/setMetadata/setResolved/setIsExtracting/
-// setIsResolving). It does NOT use `.getState()`/`.setState()` (only the
-// separate `metadataExtractionStore` helper does, and the component doesn't
-// import that). So the mock is the simplest bare form:
-//
-//   vi.mock('~/store/metadata-extraction.store', () => ({
-//     useMetadataExtractionStore: vi.fn(),
-//   }));
-//   // per test:
-//   vi.mocked(useMetadataExtractionStore).mockReturnValue(makeStore({ metadata: {...} }));
-//
-// makeStore() returns a FULL controlled state (every field + every action as a
-// vi.fn()) so the bare hook is consistent across the component's render. Because
-// the hook is called once per render and returns one frozen object, every
-// `store.x` in that render reads the same controlled value — no selector to
-// apply. (If a future component called it WITH a selector, the mock would
-// instead be `vi.fn((sel) => sel(STATE))`; if it used `.getState()`, attach it
-// to the fn: `useStore.getState = () => STATE`. Neither is needed here.)
-//
-// -----------------------------------------------------------------------------
-// (3) THIN MOCKS for heavy non-logic deps that block rendering (minimum set):
-//   - `~/components/EdgeMedia/EdgeVideo`: heavy edge-url/dialog/scroll-area tree;
-//     rendered only on the video-drop preview branch. Stub keeps the test about
-//     the panel's own data-driven render. (Same justification as VideoInput.)
-//   - `./ResourceItemContent`: pulls in AppProvider context + EdgeMedia2 +
-//     CurrencyBadge; rendered only inside the resolvedResources branch. We stub
-//     it thin so the "Resources (N)" header/count branch is testable without
-//     standing up the whole app-context provider stack. Stub shows the resource
-//     id so the per-resource mapping is still observable.
-// We do NOT mock Mantine (resolve.dedupe handles dual-React at the scaffold).
-
-// NOTE: vi.mock replaces the WHOLE module, so any OTHER importer of a
-// `~/utils/trpc` export in this component's import chain breaks unless mocked.
-// `generation-graph.store` (imported transitively for the "add to generation"
-// flow) uses `trpcVanilla.generation.getGenerationData.query`, so we stub
-// `trpcVanilla` too (and the other named exports for safety). VideoInput didn't
-// need this because its chain doesn't reach generation-graph.store.
+// The panel uses a bare Zustand hook and two independently gated tRPC queries.
+// Keep those dependencies controlled while exercising both render and local-file paths.
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     generation: {
@@ -126,6 +24,11 @@ vi.mock('~/store/metadata-extraction.store', () => ({
   useMetadataExtractionStore: vi.fn(),
 }));
 
+vi.mock('~/utils/metadata', () => ({
+  ExifParser: vi.fn(),
+  VideoMetadataParser: vi.fn(),
+}));
+
 vi.mock('~/components/EdgeMedia/EdgeVideo', () => ({
   EdgeVideo: ({ src }: { src: string }) => <div data-testid="edge-video" data-src={src} />,
 }));
@@ -141,10 +44,13 @@ vi.mock('./ResourceItemContent', () => ({
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
 import { trpc } from '~/utils/trpc';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
+import { ExifParser, VideoMetadataParser } from '~/utils/metadata';
 
 const getGenerationDataMock = vi.mocked(trpc.generation.getGenerationData.useQuery);
 const resolveImageMetaMock = vi.mocked(trpc.generation.resolveImageMeta.useQuery);
 const storeMock = vi.mocked(useMetadataExtractionStore);
+const exifParserMock = vi.mocked(ExifParser);
+const videoMetadataParserMock = vi.mocked(VideoMetadataParser);
 
 // tRPC UseQueryResult is large; the component reads only data + isFetching.
 const queryResult = (over: Partial<{ data: unknown; isFetching: boolean }> = {}) =>
@@ -168,14 +74,46 @@ const makeStore = (over: Partial<Record<string, unknown>> = {}) =>
     ...over,
   } as any);
 
+function makePreviewStore() {
+  return makeStore({ fileUrl: 'blob:video-preview' });
+}
+
+async function selectFile(file: File) {
+  let input: HTMLInputElement | null = null;
+  await vi.waitFor(() => {
+    input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+  });
+  Object.defineProperty(input!, 'files', { configurable: true, value: [file] });
+  input!.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
   beforeEach(() => {
     getGenerationDataMock.mockReset();
     resolveImageMetaMock.mockReset();
     storeMock.mockReset();
+    exifParserMock.mockReset();
+    videoMetadataParserMock.mockReset();
     getGenerationDataMock.mockReturnValue(queryResult());
     resolveImageMetaMock.mockReturnValue(queryResult());
     storeMock.mockReturnValue(makeStore());
+    exifParserMock.mockResolvedValue({
+      parse: vi.fn(() => undefined),
+      getMetadata: vi.fn(async () => ({})),
+    } as any);
+    videoMetadataParserMock.mockResolvedValue({
+      parse: vi.fn(() => undefined),
+      getMetadata: vi.fn(async () => ({})),
+    } as any);
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:video-preview'),
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    });
   });
 
   test('empty store: renders the dropzone prompt; BOTH queries disabled', async () => {
@@ -183,8 +121,12 @@ describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
 
     // Empty state (no fileUrl) renders the idle dropzone copy.
     await expect
-      .element(page.getByText('Drop an image here or click to select'))
+      .element(page.getByText('Drop an image or video here or click to select'))
       .toBeInTheDocument();
+
+    const accept = document.querySelector<HTMLInputElement>('input[type="file"]')?.accept;
+    expect(accept).toContain('video/mp4');
+    expect(accept).toContain('video/webm');
 
     // Hooks always run, but both are gated off in a bare render:
     //  - getGenerationData: enabled = !!droppedMedia = false
@@ -193,6 +135,62 @@ describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
     const [, resolveOpts] = resolveImageMetaMock.mock.calls.at(-1)!;
     expect((serverOpts as any).enabled).toBe(false);
     expect((resolveOpts as any).enabled).toBe(false);
+  });
+
+  test.each([
+    ['MP4', 'video/mp4', 'clip.mp4'],
+    ['WebM', 'video/webm', 'clip.webm'],
+  ])(
+    'accepts a local %s, previews it with an object URL, and stores parsed metadata',
+    async (_label, type, name) => {
+      const store = makePreviewStore();
+      const parsed = { prompt: `${type} prompt`, extra: { workflow: 'txt2vid' } };
+      const getMetadata = vi.fn(async () => ({ prompt: `${type} prompt` }));
+      videoMetadataParserMock.mockResolvedValue({
+        parse: vi.fn(() => parsed),
+        getMetadata,
+      } as any);
+      storeMock.mockReturnValue(store);
+
+      renderWithProviders(<MetadataExtractionPanel />);
+      const file = new File([new Uint8Array([1, 2, 3])], name, { type });
+      await selectFile(file);
+
+      await vi.waitFor(() => expect(videoMetadataParserMock).toHaveBeenCalledWith(file));
+      await vi.waitFor(() =>
+        expect(store.setMetadata).toHaveBeenCalledWith({
+          prompt: `${type} prompt`,
+          workflow: 'txt2vid',
+        })
+      );
+      await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledWith(file));
+      await vi.waitFor(() =>
+        expect(document.querySelector('video')).toHaveAttribute('src', 'blob:video-preview')
+      );
+      expect(exifParserMock).not.toHaveBeenCalled();
+      const closeButton = document.querySelector<HTMLButtonElement>('button');
+      expect(closeButton).not.toBeNull();
+      closeButton!.click();
+      await vi.waitFor(() =>
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:video-preview')
+      );
+    }
+  );
+
+  test('missing local video metadata is nonfatal and writes an empty result', async () => {
+    const store = makePreviewStore();
+    storeMock.mockReturnValue(store);
+    renderWithProviders(<MetadataExtractionPanel />);
+
+    const file = new File([new Uint8Array([1])], 'empty.webm', { type: 'video/webm' });
+    await selectFile(file);
+
+    await vi.waitFor(() => expect(videoMetadataParserMock).toHaveBeenCalledWith(file));
+    await vi.waitFor(() => expect(store.setMetadata).toHaveBeenCalledWith({}));
+    expect(store.setIsExtracting).toHaveBeenCalledWith(false);
+    await expect
+      .element(page.getByText('No generation metadata found in this image or video.'))
+      .toBeInTheDocument();
   });
 
   test('store.metadata present ENABLES resolveImageMeta and passes the metadata as query arg', async () => {
@@ -218,9 +216,7 @@ describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
 
   test('resolveImageMeta query arg strips the large `comfy` field', async () => {
     // The component drops `metadata.comfy` before sending (431 header-size guard).
-    storeMock.mockReturnValue(
-      makeStore({ metadata: { prompt: 'hi', comfy: { huge: 'graph' } } })
-    );
+    storeMock.mockReturnValue(makeStore({ metadata: { prompt: 'hi', comfy: { huge: 'graph' } } }));
 
     renderWithProviders(<MetadataExtractionPanel />);
     // Exact match: 'hi' also appears inside the raw-JSON <pre> dump.
@@ -236,7 +232,9 @@ describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
 
     renderWithProviders(<MetadataExtractionPanel />);
 
-    await expect.element(page.getByText('Extracting metadata...', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Extracting metadata...', { exact: true }))
+      .toBeInTheDocument();
   });
 
   test('store.resolvedResources render the Resources card', async () => {
@@ -275,7 +273,9 @@ describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
 
     renderWithProviders(<MetadataExtractionPanel />);
 
-    await expect.element(page.getByText('Resolving resources...', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Resolving resources...', { exact: true }))
+      .toBeInTheDocument();
   });
 
   test('resolveImageMeta data syncs into the store via setResolved', async () => {
@@ -291,9 +291,7 @@ describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
 
     renderWithProviders(<MetadataExtractionPanel />);
 
-    await vi.waitFor(() =>
-      expect(store.setResolved).toHaveBeenCalledWith(resources, params)
-    );
+    await vi.waitFor(() => expect(store.setResolved).toHaveBeenCalledWith(resources, params));
 
     // The useQuery mock returns `data` regardless of `enabled`, so the sync
     // above would also fire on a wrongly-disabled query. Pin that the query is
