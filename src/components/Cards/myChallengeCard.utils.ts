@@ -2,10 +2,11 @@ import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import type { MyChallengeResult } from '~/server/schema/challenge.schema';
 import { slugit } from '~/utils/string-helpers';
 
-export type MyChallengeCtaKind = 'results' | 'entry' | 'add' | 'manage';
+export type MyChallengeCtaKind = 'results' | 'entries' | 'entry' | 'add' | 'manage';
 
-// The detail page reads `#entries` to scroll, `?mine=1` to seed the My Entries filter, and
-// `?submit=1` to open the submit modal on arrival.
+// Detail-page deep-link targets. `results` lands on the winners podium (`#winners`), the others
+// on the entries gallery (`#entries`); `?mine=1` seeds the My Entries filter and `?submit=1`
+// opens the submit modal on arrival.
 export function getMyChallengeCtaHref(
   kind: MyChallengeCtaKind,
   { id, title }: { id: number; title: string }
@@ -14,6 +15,7 @@ export function getMyChallengeCtaHref(
   const href = `/challenges/${id}/${slugit(title)}`;
   if (kind === 'entry') return `${href}?mine=1#entries`;
   if (kind === 'add') return `${href}?submit=1#entries`;
+  if (kind === 'results') return `${href}#winners`;
   return `${href}#entries`;
 }
 
@@ -23,14 +25,14 @@ export function getMyChallengeCta(
   status: ChallengeStatus
 ): { kind: MyChallengeCtaKind; label: string; filled: 'white' | 'blue' } {
   if (result === 'hosting') {
-    // Before it starts, the only useful action is editing it — after that, looking at it.
+    // Before it starts, the only useful action is editing it — after that, looking at it. While
+    // it's live or judging there are no winners yet, so point at the entries; once completed the
+    // "results" are the winners podium.
     if (status === ChallengeStatus.Scheduled)
       return { kind: 'manage', label: 'Manage', filled: 'white' };
-    return {
-      kind: 'results',
-      label: isLive || status === ChallengeStatus.Completing ? 'View entries' : 'View results',
-      filled: 'white',
-    };
+    if (isLive || status === ChallengeStatus.Completing)
+      return { kind: 'entries', label: 'View entries', filled: 'white' };
+    return { kind: 'results', label: 'View results', filled: 'white' };
   }
   if (result === 'judging') return { kind: 'entry', label: 'View entry', filled: 'white' };
   if (result === 'entered' && isLive)

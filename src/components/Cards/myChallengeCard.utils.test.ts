@@ -38,8 +38,12 @@ describe('getMyChallengeCtaHref', () => {
 
   it('manage skips the deep link and goes to the edit page', () =>
     expect(getMyChallengeCtaHref('manage', challenge)).toBe('/challenges/42/edit'));
-  it('results anchors to the entries gallery', () =>
+  it('results anchors to the winners podium', () =>
     expect(getMyChallengeCtaHref('results', challenge)).toBe(
+      '/challenges/42/crystal-caverns#winners'
+    ));
+  it('entries anchors to the entries gallery', () =>
+    expect(getMyChallengeCtaHref('entries', challenge)).toBe(
       '/challenges/42/crystal-caverns#entries'
     ));
   it('entry anchors to the entries gallery filtered to the viewer', () =>
@@ -86,7 +90,7 @@ describe('hosting', () => {
 
   test('a live hosted challenge offers View entries', () => {
     expect(getMyChallengeCta('hosting', true, ChallengeStatus.Active)).toEqual({
-      kind: 'results',
+      kind: 'entries',
       label: 'View entries',
       filled: 'white',
     });
@@ -94,7 +98,7 @@ describe('hosting', () => {
 
   test('a hosted challenge being judged offers View entries, not View results', () => {
     expect(getMyChallengeCta('hosting', false, ChallengeStatus.Completing)).toEqual({
-      kind: 'results',
+      kind: 'entries',
       label: 'View entries',
       filled: 'white',
     });

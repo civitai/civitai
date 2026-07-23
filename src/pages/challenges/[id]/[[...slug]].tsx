@@ -210,11 +210,13 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-// The hero, prize and judge panels above the entries section keep resolving after the challenge
-// query does, so a single scroll lands short of the section. Re-pin on a short interval, and stop
-// the moment the reader takes over. Returns an abort fn so the caller can cancel on unmount; the
-// AbortController's signal also tears down all three listeners in one shot on any exit path.
-function scrollToEntries() {
+// The hero, prize and judge panels above the target section keep resolving after the challenge
+// query does, so a single scroll lands short. Re-pin on a short interval to the first of `ids`
+// present in the DOM (winners → entries fallback, since a completed challenge that never picked
+// winners has no podium), and stop the moment the reader takes over. Returns an abort fn so the
+// caller can cancel on unmount; the AbortController's signal also tears down all three listeners
+// in one shot on any exit path.
+function scrollToHash(ids: string[]) {
   const deadline = Date.now() + 1500;
   const controller = new AbortController();
   const { signal } = controller;
@@ -225,13 +227,20 @@ function scrollToEntries() {
 
   const pin = () => {
     if (signal.aborted) return;
-    document.getElementById('entries')?.scrollIntoView();
+    const target = ids.map((id) => document.getElementById(id)).find(Boolean);
+    target?.scrollIntoView();
     if (Date.now() < deadline) setTimeout(pin, 250);
     else controller.abort();
   };
   requestAnimationFrame(pin);
   return () => controller.abort();
 }
+
+// Deep-link anchors → ordered scroll targets (first present wins).
+const DEEP_LINK_TARGETS: Record<string, string[]> = {
+  entries: ['entries'],
+  winners: ['winners', 'entries'],
+};
 
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
@@ -379,11 +388,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     });
   };
 
-  // Deep links from the "Your Challenges" cards: `#entries` scrolls to the gallery, `?submit=1`
-  // opens the submit modal. Both wait on `challenge` — the entries section mounts with the query,
-  // long after the browser would have tried its own hash scroll (and it scrolls an inner
-  // `.scroll-area` container, not the window). `submit` is stripped before the modal opens so a
-  // refresh or back-nav doesn't re-trigger it.
+  // Deep links from the "Your Challenges" cards: `#entries`/`#winners` scroll to that section,
+  // `?submit=1` opens the submit modal. All wait on `challenge` — the target section mounts with
+  // the query, long after the browser would have tried its own hash scroll (and it scrolls an
+  // inner `.scroll-area` container, not the window). `submit` is stripped before the modal opens
+  // so a refresh or back-nav doesn't re-trigger it.
   useEffect(() => {
     // Scoped to the loaded challenge id, not a one-shot bool: Next reuses this component across
     // detail→detail navigations, so a boolean guard would swallow a deep link on the second one.
@@ -396,8 +405,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
     }
 
-    const abortScroll =
-      router.asPath.split('#')[1] === 'entries' ? scrollToEntries() : undefined;
+    const targets = DEEP_LINK_TARGETS[router.asPath.split('#')[1]];
+    const abortScroll = targets ? scrollToHash(targets) : undefined;
 
     const canSubmit =
       challenge.status === ChallengeStatus.Active &&
@@ -1552,6 +1561,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
 
   return (
     <div
+      id="winners"
       className="relative overflow-hidden py-12"
       style={{
         background: isDark
