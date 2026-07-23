@@ -34,6 +34,7 @@ const {
   mockImagesQueueUpdate,
   mockTrackModActivity,
   mockPreventReplicationLag,
+  mockLogToAxiom,
 } = vi.hoisted(() => ({
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
@@ -42,6 +43,7 @@ const {
   mockImagesQueueUpdate: vi.fn(),
   mockTrackModActivity: vi.fn(),
   mockPreventReplicationLag: vi.fn(),
+  mockLogToAxiom: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
@@ -106,6 +108,7 @@ vi.mock('~/server/services/model-version.service', () => ({
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: mockTrackModActivity,
 }));
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
@@ -161,6 +164,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockResolvedValue([]);
+  mockTrackModActivity.mockResolvedValue(undefined);
   mockUpdateReturns();
 });
 
@@ -273,6 +277,22 @@ describe('setModelMinor — audit ordering', () => {
       entityId: MODEL_ID,
       activity: 'setMinor',
     });
+  });
+
+  it('still completes and runs the fan-out when trackModActivity rejects', async () => {
+    mockBefore({});
+    mockTrackModActivity.mockRejectedValue(new Error('audit db down'));
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ id: 900 }]);
+
+    await expect(
+      setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID })
+    ).resolves.toEqual(expect.objectContaining({ id: MODEL_ID }));
+
+    expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockModelsQueueUpdate).toHaveBeenCalled();
+    expect(mockImagesQueueUpdate).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 });
 

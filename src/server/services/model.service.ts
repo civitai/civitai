@@ -2116,12 +2116,20 @@ export async function setModelMinor({
 
   await preventReplicationLag('model', id);
   // Audit before the fan-out: the flag write has already committed, so a fan-out
-  // failure must not cost us the record of who flipped it.
+  // failure must not cost us the record of who flipped it. The audit write itself
+  // must not block the fan-out either, so failures are logged, not thrown.
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
     activity: minor ? 'setMinor' : 'unsetMinor',
-  });
+  }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'set-model-minor-track-activity',
+      message: `Failed to track mod activity for model ${id}`,
+      error,
+    })
+  );
   await applyModelFlagSideEffects({ before, after: result });
 
   return result;

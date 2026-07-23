@@ -192,6 +192,18 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     expect(imageUpdateCall().values.slice(0, 2)).toEqual([false, false]);
   });
 
+  it('binds minor and poi to their own values, not each other, when they differ', async () => {
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, minor: true, poi: false },
+    });
+
+    const { sql, values } = imageUpdateCall();
+    expect(values.slice(0, 2)).toEqual([true, false]);
+    expect(sql).toContain('FROM "Post"');
+    expect(sql).toContain('modelVersionId');
+  });
+
   it('busts the model-version cache so generation stops reporting the old flags', async () => {
     await applyModelFlagSideEffects({
       before: baseBefore,
