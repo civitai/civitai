@@ -200,6 +200,64 @@ describe('anyMetricHidden', () => {
   });
 });
 
+/**
+ * Short-circuit invariant (the read-path cost optimization): when NO owner flag is set
+ * — no model/version meta flag AND no user default — the resolvers return NONE for BOTH
+ * membership values. This is what lets the hot read paths skip the membership lookup
+ * entirely (a redis/DB round-trip) whenever `anyMetricHidden(meta) || anyMetricHidden(
+ * userDefaults)` is false: the output is provably identical to running the full
+ * resolution. A regression here would break the "skip when nothing hidden" guarantee.
+ */
+describe('short-circuit: membership is irrelevant when nothing is hidden', () => {
+  it('resolveModelHiddenMetrics returns NONE for member AND non-member when no flags set', () => {
+    const asMember = resolveModelHiddenMetrics({
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: true,
+    });
+    const asNonMember = resolveModelHiddenMetrics({
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: false,
+    });
+    expect(asMember).toEqual(NONE);
+    expect(asNonMember).toEqual(NONE);
+    expect(asMember).toEqual(asNonMember); // membership value cannot change the output
+  });
+
+  it('resolveVersionHiddenMetrics returns NONE for member AND non-member when no flags set', () => {
+    const asMember = resolveVersionHiddenMetrics({
+      versionMeta: {},
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: true,
+    });
+    const asNonMember = resolveVersionHiddenMetrics({
+      versionMeta: {},
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: false,
+    });
+    expect(asMember).toEqual(NONE);
+    expect(asNonMember).toEqual(NONE);
+    expect(asMember).toEqual(asNonMember);
+  });
+
+  it('once ANY flag is set, membership DOES matter (so the short-circuit must not fire)', () => {
+    const gate = { modelMeta: { hideBuzz: true }, isOwnerOrModerator: false } as const;
+    expect(resolveModelHiddenMetrics({ ...gate, hasValidMembership: true })).toEqual({
+      buzz: true,
+      downloads: false,
+      generations: false,
+    });
+    expect(resolveModelHiddenMetrics({ ...gate, hasValidMembership: false })).toEqual(NONE);
+  });
+});
+
 describe('noHiddenMetrics', () => {
   it('returns an all-visible result', () => {
     expect(noHiddenMetrics()).toEqual(NONE);
