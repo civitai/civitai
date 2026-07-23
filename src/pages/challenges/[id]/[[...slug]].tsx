@@ -82,6 +82,7 @@ import {
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import {
+  getChallengeDisplayUser,
   useDeleteUserChallenge,
   useIsChallengeOwner,
   useQueryChallenge,
@@ -694,7 +695,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
       {/* Discussion Section */}
       <Container size="xl" id="comments" py={32}>
-        <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
+        <ChallengeDiscussion
+          challengeId={challenge.id}
+          userId={getChallengeDisplayUser(challenge).id}
+        />
       </Container>
 
       {/* Entries Section */}
@@ -1458,12 +1462,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       </Accordion>
 
       <CreatorCardSimple
-        user={{
-          ...challenge.createdBy,
-          // Convert null to undefined for CreatorCardSimple compatibility
-          cosmetics: challenge.createdBy.cosmetics ?? undefined,
-          profilePicture: challenge.createdBy.profilePicture ?? undefined,
-        }}
+        user={(() => {
+          const author = getChallengeDisplayUser(challenge);
+          return {
+            ...author,
+            // Convert null to undefined for CreatorCardSimple compatibility
+            cosmetics: author.cosmetics ?? undefined,
+            profilePicture: author.profilePicture ?? undefined,
+          };
+        })()}
         statDisplayOverwrite={[]}
       />
     </Stack>

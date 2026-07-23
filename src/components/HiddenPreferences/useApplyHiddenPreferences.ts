@@ -711,6 +711,8 @@ export function filterPreferences<
       return { items: comics, hidden };
     case 'challenges':
       const challenges = value.filter((challenge) => {
+        // createdBy is the real creator now (the judge is a separate field), so this correctly
+        // exempts the owner from their own challenge's browsing-level hide.
         const isOwner = challenge.createdBy.id === currentUser?.id;
         if (isOwner || isModerator) return true;
 

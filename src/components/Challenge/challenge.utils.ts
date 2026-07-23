@@ -6,11 +6,34 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type {
   ChallengeDetail,
+  ChallengeDisplayUser,
+  ChallengeJudgeInfo,
   GetInfiniteChallengesInput,
   GetCompletedChallengesWithWinnersInput,
 } from '~/server/schema/challenge.schema';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
+
+// The author to show on a card/detail. User challenges credit the real creator; System/Mod
+// challenges present the judge persona (e.g. CivBot) — System already stores the judge as its
+// creator, so this only diverges for Mod challenges, keeping the individual moderator unexposed.
+// Falls back to the creator when no judge is assigned.
+export function getChallengeDisplayUser(challenge: {
+  source: ChallengeSource;
+  createdBy: ChallengeDisplayUser;
+  judge?: ChallengeJudgeInfo | null;
+}): ChallengeDisplayUser {
+  const { source, createdBy, judge } = challenge;
+  if (source === ChallengeSource.User || !judge) return createdBy;
+  return {
+    id: judge.userId,
+    username: judge.username,
+    image: judge.image,
+    profilePicture: judge.profilePicture,
+    cosmetics: judge.cosmetics,
+    deletedAt: judge.deletedAt,
+  };
+}
 
 // Default filter values
 const defaultFilters: Partial<GetInfiniteChallengesInput> = {
