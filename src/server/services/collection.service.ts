@@ -430,9 +430,11 @@ export const getUserCollectionsWithPermissions = async <
   }
 
   // Active-window contest collections the user can submit to for review WITHOUT following first.
-  // Contest + Review-write + Public-read, and the submission window (if set) is open right now.
-  // Kept independent of contributor/permission joins so it also surfaces contests the user hasn't
-  // joined; UNION de-dupes any that already appear via the branches above.
+  // Contest + Review-write + Public-read, with a real submission window that is open RIGHT NOW.
+  // A defined, in-future submissionEndDate is REQUIRED: without it we'd surface every windowless
+  // contest ever created (old contests / daily challenges store no submission dates). Start date,
+  // if present, must have passed. Kept independent of contributor joins so it also surfaces
+  // contests the user hasn't joined; UNION de-dupes any that already appear via the branches above.
   if (includeActiveContests) {
     queries.push(Prisma.sql`(
         ${SELECT}
@@ -440,13 +442,11 @@ export const getUserCollectionsWithPermissions = async <
         WHERE c."mode" = ${CollectionMode.Contest}::"CollectionMode"
           AND c."write" = ${CollectionWriteConfiguration.Review}::"CollectionWriteConfiguration"
           AND c."read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
+          AND c."metadata"->>'submissionEndDate' IS NOT NULL
+          AND (c."metadata"->>'submissionEndDate')::timestamptz >= now()
           AND (
             c."metadata"->>'submissionStartDate' IS NULL
             OR (c."metadata"->>'submissionStartDate')::timestamptz <= now()
-          )
-          AND (
-            c."metadata"->>'submissionEndDate' IS NULL
-            OR (c."metadata"->>'submissionEndDate')::timestamptz >= now()
           )
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         LIMIT 100
