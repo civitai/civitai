@@ -32,7 +32,7 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -242,8 +242,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
-  const unavailableGenResources = await getUnavailableResources();
-
   // Creator Controls metric privacy: store which model-level metrics are hidden so
   // the search card can render the "hidden" notice. Effective only while the owner
   // holds a valid CP membership; the real metrics/rank stay in the doc so sort order
@@ -292,7 +290,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const canGenerate = modelVersions.some(
         (x) =>
           x.generationCoverage?.covered &&
-          !unavailableGenResources.includes(x.id) &&
+          !isGenerationDisabled(x.flags) &&
           isBaseModelGenerationSupported(x.baseModel, model.type)
       );
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
@@ -341,7 +339,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate:
               generationCoverage?.covered &&
-              unavailableGenResources.indexOf(x.id) === -1 &&
+              !isGenerationDisabled(x.flags) &&
               isBaseModelGenerationSupported(x.baseModel, model.type),
             settings: settings as RecommendedSettingsSchema,
             baseModel: x.baseModel as BaseModel,

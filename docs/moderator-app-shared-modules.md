@@ -95,7 +95,6 @@ Recommend option 3.
 
 | Import | Page | Blocker |
 |---|---|---|
-| `~/components/ImageGeneration/GenerationForm/generation.utils` (`useUnsupportedResources`) | `generation.tsx` | Pulls in generation form machinery → ecosystem handlers → orchestrator service. Refactor: extract the resource-availability table logic from form-internal helpers. |
 | `~/server/services/image.service` (type imports) | `image-rating-review`, `downleveled-review`, `ingestion-error-review` | Type-only imports today, but the *underlying functions* must run somewhere. Either satellite hosts these tRPC routes (drags in image.service) or the satellite calls main-app over HTTP. |
 | `~/server/services/scanner-review.service`, `~/server/services/scanner-content.service` | `scanner-audit/[mode]/[label]` | Scanner audit queue + per-label content fetch. Tied to xguard orchestrator callbacks. Refactor: clarify what's a read-only query vs. what's an orchestrator interaction. |
 | `~/server/common/moderation-helpers` (`unpublishReasons`) | `articles`, `models` | Moderator-only domain logic. Should be promoted into Tier A (schema-common) — it's effectively a stable enum. |
@@ -127,7 +126,6 @@ Recommend option 3.
 | `auditor` | 4 | **Hard** (useCheckProfanity) |
 | `scanner-audit/[mode]/index` | 14 | **Hard** (ScannerAuditLayout, xguard) |
 | `scanner-audit/[mode]/[label]` | 18 | **Hard** (scanner-content service) |
-| `generation` | 11 | **Hard** (useUnsupportedResources) |
 | `generation-restrictions` | 14 | **Hard** (UserGenerationsDrawer) |
 
 7 Easy / 11 Medium / 6 Hard
@@ -176,7 +174,9 @@ Tier D contents (EdgeMedia, ImageGuard2, MasonryColumns, NextLink, etc.). Promot
 **Phase 0** — Ship `civitai-schema-common` per the existing plan (phases 1–5). Satellite app cannot start before this.
 
 **Phase 1** — Refactor the 6 Tier F blockers **in place** in the main app:
-- Extract `useUnsupportedResources` from generation form coupling
+- ~~Extract `useUnsupportedResources` from generation form coupling~~ — resolved: the hook and its
+  only consumer (`/moderator/generation`) were removed when the generation blacklist moved to the
+  `ModelVersionFlag.DisableGeneration` bit.
 - Extract `PromptHighlight` from metadata-audit coupling
 - Refactor `useReportCsamImages` to depend on a dialog-system interface, not the concrete main-app dialog store
 - Decide: scanner-content service satellite-owned, or tRPC-proxied to main app?

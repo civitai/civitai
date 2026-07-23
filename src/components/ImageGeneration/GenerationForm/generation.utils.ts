@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   generationStatusDefaultMessage,
@@ -9,7 +9,6 @@ import type { GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { GateRule } from '~/shared/data-graph/generation/gates';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
-import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -96,43 +95,6 @@ export const useGenerationConfig = () => {
   // from before a field existed). Callers read `useGenerationConfig().<field>`
   // directly — no per-field hooks needed.
   return useMemo(() => ({ ...DEFAULT_GENERATION_CONFIG, ...data }), [data]);
-};
-
-export const useUnsupportedResources = () => {
-  const queryUtils = trpc.useUtils();
-
-  const { data: unavailableResources = [] } = trpc.generation.getUnavailableResources.useQuery(
-    undefined,
-    {
-      gcTime: Infinity,
-      staleTime: Infinity,
-      trpc: { context: { skipBatch: true } },
-    }
-  );
-
-  const toggleUnavailableResourceMutation = trpc.generation.toggleUnavailableResource.useMutation({
-    onSuccess: async () => {
-      await queryUtils.generation.getUnavailableResources.invalidate();
-    },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Error updating resource availability',
-        error: new Error(error.message),
-      });
-    },
-  });
-  const handleToggleUnavailableResource = useCallback(
-    (id: number) => {
-      return toggleUnavailableResourceMutation.mutateAsync({ id });
-    },
-    [toggleUnavailableResourceMutation]
-  );
-
-  return {
-    unavailableResources,
-    toggleUnavailableResource: handleToggleUnavailableResource,
-    toggling: toggleUnavailableResourceMutation.isPending,
-  };
 };
 
 // TODO - move these somewhere that makes more sense

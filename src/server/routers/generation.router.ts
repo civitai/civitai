@@ -5,7 +5,6 @@ import {
   generationEcosystemConfigSchema,
   generationStatusModeSchema,
   getGenerationDataSchema,
-  getGenerationResourcesSchema,
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
   resolveWildcardPackSchema,
@@ -15,12 +14,10 @@ import {
   checkResourcesCoverage,
   getGenerationData,
   getGenerationEcosystemConfig,
-  getGenerationResources,
   getGenerationStatus,
   getGateRules,
   getGenerationConfig,
   getResourceData,
-  getUnavailableResources,
   resolveImageMeta,
   setGateRules,
   setGenerationEcosystemConfig,
@@ -58,10 +55,6 @@ export const generationRouter = router({
   setWorkflowDefinition: moderatorProcedure
     .input(z.any())
     .mutation(({ input }) => setWorkflowDefinition(input.key, input)),
-  getResources: publicProcedure
-    .meta({ requiredScope: TokenScope.AIServicesRead })
-    .input(getGenerationResourcesSchema)
-    .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getGenerationDataSchema)
@@ -136,9 +129,6 @@ export const generationRouter = router({
   setGateRules: moderatorProcedure
     .input(z.array(gateRuleSchema))
     .mutation(({ input }) => setGateRules(input)),
-  getUnavailableResources: publicProcedure
-    .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(() => getUnavailableResources()),
   toggleUnavailableResource: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>

@@ -254,6 +254,7 @@ export default MixedAuthEndpoint(async function handler(
         covered: modelVersion.covered ?? false,
         modelUserId: modelVersion.modelUserId,
         modelType: modelVersion.type,
+        flags: modelVersion.versionFlags,
         modelVersionAlias: modelVersion.generationAlias,
       },
     ],

@@ -2,8 +2,8 @@ import { ModelStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getModelVersionsForSearchIndex } from '~/server/selectors/modelVersion.selector';
@@ -51,12 +51,11 @@ const updateGenerationCoverage = (idOffset: number) =>
       return -1;
     }
 
-    const unavailableGenResources = await getUnavailableResources();
     const updateIndexReadyRecords = records
       .map(({ id, modelVersions }) => {
         const [{ files, ...version }] = modelVersions;
         const canGenerate = modelVersions.some(
-          (x) => x.generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1
+          (x) => x.generationCoverage?.covered && !isGenerationDisabled(x.flags)
         );
 
         if (!version) {
@@ -72,8 +71,7 @@ const updateGenerationCoverage = (idOffset: number) =>
           versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
             ...x,
             hashes: hashes.map((hash) => hash.hash),
-            canGenerate:
-              generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
+            canGenerate: generationCoverage?.covered && !isGenerationDisabled(x.flags),
           })),
           canGenerate,
         };

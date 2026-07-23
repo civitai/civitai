@@ -192,11 +192,9 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 
 ## 4. Generation & training
 
-- [ ] **`/moderator/generation`** — `generation.tsx` — flag: none
-  - Procedures: `generation.getResources` (query)
-  - Services: `generation/generation.service.ts` → `getGenerationResources`
-  - Schemas: `generation.schema.ts` (`getGenerationResourcesSchema`)
-  - Infra: **Postgres** (+ search index). `toggleUnavailableResource` lives in a child component — verify on migration.
+- ~~**`/moderator/generation`**~~ — **removed**. The "Unavailable Resources" list was replaced by a
+  per-version "Disable generation" action on the model-version menu, backed by the
+  `ModelVersionFlag.DisableGeneration` bit on `ModelVersion.flags`. No page to migrate.
 - [ ] **`/moderator/generation-config`** — `generation-config.tsx` — flag: none
   - Procedures: `getEcosystemConfig`, `getGateRules` (queries); `setEcosystemConfig`, `setGateRules` (mutations)
   - Services: `generation/generation.service.ts` (`getGenerationEcosystemConfig`, `setGenerationEcosystemConfig`, `getGateRules`, `setGateRules`)

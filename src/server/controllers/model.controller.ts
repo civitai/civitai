@@ -153,9 +153,9 @@ import { redis, REDIS_KEYS } from '../redis/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   getResourceData,
-  getUnavailableResources,
   resolveCanGenerateForVersions,
 } from '../services/generation/generation.service';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 
 // TODO.Briant - determine all the logic to check when getting model versions
 /*
@@ -165,7 +165,6 @@ import {
   4  don't check for entity access on each version. Doesn't need to happen for versions that are already available
   5. ensure that we aren't fetching vae files when `!vadIds.length`
   6. get suggested resources in another api call
-  7. getUnavailableResources needs to go. We can't have another source of truth for generation coverage
 */
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({
@@ -223,7 +222,6 @@ export const getModelHandler = async ({
     });
 
     const modelCategories = await getCategoryTags('model');
-    const unavailableGenResources = await getUnavailableResources();
 
     const sfwOnly = !!features.isGreen;
     const versionGenStates = await resolveCanGenerateForVersions(
@@ -236,6 +234,7 @@ export const getModelHandler = async ({
         covered: v.generationCoverage?.covered ?? false,
         modelUserId: model.user.id,
         modelType: model.type,
+        flags: v.flags,
         modelVersionAlias: (v.meta as ModelVersionMeta | null)?.generationAlias,
       })),
       {
@@ -396,6 +395,7 @@ export const getModelHandler = async ({
         earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
         canDownload,
         canGenerate,
+        generationDisabled: isGenerationDisabled(version.flags),
         wildcardSetId,
         files: files as Array<
           Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
@@ -1572,8 +1572,6 @@ export const getAssociatedResourcesCardDataHandler = async ({
         })
       : [];
 
-    const unavailableGenResources = await getUnavailableResources();
-
     const associatedSfwOnly = !!ctx.features.isGreen;
     // `modelVersionAlias` is omitted here: these versions come from
     // `dataForModelsCache`, which doesn't carry `meta`. An aliased cover version
@@ -1592,6 +1590,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                 covered: v.covered,
                 modelUserId: m.user.id,
                 modelType: m.type,
+                flags: v.flags,
               },
             ]
           : [];

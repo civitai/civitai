@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * STEP-6 sysRedis soft-dependency sweep — the generation hot-path readers in
- * generation.service.ts. These five reads all run on the generation submit /
- * config path (four together in getGenerationConfig's Promise.all), so a single
+ * generation.service.ts. These reads all run on the generation submit / config
+ * path (four together in getGenerationConfig's Promise.all), so a single
  * un-deadlined member parking on a silent sysRedis half-open would park the whole
  * gen submit ~11min on every request.
  *
@@ -69,7 +69,6 @@ import {
   getUnstableResources,
   getGenerationEcosystemConfig,
   getGateRules,
-  getUnavailableResources,
 } from '~/server/services/generation/generation.service';
 
 beforeEach(() => {
@@ -210,41 +209,6 @@ describe('getGateRules — sysRedis soft-dependency', () => {
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
     const result = await getGateRules();
-
-    expect(result).toEqual([]);
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
-  });
-});
-
-describe('getUnavailableResources — sysRedis soft-dependency', () => {
-  it('happy path: returns the deduped list through withSysReadDeadline, no fail-open', async () => {
-    mockHGet.mockResolvedValue(JSON.stringify([1, 1, 2]));
-
-    const result = await getUnavailableResources();
-
-    expect(result).toEqual([1, 2]);
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
-  });
-
-  it('DOWN: hGet throws → fails open to [], no throw, logs read-degraded', async () => {
-    mockHGet.mockRejectedValue(new Error('sysRedis connection is down'));
-
-    const result = await getUnavailableResources();
-
-    expect(result).toEqual([]);
-    expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
-    expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
-    expect(mockLogSysRedisFailOpen.mock.calls[0][1]).toBe('getUnavailableResources');
-  });
-
-  it('SLOW/half-open: hGet NEVER settles + deadline REJECTS → fails open to [] (fail-on-revert)', async () => {
-    mockHGet.mockReturnValue(new Promise(() => undefined));
-    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
-
-    const result = await getUnavailableResources();
 
     expect(result).toEqual([]);
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);

@@ -33,7 +33,6 @@ export function ModerationNav() {
         },
         { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
-        { label: 'Generation', href: '/moderator/generation' },
         {
           label: 'Service Status',
           href: '/moderator/service-status',

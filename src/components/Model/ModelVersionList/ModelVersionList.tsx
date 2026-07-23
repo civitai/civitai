@@ -78,7 +78,8 @@ export function ModelVersionList({
       if (!el || !viewport) return;
 
       const startPad = 40;
-      const delta = el.getBoundingClientRect().left - viewport.getBoundingClientRect().left - startPad;
+      const delta =
+        el.getBoundingClientRect().left - viewport.getBoundingClientRect().left - startPad;
       if (delta !== 0) viewport.scrollBy({ left: delta, behavior: 'smooth' });
     });
 
@@ -246,6 +247,7 @@ export function ModelVersionList({
                 active={active}
                 published={published}
                 canGenerate={version.canGenerate}
+                generationDisabled={version.generationDisabled}
                 showToggleCoverage={showToggleCoverage}
               />
             </Button.Group>

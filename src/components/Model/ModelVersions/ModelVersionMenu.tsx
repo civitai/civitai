@@ -10,6 +10,7 @@ import {
   IconCloudX,
   IconAi,
   IconShieldHalf,
+  IconPlaylistX,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -32,6 +33,7 @@ export function ModelVersionMenu({
   active,
   published,
   canGenerate,
+  generationDisabled,
   showToggleCoverage,
 }: {
   modelVersionId: number;
@@ -41,6 +43,7 @@ export function ModelVersionMenu({
   active: boolean;
   published: boolean;
   canGenerate: boolean;
+  generationDisabled: boolean;
   showToggleCoverage: boolean;
 }) {
   const router = useRouter();
@@ -62,6 +65,39 @@ export function ModelVersionMenu({
   function handleEnqueueNsfwLevelUpdate() {
     enqueuNsfwLevelUpdateMutation.mutate({ id: modelVersionId });
   }
+
+  const toggleUnavailableResourceMutation = trpc.generation.toggleUnavailableResource.useMutation({
+    onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Error updating resource availability',
+        error: new Error(error.message),
+      }),
+  });
+
+  // Confirmed: this takes the version out of the generator site-wide for every
+  // user, and the menu item sits one row below "Bust Cache".
+  const handleToggleGeneration = () => {
+    dialogStore.trigger({
+      id: 'toggle-generation-disabled',
+      component: ConfirmDialog,
+      props: {
+        title: generationDisabled ? 'Enable generation' : 'Disable generation',
+        message: generationDisabled
+          ? 'This version will be available in the generator again.'
+          : 'This version will be blocked from the generator for everyone. Existing generations are unaffected.',
+        labels: {
+          cancel: 'Cancel',
+          confirm: generationDisabled ? 'Enable generation' : 'Disable generation',
+        },
+        confirmProps: { color: generationDisabled ? 'blue' : 'red' },
+        // Error is surfaced by the mutation's onError — swallow the rejection so
+        // the dialog still closes and clears its loading state.
+        onConfirm: () =>
+          toggleUnavailableResourceMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
+      },
+    });
+  };
 
   const { toggle, isPending: isLoading } = useToggleCheckpointCoverageMutation();
   const handleToggleCoverage = async ({
@@ -221,6 +257,27 @@ export function ModelVersionMenu({
               {canGenerate ? 'Remove from generation' : 'Add to generation'}
             </Menu.Item>
           </>
+        )}
+
+        {currentUser?.isModerator && (
+          <Menu.Item
+            disabled={toggleUnavailableResourceMutation.isPending}
+            leftSection={
+              toggleUnavailableResourceMutation.isPending ? (
+                <Loader size="xs" />
+              ) : (
+                <IconPlaylistX size={14} stroke={1.5} />
+              )
+            }
+            color="yellow"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleToggleGeneration();
+            }}
+          >
+            {generationDisabled ? 'Enable generation' : 'Disable generation'}
+          </Menu.Item>
         )}
 
         <Menu.Item

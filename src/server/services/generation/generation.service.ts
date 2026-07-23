@@ -2,8 +2,8 @@ import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
-import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbRead } from '~/server/db/client';
+import { EntityAccessPermission } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
@@ -14,29 +14,22 @@ import type {
   GenerationStatus,
   GenerationStatusMode,
   GetGenerationDataSchema,
-  GetGenerationResourcesInput,
   ResolveImageMetaInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { modelsSearchIndex } from '~/server/search-index';
 import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { getFeaturedModels } from '~/server/services/model.service';
-import { getLinkedVaeIds } from '~/server/services/model-version.service';
+import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import type { GenerationAlias, ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
-import {
-  handleLogError,
-  throwAuthorizationError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   fluxKreaAir,
   fluxUltraAir,
@@ -56,6 +49,10 @@ import { fromJson, toJson } from '~/utils/json-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
+import {
+  ModelVersionFlag,
+  isGenerationDisabled,
+} from '~/shared/constants/model-version-flags.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
@@ -78,30 +75,12 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   getBaseModelEngine,
   getBaseModelMediaType,
-  getBaseModelsByGroup,
   getEcosystem,
   hasGenerationSupport,
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
 import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import { cleanPrompt } from '~/utils/metadata/audit';
-
-type GenerationResourceSimple = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  modelId: number;
-  modelName: string;
-  modelType: ModelType;
-  baseModel: string;
-  strength: number;
-  minStrength: number;
-  maxStrength: number;
-  minor: boolean;
-  sfwOnly: boolean;
-  fileSizeKB: number;
-  available: boolean;
-};
 
 type MetaCivitaiResource = { type?: string; weight?: number; modelVersionId: number };
 
@@ -135,140 +114,16 @@ function getMetaResources({
   return resources;
 }
 
-// const baseModelSetsArray = Object.values(baseModelSets);
-/** @deprecated using search index instead... */
-export const getGenerationResources = async (
-  input: GetGenerationResourcesInput & { user?: SessionUser }
-) => {
-  return await getPagedData<GetGenerationResourcesInput, GenerationResourceSimple[]>(
-    input,
-    async ({
-      take,
-      skip,
-      query,
-      types,
-      notTypes,
-      ids, // used for getting initial values of resources
-      baseModel,
-      supported,
-    }) => {
-      const preselectedVersions: number[] = [];
-      if ((!ids || ids.length === 0) && !query) {
-        const featuredCollection = await dbRead.collection
-          .findFirst({
-            where: { userId: -1, name: 'Generator' },
-            select: {
-              items: {
-                select: {
-                  model: {
-                    select: {
-                      name: true,
-                      type: true,
-                      modelVersions: {
-                        select: { id: true, name: true },
-                        where: { status: 'Published' },
-                        orderBy: { index: 'asc' },
-                        take: 1,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          })
-          .catch(() => null);
-
-        if (featuredCollection)
-          preselectedVersions.push(
-            ...featuredCollection.items.flatMap(
-              (x) => x.model?.modelVersions.map((x) => x.id) ?? []
-            )
-          );
-
-        ids = preselectedVersions;
-      }
-
-      const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.status = 'Published'`];
-      if (ids && ids.length > 0) sqlAnd.push(Prisma.sql`mv.id IN (${Prisma.join(ids, ',')})`);
-      if (!!types?.length)
-        sqlAnd.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types, ',')}]::"ModelType"[])`);
-      if (!!notTypes?.length)
-        sqlAnd.push(Prisma.sql`m.type != ANY(ARRAY[${Prisma.join(notTypes, ',')}]::"ModelType"[])`);
-      if (query) {
-        const pgQuery = '%' + query + '%';
-        sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
-      }
-      if (baseModel) {
-        // const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-        const baseModels = getBaseModelsByGroup(baseModel as BaseModelGroup);
-        if (baseModels.length)
-          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
-      }
-
-      let orderBy = 'mv.index';
-      if (!query) orderBy = `mm."thumbsUpCount", ${orderBy}`;
-
-      const results = await dbRead.$queryRaw<Array<GenerationResourceSimple & { index: number }>>`
-        SELECT
-          mv.id,
-          mv.index,
-          mv.name,
-          mv."trainedWords",
-          m.id "modelId",
-          m.name "modelName",
-          m.type "modelType",
-          mv."baseModel",
-          mv.settings->>'strength' strength,
-          mv.settings->>'minStrength' "minStrength",
-          mv.settings->>'maxStrength' "maxStrength"
-        FROM "ModelVersion" mv
-        JOIN "Model" m ON m.id = mv."modelId"
-        ${Prisma.raw(
-          supported
-            ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
-            : ''
-        )}
-        ${Prisma.raw(
-          orderBy.startsWith('mm') ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id` : ''
-        )}
-        WHERE ${Prisma.join(sqlAnd, ' AND ')}
-        ORDER BY ${Prisma.raw(orderBy)}
-        LIMIT ${take}
-        OFFSET ${skip}
-      `;
-      const rowCount = await dbRead.$queryRaw<{ count: bigint }[]>`
-        SELECT COUNT(*)
-        FROM "ModelVersion" mv
-        JOIN "Model" m ON m.id = mv."modelId"
-        ${Prisma.raw(
-          supported
-            ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
-            : ''
-        )}
-        WHERE ${Prisma.join(sqlAnd, ' AND ')}
-      `;
-      const [{ count }] = rowCount;
-
-      return {
-        items: results.map((resource) => ({
-          ...resource,
-          strength: 1,
-        })),
-        count,
-      };
-    }
-  );
-};
-
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
-  const unavailableGenResources = await getUnavailableResources();
   const db = await getDbWithoutLag('modelVersion', id);
-  const result = await db.generationCoverage.findFirst({
-    where: { modelVersionId: id },
-    select: { covered: true },
+  const version = await db.modelVersion.findFirst({
+    where: { id },
+    select: { flags: true, generationCoverage: { select: { covered: true } } },
   });
 
-  return (result?.covered ?? false) && unavailableGenResources.indexOf(id) === -1;
+  return (
+    (version?.generationCoverage?.covered ?? false) && !isGenerationDisabled(version?.flags ?? 0)
+  );
 }
 
 export async function getGenerationStatus() {
@@ -684,6 +539,7 @@ async function resolveAliasGateVersions(
       availability: true,
       usageControl: true,
       baseModel: true,
+      flags: true,
       generationCoverage: { select: { covered: true } },
       model: { select: { userId: true, type: true } },
     },
@@ -980,54 +836,29 @@ export async function getGenerationConfig(
   };
 }
 
-export async function getUnavailableResources() {
-  // Wall-clock deadline: getUnavailableResources gates the gen submit path — a
-  // silent sysRedis half-open would park generation ~11min instead of failing open.
-  const cachedData = await withSysReadDeadline(
-    sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
-  )
-    .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
-    .catch((err) => {
-      // fallback to empty array if redis fails (DOWN or SLOW/deadline)
-      logSysRedisFailOpen('read-degraded', 'getUnavailableResources', err);
-      return [] as number[];
-    });
-
-  return [...new Set(cachedData ?? [])];
-}
-
 export async function toggleUnavailableResource({
   id,
   isModerator,
 }: GetByIdInput & { isModerator?: boolean }) {
   if (!isModerator) throw throwAuthorizationError();
 
-  const unavailableResources = await getUnavailableResources();
-  const index = unavailableResources.indexOf(id);
-  if (index > -1) unavailableResources.splice(index, 1);
-  else unavailableResources.push(id);
+  // Flip the bit in a single atomic statement (`#` is Postgres bitwise XOR).
+  // `flags` is shared with DisablePayout/NotDerivative, so a read-modify-write
+  // would clobber a concurrent write to those other bits.
+  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
+    UPDATE "ModelVersion"
+    SET flags = flags # ${ModelVersionFlag.DisableGeneration}
+    WHERE id = ${id}
+    RETURNING "modelId", flags
+  `;
+  if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
 
-  await sysRedis.hSet(
-    REDIS_SYS_KEYS.SYSTEM.FEATURES,
-    'generation:unavailable-resources',
-    toJson(unavailableResources)
-  );
+  // The flag is baked into cached version/model rows (resourceDataCache,
+  // dataForModelsCache, search index), so bust them the same way a coverage
+  // toggle does — otherwise the change wouldn't surface until TTL expiry.
+  await bustMvCache(id, updated.modelId);
 
-  const modelVersion = await dbRead.modelVersion.findUnique({
-    where: { id },
-    select: { modelId: true },
-  });
-  if (modelVersion)
-    modelsSearchIndex
-      .queueUpdate([
-        {
-          id: modelVersion.modelId,
-          action: SearchIndexUpdateQueueAction.Update,
-        },
-      ])
-      .catch(handleLogError);
-
-  return unavailableResources;
+  return { id, generationDisabled: isGenerationDisabled(updated.flags) };
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
@@ -1093,7 +924,6 @@ export async function getCanGenerateHiddenGates(user: {
 export function getResourceCanGenerate({
   resource,
   user,
-  unavailableResources,
   hiddenGates,
 }: {
   resource: {
@@ -1104,12 +934,12 @@ export function getResourceCanGenerate({
     baseModel: string;
     covered: boolean | null;
     modelUserId: number;
+    flags: number;
   };
   user: { id?: number; isModerator?: boolean };
-  unavailableResources: number[];
   hiddenGates: CanGenerateHiddenGates;
 }): boolean {
-  const isUnavailable = unavailableResources.includes(resource.id);
+  const isUnavailable = isGenerationDisabled(resource.flags);
   const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
   const covered =
     (resource.covered || explicitCoveredModelVersionIds.includes(resource.id)) && !isUnavailable;
@@ -1153,8 +983,9 @@ export function getResourceCanGenerate({
  *   - Everything else: the standard `getResourceCanGenerate` +
  *     `isBaseModelGenerationSupported` pair.
  *
- * Fetches `unavailableResources` + `ecosystemConfig` internally so call sites
- * don't have to thread them through. Returns a Map keyed by `modelVersionId`;
+ * Reads the disable-generation flag off each version's `flags` and fetches
+ * `ecosystemConfig` internally so call sites don't have to thread them through.
+ * Returns a Map keyed by `modelVersionId`;
  * the `wildcardSetId` field is populated only for Wildcards-type entries
  * whose set is visible at the current site context.
  *
@@ -1170,6 +1001,8 @@ export type ResolveCanGenerateVersion = {
   covered: boolean | null | undefined;
   modelUserId: number;
   modelType: ModelType;
+  /** ModelVersion.flags — the DisableGeneration bit gates canGenerate. */
+  flags: number;
   /**
    * Generation alias from `meta.generationAlias`, supplied by the caller (which
    * already has the version's meta). When set, this version's canGenerate is
@@ -1198,9 +1031,8 @@ export async function resolveCanGenerateForVersions(
     : [];
 
   const needsStandardGate = versions.some((v) => v.modelType !== 'Wildcards');
-  const [visibleWildcardSetIdByVersionId, unavailableResources, hiddenGates] = await Promise.all([
+  const [visibleWildcardSetIdByVersionId, hiddenGates] = await Promise.all([
     getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
-    needsStandardGate ? getUnavailableResources() : Promise.resolve<number[]>([]),
     needsStandardGate
       ? getCanGenerateHiddenGates(ctx.user)
       : Promise.resolve<CanGenerateHiddenGates>({ ecosystems: new Set(), versionIds: new Set() }),
@@ -1237,9 +1069,9 @@ export async function resolveCanGenerateForVersions(
             baseModel: gate.baseModel,
             covered: gate.covered ?? null,
             modelUserId: gate.modelUserId,
+            flags: gate.flags,
           },
           user: ctx.user,
-          unavailableResources,
           hiddenGates,
         }) && isBaseModelGenerationSupported(gate.baseModel, gate.modelType);
       result.set(key, { canGenerate });
@@ -1270,9 +1102,6 @@ export async function getResourceData(
 
   // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
   // awaits, so wrapping each shows which prelim lookup dominates.
-  const unavailableResources = await withSpan('gen:getResourceData:unavailable', () =>
-    getUnavailableResources()
-  );
   const featuredModels = await withSpan('gen:getResourceData:featured', () => getFeaturedModels());
   const hiddenGates = await withSpan('gen:getResourceData:hiddenGates', () =>
     getCanGenerateHiddenGates(user)
@@ -1296,9 +1125,9 @@ export async function getResourceData(
         baseModel: item.baseModel,
         covered: item.covered,
         modelUserId: item.model.userId,
+        flags: item.flags,
       },
       user,
-      unavailableResources,
       hiddenGates,
     });
 

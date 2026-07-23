@@ -466,11 +466,9 @@ export const tagCacheByName = {
     // backfill only), so the extra roundtrips are acceptable.
     await Promise.all(
       entries.map(({ key, data }) =>
-        redis.packed.set(
-          `${REDIS_KEYS.CACHES.BASIC_TAGS_BY_NAME}:${key}`,
-          data,
-          { EX: CacheTTL.day }
-        )
+        redis.packed.set(`${REDIS_KEYS.CACHES.BASIC_TAGS_BY_NAME}:${key}`, data, {
+          EX: CacheTTL.day,
+        })
       )
     );
   },
@@ -494,6 +492,7 @@ type ModelVersionDetails = {
   publishedAt: Date | null;
   status: ModelStatus;
   covered: boolean;
+  flags: number;
   availability: Availability;
   nsfwLevel: NsfwLevel;
 };
@@ -528,6 +527,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
         mv."trainingStatus",
         mv."publishedAt",
         mv."status",
+        mv."flags",
         mv.availability,
         mv."nsfwLevel",
         mv."description",
