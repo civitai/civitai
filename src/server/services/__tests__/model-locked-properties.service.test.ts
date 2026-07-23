@@ -328,6 +328,22 @@ describe('upsertModel — profanity lock', () => {
     expect(data.meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
   });
 
+  it('does not let a client-claimed nsfw lock suppress the profanity flag', async () => {
+    mockStored({ lockedProperties: [] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      name: 'Renamed Model',
+      lockedProperties: ['nsfw'],
+    });
+
+    const data = updateData();
+    expect(data.nsfw).toBe(true);
+    expect(data.lockedProperties).toEqual(['nsfw']);
+  });
+
   it('keeps the stored locks when adding its nsfw lock', async () => {
     mockStored({ minor: true, sfwOnly: true, lockedProperties: ['minor', 'sfwOnly'] });
     mockEvaluateContent.mockReturnValue(profaneEvaluation);

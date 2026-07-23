@@ -2189,8 +2189,10 @@ export const upsertModel = async (
 
     // If profanity exceeds thresholds, mark model as NSFW. Skip when nsfw is DB-locked:
     // a moderator has already made the call on this field (e.g. minor-flagging sets
-    // nsfw: false), and the automated filter must not override that.
-    if (evaluation.shouldMarkNSFW && !data.nsfw && !lockedProperties.includes('nsfw')) {
+    // nsfw: false), and the automated filter must not override that. Must check
+    // `storedLockedProperties`, not the client-tainted `lockedProperties` union — otherwise
+    // any caller can suppress this safety net by claiming a `'nsfw'` lock in their own input.
+    if (evaluation.shouldMarkNSFW && !data.nsfw && !storedLockedProperties.includes('nsfw')) {
       meta = {
         ...(meta ?? {}),
         profanityMatches: evaluation.matchedWords,
