@@ -91,15 +91,15 @@ function ChallengesPage() {
   const participation = parseParticipationQuery(router.query.participation);
 
   const rawEngagement = router.query.engagement;
-  const isPersonalView = rawEngagement != null;
+  const isPersonalView = rawEngagement === 'created' || rawEngagement === 'participated';
   const engagement: Engagement = rawEngagement === 'created' ? 'created' : 'participated';
-  const [myStatus, setMyStatus] = useState<MyChallengeStatus>('Active');
+  const [statusSelection, setStatusSelection] = useState<MyChallengeStatus>('Active');
+  const allowedStatuses = engagementStatuses[engagement];
+  const myStatus = allowedStatuses.includes(statusSelection)
+    ? statusSelection
+    : allowedStatuses[0];
 
   const handleEngagementChange = (next: string) => {
-    // Status sets differ per engagement — carry the selection over only when it's still valid,
-    // otherwise fall back to the first option so the feed can't query an impossible combination.
-    const allowed = engagementStatuses[next as Engagement];
-    if (!allowed.includes(myStatus)) setMyStatus(allowed[0]);
     router.replace(
       { pathname: '/challenges', query: { ...router.query, engagement: next } },
       undefined,
@@ -125,8 +125,6 @@ function ChallengesPage() {
                 <LegacyActionIcon
                   component={Link}
                   href="/challenges"
-                  variant="subtle"
-                  color="gray"
                   aria-label="Back to challenges"
                 >
                   <IconArrowLeft size={20} />
@@ -142,7 +140,7 @@ function ChallengesPage() {
                 radius="xl"
                 data={[
                   { label: 'Participated', value: 'participated' },
-                  { label: 'Created', value: 'created' },
+                  ...(features.userChallenges ? [{ label: 'Created', value: 'created' }] : []),
                 ]}
                 value={engagement}
                 onChange={handleEngagementChange}
@@ -152,9 +150,9 @@ function ChallengesPage() {
                 classNames={styles}
                 transitionDuration={0}
                 radius="xl"
-                data={engagementStatuses[engagement]}
+                data={allowedStatuses}
                 value={myStatus}
-                onChange={(v) => setMyStatus(v as MyChallengeStatus)}
+                onChange={(v) => setStatusSelection(v as MyChallengeStatus)}
                 withItemsBorders={false}
               />
             </Group>
