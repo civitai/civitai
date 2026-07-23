@@ -69,6 +69,14 @@ describe('hosting', () => {
     });
   });
 
+  test('a hosted challenge being judged offers View entries, not View results', () => {
+    expect(getMyChallengeCta('hosting', false, ChallengeStatus.Completing)).toEqual({
+      kind: 'results',
+      label: 'View entries',
+      filled: 'white',
+    });
+  });
+
   test('a finished hosted challenge offers View results', () => {
     expect(getMyChallengeCta('hosting', false, ChallengeStatus.Completed)).toEqual({
       kind: 'results',

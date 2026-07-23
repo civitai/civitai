@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Stack, Title, Group, Button, SegmentedControl } from '@mantine/core';
 import { IconTrophy, IconUsers, IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -101,13 +101,13 @@ function ChallengesPage() {
   // /challenges and /challenges?engagement=* are the same page with no route key, so switching
   // engagement via a link (header menu, the in-page control) doesn't remount — reset the status
   // explicitly rather than relying on the initializer above, which only runs once per mount.
-  const prevEngagement = useRef(rawEngagement);
-  useEffect(() => {
-    if (prevEngagement.current !== rawEngagement) {
-      setStatusSelection(rawEngagement === 'created' ? 'Scheduled' : 'Active');
-      prevEngagement.current = rawEngagement;
-    }
-  }, [rawEngagement]);
+  // Render-phase adjustment (not an effect) so the stale status is never committed/painted, and
+  // ChallengesInfinite never mounts with it — see https://react.dev/learn/you-might-not-need-an-effect.
+  const [prevEngagement, setPrevEngagement] = useState(rawEngagement);
+  if (prevEngagement !== rawEngagement) {
+    setPrevEngagement(rawEngagement);
+    setStatusSelection(rawEngagement === 'created' ? 'Scheduled' : 'Active');
+  }
   const allowedStatuses = engagementStatuses[engagement];
   const myStatus = allowedStatuses.includes(statusSelection)
     ? statusSelection

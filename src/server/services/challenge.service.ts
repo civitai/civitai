@@ -451,7 +451,7 @@ export async function getMyChallenges({
            u.username AS "creatorUsername", u.image AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
            cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ju.image AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
            my."myImageId", cw."place" AS "myPlace",
-           (c."createdById" = ${userId}) AS "isCreator",
+           (c."createdById" = ${userId} AND c.source = ${ChallengeSource.User}::"ChallengeSource") AS "isCreator",
            COALESCE(my."myEnteredAt", c."createdAt") AS "myActivityAt"
     FROM "Challenge" c
     LEFT JOIN my ON my."collectionId" = c."collectionId"

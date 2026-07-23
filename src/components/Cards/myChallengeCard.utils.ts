@@ -12,7 +12,11 @@ export function getMyChallengeCta(
     // Before it starts, the only useful action is editing it — after that, looking at it.
     if (status === ChallengeStatus.Scheduled)
       return { kind: 'manage', label: 'Manage', filled: 'white' };
-    return { kind: 'results', label: isLive ? 'View entries' : 'View results', filled: 'white' };
+    return {
+      kind: 'results',
+      label: isLive || status === ChallengeStatus.Completing ? 'View entries' : 'View results',
+      filled: 'white',
+    };
   }
   if (result === 'judging') return { kind: 'entry', label: 'View entry', filled: 'white' };
   if (result === 'entered' && isLive)
