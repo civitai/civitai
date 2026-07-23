@@ -44,7 +44,7 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
     'minutes'
   );
 
-  const tasks = chunk(urls, PURGE_BATCH_SIZE).map((files) => () => {
+  const tasks = chunk(urls, PURGE_BATCH_SIZE).map((files) => async () => {
     // Fire-and-forget the CF call, but attach a .catch so a rejection
     // (429 / timeout / auth) is logged instead of escaping as an unhandled
     // promise rejection. Deliberately NOT awaited: purgeCache stays best-effort
