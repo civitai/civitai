@@ -174,7 +174,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
       key: 'set-minor',
       component: (
         <ToggleMinorModel key="set-minor" modelId={data.id} minor={data.minor}>
-          {({ onClick, isLoading }) => (
+          {({ onClick }) => (
             <Menu.Item
               leftSection={<IconBabyCarriage size={14} stroke={1.5} />}
               onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
@@ -182,7 +182,6 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
                 e.stopPropagation();
                 onClick();
               }}
-              disabled={isLoading}
             >
               {data.minor ? 'Unset as Minor' : 'Set as Minor'}
             </Menu.Item>

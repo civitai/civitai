@@ -1198,11 +1198,10 @@ export default function ModelDetailsV2({
                                   )}
                                 </ToggleLockModel>
                                 <ToggleMinorModel modelId={model.id} minor={model.minor}>
-                                  {({ onClick, isLoading }) => (
+                                  {({ onClick }) => (
                                     <Menu.Item
                                       leftSection={<IconBabyCarriage size={14} stroke={1.5} />}
                                       onClick={onClick}
-                                      disabled={isLoading}
                                     >
                                       {model.minor ? 'Unset as Minor' : 'Set as Minor'}
                                     </Menu.Item>
