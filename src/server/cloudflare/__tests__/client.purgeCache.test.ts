@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Proves the Cloudflare edge-cache purge is best-effort at the SOURCE.
-// purgeCache now AWAITS each CF batch call (so its outcome is reflected in the
-// promise the concurrency helper awaits) AND swallows + logs a failure so it
-// never propagates to callers. Pre-fix the CF call was fire-and-forget: the
-// task resolved before the CF request settled, so a 429 / timeout / auth
-// rejection escaped as an unhandled promise rejection and no caller guard could
-// observe it. This is the real proof of the fix — the service-level guard tests
-// mock purgeCache wholesale and can't exercise this path.
+// purgeCache dispatches each CF batch call fire-and-forget (so it stays
+// non-blocking for callers like purgeOnSuccess) but attaches a .catch that
+// swallows + logs a failure. Pre-fix the CF call had NO catch: a 429 / timeout
+// / auth rejection escaped as an unhandled promise rejection and no caller
+// guard could observe it. This is the real proof of the fix — the service-level
+// guard tests mock purgeCache wholesale and can't exercise this path.
 
 const { mockCfPurge } = vi.hoisted(() => ({ mockCfPurge: vi.fn() }));
 
@@ -40,7 +39,7 @@ describe('purgeCache — best-effort Cloudflare purge', () => {
     vi.clearAllMocks();
   });
 
-  it('awaits the CF call and resolves on success', async () => {
+  it('dispatches the CF call and resolves on success', async () => {
     mockCfPurge.mockResolvedValue({ success: true });
 
     await expect(purgeCache({ urls: [URL] })).resolves.toBeUndefined();
@@ -57,13 +56,16 @@ describe('purgeCache — best-effort Cloudflare purge', () => {
     await expect(purgeCache({ urls: [URL] })).resolves.toBeUndefined();
 
     expect(mockCfPurge).toHaveBeenCalledTimes(1);
-    // Failure is observed (logged), not silently orphaned.
-    expect(logSpy).toHaveBeenCalledWith(
-      expect.anything(),
-      'Failed to purge',
-      1,
-      'URLs from Cloudflare',
-      expect.any(Error)
+    // Failure is observed (logged), not silently orphaned. The CF call is
+    // fire-and-forget, so the .catch runs on a later microtask — wait for it.
+    await vi.waitFor(() =>
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        'Failed to purge',
+        1,
+        'URLs from Cloudflare',
+        expect.any(Error)
+      )
     );
 
     logSpy.mockRestore();

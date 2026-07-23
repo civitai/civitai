@@ -44,18 +44,17 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
     'minutes'
   );
 
-  const tasks = chunk(urls, PURGE_BATCH_SIZE).map((files) => async () => {
-    // Await the CF call so its outcome is reflected in the promise the
-    // concurrency helper awaits — an un-awaited call resolves the task
-    // immediately and any rejection (429 / timeout / auth) escapes as an
-    // unhandled promise rejection. Kept best-effort: a batch failure is logged
-    // and swallowed here so it never propagates to callers (purgeCache is
-    // fire-and-forget for every caller) and doesn't abort the remaining batches.
-    try {
-      await client.zones.purgeCache(env.CF_ZONE_ID!, { files });
-    } catch (error) {
+  const tasks = chunk(urls, PURGE_BATCH_SIZE).map((files) => () => {
+    // Fire-and-forget the CF call, but attach a .catch so a rejection
+    // (429 / timeout / auth) is logged instead of escaping as an unhandled
+    // promise rejection. Deliberately NOT awaited: purgeCache stays best-effort
+    // and non-blocking for every caller — notably purgeOnSuccess, which awaits
+    // purgeCache before returning the mutation response, so awaiting the CF
+    // round-trip here would add it to user-facing mutation latency. Dispatch is
+    // still paced by limitConcurrency's betweenTasksFn rate-limit sleep.
+    client.zones.purgeCache(env.CF_ZONE_ID!, { files }).catch((error) => {
       log('Failed to purge', files.length, 'URLs from Cloudflare', error);
-    }
+    });
   });
   let purged = 0;
   await limitConcurrency(tasks, {
