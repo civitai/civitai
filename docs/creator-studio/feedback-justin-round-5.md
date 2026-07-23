@@ -74,9 +74,10 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
   there → white. (`T:490–509`)
 - [x] **[polish]** **Per-page dropdown text white** — the per-page selection reads dark-on-dark; make
   the text inside it white. (`T:517–522`)
-- [ ] **[verify]** **Base-model filter scope** — confirm whether the base-model selector in the filters
-  dropdown lists only the base models this **creator's** models use, or is meant to be the **full**
-  platform list. If it's supposed to be full, we're missing entries. (`T:528–552`)
+- [x] **[resolved — verify]** **Base-model filter scope** — confirmed: **creator's-own** by design. The
+  base-model (and model-type) filter options come from a distinct query scoped to `m.userId = userId`
+  (`lib/server/models.ts`), so the dropdown only lists base models the creator actually has — no dead
+  options that would match zero rows. Not the full platform list. (`T:528–552`)
 - [x] **[done — verify]** **Filters no longer lost on Bulk Edit** — the bug where filters were dropped
   when clicking bulk edit is fixed; confirmed working in the walkthrough. (`T:525–526`)
 - [x] **[done — verify]** **Import confirmation + error display** — import shows a confirmation and
@@ -149,17 +150,27 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 
 ## Analytics — Images/Videos → consolidate into "Content"
 
-- [ ] **[todo]** **Consolidate Images + Videos into a single "Content" page with tabs** — the pages are
-  nearly identical; make one Content page with tabs (Images, Videos) — a segmented control per Justin.
-  (`T:874–933`)
-- [ ] **[todo]** **Content page: month selector only (no comparison month)** — there's no good way to
-  compare against the previous month given how the data is displayed, so only a single month selector.
-  (`T:924–929`)
-- [ ] **[todo]** **Default page size 15 with "show more"** — analytics images/content should show 15 by
-  default with the ability to load more. (`T:859–866`)
-- [ ] **[question]** **Future content types (comics, 3D models)** — plan for adding these; scout whether
-  they fit the current form easily. Audio is out for now (no user audio posting). At minimum a "coming
-  soon" tab so they don't feel ignored. (`T:874–933`)
+- [x] **[todo]** **Consolidate Images + Videos into a single "Content" page with tabs** — done. New
+  `/analytics/content` with a segmented control (Images / Videos); the old `/analytics/images` +
+  `/analytics/videos` routes are removed and the nav is a single **Content** entry. One `getTopMedia` fetch
+  serves both tabs (it already returns both, split by `type`). Tab list is a small array so a new content type
+  slots in with one entry. (`T:874–933`)
+- [x] **[todo]** **Content page: month selector only (no comparison month)** — `AnalyticsHeader` is rendered
+  with `showCompare={false}`, so only the month picker shows. (`T:924–929`)
+- [x] **[todo]** **Content page pagination** — shared `Pagination` component (count on the left, per-page +
+  page selector on the right, its own row) now used by the Content grid **and** the models / engagement /
+  base-models tables. Page nav pushes to the URL (`?page=`); page size is the shared `analyticsPageSize`
+  store; count auto-pluralizes the noun. On Content, tab + page both live in the URL (linkable, survive
+  reload; switching tab resets to page 1); rendered top and bottom. Client-side paging (all rows already
+  loaded) — supersedes the original "15 + show more" teaser. (`T:859–866`)
+- [ ] **[blocked — no data]** **Future content types (comics, 3D models) — real stats** — decision
+  (2026-07-23) was **real stats**, but there is **no comics/3D data to show yet**: no `ComicProject`/`Model3D`
+  Prisma models, and the `reactions` ClickHouse table has zero comic/3D rows (only Image/Comment/Article/
+  Bounty/Q&A types). `comicProject`/`model3d` exist only in a forward-looking *reportable-entity* enum. Since
+  the Content analytics are reaction-based, real-stats tabs would be permanently empty. **Blocked until the
+  content type ships with data** — then add a `TABS` entry + a data source (the page is built to take it).
+  **Decision (2026-07-23): leave off until data exists** — no placeholder tabs; revisit when comics/3D ship
+  with real metrics. (`T:874–933`)
 
 ## Analytics — Audience tab
 
@@ -182,11 +193,12 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 
 ## Open questions (resolve before / during build)
 
-1. **Base-model filter scope (Licensing)** — creator's-own base models only, or full platform list? If
-   full, entries are missing. (`T:528–552`)
-2. **Buzz → $ conversion history** — is it actually limited to one month, or just filtered to one? Must
-   show all history. (`T:626–641`)
+1. **Base-model filter scope (Licensing)** — ✅ **resolved: creator's-own** (by design; filter is scoped to
+   `m.userId`). Not the full platform list. (`T:528–552`)
+2. **Buzz → $ conversion history** — ✅ **resolved: shows all history**. The `getBuzzDollarRatio` query has no
+   LIMIT (all months since 2025-03, `ORDER BY month DESC`); the one-month observation was just a sparse test
+   account. (`T:626–641`)
 3. **Model/version comparison** — deferred for V1 (cross-model version selection is messy). Confirm it
    stays out of scope. (`T:791–806`)
-4. **Future content types** — do comics / 3D models fit the current images/videos data form, or do they
-   need bespoke stats? Decide the V1 treatment (real stats vs "coming soon" tab). (`T:874–933`)
+4. **Future content types** — ✅ **resolved: real stats** (2026-07-23). Comics/3D get real metric tabs on the
+   Content page (not "coming soon"); audio out. Implementation scoped as a todo above. (`T:874–933`)

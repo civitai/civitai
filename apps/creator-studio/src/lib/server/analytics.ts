@@ -138,12 +138,15 @@ async function fetchContentAnalytics(
   };
 }
 
-// Top reacted media (images + videos) over the range — the /analytics/images and /videos grids each filter this by
-// `type`. We rank the creator's most-reacted image-entities in ClickHouse, then enrich via Postgres (which is where
-// the media type lives), so the two pages share one fetch. 100 gives each type a reasonable list.
+// Top reacted media (images + videos) over the range — the /analytics/content tabs filter this by `type`. We rank
+// the creator's most-reacted image-entities in ClickHouse, then enrich via Postgres (which is where the media type
+// lives), so both tabs share one fetch. 100 gives each type a reasonable list.
 async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
   const uid = Number(userId);
-  const raw = await getClickhouse().$query<{ imageId: number | string; reactions: number | string }>(
+  const raw = await getClickhouse().$query<{
+    imageId: number | string;
+    reactions: number | string;
+  }>(
     `SELECT entityId AS imageId, count() AS reactions FROM reactions WHERE ownerId = ${uid} AND type = 'Image_Create' AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId ORDER BY reactions DESC LIMIT 100`
   );
   return enrichTopImages(raw);
