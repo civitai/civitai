@@ -72,8 +72,8 @@ describe('YourChallengesRow', () => {
   test('renders the header, See all link, and a card per challenge', async () => {
     mocks.useQuery.mockReturnValue(
       queryResult([
-        { id: 7, title: 'Neon Cats' },
-        { id: 8, title: 'Foggy Forests' },
+        { id: 7, title: 'Neon Cats', myResult: 'entered' },
+        { id: 8, title: 'Foggy Forests', myResult: 'hosting' },
       ])
     );
     await renderWithProviders(<YourChallengesRow />);
@@ -83,6 +83,19 @@ describe('YourChallengesRow', () => {
     await expect
       .element(page.getByRole('link', { name: /see all/i }))
       .toHaveAttribute('href', '/challenges?engagement=participated');
+  });
+
+  test('See all links to Created when the row is entirely hosted challenges', async () => {
+    mocks.useQuery.mockReturnValue(
+      queryResult([
+        { id: 7, title: 'Neon Cats', myResult: 'hosting' },
+        { id: 8, title: 'Foggy Forests', myResult: 'hosting' },
+      ])
+    );
+    await renderWithProviders(<YourChallengesRow />);
+    await expect
+      .element(page.getByRole('link', { name: /see all/i }))
+      .toHaveAttribute('href', '/challenges?engagement=created');
   });
 
   test('the subtitle covers both entered and created challenges', async () => {

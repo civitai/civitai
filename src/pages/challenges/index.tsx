@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Stack, Title, Group, Button, SegmentedControl } from '@mantine/core';
 import { IconTrophy, IconUsers, IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -94,11 +94,20 @@ function ChallengesPage() {
   const isPersonalView = rawEngagement === 'created' || rawEngagement === 'participated';
   const engagement: Engagement = rawEngagement === 'created' ? 'created' : 'participated';
   // Creators arrive from the header menu to check on what they've queued up, so Created opens on
-  // Scheduled; entrants care about what's running. Initial value only — the clamp below governs
-  // after that.
+  // Scheduled; entrants care about what's running.
   const [statusSelection, setStatusSelection] = useState<MyChallengeStatus>(
     rawEngagement === 'created' ? 'Scheduled' : 'Active'
   );
+  // /challenges and /challenges?engagement=* are the same page with no route key, so switching
+  // engagement via a link (header menu, the in-page control) doesn't remount — reset the status
+  // explicitly rather than relying on the initializer above, which only runs once per mount.
+  const prevEngagement = useRef(rawEngagement);
+  useEffect(() => {
+    if (prevEngagement.current !== rawEngagement) {
+      setStatusSelection(rawEngagement === 'created' ? 'Scheduled' : 'Active');
+      prevEngagement.current = rawEngagement;
+    }
+  }, [rawEngagement]);
   const allowedStatuses = engagementStatuses[engagement];
   const myStatus = allowedStatuses.includes(statusSelection)
     ? statusSelection

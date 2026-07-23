@@ -113,9 +113,11 @@ export const MyChallengeCard = memo(function MyChallengeCard({ data }: { data: M
                 <>
                   <DaysFromNow date={endsAt} withoutSuffix /> left · Live
                 </>
-              ) : myResult === 'judging' ? (
+              ) : status === ChallengeStatus.Completing ? (
                 // No judging deadline is exposed, and "Ended 3h ago" next to a Judging badge
-                // reads as a contradiction, so state the phase instead of a date.
+                // reads as a contradiction, so state the phase instead of a date. Gated on status
+                // rather than myResult: a hosting creator's result is always 'hosting', never
+                // 'judging', but they're in the same phase as an entrant here.
                 'Judging'
               ) : (
                 <>

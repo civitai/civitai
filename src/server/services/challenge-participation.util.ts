@@ -11,8 +11,9 @@ export function deriveMyChallengeResult(input: {
   isCreator: boolean;
 }): { result: MyChallengeResult; isLive: boolean } {
   const { status, myPlace, isCreator } = input;
-  // Creating and entering are mutually exclusive (self-entry is blocked), so ownership wins
-  // outright rather than being reconciled with a placement.
+  // Creating and entering are mutually exclusive for regular users (self-entry is blocked), but
+  // moderators are exempt from that guard (collection.service.ts) — a moderator who places in
+  // their own challenge still shows hosting, not won, since ownership wins outright here.
   if (isCreator) return { result: 'hosting', isLive: status === ChallengeStatus.Active };
   if (status === ChallengeStatus.Completed) {
     if (myPlace === 1) return { result: 'won', isLive: false };

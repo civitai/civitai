@@ -54,7 +54,11 @@ export function YourChallengesRow() {
           {headerLeft}
           <Button
             component={Link}
-            href="/challenges?engagement=participated"
+            href={
+              filtered.every((c) => c.myResult === 'hosting')
+                ? '/challenges?engagement=created'
+                : '/challenges?engagement=participated'
+            }
             variant="subtle"
             size="compact-sm"
             rightSection={<IconChevronRight size={16} />}

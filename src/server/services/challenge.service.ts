@@ -459,7 +459,8 @@ export async function getMyChallenges({
     LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
     LEFT JOIN "User" ju ON ju.id = cj."userId"
     LEFT JOIN "ChallengeWinner" cw ON cw."challengeId" = c.id AND cw."userId" = ${userId}
-    WHERE (my."collectionId" IS NOT NULL OR c."createdById" = ${userId})
+    WHERE (my."collectionId" IS NOT NULL
+           OR (c."createdById" = ${userId} AND c.source = ${ChallengeSource.User}::"ChallengeSource"))
       AND c.status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus", ${ChallengeStatus.Completed}::"ChallengeStatus")
       AND (c.source <> ${ChallengeSource.User}::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${userId})
       ${blockSql ? Prisma.sql`AND ${blockSql}` : Prisma.empty}
