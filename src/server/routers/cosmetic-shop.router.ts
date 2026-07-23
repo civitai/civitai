@@ -98,6 +98,7 @@ export const cosmeticShopRouter = router({
       return getShopSectionsWithItems({
         ...input,
         isModerator: ctx?.user?.isModerator,
+        creatorShopEnabled: ctx?.features?.creatorShop,
       });
     }),
   purchaseShopItem: verifiedProcedure

@@ -21,6 +21,7 @@ import {
   useShopLastViewed,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import type { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
+import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
@@ -194,6 +195,8 @@ export default function CosmeticShopMain() {
                             item={shopItem}
                             sectionItemCreatedAt={item.createdAt}
                             alreadyOwned={alreadyOwned}
+                            creator={shopItem.cosmetic.creator}
+                            viaShopUserId={CIVITAI_SHOP_ATTRIBUTION}
                           />
                         );
                       })}

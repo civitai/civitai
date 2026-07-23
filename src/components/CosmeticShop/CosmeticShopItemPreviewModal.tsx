@@ -26,7 +26,10 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import type { CosmeticShopItemGetById } from '~/types/router';
-import { cosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import {
+  CIVITAI_SHOP_ATTRIBUTION,
+  cosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import { showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -127,7 +130,15 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   // Resold items carry the seller share so the buyer sees who earns what.
   const parsedMeta = cosmeticShopItemMeta.safeParse(shopItem.meta);
   const resaleShare = parsedMeta.success ? parsedMeta.data.sellerShare : undefined;
-  const isResale = viaShopUserId != null && resaleShare != null;
+  // The split note only shows for cross-creator resale — not on the official
+  // Civitai shop, and not when buying the creator's own item on their own
+  // storefront (the creator keeps the full pool there).
+  const isOwnShopListing = viaShopUserId != null && viaShopUserId === shopItem.cosmetic.creator?.id;
+  const isResale =
+    viaShopUserId != null &&
+    viaShopUserId !== CIVITAI_SHOP_ATTRIBUTION &&
+    resaleShare != null &&
+    !isOwnShopListing;
   const { sellerAmount: resellerAmount, creatorAmount } = computeCreatorShopSplit(
     shopItem.unitAmount,
     resaleShare ?? 0

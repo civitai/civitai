@@ -52,6 +52,9 @@ export function FeaturedSection({
             items={shop.featured}
             ownedCosmeticIds={ownedCosmeticIds}
             ownerUserId={ownerUserId}
+            // Attribute purchases to this storefront — unattributed purchases of
+            // sellable items pay the platform the reseller share.
+            viaShopUserId={ownerUserId}
           />
         </Stack>
       </div>

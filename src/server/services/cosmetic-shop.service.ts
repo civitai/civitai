@@ -64,8 +64,25 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
-  if (input.name) cosmeticWhere.name = { contains: input.name, mode: 'insensitive' };
+  if (input.name) {
+    const term = input.name.trim();
+    // INT4-bounded — an oversized pasted id would fail the whole query.
+    const termId = /^\d+$/.test(term) && Number(term) <= 2147483647 ? Number(term) : undefined;
+    // Match item title, cosmetic name, or the creator (username / raw id).
+    where.OR = [
+      { title: { contains: term, mode: 'insensitive' } },
+      { cosmetic: { name: { contains: term, mode: 'insensitive' } } },
+      { cosmetic: { creator: { username: { contains: term, mode: 'insensitive' } } } },
+      ...(termId ? [{ cosmetic: { createdById: termId } }] : []),
+    ];
+  }
+  if (input.ids?.length) where.id = { in: input.ids };
   if (input.types && input.types.length) cosmeticWhere.type = { in: input.types };
+  if (input.resellable) {
+    where.status = CosmeticShopItemStatus.Published;
+    where.addedById = { not: null };
+    where.meta = { path: ['sellableByOthers'], equals: true };
+  }
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
 
@@ -284,6 +301,29 @@ export const upsertCosmeticShopSection = async ({
   image, // TODO
   ...cosmeticShopSection
 }: UpsertCosmeticShopSectionInput & { userId: number }) => {
+  // Creator-listed items may only be featured when published AND opted into
+  // resale — a creator who never marked their item sellable-by-others hasn't
+  // consented to official-shop placement.
+  if (items?.length) {
+    const ineligible = await dbWrite.cosmeticShopItem.findMany({
+      where: {
+        id: { in: items },
+        addedById: { not: null },
+        OR: [
+          { status: { not: CosmeticShopItemStatus.Published } },
+          { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
+        ],
+      },
+      select: { title: true },
+    });
+    if (ineligible.length)
+      throw new Error(
+        `These creator items are not published resellable cosmetics: ${ineligible
+          .map((i) => i.title)
+          .join(', ')}`
+      );
+  }
+
   const shouldCreateImage = image && !image.id;
   const [imageRecord] = shouldCreateImage
     ? await createEntityImages({
@@ -408,9 +448,10 @@ export const reorderCosmeticShopSections = async ({
 
 export const getShopSectionsWithItems = async ({
   isModerator,
+  creatorShopEnabled,
   cosmeticTypes,
   sectionId,
-}: { isModerator?: boolean } & GetShopInput = {}) => {
+}: { isModerator?: boolean; creatorShopEnabled?: boolean } & GetShopInput = {}) => {
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -437,6 +478,13 @@ export const getShopSectionsWithItems = async ({
           shopItem: {
             cosmetic: (cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {},
             archivedAt: null,
+            // Creator items in official sections can lose their Published
+            // status after being featured (revert/reject) — hide those.
+            ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published }),
+            // Creator-listed items are gated behind the creatorShop feature
+            // flag; a section of only creator items disappears entirely for
+            // unflagged viewers via the empty-section filter below.
+            ...(isModerator || creatorShopEnabled ? {} : { addedById: null }),
             OR: isModerator
               ? undefined
               : [{ availableTo: { gte: new Date() } }, { availableTo: null }],
@@ -650,32 +698,49 @@ export const purchaseCosmeticShopItem = async ({
         // Cross-creator resale: when bought through another creator's shop
         // (viaShopUserId) that actually resells this sellable item, split the 70%
         // pool by the item's sellerShare. Verified server-side so credit can't be
-        // spoofed; otherwise the creator keeps the full 70%. Buying through your
-        // own shop pays no seller share — the kickback would be a self-discount.
+        // spoofed. Buying through your own resell listing pays no seller share —
+        // the kickback would be a self-discount.
+        // Every purchase declares its shop context: CIVITAI_SHOP_ATTRIBUTION
+        // (-1) = the official Civitai shop (platform acts as the reseller and
+        // keeps the seller share), a user id = that user's storefront. Positive
+        // attributions are verified against the shop owner's settings; anything
+        // unverified, missing, or spoofed falls back to the official-shop split
+        // so bad attribution can never dodge the platform's share.
+        //
+        // Verified attributions that keep the creator on the full pool: their
+        // own open shop, and a buyer purchasing through their OWN resell
+        // listing (no kickback — the seller share would be a self-discount).
         let resellerId: number | undefined;
-        if (
-          viaShopUserId &&
-          creatorId &&
-          viaShopUserId !== creatorId &&
-          viaShopUserId !== userId &&
-          meta?.sellableByOthers
-        ) {
+        let creatorKeepsPool = false;
+        if (creatorId && meta?.sellableByOthers && viaShopUserId && viaShopUserId > 0) {
           const viaUser = await dbRead.user.findUnique({
             where: { id: viaShopUserId },
             select: { settings: true },
           });
-          const resoldIds =
-            (viaUser?.settings as { creatorShop?: { resoldItemIds?: number[] } } | null)
-              ?.creatorShop?.resoldItemIds ?? [];
-          if (resoldIds.includes(shopItem.id)) resellerId = viaShopUserId;
+          const viaShop = (
+            viaUser?.settings as {
+              creatorShop?: { enabled?: boolean; resoldItemIds?: number[] };
+            } | null
+          )?.creatorShop;
+          if (viaShopUserId === creatorId) {
+            creatorKeepsPool = viaShop?.enabled === true;
+          } else if (viaShop?.resoldItemIds?.includes(shopItem.id)) {
+            if (viaShopUserId === userId) creatorKeepsPool = true;
+            else resellerId = viaShopUserId;
+          }
         }
+
+        const platformResale =
+          !!creatorId && !!meta?.sellableByOthers && !resellerId && !creatorKeepsPool;
 
         let recipients: { userId: number; amount: number }[];
         if (creatorId) {
-          if (resellerId) {
+          if (resellerId || platformResale) {
             recipients = [
               ...(creatorAmount > 0 ? [{ userId: creatorId, amount: creatorAmount }] : []),
-              ...(sellerAmount > 0 ? [{ userId: resellerId, amount: sellerAmount }] : []),
+              ...(resellerId && sellerAmount > 0
+                ? [{ userId: resellerId, amount: sellerAmount }]
+                : []),
             ];
           } else {
             recipients = [{ userId: creatorId, amount: creatorPool }];
