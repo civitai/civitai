@@ -914,7 +914,7 @@ type BaseChallenge = {
   nsfwLevel: number;
   allowedNsfwLevel: number;
   coverImage: { id: number; nsfwLevel: number } | null;
-  createdBy: { id: number };
+  createdById: number;
 };
 
 type BaseModel3D = {
