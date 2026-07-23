@@ -2091,6 +2091,12 @@ export const REDIS_KEYS = {
     // registered image resolves immediately), busted when `hideMeta` flips in
     // updatePostImage. See `getCachedImageDeliveryMetadata` in image-delivery.service.
     IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata',
+    // Per-user `id -> isValidCreatorMember(boolean)` for the read-time metric-privacy /
+    // donation-goal hide gate (#3266). Near-static per user; both TRUE and FALSE are
+    // cached (the resolver is a total function over the id). Busted on any subscription
+    // change via `invalidateSubscriptionCaches`; TTL backstops the non-webhook paths.
+    // See `getValidCreatorMembershipMap` in creator-membership.service.
+    CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

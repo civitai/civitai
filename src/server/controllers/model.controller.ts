@@ -14,11 +14,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
   getValidCreatorMembershipMap,
-  hasValidCreatorMembership,
+  hasValidCreatorMembershipCached,
 } from '~/server/services/creator-program.service';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
+  getMetaMetricPrivacy,
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
   resolveVersionHiddenMetrics,
@@ -304,12 +305,22 @@ export const getModelHandler = async ({
     let ownerSettings: unknown = null;
     let ownerHasMembership = false;
     if (metricPrivacyEnabled && !isOwner) {
-      const [owner, membership] = await Promise.all([
-        dbRead.user.findUnique({ where: { id: model.user.id }, select: { settings: true } }),
-        hasValidCreatorMembership(model.user.id),
-      ]);
+      const owner = await dbRead.user.findUnique({
+        where: { id: model.user.id },
+        select: { settings: true },
+      });
       ownerSettings = owner?.settings ?? null;
-      ownerHasMembership = membership;
+      // Only resolve CP membership when the owner actually hides something (model meta,
+      // any version meta, or a user default). When nothing is hidden, resolveModel/Version
+      // return NONE regardless of membership, so the cached membership read (and the
+      // resolvers themselves) can be skipped — byte-identical raw metrics. The membership
+      // check, when needed, is served from the shared read-through cache.
+      const ownerHidesAnything =
+        anyMetricHidden(getMetaMetricPrivacy(model.meta)) ||
+        anyMetricHidden(getUserMetricPrivacyDefaults(ownerSettings)) ||
+        filteredVersions.some((v) => anyMetricHidden(getMetaMetricPrivacy(v.meta)));
+      if (ownerHidesAnything)
+        ownerHasMembership = await hasValidCreatorMembershipCached(model.user.id);
     }
     const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
       resolveModelHiddenMetrics({
