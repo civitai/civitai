@@ -1,14 +1,5 @@
 import type { GroupProps } from '@mantine/core';
-import {
-  Chip,
-  Divider,
-  Drawer,
-  Group,
-  Indicator,
-  Popover,
-  ScrollArea,
-  Stack,
-} from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo } from 'react';
@@ -20,6 +11,7 @@ import { useStagedFilters } from '~/components/Filters/useStagedFilters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Model3DSort } from '~/server/schema/model3d.schema';
@@ -52,6 +44,7 @@ type Model3DFilterState = {
   period: MetricTimeframe;
   animated: boolean;
   unrated: boolean;
+  includePG13: boolean;
 };
 
 export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
@@ -61,6 +54,11 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
   const mobile = useIsMobile();
   const currentUser = useCurrentUser();
   const isModerator = !!currentUser?.isModerator;
+  const domainColor = useDomainColor();
+  // Anonymous users on green are hard-capped to PG by the domain rule, so the
+  // toggle would be a no-op for them. Only logged-in users actually have
+  // PG-13 access to opt in/out of.
+  const showPG13Toggle = domainColor === 'green' && !!currentUser;
 
   const sort = useMemo<Model3DSort>(() => {
     const raw = typeof query.sort === 'string' ? query.sort : undefined;
@@ -74,6 +72,7 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
 
   const animated = query.animated === 'true';
   const unrated = isModerator && query.unrated === 'true';
+  const includePG13 = showPG13Toggle && query.includePG13 === 'true';
 
   const setQuery = useCallback(
     (patch: Record<string, string | undefined>) => {
@@ -88,8 +87,8 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
 
   // Committed = URL-backed state. Apply writes back to URL via setQuery.
   const committed: Model3DFilterState = useMemo(
-    () => ({ period, animated, unrated }),
-    [period, animated, unrated]
+    () => ({ period, animated, unrated, includePG13 }),
+    [period, animated, unrated, includePG13]
   );
 
   const handleApply = useCallback(
@@ -98,6 +97,7 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
         period: next.period === MetricTimeframe.AllTime ? undefined : next.period,
         animated: next.animated ? 'true' : undefined,
         unrated: next.unrated ? 'true' : undefined,
+        includePG13: next.includePG13 ? 'true' : undefined,
         // Clear any legacy `?rigged=` left in the URL from before the
         // rigging filter was removed (the Meshy API now binds rigging
         // to animation, so the filter is no longer meaningful).
@@ -108,20 +108,36 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
   );
 
   const handleClear = useCallback(() => {
-    setQuery({ period: undefined, animated: undefined, unrated: undefined, rigged: undefined });
+    setQuery({
+      period: undefined,
+      animated: undefined,
+      unrated: undefined,
+      includePG13: undefined,
+      rigged: undefined,
+    });
   }, [setQuery]);
 
-  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
-    useStagedFilters<Model3DFilterState>({
-      committed,
-      onApply: handleApply,
-      onClear: handleClear,
-    });
+  const {
+    opened,
+    toggle,
+    close,
+    mergedFilters,
+    isDirty,
+    patchPending,
+    apply,
+    reset,
+    clearAndClose,
+  } = useStagedFilters<Model3DFilterState>({
+    committed,
+    onApply: handleApply,
+    onClear: handleClear,
+  });
 
   const filterLength =
     (mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (mergedFilters.animated ? 1 : 0) +
-    (mergedFilters.unrated ? 1 : 0);
+    (mergedFilters.unrated ? 1 : 0) +
+    (showPG13Toggle && mergedFilters.includePG13 ? 1 : 0);
 
   const target = (
     <Indicator
@@ -163,6 +179,14 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
       <Stack gap="md">
         <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <div className="flex flex-wrap gap-2">
+          {showPG13Toggle && (
+            <FilterChip
+              checked={!!mergedFilters.includePG13}
+              onChange={(checked) => patchPending({ includePG13: checked })}
+            >
+              <span>Include PG-13</span>
+            </FilterChip>
+          )}
           <FilterChip
             checked={mergedFilters.animated}
             onChange={(checked) => patchPending({ animated: checked })}
@@ -199,9 +223,7 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
         label={sort}
         value={sort}
         options={sortOptions}
-        onClick={(value) =>
-          setQuery({ sort: value === Model3DSort.Newest ? undefined : value })
-        }
+        onClick={(value) => setQuery({ sort: value === Model3DSort.Newest ? undefined : value })}
       />
       {mobile ? (
         <>
@@ -246,10 +268,7 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
         >
           <Popover.Target>{target}</Popover.Target>
           <Popover.Dropdown maw={468} p={0} w="100%">
-            <ScrollArea.Autosize
-              type="hover"
-              mah={'calc(90vh - var(--header-height) - 156px)'}
-            >
+            <ScrollArea.Autosize type="hover" mah={'calc(90vh - var(--header-height) - 156px)'}>
               {dropdownBody}
             </ScrollArea.Autosize>
             {dropdownFooter}
