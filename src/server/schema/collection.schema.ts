@@ -96,6 +96,9 @@ export const getAllUserCollectionsInputSchema = z
     permission: z.enum(CollectionContributorPermission),
     permissions: z.array(z.enum(CollectionContributorPermission)),
     type: z.enum(CollectionType).optional(),
+    // When true, also surface active-window Contest collections (Review-write, Public-read) the
+    // user hasn't followed, so they can submit an entry from the picker without joining first.
+    includeActiveContests: z.boolean(),
   })
   .partial();
 

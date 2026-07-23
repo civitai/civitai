@@ -173,6 +173,10 @@ function CollectionListForm({
   const queryUtils = trpc.useUtils();
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
 
+  // Model saves also surface active contest collections the user hasn't joined, so they can
+  // submit an entry for review without following the collection first.
+  const includeActiveContests = props.type === CollectionType.Model;
+
   const { data: collections = [], isLoading: loadingCollections } =
     trpc.collection.getAllUser.useQuery({
       // Only request collections where the user can actually add items.
@@ -184,6 +188,7 @@ function CollectionListForm({
         CollectionContributorPermission.ADD_REVIEW,
       ],
       type: props.type,
+      includeActiveContests,
     });
 
   const { data: collectionItems = [], isLoading: loadingStatus } =
@@ -195,7 +200,17 @@ function CollectionListForm({
   // before both things have loaded.
   const isLoading = loadingStatus || loadingCollections;
   const ownedCollections = collections.filter((collection) => collection.isOwner);
-  const contributingCollections = collections.filter((collection) => !collection.isOwner);
+  // Active contests are only requested (and thus split out) for model saves; for every other type
+  // the flag is off and this group is empty, so contributing behaves exactly as before.
+  const activeContestCollections = includeActiveContests
+    ? collections.filter(
+        (collection) => !collection.isOwner && collection.mode === CollectionMode.Contest
+      )
+    : [];
+  const contributingCollections = collections.filter(
+    (collection) =>
+      !collection.isOwner && !(includeActiveContests && collection.mode === CollectionMode.Contest)
+  );
   const features = useFeatureFlags();
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
@@ -360,6 +375,59 @@ function CollectionListForm({
                   <ScrollArea.Autosize mah={300}>
                     <Stack gap={4}>
                       {contributingCollections.map((collection) => {
+                        const selectedItem = selectedCollections.find(
+                          (c) => c.collectionId === collection.id
+                        );
+
+                        return (
+                          <CollectionCheckboxItem
+                            key={collection.id}
+                            collection={collection}
+                            selectedItem={selectedItem}
+                            onToggle={(isSelected) => {
+                              if (isSelected) {
+                                setSelectedCollections((curr) =>
+                                  curr.filter((c) => c.collectionId !== collection.id)
+                                );
+                              } else {
+                                setSelectedCollections((curr) => [
+                                  ...curr,
+                                  {
+                                    collectionId: collection.id,
+                                    tagId:
+                                      collection.tags?.length > 0 ? collection.tags[0].id : null,
+                                    userId: collection.userId,
+                                    read: collection.read,
+                                  },
+                                ]);
+                              }
+                            }}
+                            onTagChange={(tagId) => {
+                              setSelectedCollections((curr) =>
+                                curr.map((c) =>
+                                  c.collectionId === collection.id ? { ...c, tagId } : c
+                                )
+                              );
+                            }}
+                          />
+                        );
+                      })}
+                    </Stack>
+                  </ScrollArea.Autosize>
+                </>
+              )}
+              {activeContestCollections.length > 0 && (
+                <>
+                  <Divider my="md" />
+                  <Text size="sm" fw="bold">
+                    Active Contests
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Submit this model as an entry. It will be sent to the contest for review.
+                  </Text>
+                  <ScrollArea.Autosize mah={300}>
+                    <Stack gap={4}>
+                      {activeContestCollections.map((collection) => {
                         const selectedItem = selectedCollections.find(
                           (c) => c.collectionId === collection.id
                         );
