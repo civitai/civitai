@@ -1,4 +1,9 @@
-import { emptyOffsiteSubmitForm, type OffsiteSubmitFormValues } from '~/components/Apps/offsiteSubmitFormConfig';
+import {
+  emptyOffsiteSubmitForm,
+  pruneJustificationsToMask,
+  shapeScopeJustifications,
+  type OffsiteSubmitFormValues,
+} from '~/components/Apps/offsiteSubmitFormConfig';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
@@ -50,6 +55,19 @@ export type ListingEditContext = {
     cover: EditAsset;
     screenshots: EditScreenshot[];
   };
+  /**
+   * OAuth-connect scope disclosure (present for the merged external-app model;
+   * OPTIONAL so pre-existing non-connect edit contexts + tests still type-check):
+   *   - `connectClientId`            — the linked client (null → no scope section).
+   *   - `connectAllowedScopes`       — the client's CURRENT allowedScopes = the
+   *     DERIVED requested set the form shows read-only + submits.
+   *   - `connectRequestedScopes`     — the STORED snapshot (for drift detection).
+   *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
+   */
+  connectClientId?: string | null;
+  connectAllowedScopes?: number | null;
+  connectRequestedScopes?: number | null;
+  connectScopeJustifications?: Record<string, string> | null;
 };
 
 /** True for an edit context whose live parent is APPROVED (→ shadow-revision path). */
@@ -66,6 +84,11 @@ export function isApprovedEdit(ctx: ListingEditContext): boolean {
 export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormValues {
   const base = emptyOffsiteSubmitForm();
   const s = ctx.scalars;
+  // The requested scopes are DERIVED from the client's CURRENT allowedScopes (read-
+  // only in the form; the server re-snapshots them on save). Prefilled justifications
+  // are pruned to that derived set so a scope the client no longer has doesn't seed a
+  // dangling rationale.
+  const derivedScopes = ctx.connectAllowedScopes ?? 0;
   return {
     ...base,
     slug: ctx.slug,
@@ -76,7 +99,23 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     category: (s.category as MarketplaceCategory | null) ?? null,
     contentRating: (s.contentRating as OffsiteContentRating | null) ?? 'g',
     changelog: '',
+    connectClientId: ctx.connectClientId ?? null,
+    requestedScopes: derivedScopes,
+    scopeJustifications: pruneJustificationsToMask(
+      ctx.connectScopeJustifications ?? {},
+      derivedScopes
+    ),
   };
+}
+
+/** True iff two string→string maps have identical keys + values. PURE. */
+function shallowEqualStringMap(
+  a: Record<string, string>,
+  b: Record<string, string>
+): boolean {
+  const ak = Object.keys(a);
+  if (ak.length !== Object.keys(b).length) return false;
+  return ak.every((k) => a[k] === b[k]);
 }
 
 /**
@@ -114,6 +153,27 @@ export function buildScalarPatch(
 
   if (current.contentRating !== original.contentRating) {
     patch.contentRating = current.contentRating;
+  }
+
+  // OAuth-connect scope disclosure: the server re-snapshots `requestedScopes` from
+  // the client's CURRENT allowedScopes whenever the patch touches scopes, so we send
+  // the (derived) mask + shaped justifications when EITHER the justifications changed
+  // OR the client's allowedScopes drifted from the stored snapshot. Both re-enter mod
+  // review on an approved listing (a scope change is material). No client → no scope
+  // section, nothing to diff.
+  if (ctx.connectClientId != null) {
+    const derived = ctx.connectAllowedScopes ?? 0;
+    const storedSnapshot = ctx.connectRequestedScopes ?? 0;
+    const storedJust = shapeScopeJustifications(
+      ctx.connectScopeJustifications ?? {},
+      storedSnapshot
+    );
+    const currentJust = shapeScopeJustifications(current.scopeJustifications, derived);
+    const drifted = derived !== storedSnapshot;
+    if (drifted || !shallowEqualStringMap(currentJust, storedJust)) {
+      patch.requestedScopes = derived;
+      patch.scopeJustifications = currentJust;
+    }
   }
 
   return patch;

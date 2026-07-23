@@ -22,7 +22,6 @@ import {
   tokenScopeKeyByBit,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
 
 /**
  * App Store Listings (W13) — external-app submit form field/validation config
@@ -65,9 +64,15 @@ export type OffsiteSubmitFormValues = {
   changelog: string;
   /** REQUIRED: the id of the caller's own OAuth client (chosen in the picker). */
   connectClientId: string | null;
-  /** The disclosed requested-scope bitmask (⊆ the selected client's allowedScopes). */
+  /**
+   * The requested-scope bitmask, AUTO-DERIVED from the selected client's
+   * `allowedScopes` (no longer author-picked). Kept in the view-model so the
+   * read-only display + justification inputs iterate it and the client mirror can
+   * assert the (now trivial) subset invariant; the SERVER re-snapshots it from the
+   * client's current `allowedScopes` at submit time (authoritative).
+   */
   requestedScopes: number;
-  /** enum-key → rationale (only checked scopes get an entry). */
+  /** enum-key → rationale (only derived scopes get an entry). */
   scopeJustifications: Record<string, string>;
 };
 
@@ -293,23 +298,57 @@ export function scopeKeyForBit(bit: number): string {
 }
 
 /**
- * Toggle a single scope bit in `requestedScopes`, pruning any justification whose
- * scope is no longer requested (so the payload never carries a dangling rationale the
- * server would reject). PURE.
+ * Drop every justification whose scope is NOT in `mask` (the derived requested set),
+ * so the payload never carries a dangling rationale for a scope the app no longer
+ * requests (which the server would reject). PURE.
  */
-export function toggleScopeBit(
-  values: OffsiteSubmitFormValues,
-  bit: number
-): OffsiteSubmitFormValues {
-  const requestedScopes = Flags.hasFlag(values.requestedScopes, bit)
-    ? values.requestedScopes & ~bit
-    : values.requestedScopes | bit;
-  const requestedKeys = new Set(tokenScopeMaskToList(requestedScopes).map((s) => s.key));
-  const scopeJustifications: Record<string, string> = {};
-  for (const [key, text] of Object.entries(values.scopeJustifications)) {
-    if (requestedKeys.has(key)) scopeJustifications[key] = text;
+export function pruneJustificationsToMask(
+  justifications: Record<string, string>,
+  mask: number
+): Record<string, string> {
+  const keys = new Set(tokenScopeMaskToList(mask).map((s) => s.key));
+  const out: Record<string, string> = {};
+  for (const [key, text] of Object.entries(justifications)) {
+    if (keys.has(key)) out[key] = text;
   }
-  return { ...values, requestedScopes, scopeJustifications };
+  return out;
+}
+
+/**
+ * AUTO-DERIVE the requested scopes from the selected client's `allowedScopes`: the
+ * listing requests EXACTLY the client's allowed set (no author picking), and any
+ * justification for a scope no longer present is pruned. Called on selecting /
+ * changing the OAuth client. PURE. (Replaces the removed `toggleScopeBit` — the
+ * picker is gone; scopes are derived, not toggled.)
+ */
+export function deriveScopesFromClient(
+  values: OffsiteSubmitFormValues,
+  allowedScopes: number
+): OffsiteSubmitFormValues {
+  return {
+    ...values,
+    requestedScopes: allowedScopes,
+    scopeJustifications: pruneJustificationsToMask(values.scopeJustifications, allowedScopes),
+  };
+}
+
+/**
+ * Shape a raw justification map into the SUBMIT/EDIT payload form: trim each value,
+ * DROP empties, and keep only keys whose scope is in `mask` (the derived requested
+ * set). PURE — the single source for both `toSubmitExternalInput` (create) and the
+ * edit scalar-patch diff, so the two produce byte-identical justification payloads.
+ */
+export function shapeScopeJustifications(
+  justifications: Record<string, string>,
+  mask: number
+): Record<string, string> {
+  const keys = new Set(tokenScopeMaskToList(mask).map((s) => s.key));
+  const out: Record<string, string> = {};
+  for (const [key, text] of Object.entries(justifications)) {
+    const trimmed = text.trim();
+    if (trimmed.length > 0 && keys.has(key)) out[key] = trimmed;
+  }
+  return out;
 }
 
 /**
@@ -397,12 +436,10 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
   contentRating: OffsiteContentRating;
   changelog?: string;
 } {
-  const requestedKeys = new Set(tokenScopeMaskToList(values.requestedScopes).map((s) => s.key));
-  const scopeJustifications: Record<string, string> = {};
-  for (const [key, text] of Object.entries(values.scopeJustifications)) {
-    const trimmed = text.trim();
-    if (trimmed.length > 0 && requestedKeys.has(key)) scopeJustifications[key] = trimmed;
-  }
+  const scopeJustifications = shapeScopeJustifications(
+    values.scopeJustifications,
+    values.requestedScopes
+  );
   return {
     slug: values.slug.trim(),
     name: values.name.trim(),

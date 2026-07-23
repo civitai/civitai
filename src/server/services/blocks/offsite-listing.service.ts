@@ -179,12 +179,19 @@ export async function submitExternalListing(opts: {
     });
   }
 
-  // Load + gate the caller's OAuth client (exists / owned / not-app-block), then
-  // validate the requested-scope subset + per-scope justifications against the
-  // client's ceiling. REQUIRED for every external listing (the merged model).
+  // Load + gate the caller's OAuth client (exists / owned / not-app-block). The
+  // listing's requested scopes are AUTO-DERIVED from the client's CURRENT
+  // `allowedScopes` — the client already declares its scopes at creation, so a
+  // form-supplied `input.requestedScopes` mask is IGNORED (server-authoritative
+  // snapshot). This snapshots the reviewed set: a later widening of the client's
+  // allowedScopes does NOT silently expand a live/approved listing (a re-submit /
+  // edit re-enters review). The subset check is trivially satisfied now (the set
+  // equals its own ceiling) but kept as a defensive assertion; the per-scope
+  // justifications are validated against the derived set.
   const client = await loadConnectClientForListing(input.connectClientId, userId);
+  const requestedScopes = client.allowedScopes;
   assertConnectScopesValid({
-    requestedScopes: input.requestedScopes,
+    requestedScopes,
     scopeJustifications: input.scopeJustifications,
     allowedScopes: client.allowedScopes,
   });
@@ -247,10 +254,10 @@ export async function submitExternalListing(opts: {
           contentRating,
           // OPTIONAL homepage / Visit link — canonicalized when provided, else null.
           externalUrl: url && url.ok ? url.url : null,
-          // REQUIRED OAuth client link + the disclosed (review-only) scope subset +
-          // per-scope justifications.
+          // REQUIRED OAuth client link + the disclosed (review-only) scope set
+          // (SERVER-DERIVED from the client's allowedScopes) + per-scope justifications.
           connectClientId: input.connectClientId,
-          connectRequestedScopes: input.requestedScopes,
+          connectRequestedScopes: requestedScopes,
           connectScopeJustifications: input.scopeJustifications,
           // A natively-created off-site listing has no backing AppBlock.
           appBlockId: null,
@@ -345,6 +352,63 @@ function assertConnectScopesValid(opts: {
   if (errors.length > 0) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: errors.join('; ') });
   }
+}
+
+/**
+ * For an EDIT patch that touches the OAuth-connect scope disclosure (carries
+ * `requestedScopes` and/or `scopeJustifications`), resolve the listing's connect
+ * client and return an `effectivePatch` whose `requestedScopes` is DERIVED from the
+ * client's CURRENT `allowedScopes` (server-authoritative — a form-supplied mask is
+ * ignored) plus that ceiling. A non-scope patch is passed through unchanged.
+ *
+ * Re-asserts the caller still OWNS the client (mirrors `loadConnectClientForListing`):
+ * `connectClientId` is immutable on edit, but if the client were transferred after
+ * submit, the original listing owner must NOT be able to re-snapshot scopes against
+ * the new owner's ceiling. Validates the justifications against the derived set.
+ * Shared by `updateListing` (in-place / material-shadow) and `updateRevisionDraft`
+ * (approved shadow scalar write) so both snapshot scopes identically.
+ */
+async function deriveScopePatch(opts: {
+  connectClientId: string | null;
+  patch: UpdateListingPatch;
+  userId: number;
+}): Promise<{ effectivePatch: UpdateListingPatch; connectAllowedScopes: number | null }> {
+  const { connectClientId, patch, userId } = opts;
+  const editsScopes =
+    patch.requestedScopes !== undefined || patch.scopeJustifications !== undefined;
+  if (!editsScopes) return { effectivePatch: patch, connectAllowedScopes: null };
+
+  if (connectClientId == null) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'this listing has no OAuth client, so it cannot request scopes',
+    });
+  }
+  const client = await dbRead.oauthClient.findUnique({
+    where: { id: connectClientId },
+    select: { userId: true, allowedScopes: true },
+  });
+  if (!client) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
+  }
+  if (client.userId !== userId) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'you can only list an OAuth client you own',
+    });
+  }
+  const connectAllowedScopes = client.allowedScopes;
+  // SERVER-AUTHORITATIVE snapshot: the disclosed set is ALWAYS the client's CURRENT
+  // allowedScopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
+  // from the stored snapshot is then a MATERIAL change (patchHasMaterialChange) → the
+  // approved edit re-enters mod review via a shadow revision.
+  const effectivePatch: UpdateListingPatch = { ...patch, requestedScopes: connectAllowedScopes };
+  assertConnectScopesValid({
+    requestedScopes: connectAllowedScopes,
+    scopeJustifications: patch.scopeJustifications ?? {},
+    allowedScopes: connectAllowedScopes,
+  });
+  return { effectivePatch, connectAllowedScopes };
 }
 
 // ---------------------------------------------------------------------------
@@ -779,53 +843,15 @@ export async function updateListing(opts: {
   }
 
   // If the patch touches the disclosed OAuth scopes, resolve the client's ceiling
-  // once (needed by buildListingPatchData's subset re-validation). A scope edit on a
-  // listing with no connect client → BAD_REQUEST.
-  const editsScopes =
-    patch.requestedScopes !== undefined || patch.scopeJustifications !== undefined;
-  let connectAllowedScopes: number | null = null;
-  if (editsScopes) {
-    if (listing.connectClientId == null) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: 'this listing has no OAuth client, so it cannot request scopes',
-      });
-    }
-    const client = await dbRead.oauthClient.findUnique({
-      where: { id: listing.connectClientId },
-      select: { userId: true, allowedScopes: true },
-    });
-    if (!client) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
-    }
-    // Defense in depth: re-assert the caller still OWNS the client (mirrors
-    // `loadConnectClientForListing`'s submit-time check). `connectClientId` is
-    // immutable on edit, so this is safe today — but if the client were transferred
-    // to another user after submit, the original listing owner must NOT be able to
-    // edit disclosed scopes against the new owner's ceiling. `userId` here is the
-    // authenticated caller (the listing was already owner-bound above).
-    if (client.userId !== userId) {
-      throw new TRPCError({
-        code: 'FORBIDDEN',
-        message: 'you can only list an OAuth client you own',
-      });
-    }
-    connectAllowedScopes = client.allowedScopes;
-    // Validate the scope edit UP-FRONT (before any shadow is opened) so an invalid
-    // subset/justification rejects cleanly and never leaves an orphan shadow draft.
-    // `buildListingPatchData` re-validates as defense-in-depth for direct callers.
-    if (patch.requestedScopes === undefined) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: 'requestedScopes is required when editing scope justifications',
-      });
-    }
-    assertConnectScopesValid({
-      requestedScopes: patch.requestedScopes,
-      scopeJustifications: patch.scopeJustifications ?? {},
-      allowedScopes: connectAllowedScopes,
-    });
-  }
+  // and DERIVE the requested-scope snapshot from it (server-authoritative — a
+  // form-supplied mask is ignored). Validates UP-FRONT (before any shadow is opened)
+  // so an invalid justification set never leaves an orphan shadow draft. A scope edit
+  // on a listing with no connect client → BAD_REQUEST.
+  const { effectivePatch, connectAllowedScopes } = await deriveScopePatch({
+    connectClientId: listing.connectClientId,
+    patch,
+    userId,
+  });
   const patchOpts = { connectAllowedScopes };
 
   switch (listing.status) {
@@ -845,12 +871,12 @@ export async function updateListing(opts: {
     case 'pending': {
       // Edit IN PLACE — no re-review. A pending listing's existing pending request
       // keeps reviewing the now-updated row (it references the row, not a snapshot).
-      const data = buildListingPatchData(patch, patchOpts);
+      const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: listingId }, data });
       return { listingId, status: listing.status, requiresReview: false, shadowId: null };
     }
     case 'approved': {
-      const material = patchHasMaterialChange(patch, {
+      const material = patchHasMaterialChange(effectivePatch, {
         externalUrl: listing.externalUrl,
         name: listing.name,
         contentRating: listing.contentRating,
@@ -860,7 +886,7 @@ export async function updateListing(opts: {
         // TRIVIAL-only edit → apply to the LIVE row in place (no re-review). Any
         // material key present is byte-identical to the live value (material ===
         // false), so writing it is a harmless no-op.
-        const data = buildListingPatchData(patch, patchOpts);
+        const data = buildListingPatchData(effectivePatch, patchOpts);
         await dbWrite.appListing.update({ where: { id: listingId }, data });
         return { listingId, status: listing.status, requiresReview: false, shadowId: null };
       }
@@ -868,7 +894,7 @@ export async function updateListing(opts: {
       // FULL patch (material + trivial) is written to the shadow. Assets are edited
       // separately against the shadow id, then submitListingRevision re-reviews it.
       const { shadowId } = await beginListingRevision({ listingId, userId });
-      const data = buildListingPatchData(patch, patchOpts);
+      const data = buildListingPatchData(effectivePatch, patchOpts);
       await dbWrite.appListing.update({ where: { id: shadowId }, data });
       return { listingId, status: listing.status, requiresReview: true, shadowId };
     }
@@ -1189,12 +1215,27 @@ export type GetMyListingForEditResult = {
     cover: ListingEditAsset;
     screenshots: ListingEditScreenshot[];
   };
+  /** The linked OAuth client id (null for a non-connect listing — none in the merged model). */
+  connectClientId: string | null;
+  /**
+   * The client's CURRENT `allowedScopes` (null when no client / not found). This IS
+   * the derived requested-scope set the edit form displays read-only + submits — the
+   * server re-snapshots `requestedScopes` from it on save.
+   */
+  connectAllowedScopes: number | null;
+  /** The STORED requested-scope snapshot on the effective row (for drift detection). */
+  connectRequestedScopes: number | null;
+  /** The STORED per-scope justifications (enum-key → rationale) on the effective row. */
+  connectScopeJustifications: Record<string, string> | null;
 };
 
-/** Load a listing's scalars + current assets (edge-resolved URLs) for edit prefill. */
+/** Load a listing's scalars + current assets (edge-resolved URLs) + connect scope
+ *  snapshot for edit prefill. */
 async function loadListingEditView(listingId: string): Promise<{
   scalars: ListingEditScalars;
   assets: GetMyListingForEditResult['assets'];
+  connectRequestedScopes: number | null;
+  connectScopeJustifications: Record<string, string> | null;
 }> {
   const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
   const row = (await dbRead.appListing.findUnique({
@@ -1206,6 +1247,8 @@ async function loadListingEditView(listingId: string): Promise<{
       category: true,
       contentRating: true,
       externalUrl: true,
+      connectRequestedScopes: true,
+      connectScopeJustifications: true,
       iconId: true,
       coverId: true,
       icon: { select: { url: true } },
@@ -1228,6 +1271,8 @@ async function loadListingEditView(listingId: string): Promise<{
     category: string | null;
     contentRating: string | null;
     externalUrl: string | null;
+    connectRequestedScopes: number | null;
+    connectScopeJustifications: Prisma.JsonValue | null;
     iconId: number | null;
     coverId: number | null;
     icon: { url: string | null } | null;
@@ -1252,6 +1297,9 @@ async function loadListingEditView(listingId: string): Promise<{
       contentRating: row.contentRating,
       externalUrl: row.externalUrl,
     },
+    connectRequestedScopes: row.connectRequestedScopes ?? null,
+    connectScopeJustifications:
+      (row.connectScopeJustifications as Record<string, string> | null) ?? null,
     assets: {
       icon: {
         imageId: row.iconId,
@@ -1349,6 +1397,20 @@ export async function getMyListingForEdit(opts: {
   }
 
   const view = await loadListingEditView(effectiveId);
+
+  // Resolve the connect client's CURRENT allowedScopes — this is the derived
+  // requested-scope set the edit form displays read-only + re-submits (the server
+  // re-snapshots `requestedScopes` from it on save). null when the listing has no
+  // client or the client no longer exists.
+  let connectAllowedScopes: number | null = null;
+  if (listing.connectClientId != null) {
+    const client = await dbRead.oauthClient.findUnique({
+      where: { id: listing.connectClientId },
+      select: { allowedScopes: true },
+    });
+    connectAllowedScopes = client?.allowedScopes ?? null;
+  }
+
   return {
     parentId: listingId,
     slug: listing.slug,
@@ -1357,6 +1419,10 @@ export async function getMyListingForEdit(opts: {
     shadowId,
     scalars: view.scalars,
     assets: view.assets,
+    connectClientId: listing.connectClientId,
+    connectAllowedScopes,
+    connectRequestedScopes: view.connectRequestedScopes,
+    connectScopeJustifications: view.connectScopeJustifications,
   };
 }
 
@@ -1387,7 +1453,16 @@ export async function updateRevisionDraft(opts: {
       `a revision draft can only be edited while draft (status is ${shadow.status})`
     );
   }
-  const data = buildListingPatchData(patch);
+  // Derive the requested-scope snapshot from the shadow's connect client (the shadow
+  // carries the parent's connectClientId) when the patch touches scopes — same
+  // server-authoritative rule as updateListing, so a scope justification staged on a
+  // shadow re-snapshots against the client's CURRENT allowedScopes.
+  const { effectivePatch, connectAllowedScopes } = await deriveScopePatch({
+    connectClientId: shadow.connectClientId,
+    patch,
+    userId,
+  });
+  const data = buildListingPatchData(effectivePatch, { connectAllowedScopes });
   await dbWrite.appListing.update({ where: { id: shadowId }, data });
   return { shadowId };
 }

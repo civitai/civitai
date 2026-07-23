@@ -30,6 +30,7 @@ import {
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
+import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
 import { ListingAssetStep, type MetaSuggestions } from '~/components/Apps/ListingAssetStep';
 import {
   buildScalarPatch,
@@ -126,6 +127,13 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     value: OffsiteSubmitFormValues[K]
   ) {
     setValues((v) => ({ ...v, [key]: value }));
+  }
+
+  function handleJustificationChange(key: string, text: string) {
+    setValues((v) => ({
+      ...v,
+      scopeJustifications: { ...v.scopeJustifications, [key]: text },
+    }));
   }
 
   function handleUrlBlur() {
@@ -372,6 +380,16 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 data-testid="apps-offsite-edit-rating"
               />
             </Group>
+
+            {edit.connectClientId != null && (
+              <DerivedScopesDisclosure
+                requestedScopes={values.requestedScopes}
+                justifications={values.scopeJustifications}
+                onJustificationChange={handleJustificationChange}
+                disabled={saving}
+                intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."
+              />
+            )}
 
             <Group justify="space-between">
               <Button variant="default" onClick={() => setActive(STEP_URL)}>

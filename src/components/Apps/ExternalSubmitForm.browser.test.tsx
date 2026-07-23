@@ -110,6 +110,35 @@ describe('ExternalSubmitForm — merged wizard', () => {
     await expect.element(page.getByRole('button', { name: 'Create draft' })).toBeInTheDocument();
   });
 
+  test('picking a client shows the derived scopes READ-ONLY (no checkbox picker) with the sensitive badge', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await pickClient();
+    // Scopes are auto-derived from the client — a read-only list, no picker.
+    await expect.element(page.getByTestId('apps-offsite-scope-readonly')).toBeInTheDocument();
+    expect(page.getByRole('checkbox').elements()).toHaveLength(0);
+    // 0xffff includes sensitive scopes (UserRead / *Write) → the badge is surfaced.
+    expect(page.getByTestId('sensitive-scope-badge').elements().length).toBeGreaterThan(0);
+    // A per-scope justification input is rendered (UserRead = bit 1).
+    await expect.element(page.getByTestId('apps-offsite-justification-1')).toBeInTheDocument();
+  });
+
+  test('an empty-scopes OAuth app shows the no-scopes state and submits cleanly', async () => {
+    mocks.clients = {
+      data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 0 }],
+      isLoading: false,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await pickClient();
+    await expect.element(page.getByTestId('apps-offsite-scope-empty')).toBeInTheDocument();
+    // No justification inputs, still a valid submission.
+    expect(page.getByTestId('apps-offsite-justification-1').elements()).toHaveLength(0);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Create draft' }).click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+
   test('an optional homepage URL prefills name + slug on Details', async () => {
     renderWithProviders(<ExternalSubmitForm />);
     await pickClient();

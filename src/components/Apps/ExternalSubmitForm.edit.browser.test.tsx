@@ -200,6 +200,45 @@ describe('ExternalSubmitForm — edit mode', () => {
     expect(mocks.removeScreenshot).toHaveBeenCalledWith({ screenshotId: 'shadow-ss-1' });
   });
 
+  test('shows the derived scopes READ-ONLY + editable justifications and saves the scope patch', async () => {
+    // A connect listing: the client currently allows UserRead(1)|ModelsRead(4)|ModelsWrite(8) = 13.
+    const ctx = makeCtx({
+      status: 'draft',
+      connectClientId: 'oauth-1',
+      connectAllowedScopes: 13,
+      connectRequestedScopes: 13,
+      connectScopeJustifications: { ModelsRead: 'original reason' },
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    // URL → Details (the scope disclosure lives on Details).
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByTestId('apps-offsite-scope-readonly')).toBeInTheDocument();
+    expect(page.getByTestId('sensitive-scope-badge').elements().length).toBeGreaterThan(0);
+
+    // Edit the ModelsRead (bit 4) justification, then save.
+    await page.getByTestId('apps-offsite-justification-4').fill('updated reason');
+    await page.getByTestId('apps-offsite-edit-save').click();
+
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+    expect(mocks.updateListing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        listingId: 'apl_parent',
+        patch: expect.objectContaining({
+          requestedScopes: 13,
+          scopeJustifications: { ModelsRead: 'updated reason' },
+        }),
+      })
+    );
+    // A justification-only edit on a DRAFT is in-place — no revision.
+    expect(mocks.submitRevision).not.toHaveBeenCalled();
+  });
+
+  test('a listing with no connect client shows no scope section', async () => {
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx({ connectClientId: null })} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    expect(page.getByTestId('apps-offsite-scope-disclosure').elements()).toHaveLength(0);
+  });
+
   test('the OG auto-pull re-fire is non-destructive (a prefilled name is not clobbered)', async () => {
     // Simulate the auto-pull returning a different name suggestion.
     mocks.meta = {
