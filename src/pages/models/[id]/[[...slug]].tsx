@@ -111,6 +111,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import useIsClient from '~/hooks/useIsClient';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
@@ -390,6 +391,7 @@ export default function ModelDetailsV2({
 
   const [opened, { toggle }] = useDisclosure();
   const canShowRail = useMediaQuery(`(min-width: ${RAIL_ACTIVATE_WIDTH}px)`, false);
+  const allowAds = useBrowsingSettings((x) => x.allowAds);
 
   const { blockedUsers } = useHiddenPreferencesData();
 
@@ -812,7 +814,8 @@ export default function ModelDetailsV2({
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${model.meta?.customMessage ?? 'Flagged by system'}.`;
   const isBannedFromPromotion = model.meta?.cannotPromote ?? false;
-  const showRail = !model.poi;
+  const adsDisabledByUser = (currentUser?.isMember ?? false) && !allowAds;
+  const showRail = !model.poi && !adsDisabledByUser;
 
   return (
     <Gated
