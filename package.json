@@ -13,6 +13,7 @@
     "dev": "next dev",
     "dev:auth": "pnpm --filter @civitai/auth-app dev",
     "dev:moderator": "pnpm --filter @civitai/moderator-app dev",
+    "dev:creator-studio": "pnpm --filter @civitai/creator-studio-app dev",
     "dev:storage": "pnpm --filter @civitai/storage-app dev",
     "dev-low": "cross-env NODE_OPTIONS=\"--max_old_space_size=6144\" next dev",
     "dev-debug": "pnpm build:workers && cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --inspect\" next dev",

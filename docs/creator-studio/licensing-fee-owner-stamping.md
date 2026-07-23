@@ -39,7 +39,7 @@ dedups to **Anima 5 + Finetune 1 + LoRA 0.1 = 3 fees, 3 recipients, from 2 resou
 
 ## Checklist
 
-### Mini endpoint — main app (briant) ✅ code done, uncommitted
+### Mini endpoint — main app (briant) ✅ shipped
 
 `src/pages/api/v1/model-versions/mini/[id].ts`
 
@@ -53,9 +53,11 @@ dedups to **Anima 5 + Finetune 1 + LoRA 0.1 = 3 fees, 3 recipients, from 2 resou
 - [x] No chain walk / recipient array needed — single ancestor is enforced at write time
       (`model-version.controller.ts` requires `licensingSourceVersionId` to be a `LicensingRoot` sharing the same
       base model), so the ≤2-fee `fees[]` block is complete.
-- [ ] Typecheck + commit (behind commit gate — commit only when asked).
-- [ ] Deploy so the endpoint is live → unblocks 868kcpzzt.
-- [ ] On deploy, notify Koen (orchestrator) and Justin (backfill).
+- [x] Typecheck + commit — shipped as **PR #3139** (`afeabaa63e feat(licensing): expose owner user IDs on the
+      mini endpoint`).
+- [x] Deploy so the endpoint is live → unblocked 868kcpzzt.
+- [x] On deploy, notify Koen (orchestrator) and Justin (backfill) — both downstream steps below are done, which
+      confirms the endpoint went live.
 
 ### Orchestrator — Koen (868kcpzzt) ✅ deployed + backfilled
 

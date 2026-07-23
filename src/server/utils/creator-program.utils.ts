@@ -6,23 +6,9 @@ import {
 } from '~/shared/constants/creator-program.constants';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
-export function getForecastedValue(
-  toBank: number,
-  pool: { size: { forecasted: number }; value: number }
-) {
-  // toBank / 1000 ensures we cap at $1 per 1000 buzz
-  return Math.min((toBank / pool.size.forecasted) * pool.value, toBank / 1000);
-}
-
-export function getCurrentValue(
-  toBank: number,
-  pool: { size: { forecasted: number; current: number }; value: number }
-) {
-  if (pool.size.current === 0) return 0;
-
-  // toBank / 1000 ensures we cap at $1 per 1000 buzz
-  return Math.min((toBank / pool.size.current) * pool.value, toBank / 1000);
-}
+// Compensation-pool value math now lives in @civitai/buzz (shared with the creator-studio spoke); re-exported
+// here so existing `~/server/utils/creator-program.utils` import sites are unchanged. Single source of truth.
+export { getForecastedValue, getCurrentValue } from '@civitai/buzz';
 
 export function getExtractionFee(toExtract: number): number {
   let fee = 0;
