@@ -1,56 +1,38 @@
-import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import { useCallback, useRef } from 'react';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 
 /**
- * Block navigation while `active` (an approve/reject mutation is in flight).
+ * Block navigation while `active` (an approve/reject mutation is in flight) on the
+ * review PAGE. On the page there is no `<Modal>` shell, so the modal's `busyRef`
+ * close-refusal has no analogue — a mod could click a nav link (or hit the browser
+ * back button, or close the tab) mid-mutation and lose the in-flight action's
+ * context.
  *
- * On the review PAGE there is no `<Modal>` shell, so the modal's `busyRef`
- * close-refusal has no analogue — a mod could click a nav link (or hit the
- * browser back button, or close the tab) mid-mutation and lose the in-flight
- * action's context. This installs the pages-router equivalent while `active`:
+ * This is a THIN wrapper over the repo's existing `useCatchNavigation`, which
+ * already implements the correct pages-router pattern: a `beforeunload` guard for
+ * tab-close/reload, a `routeChangeStart` throw-to-cancel for client navigations
+ * (browser back/forward included — pages-router routes those through
+ * `routeChangeStart` too), the browser-history RESYNC (`history.pushState` back to
+ * the current path so the URL doesn't desync on a vetoed back-button), and a
+ * same-URL skip. Crucially it does NOT touch `router.beforePopState` — that setter
+ * is a single global slot owned by the app's `RoutedDialogProvider`, and the prior
+ * hand-rolled guard clobbered it (breaking app-wide routed-dialog back/forward
+ * after any approve/reject).
  *
- *  - `routeChangeStart` — throwing from the handler is the documented Next.js
- *    pages-router idiom to CANCEL a client-side navigation (there is no
- *    promise-returning veto). We emit `routeChangeError` first to clear the
- *    NProgress/loading indicator, then throw a sentinel the router swallows.
- *  - `beforePopState` — returns `false` to veto browser back/forward (which does
- *    not go through `routeChangeStart`).
- *  - `beforeunload` — the browser-native guard for a tab close / hard reload.
- *
- * All three are torn down when `active` flips false (or on unmount), so a settled
- * mutation immediately releases navigation. Idempotent: mounting with
- * `active === false` registers nothing.
+ * Returns a `bypass()` callback the caller trips SYNCHRONOUSLY immediately before
+ * its own success-redirect (`router.push('/apps/review')`). Without it the guard
+ * would block its OWN intended redirect — the guard is still armed at redirect time
+ * because the disarm is a scheduled effect-cleanup that runs a microtask too late —
+ * stranding the mod on the detail page. A genuine user-initiated navigation while a
+ * mutation is in flight still prompts; only the programmatic redirect bypasses.
  */
-export function useReviewNavigationGuard(active: boolean, message = 'A review action is still in progress.') {
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!active) return;
-
-    const abortRouteChange = () => {
-      // Clear the loading indicator the router already started, then abort.
-      router.events.emit('routeChangeError');
-      // The router catches this to cancel the navigation (documented pattern).
-      // eslint-disable-next-line @typescript-eslint/no-throw-literal
-      throw `Route change aborted: ${message}`;
-    };
-
-    const beforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      // Legacy browsers require returnValue to be set to show the prompt.
-      e.returnValue = message;
-      return message;
-    };
-
-    router.events.on('routeChangeStart', abortRouteChange);
-    router.beforePopState(() => false);
-    window.addEventListener('beforeunload', beforeUnload);
-
-    return () => {
-      router.events.off('routeChangeStart', abortRouteChange);
-      // Reset the popstate veto so history navigation works again.
-      router.beforePopState(() => true);
-      window.removeEventListener('beforeunload', beforeUnload);
-    };
-  }, [active, message, router]);
+export function useReviewNavigationGuard(
+  active: boolean,
+  message = 'A review decision is still being submitted. Leave the page anyway?'
+) {
+  const bypassRef = useRef(false);
+  useCatchNavigation({ unsavedChanges: active, message, bypassRef });
+  return useCallback(() => {
+    bypassRef.current = true;
+  }, []);
 }

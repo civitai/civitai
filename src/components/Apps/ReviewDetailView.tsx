@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { OnsiteReviewModalBody, type OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
 import {
   ReviewActionBar,
@@ -44,8 +44,18 @@ export function ReviewDetailView({
 
   // Block navigation (link click / back button / tab close) while an approve or
   // reject mutation is running — the page's replacement for the modal's busyRef
-  // close-guard.
-  useReviewNavigationGuard(status === 'submitting');
+  // close-guard. Returns a `bypass()` we trip synchronously before the intended
+  // success-redirect so the guard never blocks its own `router.push`.
+  const bypassGuard = useReviewNavigationGuard(status === 'submitting');
+
+  // The action bar calls this after a successful approve/reject. Trip the guard's
+  // bypass SYNCHRONOUSLY (before the redirect fires in `onClose`) so the guard —
+  // which is still armed at this instant, since its disarm is a scheduled
+  // effect-cleanup — lets THIS navigation through instead of aborting it.
+  const handleActionSuccess = useCallback(() => {
+    bypassGuard();
+    onClose();
+  }, [bypassGuard, onClose]);
 
   // A page has no focus trap, so a screen-reader/keyboard user would otherwise be
   // stranded on <body> after the route change. Move focus to the main region once.
@@ -99,7 +109,7 @@ export function ReviewDetailView({
       <ReviewActionBar
         key={`actions-${selection.request.id}`}
         selection={selection}
-        onClose={onClose}
+        onClose={handleActionSuccess}
         onStatusChange={setStatus}
         sticky
       />

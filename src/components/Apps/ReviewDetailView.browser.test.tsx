@@ -130,6 +130,9 @@ beforeEach(() => {
   mocks.pending = false;
   showError.mockClear();
   (router.events.on as any).mockClear();
+  (router.beforePopState as any).mockClear();
+  (router.push as any).mockClear();
+  (router.push as any).mockResolvedValue(true);
 });
 
 describe('ReviewDetailView — sticky action bar', () => {
@@ -253,5 +256,56 @@ describe('ReviewDetailView — route-leave guard', () => {
       (c: unknown[]) => c[0] === 'routeChangeStart'
     );
     expect(regs).toHaveLength(0);
+  });
+
+  test('never clobbers the app-global beforePopState, even while a mutation is in flight', async () => {
+    // The reworked guard sits on useCatchNavigation, which does NOT touch the
+    // single-slot router.beforePopState (owned app-wide by RoutedDialogProvider).
+    // The old hand-rolled guard overwrote it with () => false while armed — this
+    // locks that regression out at the integration level.
+    mocks.pending = true;
+    renderWithProviders(
+      <ReviewDetailView selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await vi.waitFor(() => {
+      const regs = (router.events.on as any).mock.calls.filter(
+        (c: unknown[]) => c[0] === 'routeChangeStart'
+      );
+      expect(regs.length).toBeGreaterThanOrEqual(1);
+    });
+    // Armed, yet beforePopState was never called.
+    expect(router.beforePopState).not.toHaveBeenCalled();
+  });
+
+  test('a successful approve redirects to /apps/review and the guard does NOT abort its own redirect', async () => {
+    // Make the mocked router.push behave like the real pages-router: it fires
+    // routeChangeStart at every registered handler. If the leave-guard treated
+    // this programmatic redirect as a user navigation it would prompt/throw here
+    // and strand the mod on the detail page — the exact bug this rework fixes.
+    const emitRouteChangeStart = (url: string) => {
+      for (const [evt, handler] of (router.events.on as any).mock.calls) {
+        if (evt === 'routeChangeStart') (handler as (u: string) => void)(url);
+      }
+    };
+    (router.push as any).mockImplementation(async (url: unknown) => {
+      emitRouteChangeStart(typeof url === 'string' ? url : String(url));
+      return true;
+    });
+    // If the guard wrongly treated the redirect as a user nav it would consult
+    // window.confirm; it must not.
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    renderWithProviders(
+      <ReviewDetailView
+        selection={{ request: PENDING, mode: 'pending' }}
+        onClose={() => void router.push('/apps/review')}
+      />
+    );
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith('/apps/review'));
+    // The programmatic redirect was NOT treated as a user navigation.
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
   });
 });
