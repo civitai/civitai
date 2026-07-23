@@ -128,6 +128,8 @@ import {
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
@@ -487,6 +489,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${version.meta?.customMessage || 'No reason provided.'}`;
   const license = baseModelLicenses[version.baseModel];
+  // Link the base model to its ecosystem SEO landing page when one is live (SEO internal linking).
+  const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
   // Both are derived per displayed version rather than stored on the model.
   const baseModelRestrictsMature =
@@ -1463,7 +1467,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Base Model</span>
                     <Text size="sm">
-                      {version.baseModel}{' '}
+                      {ecosystemSeoPage ? (
+                        <Anchor
+                          component={Link}
+                          href={`/ecosystems/${ecosystemSeoPage.slug}`}
+                          inherit
+                        >
+                          {version.baseModel}
+                        </Anchor>
+                      ) : (
+                        version.baseModel
+                      )}{' '}
                       {version.baseModelType && version.baseModelType !== 'Standard'
                         ? version.baseModelType
                         : ''}
