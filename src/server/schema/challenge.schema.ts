@@ -279,6 +279,7 @@ export const ChallengeParticipation = {
   Entered: 'entered',
   NotEntered: 'not_entered',
   Won: 'won',
+  Created: 'created',
 } as const;
 export type ChallengeParticipation =
   (typeof ChallengeParticipation)[keyof typeof ChallengeParticipation];
@@ -308,6 +309,7 @@ export const getInfiniteChallengesSchema = z.object({
       ChallengeParticipation.Entered,
       ChallengeParticipation.NotEntered,
       ChallengeParticipation.Won,
+      ChallengeParticipation.Created,
     ])
     .optional(),
   includeEnded: z.boolean().default(false),

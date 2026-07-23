@@ -697,6 +697,9 @@ export async function getInfiniteChallenges(
           )`
         );
         break;
+      case ChallengeParticipation.Created:
+        conditions.push(Prisma.sql`c."createdById" = ${currentUserId}`);
+        break;
     }
   }
 
