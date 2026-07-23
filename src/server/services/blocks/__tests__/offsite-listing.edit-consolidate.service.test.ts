@@ -35,6 +35,9 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     appListingPublishRequest: {
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    oauthClient: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -113,6 +116,7 @@ beforeEach(() => {
   mockRead.appListing.findFirst.mockResolvedValue(null);
   mockRead.appListingScreenshot.findMany.mockResolvedValue([]);
   mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+  mockRead.oauthClient.findUnique.mockResolvedValue(null);
   mockWrite.appListing.findFirst.mockResolvedValue(null);
   mockWrite.appListing.update.mockImplementation(async (args: { data: unknown }) => args.data);
   mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
@@ -134,6 +138,33 @@ describe('getMyListingForEdit', () => {
     // A draft never touches the revision machinery.
     expect(mockRead.appListing.findFirst).not.toHaveBeenCalled();
     expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('returns the connect scope disclosure: CURRENT client allowedScopes (derived set) + STORED snapshot/justifications', async () => {
+    wireFindUnique(ownedRow({ status: 'draft', connectClientId: 'oauth-1' }), {
+      apl_parent: editViewRow('ss_parent', {
+        connectRequestedScopes: 4,
+        connectScopeJustifications: { ModelsRead: 'reason' },
+      }),
+    });
+    // The client's allowedScopes drifted to 13 since the stored snapshot (4).
+    mockRead.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 13 });
+
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+    expect(res.connectClientId).toBe('oauth-1');
+    expect(res.connectAllowedScopes).toBe(13); // derived = client's CURRENT allowedScopes
+    expect(res.connectRequestedScopes).toBe(4); // stored snapshot (drift detectable)
+    expect(res.connectScopeJustifications).toEqual({ ModelsRead: 'reason' });
+  });
+
+  it('a listing with no connect client → null connect fields, no client lookup', async () => {
+    wireFindUnique(ownedRow({ status: 'draft', connectClientId: null }), {
+      apl_parent: editViewRow('ss_parent'),
+    });
+    const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
+    expect(res.connectClientId).toBeNull();
+    expect(res.connectAllowedScopes).toBeNull();
+    expect(mockRead.oauthClient.findUnique).not.toHaveBeenCalled();
   });
 
   it('APPROVED with an existing shadow → reuses it; prefill + row ids come from the SHADOW', async () => {
@@ -239,6 +270,28 @@ describe('updateRevisionDraft', () => {
         data: expect.objectContaining({ name: 'New name', tagline: 'New tagline' }),
       })
     );
+  });
+
+  it('SNAPSHOTS requestedScopes from the client when the shadow patch edits scopes (form value ignored)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      ownedRow({
+        id: 'apl_shadow',
+        status: 'draft',
+        revisionOfId: 'apl_parent',
+        connectClientId: 'oauth-1',
+      })
+    );
+    // Client allowedScopes = 13 (UserRead|ModelsRead|ModelsWrite); the form's bogus
+    // requestedScopes:4 must be ignored and the derived 13 snapshotted.
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 7, allowedScopes: 13 });
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      userId: 7,
+      patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+    });
+    const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.connectRequestedScopes).toBe(13);
+    expect(data.connectScopeJustifications).toEqual({ ModelsRead: 'reason' });
   });
 
   it('refuses a NON-shadow (top-level listing) → INVALID_REVISION, no write', async () => {

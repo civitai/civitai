@@ -42,6 +42,11 @@ describe('submitExternalListingSchema', () => {
     expect(submitExternalListingSchema.parse({ ...valid, scopeJustifications: {} })).toBeTruthy();
   });
 
+  it('accepts an OMITTED requestedScopes (now optional — the service derives it from the client)', () => {
+    const { requestedScopes, ...rest } = valid;
+    expect(submitExternalListingSchema.safeParse(rest).success).toBe(true);
+  });
+
   it('rejects a missing connectClientId', () => {
     const { connectClientId, ...rest } = valid;
     expect(submitExternalListingSchema.safeParse(rest).success).toBe(false);

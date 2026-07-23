@@ -2,14 +2,12 @@ import {
   Alert,
   Badge,
   Button,
-  Checkbox,
   Code,
   Group,
   Loader,
   Select,
   Stack,
   Stepper,
-  Table,
   Text,
   TextInput,
   Textarea,
@@ -33,29 +31,23 @@ import {
   OFFSITE_CONTENT_RATING_OPTIONS,
   OFFSITE_SUBMIT_LIMITS,
   deriveListingFromUrl,
+  deriveScopesFromClient,
   emptyOffsiteSubmitForm,
   isClientStepComplete,
   isCreateDetailsStepComplete,
   normalizeLinkUrl,
-  scopeKeyForBit,
   toSubmitExternalInput,
-  toggleScopeBit,
   validateExternalCreateForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
+import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
 import { ListingAssetStep, type MetaSuggestions } from '~/components/Apps/ListingAssetStep';
 import { ExternalListingEditForm } from '~/components/Apps/ExternalListingEditForm';
 import type { ListingEditContext } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
-import {
-  tokenScopeGrid,
-  tokenScopeLabels,
-  tokenScopeMaskToList,
-} from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -168,19 +160,13 @@ function ExternalCreateForm() {
   }
 
   function handleSelectClient(clientId: string | null) {
-    // Changing the client resets the requested scopes + justifications — the new
-    // client has a DIFFERENT ceiling, so a carried-over mask could exceed it.
-    setValues((v) => ({
-      ...v,
-      connectClientId: clientId,
-      requestedScopes: 0,
-      scopeJustifications: {},
-    }));
+    // Changing the client RE-DERIVES the requested scopes from the new client's
+    // `allowedScopes` (the listing requests exactly the client's set — no picker) and
+    // re-keys the justifications, dropping any whose scope the new client doesn't have.
+    const nextClient = clientId ? clients.find((c) => c.id === clientId) ?? null : null;
+    const nextAllowed = nextClient?.allowedScopes ?? 0;
+    setValues((v) => deriveScopesFromClient({ ...v, connectClientId: clientId }, nextAllowed));
     setErrors((prev) => ({ ...prev, connectClientId: undefined, requestedScopes: undefined }));
-  }
-
-  function handleToggleScope(bit: number) {
-    setValues((v) => toggleScopeBit(v, bit));
   }
 
   function handleJustificationChange(key: string, text: string) {
@@ -252,7 +238,6 @@ function ExternalCreateForm() {
   }
 
   const busy = submitMutation.isPending;
-  const requestedScopeList = tokenScopeMaskToList(values.requestedScopes);
   const clientOptions = clients.map((c) => ({ value: c.id, label: c.name }));
 
   return (
@@ -322,94 +307,12 @@ function ExternalCreateForm() {
                 />
 
                 {selectedClient && (
-                  <Stack gap="xs" data-testid="apps-offsite-scope-grid">
-                    <div>
-                      <Text size="sm" fw={500}>
-                        Requested scopes
-                      </Text>
-                      <Text size="xs" c="dimmed">
-                        Check only the scopes your app needs. Scopes greyed out aren’t in this app’s
-                        allowed set.
-                      </Text>
-                    </div>
-                    <Table withTableBorder withColumnBorders>
-                      <Table.Thead>
-                        <Table.Tr>
-                          <Table.Th>Resource</Table.Th>
-                          <Table.Th style={{ textAlign: 'center', width: 70 }}>Read</Table.Th>
-                          <Table.Th style={{ textAlign: 'center', width: 70 }}>Write</Table.Th>
-                          <Table.Th style={{ textAlign: 'center', width: 70 }}>Delete</Table.Th>
-                        </Table.Tr>
-                      </Table.Thead>
-                      <Table.Tbody>
-                        {tokenScopeGrid.map((row) => (
-                          <Table.Tr key={row.label}>
-                            <Table.Td>
-                              <Text size="sm">{row.label}</Text>
-                            </Table.Td>
-                            {(['read', 'write', 'delete'] as const).map((col) => {
-                              const bit = (row as { read?: number; write?: number; delete?: number })[
-                                col
-                              ];
-                              const available = bit != null && Flags.hasFlag(allowedScopes, bit);
-                              return (
-                                <Table.Td key={col} style={{ textAlign: 'center' }}>
-                                  {bit != null ? (
-                                    <Checkbox
-                                      checked={Flags.hasFlag(values.requestedScopes, bit)}
-                                      onChange={() => handleToggleScope(bit)}
-                                      disabled={!available || busy}
-                                      styles={{ input: { cursor: available ? 'pointer' : 'not-allowed' } }}
-                                      data-testid={`apps-offsite-scope-${bit}`}
-                                    />
-                                  ) : (
-                                    <Text size="xs" c="dimmed">
-                                      —
-                                    </Text>
-                                  )}
-                                </Table.Td>
-                              );
-                            })}
-                          </Table.Tr>
-                        ))}
-                      </Table.Tbody>
-                    </Table>
-                    {errors.requestedScopes && (
-                      <Text size="xs" c="red">
-                        {errors.requestedScopes}
-                      </Text>
-                    )}
-
-                    {requestedScopeList.length > 0 && (
-                      <Stack gap="sm" data-testid="apps-offsite-justifications">
-                        <Text size="sm" fw={500}>
-                          Why do you need each scope? (optional, helps review)
-                        </Text>
-                        {requestedScopeList.map(({ bit, key, label }) => {
-                          const justificationKey = scopeKeyForBit(bit);
-                          const text = values.scopeJustifications[justificationKey] ?? '';
-                          return (
-                            <Textarea
-                              key={bit}
-                              label={label || tokenScopeLabels[bit] || key}
-                              placeholder="Explain why your app needs this scope…"
-                              autosize
-                              minRows={2}
-                              maxRows={4}
-                              value={text}
-                              onChange={(e) =>
-                                handleJustificationChange(justificationKey, e.currentTarget.value)
-                              }
-                              maxLength={OFFSITE_SUBMIT_LIMITS.justificationMax}
-                              disabled={busy}
-                              description={`${text.length}/${OFFSITE_SUBMIT_LIMITS.justificationMax}`}
-                              data-testid={`apps-offsite-justification-${bit}`}
-                            />
-                          );
-                        })}
-                      </Stack>
-                    )}
-                  </Stack>
+                  <DerivedScopesDisclosure
+                    requestedScopes={values.requestedScopes}
+                    justifications={values.scopeJustifications}
+                    onJustificationChange={handleJustificationChange}
+                    disabled={busy}
+                  />
                 )}
 
                 <TextInput
