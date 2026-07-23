@@ -351,6 +351,7 @@ type CollectionForPermission = {
   write: CollectionWriteConfiguration;
   imageId?: number;
   type?: CollectionType;
+  mode?: CollectionMode | null;
 };
 
 export const getUserCollectionsWithPermissions = async <
@@ -360,12 +361,12 @@ export const getUserCollectionsWithPermissions = async <
 }: {
   input: GetAllUserCollectionsInputSchema & { userId: number };
 }) => {
-  const { userId, permission, contributingOnly = true } = input;
+  const { userId, permission, contributingOnly = true, includeActiveContests = false } = input;
   let { permissions = [] } = input;
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode"`
   );
 
   if (input.type) {
@@ -425,6 +426,30 @@ export const getUserCollectionsWithPermissions = async <
           )}]::"CollectionContributorPermission"[]
           AND cc."collectionId" IS NOT NULL
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+    )`);
+  }
+
+  // Active-window contest collections the user can submit to for review WITHOUT following first.
+  // Contest + Review-write + Public-read, with a real submission window that is open RIGHT NOW.
+  // A defined, in-future submissionEndDate is REQUIRED: without it we'd surface every windowless
+  // contest ever created (old contests / daily challenges store no submission dates). Start date,
+  // if present, must have passed. Kept independent of contributor joins so it also surfaces
+  // contests the user hasn't joined; UNION de-dupes any that already appear via the branches above.
+  if (includeActiveContests) {
+    queries.push(Prisma.sql`(
+        ${SELECT}
+        FROM "Collection" c
+        WHERE c."mode" = ${CollectionMode.Contest}::"CollectionMode"
+          AND c."write" = ${CollectionWriteConfiguration.Review}::"CollectionWriteConfiguration"
+          AND c."read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
+          AND c."metadata"->>'submissionEndDate' IS NOT NULL
+          AND (c."metadata"->>'submissionEndDate')::timestamptz >= now()
+          AND (
+            c."metadata"->>'submissionStartDate' IS NULL
+            OR (c."metadata"->>'submissionStartDate')::timestamptz <= now()
+          )
+          ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        LIMIT 100
     )`);
   }
 
@@ -642,8 +667,15 @@ export const saveItemInCollections = async ({
           });
         }
 
-        if (!permission.isContributor && !permission.isOwner) {
-          // Person adding content to stuff they don't follow.
+        // Non-owners who don't contribute may still submit to Public-write (write) or Review-write
+        // (writeReview) collections — the follow above is skipped when disableFollowOnSubmission is
+        // set, so gate on the standing write grant rather than contributor status.
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !permission.writeReview &&
+          !permission.write
+        ) {
           return null;
         }
 
@@ -2540,8 +2572,7 @@ export const bulkSaveItems = async ({
           logToAxiom({
             type: 'error',
             name: 'contest-entry-fee-rollback-failed',
-            message:
-              rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
             stack: rollbackError instanceof Error ? rollbackError.stack : undefined,
             originalError: originalError instanceof Error ? originalError.message : undefined,
             collectionId,
