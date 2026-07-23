@@ -1,7 +1,7 @@
 import { Anchor, Divider, Paper, Stack, Text } from '@mantine/core';
 import { IconCircleCheck, IconCircleX } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
-import { openCreatorScoreModal } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
+import { NextLink } from '~/components/NextLink/NextLink';
 import type { RouterOutput } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -16,10 +16,14 @@ function renderRequirement(req: Requirement): { title: string; content: ReactNod
         content: (
           <Text size="sm" c="dimmed">
             Your current{' '}
-            <Anchor inherit onClick={() => openCreatorScoreModal()}>
+            <Anchor component={NextLink} href="/user/account#creator-score" inherit>
               Creator Score
             </Anchor>{' '}
-            is {abbreviateNumber(req.current)}.
+            is{' '}
+            <Anchor component={NextLink} href="/user/account#creator-score" inherit>
+              {abbreviateNumber(req.current)}
+            </Anchor>
+            .
           </Text>
         ),
       };
