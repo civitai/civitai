@@ -3,12 +3,11 @@
   import { IconBolt } from '@tabler/icons-svelte';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
 
-  // Tabler ships legacy class components, so mirror nav.ts and type the icon slot as `typeof` an icon.
+  // Tabler icons are legacy class components; type the slot as `typeof` an icon (matches nav.ts).
   type TablerIcon = typeof IconBolt;
 
-  // The shared stat tile used across the dashboard + analytics: a coloured icon + label header, then whatever value
-  // / delta / hint the caller renders as children. The header style lives here so every stat card matches (change
-  // it once and it changes everywhere). Callers space their body with `mt-1` (value) / `mt-2` (hint).
+  // Shared stat tile: the icon + label header lives here so every card matches; callers render the value/hint as
+  // children (spaced with mt-1 / mt-2).
   let {
     label,
     icon: Icon,

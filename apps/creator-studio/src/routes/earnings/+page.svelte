@@ -6,6 +6,7 @@
   import { IconFilter } from '@tabler/icons-svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
   import StatCard from '$lib/components/StatCard.svelte';
+  import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { chartType } from '$lib/stores/chart-type';
@@ -18,7 +19,6 @@
     currencyMeta,
     currencySort,
     formatAmount,
-    formatBuzz,
     hasDisplayValue,
   } from '$lib/earnings';
   import type { PageData } from './$types';
@@ -301,7 +301,7 @@
   <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
     {#each sourceTotals as st (st.source)}
       <StatCard label={SOURCE_LABEL[st.source]}>
-        <p class="mt-1 text-xl font-semibold text-white">{formatBuzz(st.total)}</p>
+        <p class="mt-1 text-xl font-semibold text-white"><CurrencyDisplay amount={st.total} /></p>
         <div class="mt-1">
           <DeltaChip current={st.total} previous={cmpSourceBuzz(st.source)} label="vs {data.compare.label}" />
         </div>
@@ -371,7 +371,7 @@
               {@const total = buzzTotal(s)}
               {@const show = Math.floor(total) >= 1}
               <Table.Cell class="text-right align-top {show ? 'font-medium text-white' : 'text-dark-4'}">
-                <div>{show ? formatBuzz(total) : '—'}</div>
+                <div>{#if show}<CurrencyDisplay amount={total} />{:else}—{/if}</div>
                 {#if show}
                   <div class="mt-0.5"><DeltaChip current={total} previous={cmpBuzzTotal(s)} /></div>
                 {/if}
@@ -381,7 +381,7 @@
                 {@const v = cell(s, c)}
                 {@const show = hasDisplayValue(v, c)}
                 <Table.Cell class="text-right align-top {show ? 'font-medium text-white' : 'text-dark-4'}">
-                  <div>{show ? formatAmount(v, c) : '—'}</div>
+                  <div>{#if show}<CurrencyDisplay amount={v} currency={c} />{:else}—{/if}</div>
                   {#if show}
                     <div class="mt-0.5"><DeltaChip current={v} previous={cmpCell(s, c)} /></div>
                   {/if}
@@ -419,7 +419,7 @@
               {@const show = hasDisplayValue(v, c)}
               <Table.Cell class="align-top text-right">
                 <div class="tabular-nums {show ? 'font-medium text-white' : 'text-dark-4'}">
-                  {show ? formatAmount(v, c) : '—'}
+                  {#if show}<CurrencyDisplay amount={v} currency={c} />{:else}—{/if}
                 </div>
                 {#if prevMonth && show}
                   <div class="mt-0.5">
@@ -457,7 +457,7 @@
         {#each data.buzzRatio as r (r.month)}
           <Table.Row>
             <Table.Cell class="text-dark-1">{formatMonth(r.month)}</Table.Cell>
-            <Table.Cell class="text-right tabular-nums text-white">{formatBuzz(r.bankedBuzz)}</Table.Cell>
+            <Table.Cell class="text-right tabular-nums text-white"><CurrencyDisplay amount={r.bankedBuzz} /></Table.Cell>
             <Table.Cell class="text-right tabular-nums text-white">{usdFmt.format(r.usd)}</Table.Cell>
             <Table.Cell class="text-right font-medium tabular-nums text-green-4">
               {rateFmt.format(r.perThousand)}

@@ -17,7 +17,7 @@
   } from '@tabler/icons-svelte';
   import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
-  import BuzzAmount from '$lib/components/BuzzAmount.svelte';
+  import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import StatCard from '$lib/components/StatCard.svelte';
   import type { PageData } from './$types';
 
@@ -28,7 +28,6 @@
     hint: string;
     icon: typeof IconBolt;
     color: string;
-    // When present, the value is a buzz amount rendered via <BuzzAmount>; otherwise `value` is shown verbatim.
     buzz?: number;
   };
 
@@ -179,7 +178,7 @@
         {#if stat.value != null}
           <div class="mt-1 flex items-baseline gap-2">
             <p class="text-xl font-semibold text-white">
-              {#if stat.buzz != null}<BuzzAmount amount={stat.buzz} />{:else}{stat.value}{/if}
+              {#if stat.buzz != null}<CurrencyDisplay amount={stat.buzz} />{:else}{stat.value}{/if}
             </p>
             {#if stat.label === 'Buzz earned'}<DeltaChip current={buzzNow} previous={buzzPrev} />{/if}
           </div>

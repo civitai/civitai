@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
+  import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import {
     IconArrowUp,
     IconArrowDown,
@@ -11,7 +12,7 @@
   import { page } from '$app/state';
   import { setSortParam, setPageParam, pageWindow } from '$lib/table-nav';
   import { formatRange } from '$lib/date-range';
-  import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
+  import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import { analyticsPageSize } from '$lib/stores/analytics-page-size';
   import PageSizeSelect from '$lib/components/PageSizeSelect.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
@@ -179,7 +180,7 @@
               {@const show = hasDisplayValue(v, c)}
               <Table.Cell class="align-top text-right">
                 <div class="tabular-nums {show ? 'font-medium text-white' : 'text-dark-4'}">
-                  {show ? formatAmount(v, c) : '—'}
+                  {#if show}<CurrencyDisplay amount={v} currency={c} />{:else}—{/if}
                 </div>
                 {#if show}
                   <div class="mt-0.5"><DeltaChip current={v} previous={modelCellPrev(m, c)} /></div>

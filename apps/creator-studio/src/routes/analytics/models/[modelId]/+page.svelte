@@ -6,8 +6,9 @@
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { IconExternalLink, IconArrowLeft } from '@tabler/icons-svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
+  import CurrencyDisplay from '$lib/components/CurrencyDisplay.svelte';
   import { formatRange, eachDayIso, shiftIso, dayDiff } from '$lib/date-range';
-  import { formatAmount, currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
+  import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import { modelUrl } from '$lib/model-url';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import type { PageData } from './$types';
@@ -244,7 +245,7 @@
               {@const show = hasDisplayValue(cc.total, c)}
               <Table.Cell class="align-top text-right">
                 <div class="tabular-nums {show ? 'font-medium text-white' : 'text-dark-4'}">
-                  {show ? formatAmount(cc.total, c) : '—'}
+                  {#if show}<CurrencyDisplay amount={cc.total} currency={c} />{:else}—{/if}
                 </div>
                 {#if show}
                   <div class="mt-0.5"><DeltaChip current={cc.total} previous={cc.prev} /></div>
