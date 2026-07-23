@@ -23,6 +23,13 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       hashes: { some: { hash } },
       modelVersion: { model: { status: 'Published' }, status: 'Published' },
     },
+    // Duplicate hashes are a known condition (see src/pages/moderator/duplicate-hashes.tsx):
+    // a single hash can map to multiple Published files/versions. Without an explicit order
+    // `findFirst` returns a plan-dependent, arbitrary row, so repeated calls for the same hash
+    // can resolve to different versions. Order deterministically by the oldest/canonical
+    // version (earliest publishedAt, then lowest version id as a stable tiebreaker) so the
+    // result is stable. This makes resolution deterministic, not disambiguated.
+    orderBy: [{ modelVersion: { publishedAt: 'asc' } }, { modelVersion: { id: 'asc' } }],
     take: 1,
     select: {
       modelVersion: {
