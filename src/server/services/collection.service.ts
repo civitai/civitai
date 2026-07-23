@@ -449,6 +449,7 @@ export const getUserCollectionsWithPermissions = async <
             OR (c."metadata"->>'submissionEndDate')::timestamptz >= now()
           )
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        LIMIT 100
     )`);
   }
 
@@ -659,20 +660,22 @@ export const saveItemInCollections = async ({
           !metadata?.disableFollowOnSubmission
         ) {
           // Make sure to follow the collection
-          const contributor = await addContributorToCollection({
+          await addContributorToCollection({
             targetUserId: userId,
             userId: userId,
             collectionId,
           });
-          // The follow just granted this user the collection's follow permissions (ADD for
-          // Public-write, ADD_REVIEW for Review-write). Reflect that in the stale permission
-          // object so their entry is saved on this same request instead of silently dropped
-          // by the contributor gate below (the real write check still runs at writeReview/write).
-          if (contributor) permission.isContributor = true;
         }
 
-        if (!permission.isContributor && !permission.isOwner) {
-          // Person adding content to stuff they don't follow.
+        // Non-owners who don't contribute may still submit to Public-write (write) or Review-write
+        // (writeReview) collections — the follow above is skipped when disableFollowOnSubmission is
+        // set, so gate on the standing write grant rather than contributor status.
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !permission.writeReview &&
+          !permission.write
+        ) {
           return null;
         }
 
