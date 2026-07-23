@@ -948,6 +948,17 @@ export const upsertArticle = async ({
     // article is guaranteed non-null here since the `if (id)` block above fetches it
     if (!article) throw throwNotFoundError();
 
+    // A moderator-set NSFW override is the authoritative rating for the article
+    // (see updateArticleNsfwLevels), so editing an overridden article must not
+    // (re)trigger image scanning: a rescan would bounce the article into
+    // Pending/Processing — hiding it from the feed until a scan completes whose
+    // result the override supersedes anyway. Treat scanning as disabled whenever
+    // an override is (or is being) set. Clearing the override (setting it null)
+    // re-enables scanning and returns the article to auto-derivation.
+    const effectiveModeratorNsfwLevel =
+      data.moderatorNsfwLevel !== undefined ? data.moderatorNsfwLevel : article.moderatorNsfwLevel;
+    const scanContentEffective = scanContent && effectiveModeratorNsfwLevel == null;
+
     // userNsfwLevel is the user's preference and is preserved verbatim. The
     // effective article.nsfwLevel is derived by updateArticleNsfwLevels as
     // GREATEST(userNsfwLevel, cover, content images, moderation floor), so
@@ -971,7 +982,7 @@ export const upsertArticle = async ({
     // SECURITY: Validate image scan status before allowing publish
     // Prevent publishing articles with blocked or failed images
     // Note: Pending images are allowed - article will remain in Processing status until scan completes
-    if (!isModerator && data.status === ArticleStatus.Published && scanContent) {
+    if (!isModerator && data.status === ArticleStatus.Published && scanContentEffective) {
       const scanStatus = await getArticleScanStatus({ id });
       const hasProblematicImages = scanStatus.blocked > 0 || scanStatus.error > 0;
 
@@ -1157,7 +1168,7 @@ export const upsertArticle = async ({
             content: data.content,
             userId,
             coverId: coverId ?? article.coverId,
-            cleanupOnly: !scanContent,
+            cleanupOnly: !scanContentEffective,
           });
 
           // Delete truly orphaned images (DB + S3 + cache) post-transaction
@@ -1170,7 +1181,7 @@ export const upsertArticle = async ({
             });
           }
 
-          if (scanContent) {
+          if (scanContentEffective) {
             // Content changed and images need re-scanning — use Rescan to distinguish
             // user-edit-triggered rescans from initial pending scans.
             await dbWrite.article.update({
@@ -1967,6 +1978,7 @@ export async function recomputeArticleIngestionInTx(
       title: true,
       content: true,
       coverId: true,
+      moderatorNsfwLevel: true,
     },
   });
 
@@ -2021,8 +2033,21 @@ export async function recomputeArticleIngestionInTx(
   const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
 
   // --- Derive ingestion state ---
+  //
+  // A moderator-set NSFW override is authoritative: the article's rating comes
+  // from `moderatorNsfwLevel` (see updateArticleNsfwLevels), so its visibility
+  // must not hinge on image/text scan state. Force Scanned so an overridden
+  // article can't be trapped in Pending by unscanned/stuck images or bounced out
+  // of the feed on edit. If the override itself is Blocked-level, nsfwLevel
+  // carries that and the feed filters hide it — the ingestion path doesn't need
+  // to. This is the single choke point every scan/webhook/edit recompute flows
+  // through, so it also covers cover-image changes and stale Pending images.
+  const hasModeratorOverride = current.moderatorNsfwLevel != null;
+
   let next: ArticleIngestionStatus;
-  if (imageBlocked || textBlocked) {
+  if (hasModeratorOverride) {
+    next = ArticleIngestionStatus.Scanned;
+  } else if (imageBlocked || textBlocked) {
     next = ArticleIngestionStatus.Blocked;
   } else if (imageError || textError) {
     next = ArticleIngestionStatus.Error;
