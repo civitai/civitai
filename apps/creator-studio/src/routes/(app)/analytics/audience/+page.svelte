@@ -79,10 +79,12 @@
       </div>
     </StatCard>
     {#if data.allTime}
-      <StatCard label="All-time reactions" icon={IconHeart} color="#ff6b6b">
+      <!-- Both come from the image_metrics_user rollup — images only, so the labels say so. Comments on models,
+           posts and articles aren't counted (see the round-5 checklist). -->
+      <StatCard label="All-time image reactions" icon={IconHeart} color="#ff6b6b">
         <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.reactions)}</p>
       </StatCard>
-      <StatCard label="All-time comments" icon={IconMessage} color="#20c997">
+      <StatCard label="All-time image comments" icon={IconMessage} color="#20c997">
         <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.comments)}</p>
       </StatCard>
     {/if}
@@ -113,6 +115,6 @@
     </div>
   </div>
 
-  <!-- Comments have no fast period-scoped source (all-time only, see getAllTimeTotals), so there's no
-       comments-over-time chart yet — tracked in the round-5 checklist. -->
+  <!-- No comments-over-time chart: comment events carry no owner, so scoping them to a creator needs a
+       per-entity-type join. Deferred until ownerId is denormalized onto comments (round-5 checklist). -->
 {/if}

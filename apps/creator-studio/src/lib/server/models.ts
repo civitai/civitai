@@ -1,6 +1,14 @@
+import { sql } from '@civitai/db/kysely';
 import { dbRead } from '$lib/server/db';
 import type { ModelType } from '@civitai/db-schema';
 import type { EarlyAccessConfig } from '$lib/monetization/early-access';
+
+// The access filter means "sold in any form": a timed early-access window OR permanent. Permanent is
+// intentionally no-end-date, so filtering on earlyAccessEndsAt alone silently drops those versions.
+function paidAccessFilter(alias?: string) {
+  const p = alias ? sql.raw(`${alias}.`) : sql.raw('');
+  return sql<boolean>`(${p}"earlyAccessEndsAt" is not null or ${p}"earlyAccessConfig"->>'permanent' = 'true')`;
+}
 
 // The `earlyAccessConfig` column is `{}` (or JSON null) for versions that never configured early access.
 // Only treat it as a real config when it actually carries the timeframe an EA setup always writes.
@@ -88,7 +96,7 @@ export async function getCreatorVersionsForCsv(query: ModelsQuery): Promise<CsvV
   else if (status === 'draft') qb = qb.where('m.status', '=', 'Draft');
   else if (status !== 'all') qb = qb.where('m.status', '!=', 'Draft');
   if (baseModel) qb = qb.where('mv.baseModel', '=', baseModel);
-  if (access) qb = qb.where('mv.earlyAccessEndsAt', 'is not', null);
+  if (access) qb = qb.where(paidAccessFilter('mv'));
   if (fee === 'set') qb = qb.where('mv.licensingFee', 'is not', null);
   if (fee === 'off') qb = qb.where('mv.licensingFee', 'is', null);
   const rows = await qb
@@ -145,7 +153,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
           .select('mv.id')
           .whereRef('mv.modelId', '=', 'Model.id')
           .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
-          .$if(!!access, (b) => b.where('mv.earlyAccessEndsAt', 'is not', null))
+          .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
           .$if(fee === 'set', (b) => b.where('mv.licensingFee', 'is not', null))
           .$if(fee === 'off', (b) => b.where('mv.licensingFee', 'is', null))
       )
@@ -206,7 +214,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       models.map((m) => m.id)
     )
     .$if(!!baseModel, (b) => b.where('baseModel', '=', baseModel!))
-    .$if(!!access, (b) => b.where('earlyAccessEndsAt', 'is not', null))
+    .$if(!!access, (b) => b.where(paidAccessFilter()))
     .$if(fee === 'set', (b) => b.where('licensingFee', 'is not', null))
     .$if(fee === 'off', (b) => b.where('licensingFee', 'is', null))
     .orderBy('index', 'asc')
@@ -228,7 +236,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
         b.where('m.status', '!=', 'Draft')
       )
       .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
-      .$if(!!access, (b) => b.where('mv.earlyAccessEndsAt', 'is not', null))
+      .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
       .$if(fee === 'set', (b) => b.where('mv.licensingFee', 'is not', null))
       .$if(fee === 'off', (b) => b.where('mv.licensingFee', 'is', null))
       .select('mv.id')

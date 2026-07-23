@@ -73,6 +73,14 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
     "Early access" chip — and permanent versions may have shown **no badge at all**, since `hasEarlyAccess` is
     derived from `earlyAccessEndsAt !== null` and permanent is intentionally duration-0/no-end-date. The badge
     now keys off `earlyAccessConfig.permanent` directly, so it's correct either way.
+  - **Confirmed against the code + DB (2026-07-23):** the main app's own check is
+    `(!earlyAccessEndsAt && !earlyAccessPermanent)`, so permanent versions legitimately have a **NULL end date**.
+    Production currently has **0 permanent versions** (the feature is unused), so this was latent, not yet
+    visible.
+  - **Same bug in the "Has early / paid access" filter** — it keyed on `earlyAccessEndsAt is not null` in 4
+    places, silently excluding permanent versions. Replaced with a shared `paidAccessFilter()` predicate
+    (`earlyAccessEndsAt is not null OR earlyAccessConfig->>'permanent' = 'true'`). Verified the SQL runs; it's a
+    no-op today (0 permanent versions) and correct once the feature is used.
 - [x] **[todo]** **Access allowance indicator (how many already set)** — done. The two limits work
   *differently*, so the indicator states each honestly:
   - **Permanent** — a **count** cap by Creator-Program **tier** (`bronze 3 / silver 10 / gold unlimited`,
@@ -208,8 +216,12 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
   - **Proper fix:** denormalize an **`ownerId` onto comment events at ingest** (mirror `reactions.ownerId`).
     Then "comments received" = `comments WHERE ownerId = uid` across all types — correct _and_ fast — and it
     fixes the all-time number too. This is a tracking-pipeline change + backfill; batch it with the owner-keyed
-    rollup (A1), not this UI task. Until then, the surfaced all-time comments number is **image-only** (should
-    be labeled as such if kept). "Per-month graph" (longer monthly trend) also deferred. (`T:940–954`)
+    rollup (A1), not this UI task. **Relabeled in the meantime (2026-07-23):** the audience cards now read
+    **"All-time image reactions"** / **"All-time image comments"** — both come from the same image-only
+    `image_metrics_user` rollup, so neither was honest as a bare total. (The analytics overview already scoped
+    its line with "All-time on your images".) Note the asymmetry this exposes: the reactions **over-time chart**
+    is all-content (via `reactions.ownerId`) while the all-time **card** is image-only.
+    "Per-month graph" (longer monthly trend) also deferred. (`T:940–954`)
 - [x] **[polish]** **Card color matches dashboard** — the audience cards' color differs from the
   dashboard stat cards; align (covered by the global card-color item). (`T:956–959`)
 
