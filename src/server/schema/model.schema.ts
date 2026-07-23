@@ -253,6 +253,9 @@ export const toggleModelLockSchema = z.object({
   locked: z.boolean(),
 });
 
+export type SetModelMinorInput = z.infer<typeof setModelMinorSchema>;
+export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean() });
+
 export type ModelMeta = Partial<{
   unpublishedReason: UnpublishReason;
   customMessage: string;

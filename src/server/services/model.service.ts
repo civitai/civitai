@@ -65,6 +65,7 @@ import type {
   PublishModelSchema,
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
+  SetModelMinorInput,
   SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
@@ -108,6 +109,7 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
@@ -2055,6 +2057,76 @@ export async function applyModelFlagSideEffects({
       }
     }
   }
+}
+
+// Kept in sync with `lockableProperties` in ModelUpsertForm.tsx — these are the
+// fields the "Set as Minor" quick action locks against creator edits.
+export const MINOR_LOCKED_PROPERTIES = ['minor', 'nsfw', 'sfwOnly'];
+
+export async function setModelMinor({
+  id,
+  minor,
+  userId,
+}: SetModelMinorInput & { userId: number }) {
+  const before = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      nsfw: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  const prevLockedProperties = before.lockedProperties ?? [];
+  const lockedProperties = minor
+    ? uniq([...prevLockedProperties, ...MINOR_LOCKED_PROPERTIES])
+    : prevLockedProperties.filter((prop) => !MINOR_LOCKED_PROPERTIES.includes(prop));
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+
+  const result = await dbWrite.model.update({
+    where: { id },
+    // Unset deliberately leaves sfwOnly/nsfw/gallerySettings untouched — the model may
+    // have been legitimately SFW-only before it was flagged, and guessing wrong would
+    // silently re-open NSFW generation nobody asked to re-open.
+    data: minor
+      ? {
+          minor: true,
+          nsfw: false,
+          sfwOnly: true,
+          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+          lockedProperties,
+        }
+      : {
+          minor: false,
+          lockedProperties,
+        },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+    },
+  });
+
+  await preventReplicationLag('model', id);
+  await applyModelFlagSideEffects({ before, after: result });
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: id,
+    activity: minor ? 'setMinor' : 'unsetMinor',
+  });
+
+  return result;
 }
 
 export const upsertModel = async (
