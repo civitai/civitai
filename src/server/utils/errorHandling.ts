@@ -61,6 +61,17 @@ export function isPrismaUniqueViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
+/**
+ * True when an error is a Prisma foreign-key violation (P2003).
+ *
+ * Usually means the referenced row was deleted between the client reading it and
+ * the write landing — i.e. "the thing you're acting on no longer exists" rather
+ * than a server fault. Callers should translate it to a 404, not a 500.
+ */
+export function isPrismaForeignKeyViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003';
+}
+
 const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
   P1008: 'TIMEOUT',
   P2000: 'BAD_REQUEST',
