@@ -711,7 +711,9 @@ export function filterPreferences<
       return { items: comics, hidden };
     case 'challenges':
       const challenges = value.filter((challenge) => {
-        const isOwner = challenge.createdBy.id === currentUser?.id;
+        // `createdBy.id` displays the judge (e.g. CivBot) when one is assigned, not the real
+        // creator — use `createdById` for the ownership exemption.
+        const isOwner = challenge.createdById === currentUser?.id;
         if (isOwner || isModerator) return true;
 
         // Content allowed by the challenge must intersect the user's browsing level
@@ -912,7 +914,7 @@ type BaseChallenge = {
   nsfwLevel: number;
   allowedNsfwLevel: number;
   coverImage: { id: number; nsfwLevel: number } | null;
-  createdBy: { id: number };
+  createdById: number;
 };
 
 type BaseModel3D = {

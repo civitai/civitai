@@ -95,6 +95,12 @@ export default defineConfig({
         // the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
         optimizeDeps: {
           include: ['next/router', 'vitest-browser-react', 'react/jsx-dev-runtime', 'react/jsx-runtime'],
+          // Vite's cold-scan crawls the whole `src` tree for bare imports, including server-only
+          // files that `await import('sharp')` (e.g. app-listing-assets.service.ts). esbuild can't
+          // pre-bundle sharp's native binding (a template-literal `require` of a `.node` file) and
+          // fails the whole component project with "No loader is configured for '.node' files" —
+          // unrelated to whatever test you actually ran. Exclude it; no component test needs it.
+          exclude: ['sharp'],
         },
         test: {
           name: 'component',

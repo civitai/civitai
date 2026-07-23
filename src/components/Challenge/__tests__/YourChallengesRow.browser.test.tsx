@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/utils/trpc', () => ({
-  trpc: { challenge: { getMyParticipated: { useQuery: mocks.useQuery } } },
+  trpc: { challenge: { getMyChallenges: { useQuery: mocks.useQuery } } },
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -83,5 +83,13 @@ describe('YourChallengesRow', () => {
     await expect
       .element(page.getByRole('link', { name: /see all/i }))
       .toHaveAttribute('href', '/challenges?engagement=participated');
+  });
+
+  test('the subtitle covers both entered and created challenges', async () => {
+    mocks.useQuery.mockReturnValue(queryResult([{ id: 7, title: 'Neon Cats' }]));
+    await renderWithProviders(<YourChallengesRow />);
+    await expect
+      .element(page.getByText("Challenges you've entered or created"))
+      .toBeInTheDocument();
   });
 });
