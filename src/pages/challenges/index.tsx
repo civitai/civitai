@@ -200,6 +200,7 @@ function ChallengesPage() {
                   <Title order={3}>Community Challenges</Title>
                 </Group>
                 <Group gap="sm" wrap="wrap" ml="auto">
+                  {createChallengeButton}
                   <ChallengeFeedFilters />
                 </Group>
               </Group>
