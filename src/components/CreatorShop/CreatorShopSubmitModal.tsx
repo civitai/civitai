@@ -22,6 +22,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
 import { ArtworkField } from '~/components/CreatorShop/Submit/ArtworkField';
+import { CosmeticStudioCallout } from '~/components/CreatorShop/Submit/CosmeticStudioCallout';
 import { FeeSection } from '~/components/CreatorShop/Submit/FeeSection';
 import { CosmeticStandardsModal } from '~/components/CreatorShop/CosmeticStandardsModal';
 import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
@@ -126,8 +127,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             <Alert color="yellow" icon={<IconAlertTriangle size={18} />}>
               <Text size="xs">
                 All cosmetics must be <b>safe-for-work</b> and must not use{' '}
-                <b>copyrighted or trademarked material</b> you don&apos;t own. Submissions that
-                violate this will be rejected. Review the{' '}
+                <b>copyrighted or trademarked material</b>
+                {" you don't own."} Submissions that violate this will be rejected. Review the{' '}
                 <Anchor
                   component="button"
                   type="button"
@@ -150,6 +151,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               disabled={isEdit}
               description={isEdit ? 'Type cannot be changed after submission' : undefined}
             />
+
+            {!artLocked && !localUrl && !imageId && <CosmeticStudioCallout />}
 
             <ArtworkField
               type={type}
