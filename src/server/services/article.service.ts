@@ -1967,6 +1967,7 @@ export async function recomputeArticleIngestionInTx(
       title: true,
       content: true,
       coverId: true,
+      moderatorNsfwLevel: true,
     },
   });
 
@@ -2021,12 +2022,26 @@ export async function recomputeArticleIngestionInTx(
   const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
 
   // --- Derive ingestion state ---
+  //
+  // A moderator-set NSFW override supplies the article's rating outright
+  // (updateArticleNsfwLevels COALESCEs it over the derived level), so an
+  // overridden article should not sit hidden in Pending waiting on a scan whose
+  // *rating* the override already supersedes — that's what bounced official
+  // articles out of the feed on every edit.
+  //
+  // It substitutes for Pending ONLY. Blocked and Error still win: an override is
+  // a rating decision, not a moderation bypass. A policy-blocked image can't
+  // surface through nsfwLevel either (the derivation joins `ingestion = 'Scanned'`
+  // images only, and the override COALESCEs over it), so `ingestion = Blocked` is
+  // the sole guard keeping it out of the feed and the search index.
+  const hasModeratorOverride = current.moderatorNsfwLevel != null;
+
   let next: ArticleIngestionStatus;
   if (imageBlocked || textBlocked) {
     next = ArticleIngestionStatus.Blocked;
   } else if (imageError || textError) {
     next = ArticleIngestionStatus.Error;
-  } else if (imageDone && textDone) {
+  } else if ((imageDone && textDone) || hasModeratorOverride) {
     next = ArticleIngestionStatus.Scanned;
   } else {
     next = ArticleIngestionStatus.Pending;
