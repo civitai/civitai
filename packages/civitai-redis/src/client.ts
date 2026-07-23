@@ -2001,6 +2001,7 @@ export const REDIS_KEYS = {
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
+    ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
