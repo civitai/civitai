@@ -314,3 +314,49 @@ describe("seed ('posts') ↔ tail ('images') filter parity — no reappear-via-t
     expect(runImages([tailOnly]).items.map((i) => i.id)).toEqual([12]);
   });
 });
+
+// ============================================================================
+// `case 'challenges'` branch — `isOwner` must key off `createdById` (the real
+// creator), not `createdBy.id` (the judge assigned to non-`User`-source
+// challenges, e.g. CivBot). A challenge failing every other gate must still
+// survive when the viewer is its real creator.
+// ============================================================================
+
+const makeChallenge = (o: { createdById: number; createdBy?: { id: number } }) => ({
+  id: nextId++,
+  nsfwLevel: 0,
+  allowedNsfwLevel: 0, // 0 never intersects a nonzero browsingLevel — fails that gate
+  coverImage: null, // also fails the cover-image gate
+  createdById: o.createdById,
+  createdBy: o.createdBy,
+});
+
+const runChallenges = (data: ReturnType<typeof makeChallenge>[], currentUserId: number) =>
+  filterPreferences({
+    type: 'challenges',
+    data,
+    hiddenPreferences: emptyPrefs(),
+    browsingLevel: BROWSING_LEVEL,
+    currentUser: { id: currentUserId } as never,
+    canViewNsfw: true,
+  });
+
+describe("filterPreferences — 'challenges' isOwner keys off createdById, not the judge's createdBy.id", () => {
+  it('keeps a challenge the viewer created, even though it fails the browsing-level/cover-image gates', () => {
+    // createdById is the real creator (the viewer); createdBy.id simulates a judge (e.g.
+    // CivBot) assigned to a non-`User`-source challenge — a different id entirely.
+    const own = makeChallenge({ createdById: 1, createdBy: { id: 999 } });
+
+    const { items } = runChallenges([own], 1);
+
+    expect(items.map((c) => c.id)).toEqual([own.id]);
+  });
+
+  it('drops a challenge that fails the gates when the viewer did not create it', () => {
+    const other = makeChallenge({ createdById: 2, createdBy: { id: 2 } });
+
+    const { items } = runChallenges([other], 1);
+
+    expect(items).toEqual([]);
+  });
+});

@@ -5,7 +5,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 // The band is personal: it must be completely absent (no header, no skeleton) for
-// logged-out users, while the query is in flight, and when the user has no entries —
+// logged-out users, while the query is in flight, and when the user has no challenges —
 // otherwise a titled "Your Challenges" band flashes at every first-time visitor.
 
 const mocks = vi.hoisted(() => ({
@@ -63,13 +63,13 @@ describe('YourChallengesRow', () => {
     await expect.element(page.getByText('Your Challenges')).not.toBeInTheDocument();
   });
 
-  test('renders nothing when the user has no entries', async () => {
+  test('renders nothing when the user has no challenges', async () => {
     mocks.useQuery.mockReturnValue(queryResult([]));
     await renderWithProviders(<YourChallengesRow />);
     await expect.element(page.getByText('Your Challenges')).not.toBeInTheDocument();
   });
 
-  test('renders the header, See all link, and a card per entry', async () => {
+  test('renders the header, See all link, and a card per challenge', async () => {
     mocks.useQuery.mockReturnValue(
       queryResult([
         { id: 7, title: 'Neon Cats' },

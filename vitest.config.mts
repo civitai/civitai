@@ -95,11 +95,16 @@ export default defineConfig({
         // the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
         optimizeDeps: {
           include: ['next/router', 'vitest-browser-react', 'react/jsx-dev-runtime', 'react/jsx-runtime'],
-          // Vite's cold-scan crawls the whole `src` tree for bare imports, including server-only
-          // files that `await import('sharp')` (e.g. app-listing-assets.service.ts). esbuild can't
-          // pre-bundle sharp's native binding (a template-literal `require` of a `.node` file) and
-          // fails the whole component project with "No loader is configured for '.node' files" —
-          // unrelated to whatever test you actually ran. Exclude it; no component test needs it.
+          // `@vitest/browser` seeds optimizeDeps.entries from EVERY `*.browser.test.tsx` file
+          // (globTestFiles), not just the one you ran. The review app-listing browser tests
+          // (src/tests/pages/apps/review/review-{detail-page,queue-nav}.browser.test.tsx, from
+          // #3298 on main) `await import('~/pages/apps/review/[publishRequestId]')`, which pulls
+          // in `createServerSideProps` -> `appRouter` -> app-listing-assets.service.ts's
+          // `await import('sharp')`. Those tests `vi.mock` `server-side-helpers` so `sharp` is
+          // never evaluated at runtime — but esbuild's static scan follows the import anyway and
+          // can't pre-bundle sharp's native binding (a template-literal `require` of a `.node`
+          // file), failing the whole component project with "No loader is configured for '.node'
+          // files" regardless of which test you targeted. Exclude it; no component test needs it.
           exclude: ['sharp'],
         },
         test: {
