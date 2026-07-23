@@ -210,6 +210,29 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+// The hero, prize and judge panels above the entries section keep resolving after the challenge
+// query does, so a single scroll lands short of the section. Re-pin on a short interval, and stop
+// the moment the reader takes over. Returns an abort fn so the caller can cancel on unmount; the
+// AbortController's signal also tears down all three listeners in one shot on any exit path.
+function scrollToEntries() {
+  const deadline = Date.now() + 1500;
+  const controller = new AbortController();
+  const { signal } = controller;
+  const events = ['wheel', 'touchmove', 'keydown'] as const;
+  events.forEach((e) =>
+    window.addEventListener(e, () => controller.abort(), { passive: true, signal })
+  );
+
+  const pin = () => {
+    if (signal.aborted) return;
+    document.getElementById('entries')?.scrollIntoView();
+    if (Date.now() < deadline) setTimeout(pin, 250);
+    else controller.abort();
+  };
+  requestAnimationFrame(pin);
+  return () => controller.abort();
+}
+
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
   const currentUser = useCurrentUser();
@@ -218,6 +241,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const queryUtils = trpc.useUtils();
   const { deleteChallenge: deleteOwnChallenge, deleting: deletingOwn } = useDeleteUserChallenge();
   const deletingOwnRef = useRef(false);
+  const deepLinkHandledFor = useRef<number>();
   const isOwner = useIsChallengeOwner(challenge);
 
   const handleMutationError = (error: { message: string }) => {
@@ -354,6 +378,39 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       },
     });
   };
+
+  // Deep links from the "Your Challenges" cards: `#entries` scrolls to the gallery, `?submit=1`
+  // opens the submit modal. Both wait on `challenge` — the entries section mounts with the query,
+  // long after the browser would have tried its own hash scroll (and it scrolls an inner
+  // `.scroll-area` container, not the window). `submit` is stripped before the modal opens so a
+  // refresh or back-nav doesn't re-trigger it.
+  useEffect(() => {
+    // Scoped to the loaded challenge id, not a one-shot bool: Next reuses this component across
+    // detail→detail navigations, so a boolean guard would swallow a deep link on the second one.
+    if (!challenge || deepLinkHandledFor.current === challenge.id) return;
+    deepLinkHandledFor.current = challenge.id;
+
+    const wantsSubmit = !!router.query.submit;
+    if (wantsSubmit) {
+      const { submit, ...query } = router.query;
+      router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    }
+
+    const abortScroll =
+      router.asPath.split('#')[1] === 'entries' ? scrollToEntries() : undefined;
+
+    const canSubmit =
+      challenge.status === ChallengeStatus.Active &&
+      !!challenge.collectionId &&
+      !currentUser?.muted;
+    if (wantsSubmit && canSubmit && challenge.collectionId)
+      dialogStore.trigger({
+        component: ChallengeSubmitModal,
+        props: { challengeId: challenge.id, collectionId: challenge.collectionId },
+      });
+
+    return abortScroll;
+  }, [challenge, router, currentUser?.muted]);
 
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
@@ -1635,8 +1692,11 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   // the domain rule, so the toggle would be a no-op for them.
   const showPG13Toggle = domainColor === 'green' && !!currentUser;
 
+  const router = useRouter();
+
   const [judgeReviewedOnly, setJudgeReviewedOnly] = useState(false);
-  const [myEntriesOnly, setMyEntriesOnly] = useState(false);
+  // Seeded from `?mine=1` so the Your Challenges "View entry" CTA lands on the user's own entries.
+  const [myEntriesOnly, setMyEntriesOnly] = useState(() => !!router.query.mine);
   const [pendingReviewOnly, setPendingReviewOnly] = useState(false);
   const [includePG13, setIncludePG13] = useState(false);
   const [opened, setOpened] = useState(false);
@@ -1781,6 +1841,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   return (
     <Container
       fluid
+      id="entries"
       my="md"
       style={{
         background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],

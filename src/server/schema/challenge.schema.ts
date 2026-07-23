@@ -106,7 +106,6 @@ export const getMyChallengesSchema = z.object({
 export type GetMyChallengesInput = z.infer<typeof getMyChallengesSchema>;
 
 export type MyChallengeItem = ChallengeListItem & {
-  myEntryImage: ChallengeListItem['coverImage'];
   myPlace: number | null;
   myResult: MyChallengeResult;
   isLive: boolean;
@@ -603,6 +602,7 @@ export const getCompletedChallengesWithWinnersSchema = z.object({
   eventId: z.number().optional(),
   browsingLevel: z.number().optional(),
   query: z.string().optional(),
+  source: z.enum(ChallengeSource).array().optional(),
 });
 
 // --- Winner Cooldown ---

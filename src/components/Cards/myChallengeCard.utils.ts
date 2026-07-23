@@ -1,7 +1,21 @@
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import type { MyChallengeResult } from '~/server/schema/challenge.schema';
+import { slugit } from '~/utils/string-helpers';
 
 export type MyChallengeCtaKind = 'results' | 'entry' | 'add' | 'manage';
+
+// The detail page reads `#entries` to scroll, `?mine=1` to seed the My Entries filter, and
+// `?submit=1` to open the submit modal on arrival.
+export function getMyChallengeCtaHref(
+  kind: MyChallengeCtaKind,
+  { id, title }: { id: number; title: string }
+) {
+  if (kind === 'manage') return `/challenges/${id}/edit`;
+  const href = `/challenges/${id}/${slugit(title)}`;
+  if (kind === 'entry') return `${href}?mine=1#entries`;
+  if (kind === 'add') return `${href}?submit=1#entries`;
+  return `${href}#entries`;
+}
 
 export function getMyChallengeCta(
   result: MyChallengeResult,

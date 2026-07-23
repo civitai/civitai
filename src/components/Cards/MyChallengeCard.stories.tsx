@@ -42,7 +42,6 @@ const baseChallenge: MyChallengeItem = {
     cosmetics: null,
     deletedAt: null,
   },
-  myEntryImage: baseImage,
   myPlace: null,
   myResult: 'entered',
   isLive: false,
@@ -103,7 +102,6 @@ export const HostingScheduled = () =>
     myPlace: null,
     myResult: 'hosting',
     isLive: false,
-    myEntryImage: null,
     startsAt: daysFromNow(2),
     endsAt: daysFromNow(9),
   });
@@ -116,7 +114,6 @@ export const HostingLive = () =>
     myPlace: null,
     myResult: 'hosting',
     isLive: true,
-    myEntryImage: null,
     startsAt: daysFromNow(-2),
     endsAt: daysFromNow(3),
   });

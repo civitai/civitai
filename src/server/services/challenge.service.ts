@@ -98,6 +98,7 @@ import {
   buildWinnerPayoutTransactions,
   chargeInitialPrize,
   refundUserChallengeFunds,
+  reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
 import {
   deriveDomainCurrency,
@@ -375,7 +376,6 @@ async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<Chall
 // Raw row shape for getMyChallenges: the shared card projection plus the viewer's own
 // entry/placement fields from the `my` CTE, and whether the viewer created it.
 type MyChallengeRow = ChallengeCardRow & {
-  myImageId: number | null;
   myPlace: number | null;
   myActivityAt: Date;
   isCreator: boolean;
@@ -418,8 +418,7 @@ export async function getMyChallenges({
   const myEntries = Prisma.sql`
     SELECT
       ci."collectionId" AS "collectionId",
-      MAX(ci."createdAt") AS "myEnteredAt",
-      (ARRAY_AGG(ci."imageId" ORDER BY ci."createdAt" DESC))[1] AS "myImageId"
+      MAX(ci."createdAt") AS "myEnteredAt"
     FROM "CollectionItem" ci
     WHERE ci."addedById" = ${userId}
       AND ci.status IN (${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus", ${CollectionItemStatus.REVIEW}::"CollectionItemStatus")
@@ -450,7 +449,7 @@ export async function getMyChallenges({
            c."collectionId", c."createdById",
            u.username AS "creatorUsername", u.image AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
            cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ju.image AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
-           my."myImageId", cw."place" AS "myPlace",
+           cw."place" AS "myPlace",
            (c."createdById" = ${userId} AND c.source = ${ChallengeSource.User}::"ChallengeSource") AS "isCreator",
            COALESCE(my."myEnteredAt", c."createdAt") AS "myActivityAt"
     FROM "Challenge" c
@@ -475,28 +474,14 @@ export async function getMyChallenges({
   if (!rows.length) return [];
 
   const baseCards = await mapChallengeRowsToCards(rows);
-  const entryImageIds = rows.map((r) => r.myImageId).filter((id): id is number => !!id);
-  const entryImages = entryImageIds.length
-    ? await dbRead.image.findMany({ where: { id: { in: entryImageIds } }, select: imageSelect })
-    : [];
 
   return enrichMyChallengeCards(
     baseCards,
     rows.map((r) => ({
       id: r.id,
-      myImageId: r.myImageId,
       myPlace: r.myPlace,
       myActivityAt: r.myActivityAt,
       isCreator: r.isCreator,
-    })),
-    entryImages.map((img) => ({
-      id: img.id,
-      url: img.url,
-      nsfwLevel: img.nsfwLevel,
-      hash: img.hash,
-      width: img.width,
-      height: img.height,
-      type: img.type,
     }))
   );
 }
@@ -2472,6 +2457,8 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           prizes: finalPrizes,
         });
       }
+
+      await reportPoolFundingShortfall({ challengeId, collectionId: challenge.collectionId });
     }
 
     // Check if winners already exist from a previous (failed) run.
@@ -3614,7 +3601,7 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 export async function getCompletedChallengesWithWinners(
   input: GetCompletedChallengesWithWinnersInput & { isGreen?: boolean; currentUserId?: number }
 ) {
-  const { cursor, limit, eventId, browsingLevel, query, isGreen, currentUserId } = input;
+  const { cursor, limit, eventId, browsingLevel, query, source, isGreen, currentUserId } = input;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
@@ -3625,6 +3612,14 @@ export async function getCompletedChallengesWithWinners(
 
   if (eventId) {
     conditions.push(Prisma.sql`c."eventId" = ${eventId}`);
+  }
+
+  if (source?.length) {
+    conditions.push(
+      Prisma.sql`c.source IN (${Prisma.join(
+        source.map((s) => Prisma.sql`${s}::"ChallengeSource"`)
+      )})`
+    );
   }
 
   // Domain-currency gate — parity with the feed: a user challenge only appears on its own domain

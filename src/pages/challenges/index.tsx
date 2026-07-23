@@ -195,7 +195,7 @@ function ChallengesPage() {
       <div className={styles.sections}>
         <FeaturedChallengeEvents />
 
-        <YourChallengesRow />
+        {features.userChallenges && <YourChallengesRow />}
 
         <DailyChallengesSection />
 

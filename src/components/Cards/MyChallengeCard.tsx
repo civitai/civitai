@@ -15,7 +15,11 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { slugit } from '~/utils/string-helpers';
-import { getMyChallengeBadge, getMyChallengeCta } from './myChallengeCard.utils';
+import {
+  getMyChallengeBadge,
+  getMyChallengeCta,
+  getMyChallengeCtaHref,
+} from './myChallengeCard.utils';
 import type { MyChallengeItem } from '~/server/schema/challenge.schema';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 
@@ -38,30 +42,14 @@ const badgeStyles = {
 } as const;
 
 export const MyChallengeCard = memo(function MyChallengeCard({ data }: { data: MyChallengeItem }) {
-  const {
-    id,
-    title,
-    theme,
-    coverImage,
-    myEntryImage,
-    myResult,
-    myPlace,
-    isLive,
-    status,
-    startsAt,
-    endsAt,
-  } = data;
+  const { id, title, theme, coverImage, myResult, myPlace, isLive, status, startsAt, endsAt } =
+    data;
   const badge = getMyChallengeBadge(myResult, myPlace);
   const cta = getMyChallengeCta(myResult, isLive, status);
   const BadgeIcon = badgeIcons[badge.icon];
   const badgeStyle = badgeStyles[badge.color];
   const challengeHref = `/challenges/${id}/${slugit(title)}`;
-  const ctaHref =
-    cta.kind === 'entry' && myEntryImage
-      ? `/images/${myEntryImage.id}`
-      : cta.kind === 'manage'
-      ? `/challenges/${id}/edit`
-      : challengeHref;
+  const ctaHref = getMyChallengeCtaHref(cta.kind, { id, title });
 
   const image = coverImage
     ? {

@@ -1,5 +1,9 @@
 import { describe, it, test, expect } from 'vitest';
-import { getMyChallengeCta, getMyChallengeBadge } from './myChallengeCard.utils';
+import {
+  getMyChallengeCta,
+  getMyChallengeBadge,
+  getMyChallengeCtaHref,
+} from './myChallengeCard.utils';
 import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 describe('getMyChallengeCta', () => {
@@ -27,6 +31,25 @@ describe('getMyChallengeCta', () => {
       label: 'View results',
       filled: 'white',
     }));
+});
+
+describe('getMyChallengeCtaHref', () => {
+  const challenge = { id: 42, title: 'Crystal Caverns' };
+
+  it('manage skips the deep link and goes to the edit page', () =>
+    expect(getMyChallengeCtaHref('manage', challenge)).toBe('/challenges/42/edit'));
+  it('results anchors to the entries gallery', () =>
+    expect(getMyChallengeCtaHref('results', challenge)).toBe(
+      '/challenges/42/crystal-caverns#entries'
+    ));
+  it('entry anchors to the entries gallery filtered to the viewer', () =>
+    expect(getMyChallengeCtaHref('entry', challenge)).toBe(
+      '/challenges/42/crystal-caverns?mine=1#entries'
+    ));
+  it('add opens the submit modal on arrival', () =>
+    expect(getMyChallengeCtaHref('add', challenge)).toBe(
+      '/challenges/42/crystal-caverns?submit=1#entries'
+    ));
 });
 
 describe('getMyChallengeBadge', () => {

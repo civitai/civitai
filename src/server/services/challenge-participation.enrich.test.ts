@@ -25,63 +25,37 @@ const baseCard = {
   modelVersionIds: [],
   createdBy: { id: 1, username: 'CivBot', image: null, profilePicture: null, cosmetics: null, deletedAt: null },
 } as any;
-const img = { id: 99, url: 'u', nsfwLevel: 1, hash: 'h', width: 512, height: 512, type: 'image' as const };
 
 describe('enrichMyChallengeCards', () => {
-  it('attaches entry image, place, derived result, activity-at', () => {
+  it('attaches place, derived result, activity-at', () => {
     const [out] = enrichMyChallengeCards(
       [baseCard],
-      [{ id: 10, myImageId: 99, myPlace: 1, myActivityAt: new Date('2026-01-03'), isCreator: false }],
-      [img]
+      [{ id: 10, myPlace: 1, myActivityAt: new Date('2026-01-03'), isCreator: false }]
     );
-    expect(out.myEntryImage?.id).toBe(99);
     expect(out.myPlace).toBe(1);
     expect(out.myResult).toBe('won');
     expect(out.isLive).toBe(false);
     expect(out.myActivityAt).toEqual(new Date('2026-01-03'));
   });
-  it('leaves myEntryImage null when the entry image is missing', () => {
-    const cover = { ...img, id: 7 };
-    const [out] = enrichMyChallengeCards(
-      [{ ...baseCard, coverImage: cover }],
-      [{ id: 10, myImageId: null, myPlace: null, myActivityAt: new Date('2026-01-03'), isCreator: false }],
-      []
-    );
-    expect(out.myEntryImage).toBeNull();
-    expect(out.coverImage).toEqual(cover);
-    expect(out.myResult).toBe('entered');
-  });
 });
 
 describe('enrichMyChallengeCards — the card renders the challenge cover', () => {
   const cover = { id: 1, url: 'cover', nsfwLevel: 1, hash: null, width: 10, height: 10, type: 'image' as const };
-  const entry = { id: 2, url: 'entry', nsfwLevel: 1, hash: null, width: 10, height: 10, type: 'image' as const };
 
-  it('coverImage stays the challenge cover even when an entry image exists', () => {
+  it('coverImage stays the challenge cover', () => {
     const [out] = enrichMyChallengeCards(
       [{ ...baseCard, coverImage: cover }],
-      [{ id: baseCard.id, myImageId: 2, myPlace: null, myActivityAt: new Date(), isCreator: false }],
-      [entry]
+      [{ id: baseCard.id, myPlace: null, myActivityAt: new Date(), isCreator: false }]
     );
     expect(out.coverImage).toEqual(cover);
+    expect(out.myResult).toBe('entered');
   });
 
-  it('myEntryImage is the entry image, for the View entry link', () => {
+  it('a creator gets the hosting result', () => {
     const [out] = enrichMyChallengeCards(
       [{ ...baseCard, coverImage: cover }],
-      [{ id: baseCard.id, myImageId: 2, myPlace: null, myActivityAt: new Date(), isCreator: false }],
-      [entry]
+      [{ id: baseCard.id, myPlace: null, myActivityAt: new Date(), isCreator: true }]
     );
-    expect(out.myEntryImage).toEqual(entry);
-  });
-
-  it('a hosted challenge has no entry image', () => {
-    const [out] = enrichMyChallengeCards(
-      [{ ...baseCard, coverImage: cover }],
-      [{ id: baseCard.id, myImageId: null, myPlace: null, myActivityAt: new Date(), isCreator: true }],
-      []
-    );
-    expect(out.myEntryImage).toBeNull();
     expect(out.coverImage).toEqual(cover);
     expect(out.myResult).toBe('hosting');
   });
