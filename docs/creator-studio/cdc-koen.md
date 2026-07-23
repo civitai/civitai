@@ -1,5 +1,15 @@
 # CDC work for Koen — Creator Studio per-model earnings
 
+> ## ⛔ SUPERSEDED — do not build this
+>
+> The `modelVersionId → ownerUserId` dictionary + ClickPipe mirror described here was **retired** in favour of
+> **stamping the owner onto every `ResourceCompensation` row at write time**, which makes per-model reads a plain
+> `GROUP BY ownerId` — no dictionary, no CDC. That work is **done and deployed** (mini endpoint PR #3139,
+> orchestrator + backfill complete): see
+> [licensing-fee-owner-stamping.md](licensing-fee-owner-stamping.md).
+>
+> The unchecked boxes below are **obsolete**, not open work. Kept for the ClickHouse audit context only.
+
 Standalone ask, extracted from [owner-rollup-handoff.md](owner-rollup-handoff.md) Part 2 (the full spec + the
 ClickHouse audit basis live there). Reflects Justin's D1/D2/attribution answers (2026-07-14), so this is the
 **narrowed** scope, not the original.

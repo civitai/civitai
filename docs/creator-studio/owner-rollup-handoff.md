@@ -1,11 +1,15 @@
 # Creator Studio — owner-keyed earnings rollup (build handoff)
 
-> **Status:** **substantially revised 2026-07-14** after a second live ClickHouse audit + Justin's answers to
-> D1/D2. The **by-source earnings totals** are simpler than originally specced: `/earnings` reads
-> `default.buzzTransactions`, which is **already owner-keyed**, so those need **no dictionary and no CDC**.
-> **The dictionary is still required** for anything *per-model* (top-earning models, the `/analytics` table) —
-> Justin confirmed those ship, so **Part 2 below stays on the critical path**. Answers backend question **A1**
-> in [questions-koen-backend.md](questions-koen-backend.md).
+> **Status: Part 1 shipped · Part 2 ⛔ SUPERSEDED.** `/earnings` + dashboard read `default.buzzTransactions`,
+> which is already owner-keyed — no dictionary, no CDC (Part 1, still accurate). **Part 2's dictionary + CDC
+> plan is retired:** the owner is now stamped onto every `ResourceCompensation` row at write time, so per-model
+> earnings are a plain `GROUP BY ownerId`. That shipped (mini endpoint PR #3139, orchestrator + backfill done) —
+> see [licensing-fee-owner-stamping.md](licensing-fee-owner-stamping.md). **No CDC work is on the critical
+> path.** Unchecked Part 2 boxes below are obsolete, not open work.
+>
+> _Original status (2026-07-14, superseded): "the dictionary is still required for anything per-model, so Part 2
+> stays on the critical path."_ Answers backend question **A1** in
+> [questions-koen-backend.md](questions-koen-backend.md).
 
 ## The problem (unchanged, but narrower than we thought)
 
@@ -79,6 +83,12 @@ Until fixed, filter `type IN ('licenseFee','27')`, or the license-fee card reads
 doc. Do not attempt the MV surgery from this workstream — it has a data-loss failure mode.
 
 ### Part 2 — per-model earnings: the dictionary is **required**, not optional
+
+> **⛔ SUPERSEDED (later than this doc).** The conclusion below — that a `modelVersionId → ownerUserId`
+> dictionary (and therefore CDC) is required — no longer holds. The owner is now **stamped onto every
+> `ResourceCompensation` row at write time**, so per-model reads are a plain `GROUP BY ownerId`: no dictionary,
+> no CDC, no staleness question. Shipped and deployed — see
+> [licensing-fee-owner-stamping.md](licensing-fee-owner-stamping.md). Read the rest of this section as history.
 
 **Justin (2026-07-14), on top-earning models:** *"That's going to have to be driven by the resource compensation
 table… So we are going to need the dictionary for that one to map to the user so we can get all of the model
@@ -235,8 +245,12 @@ in this repo inserts into it).
       confirmed the tile ships**, so it is driven by `resourceCompensations` + the Part 2 dictionary (with the
       `IN (…)` fallback until that lands).
 
-**For Part 2 (per-model earnings: `/analytics` table + top-earning models) — still needs Koen, on the critical
-path:**
+**For Part 2 (per-model earnings: `/analytics` table + top-earning models) — ⛔ SUPERSEDED, do not build.**
+The dictionary + CDC approach below was retired in favour of **stamping the owner onto every
+`ResourceCompensation` row at write time**, making per-model reads a plain `GROUP BY ownerId`. That shipped
+(mini endpoint PR #3139, orchestrator + backfill done) — see
+[licensing-fee-owner-stamping.md](licensing-fee-owner-stamping.md). The unchecked boxes below are **obsolete,
+not open work**; kept for the audit context:
 
 - [ ] **CDC/ClickPipe path** — clone the Buzz-DB ClickPipe for prod `Model` + `ModelVersion` (Bastion/networking
       OK? CDC enabled?). Mirror **full tables, or just** `ModelVersion.id/modelId` + `Model.id/userId`?
