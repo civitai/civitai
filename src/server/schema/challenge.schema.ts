@@ -87,16 +87,9 @@ export type ChallengeListItem = {
   commentCount: number;
   modelVersionIds: number[];
   collectionId: number | null;
-  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
   createdById: number;
-  createdBy: {
-    id: number;
-    username: string | null;
-    image: string | null;
-    profilePicture?: ProfileImage | null;
-    cosmetics?: UserWithCosmetics['cosmetics'] | null;
-    deletedAt: Date | null;
-  };
+  createdBy: ChallengeDisplayUser;
+  judge: ChallengeJudgeInfo | null;
 };
 
 // The viewer's own challenges — entered or created — for the Challenges Center "Your Challenges" row.
@@ -146,11 +139,28 @@ export function parseChallengeMetadata(raw: unknown): ChallengeMetadata {
   return result.success ? result.data : {};
 }
 
+// The author shown on a challenge card/detail. For User challenges this is the real creator; for
+// System/Mod challenges the client swaps in the judge (see getChallengeDisplayUser). `createdBy`
+// always carries the real creator regardless — the swap is display-only.
+export type ChallengeDisplayUser = {
+  id: number;
+  username: string | null;
+  image: string | null;
+  profilePicture?: ProfileImage | null;
+  cosmetics?: UserWithCosmetics['cosmetics'] | null;
+  deletedAt?: Date | null;
+};
+
+// `id` is the ChallengeJudge row id; `userId` + the User fields identify the account the judge posts
+// as, so the judge can render as an author avatar.
 export type ChallengeJudgeInfo = {
   id: number;
   userId: number;
   name: string;
   bio: string | null;
+  username: string | null;
+  image: string | null;
+  deletedAt: Date | null;
   profilePicture?: ProfileImage | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
 };
@@ -204,16 +214,8 @@ export type ChallengeDetail = {
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   entryCount: number;
-  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
   createdById: number;
-  createdBy: {
-    id: number;
-    username: string | null;
-    image: string | null;
-    profilePicture?: ProfileImage | null;
-    cosmetics?: UserWithCosmetics['cosmetics'] | null;
-    deletedAt?: Date | null;
-  };
+  createdBy: ChallengeDisplayUser;
   judge: ChallengeJudgeInfo | null;
   winners: Array<{
     place: number;

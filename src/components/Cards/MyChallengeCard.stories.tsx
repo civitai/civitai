@@ -42,6 +42,7 @@ const baseChallenge: MyChallengeItem = {
     cosmetics: null,
     deletedAt: null,
   },
+  judge: null,
   myPlace: null,
   myResult: 'entered',
   isLive: false,
