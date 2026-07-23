@@ -93,7 +93,10 @@ import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
-import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
+import {
+  HIDDEN_METRIC_MESSAGE,
+  HiddenMetricNotice,
+} from '~/components/Model/HiddenMetricNotice';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -884,11 +887,12 @@ export default function ModelDetailsV2({
                     <StatHoverCard
                       label="Unique Downloads"
                       value={model.rank?.downloadCountAllTime ?? 0}
+                      message={model.hiddenMetrics?.downloads ? HIDDEN_METRIC_MESSAGE : undefined}
                     >
                       <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                         <Text className={classes.modelBadgeText}>
                           {model.hiddenMetrics?.downloads ? (
-                            <HiddenMetricNotice />
+                            <HiddenMetricNotice size={18} withTooltip={false} />
                           ) : (
                             abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)
                           )}
@@ -904,7 +908,7 @@ export default function ModelDetailsV2({
                         <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
                           <Text className={classes.modelBadgeText}>
                             {model.hiddenMetrics?.generations ? (
-                              <HiddenMetricNotice />
+                              <HiddenMetricNotice size={18} />
                             ) : (
                               abbreviateNumber(model.rank?.generationCountAllTime ?? 0)
                             )}
@@ -935,7 +939,11 @@ export default function ModelDetailsV2({
                       </StatHoverCard>
                     )}
                     {!model.poi && (
-                      <StatHoverCard label="Buzz Earned" value={buzzEarned}>
+                      <StatHoverCard
+                        label="Buzz Earned"
+                        value={buzzEarned}
+                        message={model.hiddenMetrics?.buzz ? HIDDEN_METRIC_MESSAGE : undefined}
+                      >
                         <div>
                           <InteractiveTipBuzzButton
                             toUserId={model.user.id}
@@ -952,7 +960,7 @@ export default function ModelDetailsV2({
                             >
                               <Text className={classes.modelBadgeText}>
                                 {model.hiddenMetrics?.buzz ? (
-                                  <HiddenMetricNotice />
+                                  <HiddenMetricNotice size={18} withTooltip={false} />
                                 ) : (
                                   abbreviateNumber(buzzEarned)
                                 )}
