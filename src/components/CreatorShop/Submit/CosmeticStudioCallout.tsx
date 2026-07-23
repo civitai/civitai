@@ -1,26 +1,16 @@
 import { Button, Group, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconSparkles } from '@tabler/icons-react';
-import { useCallback, useRef } from 'react';
 import { COSMETIC_STUDIO_URL } from '~/components/CreatorShop/creator-shop.constants';
+import { useSpotlight } from '~/hooks/useSpotlight';
 
 // Nudge toward the standalone Cosmetic Studio for creators who don't have
 // artwork ready yet. Shown above the artwork dropzone on new submissions.
 // Cursor-following spotlight matches the crypto deposit / prize pool cards.
 export function CosmeticStudioCallout() {
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(300px circle at ${x}px ${y}px, light-dark(rgba(190,75,219,0.08), rgba(218,127,255,0.1)), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    size: 300,
+    color: 'light-dark(rgba(190,75,219,0.08), rgba(218,127,255,0.1))',
+  });
 
   return (
     <Paper
