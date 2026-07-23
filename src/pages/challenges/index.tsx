@@ -93,7 +93,12 @@ function ChallengesPage() {
   const rawEngagement = router.query.engagement;
   const isPersonalView = rawEngagement === 'created' || rawEngagement === 'participated';
   const engagement: Engagement = rawEngagement === 'created' ? 'created' : 'participated';
-  const [statusSelection, setStatusSelection] = useState<MyChallengeStatus>('Active');
+  // Creators arrive from the header menu to check on what they've queued up, so Created opens on
+  // Scheduled; entrants care about what's running. Initial value only — the clamp below governs
+  // after that.
+  const [statusSelection, setStatusSelection] = useState<MyChallengeStatus>(
+    rawEngagement === 'created' ? 'Scheduled' : 'Active'
+  );
   const allowedStatuses = engagementStatuses[engagement];
   const myStatus = allowedStatuses.includes(statusSelection)
     ? statusSelection
@@ -110,6 +115,11 @@ function ChallengesPage() {
   if (isPersonalView) {
     if (!currentUser) return <NotFound />;
     if (engagement === 'created' && !features.userChallenges) return <NotFound />;
+
+    const engagementOptions = [
+      { label: 'Participated', value: 'participated' },
+      ...(features.userChallenges ? [{ label: 'Created', value: 'created' }] : []),
+    ];
 
     const personalFilters: Partial<GetInfiniteChallengesInput> =
       engagement === 'created'
@@ -134,18 +144,17 @@ function ChallengesPage() {
               {createChallengeButton}
             </Group>
             <Group justify="space-between" w="100%" wrap="wrap" gap="sm">
-              <SegmentedControl
-                classNames={styles}
-                transitionDuration={0}
-                radius="xl"
-                data={[
-                  { label: 'Participated', value: 'participated' },
-                  ...(features.userChallenges ? [{ label: 'Created', value: 'created' }] : []),
-                ]}
-                value={engagement}
-                onChange={handleEngagementChange}
-                withItemsBorders={false}
-              />
+              {engagementOptions.length > 1 && (
+                <SegmentedControl
+                  classNames={styles}
+                  transitionDuration={0}
+                  radius="xl"
+                  data={engagementOptions}
+                  value={engagement}
+                  onChange={handleEngagementChange}
+                  withItemsBorders={false}
+                />
+              )}
               <SegmentedControl
                 classNames={styles}
                 transitionDuration={0}
