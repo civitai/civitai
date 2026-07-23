@@ -46,7 +46,7 @@ export function useSubmitCreatorShopForm({
   const [quantity, setQuantity] = useState<number | undefined>(
     item?.availableQuantity ?? undefined
   );
-  const [buzzType, setBuzzType] = useState<'yellow' | 'green'>('yellow');
+  const [buzzType, setBuzzType] = useState<'yellow' | 'green' | 'blue'>('yellow');
   const [imageId, setImageId] = useState<string | null>(existingArtUrl(item));
   const [localUrl, setLocalUrl] = useState<string | null>(null);
   const [checks, setChecks] = useState<AutoCheck[]>([]);
@@ -76,10 +76,12 @@ export function useSubmitCreatorShopForm({
     type === CosmeticType.ProfileDecoration ||
     type === CosmeticType.ProfileBackground;
 
-  const { data: buzz } = useQueryBuzz(['yellow', 'green']);
+  const { data: buzz } = useQueryBuzz(['yellow', 'green', 'blue']);
   const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
   const greenBalance = buzz.accounts.find((a) => a.type === 'green')?.balance ?? 0;
-  const feeAccountBalance = buzzType === 'yellow' ? yellowBalance : greenBalance;
+  const blueBalance = buzz.accounts.find((a) => a.type === 'blue')?.balance ?? 0;
+  const feeAccountBalance =
+    buzzType === 'yellow' ? yellowBalance : buzzType === 'green' ? greenBalance : blueBalance;
   // Only new submissions pay the fee; edits don't.
   const canAffordFee = isEdit || feeAccountBalance >= CREATOR_SHOP_SUBMISSION_FEE;
 
@@ -242,6 +244,7 @@ export function useSubmitCreatorShopForm({
     canSubmit,
     yellowBalance,
     greenBalance,
+    blueBalance,
     feeAccountBalance,
     earn,
     notice,

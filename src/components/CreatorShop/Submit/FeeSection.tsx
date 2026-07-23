@@ -10,13 +10,15 @@ export function FeeSection({
   onBuzzTypeChange,
   yellowBalance,
   greenBalance,
+  blueBalance,
   feeAccountBalance,
   canAffordFee,
 }: {
-  buzzType: 'yellow' | 'green';
-  onBuzzTypeChange: (value: 'yellow' | 'green') => void;
+  buzzType: 'yellow' | 'green' | 'blue';
+  onBuzzTypeChange: (value: 'yellow' | 'green' | 'blue') => void;
   yellowBalance: number;
   greenBalance: number;
+  blueBalance: number;
   feeAccountBalance: number;
   canAffordFee: boolean;
 }) {
@@ -27,10 +29,11 @@ export function FeeSection({
         <SegmentedControl
           size="xs"
           value={buzzType}
-          onChange={(v) => onBuzzTypeChange(v as 'yellow' | 'green')}
+          onChange={(v) => onBuzzTypeChange(v as 'yellow' | 'green' | 'blue')}
           data={[
             { value: 'yellow', label: `Yellow · ${numberWithCommas(yellowBalance)}` },
             { value: 'green', label: `Green · ${numberWithCommas(greenBalance)}` },
+            { value: 'blue', label: `Blue · ${numberWithCommas(blueBalance)}` },
           ]}
         />
       </Group>
