@@ -2,15 +2,14 @@ import { Button, Center, Loader } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useRef } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import {
-  OnsiteReviewModalBody,
   OnsiteReviewModalTitle,
   type AnyRequest,
   type OnsiteReviewMode,
 } from '~/components/Apps/OnsiteReviewModal';
+import { ReviewDetailView } from '~/components/Apps/ReviewDetailView';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -88,11 +87,6 @@ export const getServerSideProps = createServerSideProps<ReviewDetailPageProps>({
 export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageProps) {
   const features = useFeatureFlags();
   const router = useRouter();
-  // The page has no `<Modal>` shell, so `busyRef` (which the shell used to refuse
-  // an in-flight close) has no consumer here — a plain ref satisfies the body's
-  // contract. A route-leave busy-guard is a Phase 2 concern; Phase 1 keeps the
-  // body behaviour-identical.
-  const busyRef = useRef(false);
 
   const query = trpc.blocks.getPublishRequest.useQuery(
     { publishRequestId },
@@ -138,16 +132,15 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
           // gate uses — never a half-rendered review.
           <NotFound />
         ) : (
-          <OnsiteReviewModalBody
-            // Route param remounts the page per submission (fresh approve/reject
-            // state); key parity with the modal for defensiveness.
+          <ReviewDetailView
+            // Route param remounts per submission (fresh approve/reject state);
+            // key parity with the modal for defensiveness.
             key={selection.request.id}
             selection={selection}
             // Q6: after approve/reject, redirect to the queue (matches today's
             // modal-close-then-invalidate — the mutation already invalidates the
             // list queries, so the queue is fresh on arrival).
             onClose={() => void router.push('/apps/review')}
-            busyRef={busyRef}
           />
         )}
       </AppsPageLayout>

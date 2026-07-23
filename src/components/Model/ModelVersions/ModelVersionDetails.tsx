@@ -128,6 +128,8 @@ import {
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
@@ -142,6 +144,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
+import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -487,6 +490,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${version.meta?.customMessage || 'No reason provided.'}`;
   const license = baseModelLicenses[version.baseModel];
+  // Link the base model to its ecosystem SEO landing page when one is live (SEO internal linking).
+  const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
   // Both are derived per displayed version rather than stored on the model.
   const baseModelRestrictsMature =
@@ -1360,23 +1365,35 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         <Group gap={4}>
                           <IconDownload size={16} style={styleIconOpacity} />
                           <Text size="sm">
-                            <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
+                            {version.hiddenMetrics?.downloads ? (
+                              <HiddenMetricNotice size={16} />
+                            ) : (
+                              <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
+                            )}
                           </Text>
                         </Group>
                       )}
-                      {canGenerate && (
+                      {(canGenerate || version.hiddenMetrics?.generations) && (
                         <Group gap={4}>
                           <IconBrush size={16} style={styleIconOpacity} />
                           <Text size="sm">
-                            <AnimatedCount value={liveMetrics.generationCount} />
+                            {version.hiddenMetrics?.generations ? (
+                              <HiddenMetricNotice size={16} />
+                            ) : (
+                              <AnimatedCount value={liveMetrics.generationCount} />
+                            )}
                           </Text>
                         </Group>
                       )}
-                      {!!liveMetrics.earnedAmount && (
+                      {(!!liveMetrics.earnedAmount || version.hiddenMetrics?.buzz) && (
                         <Group gap={4}>
                           <IconBolt size={16} style={styleIconOpacity} />
                           <Text size="sm">
-                            <AnimatedCount value={liveMetrics.earnedAmount} />
+                            {version.hiddenMetrics?.buzz ? (
+                              <HiddenMetricNotice size={16} />
+                            ) : (
+                              <AnimatedCount value={liveMetrics.earnedAmount} />
+                            )}
                           </Text>
                         </Group>
                       )}
@@ -1463,7 +1480,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   <div className={classes.detailRow}>
                     <span className={classes.detailLabel}>Base Model</span>
                     <Text size="sm">
-                      {version.baseModel}{' '}
+                      {ecosystemSeoPage ? (
+                        <Anchor
+                          component={Link}
+                          href={`/ecosystems/${ecosystemSeoPage.slug}`}
+                          inherit
+                        >
+                          {version.baseModel}
+                        </Anchor>
+                      ) : (
+                        version.baseModel
+                      )}{' '}
                       {version.baseModelType && version.baseModelType !== 'Standard'
                         ? version.baseModelType
                         : ''}

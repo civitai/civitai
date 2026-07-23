@@ -80,6 +80,7 @@ import {
   refundUserChallengeFunds,
   buildWinnerPayoutTransactions,
   getChallengeBuzzType,
+  reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
@@ -1313,6 +1314,11 @@ export async function pickWinnersForChallenge(
             prizes: finalPrizes,
           });
         }
+
+        await reportPoolFundingShortfall({
+          challengeId: currentChallenge.challengeId,
+          collectionId: currentChallenge.collectionId,
+        });
       }
 
       // 3. Get judged entries + LLM judgment

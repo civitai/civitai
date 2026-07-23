@@ -92,6 +92,7 @@ vi.mock('~/server/jobs/daily-challenge-processing', () => ({
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
+  reportPoolFundingShortfall: vi.fn(),
 }));
 
 vi.mock('~/server/services/buzz.service', () => ({

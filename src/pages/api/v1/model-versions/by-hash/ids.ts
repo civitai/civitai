@@ -29,6 +29,11 @@ export default PublicEndpoint(
           },
           select: {
             modelVersionId: true,
+            modelVersion: {
+              select: {
+                modelId: true,
+              },
+            },
             hashes: {
               select: {
                 hash: true,
@@ -39,8 +44,11 @@ export default PublicEndpoint(
             },
           },
         })
-      )?.map((entry) => ({ modelVersionId: entry.modelVersionId, hash: entry.hashes[0].hash })) ??
-      [];
+      )?.map((entry) => ({
+        modelVersionId: entry.modelVersionId,
+        modelId: entry.modelVersion.modelId,
+        hash: entry.hashes[0].hash,
+      })) ?? [];
 
     res.status(200).json(ids);
   },

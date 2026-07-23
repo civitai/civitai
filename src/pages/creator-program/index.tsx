@@ -47,10 +47,7 @@ import {
   usePrevMonthStats,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import {
-  CreatorProgramCapsInfo,
-  openCreatorScoreModal,
-} from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
+import { CreatorProgramCapsInfo } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -437,14 +434,14 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                     content={
                       <p className="my-0">
                         Your current{' '}
-                        <Anchor
-                          onClick={() => {
-                            openCreatorScoreModal();
-                          }}
-                        >
+                        <Anchor component={NextLink} href="/user/account#creator-score">
                           Creator Score
                         </Anchor>{' '}
-                        is {abbreviateNumber(requirements?.score.current ?? 0)}.
+                        is{' '}
+                        <Anchor component={NextLink} href="/user/account#creator-score">
+                          {abbreviateNumber(requirements?.score.current ?? 0)}
+                        </Anchor>
+                        .
                       </p>
                     }
                   />

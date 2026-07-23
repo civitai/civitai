@@ -105,8 +105,14 @@ export const submitExternalListingSchema = z
     // AppBlocksDevTunnel bits, which a client's `allowedScopes` MAY legitimately carry,
     // so bounding at Full could reject a valid subset. The per-client subset check still
     // lives in the service (it needs the client's `allowedScopes`).
-    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES),
-    // Per-value length bound only; full key/subset validation is in the service.
+    // OPTIONAL + IGNORED by the service. The listing's requested scopes are
+    // AUTO-DERIVED server-side from the client's CURRENT `allowedScopes` at submit
+    // time (server-authoritative snapshot — a form-supplied mask is never trusted).
+    // Still bounded here (int/nonnegative/≤ALL_SCOPES) so a provided value can't
+    // overflow int4, but the stored value comes from the client, not this field.
+    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES).optional(),
+    // Per-value length bound only; full key/subset validation is in the service
+    // (validated against the DERIVED scope set = the client's allowedScopes).
     scopeJustifications: z.record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH)),
     // OPTIONAL homepage / Visit link. Validated for the https-only shape only when present.
     externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),

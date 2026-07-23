@@ -68,6 +68,15 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
 
+// The Summary tab renders `summaryMd` through `CustomMarkdown`, which reads
+// `useCurrentUser()` (→ CivitaiSessionContext) for its link-rewrite. The
+// network-free scaffold has no session provider, so boundary-stub the hook (the
+// standard pattern in the sibling AgentReviewChat test). Null user is fine —
+// CustomMarkdown only uses `user?.id` (optional-chained).
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => null,
+}));
+
 vi.mock('~/utils/trpc', () => {
   const mutation =
     (name: string) =>
@@ -228,6 +237,54 @@ const FULL_REPORT = {
     underDeclared: ['models:write:self'],
   },
   tokenUsage: { promptTokens: 1200, completionTokens: 340 },
+};
+
+// A report with multiple findings per section — exercises tab counts + the
+// severity roll-up (critical + high in the security breakdown).
+const MULTI_REPORT = {
+  ...FULL_REPORT,
+  summaryMd: '# Review summary\n\n**Two** concerns, one _minor_.',
+  codeReview: {
+    findings: [
+      { severity: 'low', title: 'Low code finding', detail: 'nit' },
+      { severity: 'high', title: 'High code finding', detail: 'important' },
+      { severity: 'medium', title: 'Medium code finding', detail: 'moderate' },
+    ],
+    priorFindingsReconciled: [],
+  },
+  securityAudit: {
+    findings: [
+      { severity: 'critical', title: 'Critical sec finding', detail: 'sandbox escape' },
+      { severity: 'high', title: 'High sec finding', detail: 'broad host' },
+    ],
+    manifestUnexpectedKeys: [],
+    iframeSandboxGrants: [],
+    promptInjectionAttempts: [],
+  },
+  scopeVerdicts: {
+    scopes: [
+      { declared: 'user:read', used: 'yes', justificationAccurate: 'yes', sensitive: false, evidence: [] },
+      { declared: 'buzz:read:self', used: 'yes', justificationAccurate: 'weak', sensitive: true, evidence: [] },
+    ],
+    overBroad: [],
+    underDeclared: [],
+  },
+};
+
+// Only code findings, deliberately out of severity order — the render must sort
+// them critical → info regardless of input order.
+const SORT_REPORT = {
+  status: 'complete',
+  summaryMd: null,
+  codeReview: {
+    findings: [
+      { severity: 'low', title: 'Low finding' },
+      { severity: 'critical', title: 'Critical finding' },
+      { severity: 'medium', title: 'Medium finding' },
+    ],
+  },
+  securityAudit: {},
+  scopeVerdicts: {},
 };
 
 beforeEach(() => {
@@ -513,7 +570,7 @@ describe('AgentReviewPanel — responsive scope verdicts', () => {
 // ---------------------------------------------------------------------------
 
 describe('AgentReviewPanel — defensive / empty', () => {
-  test('a report with empty/missing sub-objects renders "None found" for each section without throwing', async () => {
+  test('a report with empty/missing sub-objects renders per-tab empty states without throwing', async () => {
     mocks.agentReport = {
       status: 'complete',
       model: null,
@@ -523,12 +580,12 @@ describe('AgentReviewPanel — defensive / empty', () => {
       scopeVerdicts: {},
     };
     renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
-    // The report still renders (advisory banner) and the empty sections are tidy.
+    // The report still renders (advisory banner) and each tab has a tidy empty state.
+    // (Panels are keepMounted, so all four are in the DOM regardless of active tab.)
     await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
-    // Code + security findings both show "None found".
-    expect(page.getByText('None found').elements().length).toBeGreaterThanOrEqual(2);
-    // Scopes section shows its own empty label.
-    await expect.element(page.getByText('No scopes assessed')).toBeInTheDocument();
+    await expect.element(page.getByText('No code-review findings.')).toBeInTheDocument();
+    await expect.element(page.getByText('No security-audit findings.')).toBeInTheDocument();
+    await expect.element(page.getByText('No scopes assessed.')).toBeInTheDocument();
   });
 });
 
@@ -567,5 +624,126 @@ describe('AgentReviewPanel — sanitization', () => {
     expect((window as any).__xssFired).toBeUndefined();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((window as any).__xssScript).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TABBED REPORT IA (Phase-2 redesign)
+// ---------------------------------------------------------------------------
+
+describe('AgentReviewPanel — tabbed report', () => {
+  test('renders the four tabs with finding counts in the labels', async () => {
+    mocks.agentReport = MULTI_REPORT;
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    // Tab labels carry the counts (3 code findings, 2 security, 2 scopes).
+    await expect.element(page.getByRole('tab', { name: /Summary/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('tab', { name: /Code review.*3/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('tab', { name: /Security audit.*2/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('tab', { name: /Scopes.*2/ })).toBeInTheDocument();
+
+    // Summary roll-up shows the severity breakdown for security (1 critical, 1 high).
+    const rollup = page.getByTestId('report-rollup');
+    await expect.element(rollup).toBeVisible();
+    await expect.element(rollup.getByText(/Code 3/)).toBeInTheDocument();
+    await expect.element(rollup.getByText(/Security 2 \(1 critical, 1 high\)/)).toBeInTheDocument();
+    await expect.element(rollup.getByText(/2 scopes/)).toBeInTheDocument();
+  });
+
+  test('switching tabs reveals the right section (one visible at a time)', async () => {
+    mocks.agentReport = FULL_REPORT;
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    // Summary is the default active tab; its markdown panel is visible.
+    await expect.element(page.getByTestId('report-summary-md')).toBeVisible();
+    // Code-review-only content exists (keepMounted) but is NOT visible yet.
+    await expect.element(page.getByText('Prior-version reconciliation')).not.toBeVisible();
+
+    // Activate the Code review tab → its content becomes visible, Summary hides.
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await expect.element(page.getByText('Prior-version reconciliation')).toBeVisible();
+    await expect.element(page.getByText('Hardcoded secret')).toBeVisible();
+    await expect.element(page.getByTestId('report-summary-md')).not.toBeVisible();
+
+    // Activate the Scopes tab → the verdicts table becomes visible.
+    await page.getByRole('tab', { name: /Scopes/ }).click();
+    await expect.element(page.getByTestId('scope-verdicts-table')).toBeVisible();
+    await expect.element(page.getByText('Prior-version reconciliation')).not.toBeVisible();
+  });
+
+  test('findings render as cards sorted by severity (critical → info) regardless of input order', async () => {
+    mocks.agentReport = SORT_REPORT;
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    // Activate the Code review tab and await a rendered card before the
+    // synchronous elements() read — browser-mode render is async-committed, so a
+    // bare sync query races the commit (was returning 0).
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await expect.element(page.getByText('Critical finding')).toBeVisible();
+
+    // SORT_REPORT has only code findings, so every finding-card is a code card.
+    const cards = page.getByTestId('finding-card').elements();
+    expect(cards.length).toBe(3);
+    const texts = cards.map((c) => c.textContent ?? '');
+    // Input order was low, critical, medium → rendered order must be critical, medium, low.
+    expect(texts[0]).toContain('Critical finding');
+    expect(texts[1]).toContain('Medium finding');
+    expect(texts[2]).toContain('Low finding');
+  });
+
+  test('summaryMd renders as markdown, and a markdown image is dropped (no <img>)', async () => {
+    mocks.agentReport = {
+      ...FULL_REPORT,
+      summaryMd: '# Heading one\n\n**bolded** text with an ![alt](https://evil.example/pixel.png)',
+    };
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    // Markdown formatting is applied (heading + strong become real elements).
+    await expect.element(page.getByRole('heading', { name: 'Heading one' })).toBeInTheDocument();
+    expect(document.querySelector('.markdown-content strong')?.textContent).toBe('bolded');
+    // 🔴 img-guard (mirrors the Phase-0 chat guard): the markdown image produces
+    // NO <img> — an <img> would fire an external fetch from the moderator's browser.
+    expect(document.querySelectorAll('img').length).toBe(0);
+  });
+
+  test('an errored analysis section shows the failure state, not a crash', async () => {
+    mocks.agentReport = {
+      status: 'complete',
+      summaryMd: 'ok',
+      // codeReview came back as an { error } object (sub-analysis failed).
+      codeReview: { error: 'code analysis timed out' },
+      securityAudit: { findings: [{ severity: 'high', title: 'A sec finding' }] },
+      scopeVerdicts: {},
+    };
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    // The report still mounts (advisory banner present) — no crash.
+    await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
+
+    // The Code review tab shows an explicit "analysis failed" state with the message.
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await expect.element(page.getByText('Analysis failed')).toBeVisible();
+    await expect.element(page.getByText('code analysis timed out')).toBeVisible();
+
+    // The intact security section still renders its finding.
+    await page.getByRole('tab', { name: /Security audit/ }).click();
+    await expect.element(page.getByText('A sec finding')).toBeVisible();
+  });
+
+  test('per-tab empty states render for a report with no findings/scopes', async () => {
+    mocks.agentReport = {
+      status: 'complete',
+      summaryMd: null,
+      codeReview: { findings: [] },
+      securityAudit: { findings: [] },
+      scopeVerdicts: { scopes: [] },
+    };
+    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+
+    await expect.element(page.getByText('No code-review findings.')).toBeInTheDocument();
+    await expect.element(page.getByText('No security-audit findings.')).toBeInTheDocument();
+    await expect.element(page.getByText('No scopes assessed.')).toBeInTheDocument();
+    // Summary tab with no summaryMd shows its own empty state.
+    await expect.element(page.getByText('No summary was provided.')).toBeInTheDocument();
   });
 });

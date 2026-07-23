@@ -14,10 +14,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
   getValidCreatorMembershipMap,
-  hasValidCreatorMembership,
+  hasValidCreatorMembershipCached,
 } from '~/server/services/creator-program.service';
 import {
   anyMetricHidden,
+  gateHiddenMetrics,
+  getMetaMetricPrivacy,
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
   resolveVersionHiddenMetrics,
@@ -296,22 +298,38 @@ export const getModelHandler = async ({
 
     // Creator Controls metric privacy: resolve once per request. Owners/mods bypass;
     // otherwise flags apply only while the owner holds a valid CP membership.
+    // Flag-gated (#3266 A/B): when `modelMetricPrivacyReadtime` is OFF, skip the
+    // owner-settings + membership lookups AND the resolvers entirely and emit raw
+    // metrics. Evaluated ONCE per request off the memoized per-request flag object.
+    const metricPrivacyEnabled = !!features.modelMetricPrivacyReadtime;
     let ownerSettings: unknown = null;
     let ownerHasMembership = false;
-    if (!isOwner) {
-      const [owner, membership] = await Promise.all([
-        dbRead.user.findUnique({ where: { id: model.user.id }, select: { settings: true } }),
-        hasValidCreatorMembership(model.user.id),
-      ]);
+    if (metricPrivacyEnabled && !isOwner) {
+      const owner = await dbRead.user.findUnique({
+        where: { id: model.user.id },
+        select: { settings: true },
+      });
       ownerSettings = owner?.settings ?? null;
-      ownerHasMembership = membership;
+      // Only resolve CP membership when the owner actually hides something (model meta,
+      // any version meta, or a user default). When nothing is hidden, resolveModel/Version
+      // return NONE regardless of membership, so the cached membership read (and the
+      // resolvers themselves) can be skipped — byte-identical raw metrics. The membership
+      // check, when needed, is served from the shared read-through cache.
+      const ownerHidesAnything =
+        anyMetricHidden(getMetaMetricPrivacy(model.meta)) ||
+        anyMetricHidden(getUserMetricPrivacyDefaults(ownerSettings)) ||
+        filteredVersions.some((v) => anyMetricHidden(getMetaMetricPrivacy(v.meta)));
+      if (ownerHidesAnything)
+        ownerHasMembership = await hasValidCreatorMembershipCached(model.user.id);
     }
-    const modelHidden = resolveModelHiddenMetrics({
-      modelMeta: model.meta,
-      userSettings: ownerSettings,
-      isOwnerOrModerator: isOwner,
-      hasValidMembership: ownerHasMembership,
-    });
+    const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
+      resolveModelHiddenMetrics({
+        modelMeta: model.meta,
+        userSettings: ownerSettings,
+        isOwnerOrModerator: isOwner,
+        hasValidMembership: ownerHasMembership,
+      })
+    );
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
@@ -367,13 +385,15 @@ export const getModelHandler = async ({
 
       const versionMetrics = version.metrics[0];
 
-      const versionHidden = resolveVersionHiddenMetrics({
-        versionMeta: version.meta,
-        modelMeta: model.meta,
-        userSettings: ownerSettings,
-        isOwnerOrModerator: isOwner,
-        hasValidMembership: ownerHasMembership,
-      });
+      const versionHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
+        resolveVersionHiddenMetrics({
+          versionMeta: version.meta,
+          modelMeta: model.meta,
+          userSettings: ownerSettings,
+          isOwnerOrModerator: isOwner,
+          hasValidMembership: ownerHasMembership,
+        })
+      );
 
       return {
         ...version,
@@ -501,6 +521,9 @@ export const getModelsInfiniteHandler = async ({
     // applies either way (see model-getall-images).
     const slim = ctx.features.getAllModelImagesSlim;
     const imagesPerModel = slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL;
+    // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
+    // value so the feed-hydration path skips the metric-privacy resolution when OFF.
+    const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
@@ -508,6 +531,7 @@ export const getModelsInfiniteHandler = async ({
         user: ctx.user,
         imagesPerModel,
         biasImageSlice: slim,
+        metricPrivacyEnabled,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
@@ -1603,26 +1627,34 @@ export const getAssociatedResourcesCardDataHandler = async ({
       }
     );
 
+    // Flag-gated (#3266 A/B): when `modelMetricPrivacyReadtime` is OFF, skip the
+    // batched owner-settings query + `getValidCreatorMembershipMap` and emit raw
+    // metrics. Evaluated once per request off the memoized per-request flag object.
+    const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const assocIsMod = !!user?.isModerator;
-    const assocOwnerIds = [...new Set(models.map((m) => m.user.id))];
-    const assocOwnerSettings = assocOwnerIds.length
-      ? await dbRead.user.findMany({
-          where: { id: { in: assocOwnerIds } },
-          select: { id: true, settings: true },
-        })
-      : [];
-    const assocOwnerSettingsMap = new Map<number, unknown>(
-      assocOwnerSettings.map((o) => [o.id, o.settings])
-    );
-    const assocMembershipCandidates = new Set<number>();
-    for (const m of models) {
-      const ownerId = m.user.id;
-      if (assocIsMod || ownerId === user?.id) continue;
-      const defHidden = getUserMetricPrivacyDefaults(assocOwnerSettingsMap.get(ownerId));
-      if (anyMetricHidden(m.metricPrivacy) || anyMetricHidden(defHidden))
-        assocMembershipCandidates.add(ownerId);
+    let assocOwnerSettingsMap = new Map<number, unknown>();
+    let assocMembershipMap = new Map<number, boolean>();
+    if (metricPrivacyEnabled) {
+      const assocOwnerIds = [...new Set(models.map((m) => m.user.id))];
+      const assocOwnerSettings = assocOwnerIds.length
+        ? await dbRead.user.findMany({
+            where: { id: { in: assocOwnerIds } },
+            select: { id: true, settings: true },
+          })
+        : [];
+      assocOwnerSettingsMap = new Map<number, unknown>(
+        assocOwnerSettings.map((o) => [o.id, o.settings])
+      );
+      const assocMembershipCandidates = new Set<number>();
+      for (const m of models) {
+        const ownerId = m.user.id;
+        if (assocIsMod || ownerId === user?.id) continue;
+        const defHidden = getUserMetricPrivacyDefaults(assocOwnerSettingsMap.get(ownerId));
+        if (anyMetricHidden(m.metricPrivacy) || anyMetricHidden(defHidden))
+          assocMembershipCandidates.add(ownerId);
+      }
+      assocMembershipMap = await getValidCreatorMembershipMap([...assocMembershipCandidates]);
     }
-    const assocMembershipMap = await getValidCreatorMembershipMap([...assocMembershipCandidates]);
 
     const completeModels = models
       .map(({ hashes, modelVersions, rank, tagsOnModels, metricPrivacy, ...model }) => {
@@ -1636,16 +1668,18 @@ export const getAssociatedResourcesCardDataHandler = async ({
         const canGenerate = associatedGenStates.get(version.id)?.canGenerate ?? false;
 
         const isOwner = assocIsMod || model.user.id === user?.id;
-        const hiddenMetrics = resolveModelHiddenMetrics({
-          modelMeta: {
-            hideBuzz: metricPrivacy.buzz,
-            hideDownloads: metricPrivacy.downloads,
-            hideGenerations: metricPrivacy.generations,
-          },
-          userSettings: assocOwnerSettingsMap.get(model.user.id),
-          isOwnerOrModerator: isOwner,
-          hasValidMembership: assocMembershipMap.get(model.user.id) ?? false,
-        });
+        const hiddenMetrics = gateHiddenMetrics(metricPrivacyEnabled, () =>
+          resolveModelHiddenMetrics({
+            modelMeta: {
+              hideBuzz: metricPrivacy.buzz,
+              hideDownloads: metricPrivacy.downloads,
+              hideGenerations: metricPrivacy.generations,
+            },
+            userSettings: assocOwnerSettingsMap.get(model.user.id),
+            isOwnerOrModerator: isOwner,
+            hasValidMembership: assocMembershipMap.get(model.user.id) ?? false,
+          })
+        );
 
         return {
           ...model,

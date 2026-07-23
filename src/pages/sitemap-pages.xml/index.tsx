@@ -3,6 +3,10 @@ import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { respondWithSitemap, type SitemapField } from '~/server/utils/sitemap';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import {
+  getEcosystemSeoConfigBySlug,
+  getLiveEcosystemSeoPages,
+} from '~/shared/constants/ecosystem-seo.constants';
 
 const greenPaths: string[] = [
   '/',
@@ -71,6 +75,27 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
   const fields: SitemapField[] = paths.map((path) => ({
     loc: path === '/' ? baseUrl : `${baseUrl}${path}`,
   }));
+
+  // Ecosystem SEO hub pages — the /ecosystems index plus each live page. These are indexed on
+  // civitai.com (green) ONLY (the pages emit noindex on red/blue), so only green's sitemap lists
+  // them. Only pages with a built config are emitted, so we never put a 404 into the sitemap.
+  // Authoritative source: ECOSYSTEM_SEO_PAGES. lastmod is each config's hand-maintained
+  // `updatedAt` (editorial change date — not the daily stats refresh); the index reflects
+  // the most recently updated ecosystem.
+  if (color === 'green') {
+    const liveEcosystems = getLiveEcosystemSeoPages().flatMap((page) => {
+      const config = getEcosystemSeoConfigBySlug(page.slug);
+      return config ? [{ slug: page.slug, updatedAt: config.updatedAt }] : [];
+    });
+    const indexLastmod = liveEcosystems.reduce(
+      (latest, e) => (e.updatedAt > latest ? e.updatedAt : latest),
+      '0000-00-00'
+    );
+    fields.push({ loc: `${baseUrl}/ecosystems`, lastmod: indexLastmod });
+    for (const eco of liveEcosystems) {
+      fields.push({ loc: `${baseUrl}/ecosystems/${eco.slug}`, lastmod: eco.updatedAt });
+    }
+  }
 
   return respondWithSitemap(ctx, fields);
 };

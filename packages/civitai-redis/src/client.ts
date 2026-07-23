@@ -2001,6 +2001,7 @@ export const REDIS_KEYS = {
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
+    ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
@@ -2090,6 +2091,12 @@ export const REDIS_KEYS = {
     // registered image resolves immediately), busted when `hideMeta` flips in
     // updatePostImage. See `getCachedImageDeliveryMetadata` in image-delivery.service.
     IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata',
+    // Per-user `id -> isValidCreatorMember(boolean)` for the read-time metric-privacy /
+    // donation-goal hide gate (#3266). Near-static per user; both TRUE and FALSE are
+    // cached (the resolver is a total function over the id). Busted on any subscription
+    // change via `invalidateSubscriptionCaches`; TTL backstops the non-webhook paths.
+    // See `getValidCreatorMembershipMap` in creator-membership.service.
+    CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

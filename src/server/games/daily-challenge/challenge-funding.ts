@@ -43,7 +43,7 @@ import {
   CHALLENGE_ENTRY_HOUSE_CUT,
   getEntryPoolContribution,
 } from '~/shared/constants/challenge.constants';
-import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('challenge-funding', 'yellow');
@@ -296,6 +296,48 @@ export async function refundUserChallengeFunds(challengeId: number) {
     `Refunded ${refundedEntries} entry-fee pool contributions + initial prize for cancelled challenge ${challengeId}`
   );
   return { refundedEntries };
+}
+
+/**
+ * Alert when a completing user challenge holds less Buzz than its accepted entries imply. An
+ * entry that reached the collection without a paid pool leg still competes for the prizes, so
+ * the shortfall silently shrinks every winner's payout (challenge 413 completed with 2 entries
+ * and a pool of 0, paying its winners nothing). Never throws — reporting only.
+ */
+export async function reportPoolFundingShortfall({
+  challengeId,
+  collectionId,
+}: {
+  challengeId: number;
+  collectionId: number | null;
+}) {
+  if (!collectionId) return;
+
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { source: true, entryFee: true, basePrizePool: true, prizePool: true },
+  });
+  if (!challenge || challenge.source !== ChallengeSource.User || challenge.entryFee <= 0) return;
+
+  const entryCount = await dbRead.collectionItem.count({
+    where: { collectionId, status: CollectionItemStatus.ACCEPTED },
+  });
+  const expectedPool =
+    challenge.basePrizePool + getEntryPoolContribution(challenge.entryFee) * entryCount;
+  const shortfall = expectedPool - challenge.prizePool;
+  if (shortfall <= 0) return;
+
+  await logToAxiom({
+    type: 'warning',
+    name: 'challenge-pool-funding-shortfall',
+    message: 'Challenge completing with a prize pool below what its accepted entries imply',
+    challengeId,
+    entryCount,
+    entryFee: challenge.entryFee,
+    prizePool: challenge.prizePool,
+    expectedPool,
+    shortfall,
+  }).catch(() => {});
 }
 
 /** Build the winner-prize transactions for a challenge, paid in its stored currency. Pure. */

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  deriveScopesFromClient,
   emptyOffsiteSubmitForm,
   isClientStepComplete,
   isCreateDetailsStepComplete,
+  pruneJustificationsToMask,
+  shapeScopeJustifications,
   toSubmitExternalInput,
-  toggleScopeBit,
   validateConnectFields,
   validateExternalCreateForm,
   type OffsiteSubmitFormValues,
@@ -32,20 +34,47 @@ function full(overrides: Partial<OffsiteSubmitFormValues> = {}): OffsiteSubmitFo
   };
 }
 
-describe('toggleScopeBit', () => {
-  it('sets and clears a bit', () => {
-    const on = toggleScopeBit(emptyOffsiteSubmitForm(), TokenScope.ModelsRead);
-    expect(on.requestedScopes).toBe(TokenScope.ModelsRead);
-    const off = toggleScopeBit(on, TokenScope.ModelsRead);
-    expect(off.requestedScopes).toBe(0);
+describe('deriveScopesFromClient', () => {
+  it('sets requestedScopes to EXACTLY the client allowedScopes (auto-derived, no picking)', () => {
+    const v = deriveScopesFromClient(emptyOffsiteSubmitForm(), CEILING);
+    expect(v.requestedScopes).toBe(CEILING);
   });
 
-  it('prunes a justification when its scope is unchecked', () => {
-    let v = toggleScopeBit(emptyOffsiteSubmitForm(), TokenScope.ModelsRead);
-    v = { ...v, scopeJustifications: { ModelsRead: 'reason' } };
-    const cleared = toggleScopeBit(v, TokenScope.ModelsRead);
-    expect(cleared.requestedScopes).toBe(0);
-    expect(cleared.scopeJustifications).toEqual({});
+  it('prunes a justification for a scope the (new) client does not allow', () => {
+    const start = {
+      ...emptyOffsiteSubmitForm(),
+      scopeJustifications: { ModelsRead: 'keep', MediaWrite: 'drop' },
+    };
+    // A client that only allows ModelsRead → MediaWrite justification is pruned.
+    const v = deriveScopesFromClient(start, TokenScope.ModelsRead);
+    expect(v.requestedScopes).toBe(TokenScope.ModelsRead);
+    expect(v.scopeJustifications).toEqual({ ModelsRead: 'keep' });
+  });
+
+  it('an empty-scopes client → 0 mask + no justifications (valid, disclosure-only)', () => {
+    const v = deriveScopesFromClient(
+      { ...emptyOffsiteSubmitForm(), scopeJustifications: { ModelsRead: 'x' } },
+      0
+    );
+    expect(v.requestedScopes).toBe(0);
+    expect(v.scopeJustifications).toEqual({});
+  });
+});
+
+describe('pruneJustificationsToMask / shapeScopeJustifications', () => {
+  it('prune keeps only keys in the mask (values untouched)', () => {
+    expect(
+      pruneJustificationsToMask({ ModelsRead: '  a  ', MediaWrite: 'b' }, TokenScope.ModelsRead)
+    ).toEqual({ ModelsRead: '  a  ' });
+  });
+
+  it('shape trims, drops empties, and keeps only mask keys', () => {
+    expect(
+      shapeScopeJustifications(
+        { ModelsRead: '  a  ', UserRead: '   ', MediaWrite: 'x' },
+        TokenScope.ModelsRead | TokenScope.UserRead
+      )
+    ).toEqual({ ModelsRead: 'a' });
   });
 });
 

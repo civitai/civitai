@@ -207,7 +207,9 @@ describe('submitExternalListing', () => {
       externalUrl: 'https://cool.example.com/app',
       // Merged model: the linked OAuth client + the (empty) disclosed scope set.
       connectClientId: CLIENT_ID,
-      connectRequestedScopes: 0,
+      // SERVER-DERIVED from the client's allowedScopes (CEILING), not the input's
+      // requestedScopes:0. The disclosed set is always the client's allowed set.
+      connectRequestedScopes: CEILING,
       connectScopeJustifications: {},
       appBlockId: null,
       contentRating: 'g',

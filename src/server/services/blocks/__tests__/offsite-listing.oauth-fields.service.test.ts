@@ -115,7 +115,9 @@ describe('submitExternalListing', () => {
       slug: 'connect-app',
       externalUrl: null,
       connectClientId: CLIENT_ID,
-      connectRequestedScopes: TokenScope.ModelsRead,
+      // SERVER-DERIVED from the client's allowedScopes (= CEILING), NOT the form's
+      // requestedScopes (ModelsRead in baseInput).
+      connectRequestedScopes: CEILING,
       connectScopeJustifications: { ModelsRead: 'We download models to run them.' },
       appBlockId: null,
       userId: CALLER,
@@ -171,18 +173,26 @@ describe('submitExternalListing', () => {
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
-  it('requestedScopes NOT ⊆ allowedScopes → BAD_REQUEST, no write', async () => {
+  it('IGNORES the form-supplied requestedScopes and snapshots the client allowedScopes', async () => {
+    // A bogus form mask (MediaWrite, outside the client ceiling) must NOT reach the
+    // stored row — the service derives the disclosed set from the client instead.
+    await submitExternalListing({
+      input: { ...baseInput, requestedScopes: TokenScope.MediaWrite, scopeJustifications: {} },
+      userId: CALLER,
+    });
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<string, unknown>;
+    expect(listingData.connectRequestedScopes).toBe(CEILING);
+  });
+
+  it('a justification for a scope OUTSIDE the client allowedScopes → BAD_REQUEST, no write', async () => {
+    // The derived set is CEILING (13); MediaWrite (64) is not in it, so its
+    // justification is rejected (keys must be ⊆ the derived/requested scopes).
     await expect(
       submitExternalListing({
-        input: {
-          ...baseInput,
-          // MediaWrite (64) is outside the ceiling (13).
-          requestedScopes: TokenScope.MediaWrite,
-          scopeJustifications: { MediaWrite: 'why' },
-        },
+        input: { ...baseInput, scopeJustifications: { MediaWrite: 'why' } },
         userId: CALLER,
       })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('exceed') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
@@ -200,10 +210,11 @@ describe('submitExternalListing', () => {
       { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { ModelsRead: '' } },
     ],
     [
-      'key not among requested scopes',
+      'key not among the derived (client) scopes',
       {
-        requestedScopes: TokenScope.ModelsRead,
-        scopeJustifications: { ModelsWrite: 'not requested' },
+        // MediaWrite (64) is outside the client ceiling (CEILING=13), so it is not in
+        // the derived requested set → its justification is rejected.
+        scopeJustifications: { MediaWrite: 'not in the client scopes' },
       },
     ],
   ])('bad justification (%s) → BAD_REQUEST, no write', async (_label, patch) => {
@@ -302,16 +313,34 @@ describe('updateListing (connect scope edit re-validation)', () => {
     coverId: 2,
   };
 
-  it('re-validates the subset on edit: a scope change beyond the ceiling → error, no shadow write', async () => {
+  it('rejects a justification for a scope OUTSIDE the client ceiling on edit → BAD_REQUEST', async () => {
+    // The form can no longer request a scope beyond the ceiling (the mask is derived),
+    // but a justification for a scope the client doesn't allow is still rejected.
     mockRead.appListing.findUnique.mockResolvedValue(approvedConnectListing);
     mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient());
     await expect(
       updateListing({
         listingId: 'apl_live',
         userId: CALLER,
-        patch: { requestedScopes: TokenScope.MediaWrite, scopeJustifications: {} },
+        patch: { scopeJustifications: { MediaWrite: 'why' } },
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('SNAPSHOTS requestedScopes from the client on a pending-listing scope edit (form value ignored)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue({
+      ...approvedConnectListing,
+      status: 'pending',
+    });
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient()); // allowedScopes = CEILING
+    await updateListing({
+      listingId: 'apl_live',
+      userId: CALLER,
+      // A bogus form mask is supplied; the service must ignore it and snapshot CEILING.
+      patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { ModelsRead: 'reason' } },
+    });
+    const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.connectRequestedScopes).toBe(CEILING);
   });
 
   it('re-asserts client OWNERSHIP on edit: a client transferred to another user → FORBIDDEN, no shadow write', async () => {

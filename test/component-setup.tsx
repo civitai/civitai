@@ -59,6 +59,11 @@ vi.mock('next/router', () => {
     events: { on: vi.fn(), off: vi.fn(), emit: vi.fn() },
   };
   return {
+    // Real `next/router` is an ES module; flag the mock so a DEFAULT import
+    // (`import Router from 'next/router'`, used by `useCatchNavigation` and many
+    // other components) resolves to the singleton rather than the namespace
+    // object under esModuleInterop (whose `.events` would be undefined).
+    __esModule: true,
     useRouter: () => router,
     Router: router,
     default: router,

@@ -14,10 +14,10 @@ import {
   Stack,
   Switch,
   Text,
-  Textarea,
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
+import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
@@ -42,14 +42,8 @@ import {
   ManifestDiffPreview,
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
-import {
-  ReasonGatedField,
-  ReasonGatedSubmitButton,
-  reasonMeetsMin,
-} from '~/components/Apps/ReasonGatedActionModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
-import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
@@ -259,60 +253,24 @@ export function OnsiteReviewModalBody({
   selection,
   onClose,
   busyRef,
+  hideInlineActions = false,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
   onClose: () => void;
-  busyRef: { current: boolean };
+  /** Modal shell close-guard ref, passed through to the inline action bar.
+   *  Omitted by the page, which renders its own (sticky) action bar. */
+  busyRef?: { current: boolean };
+  /** Suppress the inline approve/reject footer so the page can render the actions
+   *  in its own sticky bottom bar (the modal keeps them inline). */
+  hideInlineActions?: boolean;
 }) {
-  const utils = trpc.useUtils();
   const features = useFeatureFlags();
-  const [approvalNotes, setApprovalNotes] = useState('');
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
 
   const { request, mode } = selection;
-
-  const approveMut = trpc.blocks.approveRequest.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({
-        message: `Approved ${request.slug} v${request.version}. Build started.`,
-      });
-      await utils.blocks.listPendingRequests.invalidate();
-      await utils.blocks.listApprovedRequests.invalidate();
-      onClose();
-    },
-    onError: (e) => {
-      showErrorNotification({
-        title: 'Approve failed',
-        error: new Error(e.message),
-      });
-    },
-  });
-  const rejectMut = trpc.blocks.rejectRequest.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({
-        message: `Rejected ${request.slug} v${request.version}.`,
-      });
-      await utils.blocks.listPendingRequests.invalidate();
-      await utils.blocks.listRejectedRequests.invalidate();
-      onClose();
-    },
-    onError: (e) => {
-      showErrorNotification({
-        title: 'Reject failed',
-        error: new Error(e.message),
-      });
-    },
-  });
-
-  const readOnly = mode !== 'pending';
 
   const manifest = request.manifest as Record<string, unknown>;
   const fs = (request.fileSummary ?? {}) as FileSummary;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-  const busy = approveMut.isPending || rejectMut.isPending;
-  // Publish the in-flight state up to the shell so its onClose can guard on it.
-  busyRef.current = busy;
 
   const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
   const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
@@ -482,76 +440,12 @@ export function OnsiteReviewModalBody({
           <ManifestView manifest={manifest} />
         </Stack>
 
-        {readOnly ? null : actionMode === 'reject' ? (
-          <Stack gap="xs">
-            <ReasonGatedField
-              value={rejectionReason}
-              onChange={setRejectionReason}
-              disabled={busy}
-              label="Rejection reason"
-              placeholder={`Explain what needs to change before this can be approved (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the dev).`}
-              testId="apps-review-reject-reason"
-              minRows={3}
-              maxRows={10}
-            />
-            <Group justify="flex-end" gap="xs">
-              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
-                Cancel
-              </Button>
-              <ReasonGatedSubmitButton
-                onClick={() =>
-                  rejectMut.mutate({
-                    publishRequestId: request.id,
-                    rejectionReason: rejectionReason.trim(),
-                  })
-                }
-                gateOpen={reasonMeetsMin(rejectionReason)}
-                busy={rejectMut.isPending}
-                color="red"
-                leftSection={<IconX size={14} />}
-                label="Reject"
-                testId="apps-review-reject-confirm"
-              />
-            </Group>
-          </Stack>
-        ) : (
-          <Stack gap="xs">
-            <Textarea
-              label="Approval notes (optional)"
-              autosize
-              minRows={2}
-              maxRows={6}
-              placeholder="Optional notes attached to the approval record."
-              value={approvalNotes}
-              onChange={(e) => setApprovalNotes(e.currentTarget.value)}
-              disabled={busy}
-            />
-            <Group justify="flex-end" gap="xs">
-              <Button
-                color="red"
-                variant="default"
-                leftSection={<IconX size={14} />}
-                onClick={() => setActionMode('reject')}
-                disabled={busy}
-              >
-                Reject…
-              </Button>
-              <Button
-                color="green"
-                leftSection={<IconCheck size={14} />}
-                onClick={() =>
-                  approveMut.mutate({
-                    publishRequestId: request.id,
-                    approvalNotes: approvalNotes.trim() || undefined,
-                  })
-                }
-                disabled={busy}
-                loading={approveMut.isPending}
-              >
-                Approve + build
-              </Button>
-            </Group>
-          </Stack>
+        {/* Approve/reject controls. Rendered inline here for the modal (its
+            footer, unchanged), and SUPPRESSED on the page (`hideInlineActions`),
+            which renders the same `ReviewActionBar` pinned in a sticky bottom bar.
+            The bar self-suppresses for read-only approved/rejected history. */}
+        {!hideInlineActions && (
+          <ReviewActionBar selection={selection} onClose={onClose} busyRef={busyRef} />
         )}
       </Stack>
   );

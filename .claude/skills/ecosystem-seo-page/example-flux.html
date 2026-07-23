@@ -1,0 +1,744 @@
+<title>Flux AI Models & Generator | Civitai — SEO Hub Concept</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --primary: #228be6;
+    --primary-light: #339af0;
+    --accent-amber: #fab005;
+    --accent-amber-light: #fcc419;
+    --bg-base: #1a1b1e;
+    --bg-card: #25262b;
+    --bg-elevated: #2c2e33;
+    --text-primary: #c1c2c5;
+    --text-heading: #fff;
+    --text-muted: #909296;
+    --border-color: rgba(255, 255, 255, 0.1);
+    --violet: #7950f2;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    line-height: 1.5;
+  }
+
+  a { color: var(--primary-light); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Placeholder image slots — stand in for real generated images (CSP blocks remote hosts) */
+  .img-ph {
+    position: relative;
+    background: linear-gradient(135deg, #2c2e33 0%, #25262b 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .img-ph::after {
+    content: attr(data-label);
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.35);
+  }
+  .img-ph.g1 { background: linear-gradient(135deg, #1f3a5f 0%, #3d2b5c 100%); }
+  .img-ph.g2 { background: linear-gradient(135deg, #4a2f1a 0%, #2c2e33 100%); }
+  .img-ph.g3 { background: linear-gradient(135deg, #1a3a34 0%, #2c2e33 100%); }
+  .img-ph.g4 { background: linear-gradient(135deg, #3d2b5c 0%, #1f2a4a 100%); }
+  .img-ph.g5 { background: linear-gradient(135deg, #4a1f3a 0%, #2c2e33 100%); }
+  .img-ph.g6 { background: linear-gradient(135deg, #2a3a1f 0%, #2c2e33 100%); }
+
+  .seo-banner {
+    background: rgba(37, 38, 43, 0.85);
+    border-bottom: 1px solid var(--border-color);
+    padding: 12px 24px;
+    font-size: 12px;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    backdrop-filter: blur(8px);
+  }
+  .seo-banner-close { cursor: pointer; color: var(--text-muted); font-weight: 600; flex: 0 0 auto; }
+
+  .container { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
+
+  .hero { padding: 48px 0; border-bottom: 1px solid var(--border-color); }
+  .breadcrumb { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+  .breadcrumb a { color: var(--text-muted); }
+  .breadcrumb a:hover { color: var(--primary-light); }
+
+  .hero-title { font-size: 48px; font-weight: 700; color: var(--text-heading); margin-bottom: 12px; letter-spacing: -0.5px; }
+  .badge-row { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+  .badge {
+    background: rgba(34, 139, 230, 0.15);
+    border: 1px solid rgba(34, 139, 230, 0.3);
+    color: var(--primary-light);
+    padding: 6px 12px;
+    border-radius: 99px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .hero-intro { max-width: 720px; font-size: 16px; line-height: 1.6; color: var(--text-primary); margin-bottom: 32px; }
+  .cta-row { display: flex; gap: 12px; margin-bottom: 40px; flex-wrap: wrap; align-items: center; }
+
+  .btn {
+    padding: 12px 28px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+    border: none;
+    transition: transform 200ms ease, box-shadow 200ms ease, background 200ms ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .btn:focus-visible { outline: 2px solid var(--primary-light); outline-offset: 2px; }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent-amber) 0%, var(--accent-amber-light) 100%);
+    color: #1a1b1e;
+    box-shadow: 0 8px 24px rgba(250, 176, 5, 0.3);
+  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(250, 176, 5, 0.4); text-decoration: none; }
+  .btn-secondary { background: transparent; color: var(--primary-light); border: 1.5px solid var(--primary-light); }
+  .btn-secondary:hover { background: rgba(34, 139, 230, 0.1); text-decoration: none; }
+
+  .stats-row { display: flex; gap: 32px; margin-bottom: 40px; flex-wrap: wrap; }
+  .stat-item { display: flex; flex-direction: column; }
+  .stat-number { font-size: 24px; font-weight: 700; color: var(--text-heading); margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+  .stat-label { font-size: 13px; color: var(--text-muted); }
+
+  .hero-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-top: 32px; }
+  .hero-image-card { aspect-ratio: 7/9; border-radius: 12px; border: 1px solid var(--border-color); overflow: hidden; }
+
+  .quick-nav {
+    display: flex;
+    gap: 12px;
+    padding: 16px 0;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 45px;
+    background: rgba(26, 27, 30, 0.92);
+    backdrop-filter: blur(8px);
+    z-index: 30;
+  }
+  .nav-chip {
+    padding: 8px 16px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 200ms ease, color 200ms ease;
+    border: 1px solid transparent;
+  }
+  .nav-chip:hover { background: rgba(34, 139, 230, 0.2); color: var(--primary-light); text-decoration: none; }
+
+  .section { padding: 60px 0; border-bottom: 1px solid var(--border-color); }
+  .section-header { margin-bottom: 40px; }
+  .section-title { font-size: 32px; font-weight: 700; color: var(--text-heading); margin-bottom: 8px; text-wrap: balance; }
+  .section-subtitle { font-size: 15px; color: var(--text-muted); }
+
+  .model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 24px; }
+  .model-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+    display: flex;
+    flex-direction: column;
+  }
+  .model-card:hover { border-color: rgba(34, 139, 230, 0.5); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); transform: translateY(-4px); }
+  .model-image { width: 100%; aspect-ratio: 7/9; }
+  .model-info { padding: 16px; flex: 1; display: flex; flex-direction: column; }
+  .model-type-badge {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    background: rgba(64, 192, 87, 0.2);
+    border: 1px solid rgba(64, 192, 87, 0.4);
+    color: #69db7c;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+  .model-type-badge.lora { background: rgba(121, 80, 242, 0.2); border-color: rgba(121, 80, 242, 0.4); color: #b197fc; }
+  .model-name { font-size: 16px; font-weight: 600; color: var(--text-heading); margin-bottom: 8px; line-height: 1.3; }
+  .model-meta { display: flex; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+  .model-rating { display: flex; gap: 2px; color: #fab005; margin-bottom: 12px; }
+  .model-cta {
+    padding: 8px 12px;
+    background: var(--accent-amber);
+    color: #1a1b1e;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: background 200ms ease, transform 200ms ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: auto;
+  }
+  .model-cta:hover { background: var(--accent-amber-light); transform: translateY(-2px); }
+
+  .lora-scroll { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 16px; }
+  .lora-card {
+    flex: 0 0 160px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 200ms ease, transform 200ms ease;
+  }
+  .lora-card:hover { border-color: rgba(34, 139, 230, 0.5); transform: translateY(-4px); }
+  .lora-image { width: 100%; aspect-ratio: 1; }
+  .lora-info { padding: 12px; }
+  .lora-name { font-size: 14px; font-weight: 600; color: var(--text-heading); margin-bottom: 8px; }
+  .lora-cta {
+    padding: 6px 12px;
+    background: var(--accent-amber);
+    color: #1a1b1e;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    width: 100%;
+    transition: background 200ms ease;
+  }
+  .lora-cta:hover { background: var(--accent-amber-light); }
+
+  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+  .gallery-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 200ms ease;
+  }
+  .gallery-card:hover { border-color: rgba(34, 139, 230, 0.5); }
+  .gallery-image { width: 100%; aspect-ratio: 1; }
+  .gallery-info { padding: 16px; }
+  .gallery-prompt {
+    font-size: 12px;
+    color: var(--text-primary);
+    line-height: 1.5;
+    margin-bottom: 12px;
+    font-family: 'SFMono-Regular', ui-monospace, 'Courier New', monospace;
+    background: var(--bg-base);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .gallery-settings { font-size: 11px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+  .gallery-cta {
+    padding: 8px 12px;
+    background: var(--primary);
+    color: #fff;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    width: 100%;
+    transition: background 200ms ease;
+  }
+  .gallery-cta:hover { background: var(--primary-light); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+  .col-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 32px; }
+  .col-card.recommended { border-color: rgba(250, 176, 5, 0.4); box-shadow: 0 0 0 1px rgba(250, 176, 5, 0.1); }
+  .col-card h3 { font-size: 20px; font-weight: 700; color: var(--text-heading); margin-bottom: 12px; }
+  .col-card p { font-size: 14px; color: var(--text-primary); line-height: 1.6; margin-bottom: 12px; }
+  .col-card .check { display: flex; gap: 10px; margin-bottom: 12px; font-size: 14px; color: var(--text-primary); }
+  .col-card .check::before { content: "✓"; color: #40c057; font-weight: 700; flex: 0 0 auto; }
+  .col-card .caveat { display: flex; gap: 10px; margin-bottom: 12px; font-size: 14px; color: var(--text-muted); }
+  .col-card .caveat::before { content: "•"; color: var(--text-muted); font-weight: 700; flex: 0 0 auto; }
+  .members-callout {
+    background: rgba(121, 80, 242, 0.1);
+    border-left: 3px solid var(--violet);
+    padding: 12px 16px;
+    margin-top: 20px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .members-callout a { color: #b197fc; font-weight: 600; }
+
+  .table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--border-color); }
+  .comparison-table { width: 100%; border-collapse: collapse; min-width: 640px; }
+  .comparison-table th, .comparison-table td { padding: 16px; text-align: left; border-bottom: 1px solid var(--border-color); }
+  .comparison-table th { background: var(--bg-elevated); font-weight: 700; color: var(--text-heading); font-size: 14px; }
+  .comparison-table th a { color: var(--primary-light); }
+  .comparison-table td { background: var(--bg-card); font-size: 14px; color: var(--text-primary); }
+  .comparison-table tr:last-child td { border-bottom: none; }
+  .comparison-table .col-flux { background: rgba(34, 139, 230, 0.06); }
+  .comparison-table th.col-flux { background: rgba(34, 139, 230, 0.14); }
+  .row-header { font-weight: 600; color: var(--text-heading); width: 20%; }
+  .comparison-check { color: #40c057; font-weight: 700; }
+
+  .faq-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+  .faq-question {
+    padding: 20px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    font-weight: 600;
+    color: var(--text-heading);
+    transition: background 200ms ease;
+    list-style: none;
+  }
+  .faq-question::-webkit-details-marker { display: none; }
+  .faq-question:hover { background: rgba(34, 139, 230, 0.08); }
+  .faq-icon { transition: transform 200ms ease; flex: 0 0 auto; color: var(--text-muted); }
+  .faq-item[open] .faq-icon { transform: rotate(180deg); }
+  .faq-answer { padding: 0 20px 20px; color: var(--text-primary); line-height: 1.6; font-size: 14px; }
+  .faq-answer a { color: var(--primary-light); font-weight: 500; }
+
+  .cta-band {
+    background: linear-gradient(135deg, rgba(34, 139, 230, 0.2) 0%, rgba(121, 80, 242, 0.2) 100%);
+    border: 1px solid rgba(34, 139, 230, 0.3);
+    border-radius: 12px;
+    padding: 48px 32px;
+    text-align: center;
+    margin: 60px 0;
+  }
+  .cta-band h2 { font-size: 32px; font-weight: 700; color: var(--text-heading); margin-bottom: 12px; text-wrap: balance; }
+  .cta-band p { font-size: 16px; color: var(--text-primary); margin-bottom: 28px; }
+  .cta-band-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .membership-note { margin-top: 24px; font-size: 13px; color: var(--text-muted); }
+  .membership-note a { color: var(--primary-light); }
+
+  .footer { padding: 48px 0; text-align: center; }
+  .footer-text { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+  .ecosystem-links { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
+  .ecosystem-link {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    font-size: 13px;
+    color: var(--primary-light);
+    transition: background 200ms ease, border-color 200ms ease;
+    border: 1px solid transparent;
+  }
+  .ecosystem-link:hover { background: rgba(34, 139, 230, 0.2); border-color: rgba(34, 139, 230, 0.3); text-decoration: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+
+  @media (max-width: 768px) {
+    .hero-title { font-size: 32px; }
+    .section-title { font-size: 24px; }
+    .model-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    .two-col { grid-template-columns: 1fr; gap: 24px; }
+    .cta-band { padding: 32px 24px; }
+    .cta-band h2 { font-size: 24px; }
+    .cta-row .btn { flex: 1 1 auto; justify-content: center; }
+  }
+</style>
+
+<div class="seo-banner">
+  <div>
+    <strong style="color: var(--text-primary);">SEO template preview</strong> — one reusable template per generation ecosystem. Title tag, meta description, and FAQPage / BreadcrumbList JSON-LD render server-side. Replicated across SDXL, Pony, Illustrious, Wan, Qwen &amp; ~60 more.
+  </div>
+  <div class="seo-banner-close" role="button" tabindex="0" aria-label="Dismiss">×</div>
+</div>
+
+<section class="hero">
+  <div class="container">
+    <nav class="breadcrumb"><a href="#">Home</a> / <a href="#">Ecosystems</a> / <span>Flux</span></nav>
+
+    <h1 class="hero-title">Flux</h1>
+
+    <div class="badge-row">
+      <span class="badge">Text-to-Image</span>
+      <span class="badge">By Black Forest Labs</span>
+      <span class="badge">Open + API Models</span>
+    </div>
+
+    <p class="hero-intro">
+      Flux is a new generation of open-weight text-to-image models with class-leading prompt adherence, legible in-image text, and striking photorealism. Generate detailed images from a description in seconds — no GPU, no install. Run every Flux model right here on Civitai.
+    </p>
+
+    <div class="cta-row">
+      <a href="#" class="btn btn-primary"><span aria-hidden="true">⚡</span> Generate with Flux</a>
+      <a href="#" class="btn btn-secondary">Browse Flux models</a>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-item"><span class="stat-number">12,400+</span><span class="stat-label">Flux models</span></div>
+      <div class="stat-item"><span class="stat-number">3.2M</span><span class="stat-label">Images generated</span></div>
+      <div class="stat-item"><span class="stat-number">480</span><span class="stat-label">Flux LoRAs</span></div>
+    </div>
+
+    <div class="hero-images">
+      <div class="hero-image-card img-ph g1" data-label="Cyberpunk portrait"></div>
+      <div class="hero-image-card img-ph g2" data-label="Landscape render"></div>
+      <div class="hero-image-card img-ph g3" data-label="Product design"></div>
+      <div class="hero-image-card img-ph g4" data-label="Anime style"></div>
+    </div>
+  </div>
+</section>
+
+<nav class="quick-nav" aria-label="On this page">
+  <div class="container" style="display: flex; gap: 12px; width: 100%; padding: 0;">
+    <a class="nav-chip" href="#">Overview</a>
+    <a class="nav-chip" href="#best-models">Best Models</a>
+    <a class="nav-chip" href="#loras">LoRAs</a>
+    <a class="nav-chip" href="#examples">Examples</a>
+    <a class="nav-chip" href="#how-to-run">How to Run</a>
+    <a class="nav-chip" href="#compare">Flux vs Others</a>
+    <a class="nav-chip" href="#faq">FAQ</a>
+  </div>
+</nav>
+
+<section class="section" id="best-models">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">Best Flux models</h2>
+      <p class="section-subtitle">Ranked by downloads and community rating — data only Civitai has.</p>
+    </div>
+
+    <div class="model-grid">
+      <div class="model-card">
+        <div class="model-image img-ph g1" data-label="Flux.1 Dev"></div>
+        <div class="model-info">
+          <span class="model-type-badge">Checkpoint</span>
+          <div class="model-name">Flux.1 Dev</div>
+          <div class="model-meta"><span>↓ 289K downloads</span></div>
+          <div class="model-rating" aria-label="5 out of 5 stars">★★★★★</div>
+          <button class="model-cta"><span aria-hidden="true">⚡</span> Generate</button>
+        </div>
+      </div>
+      <div class="model-card">
+        <div class="model-image img-ph g2" data-label="Flux.1 Schnell"></div>
+        <div class="model-info">
+          <span class="model-type-badge">Checkpoint</span>
+          <div class="model-name">Flux.1 Schnell</div>
+          <div class="model-meta"><span>↓ 156K downloads</span></div>
+          <div class="model-rating" aria-label="4 out of 5 stars">★★★★☆</div>
+          <button class="model-cta"><span aria-hidden="true">⚡</span> Generate</button>
+        </div>
+      </div>
+      <div class="model-card">
+        <div class="model-image img-ph g3" data-label="Flux Realism+"></div>
+        <div class="model-info">
+          <span class="model-type-badge lora">LoRA</span>
+          <div class="model-name">Flux Realism+</div>
+          <div class="model-meta"><span>↓ 94K downloads</span></div>
+          <div class="model-rating" aria-label="5 out of 5 stars">★★★★★</div>
+          <button class="model-cta"><span aria-hidden="true">⚡</span> Generate</button>
+        </div>
+      </div>
+      <div class="model-card">
+        <div class="model-image img-ph g4" data-label="Anime Flux Master"></div>
+        <div class="model-info">
+          <span class="model-type-badge lora">LoRA</span>
+          <div class="model-name">Anime Flux Master</div>
+          <div class="model-meta"><span>↓ 72K downloads</span></div>
+          <div class="model-rating" aria-label="4 out of 5 stars">★★★★☆</div>
+          <button class="model-cta"><span aria-hidden="true">⚡</span> Generate</button>
+        </div>
+      </div>
+      <div class="model-card">
+        <div class="model-image img-ph g5" data-label="Flux Portrait Pro"></div>
+        <div class="model-info">
+          <span class="model-type-badge lora">LoRA</span>
+          <div class="model-name">Flux Portrait Pro</div>
+          <div class="model-meta"><span>↓ 58K downloads</span></div>
+          <div class="model-rating" aria-label="5 out of 5 stars">★★★★★</div>
+          <button class="model-cta"><span aria-hidden="true">⚡</span> Generate</button>
+        </div>
+      </div>
+      <div class="model-card">
+        <div class="model-image img-ph g6" data-label="PixelWave Flux"></div>
+        <div class="model-info">
+          <span class="model-type-badge lora">LoRA</span>
+          <div class="model-name">PixelWave Flux</div>
+          <div class="model-meta"><span>↓ 43K downloads</span></div>
+          <div class="model-rating" aria-label="4 out of 5 stars">★★★★☆</div>
+          <button class="model-cta"><span aria-hidden="true">⚡</span> Generate</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="loras">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">Popular Flux LoRAs &amp; add-ons</h2>
+      <p class="section-subtitle">Community-trained styles that stack on top of any Flux checkpoint.</p>
+    </div>
+
+    <div class="lora-scroll">
+      <div class="lora-card"><div class="lora-image img-ph g2" data-label="Amateur Photo"></div><div class="lora-info"><div class="lora-name">Amateur Photo</div><button class="lora-cta">⚡ Generate</button></div></div>
+      <div class="lora-card"><div class="lora-image img-ph g4" data-label="Anime Flux"></div><div class="lora-info"><div class="lora-name">Anime Flux</div><button class="lora-cta">⚡ Generate</button></div></div>
+      <div class="lora-card"><div class="lora-image img-ph g3" data-label="Detailer+"></div><div class="lora-info"><div class="lora-name">Detailer+</div><button class="lora-cta">⚡ Generate</button></div></div>
+      <div class="lora-card"><div class="lora-image img-ph g5" data-label="Oil Painting"></div><div class="lora-info"><div class="lora-name">Oil Painting</div><button class="lora-cta">⚡ Generate</button></div></div>
+      <div class="lora-card"><div class="lora-image img-ph g1" data-label="Cinematic Pro"></div><div class="lora-info"><div class="lora-name">Cinematic Pro</div><button class="lora-cta">⚡ Generate</button></div></div>
+      <div class="lora-card"><div class="lora-image img-ph g6" data-label="Sci-Fi Dreams"></div><div class="lora-info"><div class="lora-name">Sci-Fi Dreams</div><button class="lora-cta">⚡ Generate</button></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="examples">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">Example generations</h2>
+      <p class="section-subtitle">Every image ships with its real prompt and settings — copy, tweak, remix.</p>
+    </div>
+
+    <div class="gallery-grid">
+      <div class="gallery-card">
+        <div class="gallery-image img-ph g1" data-label="Generated image"></div>
+        <div class="gallery-info">
+          <div class="gallery-prompt">A cyberpunk street market in Tokyo at night, neon signs, rain reflections, highly detailed</div>
+          <div class="gallery-settings">Steps 20 · Guidance 3.5 · Flux.1 Dev</div>
+          <button class="gallery-cta">Remix this →</button>
+        </div>
+      </div>
+      <div class="gallery-card">
+        <div class="gallery-image img-ph g4" data-label="Generated image"></div>
+        <div class="gallery-info">
+          <div class="gallery-prompt">Portrait of a wizard with flowing robes, magical aura, fantasy art, octane render</div>
+          <div class="gallery-settings">Steps 25 · Guidance 4.0 · Flux.1 Dev</div>
+          <button class="gallery-cta">Remix this →</button>
+        </div>
+      </div>
+      <div class="gallery-card">
+        <div class="gallery-image img-ph g3" data-label="Generated image"></div>
+        <div class="gallery-info">
+          <div class="gallery-prompt">Minimalist Scandinavian interior, white and wood tones, soft natural light</div>
+          <div class="gallery-settings">Steps 20 · Guidance 3.0 · Flux.1 Schnell</div>
+          <button class="gallery-cta">Remix this →</button>
+        </div>
+      </div>
+      <div class="gallery-card">
+        <div class="gallery-image img-ph g6" data-label="Generated image"></div>
+        <div class="gallery-info">
+          <div class="gallery-prompt">Mountain range at sunset, golden-hour light, cinematic landscape photography</div>
+          <div class="gallery-settings">Steps 25 · Guidance 3.5 · Flux.1 Dev</div>
+          <button class="gallery-cta">Remix this →</button>
+        </div>
+      </div>
+      <div class="gallery-card">
+        <div class="gallery-image img-ph g5" data-label="Generated image"></div>
+        <div class="gallery-info">
+          <div class="gallery-prompt">Cute anime girl, pastel palette, soft lighting, Ghibli-style illustration</div>
+          <div class="gallery-settings">Steps 20 · Guidance 4.5 · Flux.1 Dev + Anime LoRA</div>
+          <button class="gallery-cta">Remix this →</button>
+        </div>
+      </div>
+      <div class="gallery-card">
+        <div class="gallery-image img-ph g2" data-label="Generated image"></div>
+        <div class="gallery-info">
+          <div class="gallery-prompt">Futuristic spaceship interior, blue neon accents, sci-fi concept art</div>
+          <div class="gallery-settings">Steps 24 · Guidance 3.8 · Flux.1 Dev</div>
+          <button class="gallery-cta">Remix this →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="how-to-run">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">How to run Flux</h2>
+      <p class="section-subtitle">Two paths — one takes ten seconds, one takes an afternoon.</p>
+    </div>
+
+    <div class="two-col">
+      <div class="col-card recommended">
+        <h3><span aria-hidden="true">⚡</span> Run on Civitai <span style="font-size: 12px; color: var(--accent-amber); font-weight: 600;">Recommended</span></h3>
+        <p><strong>The fastest way to start.</strong></p>
+        <div class="check">No GPU required</div>
+        <div class="check">In-browser generation in seconds</div>
+        <div class="check">One click from any model or LoRA on this page</div>
+        <div class="check">Works on mobile</div>
+        <a href="#" class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 16px;"><span aria-hidden="true">⚡</span> Generate now</a>
+        <div class="members-callout">
+          <strong>Level up:</strong> Members get more daily generations and priority queue on Flux. <a href="#">See membership →</a>
+        </div>
+      </div>
+
+      <div class="col-card">
+        <h3><span aria-hidden="true">🖥️</span> Run it locally</h3>
+        <p><strong>For power users who want full control.</strong></p>
+        <div class="check">Full control over the workflow</div>
+        <div class="check">Batch and automate</div>
+        <div class="caveat">Needs a 16GB+ VRAM GPU</div>
+        <div class="caveat">Download ~24GB of weights</div>
+        <div class="caveat">Set up ComfyUI and node graphs yourself</div>
+        <a href="#" class="btn btn-secondary" style="width: 100%; justify-content: center; margin-top: 16px;">Read the local setup guide</a>
+        <p style="margin-top: 16px; font-size: 12px; color: var(--text-muted);">No graphics card? The Civitai path above skips all of this.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="compare">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">Flux vs other ecosystems</h2>
+      <p class="section-subtitle">Every claim below is backed by Civitai usage data. Column headers link to each ecosystem hub.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th scope="col">Feature</th>
+            <th scope="col" class="col-flux"><a href="#">Flux</a></th>
+            <th scope="col"><a href="#">SDXL</a></th>
+            <th scope="col"><a href="#">Pony</a></th>
+            <th scope="col"><a href="#">Illustrious</a></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="row-header">Best for</td>
+            <td class="col-flux">Photorealism, text, versatility</td>
+            <td>General purpose, speed</td>
+            <td>Anime &amp; illustration</td>
+            <td>Stylized anime art</td>
+          </tr>
+          <tr>
+            <td class="row-header">Prompt adherence</td>
+            <td class="col-flux"><span class="comparison-check">Excellent</span></td>
+            <td>Good</td>
+            <td>Good</td>
+            <td>Very good</td>
+          </tr>
+          <tr>
+            <td class="row-header">Text in images</td>
+            <td class="col-flux"><span class="comparison-check">Strong</span></td>
+            <td>Weak</td>
+            <td>Fair</td>
+            <td>Fair</td>
+          </tr>
+          <tr>
+            <td class="row-header">Speed on Civitai</td>
+            <td class="col-flux">Fast (4–8s)</td>
+            <td><span class="comparison-check">Fastest (2–4s)</span></td>
+            <td>Fast (3–6s)</td>
+            <td>Medium (5–10s)</td>
+          </tr>
+          <tr>
+            <td class="row-header">LoRA ecosystem</td>
+            <td class="col-flux">480+ LoRAs</td>
+            <td><span class="comparison-check">8,200+ LoRAs</span></td>
+            <td>3,400+ LoRAs</td>
+            <td>2,100+ LoRAs</td>
+          </tr>
+          <tr>
+            <td class="row-header">Runs free on Civitai</td>
+            <td class="col-flux"><span class="comparison-check">✓ Yes</span></td>
+            <td><span class="comparison-check">✓ Yes</span></td>
+            <td><span class="comparison-check">✓ Yes</span></td>
+            <td><span class="comparison-check">✓ Yes</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="faq">
+  <div class="container">
+    <div class="section-header">
+      <h2 class="section-title">Frequently asked questions</h2>
+      <p class="section-subtitle">These render as FAQPage schema for rich results in search.</p>
+    </div>
+
+    <details class="faq-item" open>
+      <summary class="faq-question"><span>Is Flux free to use?</span><span class="faq-icon" aria-hidden="true">▼</span></summary>
+      <div class="faq-answer">Yes — you can generate with Flux.1 Dev and Schnell on Civitai for free. Members get higher daily limits and priority queue. <a href="#">Compare membership tiers.</a></div>
+    </details>
+    <details class="faq-item">
+      <summary class="faq-question"><span>What's the difference between Flux Dev and Schnell?</span><span class="faq-icon" aria-hidden="true">▼</span></summary>
+      <div class="faq-answer">Dev prioritizes quality and prompt adherence; Schnell is tuned for speed, producing images in far fewer steps. Both are free on Civitai — <a href="#">try them side by side.</a></div>
+    </details>
+    <details class="faq-item">
+      <summary class="faq-question"><span>Can I train my own Flux LoRA?</span><span class="faq-icon" aria-hidden="true">▼</span></summary>
+      <div class="faq-answer">Yes. Flux supports LoRA fine-tuning, and you can <a href="#">train one directly on Civitai</a> — no local GPU needed. Publish it to earn Buzz when others generate with it.</div>
+    </details>
+    <details class="faq-item">
+      <summary class="faq-question"><span>Do I need a GPU to run Flux?</span><span class="faq-icon" aria-hidden="true">▼</span></summary>
+      <div class="faq-answer">Not on Civitai — we run the compute for you. Locally, Flux wants a 16GB+ VRAM GPU. <a href="#">Generate in your browser instead →</a></div>
+    </details>
+    <details class="faq-item">
+      <summary class="faq-question"><span>How do I combine a checkpoint with LoRAs?</span><span class="faq-icon" aria-hidden="true">▼</span></summary>
+      <div class="faq-answer">Pick a Flux checkpoint, then stack up to 5 LoRAs in the generator to blend styles. <a href="#">Remix an example</a> to see how the settings carry over.</div>
+    </details>
+    <details class="faq-item">
+      <summary class="faq-question"><span>What does Civitai membership add?</span><span class="faq-icon" aria-hidden="true">▼</span></summary>
+      <div class="faq-answer">More daily generations, priority queue, and early access to new models. <a href="#">See what's included.</a></div>
+    </details>
+  </div>
+</section>
+
+<div class="container">
+  <div class="cta-band">
+    <h2>Start generating with Flux now</h2>
+    <p>No installation. No GPU. Runs in your browser.</p>
+    <div class="cta-band-buttons">
+      <a href="#" class="btn btn-primary"><span aria-hidden="true">⚡</span> Generate with Flux</a>
+      <a href="#" class="btn btn-secondary">Browse models</a>
+    </div>
+    <div class="membership-note">Want more daily generations and a faster queue? <a href="#">Explore Civitai membership.</a></div>
+  </div>
+</div>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-text">Explore other generation ecosystems on Civitai</div>
+    <div class="ecosystem-links">
+      <a href="#" class="ecosystem-link">SDXL</a>
+      <a href="#" class="ecosystem-link">Pony</a>
+      <a href="#" class="ecosystem-link">Illustrious</a>
+      <a href="#" class="ecosystem-link">NoobAI</a>
+      <a href="#" class="ecosystem-link">Wan</a>
+      <a href="#" class="ecosystem-link">Qwen</a>
+      <a href="#" class="ecosystem-link">SD 1.5</a>
+      <a href="#" class="ecosystem-link">HiDream</a>
+    </div>
+    <div class="footer-text" style="margin-top: 24px;">Flux is an open-weight model by Black Forest Labs. This is a design concept — links are non-functional.</div>
+  </div>
+</footer>
+
+<script>
+  document.querySelector('.seo-banner-close').addEventListener('click', function () {
+    this.closest('.seo-banner').style.display = 'none';
+  });
+</script>

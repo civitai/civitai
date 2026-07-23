@@ -26,6 +26,40 @@ export type HiddenModelMetrics = { buzz: boolean; downloads: boolean; generation
 
 const NONE_HIDDEN: HiddenModelMetrics = { buzz: false, downloads: false, generations: false };
 
+/**
+ * A fresh, fully-visible ("nothing hidden") result. Returned by the read-time gate
+ * (`gateHiddenMetrics`) when the `modelMetricPrivacyReadtime` flag is OFF, so a
+ * gated surface emits its RAW metrics without running any membership / resolver
+ * work. Always a NEW object (never the shared `NONE_HIDDEN` ref) to match the
+ * fresh-object contract of `resolveModel/VersionHiddenMetrics`.
+ */
+export const noHiddenMetrics = (): HiddenModelMetrics => ({
+  buzz: false,
+  downloads: false,
+  generations: false,
+});
+
+/**
+ * Read-time flag gate for the Creator-Controls metric-privacy resolution.
+ *
+ * When `enabled` is true the caller's `resolve` thunk runs and its result is
+ * returned UNCHANGED (byte-identical to calling the resolver directly). When
+ * `enabled` is false the thunk is NOT invoked at all — no resolver, and (because
+ * the caller only builds the resolver's inputs inside a matching `if (enabled)`
+ * guard) none of the batched membership / owner-settings lookups either — and a
+ * fresh all-visible result is returned (raw metrics, i.e. pre-#3266 visibility).
+ *
+ * This is the single choke-point that lets `modelMetricPrivacyReadtime` be flipped
+ * OFF to skip #3266's added synchronous read-time work for a controlled A/B.
+ */
+export function gateHiddenMetrics(
+  enabled: boolean,
+  resolve: () => HiddenModelMetrics
+): HiddenModelMetrics {
+  if (!enabled) return noHiddenMetrics();
+  return resolve();
+}
+
 /** Whether any of the three metrics is hidden. */
 export const anyMetricHidden = (hidden: HiddenModelMetrics) =>
   hidden.buzz || hidden.downloads || hidden.generations;

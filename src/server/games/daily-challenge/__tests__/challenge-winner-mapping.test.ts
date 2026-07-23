@@ -146,6 +146,7 @@ vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
   buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
   getChallengeBuzzType: vi.fn().mockResolvedValue('user'),
+  reportPoolFundingShortfall: vi.fn(),
 }));
 
 vi.mock('~/utils/logging', () => ({

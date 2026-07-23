@@ -1916,22 +1916,24 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
 }
 
 // Charge the active user-challenge entry fee for `imageIds` on this collection, if any.
-// Idempotent per (challenge, image) — see chargeEntryFees. No-op for moderators, empty input,
-// or collections without an Active fee challenge. Returns the paid/unpaid partition when a
-// charge ran; entry fees are NEVER refunded (see challenge-funding.ts), so callers must
-// commit only `paidImageIds` — an unpaid image self-heals if the user retries.
+// Idempotent per (challenge, image) — see chargeEntryFees. No-op for empty input or collections
+// without an Active fee challenge. Returns the paid/unpaid partition when a charge ran; entry
+// fees are NEVER refunded (see challenge-funding.ts), so callers must commit only
+// `paidImageIds` — an unpaid image self-heals if the user retries.
+//
+// Moderators are charged like everyone else: a fee-exempt entry is still eligible to win, so it
+// would pay out from a pool it never funded (challenge 413 completed with 2 mod entries and a
+// prizePool of 0).
 const chargeContestEntryFeesForCollection = async ({
   collectionId,
   userId,
   imageIds,
-  isModerator,
 }: {
   collectionId: number;
   userId: number;
   imageIds: number[];
-  isModerator?: boolean;
 }) => {
-  if (isModerator || imageIds.length === 0) return undefined;
+  if (imageIds.length === 0) return undefined;
   const feeChallenge = await dbRead.challenge.findFirst({
     where: { collectionId, source: 'User', entryFee: { gt: 0 }, status: 'Active' },
     select: { id: true, entryFee: true, buzzType: true },
@@ -2278,7 +2280,6 @@ export const validateContestCollectionEntry = async ({
       collectionId,
       userId,
       imageIds,
-      isModerator,
     });
     if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
       // Nothing was written yet, so aborting strands no entry. Any legs that DID charge stay
@@ -2557,7 +2558,6 @@ export const bulkSaveItems = async ({
         collectionId,
         userId,
         imageIds: chargeImageIds,
-        isModerator,
       });
     } catch (e) {
       // Transport/service failure — per-image payment state is unknown, so remove every row
