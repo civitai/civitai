@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   fileLineLabel,
+  findingBody,
   formatCostUsd,
   parseAgentReport,
+  sectionAnalysisError,
+  severityBreakdown,
+  severityRank,
+  sortFindingsBySeverity,
+  type AgentFinding,
 } from '~/components/Apps/agentReviewReport';
 
 /**
@@ -135,5 +141,102 @@ describe('fileLineLabel', () => {
     expect(fileLineLabel('a.js')).toBe('a.js');
     expect(fileLineLabel('a.js', '')).toBe('a.js');
     expect(fileLineLabel(undefined, 3)).toBeNull();
+  });
+});
+
+describe('findingBody', () => {
+  it('prefers the richer `detail` over legacy `description`', () => {
+    expect(findingBody({ evidence: [], detail: 'D', description: 'legacy' })).toBe('D');
+    expect(findingBody({ evidence: [], description: 'legacy' })).toBe('legacy');
+    expect(findingBody({ evidence: [] })).toBeUndefined();
+  });
+});
+
+describe('parseAgentReport — richer finding fields', () => {
+  it('captures category / detail / evidence / suggestion / diffStatus / confidence', () => {
+    const v = parseAgentReport({
+      codeReview: {
+        findings: [
+          {
+            file: 'a.js',
+            line: 3,
+            severity: 'high',
+            category: 'security',
+            title: 'X',
+            detail: 'the detail',
+            evidence: ['a.js:3', 'b.js:9'],
+            suggestion: 'do Y',
+            diffStatus: 'added',
+          },
+        ],
+      },
+      securityAudit: {
+        findings: [{ severity: 'critical', title: 'Z', evidence: ['c.js:1'], confidence: 'high' }],
+      },
+    });
+    const f = v.codeReview.findings[0];
+    expect(f.category).toBe('security');
+    expect(f.detail).toBe('the detail');
+    expect(f.evidence).toEqual(['a.js:3', 'b.js:9']);
+    expect(f.suggestion).toBe('do Y');
+    expect(f.diffStatus).toBe('added');
+    expect(v.securityAudit.findings[0].confidence).toBe('high');
+    // A wrong-typed evidence array falls back to [] (never throws).
+    const bad = parseAgentReport({ codeReview: { findings: [{ title: 'T', evidence: 'nope' }] } });
+    expect(bad.codeReview.findings[0].evidence).toEqual([]);
+  });
+});
+
+describe('severityRank + sortFindingsBySeverity', () => {
+  it('ranks by descending risk; unknown severities sort last', () => {
+    expect(severityRank('critical')).toBeLessThan(severityRank('high'));
+    expect(severityRank('high')).toBeLessThan(severityRank('medium'));
+    expect(severityRank('low')).toBeLessThan(severityRank('info'));
+    expect(severityRank('bogus')).toBeGreaterThan(severityRank('info'));
+    expect(severityRank(undefined)).toBeGreaterThan(severityRank('info'));
+  });
+
+  it('sorts critical → info, stable within a bucket, without mutating input', () => {
+    const input: AgentFinding[] = [
+      { evidence: [], severity: 'low', title: 'L' },
+      { evidence: [], severity: 'critical', title: 'C' },
+      { evidence: [], severity: 'medium', title: 'M1' },
+      { evidence: [], severity: 'medium', title: 'M2' },
+      { evidence: [], title: 'unknown' },
+    ];
+    const out = sortFindingsBySeverity(input);
+    expect(out.map((f) => f.title)).toEqual(['C', 'M1', 'M2', 'L', 'unknown']);
+    // Input untouched.
+    expect(input[0].title).toBe('L');
+  });
+});
+
+describe('severityBreakdown', () => {
+  it('buckets counts (medium + moderate collapse; unknown → other)', () => {
+    const b = severityBreakdown([
+      { evidence: [], severity: 'critical' },
+      { evidence: [], severity: 'high' },
+      { evidence: [], severity: 'medium' },
+      { evidence: [], severity: 'moderate' },
+      { evidence: [], severity: 'low' },
+      { evidence: [], severity: 'info' },
+      { evidence: [], severity: 'weird' },
+      { evidence: [] },
+    ]);
+    expect(b).toEqual({ total: 8, critical: 1, high: 1, medium: 2, low: 1, info: 1, other: 2 });
+  });
+});
+
+describe('sectionAnalysisError', () => {
+  it('detects an { error } object or a bare string; null for well-formed/empty', () => {
+    expect(sectionAnalysisError({ error: 'boom' })).toBe('boom');
+    expect(sectionAnalysisError({ error: { code: 'X' } })).toContain('X');
+    expect(sectionAnalysisError('runner crashed')).toBe('runner crashed');
+    expect(sectionAnalysisError({ findings: [] })).toBeNull();
+    expect(sectionAnalysisError({})).toBeNull();
+    expect(sectionAnalysisError(null)).toBeNull();
+    expect(sectionAnalysisError(undefined)).toBeNull();
+    expect(sectionAnalysisError({ error: null })).toBeNull();
+    expect(sectionAnalysisError('   ')).toBeNull();
   });
 });
