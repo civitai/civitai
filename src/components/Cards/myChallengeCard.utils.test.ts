@@ -1,27 +1,28 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, test, expect } from 'vitest';
 import { getMyChallengeCta, getMyChallengeBadge } from './myChallengeCard.utils';
+import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 describe('getMyChallengeCta', () => {
   it('won => View results (white)', () =>
-    expect(getMyChallengeCta('won', false)).toEqual({
+    expect(getMyChallengeCta('won', false, ChallengeStatus.Completed)).toEqual({
       kind: 'results',
       label: 'View results',
       filled: 'white',
     }));
   it('judging => View entry (white)', () =>
-    expect(getMyChallengeCta('judging', false)).toEqual({
+    expect(getMyChallengeCta('judging', false, ChallengeStatus.Completed)).toEqual({
       kind: 'entry',
       label: 'View entry',
       filled: 'white',
     }));
   it('entered + live => Add another entry (blue)', () =>
-    expect(getMyChallengeCta('entered', true)).toEqual({
+    expect(getMyChallengeCta('entered', true, ChallengeStatus.Active)).toEqual({
       kind: 'add',
       label: 'Add another entry',
       filled: 'blue',
     }));
   it('entered + not live => View results (white)', () =>
-    expect(getMyChallengeCta('entered', false)).toEqual({
+    expect(getMyChallengeCta('entered', false, ChallengeStatus.Completed)).toEqual({
       kind: 'results',
       label: 'View results',
       filled: 'white',
@@ -41,4 +42,38 @@ describe('getMyChallengeBadge', () => {
       color: 'gold',
       icon: 'trophy',
     }));
+});
+
+describe('hosting', () => {
+  test('badge is a grape crown', () => {
+    expect(getMyChallengeBadge('hosting', null)).toEqual({
+      label: 'Hosting',
+      color: 'grape',
+      icon: 'crown',
+    });
+  });
+
+  test('a scheduled hosted challenge offers Manage', () => {
+    expect(getMyChallengeCta('hosting', false, ChallengeStatus.Scheduled)).toEqual({
+      kind: 'manage',
+      label: 'Manage',
+      filled: 'white',
+    });
+  });
+
+  test('a live hosted challenge offers View entries', () => {
+    expect(getMyChallengeCta('hosting', true, ChallengeStatus.Active)).toEqual({
+      kind: 'results',
+      label: 'View entries',
+      filled: 'white',
+    });
+  });
+
+  test('a finished hosted challenge offers View results', () => {
+    expect(getMyChallengeCta('hosting', false, ChallengeStatus.Completed)).toEqual({
+      kind: 'results',
+      label: 'View results',
+      filled: 'white',
+    });
+  });
 });

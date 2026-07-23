@@ -5,6 +5,7 @@ import {
   IconMedal,
   IconHourglass,
   IconCheck,
+  IconCrown,
   IconArrowRight,
   IconPlus,
 } from '@tabler/icons-react';
@@ -15,13 +16,15 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { slugit } from '~/utils/string-helpers';
 import { getMyChallengeBadge, getMyChallengeCta } from './myChallengeCard.utils';
-import type { MyParticipatedChallengeItem } from '~/server/schema/challenge.schema';
+import type { MyChallengeItem } from '~/server/schema/challenge.schema';
+import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 const badgeIcons = {
   trophy: IconTrophy,
   medal: IconMedal,
   hourglass: IconHourglass,
   check: IconCheck,
+  crown: IconCrown,
 } as const;
 
 // Per-result badge palette (matches designs/challenges-feed.pen v4). Gold uses dark content for
@@ -31,33 +34,44 @@ const badgeStyles = {
   dark: { bg: 'var(--mantine-color-gray-8)', fg: '#ffffff' },
   blue: { bg: 'var(--mantine-color-blue-6)', fg: '#ffffff' },
   green: { bg: 'var(--mantine-color-green-8)', fg: '#ffffff' },
+  grape: { bg: 'var(--mantine-color-grape-6)', fg: '#ffffff' },
 } as const;
 
-export const MyChallengeCard = memo(function MyChallengeCard({
-  data,
-}: {
-  data: MyParticipatedChallengeItem;
-}) {
-  const { id, title, theme, myEntryImage, myResult, myPlace, isLive, endsAt } = data;
+export const MyChallengeCard = memo(function MyChallengeCard({ data }: { data: MyChallengeItem }) {
+  const {
+    id,
+    title,
+    theme,
+    coverImage,
+    myEntryImage,
+    myResult,
+    myPlace,
+    isLive,
+    status,
+    startsAt,
+    endsAt,
+  } = data;
   const badge = getMyChallengeBadge(myResult, myPlace);
-  const cta = getMyChallengeCta(myResult, isLive);
+  const cta = getMyChallengeCta(myResult, isLive, status);
   const BadgeIcon = badgeIcons[badge.icon];
   const badgeStyle = badgeStyles[badge.color];
   const challengeHref = `/challenges/${id}/${slugit(title)}`;
-  // "View entry" goes straight to the user's own image; everything else (results, and the
-  // submit flow "Add another entry" opens from) lives on the challenge page.
   const ctaHref =
-    cta.kind === 'entry' && myEntryImage ? `/images/${myEntryImage.id}` : challengeHref;
+    cta.kind === 'entry' && myEntryImage
+      ? `/images/${myEntryImage.id}`
+      : cta.kind === 'manage'
+      ? `/challenges/${id}/edit`
+      : challengeHref;
 
-  const image = myEntryImage
+  const image = coverImage
     ? {
-        id: myEntryImage.id,
-        url: myEntryImage.url,
-        type: myEntryImage.type,
-        width: myEntryImage.width ?? 512,
-        height: myEntryImage.height ?? 512,
-        nsfwLevel: myEntryImage.nsfwLevel,
-        hash: myEntryImage.hash,
+        id: coverImage.id,
+        url: coverImage.url,
+        type: coverImage.type,
+        width: coverImage.width ?? 512,
+        height: coverImage.height ?? 512,
+        nsfwLevel: coverImage.nsfwLevel,
+        hash: coverImage.hash,
         metadata: null,
       }
     : undefined;
@@ -91,7 +105,11 @@ export const MyChallengeCard = memo(function MyChallengeCard({
             style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
           >
             <Text size="xs" fw={600} c="gray.2">
-              {isLive ? (
+              {status === ChallengeStatus.Scheduled ? (
+                <>
+                  Starts <DaysFromNow date={startsAt} />
+                </>
+              ) : isLive ? (
                 <>
                   <DaysFromNow date={endsAt} withoutSuffix /> left · Live
                 </>

@@ -94,3 +94,29 @@ export const EnteredEnded = () =>
     myResult: 'entered',
     isLive: false,
   });
+
+/** Hosting state: scheduled, not yet started — grape crown badge, "Starts …" chip, "Manage" CTA */
+export const HostingScheduled = () =>
+  wrap({
+    ...baseChallenge,
+    status: ChallengeStatus.Scheduled,
+    myPlace: null,
+    myResult: 'hosting',
+    isLive: false,
+    myEntryImage: null,
+    startsAt: daysFromNow(2),
+    endsAt: daysFromNow(9),
+  });
+
+/** Hosting state: live — grape crown badge, "… left · Live" chip, "View entries" CTA */
+export const HostingLive = () =>
+  wrap({
+    ...baseChallenge,
+    status: ChallengeStatus.Active,
+    myPlace: null,
+    myResult: 'hosting',
+    isLive: true,
+    myEntryImage: null,
+    startsAt: daysFromNow(-2),
+    endsAt: daysFromNow(3),
+  });
