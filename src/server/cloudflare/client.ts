@@ -44,8 +44,17 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
     'minutes'
   );
 
-  const tasks = chunk(urls, PURGE_BATCH_SIZE).map((files) => async () => {
-    client.zones.purgeCache(env.CF_ZONE_ID!, { files });
+  const tasks = chunk(urls, PURGE_BATCH_SIZE).map((files) => () => {
+    // Fire-and-forget the CF call, but attach a .catch so a rejection
+    // (429 / timeout / auth) is logged instead of escaping as an unhandled
+    // promise rejection. Deliberately NOT awaited: purgeCache stays best-effort
+    // and non-blocking for every caller — notably purgeOnSuccess, which awaits
+    // purgeCache before returning the mutation response, so awaiting the CF
+    // round-trip here would add it to user-facing mutation latency. Dispatch is
+    // still paced by limitConcurrency's betweenTasksFn rate-limit sleep.
+    client.zones.purgeCache(env.CF_ZONE_ID!, { files }).catch((error) => {
+      log('Failed to purge', files.length, 'URLs from Cloudflare', error);
+    });
   });
   let purged = 0;
   await limitConcurrency(tasks, {

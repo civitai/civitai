@@ -110,6 +110,8 @@ import { markFileReplaced, filesForModelVersionCache } from './model-file.servic
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
+import { purgeCache } from '~/server/cloudflare/client';
+import { getBaseUrl } from '~/server/utils/url-helpers';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -749,21 +751,72 @@ export const updateModelVersionEarlyAccessConfig = async ({
   return version;
 };
 
+// Evict the by-hash single-lookup endpoint from the Cloudflare edge.
+//
+// `GET /api/v1/model-versions/by-hash/[hash]` is a PublicEndpoint edge-cached
+// via Cache-Control (s-maxage) and emits NO Cache-Tag, so the tag-based
+// purge (which resolves tags→urls out of Redis) can't target it. The only
+// lever is a purge by exact URL. When a version is unpublished/deleted the
+// endpoint should stop resolving it (Published-only filter), and when a
+// version is published a previously-cached 404 should be dropped so it starts
+// resolving — both need the cached response evicted early rather than waiting
+// out the TTL.
+//
+// The endpoint's zod schema uppercases the hash, so the canonical cache key is
+// the uppercase URL. The Cloudflare cache key is the raw request URL and is
+// case-sensitive, and clients may request either casing, so we purge both the
+// upper- and lower-case variants for each hash.
+async function purgeModelVersionByHashCache(hashes: string[]) {
+  const unique = [...new Set(hashes.filter(Boolean))];
+  if (!unique.length) return;
+
+  const origin = getBaseUrl();
+  const urls = [
+    ...new Set(
+      unique.flatMap((hash) => {
+        const upper = hash.toUpperCase();
+        const lower = hash.toLowerCase();
+        const variants = upper === lower ? [upper] : [upper, lower];
+        return variants.map((h) => `${origin}/api/v1/model-versions/by-hash/${h}`);
+      })
+    ),
+  ];
+
+  await purgeCache({ urls });
+}
+
+// Resolve a version's file hashes then purge the by-hash edge cache. Used by
+// publish/unpublish where the ModelFile/ModelFileHash rows still exist. The
+// delete path can't use this (the cascade removes the rows), so it snapshots
+// the hashes inside the transaction and calls purgeModelVersionByHashCache
+// directly.
+async function purgeModelVersionByHashCacheById(modelVersionId: number) {
+  const hashes = await dbRead.modelFileHash.findMany({
+    where: { file: { modelVersionId } },
+    select: { hash: true },
+  });
+  await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
+}
+
 export const deleteVersionById = async ({
   id,
   isModerator,
 }: GetByIdInput & { isModerator?: boolean }) => {
   // Populated inside the tx so the snapshot is consistent with the cascade.
   let modelFileUrls: string[] = [];
+  // Snapshot the by-hash cache keys inside the tx too — the version cascade
+  // nukes ModelFileHash rows, so they must be read before the delete.
+  let modelFileHashes: string[] = [];
 
   const version = await dbWrite.$transaction(async (tx) => {
-    // Snapshot URLs inside the tx — must read before the cascade nukes ModelFile rows.
-    modelFileUrls = (
-      await tx.modelFile.findMany({
-        where: { modelVersionId: id },
-        select: { url: true },
-      })
-    ).map((f) => f.url);
+    // Snapshot URLs + hashes inside the tx — must read before the cascade nukes
+    // the ModelFile / ModelFileHash rows.
+    const files = await tx.modelFile.findMany({
+      where: { modelVersionId: id },
+      select: { url: true, hashes: { select: { hash: true } } },
+    });
+    modelFileUrls = files.map((f) => f.url);
+    modelFileHashes = files.flatMap((f) => f.hashes.map((h) => h.hash));
 
     const data = await tx.modelVersion.findFirstOrThrow({
       where: { id },
@@ -848,6 +901,19 @@ export const deleteVersionById = async ({
       type: 'error',
       name: 'model-version-delete-bust-cache',
       message: `Failed to bust cache for deleted model version ${id}`,
+      error,
+    });
+  }
+  // Best-effort: evict the by-hash single-lookup endpoint from the edge so the
+  // deleted version stops resolving by-hash before the cache TTL expires. A
+  // purge failure must not fail the (already-committed) delete.
+  try {
+    await purgeModelVersionByHashCache(modelFileHashes);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-delete-purge-by-hash',
+      message: `Failed to purge by-hash edge cache for deleted model version ${id}`,
       error,
     });
   }
@@ -1276,6 +1342,20 @@ export const publishModelVersionById = async ({
     await updateModelLastVersionAt({ id: version.modelId });
   await bustMvCache(version.id, version.modelId);
 
+  // Best-effort: evict any cached by-hash 404 for this version's hashes so a
+  // freshly-published version starts resolving by-hash immediately instead of
+  // serving the stale not-found until the edge cache TTL expires.
+  try {
+    await purgeModelVersionByHashCacheById(version.id);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-publish-purge-by-hash',
+      message: `Failed to purge by-hash edge cache for published model version ${id}`,
+      error,
+    });
+  }
+
   // Update search index for model and images
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
@@ -1371,6 +1451,19 @@ export const unpublishModelVersionById = async ({
 
   await updateModelLastVersionAt({ id: version.model.id });
   await bustMvCache(version.id, version.model.id);
+
+  // Best-effort: evict the by-hash single-lookup endpoint so an unpublished
+  // version stops resolving by-hash before the edge cache TTL expires.
+  try {
+    await purgeModelVersionByHashCacheById(version.id);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-unpublish-purge-by-hash',
+      message: `Failed to purge by-hash edge cache for unpublished model version ${id}`,
+      error,
+    });
+  }
 
   return version;
 };
