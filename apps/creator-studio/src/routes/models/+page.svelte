@@ -25,6 +25,7 @@
     SheetFooter,
   } from '@civitai/ui/components/ui/sheet/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import * as Pagination from '@civitai/ui/components/ui/pagination/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -340,7 +341,7 @@
   </form>
   <Popover.Root>
     <Popover.Trigger
-      class="flex items-center gap-1.5 rounded border border-dark-4 bg-dark-7 px-2.5 py-1.5 text-sm text-white hover:border-dark-3"
+      class="flex h-8 items-center gap-1.5 rounded-lg border border-input bg-transparent px-2.5 text-sm text-white transition-colors hover:bg-dark-6 dark:bg-input/30"
     >
       <IconFilter size={16} class="text-dark-3" />
       Filters
@@ -432,15 +433,21 @@
       {/if}
     </Popover.Content>
   </Popover.Root>
-  <NativeSelect
-    aria-label="Sort"
+  <Select.Root
+    type="single"
     value={data.query.sort}
-    onchange={(e) => navigate({ sort: e.currentTarget.value, page: null })}
-    class="[&>option]:bg-dark-7 [&>option]:text-white"
+    onValueChange={(v: string) => {
+      if (v) navigate({ sort: v, page: null });
+    }}
   >
-    <NativeSelectOption value="recent">Recently updated</NativeSelectOption>
-    <NativeSelectOption value="name">Name</NativeSelectOption>
-  </NativeSelect>
+    <Select.Trigger size="default" class="w-44 text-white" aria-label="Sort">
+      {data.query.sort === 'name' ? 'Name' : 'Recently updated'}
+    </Select.Trigger>
+    <Select.Content>
+      <Select.Item value="recent" label="Recently updated" />
+      <Select.Item value="name" label="Name" />
+    </Select.Content>
+  </Select.Root>
   {#if data.total > 0 && !bulkMode}
     <div class="ml-auto flex items-center gap-2">
       <Button href={exportHref} data-sveltekit-reload variant="outline" size="sm">Export CSV</Button>
@@ -464,7 +471,7 @@
         </form>
         <Button variant="outline" size="sm" onclick={() => fileInput?.click()}>Import CSV</Button>
         <Button href={buildHref({ mode: 'bulk' })} data-sveltekit-replacestate variant="outline" size="sm">
-          Bulk edit fees
+          Bulk Edit Fees
         </Button>
       {/if}
     </div>
@@ -479,7 +486,7 @@
       aria-label="Models per page"
       value={String(data.perPage)}
       onchange={(e) => navigate({ ps: e.currentTarget.value, page: null })}
-      class="h-7 py-0 text-xs [&>option]:bg-dark-7 [&>option]:text-white"
+      class="h-7 rounded-lg py-0 text-xs text-white [&>option]:bg-dark-7 [&>option]:text-white"
     >
       {#each data.pageSizeOptions as n (n)}
         <NativeSelectOption value={String(n)}>{n}</NativeSelectOption>
@@ -498,15 +505,15 @@
     {#if data.matchingVersionIds.length > 0}
       <Button
         variant="outline"
-        size="xs"
-        onclick={() => (selectAll(data.matchingVersionIds))}
+        size="sm"
+        onclick={() => selectAll(data.matchingVersionIds)}
         title="Select every version matching the current filters (all pages)"
       >
         Select all {data.matchingVersionIds.length}
       </Button>
     {/if}
     {#if selected.size > 0}
-      <Button variant="outline" size="xs" onclick={() => selected.clear()}>Clear</Button>
+      <Button variant="outline" size="sm" onclick={() => selected.clear()}>Clear</Button>
     {/if}
     <form bind:this={bulkForm} method="POST" action="?/bulkSetFee" use:enhance={bulkEnhance} class="contents">
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
@@ -517,14 +524,14 @@
         placeholder="Buzz"
         aria-label="Buzz (leave empty to clear the fee)"
         title="Leave empty to clear the fee"
-        class="w-20"
+        class="h-7 w-20"
       />
       <span class="text-sm text-dark-1">⚡ per</span>
       <NativeSelect
         name="images"
         bind:value={bulkImages}
         aria-label="Images"
-        class="[&>option]:bg-dark-7 [&>option]:text-white"
+        class="h-7 rounded-lg py-0 text-white [&>option]:bg-dark-7 [&>option]:text-white"
       >
         {#each FEE_IMAGE_OPTIONS as opt (opt)}
           <NativeSelectOption value={String(opt)}>{opt}</NativeSelectOption>
@@ -545,7 +552,7 @@
         {@const sr = feeToRatio(bulkSuggested)}
         <button
           type="button"
-          class="text-xs text-blue-4 hover:underline"
+          class="text-xs text-dark-1 hover:text-white hover:underline"
           onclick={() => {
             bulkBuzz = sr.buzz;
             bulkImages = String(sr.images);
