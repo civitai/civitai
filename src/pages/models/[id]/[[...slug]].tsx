@@ -21,6 +21,7 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconArchive,
   IconArrowsLeftRight,
+  IconBabyCarriage,
   IconBan,
   IconBolt,
   IconBookmark,
@@ -92,6 +93,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
+import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import {
   HIDDEN_METRIC_MESSAGE,
@@ -1195,6 +1197,16 @@ export default function ModelDetailsV2({
                                     </Menu.Item>
                                   )}
                                 </ToggleLockModel>
+                                <ToggleMinorModel modelId={model.id} minor={model.minor}>
+                                  {({ onClick }) => (
+                                    <Menu.Item
+                                      leftSection={<IconBabyCarriage size={14} stroke={1.5} />}
+                                      onClick={onClick}
+                                    >
+                                      {model.minor ? 'Unset as Minor' : 'Set as Minor'}
+                                    </Menu.Item>
+                                  )}
+                                </ToggleMinorModel>
                                 <ToggleLockModelComments
                                   modelId={model.id}
                                   locked={model.meta?.commentsLocked}
