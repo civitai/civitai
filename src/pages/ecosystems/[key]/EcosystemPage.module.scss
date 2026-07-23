@@ -190,6 +190,14 @@
     color: var(--text-primary);
   }
 }
+.freshnessNote {
+  max-width: 760px;
+  margin-top: 20px;
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
 .promptTips {
   max-width: 760px;
   margin-top: 32px;

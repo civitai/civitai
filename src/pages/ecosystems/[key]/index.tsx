@@ -233,6 +233,12 @@ export default function EcosystemPage({
                   </ul>
                 </div>
               )}
+              {(isVideo || apiOnly) && (
+                <p className={styles.freshnessNote}>
+                  AI models move fast — new versions ship often, and a model’s capabilities or Buzz
+                  cost can change. For the latest, check the model’s own page before you generate.
+                </p>
+              )}
             </div>
           </section>
         )}

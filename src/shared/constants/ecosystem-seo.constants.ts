@@ -37,7 +37,7 @@ export type FeaturedExample = {
   imageId: number;
   /** Curated (SFW) caption — the prompt shown on the card. */
   prompt: string;
-  /** e.g. "Steps 20 · Guidance 3.5 · Flux.1 Dev". For video: include length/fps. */
+  /** e.g. "Steps 20 · Guidance 3.5 · Flux.1 Dev". For video: include fps. */
   settings: string;
   /**
    * Media type of THIS example. Defaults to the config's `modality`. Set it on a dual-modality
@@ -1403,19 +1403,19 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     modality: 'image',
     hero: {
       intro:
-        'Flux.2 is the latest generation of Black Forest Labs text-to-image models — sharper prompt adherence, cleaner in-image text, and stronger photorealism than the original Flux. The open-weight Klein variants run locally, while Pro, Max, and Flex are available through the API. Generate with every Flux.2 model right here on Civitai — no GPU, no install.',
+        'Flux.2 is the latest generation of Black Forest Labs text-to-image models — sharper prompt adherence, cleaner in-image text, and stronger photorealism than the original Flux. The open-weight Klein variants run locally, while Pro and Flex are available through the API. Generate with every Flux.2 model right here on Civitai — no GPU, no install.',
       badges: ['Text-to-Image', 'By Black Forest Labs', 'Open weights (Klein) + API'],
     },
     overview: [
-      'Flux.2 is the current generation of open and API text-to-image models from Black Forest Labs, the team of former Stable Diffusion researchers behind the original Flux. Where the first Flux paired its transformer with a T5 text encoder, Flux.2 moves to the Mistral Small 3.2 text encoder, giving it noticeably stronger language understanding — it parses long, natural-language descriptions, handles instructions in multiple languages, and even accepts hex color codes tied to specific objects. The result is sharper prompt following, cleaner in-image text, and more believable photorealism than the model it replaces.',
-      'The lineup is a set of tiers rather than a single model. Flux.2 [Dev] is the open-weight, quality-first checkpoint (weights are published on Hugging Face and hosted here on Civitai); the Flux.2 [Klein] family — released in 9B and 4B sizes, plus matching "base" variants — is Black Forest Labs’ fastest line yet, folding generation and editing into one compact architecture that can finish an image in roughly a second. Above the open weights sit the API-only tiers — Pro, Max, and Flex — tuned for higher fidelity and finer control. Every one of them is generatable on Civitai, so you can move between the open Klein and Dev checkpoints and the hosted API tiers without downloading weights or standing up a local rig.',
+      'Flux.2 is the current generation of open and API text-to-image models from Black Forest Labs, the team of former Stable Diffusion researchers behind the original Flux. Where the first Flux paired its transformer with a T5 text encoder, Flux.2 moves to the Mistral Small 3.2 text encoder, giving it noticeably stronger language understanding — it parses long, natural-language descriptions and handles instructions in multiple languages. The result is sharper prompt following, cleaner in-image text, and more believable photorealism than the model it replaces.',
+      'The lineup is a set of tiers rather than a single model. Flux.2 [Dev] is the open-weight, quality-first checkpoint (weights are published on Hugging Face and hosted here on Civitai); the Flux.2 [Klein] family — released in 9B and 4B sizes, plus matching "base" variants — is Black Forest Labs’ fastest line yet, folding generation and editing into one compact architecture that can finish an image in roughly a second. Above the open weights sit the API-only tiers — Pro and Flex — tuned for higher fidelity and finer control. Every one of them is generatable on Civitai, so you can move between the open Klein and Dev checkpoints and the hosted API tiers without downloading weights or standing up a local rig.',
       'Choose Flux.2 when prompt fidelity, legible typography, precise color, or photographic realism matter most — product shots, posters, text-in-image work, and complex multi-subject scenes are where it shines. If you want the smallest, fastest footprint for local iteration, reach for a Klein variant; if you want maximum quality and are generating on Civitai anyway, Dev or the API tiers give you more headroom. For anime and character art the SDXL-based Pony and Illustrious ecosystems still hold a deeper LoRA library, but Flux.2’s own LoRA catalog is growing quickly on top of the open Klein and Dev bases.',
     ],
     promptTips: [
       'Write in natural language — full sentences, not comma-separated tags. Flux.2 uses the Mistral Small 3.2 text encoder, so describe the scene the way you would to a person. It technically accepts very long prompts, but the sweet spot is still about 30–80 words.',
       'Front-load what matters. Word order carries weight in Flux.2, so lead with the subject and its action before layering in style, lighting, and mood.',
       'Skip weight syntax and negative prompts. (word:1.5) and similar SD-style emphasis are completely ignored, and there is no negative prompt — state what you want ("sharp, crisp focus") instead of what to avoid.',
-      'For exact color, give hex codes tied to a specific object — e.g. "an apple in color #0047AB" or "a vase gradient starting #02eb3c finishing #edfa3c" — rather than vague words like "cobalt."',
+      'For precise color, name exact shades and materials — "a deep cobalt-blue ceramic vase with a glossy glaze" — rather than a vague word like "blue."',
       'Specific lighting and camera/lens references land well ("warm golden window light," "shot on 80mm, f/2.8"), and prompting in a native language can produce more culturally authentic results.',
     ],
     generatorVersionId: 2439067,
@@ -1534,8 +1534,8 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         a: 'Generation on Civitai runs on Buzz, and how far it goes depends on which Flux.2 tier you pick. The heavier Flux.2 [Dev] and the API Pro/Max/Flex tiers cost more Buzz per image, while the compact Klein variants are the fastest and lightest way to iterate. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, so you can generate with Flux.2 without spending real money — your daily Blue Buzz stretches furthest on Klein, and you can let it accumulate or add a membership for heavier Dev and API-tier use.',
       },
       {
-        q: "What's the difference between Flux.2 Klein, Dev, Pro, Max, and Flex?",
-        a: 'Klein 9B and 4B are the open-weight variants you can download and run locally; Dev is the standard Civitai-hosted checkpoint; Pro, Max, and Flex are API-only tiers tuned for higher quality and control. All of them are generatable on Civitai.',
+        q: "What's the difference between Flux.2 Klein, Dev, Pro and Flex?",
+        a: 'Klein 9B and 4B are the open-weight variants you can download and run locally; Dev is the standard Civitai-hosted checkpoint; Pro and Flex are API-only tiers tuned for higher quality and control. All of them are generatable on Civitai.',
       },
       {
         q: 'How is Flux.2 different from the original Flux?',
@@ -1543,7 +1543,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Can I run Flux.2 locally?',
-        a: 'The Klein variants are open weights — roughly 9GB (Klein 9B) or 4GB (Klein 4B) — and run in ComfyUI on a 16GB+ VRAM GPU. The Pro, Max, and Flex tiers are API-only. No GPU? Generate any of them on Civitai.',
+        a: 'The Klein variants are open weights — roughly 9GB (Klein 9B) or 4GB (Klein 4B) — and run in ComfyUI on a 16GB+ VRAM GPU. The Pro and Flex tiers are API-only. No GPU? Generate any of them on Civitai.',
       },
       {
         q: 'Can I train a Flux.2 LoRA?',
@@ -1572,7 +1572,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Krea 2 is Krea AI's first foundation image model, trained from scratch to prioritize how an image feels — its mood, lighting, and texture — rather than just what it contains. It's served on Civitai through the official fal.ai API partnership, so you can generate with the closed-weights hosted build directly on-site with no GPU or install. The model is designed around aesthetic control: style references with per-reference strength, moodboards, and a tunable creativity dial (raw, low, medium, high) that governs how far the model may drift from your inputs, making the prompt only one input among several.",
-      "The hosted model ships in two sizes. Large is the bigger build — roughly twice the parameters of Medium — with softer post-training that leaves more of the raw base character intact; it's the pick for photorealism of humans and animals, motion blur, film grain, low dynamic range, and imperfect lighting that reads as a real photograph. Medium is smaller, faster, and cheaper, with heavier post-training that pushes it toward illustration, anime, painting, and other stylized aesthetics with clean line work. Alongside these, Krea released two open-weight checkpoints on Hugging Face: Raw, the undistilled full-guidance build (Krea recommends ~52 steps at CFG 3.5) that carries the highest quality ceiling and is the intended target for fine-tuning and LoRA training; and Turbo, an 8-step distilled build of Raw that runs without classifier-free guidance for fast inference at 1K–2K resolution (up to 2048×2048).",
+      "The hosted model ships in two sizes. Large is the bigger build, with softer post-training that leaves more of the raw base character intact; it's the pick for photorealism of humans and animals, motion blur, film grain, low dynamic range, and imperfect lighting that reads as a real photograph. Medium is smaller, faster, and cheaper, with heavier post-training that pushes it toward illustration, anime, painting, and other stylized aesthetics with clean line work. Alongside these, Krea released two open-weight checkpoints on Hugging Face: Raw, the undistilled full-guidance build (Krea recommends ~52 steps at CFG 3.5) that carries the highest quality ceiling and is the intended target for fine-tuning and LoRA training; and Turbo, an 8-step distilled build of Raw that runs without classifier-free guidance for fast inference at 1K–2K resolution (up to 2048×2048).",
       'Choose Krea 2 when you want photoreal grit or a defined illustration style with minimal fuss — it has a noticeable edge on the hard cases other models fight you on: lens flares, chrome and metallic surfaces, motion blur, glitter and iridescent textures, film grain, and starburst highlights. Reach for Large for chrome, lens flares, and photographic realism; Medium for clean stylized art; Raw when you want the maximum quality ceiling or a predictable base for training; and Turbo when you want Krea 2 aesthetics at a fraction of the compute. LoRAs trained on Raw carry over to Turbo, so you can train once on the full model and run inference fast on the distilled build.',
     ],
     promptTips: [
@@ -1734,7 +1734,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     promptTips: [
       'Prompt with Danbooru-style tags, natural-language captions, or a mix of both — Anima was trained with tag dropout, so you do not need to list every relevant tag. When using tags, follow the order [quality/meta/year/safety] [1girl/1boy/etc] [character] [series] [artist] [general tags], lowercase with spaces instead of underscores.',
       'Prefix every artist tag with "@" (e.g. "@nnn yryr"). Without the "@" the artist effect is very weak. Artist and quality tags meaningfully improve aesthetics because the base checkpoint is intentionally neutral — though Anima-Aesthetic already looks good and does not need quality or score tags.',
-      "Do not use SD-style weight syntax — (word:1.3), ((word)) and similar attention controls are not part of Anima's prompting convention. Steer with tags and description instead.",
+      'Prompt weighting works, but Anima needs a higher weight than SDXL to register — reach for something like (word:2) rather than the usual (word:1.2). Beyond emphasis, steer mainly with tags and description.',
       'Negative prompts are supported and useful, especially for quality ("worst quality, low quality, jpeg artifacts") and for safety steering — add a safety tag (safe / sensitive / nsfw / explicit) in the positive and/or negative to control content.',
       'When naming a character, also describe their basic appearance (hair, eyes, outfit) — critical in multi-character scenes, where names alone make the model confuse characters. If prompting in pure natural language, write at least two sentences; very short prompts give unpredictable results on this preview checkpoint, and you can place quality/safety/@artist tags at the start of an NL prompt.',
     ],
@@ -1862,13 +1862,6 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     ],
     localRun: { vram: '8GB+ VRAM', weightsSize: '~7GB', tool: 'ComfyUI' },
     attribution: 'an open-weight anime image model by CircleStone Labs',
-    factCheck: [
-      {
-        field: 'promptTips',
-        claim: 'weight-syntax guidance',
-        note: 'The model card and the prompt guide CONFLICT on whether weight syntax works — the guide was followed. Confirm which is correct.',
-      },
-    ],
   },
 
   ZImageTurbo: {
@@ -2054,13 +2047,13 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Wan is a family of open-weight video models from Alibaba, spanning both text-to-video (T2V) and image-to-video (I2V). The line is built around Alibaba's Wan-VAE, an efficient video autoencoder, and Wan 2.1 was notable as the first open video model able to render both Chinese and English text inside a clip. It scales across sizes — from a lightweight 1.3B T2V model that fits in about 8GB of VRAM up to the flagship 14B models — so the same ecosystem covers everything from quick consumer-GPU drafts to high-fidelity cinematic generation.",
-      'The versions diverge in architecture and focus. Wan 2.2 introduces a Mixture-of-Experts (MoE) design that splits the denoising process across specialized expert models, enlarging capacity at the same compute cost, and adds a fast 5B TI2V variant (16×16×4 compression via Wan2.2-VAE) that generates 720p at 24fps on a card like a 4090; its A14B T2V and I2V models were trained on substantially more data with curated cinematic-aesthetic labels for lighting, composition, and color. Wan 2.5 is the hosted, audio-aware generation — synchronized voices, ambient sound, and music alongside cinematic 10-second 1080p output — while Wan 2.7 pushes temporal consistency and subject stability, reducing flicker, distortion, and identity drift across frames.',
+      'The versions diverge in architecture and focus. Wan 2.2 introduces a Mixture-of-Experts (MoE) design that splits the denoising process across specialized expert models, enlarging capacity at the same compute cost, and adds a fast 5B TI2V variant (16×16×4 compression via Wan2.2-VAE) that generates 720p at 24fps on a card like a 4090; its A14B T2V and I2V models were trained on substantially more data with curated cinematic-aesthetic labels for lighting, composition, and color. Wan 2.5 is the hosted, audio-aware generation — synchronized voices, ambient sound, and music alongside cinematic 1080p output — while Wan 2.7 pushes temporal consistency and subject stability, reducing flicker, distortion, and identity drift across frames.',
       'Choose Wan when you want open, controllable video with strong native image-to-video and the deepest LoRA and motion-effect ecosystem in open video generation. Reach for the 2.2 A14B models as the open-weight workhorses for T2V and I2V, the 5B variant when speed matters, and the hosted 2.5 / 2.7 releases when you want the best prompt adherence, motion realism, or audio-synced clips. Against closed APIs like Kling you trade some polish for open weights, stackable LoRAs, and no local install when you run it here.',
     ],
     promptTips: [
       'Write in natural language, not tags — describe a cinematic scene in the order subject → action → setting → lighting → camera. Wan reads full descriptions, and weight syntax like (word:1.5) is ignored.',
       'Always include a camera direction; a missing one is the most common weak spot. Use Wan\'s vocabulary: "slow zoom in," "camera pans left," "dolly shot," "tracking shot," "aerial drone shot," or "static camera."',
-      'Control motion explicitly with intensity cues like "gentle breeze," "slow-motion," or "rapid movement," and keep a single clip to one continuous action — a 5–7 second shot can\'t hold several sequential events.',
+      'Control motion explicitly with intensity cues like "gentle breeze," "slow-motion," or "rapid movement," and keep a single clip to one continuous action — a short shot can\'t hold several sequential events.',
       'Unlike many open image models, Wan supports negative prompts — a good default is "blurry, distorted, low quality, watermark, static, morphing, deformed hands" to suppress common video artifacts.',
       'For image-to-video, prompt only the motion you want added, not the static scene already in your image — describe what should move or change, plus the camera move and lighting/mood. For text-to-video, layer quality modifiers such as "cinematic lighting," "film grain," "HDR," or "shallow depth of field."',
     ],
@@ -2111,32 +2104,32 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       {
         imageId: 137055622,
         prompt: 'Cinematic nighttime chase through a rain-soaked futuristic street market',
-        settings: 'Wan 2.2 T2V · 480×832 · 5s · 16fps',
+        settings: 'Wan 2.2 T2V · 480×832 · 16fps',
       },
       {
         imageId: 137055620,
         prompt: 'Six dancers in a synchronized rooftop routine over a coastal city at sunset',
-        settings: 'Wan 2.2 T2V · 480×832 · 5s · 16fps',
+        settings: 'Wan 2.2 T2V · 480×832 · 16fps',
       },
       {
         imageId: 136170283,
         prompt: 'A tiny frog hopping up and down a large leaf, wet from rain',
-        settings: 'Wan 2.2 T2V · 480×832 · 5s · 16fps',
+        settings: 'Wan 2.2 T2V · 480×832 · 16fps',
       },
       {
         imageId: 136196483,
         prompt: 'A gothic vampire portrait with subtle, moody motion',
-        settings: 'Wan 2.2 I2V · 480×832 · 5s · 16fps',
+        settings: 'Wan 2.2 I2V · 480×832 · 16fps',
       },
       {
         imageId: 134053701,
         prompt: 'A magical-girl heroine in a bright transformation-style scene',
-        settings: 'Wan 2.2 I2V · 480×832 · 5s · 16fps',
+        settings: 'Wan 2.2 I2V · 480×832 · 16fps',
       },
       {
         imageId: 132485484,
         prompt: 'An elegant character gliding toward the camera on a sunlit seaside balcony',
-        settings: 'Wan 2.2 I2V · 480×832 · 5s · 16fps',
+        settings: 'Wan 2.2 I2V · 480×832 · 16fps',
       },
     ],
     comparison: {
@@ -2222,7 +2215,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       'Describe subject movement and camera movement separately, and always include a camera cue — e.g. "camera panning slowly to the right," "slow zoom in," or "static wide shot." Missing camera direction is the most common weak spot in LTXV prompts.',
       'Skip weight syntax — (word:1.5) and similar emphasis markers are not used. Say what you want directly instead.',
       'Negative prompts are supported (applied via CFG). A solid default is "worst quality, blurry, jittery, distorted, watermark, low resolution, inconsistent motion."',
-      'Keep clips short — 3 to 5 seconds at 24 fps (roughly 97 or 121 frames) — and describe one continuous action. Packing many sequential events into a short clip hurts temporal consistency.',
+      'Keep clips short and describe one continuous action. Packing many sequential events into a short clip hurts temporal consistency.',
     ],
     generatorVersionId: 2749908,
     featuredModels: [
@@ -2272,34 +2265,34 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         imageId: 137191028,
         prompt:
           'Cinematic medium shot of a bartender in a posh 1950s bar picking up an old telephone',
-        settings: 'LTX Video 2.3 · 1280×704 · ~5s · 24fps',
+        settings: 'LTX Video 2.3 · 1280×704 · 24fps',
       },
       {
         imageId: 137191027,
         prompt:
           'Cinematic full shot of a young businessman presenting beside a chart with a red downward curve',
-        settings: 'LTX Video 2.3 · 1280×704 · ~5s · 24fps',
+        settings: 'LTX Video 2.3 · 1280×704 · 24fps',
       },
       {
         imageId: 137190596,
         prompt: 'A man in a hoodie and cap pushing through a crowd in a busy subway station',
-        settings: 'LTX Video 2.3 · 1280×704 · ~5s · 24fps',
+        settings: 'LTX Video 2.3 · 1280×704 · 24fps',
       },
       {
         imageId: 137190595,
         prompt: 'Cinematic close-up of a young woman seated in a dark confession booth, side view',
-        settings: 'LTX Video 2.3 · 1280×704 · ~5s · 24fps',
+        settings: 'LTX Video 2.3 · 1280×704 · 24fps',
       },
       {
         imageId: 137190592,
         prompt:
           'An elderly bishop preaching from the pulpit of a gothic cathedral in rich vestments',
-        settings: 'LTX Video 2.3 · 1280×704 · ~5s · 24fps',
+        settings: 'LTX Video 2.3 · 1280×704 · 24fps',
       },
       {
         imageId: 137190589,
         prompt: 'A wizard seated on a stone floor at the center of a chalk pentagram, candlelit',
-        settings: 'LTX Video 2.3 · 1280×704 · ~5s · 24fps',
+        settings: 'LTX Video 2.3 · 1280×704 · 24fps',
       },
     ],
     comparison: {
@@ -2376,7 +2369,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       'Write in natural language, not tags — Kling reads detailed scene descriptions and is tuned for both English and Chinese. A reliable order is subject and action, then setting, then camera/perspective, then style and lighting.',
       "Lean into motion. Kling is built for strong, dynamic movement, so action and clear physical motion ('sprinting', 'fabric billowing in the wind', 'water splashing') play to its strengths — vague, static scenes waste its main advantage.",
       "Direct the camera. Kling exposes separate camera-motion controls (zoom, pan, tilt, rotate) and also responds to prompt cues like 'first-person perspective', 'bird's eye view', or 'slow-motion close-up'.",
-      'Keep a clip to one continuous action. Generation runs in 5-second and 10-second modes, so a prompt describing several sequential events won’t fit — describe a single moment and use clip extension for longer sequences.',
+      'Keep a clip to one continuous action — a prompt describing several sequential events won’t fit. Describe a single moment and use clip extension for longer sequences.',
       'Negative prompts are supported, so add standard quality negatives to suppress artifacts. For image-to-video, the first frame is anchored for stronger consistency — prompt the motion and camera you want added rather than re-describing the still.',
     ],
     generatorVersionId: 2698632,
@@ -2415,37 +2408,37 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         imageId: 136950722,
         prompt:
           'A dynamic anime-style swordswoman drawing a glowing purple lightning sword in a lightning-fast iai-ken combo',
-        settings: 'Kling 3.0 · 960×960 · 5s',
+        settings: 'Kling 3.0 · 960×960',
       },
       {
         imageId: 134900886,
         prompt:
           'A sleepy sloth working as a food-delivery courier, moving in extreme slow motion while the world rushes past at normal speed',
-        settings: 'Kling 2.5 Turbo · 1440×1440 · 5s',
+        settings: 'Kling 2.5 Turbo · 1440×1440',
       },
       {
         imageId: 133284218,
         prompt:
           'A fierce nordic woman with platinum braids riding a massive bio-engineered mount through a desert-punk scene at golden hour',
-        settings: 'Kling 3.0 · 828×1108 · 8s',
+        settings: 'Kling 3.0 · 828×1108',
       },
       {
         imageId: 136956093,
         prompt:
           'A group of tiny kitten chefs with soft fluffy fur working together to bake a red tortoise-shaped cake',
-        settings: 'Kling 2.5 Turbo · 1440×1440 · 10s',
+        settings: 'Kling 2.5 Turbo · 1440×1440',
       },
       {
         imageId: 132808315,
         prompt:
           'A stylish anthropomorphic cephalopod receptionist at an office desk looking up as the camera slowly zooms in',
-        settings: 'Kling 2.5 Turbo · 1440×1440 · 5s',
+        settings: 'Kling 2.5 Turbo · 1440×1440',
       },
       {
         imageId: 126793482,
         prompt:
           'Princess Celestia, a majestic alicorn with large ethereal wings, a golden crown, and a flowing rainbow mane',
-        settings: 'Kling v2 · 1280×720 · 10s',
+        settings: 'Kling v2 · 1280×720',
       },
     ],
     comparison: {
@@ -2484,7 +2477,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     faq: [
       {
         q: 'How much does it cost to generate with Kling?',
-        a: 'Generation on Civitai runs on Buzz, and every account earns free Blue Buzz daily through on-site actions like reacting to images. Kling is a premium hosted video model — a clip is far heavier to produce than a single image, so a Kling generation costs more Buzz per clip than most models, and 10-second clips cost more than 5-second ones. You can put your daily free Blue Buzz toward it, but for regular Kling use you’ll want to let Buzz accumulate or add a membership for higher limits.',
+        a: 'Generation on Civitai runs on Buzz, and every account earns free Blue Buzz daily through on-site actions like reacting to images. Kling is a premium hosted video model — a clip is far heavier to produce than a single image, so a Kling generation costs more Buzz per clip than most models, and longer clips cost more than shorter ones. You can put your daily free Blue Buzz toward it, but for regular Kling use you’ll want to let Buzz accumulate or add a membership for higher limits.',
       },
       {
         q: "What's the difference between text-to-video and image-to-video?",
@@ -2500,7 +2493,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'How long can a Kling clip be?',
-        a: 'Kling generates in 5-second and 10-second modes, with clip extension available for longer sequences. Keep each prompt focused on a single continuous action for the cleanest result, then remix an example above to see how it works.',
+        a: 'Kling generates short clips, with clip extension available for longer sequences, and you set the length in the generator. Keep each prompt focused on a single continuous action for the cleanest result, then remix an example above to see how it works.',
       },
       {
         q: 'Do I need a GPU to run Kling?',
@@ -2509,12 +2502,6 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     ],
     attribution: 'a hosted text-to-video and image-to-video model by Kuaishou (Kling)',
     factCheck: [
-      {
-        field: 'featuredExamples',
-        claim: '8-second example clip (imageId 133284218)',
-        highlight: '8s',
-        note: "Duration is the real image meta value, but sits outside the guide's stated 5s/10s modes — verify it's correct.",
-      },
       {
         field: 'comparison',
         claim: 'peer facts (Seedance = ByteDance, Hailuo = MiniMax) + qualitative ratings',
@@ -2537,7 +2524,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Seedance 2.0 is a hosted multimodal video generator from ByteDance's Seed team. It's built on a Dual-branch DiT (Diffusion Transformer) architecture that jointly generates the visuals, dialogue, lip-sync, and ambient sound in one pipeline, natively fusing text, image, and audio inputs rather than treating audio as a separate post step. Weights aren't published — the ByteDance-Seed org is on Hugging Face, but Seedance runs as a hosted model, which on Civitai means you generate it through the on-site generator instead of downloading it.",
-      'Two variants are available on Civitai: Seedance 2.0, the full-quality model set as the generator default, and Seedance 2.0 Fast, a speed-optimized variant that trades some fidelity for quicker turnaround. Both do text-to-video and image-to-video and both produce synchronized audio. Clips run roughly 4–15 seconds at 480p or 720p native, and the model can take reference inputs — up to nine images plus short audio and video clips — to steer a generation. Because it is API-only there are no LoRAs or local runs; you prompt it directly in the generator.',
+      'Two variants are available on Civitai: Seedance 2.0, the full-quality model set as the generator default, and Seedance 2.0 Fast, a speed-optimized variant that trades some fidelity for quicker turnaround. Both do text-to-video and image-to-video and both produce synchronized audio. Clips run from 480p up to 4K native, and the model can take reference inputs — up to nine images plus short audio and video clips — to steer a generation. Because it is API-only there are no LoRAs or local runs; you prompt it directly in the generator.',
       'Choose Seedance when you want video and matching audio in a single generation — synchronized speech, sound effects, and ambience without a separate audio pass. Against a polished closed API like Kling or a fast one like Hailuo you get the joint audio-plus-video pipeline; against open-weight Wan you trade downloadable models and a LoRA ecosystem for that one-pass audio and ByteDance hosting. It runs right here on Civitai either way.',
     ],
     promptTips: [
@@ -2545,7 +2532,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       "Don't write a negative prompt — Seedance doesn't use them. Say what you want positively instead of listing what to avoid.",
       "Describe the audio, since Seedance generates it natively: name the dialogue lines, music style, sound effects, ambient noise, or ASMR detail you want synced to the picture. Leaving audio out wastes the model's signature feature.",
       'Use real cinematography vocabulary over the vague word "cinematic": "Steadicam long take," "push-in," "pull-back," "over-the-shoulder," "macro shot," "slow rotation." Explicit camera technique reads far better than generic quality words.',
-      'Keep a clip to one continuous take within the 4–15 second range — avoid describing multiple hard cuts or sequential scenes. Lean on physical detail ("wet-pavement reflections," "visible breath vapor," "weight and inertia") and performance cues ("solemn," "explosive") to direct the motion.',
+      'Keep a clip to one continuous take — avoid describing multiple hard cuts or sequential scenes. Lean on physical detail ("wet-pavement reflections," "visible breath vapor," "weight and inertia") and performance cues ("solemn," "explosive") to direct the motion.',
     ],
     generatorVersionId: 2864671,
     featuredModels: [
@@ -2575,31 +2562,31 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         imageId: 134788273,
         prompt:
           'A studio-quality American 2D animation from the 90s or 2000s. A surfer dog in a drinking-helmet hat flips on her surfboard mid-wave, lands cleanly, and says "Is this radical enough for you, dawg?"',
-        settings: 'Seedance 2.0 · 1280×720 · 10s',
+        settings: 'Seedance 2.0 · 1280×720',
       },
       {
         imageId: 134679254,
         prompt:
           'The scene takes place inside a lively football stadium in USA. Two young adult Japanese girls in matching national-team jerseys cheer, one shouts a funny goal-celebration impression and her friend bursts out laughing.',
-        settings: 'Seedance 2.0 · 864×496 · 5s',
+        settings: 'Seedance 2.0 · 864×496',
       },
       {
         imageId: 136424192,
         prompt:
           'A cinematic ultra-realistic video of a daring cyberpunk bullet-train robbery racing through a spectacular neon city night, aerial shots following masked outlaws on motorcycles alongside the speeding train.',
-        settings: 'Seedance 2.0 Fast · 864×496 · 15s',
+        settings: 'Seedance 2.0 Fast · 864×496',
       },
       {
         imageId: 135486457,
         prompt:
           'A majestic Japanese castle viewed from a fixed camera. The castle remains completely still while the sky changes in a smooth cinematic time-lapse from morning through golden hour, sunset, night, and back to dawn.',
-        settings: 'Seedance 2.0 Fast · 1112×834 · 5s',
+        settings: 'Seedance 2.0 Fast · 1112×834',
       },
       {
         imageId: 134178690,
         prompt:
           'Video-game style, race through a Tokyo city background — a mutt-dog dreamer drives a turbo sport race car, drifting and using nitro, teleporting Hot Wheels style through the neon streets.',
-        settings: 'Seedance 2.0 Fast · 1280×720 · 15s',
+        settings: 'Seedance 2.0 Fast · 1280×720',
       },
     ],
     comparison: {
@@ -2655,7 +2642,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'How long can a Seedance clip be, and what resolution?',
-        a: 'Clips run about 4 to 15 seconds at 480p or 720p native. Single continuous takes work best, so aim for one camera move and one action rather than several hard cuts. Set length and size in the generator when you create a clip.',
+        a: 'Clips run from 480p up to 4K native. Single continuous takes work best, so aim for one camera move and one action rather than several hard cuts. Set length and size in the generator when you create a clip.',
       },
       {
         q: 'Do I need a GPU to run Seedance?',
@@ -2712,18 +2699,18 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         imageId: 137144533,
         prompt:
           'Anime style, looped clip: a cat running dynamically through an urban park, motion blur, golden-hour lighting, wide angle',
-        settings: 'Grok Imagine · 1280×720 · 6s',
+        settings: 'Grok Imagine · 1280×720',
       },
       {
         imageId: 134432710,
         prompt:
           'A realistic medium shot of a sports commentator in a high-tech broadcasting studio, blurred screens glowing behind her',
-        settings: 'Grok Imagine · 1280×720 · 15s',
+        settings: 'Grok Imagine · 1280×720',
       },
       {
         imageId: 136594603,
         prompt: 'A magic fairy world where everything is moving, full of magic',
-        settings: 'Grok Imagine · 720×720 · 6s',
+        settings: 'Grok Imagine · 720×720',
       },
       {
         imageId: 137451444,
@@ -2861,7 +2848,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         imageId: 134839104,
         prompt:
           'A photo-realistic gazelle standing beside a lush green desert oasis with date palms and a still pond',
-        settings: 'HappyHorse v1.0 · 1280×720 · 5s',
+        settings: 'HappyHorse v1.0 · 1280×720',
       },
       {
         imageId: 132339182,
@@ -2877,19 +2864,19 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       {
         imageId: 130711989,
         prompt: 'A diverse group of female astronauts emerging into a lush green tropical setting',
-        settings: 'HappyHorse v1.0 · 1920×1080 · 5s',
+        settings: 'HappyHorse v1.0 · 1920×1080',
       },
       {
         imageId: 130325689,
         prompt:
           'A little girl seen from behind sits beside a black cat on a hill, both looking calmly toward the sunset',
-        settings: 'HappyHorse v1.0 · 1280×720 · 4s',
+        settings: 'HappyHorse v1.0 · 1280×720',
       },
       {
         imageId: 129042530,
         prompt:
           'A lone figure in a long black coat walks away through dense fog along a wet industrial dock at dusk',
-        settings: 'HappyHorse v1.0 · 1280×720 · 5s',
+        settings: 'HappyHorse v1.0 · 1280×720',
       },
     ],
     comparison: {
@@ -2958,11 +2945,6 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         claim: '"attributed to Alibaba"',
         highlight: 'attributed to Alibaba',
         note: 'Corporate parent unconfirmed — the guide said "Alibaba, via fal.ai"; Civitai groups it under an Alibaba–Taotian family. Confirm the real owner.',
-      },
-      {
-        field: 'overview',
-        claim: 'native synchronized audio + physics-aware motion',
-        note: 'The model card leads with an unverified "#1 on the Artificial Analysis Video Arena / Elo 1416" claim, deliberately excluded here — decide whether to include.',
       },
     ],
   },
@@ -3135,14 +3117,14 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Imagen 4 is the latest iteration of Google DeepMind's Imagen text-to-image line, designed to generate ultra-high-quality, photorealistic images from natural-language prompts. Its emphasis is on visual fidelity, fine detail, and compositional accuracy — reading a plain description of a scene and rendering it with convincing lighting, materials, and structure rather than relying on tag-style keywords. It responds strongly to cinematic, descriptive prompting that specifies perspective, lighting, environment, and action.",
-      'Unlike open-weight families such as Flux or SDXL, Imagen 4 is a closed, hosted model — there are no downloadable weights and no local checkpoints or LoRAs. It is served exclusively through an API, which Civitai runs for you: you write a prompt (and, optionally, a short negative prompt), pick an aspect ratio, and the image comes back without any local setup. That makes it a fast way to reach Google-grade photorealism directly in the browser.',
+      'Unlike open-weight families such as Flux or SDXL, Imagen 4 is a closed, hosted model — there are no downloadable weights and no local checkpoints or LoRAs. It is served exclusively through an API, which Civitai runs for you: you write a prompt, pick an aspect ratio, and the image comes back without any local setup. That makes it a fast way to reach Google-grade photorealism directly in the browser.',
       'Choose Imagen 4 when photorealism, fine detail, accurate composition, or legible in-image text matter most, and when you want a polished result from a natural-language description without tuning samplers or stacking LoRAs. For deep style customization, community fine-tunes, and huge LoRA libraries — especially for anime and character art — the open SDXL-based ecosystems (Pony, Illustrious) or Flux remain the better fit, since Imagen 4 trades that openness for a hosted, ready-to-run pipeline.',
     ],
     promptTips: [
       'Write in natural, cinematic language and follow the template [Subject] + [Context/Background] + [Style] + [Lighting and technical details]. Descriptive full sentences beat comma-separated tags on Imagen 4.',
       'Be explicit about lighting — Imagen 4 responds strongly to lighting cues. "Warm late-afternoon sun raking across the wall from the left" gives far more than "nice lighting."',
       'Skip weight syntax like (word:1.5) — it is not supported. Emphasize an element by describing it in more vivid detail instead of using numeric weights.',
-      'Use the separate negative-prompt field to remove elements, and phrase it plainly — just list what you do not want ("greenery, people, text") without "no" or "avoid," and keep it short, roughly 5–10 words.',
+      'State everything positively — Imagen 4 has no negative-prompt field. Instead of listing what to avoid, describe the clean scene you do want (an empty plaza rather than "no people").',
       'For text in the image, spell out the exact words in quotes and describe the type: e.g. "a bold sans-serif title at the top reading \'HELLO\'," specifying font style, size, and placement. Then refine iteratively, changing one variable at a time.',
     ],
     generatorVersionId: 1889632,
@@ -3238,7 +3220,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'How should I prompt Imagen 4?',
-        a: 'Use natural, cinematic language following [Subject] + [Context] + [Style] + [Lighting], be specific about lighting, and put any unwanted elements in the separate negative-prompt field as a short plain list. Remix any example above to start from a working prompt.',
+        a: 'Use natural, cinematic language following [Subject] + [Context] + [Style] + [Lighting], be specific about lighting, and phrase everything positively — Imagen 4 has no negative-prompt field. Remix any example above to start from a working prompt.',
       },
     ],
     attribution: 'a hosted text-to-image model by Google DeepMind (Imagen 4)',
@@ -3253,18 +3235,18 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     modality: 'image',
     hero: {
       intro:
-        "Seedream is ByteDance's text-to-image model, built for high-resolution output, strong prompt adherence, and fine-grained typography — legible text inside the image, including Chinese characters. Seedream 4.5 adds 4K resolution. Generate with every Seedream version right here on Civitai — no GPU, no install.",
+        "Seedream is ByteDance's text-to-image model, built for high-resolution output, strong prompt adherence, and fine-grained typography — legible text inside the image, including Chinese characters. Seedream 4.0 adds native 4K resolution. Generate with every Seedream version right here on Civitai — no GPU, no install.",
       badges: ['Text-to-Image', '4K + Typography', 'By ByteDance'],
     },
     overview: [
-      "Seedream is ByteDance's text-to-image model, developed by the company's Seed research team. It is designed around high-resolution output, strong prompt adherence, and fine-grained typography — rendering legible text inside the image, including Chinese characters, rather than overlaying it. According to ByteDance's technical write-ups, Seedream 3.0 introduced native 2K output, and the more recent Seedream 4.5 adds 4K resolution at no extra cost. It is a distinct model from Seedance, ByteDance's video generator.",
+      "Seedream is ByteDance's text-to-image model, developed by the company's Seed research team. It is designed around high-resolution output, strong prompt adherence, and fine-grained typography — rendering legible text inside the image, including Chinese characters, rather than overlaying it. According to ByteDance's technical write-ups, Seedream 3.0 introduced native 2K output, and Seedream 4.0 raised that to native 4K resolution. It is a distinct model from Seedance, ByteDance's video generator.",
       'The family has iterated quickly. Compared with Seedream 2.0, later releases roughly doubled the training data and improved image resolution, complex-attribute adherence, fine-grained text rendering, and overall aesthetics and fidelity. On Civitai you can run several generations — v3.0, v4.0, v4.5, and the v5.0 Lite and v5.0 Pro tiers — with v5.0 Pro as the current flagship. Because Seedream is API-only, there are no open weights to download and no LoRAs to stack; every version is hosted and ready to generate directly in the browser.',
       'Choose Seedream when legible in-image text and typography, high-resolution output, or careful adherence to complex prompts matter — it is a strong fit for posters, signage, packaging, and text-heavy design work, and ByteDance publishes an official prompting guide for it. For the deepest library of community styles and characters via LoRAs, the SDXL-based Pony and Illustrious ecosystems still lead; Qwen-Image is the closest open-weight alternative for text-in-image work. As a premium hosted model, Seedream costs more Buzz per image than lighter open checkpoints — a fair trade when resolution and prompt precision are the priority.',
     ],
     promptTips: [
       'Write in natural language, not tag lists. Describe the subject, setting, lighting, and style in plain sentences — Seedream is built to follow detailed, descriptive prompts rather than comma-separated Danbooru tags.',
       'For text in the image, put the exact words in quotation marks. Fine-grained typography is a Seedream strength — it renders legible small text and long layouts, and handles Chinese characters as well as English.',
-      'Ask for the resolution you want. Seedream supports high-resolution output (up to 4K on Seedream 4.5), so state the aspect ratio and a high-detail intent when you need crisp, print-scale results.',
+      'Ask for the resolution you want. Seedream supports high-resolution output (up to 4K from Seedream 4.0 on), so state the aspect ratio and a high-detail intent when you need crisp, print-scale results.',
       'Be explicit about complex attributes and composition. Later Seedream versions were tuned for complex-attribute adherence, so spell out counts, colors, spatial relationships, and per-object details rather than leaving them implied.',
       "Consult ByteDance's official Seedream prompting guide for model-specific structure, and skip SD-style weight syntax like (word:1.5) — describe emphasis in words instead.",
     ],
@@ -3393,7 +3375,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Which Seedream version should I use?',
-        a: 'v5.0 Pro is the current flagship and the default; v5.0 Lite is a lighter tier, and v4.5 is where 4K resolution arrived. Remix an example above to compare versions on the same prompt.',
+        a: 'v5.0 Pro is the current flagship and the default; v5.0 Lite is a lighter tier, and v4.0 is where 4K resolution arrived. Remix an example above to compare versions on the same prompt.',
       },
     ],
     attribution: 'a hosted text-to-image model by ByteDance (Seedream)',
@@ -3402,12 +3384,6 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         field: 'promptTips',
         claim: 'prompting tips',
         note: 'Prompt guide was a generic fallback — tips grounded in the model card. ByteDance publishes an official Seedream guide worth mirroring.',
-      },
-      {
-        field: 'overview',
-        claim: 'native 2K / 4K resolution',
-        highlight: '4K resolution',
-        note: 'Sourced from the model card. The card’s original "#1 on the Image Arena" claim was removed as unverified — decide whether to include.',
       },
     ],
   },
@@ -3428,14 +3404,14 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     overview: [
       'Veo 3 is a state-of-the-art text-to-video and image-to-video model from Google DeepMind. Its defining advance over earlier AI video models is native audio generation: rather than producing a silent clip and bolting sound on afterward, Veo 3 generates dialogue, sound effects, and music together with the visuals in a single pass, for more realistic and immersive results. It reads detailed natural-language direction — characters, action, camera work, mood, and the sound you want — and turns it into a coherent clip.',
       'In practice, Veo 3 is tuned for cinematic, real-world scenes with strong temporal consistency and an unusually deep understanding of camera and film vocabulary — tracking shots, crane and steadicam moves, slow motion, time-lapse, whip pans, and lens/film references. It works from a text prompt, a reference image, or both, and handles temporal progression cues like "as the sun sets." Because it prompts in plain natural language, there is no weight syntax and no negative prompt — you describe everything you want, including the audio, positively.',
-      'Veo 3 is a closed, hosted model: there are no downloadable weights and no Veo LoRAs, so control comes from prompting, reference images, and camera direction rather than community fine-tunes. It is also a PG model by design — profanity or sexually explicit prompts return a generic PG clip (with no refund), so it is best suited to SFW work. On Civitai several releases are hosted — Veo 3 and Veo 3 Fast for text-to-video, plus Veo 3 Image-to-Video and its Fast variant — so you can move between quality and speed without any local setup. For open weights and a stackable video LoRA ecosystem, the Wan ecosystem is the natural alternative to compare against.',
+      'Veo 3 is a closed, hosted model: there are no downloadable weights and no Veo LoRAs, so control comes from prompting, reference images, and camera direction rather than community fine-tunes. It is also a PG/SFW model by design — profanity or sexually explicit prompts are filtered, so it is best suited to SFW work. On Civitai several releases are hosted — Veo 3 and Veo 3 Fast for text-to-video, plus Veo 3 Image-to-Video and its Fast variant — so you can move between quality and speed without any local setup. For open weights and a stackable video LoRA ecosystem, the Wan ecosystem is the natural alternative to compare against.',
     ],
     promptTips: [
       'Write like a mini screenplay in natural language, not tags: describe the characters, the action, the mood, and the visual style in full sentences. A reliable order is scene and characters → action sequence → camera work → visual style → audio.',
       "Describe the audio, since Veo 3 generates it natively. Name the dialogue lines, sound effects, ambient noise, or music you want synced to the picture — leaving audio out wastes the model's signature feature.",
       'Direct the camera with real cinematography terms. Veo 3 understands "tracking shot," "crane shot," "steadicam," "time-lapse," "slow motion," and "whip pan," plus lens and film references like "shot on ARRI Alexa," "anamorphic lens," or "film grain."',
       'Skip weight syntax and negative prompts — neither is supported. There is no (word:1.5) and no "no blur" list; describe what you want positively instead.',
-      'Keep it to one continuous take. For longer clips describe gradual progression ("transitioning from day to night") rather than discrete scene cuts, and remember Veo 3 is a PG model — SFW prompts only, or you get a generic PG clip.',
+      'Keep it to one continuous take. For longer clips describe gradual progression ("transitioning from day to night") rather than discrete scene cuts, and remember Veo 3 is a PG/SFW model — explicit prompts are filtered, so keep it clean.',
     ],
     generatorVersionId: 1885367,
     featuredModels: [
@@ -3485,13 +3461,13 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         imageId: 126141741,
         prompt:
           'Two brave 3D chibi explorers — a tiger in an adventure hat and backpack and a squirrel in goggles — discovering a hidden treasure cave',
-        settings: 'Veo 3 · 1280×720 · 8s',
+        settings: 'Veo 3 · 1280×720',
       },
       {
         imageId: 129440678,
         prompt:
           'A cinematic wide shot of a desolate battlefield at dusk, filled with drifting ash, broken war machines, and scattered debris under an overcast orange sky',
-        settings: 'Veo 3 · 720×1280 · 8s',
+        settings: 'Veo 3 · 720×1280',
       },
       {
         imageId: 130302649,
@@ -3503,7 +3479,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         imageId: 126691377,
         prompt:
           "A figure moves slowly as the stars behind him twinkle; he bows in a gentleman's salute, then stands at attention",
-        settings: 'Veo 3 · 720×1280 · 8s',
+        settings: 'Veo 3 · 720×1280',
       },
     ],
     comparison: {
@@ -3554,7 +3530,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Is Veo 3 SFW only?',
-        a: "Yes. Veo 3 is a PG model by design — profanity or sexually explicit prompts return a generic PG clip and are not refunded — so it's best used for SFW content. Keep prompts clean and lean into its strengths: cinematic action, characters, and synced audio.",
+        a: "Yes. Veo 3 is a PG/SFW model by design — profanity or sexually explicit prompts are filtered — so it's best used for SFW content. Keep prompts clean and lean into its strengths: cinematic action, characters, and synced audio.",
       },
       {
         q: "What's the difference between text-to-video and image-to-video?",
@@ -3618,34 +3594,34 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       {
         imageId: 136011852,
         prompt: 'Anthropomorphic dog and cat having a party, saying "magnificent"',
-        settings: 'Sora 2 · 720×1280 · 8s',
+        settings: 'Sora 2 · 720×1280',
       },
       {
         imageId: 132779682,
         prompt:
           'A cozy cinematic animated scene filled with warmth and nostalgia. Early autumn evening in a small countryside town. A fluffy orange cat wearing a tiny hat',
-        settings: 'Sora 2 · 720×1280 · 8s',
+        settings: 'Sora 2 · 720×1280',
       },
       {
         imageId: 134305014,
         prompt: "Cat walking on two legs. It's on the beach. It strikes a pose",
-        settings: 'Sora 2 · 1280×720 · 8s',
+        settings: 'Sora 2 · 1280×720',
       },
       {
         imageId: 134601390,
         prompt: 'Cartoon kangaroo, twirling around, rainbow park',
-        settings: 'Sora 2 · 720×1280 · 4s',
+        settings: 'Sora 2 · 720×1280',
       },
       {
         imageId: 126602082,
         prompt:
           'In the style of a Studio Ghibli action movie with gritty 24fps cinematic flair, a pack of sleek anthropomorphic robots crafted from rusted brass gears and glowing blue eyes',
-        settings: 'Sora 2 · 720×1280 · 8s',
+        settings: 'Sora 2 · 720×1280',
       },
       {
         imageId: 126981587,
         prompt: 'Anthropomorphic badger, victory dance',
-        settings: 'Sora 2 · 720×1280 · 8s',
+        settings: 'Sora 2 · 720×1280',
       },
     ],
     comparison: {
@@ -3749,7 +3725,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       'Give the encoder enough to work with. Very short prompts tend to underperform on Chroma — add concrete detail about materials, mood, and framing rather than leaving it terse.',
       'Skip weight syntax like (word:1.4) — it is not used here. Control emphasis through descriptive language and word choice instead of numeric weights.',
       'Use a negative prompt — Chroma supports it as a separate parameter and benefits from one. A solid quality-focused baseline is "low quality, ugly, unfinished, out of focus, deformed, disfigured, blurry, flat colors."',
-      'Chroma uses true CFG (classifier-free guidance). The default guidance scale is around 5.0, but many users prefer ~3.0 for a more natural, less over-cooked look — worth trying both when dialing in a prompt.',
+      'Chroma uses true CFG (classifier-free guidance). The official example uses a guidance scale around 3.0; some nudge it a little higher for punchier output — worth trying both when dialing in a prompt.',
     ],
     generatorVersionId: 2164239,
     featuredModels: [
