@@ -1962,6 +1962,101 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
   });
 };
 
+export async function applyModelFlagSideEffects({
+  before,
+  after,
+  tagsChanged = false,
+  nameChanged = false,
+  descriptionChanged = false,
+}: {
+  before: {
+    poi: boolean;
+    minor: boolean;
+    sfwOnly: boolean;
+    nsfw: boolean;
+    gallerySettings: Prisma.JsonValue;
+  };
+  after: {
+    id: number;
+    name: string;
+    description: string | null;
+    poi: boolean;
+    nsfw: boolean;
+    minor: boolean;
+    sfwOnly: boolean;
+    status: ModelStatus;
+    gallerySettings: Prisma.JsonValue;
+  };
+  tagsChanged?: boolean;
+  nameChanged?: boolean;
+  descriptionChanged?: boolean;
+}): Promise<void> {
+  const { id } = after;
+  const poiChanged = after.poi !== before.poi;
+  const minorChanged = after.minor !== before.minor || after.sfwOnly !== before.sfwOnly;
+  const nsfwChanged = after.nsfw !== before.nsfw;
+
+  // Update search index if listing changes
+  if (tagsChanged || poiChanged || minorChanged) {
+    await modelTagCache.refresh(id);
+    if (tagsChanged) await modelVotableTagsCache.bust(id);
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  }
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+  const newGallerySettings = after.gallerySettings as ModelGallerySettingsSchema;
+  const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
+
+  if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+
+  // Ingest model if it's published and any of the following fields have changed:
+  if (
+    (after.status === 'Published' || after.status === 'Scheduled') &&
+    (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
+  ) {
+    const parsedModel = ingestModelSchema.parse(after);
+    // Run it in the background to prevent blocking the request
+    ingestModel({ ...parsedModel }).catch((error) =>
+      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+    );
+  }
+
+  if (minorChanged || poiChanged) {
+    // Update all images:
+    const modelVersions = await dbWrite.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true },
+    });
+
+    const modelVersionIds = modelVersions.map(({ id }) => id);
+
+    if (modelVersionIds.length !== 0) {
+      const imageIds = await dbRead.$queryRaw<{ id: number }[]>`
+        SELECT i.id
+        FROM "Image" i
+        JOIN "Post" p ON i."postId" = p.id
+        WHERE p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
+      `;
+
+      if (imageIds.length !== 0) {
+        await dbWrite.$executeRaw`
+          UPDATE "Image"
+            SET minor = ${after.minor},
+                poi = ${after.poi}
+          WHERE id IN (${Prisma.join(
+            imageIds.map(({ id }) => id),
+            ','
+          )})
+        `;
+
+        await imagesSearchIndex.queueUpdate(
+          imageIds.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        );
+      }
+    }
+  }
+}
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
@@ -2170,78 +2265,19 @@ export const upsertModel = async (
       },
     });
     await preventReplicationLag('model', id);
+    await userModelCountCache.refresh(userId);
 
-    // Check any changes that would require a search index update
-    const poiChanged = result.poi !== beforeUpdate.poi;
-    const minorChanged =
-      result.minor !== beforeUpdate.minor || result.sfwOnly !== beforeUpdate.sfwOnly;
-    const nsfwChanged = result.nsfw !== beforeUpdate.nsfw;
-    const nameChanged = input.name !== beforeUpdate.name;
-    const descriptionChanged = input.description !== beforeUpdate.description;
     const modelMeta = result.meta as ModelMeta | null;
     const showcaseCollectionChanged =
       modelMeta?.showcaseCollectionId !== (beforeUpdate.meta as ModelMeta)?.showcaseCollectionId;
 
-    // Update search index if listing changes
-    if (tagsOnModels || poiChanged || minorChanged) {
-      await modelTagCache.refresh(result.id);
-      if (tagsOnModels) await modelVotableTagsCache.bust(result.id);
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    }
-
-    const newGallerySettings = result.gallerySettings as ModelGallerySettingsSchema;
-    const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
-
-    if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
-
-    await userModelCountCache.refresh(userId);
-
-    // Ingest model if it's published and any of the following fields have changed:
-    if (
-      (result.status === 'Published' || result.status === 'Scheduled') &&
-      (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
-    ) {
-      const parsedModel = ingestModelSchema.parse(result);
-      // Run it in the background to prevent blocking the request
-      ingestModel({ ...parsedModel }).catch((error) =>
-        logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-      );
-    }
-
-    if (minorChanged || poiChanged) {
-      // Update all images:
-      const modelVersions = await dbWrite.modelVersion.findMany({
-        where: { modelId: id },
-        select: { id: true },
-      });
-
-      const modelVersionIds = modelVersions.map(({ id }) => id);
-
-      if (modelVersionIds.length !== 0) {
-        const imageIds = await dbRead.$queryRaw<{ id: number }[]>`
-          SELECT i.id
-          FROM "Image" i
-          JOIN "Post" p ON i."postId" = p.id
-          WHERE p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
-        `;
-
-        if (imageIds.length !== 0) {
-          await dbWrite.$executeRaw`
-            UPDATE "Image"
-              SET minor = ${result.minor},
-                  poi = ${result.poi}
-            WHERE id IN (${Prisma.join(
-              imageIds.map(({ id }) => id),
-              ','
-            )})
-          `;
-
-          await imagesSearchIndex.queueUpdate(
-            imageIds.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-          );
-        }
-      }
-    }
+    await applyModelFlagSideEffects({
+      before: beforeUpdate,
+      after: result,
+      tagsChanged: !!tagsOnModels,
+      nameChanged: input.name !== beforeUpdate.name,
+      descriptionChanged: input.description !== beforeUpdate.description,
+    });
 
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
