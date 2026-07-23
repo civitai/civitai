@@ -65,7 +65,7 @@ type SubmitResult = { listingId: string; publishRequestId: string; slug: string 
 type PendingItem = { id: string; slug: string; appListingId: string | null };
 type PendingList = { items: PendingItem[]; nextCursor: string | null };
 
-function submitInput(slug: string) {
+function submitInput(slug: string, connectClientId: string) {
   return {
     slug,
     name: 'CI Smoke — external approve/reject (P3a PR-b)',
@@ -74,7 +74,36 @@ function submitInput(slug: string) {
     category: 'utility',
     contentRating: 'g',
     changelog: 'ci-smoke approve/reject',
+    // W13 merged external+connect model (#3227): every external listing links the
+    // caller's OWN OAuth client. This pure external-link app discloses NO scopes,
+    // so an empty requested-scope mask (0) + empty justifications is the minimal
+    // valid connect shape (0 ⊆ any client ceiling; no scopes → no justifications).
+    connectClientId,
+    requestedScopes: 0,
+    scopeJustifications: {},
   };
+}
+
+/**
+ * The W13 merged external+connect model requires every external listing to link
+ * the caller's OWN OAuth client (existence/ownership/not-app-block checked in the
+ * service). Create a throwaway client per test and delete it on cleanup —
+ * self-cleaning like the draft listing + slug.
+ */
+async function createConnectClient(request: APIRequestContext): Promise<string> {
+  const res = await trpcMutation<{ clientId: string }>(request, 'oauthClient.create', {
+    name: 'CI Smoke — external-listing connect client',
+    redirectUris: ['https://example.com/ci-smoke-oauth-callback'],
+  });
+  return res.clientId;
+}
+
+async function deleteConnectClient(
+  request: APIRequestContext,
+  clientId: string | null
+): Promise<void> {
+  if (!clientId) return;
+  await trpcMutation(request, 'oauthClient.delete', { id: clientId }).catch(() => {});
 }
 
 /** Page the oldest-first pending queue to find our row by slug. */
@@ -119,13 +148,15 @@ test.describe('App Blocks P3a PR-b: off-site approve/reject (mod, self-cleaning)
     const request = page.request;
 
     let publishRequestId: string | null = null;
+    let clientId: string | null = null;
     try {
       await withdrawPendingForSlug(request, SLUG);
+      clientId = await createConnectClient(request);
 
       const result = await trpcMutation<SubmitResult>(
         request,
         'appListings.submitExternalListing',
-        submitInput(SLUG)
+        submitInput(SLUG, clientId)
       );
       publishRequestId = result.publishRequestId;
       expect(result.slug, 'slug echoes the submission').toBe(SLUG);
@@ -152,6 +183,7 @@ test.describe('App Blocks P3a PR-b: off-site approve/reject (mod, self-cleaning)
       } else {
         await withdrawPendingForSlug(request, SLUG);
       }
+      await deleteConnectClient(request, clientId);
     }
   });
 
@@ -163,13 +195,15 @@ test.describe('App Blocks P3a PR-b: off-site approve/reject (mod, self-cleaning)
     const request = page.request;
 
     let publishRequestId: string | null = null;
+    let clientId: string | null = null;
     try {
       await withdrawPendingForSlug(request, SLUG);
+      clientId = await createConnectClient(request);
 
       const result = await trpcMutation<SubmitResult>(
         request,
         'appListings.submitExternalListing',
-        submitInput(SLUG)
+        submitInput(SLUG, clientId)
       );
       publishRequestId = result.publishRequestId;
 
@@ -209,6 +243,7 @@ test.describe('App Blocks P3a PR-b: off-site approve/reject (mod, self-cleaning)
       } else {
         await withdrawPendingForSlug(request, SLUG);
       }
+      await deleteConnectClient(request, clientId);
     }
   });
 });
