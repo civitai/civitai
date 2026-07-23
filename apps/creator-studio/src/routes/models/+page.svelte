@@ -32,7 +32,6 @@
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
-  import { NativeSelect, NativeSelectOption } from '@civitai/ui/components/ui/native-select/index.js';
   import {
     MIN_DOWNLOAD_PRICE,
     MIN_GENERATION_PRICE,
@@ -351,7 +350,7 @@
     </Popover.Trigger>
     <Popover.Content class="w-64 space-y-4 border-dark-4 bg-dark-7 p-4 text-sm text-white">
       <fieldset>
-        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-3">Status</legend>
+        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-2">Status</legend>
         <RadioGroup
           value={data.query.status ?? ''}
           onValueChange={(v) => navigate({ status: v || null, page: null })}
@@ -366,36 +365,44 @@
         </RadioGroup>
       </fieldset>
       <div class="space-y-1.5">
-        <Label for="filter-mt" class="text-xs font-medium uppercase tracking-wide text-dark-3">
+        <Label for="filter-mt" class="text-xs font-medium uppercase tracking-wide text-dark-2">
           Model type
         </Label>
-        <NativeSelect
-          id="filter-mt"
-          value={data.query.mt}
-          onchange={(e) => navigate({ mt: e.currentTarget.value || null, page: null })}
-          class="[&>option]:bg-dark-7 [&>option]:text-white"
+        <Select.Root
+          type="single"
+          value={data.query.mt ?? ''}
+          onValueChange={(v: string) => navigate({ mt: v || null, page: null })}
         >
-          <NativeSelectOption value="">All types</NativeSelectOption>
-          {#each data.modelTypes as mt (mt)}
-            <NativeSelectOption value={mt}>{mt}</NativeSelectOption>
-          {/each}
-        </NativeSelect>
+          <Select.Trigger id="filter-mt" size="default" class="w-full text-white" aria-label="Model type">
+            {data.query.mt || 'All types'}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="" label="All types" />
+            {#each data.modelTypes as mt (mt)}
+              <Select.Item value={mt} label={mt} />
+            {/each}
+          </Select.Content>
+        </Select.Root>
       </div>
       <div class="space-y-1.5">
-        <Label for="filter-bm" class="text-xs font-medium uppercase tracking-wide text-dark-3">
+        <Label for="filter-bm" class="text-xs font-medium uppercase tracking-wide text-dark-2">
           Base model
         </Label>
-        <NativeSelect
-          id="filter-bm"
-          value={data.query.bm}
-          onchange={(e) => navigate({ bm: e.currentTarget.value || null, page: null })}
-          class="[&>option]:bg-dark-7 [&>option]:text-white"
+        <Select.Root
+          type="single"
+          value={data.query.bm ?? ''}
+          onValueChange={(v: string) => navigate({ bm: v || null, page: null })}
         >
-          <NativeSelectOption value="">All base models</NativeSelectOption>
-          {#each data.baseModels as bm (bm)}
-            <NativeSelectOption value={bm}>{bm}</NativeSelectOption>
-          {/each}
-        </NativeSelect>
+          <Select.Trigger id="filter-bm" size="default" class="w-full text-white" aria-label="Base model">
+            {data.query.bm || 'All base models'}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="" label="All base models" />
+            {#each data.baseModels as bm (bm)}
+              <Select.Item value={bm} label={bm} />
+            {/each}
+          </Select.Content>
+        </Select.Root>
       </div>
       <div class="flex items-center gap-2">
         <Checkbox
@@ -406,7 +413,7 @@
         <Label for="filter-access" class="cursor-pointer font-normal">Has early / paid access</Label>
       </div>
       <fieldset>
-        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-3">Licensing fee</legend>
+        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-2">Licensing fee</legend>
         <RadioGroup
           value={data.query.fee ?? ''}
           onValueChange={(v) => navigate({ fee: v || null, page: null })}
@@ -482,16 +489,22 @@
   <p class="text-xs text-dark-3">{data.total} model{data.total === 1 ? '' : 's'}</p>
   <label class="flex items-center gap-1.5 text-xs text-dark-3">
     Per page
-    <NativeSelect
-      aria-label="Models per page"
+    <Select.Root
+      type="single"
       value={String(data.perPage)}
-      onchange={(e) => navigate({ ps: e.currentTarget.value, page: null })}
-      class="h-7 rounded-lg py-0 text-xs text-white [&>option]:bg-dark-7 [&>option]:text-white"
+      onValueChange={(v: string) => {
+        if (v) navigate({ ps: v, page: null });
+      }}
     >
-      {#each data.pageSizeOptions as n (n)}
-        <NativeSelectOption value={String(n)}>{n}</NativeSelectOption>
-      {/each}
-    </NativeSelect>
+      <Select.Trigger size="sm" class="w-16 text-white" aria-label="Models per page">
+        {data.perPage}
+      </Select.Trigger>
+      <Select.Content>
+        {#each data.pageSizeOptions as n (n)}
+          <Select.Item value={String(n)} label={String(n)} />
+        {/each}
+      </Select.Content>
+    </Select.Root>
   </label>
 </div>
 
@@ -527,16 +540,17 @@
         class="h-7 w-20"
       />
       <span class="text-sm text-dark-1">⚡ per</span>
-      <NativeSelect
-        name="images"
-        bind:value={bulkImages}
-        aria-label="Images"
-        class="h-7 rounded-lg py-0 text-white [&>option]:bg-dark-7 [&>option]:text-white"
-      >
-        {#each FEE_IMAGE_OPTIONS as opt (opt)}
-          <NativeSelectOption value={String(opt)}>{opt}</NativeSelectOption>
-        {/each}
-      </NativeSelect>
+      <input type="hidden" name="images" value={bulkImages} />
+      <Select.Root type="single" value={bulkImages} onValueChange={(v: string) => { if (v) bulkImages = v; }}>
+        <Select.Trigger size="sm" class="w-16 text-white" aria-label="Images">
+          {bulkImages}
+        </Select.Trigger>
+        <Select.Content>
+          {#each FEE_IMAGE_OPTIONS as opt (opt)}
+            <Select.Item value={String(opt)} label={String(opt)} />
+          {/each}
+        </Select.Content>
+      </Select.Root>
       <span class="text-sm text-dark-1">images</span>
       <Button
         size="sm"
@@ -841,16 +855,17 @@
                 class="w-16 py-1"
               />
               <span class="text-xs text-dark-3">⚡ per</span>
-              <NativeSelect
-                name="images"
-                bind:value={feeImages}
-                aria-label="Images for {editing.name}"
-                class="[&>option]:bg-dark-7 [&>option]:text-white"
-              >
-                {#each FEE_IMAGE_OPTIONS as opt (opt)}
-                  <NativeSelectOption value={String(opt)}>{opt}</NativeSelectOption>
-                {/each}
-              </NativeSelect>
+              <input type="hidden" name="images" value={feeImages} />
+              <Select.Root type="single" value={feeImages} onValueChange={(v: string) => { if (v) feeImages = v; }}>
+                <Select.Trigger size="default" class="w-16 text-white" aria-label="Images for {editing.name}">
+                  {feeImages}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each FEE_IMAGE_OPTIONS as opt (opt)}
+                    <Select.Item value={String(opt)} label={String(opt)} />
+                  {/each}
+                </Select.Content>
+              </Select.Root>
               <span class="text-xs text-dark-3">images</span>
               <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
               <p class="w-full text-xs text-dark-3">

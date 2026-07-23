@@ -47,8 +47,8 @@
     <strong class="text-dark-2">Nothing to review</strong> — none of your published models have downvotes or comments.
   </div>
 {:else}
-  <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-3 text-sm text-dark-2">
+  <div class="cs-panel p-4">
+    <p class="mb-3 text-sm font-medium text-white">
       Engagement by model
       <span class="text-xs text-dark-3">· all-time · click a column to sort</span>
     </p>

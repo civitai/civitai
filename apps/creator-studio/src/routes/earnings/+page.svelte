@@ -5,6 +5,7 @@
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { IconFilter } from '@tabler/icons-svelte';
   import RangeSelector from '$lib/components/RangeSelector.svelte';
+  import StatCard from '$lib/components/StatCard.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { chartType } from '$lib/stores/chart-type';
@@ -241,9 +242,9 @@
   </div>
 {:else}
   {#if sources.length > 1}
-    <section class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-3">
+    <section class="mb-4 cs-panel p-3">
       <div class="flex flex-wrap items-center gap-2">
-        <span class="text-xs font-medium uppercase tracking-wide text-dark-3">Sources</span>
+        <span class="text-xs font-medium uppercase tracking-wide text-dark-2">Sources</span>
         <ToggleGroup
           type="multiple"
           value={shownSources}
@@ -293,25 +294,24 @@
     </section>
   {/if}
 
-  <p class="mb-2 text-xs text-dark-3">
+  <p class="mb-2 text-xs text-dark-2">
     Earned by source · buzz {periodLabel}{#if isFiltered}<span class="font-medium text-yellow-5"> · filtered</span
       >{/if}
   </p>
   <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
     {#each sourceTotals as st (st.source)}
-      <div class="rounded-lg border border-dark-4 bg-dark-6 p-3">
-        <p class="text-xs uppercase tracking-wide text-dark-3">{SOURCE_LABEL[st.source]}</p>
+      <StatCard label={SOURCE_LABEL[st.source]}>
         <p class="mt-1 text-xl font-semibold text-white">{formatBuzz(st.total)}</p>
         <div class="mt-1">
           <DeltaChip current={st.total} previous={cmpSourceBuzz(st.source)} label="vs {data.compare.label}" />
         </div>
-      </div>
+      </StatCard>
     {/each}
   </section>
 
-  <div class="mb-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
+  <div class="mb-6 cs-panel p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-dark-2">
+      <p class="text-sm font-medium text-white">
         Buzz earned over time
         <span class="text-xs text-dark-3">· this month vs {data.compare.label}</span>{#if isFiltered}<span
             class="text-xs font-medium text-yellow-5"
@@ -328,9 +328,9 @@
     </div>
   </div>
 
-  <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
+  <div class="cs-panel p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-dark-2">
+      <p class="text-sm font-medium text-white">
         By source <span class="text-xs text-dark-3">{periodLabel}</span>{#if isFiltered}<span
             class="text-xs font-medium text-yellow-5"
           >
@@ -396,8 +396,8 @@
 {/if}
 
 {#if monthlyMonths.length}
-  <div class="mt-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-3 text-sm text-dark-2">
+  <div class="mt-6 cs-panel p-4">
+    <p class="mb-3 text-sm font-medium text-white">
       Monthly performance <span class="text-xs text-dark-3">· buzz, last 12 months</span>
     </p>
     <Table.Root>
@@ -436,8 +436,8 @@
 {/if}
 
 {#if data.buzzRatio?.length}
-  <div class="mt-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-1 text-sm text-dark-2">
+  <div class="mt-6 cs-panel p-4">
+    <p class="mb-1 text-sm font-medium text-white">
       Buzz → $ conversion <span class="text-xs text-dark-3">· what your banked Buzz was worth each month</span>
     </p>
     <p class="mb-3 text-xs text-dark-3">

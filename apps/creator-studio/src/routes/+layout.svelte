@@ -20,7 +20,7 @@
     SidebarInset,
     SidebarTrigger,
   } from '@civitai/ui/components/ui/sidebar/index.js';
-  import { NativeSelect, NativeSelectOption } from '@civitai/ui/components/ui/native-select/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Toaster } from '@civitai/ui/components/ui/sonner/index.js';
   import AccountSwitcher from '$lib/components/AccountSwitcher.svelte';
   import { activeNavHref, isNavChildActive, navForMember } from '$lib/nav';
@@ -145,16 +145,20 @@
           >
             Simulate membership (test)
           </label>
-          <NativeSelect
-            id="cs-sim-membership"
+          <Select.Root
+            type="single"
             value={data.testMembership ?? ''}
-            onchange={(e) => setTestMembership(e.currentTarget.value)}
-            class="h-auto py-1 text-xs [&>option]:bg-dark-7 [&>option]:text-white"
+            onValueChange={(v: string) => setTestMembership(v)}
           >
-            {#each membershipOptions as opt (opt.value)}
-              <NativeSelectOption value={opt.value}>{opt.label}</NativeSelectOption>
-            {/each}
-          </NativeSelect>
+            <Select.Trigger id="cs-sim-membership" size="sm" class="w-full text-xs text-white" aria-label="Simulate membership">
+              {membershipOptions.find((o) => o.value === (data.testMembership ?? ''))?.label ?? 'Default'}
+            </Select.Trigger>
+            <Select.Content>
+              {#each membershipOptions as opt (opt.value)}
+                <Select.Item value={opt.value} label={opt.label} />
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
       {/if}
       <div class="px-1 py-1">

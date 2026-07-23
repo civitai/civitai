@@ -18,7 +18,7 @@
 {:else if data.images.length === 0}
   <div class="placeholder">No image reactions {periodLabel} yet.</div>
 {:else}
-  <p class="mb-3 text-sm text-dark-2">
+  <p class="mb-3 text-sm font-medium text-white">
     Top images by reactions <span class="text-xs text-dark-3">{periodLabel}</span>
   </p>
   <div class="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-5">

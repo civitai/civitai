@@ -52,8 +52,8 @@
 <AnalyticsHeader range={data.range} compare={data.compare} />
 
 {#if data.modelPerformance && data.modelPerformance.length > 0}
-  <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <p class="mb-3 text-sm text-dark-2">
+  <div class="cs-panel p-4">
+    <p class="mb-3 text-sm font-medium text-white">
       Per-model performance <span class="text-xs text-dark-3">{periodLabel} · click a column to sort</span>
     </p>
     {#snippet sortHead(key: string, label: string)}

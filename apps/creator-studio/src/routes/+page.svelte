@@ -18,6 +18,7 @@
   import { currencyMeta, formatAmount, formatBuzz } from '$lib/earnings';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import BuzzAmount from '$lib/components/BuzzAmount.svelte';
+  import StatCard from '$lib/components/StatCard.svelte';
   import type { PageData } from './$types';
 
   type Stat = {
@@ -148,25 +149,18 @@
 
 <section class="mb-8">
   <div class="mb-2 flex items-center justify-between">
-    <p class="text-xs uppercase tracking-wide text-dark-3">Your activity — last 30 days</p>
+    <p class="text-xs uppercase tracking-wide text-dark-2">Your activity — last 30 days</p>
     <a href="/analytics" class="text-xs text-dark-2 hover:text-white">View analytics →</a>
   </div>
   {#if data.content}
     <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
       {#each activity as a (a.label)}
-        {@const Icon = a.icon}
-        <Card>
-          <CardContent>
-            <div class="flex items-center gap-1.5">
-              <Icon size={15} color={a.color} />
-              <p class="text-xs uppercase tracking-wide text-dark-3">{a.label}</p>
-            </div>
-            <div class="mt-1 flex items-baseline gap-2">
-              <p class="text-xl font-semibold text-white">{num(a.value)}</p>
-              <DeltaChip current={a.value} previous={a.prev} />
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard label={a.label} icon={a.icon} color={a.color}>
+          <div class="mt-1 flex items-baseline gap-2">
+            <p class="text-xl font-semibold text-white">{num(a.value)}</p>
+            <DeltaChip current={a.value} previous={a.prev} />
+          </div>
+        </StatCard>
       {/each}
     </div>
   {:else}
@@ -176,48 +170,41 @@
 
 <section class="mb-8">
   <div class="mb-2 flex items-center justify-between">
-    <p class="text-xs uppercase tracking-wide text-dark-3">Earnings</p>
+    <p class="text-xs uppercase tracking-wide text-dark-2">Earnings</p>
     <a href="/earnings" class="text-xs text-dark-2 hover:text-white">View earnings →</a>
   </div>
   <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
     {#each stats as stat (stat.label)}
-      {@const Icon = stat.icon}
-      <Card>
-        <CardHeader class="flex flex-row items-center gap-1.5 space-y-0">
-          <Icon size={15} color={stat.color} />
-          <CardTitle class="text-sm font-medium text-dark-2">{stat.label}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {#if stat.value != null}
-            <div class="flex items-baseline gap-2">
-              <p class="text-xl font-semibold text-white">
-                {#if stat.buzz != null}<BuzzAmount amount={stat.buzz} />{:else}{stat.value}{/if}
-              </p>
-              {#if stat.label === 'Buzz earned'}<DeltaChip current={buzzNow} previous={buzzPrev} />{/if}
-            </div>
-          {:else if stat.pending}
-            <p class="text-xl font-semibold text-dark-4">—</p>
-          {:else}
-            <Skeleton class="h-7 w-24" />
-          {/if}
-          {#if stat.label === 'Top-earning model' && topModelName}
-            <!-- Model name + compact scope on one line, so this card stays the same height as the others. -->
-            <p class="mt-2 flex items-baseline gap-1 text-xs">
-              <span class="truncate text-dark-2" title={topModelName}>{topModelName}</span>
-              <span class="shrink-0 text-dark-4">· 30d</span>
+      <StatCard label={stat.label} icon={stat.icon} color={stat.color}>
+        {#if stat.value != null}
+          <div class="mt-1 flex items-baseline gap-2">
+            <p class="text-xl font-semibold text-white">
+              {#if stat.buzz != null}<BuzzAmount amount={stat.buzz} />{:else}{stat.value}{/if}
             </p>
-          {:else}
-            <p class="mt-2 flex items-center gap-1 text-xs text-dark-3">
-              {#if stat.label === 'Buzz earned'}
-                {#each buzzLegend as c (c)}
-                  <span class="inline-block h-2 w-2 rounded-full" style="background:{c}"></span>
-                {/each}
-              {/if}
-              <span>{stat.hint}</span>
-            </p>
-          {/if}
-        </CardContent>
-      </Card>
+            {#if stat.label === 'Buzz earned'}<DeltaChip current={buzzNow} previous={buzzPrev} />{/if}
+          </div>
+        {:else if stat.pending}
+          <p class="mt-1 text-xl font-semibold text-dark-4">—</p>
+        {:else}
+          <Skeleton class="mt-1 h-7 w-24" />
+        {/if}
+        {#if stat.label === 'Top-earning model' && topModelName}
+          <!-- Model name + compact scope on one line, so this card stays the same height as the others. -->
+          <p class="mt-2 flex items-baseline gap-1 text-xs">
+            <span class="truncate text-dark-2" title={topModelName}>{topModelName}</span>
+            <span class="shrink-0 text-dark-4">· 30d</span>
+          </p>
+        {:else}
+          <p class="mt-2 flex items-center gap-1 text-xs text-dark-3">
+            {#if stat.label === 'Buzz earned'}
+              {#each buzzLegend as c (c)}
+                <span class="inline-block h-2 w-2 rounded-full" style="background:{c}"></span>
+              {/each}
+            {/if}
+            <span>{stat.hint}</span>
+          </p>
+        {/if}
+      </StatCard>
     {/each}
   </div>
 </section>

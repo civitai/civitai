@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Chart, chartColor, createSyncedCrosshair } from '@civitai/ui/components/ui/chart/index.js';
-  import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
+  import StatCard from '$lib/components/StatCard.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { chartType } from '$lib/stores/chart-type';
@@ -111,22 +111,15 @@
     No activity {periodLabel}. Once your images get reactions, followers, or views, they'll show up here.
   </div>
 {:else}
-  <p class="mb-2 text-xs text-dark-3">Totals {periodLabel}</p>
+  <p class="mb-2 text-xs text-dark-2">Totals {periodLabel}</p>
   <section class="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
     {#each tiles as tile (tile.label)}
-      {@const Icon = tile.icon}
-      <Card>
-        <CardContent>
-          <div class="flex items-center gap-1.5">
-            <Icon size={15} color={tile.color} />
-            <p class="text-xs uppercase tracking-wide text-dark-3">{tile.label}</p>
-          </div>
-          <div class="mt-1 flex items-baseline gap-2">
-            <p class="text-xl font-semibold text-white">{num(tile.value)}</p>
-            <DeltaChip current={tile.value} previous={tile.prev} />
-          </div>
-        </CardContent>
-      </Card>
+      <StatCard label={tile.label} icon={tile.icon} color={tile.color}>
+        <div class="mt-1 flex items-baseline gap-2">
+          <p class="text-xl font-semibold text-white">{num(tile.value)}</p>
+          <DeltaChip current={tile.value} previous={tile.prev} />
+        </div>
+      </StatCard>
     {/each}
   </section>
   {#if data.allTime}
@@ -136,9 +129,9 @@
     </p>
   {/if}
 
-  <div class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
+  <div class="mb-4 cs-panel p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-dark-2">Reactions received over time</p>
+      <p class="text-sm font-medium text-white">Reactions received over time</p>
       <ChartTypeToggle />
     </div>
     <div class="h-64">
@@ -150,8 +143,8 @@
 
   <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
     {#each secondaryCharts as c (c.title)}
-      <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
-        <p class="mb-3 text-sm text-dark-2">{c.title}</p>
+      <div class="cs-panel p-4">
+        <p class="mb-3 text-sm font-medium text-white">{c.title}</p>
         <div class="h-48">
           {#key chartType.value}
             <Chart type={chartType.value} data={lineData(c.series, c.title, c.color, c.prev)} options={commonOptions} plugins={[crosshair]} class="h-full" />

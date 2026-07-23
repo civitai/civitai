@@ -21,11 +21,11 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
   "select all", per-page selector) should show `cursor: pointer` unless disabled. (`T:510–516`)
 - [ ] **[global] [todo]** **Page-size selector on every paginated page** — every page with pagination
   needs a page-size selector (see specific pages below). (`T:807–810`, `T:856–866`)
-- [ ] **[global] [polish]** **Replace `NativeSelect` with the styled `Select` component** — the bits-ui
-  `Select` (`@civitai/ui/.../select`, used by RangeSelector + the Licensing sort) renders the value/chevron
-  cleanly and matches the design; the native `<select>` clips text when its height is overridden and styles
-  inconsistently. Sweep the remaining `NativeSelect` usages onto `Select`: the Licensing filter popover
-  (model-type, base-model) + per-page + bulk-images selects, and the shared `PageSizeSelect`. (Sort is done.)
+- [x] **[global] [polish]** **Replace `NativeSelect` with the styled `Select` component** — done. Swept all
+  remaining `NativeSelect` usages onto bits-ui `Select`: the Licensing filter popover (model-type, base-model),
+  Licensing per-page, the bulk-edit-bar images select + per-row fee-images select (form fields — added a hidden
+  `name="images"` input so the POST still submits), the shared `PageSizeSelect`, and the layout
+  "Simulate membership" moderator toggle. No `NativeSelect` remains in the app.
 - [ ] **[global] [todo]** **Adopt `<BuzzAmount>` for buzz displays** — new `$lib/components/BuzzAmount.svelte`
   renders a buzz amount with the ⚡ sized in `em` + tucked against the number (currency-symbol style), reusable
   in any font-size context. Sweep the remaining buzz displays onto it: **earnings** source cards + buzz→$ table +
@@ -142,10 +142,12 @@ Tags: **[todo]** build · **[bug]** fix · **[polish]** styling · **[verify]** 
 
 ## Analytics — Audience tab
 
-- [ ] **[todo]** **Add over-time charts to match header cards** — add a chart for each header card:
-  **new followers**, **all-time reactions**, and **all-time comments** — i.e. reactions-received-over-time
-  and comments-over-time charts alongside the existing followers-over-time, plus a per-month graph for
-  each. (`T:940–954`)
+- [~] **[todo]** **Add over-time charts to match header cards** — followers-over-time + **reactions-received-
+  over-time** now render side-by-side (reactions series already came from `getContentAnalytics`). **Comments-
+  over-time is NOT done**: comments have no fast period-scoped source (`getAllTimeTotals` is all-time only, from
+  the `image_metrics_user` rollup) — a dated chart needs a new source (Postgres `CommentV2` by date, or a
+  ClickHouse rollup). "Per-month graph" (longer monthly trend vs the current daily-in-month) also deferred.
+  (`T:940–954`)
 - [ ] **[polish]** **Card color matches dashboard** — the audience cards' color differs from the
   dashboard stat cards; align (covered by the global card-color item). (`T:956–959`)
 

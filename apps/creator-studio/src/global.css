@@ -50,4 +50,10 @@
   .placeholder {
     @apply grid min-h-60 place-items-center rounded-xl border border-dashed border-dark-4 bg-dark-6 p-6 text-dark-2;
   }
+
+  /* Canonical content-card surface — matches the dashboard <Card> (bg-card + subtle ring + rounded-xl) so panels
+     look the same across every page. Add padding (p-4 / p-3) at the call site. */
+  .cs-panel {
+    @apply rounded-xl bg-card text-card-foreground ring-1 ring-foreground/10;
+  }
 }

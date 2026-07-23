@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Chart, chartColor } from '@civitai/ui/components/ui/chart/index.js';
-  import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
+  import StatCard from '$lib/components/StatCard.svelte';
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import ChartTypeToggle from '$lib/components/ChartTypeToggle.svelte';
   import { chartType } from '$lib/stores/chart-type';
@@ -72,49 +72,47 @@
   <div class="placeholder">Audience analytics are temporarily unavailable — please try again shortly.</div>
 {:else}
   <section class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-    <Card>
-      <CardContent>
-        <div class="flex items-center gap-1.5">
-          <IconUserPlus size={15} color="#4dabf7" />
-          <p class="text-xs uppercase tracking-wide text-dark-3">New followers</p>
-        </div>
-        <div class="mt-1 flex items-baseline gap-2">
-          <p class="text-xl font-semibold text-white">{num(data.analytics.totals.followers)}</p>
-          <DeltaChip current={data.analytics.totals.followers} previous={data.analyticsPrev?.totals.followers ?? null} />
-        </div>
-      </CardContent>
-    </Card>
+    <StatCard label="New followers" icon={IconUserPlus} color="#4dabf7">
+      <div class="mt-1 flex items-baseline gap-2">
+        <p class="text-xl font-semibold text-white">{num(data.analytics.totals.followers)}</p>
+        <DeltaChip current={data.analytics.totals.followers} previous={data.analyticsPrev?.totals.followers ?? null} />
+      </div>
+    </StatCard>
     {#if data.allTime}
-      <Card>
-        <CardContent>
-          <div class="flex items-center gap-1.5">
-            <IconHeart size={15} color="#ff6b6b" />
-            <p class="text-xs uppercase tracking-wide text-dark-3">All-time reactions</p>
-          </div>
-          <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.reactions)}</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent>
-          <div class="flex items-center gap-1.5">
-            <IconMessage size={15} color="#20c997" />
-            <p class="text-xs uppercase tracking-wide text-dark-3">All-time comments</p>
-          </div>
-          <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.comments)}</p>
-        </CardContent>
-      </Card>
+      <StatCard label="All-time reactions" icon={IconHeart} color="#ff6b6b">
+        <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.reactions)}</p>
+      </StatCard>
+      <StatCard label="All-time comments" icon={IconMessage} color="#20c997">
+        <p class="mt-1 text-xl font-semibold text-white">{num(data.allTime.comments)}</p>
+      </StatCard>
     {/if}
   </section>
 
-  <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
-    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-dark-2">New followers over time <span class="text-xs text-dark-3">{periodLabel}</span></p>
-      <ChartTypeToggle />
+  <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+    <div class="cs-panel p-4">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p class="text-sm font-medium text-white">New followers over time <span class="text-xs text-dark-3">{periodLabel}</span></p>
+        <ChartTypeToggle />
+      </div>
+      <div class="h-64">
+        {#key chartType.value}
+          <Chart type={chartType.value} data={lineData(data.analytics.followers, 'New followers', 1, data.analyticsPrev?.followers)} options={commonOptions} class="h-full" />
+        {/key}
+      </div>
     </div>
-    <div class="h-64">
-      {#key chartType.value}
-        <Chart type={chartType.value} data={lineData(data.analytics.followers, 'New followers', 1, data.analyticsPrev?.followers)} options={commonOptions} class="h-full" />
-      {/key}
+    <div class="cs-panel p-4">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p class="text-sm font-medium text-white">Reactions received over time <span class="text-xs text-dark-3">{periodLabel}</span></p>
+        <ChartTypeToggle />
+      </div>
+      <div class="h-64">
+        {#key chartType.value}
+          <Chart type={chartType.value} data={lineData(data.analytics.reactions, 'Reactions', 0, data.analyticsPrev?.reactions)} options={commonOptions} class="h-full" />
+        {/key}
+      </div>
     </div>
   </div>
+
+  <!-- Comments have no fast period-scoped source (all-time only, see getAllTimeTotals), so there's no
+       comments-over-time chart yet — tracked in the round-5 checklist. -->
 {/if}

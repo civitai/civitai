@@ -110,7 +110,7 @@
   </CardContent>
 </Card>
 
-<div class="mb-6 rounded-lg border border-dark-4 bg-dark-6 p-4">
+<div class="mb-6 cs-panel p-4">
   <div class="flex items-center justify-between text-sm">
     <span class="text-dark-1">Your creator score</span>
     <span class="font-medium text-white">

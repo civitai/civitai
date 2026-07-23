@@ -151,9 +151,9 @@
 <AnalyticsHeader range={data.range} compare={data.compare} />
 
 {#if trendHasData}
-  <div class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
+  <div class="mb-4 cs-panel p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-dark-2">
+      <p class="text-sm font-medium text-white">
         Civitai-wide base-model usage
         <span class="text-xs text-dark-3">
           · {trendMetric} {periodLabel} · dashed = {data.compare.label} · ★ marks yours
@@ -212,7 +212,7 @@
 {/if}
 
 {#if data.baseModels && data.baseModels.length > 0}
-  <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
+  <div class="cs-panel p-4">
     <p class="text-sm font-medium text-white">Your base models</p>
     <p class="mb-3 text-xs text-dark-3">
       Your own generations, downloads &amp; earnings by base model {periodLabel} · click a column to sort

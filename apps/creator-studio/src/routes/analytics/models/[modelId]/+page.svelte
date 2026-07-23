@@ -138,9 +138,9 @@
 </div>
 
 {#if seriesVersions.length > 0}
-  <div class="mb-4 rounded-lg border border-dark-4 bg-dark-6 p-4">
+  <div class="mb-4 cs-panel p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <p class="text-sm text-dark-2">
+      <p class="text-sm font-medium text-white">
         Compare versions
         <span class="text-xs text-dark-3">
           · {metricLabel[metric].toLowerCase()} over time {periodLabel} · dashed = {data.compare.label}
@@ -205,7 +205,7 @@
 {#if versions.length === 0}
   <div class="placeholder">This model has no versions.</div>
 {:else}
-  <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
+  <div class="cs-panel p-4">
     <Table.Root>
       <Table.Header>
         <Table.Row>
