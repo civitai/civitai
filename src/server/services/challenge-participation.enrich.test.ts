@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { ChallengeStatus, ChallengeSource } from '~/shared/utils/prisma/enums';
-import { enrichParticipatedCards } from './challenge-participation.util';
+import {
+  deriveMyChallengeResult,
+  enrichMyChallengeCards,
+} from './challenge-participation.util';
 
 const baseCard = {
   id: 10,
@@ -24,68 +27,96 @@ const baseCard = {
 } as any;
 const img = { id: 99, url: 'u', nsfwLevel: 1, hash: 'h', width: 512, height: 512, type: 'image' as const };
 
-describe('enrichParticipatedCards', () => {
-  it('attaches entry image, place, derived result, entered-at', () => {
-    const [out] = enrichParticipatedCards(
+describe('enrichMyChallengeCards', () => {
+  it('attaches entry image, place, derived result, activity-at', () => {
+    const [out] = enrichMyChallengeCards(
       [baseCard],
-      [{ id: 10, myImageId: 99, myPlace: 1, myEnteredAt: new Date('2026-01-03') }],
+      [{ id: 10, myImageId: 99, myPlace: 1, myActivityAt: new Date('2026-01-03'), isCreator: false }],
       [img]
     );
     expect(out.myEntryImage?.id).toBe(99);
     expect(out.myPlace).toBe(1);
     expect(out.myResult).toBe('won');
     expect(out.isLive).toBe(false);
-    expect(out.myEnteredAt).toEqual(new Date('2026-01-03'));
+    expect(out.myActivityAt).toEqual(new Date('2026-01-03'));
   });
-  it('falls back to challenge cover when entry image missing', () => {
-    const withCover = { ...baseCard, coverImage: { ...img, id: 7 } };
-    const [out] = enrichParticipatedCards(
-      [withCover],
-      [{ id: 10, myImageId: null, myPlace: null, myEnteredAt: new Date('2026-01-03') }],
+  it('leaves myEntryImage null when the entry image is missing', () => {
+    const cover = { ...img, id: 7 };
+    const [out] = enrichMyChallengeCards(
+      [{ ...baseCard, coverImage: cover }],
+      [{ id: 10, myImageId: null, myPlace: null, myActivityAt: new Date('2026-01-03'), isCreator: false }],
       []
     );
-    expect(out.myEntryImage?.id).toBe(7); // fell back to challenge cover
+    expect(out.myEntryImage).toBeNull();
+    expect(out.coverImage).toEqual(cover);
     expect(out.myResult).toBe('entered');
   });
 });
 
-// `useApplyHiddenPreferences({ type: 'challenges' })` gates each row on `coverImage.nsfwLevel` and
-// drops anything with no cover at all — but the card renders `myEntryImage`. Keeping `coverImage`
-// pointed at the image actually rendered makes the generic filter judge what the user will see.
-describe('enrichParticipatedCards — coverImage tracks the rendered thumbnail', () => {
-  const spicyEntry = { ...img, id: 1234, nsfwLevel: 8 };
+describe('enrichMyChallengeCards — the card renders the challenge cover', () => {
+  const cover = { id: 1, url: 'cover', nsfwLevel: 1, hash: null, width: 10, height: 10, type: 'image' as const };
+  const entry = { id: 2, url: 'entry', nsfwLevel: 1, hash: null, width: 10, height: 10, type: 'image' as const };
 
-  it('sets coverImage to the entry image so the hidden-preferences filter gates on it', () => {
-    const [out] = enrichParticipatedCards(
-      [{ ...baseCard, coverImage: { ...img, id: 7, nsfwLevel: 1 } }],
-      [{ id: 10, myImageId: spicyEntry.id, myPlace: null, myEnteredAt: new Date('2026-01-03') }],
-      [spicyEntry]
-    );
-
-    expect(out.myEntryImage).toEqual(spicyEntry);
-    expect(out.coverImage).toEqual(spicyEntry);
-  });
-
-  it('keeps a cover-less challenge visible when the user has an entry image', () => {
-    const [out] = enrichParticipatedCards(
-      [{ ...baseCard, coverImage: null }],
-      [{ id: 10, myImageId: img.id, myPlace: null, myEnteredAt: new Date('2026-01-03') }],
-      [img]
-    );
-
-    // Without this the filter sees `coverImage: null` and hides a challenge the user entered.
-    expect(out.coverImage).toEqual(img);
-  });
-
-  it('falls back to the challenge cover when there is no entry image', () => {
-    const cover = { ...img, id: 7 };
-    const [out] = enrichParticipatedCards(
+  it('coverImage stays the challenge cover even when an entry image exists', () => {
+    const [out] = enrichMyChallengeCards(
       [{ ...baseCard, coverImage: cover }],
-      [{ id: 10, myImageId: null, myPlace: null, myEnteredAt: new Date('2026-01-03') }],
+      [{ id: baseCard.id, myImageId: 2, myPlace: null, myActivityAt: new Date(), isCreator: false }],
+      [entry]
+    );
+    expect(out.coverImage).toEqual(cover);
+  });
+
+  it('myEntryImage is the entry image, for the View entry link', () => {
+    const [out] = enrichMyChallengeCards(
+      [{ ...baseCard, coverImage: cover }],
+      [{ id: baseCard.id, myImageId: 2, myPlace: null, myActivityAt: new Date(), isCreator: false }],
+      [entry]
+    );
+    expect(out.myEntryImage).toEqual(entry);
+  });
+
+  it('a hosted challenge has no entry image', () => {
+    const [out] = enrichMyChallengeCards(
+      [{ ...baseCard, coverImage: cover }],
+      [{ id: baseCard.id, myImageId: null, myPlace: null, myActivityAt: new Date(), isCreator: true }],
       []
     );
-
+    expect(out.myEntryImage).toBeNull();
     expect(out.coverImage).toEqual(cover);
-    expect(out.myEntryImage).toEqual(cover);
+    expect(out.myResult).toBe('hosting');
+  });
+});
+
+describe('deriveMyChallengeResult — hosting', () => {
+  it('a creator gets hosting regardless of status', () => {
+    expect(
+      deriveMyChallengeResult({
+        status: ChallengeStatus.Scheduled,
+        myPlace: null,
+        isCreator: true,
+      })
+    ).toEqual({ result: 'hosting', isLive: false });
+  });
+
+  it('a live hosted challenge is marked live', () => {
+    expect(
+      deriveMyChallengeResult({ status: ChallengeStatus.Active, myPlace: null, isCreator: true })
+    ).toEqual({ result: 'hosting', isLive: true });
+  });
+
+  it('a completed hosted challenge is hosting, not entered', () => {
+    expect(
+      deriveMyChallengeResult({
+        status: ChallengeStatus.Completed,
+        myPlace: null,
+        isCreator: true,
+      })
+    ).toEqual({ result: 'hosting', isLive: false });
+  });
+
+  it('a non-creator entrant is unaffected', () => {
+    expect(
+      deriveMyChallengeResult({ status: ChallengeStatus.Active, myPlace: null, isCreator: false })
+    ).toEqual({ result: 'entered', isLive: true });
   });
 });

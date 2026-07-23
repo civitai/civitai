@@ -29,7 +29,7 @@ import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.
 
 // Lives here rather than in the service util that derives it: the util and the client-side card
 // helpers both need it, and services depend on schema, never the reverse.
-export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered';
+export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered' | 'hosting';
 
 // Cover image type for challenges (compatible with ImageGuard2)
 export type ChallengeCoverImage = {
@@ -99,18 +99,19 @@ export type ChallengeListItem = {
   };
 };
 
-// Recently participated-in challenges for the current user (Challenges Center "My Participated" row)
-export const getMyParticipatedSchema = z.object({
+// The viewer's own challenges — entered or created — for the Challenges Center "Your Challenges" row.
+export const getMyChallengesSchema = z.object({
   limit: z.number().min(1).max(20).default(6),
 });
-export type GetMyParticipatedInput = z.infer<typeof getMyParticipatedSchema>;
+export type GetMyChallengesInput = z.infer<typeof getMyChallengesSchema>;
 
-export type MyParticipatedChallengeItem = ChallengeListItem & {
+export type MyChallengeItem = ChallengeListItem & {
   myEntryImage: ChallengeListItem['coverImage'];
   myPlace: number | null;
   myResult: MyChallengeResult;
   isLive: boolean;
-  myEnteredAt: Date;
+  // Entry time for challenges you entered; creation time for ones you host.
+  myActivityAt: Date;
 };
 
 // Completion summary stored in Challenge.metadata when winners are picked

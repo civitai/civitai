@@ -34,9 +34,9 @@ import {
   type GetInfiniteChallengesInput,
   type GetModeratorChallengesInput,
   type GetChallengeEventsInput,
-  type GetMyParticipatedInput,
+  type GetMyChallengesInput,
   type ImageEligibilityResult,
-  type MyParticipatedChallengeItem,
+  type MyChallengeItem,
   type UpcomingTheme,
   type UpsertChallengeInput,
   type UserChallengeUpsertInput,
@@ -87,7 +87,7 @@ import {
   assertUserAccountInGoodStanding,
 } from '~/server/services/challenge-eligibility.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { enrichParticipatedCards } from '~/server/services/challenge-participation.util';
+import { enrichMyChallengeCards } from '~/server/services/challenge-participation.util';
 import {
   getEffectiveBrowsingLevel,
   isChallengeHiddenByCoverScan,
@@ -372,12 +372,13 @@ async function mapChallengeRowsToCards(items: ChallengeCardRow[]): Promise<Chall
   });
 }
 
-// Raw row shape for getMyParticipated: the shared card projection plus the viewer's own
-// entry/placement fields from the `my` CTE.
-type ParticipatedRow = ChallengeCardRow & {
+// Raw row shape for getMyChallenges: the shared card projection plus the viewer's own
+// entry/placement fields from the `my` CTE, and whether the viewer created it.
+type MyChallengeRow = ChallengeCardRow & {
   myImageId: number | null;
   myPlace: number | null;
-  myEnteredAt: Date;
+  myActivityAt: Date;
+  isCreator: boolean;
 };
 
 // The viewer's bounded block/hide exclusion set (hidden ∪ blocked-by ∪ blocked), used to drop
@@ -406,16 +407,14 @@ function challengeCreatorBlockSql(excludedUserIds: number[]): Prisma.Sql | null 
 }
 
 /**
- * Challenges the current user has entered (CollectionItem) or won (ChallengeWinner), recent-first
- * by entry time. One row per challenge (their latest entry as the representative thumbnail).
+ * The viewer's own challenges: ones they entered (CollectionItem) and ones they created,
+ * most-recent-activity first. One row per challenge.
  */
-export async function getMyParticipated({
+export async function getMyChallenges({
   userId,
   limit,
   isGreen,
-}: GetMyParticipatedInput & { userId: number; isGreen: boolean }): Promise<
-  MyParticipatedChallengeItem[]
-> {
+}: GetMyChallengesInput & { userId: number; isGreen: boolean }): Promise<MyChallengeItem[]> {
   const myEntries = Prisma.sql`
     SELECT
       ci."collectionId" AS "collectionId",
@@ -429,8 +428,8 @@ export async function getMyParticipated({
   // Domain + NSFW gating mirrors getInfiniteChallenges (deriveDomainCurrency / getEffectiveBrowsingLevel)
   // rather than a flat `nsfwLevel = 1` check — a yellow-domain user challenge must stay off the
   // green site, and the SFW cap must be bitwise-checked, not equality-checked. Both gates exempt
-  // the viewer's own creations. The browsing-level check reads the entry image (COALESCE to the
-  // challenge cover when absent) since that's the thumbnail this card actually renders.
+  // the viewer's own creations. The level check reads the challenge cover, which is what the card
+  // renders.
   const domainCurrency = deriveDomainCurrency(isGreen);
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen,
@@ -440,7 +439,7 @@ export async function getMyParticipated({
 
   const blockSql = challengeCreatorBlockSql(await getChallengeExcludedUserIds(userId));
 
-  const rows = await dbRead.$queryRaw<ParticipatedRow[]>(Prisma.sql`
+  const rows = await dbRead.$queryRaw<MyChallengeRow[]>(Prisma.sql`
     WITH my AS (${myEntries})
     SELECT c.id, c.title, c.theme, c.invitation, c."coverImageId", c."startsAt", c."endsAt",
            c.status, c.source, c."buzzType", c."prizePool",
@@ -451,22 +450,25 @@ export async function getMyParticipated({
            c."collectionId", c."createdById",
            u.username AS "creatorUsername", u.image AS "creatorImage", u."deletedAt" AS "creatorDeletedAt",
            cj."userId" AS "judgeUserId", ju.username AS "judgeUsername", ju.image AS "judgeImage", ju."deletedAt" AS "judgeDeletedAt",
-           my."myImageId", my."myEnteredAt", cw."place" AS "myPlace"
+           my."myImageId", cw."place" AS "myPlace",
+           (c."createdById" = ${userId}) AS "isCreator",
+           COALESCE(my."myEnteredAt", c."createdAt") AS "myActivityAt"
     FROM "Challenge" c
-    JOIN my ON my."collectionId" = c."collectionId"
+    LEFT JOIN my ON my."collectionId" = c."collectionId"
     JOIN "User" u ON u.id = c."createdById"
     LEFT JOIN "ChallengeJudge" cj ON cj.id = c."judgeId"
     LEFT JOIN "User" ju ON ju.id = cj."userId"
     LEFT JOIN "ChallengeWinner" cw ON cw."challengeId" = c.id AND cw."userId" = ${userId}
-    WHERE c.status IN (${ChallengeStatus.Active}::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus", ${ChallengeStatus.Completed}::"ChallengeStatus")
+    WHERE (my."collectionId" IS NOT NULL OR c."createdById" = ${userId})
+      AND c.status IN (${ChallengeStatus.Scheduled}::"ChallengeStatus", ${ChallengeStatus.Active}::"ChallengeStatus", ${ChallengeStatus.Completing}::"ChallengeStatus", ${ChallengeStatus.Completed}::"ChallengeStatus")
       AND (c.source <> ${ChallengeSource.User}::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${userId})
       ${blockSql ? Prisma.sql`AND ${blockSql}` : Prisma.empty}
       ${
         effectiveBrowsingLevel > 0
-          ? Prisma.sql`AND (c."createdById" = ${userId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = COALESCE(my."myImageId", c."coverImageId") AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
+          ? Prisma.sql`AND (c."createdById" = ${userId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
           : Prisma.empty
       }
-    ORDER BY my."myEnteredAt" DESC
+    ORDER BY COALESCE(my."myEnteredAt", c."createdAt") DESC
     LIMIT ${limit}`);
 
   if (!rows.length) return [];
@@ -477,9 +479,15 @@ export async function getMyParticipated({
     ? await dbRead.image.findMany({ where: { id: { in: entryImageIds } }, select: imageSelect })
     : [];
 
-  return enrichParticipatedCards(
+  return enrichMyChallengeCards(
     baseCards,
-    rows.map((r) => ({ id: r.id, myImageId: r.myImageId, myPlace: r.myPlace, myEnteredAt: r.myEnteredAt })),
+    rows.map((r) => ({
+      id: r.id,
+      myImageId: r.myImageId,
+      myPlace: r.myPlace,
+      myActivityAt: r.myActivityAt,
+      isCreator: r.isCreator,
+    })),
     entryImages.map((img) => ({
       id: img.id,
       url: img.url,

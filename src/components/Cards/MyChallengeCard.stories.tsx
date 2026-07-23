@@ -1,5 +1,5 @@
 import { ChallengeSource, ChallengeStatus, MediaType } from '~/shared/utils/prisma/enums';
-import type { MyParticipatedChallengeItem } from '~/server/schema/challenge.schema';
+import type { MyChallengeItem } from '~/server/schema/challenge.schema';
 import { MyChallengeCard } from './MyChallengeCard';
 
 const now = new Date();
@@ -15,7 +15,7 @@ const baseImage = {
   type: MediaType.image,
 };
 
-const baseChallenge: MyParticipatedChallengeItem = {
+const baseChallenge: MyChallengeItem = {
   id: 101,
   title: 'Cybernetic Dreams',
   theme: 'Neon-soaked futures',
@@ -46,10 +46,10 @@ const baseChallenge: MyParticipatedChallengeItem = {
   myPlace: null,
   myResult: 'entered',
   isLive: false,
-  myEnteredAt: daysFromNow(-5),
+  myActivityAt: daysFromNow(-5),
 };
 
-const wrap = (data: MyParticipatedChallengeItem) => (
+const wrap = (data: MyChallengeItem) => (
   <div style={{ width: 320 }}>
     <MyChallengeCard data={data} />
   </div>
