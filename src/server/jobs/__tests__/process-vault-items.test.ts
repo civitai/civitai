@@ -72,10 +72,20 @@ vi.mock('jszip', () => ({
 
 import {
   processVaultItem,
+  processVaultItems,
   getEligibleVaultItemsQuery,
   MAX_FAILURES,
   VAULT_ITEMS_BATCH_SIZE,
+  LEASE_STALENESS_MS,
 } from '~/server/jobs/process-vault-items';
+
+// The eligibility WHERE ANDs two OR-groups: [0] = retry-budget, [1] = overlap
+// lease guard. Small helpers keep the assertions robust to ordering.
+const budgetOr = (q: any) =>
+  q.where.AND.find((g: any) => g.OR?.some((b: any) => b.meta?.path?.[0] === 'failures')).OR;
+const leaseOr = (q: any) =>
+  q.where.AND.find((g: any) => g.OR?.some((b: any) => b.meta?.path?.[0] === 'processingStartedAt'))
+    .OR;
 
 const makeItem = (overrides: Record<string, unknown> = {}) => ({
   id: 1,
@@ -111,7 +121,7 @@ describe('getEligibleVaultItemsQuery — bounded batch + retry-budget exclusion'
 
   it('only selects items whose failure count is within the retry budget', () => {
     const q = getEligibleVaultItemsQuery();
-    const lteBranch = q.where.OR.find((b: any) => typeof b.meta?.lte === 'number');
+    const lteBranch = budgetOr(q).find((b: any) => typeof b.meta?.lte === 'number');
     expect(lteBranch?.meta?.path).toEqual(['failures']);
     expect(lteBranch?.meta?.lte).toBe(MAX_FAILURES);
 
@@ -179,7 +189,7 @@ describe('processVaultItem — OOM-resilient failure accounting', () => {
   it('climbs past MAX_FAILURES across repeated OOM-style attempts, then is excluded', () => {
     // Simulate the uncatchable path: each run only the pre-increment persists.
     const q = getEligibleVaultItemsQuery();
-    const budget = (q.where.OR.find((b: any) => typeof b.meta?.lte === 'number') as any).meta
+    const budget = (budgetOr(q).find((b: any) => typeof b.meta?.lte === 'number') as any).meta
       .lte as number;
     let failures = 0; // starts from null-meta -> 0
     let runs = 0;
@@ -191,5 +201,113 @@ describe('processVaultItem — OOM-resilient failure accounting', () => {
     }
     expect(failures).toBe(MAX_FAILURES + 1);
     expect(failures > budget).toBe(true); // now excluded from the next findMany
+  });
+});
+
+// Fix A: a transient failure on ONE item must not abort the whole batch.
+describe('processVaultItems — per-item isolation (one failure never aborts the batch)', () => {
+  it('continues to the next item when a per-item processing error propagates', async () => {
+    const item1 = makeItem({ id: 1, modelVersionId: 100, meta: { failures: 0 } });
+    const item2 = makeItem({ id: 2, modelVersionId: 200, meta: { failures: 0 } });
+    mockDbWrite.vaultItem.findMany.mockResolvedValueOnce([item1, item2]);
+
+    // The FIRST update (item1's pre-attempt increment — which runs OUTSIDE
+    // processVaultItem's own try/catch) throws a transient DB error. Every
+    // subsequent update succeeds.
+    mockDbWrite.vaultItem.update
+      .mockRejectedValueOnce(new Error('transient db blip'))
+      .mockResolvedValue({});
+
+    // Must not reject: the batch swallows item1's error and moves on.
+    await expect(processVaultItems({} as never)).resolves.not.toThrow();
+
+    // item2 was still processed: its heavy work ran with item2's modelVersionId.
+    expect(mockGetModelVersionData).toHaveBeenCalledTimes(1);
+    expect(mockGetModelVersionData).toHaveBeenCalledWith({ modelVersionId: 200 });
+    // item2 reached its terminal Stored write (last update targets id 2).
+    const lastUpdate = mockDbWrite.vaultItem.update.mock.calls.at(-1)?.[0];
+    expect(lastUpdate.where).toEqual({ id: 2 });
+    expect(lastUpdate.data.status).toBe('Stored');
+  });
+
+  it('processes every remaining item even if an earlier one throws mid-batch', async () => {
+    const items = [1, 2, 3].map((id) => makeItem({ id, modelVersionId: id * 10, meta: null }));
+    mockDbWrite.vaultItem.findMany.mockResolvedValueOnce(items);
+
+    // Middle item's pre-increment update throws; the other two succeed.
+    mockDbWrite.vaultItem.update
+      .mockResolvedValueOnce({}) // item1 pre-increment
+      .mockImplementation(async (arg: any) => {
+        if (arg.where.id === 2 && arg.data.meta.processingStartedAt) {
+          throw new Error('transient db blip on item 2');
+        }
+        return {};
+      });
+
+    await expect(processVaultItems({} as never)).resolves.not.toThrow();
+
+    // Heavy work ran for item1 and item3 (not the throwing item2).
+    const processedVersionIds = mockGetModelVersionData.mock.calls.map((c) => c[0].modelVersionId);
+    expect(processedVersionIds).toContain(10);
+    expect(processedVersionIds).toContain(30);
+    expect(processedVersionIds).not.toContain(20);
+  });
+});
+
+// Fix B: overlap guard — an in-flight (freshly-leased) item is excluded from the
+// eligibility query; a stale lease (killed run) becomes eligible again.
+describe('getEligibleVaultItemsQuery — overlap lease guard', () => {
+  it('excludes freshly-leased in-flight items but includes stale/unleased ones', () => {
+    const before = Date.now();
+    const q = getEligibleVaultItemsQuery();
+    const after = Date.now();
+
+    const ltBranch = leaseOr(q).find((b: any) => typeof b.meta?.lt === 'number');
+    const nullBranch = leaseOr(q).find((b: any) => b.meta?.equals !== undefined);
+
+    // The lease cutoff = now - LEASE_STALENESS_MS (computed at query-build time).
+    expect(ltBranch?.meta?.path).toEqual(['processingStartedAt']);
+    expect(ltBranch?.meta?.lt).toBeGreaterThanOrEqual(before - LEASE_STALENESS_MS);
+    expect(ltBranch?.meta?.lt).toBeLessThanOrEqual(after - LEASE_STALENESS_MS);
+    // Unleased (absent/null) items stay eligible.
+    expect(nullBranch?.meta?.path).toEqual(['processingStartedAt']);
+
+    // Model the predicate the DB evaluates on `processingStartedAt`.
+    const cutoff = ltBranch?.meta?.lt as number;
+    const eligibleByLease = (leasedAt: number | null | undefined) =>
+      leasedAt == null || leasedAt < cutoff;
+
+    expect(eligibleByLease(undefined)).toBe(true); // never claimed
+    expect(eligibleByLease(null)).toBe(true); // lease cleared on completion
+    expect(eligibleByLease(Date.now())).toBe(false); // claimed just now -> in-flight -> skip
+    expect(eligibleByLease(Date.now() - LEASE_STALENESS_MS - 1000)).toBe(true); // stale -> re-eligible
+  });
+});
+
+describe('processVaultItem — lease claim/clear', () => {
+  it('stamps a fresh processingStartedAt lease on the pre-attempt (claim) write', async () => {
+    const before = Date.now();
+    await processVaultItem(makeItem({ meta: { failures: 0 } }), ctx);
+    const after = Date.now();
+
+    const claimWrite = mockDbWrite.vaultItem.update.mock.calls[0][0];
+    expect(typeof claimWrite.data.meta.processingStartedAt).toBe('number');
+    expect(claimWrite.data.meta.processingStartedAt).toBeGreaterThanOrEqual(before);
+    expect(claimWrite.data.meta.processingStartedAt).toBeLessThanOrEqual(after);
+  });
+
+  it('clears the lease on a successful (Stored) run', async () => {
+    await processVaultItem(makeItem({ meta: { failures: 0 } }), ctx);
+    const storedWrite = mockDbWrite.vaultItem.update.mock.calls.at(-1)?.[0];
+    expect(storedWrite.data.status).toBe('Stored');
+    expect(storedWrite.data.meta.processingStartedAt).toBeNull();
+  });
+
+  it('clears the lease on a caught failure so it retries next cycle', async () => {
+    mockGetModelVersionData.mockRejectedValueOnce(new Error('boom'));
+    await processVaultItem(makeItem({ meta: { failures: 0 } }), ctx);
+    const failWrite = mockDbWrite.vaultItem.update.mock.calls.at(-1)?.[0];
+    expect(failWrite.data.status).toBe('Failed');
+    expect(failWrite.data.meta.processingStartedAt).toBeNull();
   });
 });
