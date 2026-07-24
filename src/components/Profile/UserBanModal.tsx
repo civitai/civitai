@@ -10,6 +10,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
@@ -152,7 +153,7 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
             onChange={(event) => setRemoveMedia(event.currentTarget.checked)}
           />
           {banPreview && (removeModels || removeMedia) && (
-            <Alert color="red" p="xs">
+            <Alert color="red" p="xs" icon={<IconAlertTriangle size={18} />}>
               {[
                 removeModels
                   ? `${numberWithCommas(banPreview.modelCount)} model${
