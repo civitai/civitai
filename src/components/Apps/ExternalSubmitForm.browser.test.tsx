@@ -23,7 +23,12 @@ const READONLY_SCOPES = 4 | 32; // ModelsRead | MediaRead
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   mutate: vi.fn(),
-  meta: { data: undefined as unknown, isFetching: false, isSuccess: false },
+  meta: { data: undefined as unknown, isFetching: false, isSuccess: false } as {
+    data: unknown;
+    isFetching: boolean;
+    isSuccess: boolean;
+    isError?: boolean;
+  },
   clients: {
     data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 4 | 32 }] as unknown,
     isLoading: false,
@@ -173,6 +178,9 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
       data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 0 }],
       isLoading: false,
     };
+    // Meta settles with no title → the Name autofills from the host fallback so the
+    // Details step is complete and "Create draft" is enabled.
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
     renderWithProviders(<ExternalSubmitForm />);
     await advanceFromUrl();
     await pickClient();
@@ -183,10 +191,12 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
   });
 
-  test('the App URL prefills name + slug on Details, and og:description autofills the Description', async () => {
+  test('the page <title> (not the host) fills the Name; slug still derives from the host; og:description autofills the Description', async () => {
+    // Regression (bug report): cosmetic-studio.civitai.com must show the real page
+    // <title> "Civitai Cosmetic Studio" in Name, NOT the host-derived "Cosmetic Studio".
     mocks.meta = {
       data: {
-        name: 'OG Name',
+        name: 'Civitai Cosmetic Studio',
         tagline: 'short',
         description: 'A longer description pulled from the link.',
         coverImageUrl: undefined,
@@ -196,18 +206,83 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
       isSuccess: true,
     };
     renderWithProviders(<ExternalSubmitForm />);
-    await advanceFromUrl('https://vitrine.civitai.com');
+    await advanceFromUrl('https://cosmetic-studio.civitai.com');
     await pickClient();
     await page.getByTestId('apps-offsite-wizard-next-app').click();
-    // Name/slug derive from the URL host (filled before the OG name, non-clobber).
-    await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
-    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('vitrine');
+    // The extracted <title> WINS over the host-derived name ("Cosmetic Studio").
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('Civitai Cosmetic Studio');
+    // Slug still derives from the URL host (hyphenated — slugs keep hyphens).
+    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('cosmetic-studio');
     // og:description autofills the (empty) Description field.
     await expect
       .element(page.getByTestId('apps-offsite-submit-description'))
       .toHaveValue('A longer description pulled from the link.');
     // The "we found your details" reveal is shown.
     await expect.element(page.getByTestId('apps-offsite-autofill-reveal')).toBeInTheDocument();
+  });
+
+  test('when the meta fetch returns NO title, the Name falls back to the de-hyphenated host name', async () => {
+    // Settled with data but no name/title → host fallback, de-hyphenated to a space.
+    mocks.meta = {
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: undefined,
+        iconImageUrl: undefined,
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://cosmetic-studio.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    // No <title> → host-derived name, de-hyphenated ("Cosmetic Studio", not "Cosmetic-Studio").
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('Cosmetic Studio');
+    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('cosmetic-studio');
+  });
+
+  test('when the meta fetch ERRORS, the Name still falls back to the de-hyphenated host name', async () => {
+    // The fetch settling as an error must not leave Name blank — host fallback applies.
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false, isError: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://cosmetic-studio.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('Cosmetic Studio');
+  });
+
+  test('a Name the user already typed is never overwritten by the title or the host fallback', async () => {
+    // Meta has NOT settled yet when the author reaches Details and types a name.
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false, isError: false };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://cosmetic-studio.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    const name = page.getByTestId('apps-offsite-submit-name');
+    await name.fill('User Typed Name');
+    // The meta fetch now resolves WITH a <title>; force a re-render so the effect runs.
+    mocks.meta = {
+      data: {
+        name: 'Civitai Cosmetic Studio',
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: undefined,
+        iconImageUrl: undefined,
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    await page.getByRole('textbox', { name: /^Tagline/ }).fill('trigger a re-render');
+    // Neither the title nor the host fallback clobbers the typed name.
+    await expect.element(name).toHaveValue('User Typed Name');
   });
 
   test('autofill does NOT clobber a description the user already typed', async () => {
@@ -229,6 +304,8 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
   });
 
   test('submitting valid details calls submitExternalListing (server owns the draft)', async () => {
+    // Meta settles with no title → Name autofills from the host fallback, completing Details.
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
     renderWithProviders(<ExternalSubmitForm />);
     await advanceFromUrl();
     await pickClient();

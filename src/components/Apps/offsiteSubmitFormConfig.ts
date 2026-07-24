@@ -182,9 +182,15 @@ export function isOffsiteSubmitFormValid(values: OffsiteSubmitFormValues): boole
  *   - Take the hostname (already lowercased by the URL parser), strip a leading
  *     `www.`, and use the FIRST dot-label as the base
  *     (`vitrine.civitai.com` → `vitrine`; `www.my-app.io` → `my-app`).
- *   - `name`  = the base, hyphen-word title-cased: each `-`-separated word gets
- *     its first char upper-cased and the remainder lower-cased, rejoined with
- *     `-` (`vitrine` → `Vitrine`; `my-app` → `My-App`; `example` → `Example`).
+ *   - `name`  = the base, word title-cased: each `-`-separated word gets its
+ *     first char upper-cased and the remainder lower-cased, rejoined with a
+ *     SPACE so the human-readable name reads naturally
+ *     (`vitrine` → `Vitrine`; `my-app` → `My App`;
+ *     `cosmetic-studio` → `Cosmetic Studio`; `example` → `Example`). This name
+ *     is only a FALLBACK — the submit wizard prefers the page's real `<title>`
+ *     (from the OG-meta fetch) and uses this host-derived name solely when the
+ *     meta fetch yields no usable title. Only the `name` is de-hyphenated; the
+ *     `slug` below keeps hyphens (slugs need them).
  *   - `slug`  = the base kebab-cased + SLUG_REGEX-sanitized: lower-cased, every
  *     run of non `[a-z0-9]` chars collapsed to a single `-`, leading/trailing `-`
  *     trimmed, and any leading non-letters dropped (SLUG_REGEX requires a leading
@@ -212,7 +218,7 @@ export function deriveListingFromUrl(url: string): { name: string; slug: string 
     .split('-')
     .filter((word) => word.length > 0)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join('-');
+    .join(' ');
 
   const slugCandidate = base
     .toLowerCase()

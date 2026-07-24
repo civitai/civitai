@@ -115,6 +115,10 @@ function ExternalCreateForm() {
   const [suggestions, setSuggestions] = useState<MetaSuggestions>({});
   const [autofillApplied, setAutofillApplied] = useState(false);
   const appliedMetaRef = useRef<string | null>(null);
+  // Host-derived name kept as a FALLBACK only — used to fill `name` when the OG-meta
+  // fetch settles with no usable `<title>`. The real page title is preferred (see the
+  // meta effect); we never seed this up front so the title can win.
+  const hostNameFallbackRef = useRef<string>('');
 
   const clientsQuery = trpc.oauthClient.getAll.useQuery(undefined, {
     retry: false,
@@ -140,35 +144,47 @@ function ExternalCreateForm() {
     { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
   );
 
+  // Apply the OG-meta prefill ONCE per settled URL. Runs only after the fetch settles
+  // (success OR error) for the current `metaUrl`, so the real page `<title>`
+  // (`data.name`) has a chance to arrive before we touch the `name` field — the Name
+  // input lives on the later Details step, so the fetch has time. NAME precedence:
+  // prefer the extracted `<title>`; if the fetch yields none (or errors), fall back to
+  // the host-derived name. Every field is fill-if-empty, so typed text is never
+  // clobbered.
   useEffect(() => {
-    if (!metaQuery.data || appliedMetaRef.current === metaUrl) return;
-    appliedMetaRef.current = metaUrl;
+    if (!metaUrl || appliedMetaRef.current === metaUrl) return;
+    // Wait until the fetch settles for THIS url. With a per-url cache key + retry:false,
+    // `metaQuery.data` (when present) belongs to `metaUrl`, and `isError` is its result.
+    if (metaQuery.isFetching) return;
     const data = metaQuery.data;
+    const settled = !!data || metaQuery.isError;
+    if (!settled) return;
+    appliedMetaRef.current = metaUrl;
+
+    // Prefer the page <title> (data.name) over the host-derived fallback name.
+    const resolvedName = data?.name || hostNameFallbackRef.current;
     setValues((v) => ({
       ...v,
-      name: v.name.trim().length === 0 && data.name ? data.name : v.name,
-      tagline: v.tagline.trim().length === 0 && data.tagline ? data.tagline : v.tagline,
+      name: v.name.trim().length === 0 && resolvedName ? resolvedName : v.name,
+      tagline: v.tagline.trim().length === 0 && data?.tagline ? data.tagline : v.tagline,
       // Description autofill: fill ONLY when empty, truncated to the field bound —
       // a suggestion the author can freely edit or clear (never clobbers typed text).
       description:
-        v.description.trim().length === 0 && data.description
+        v.description.trim().length === 0 && data?.description
           ? data.description.slice(0, OFFSITE_SUBMIT_LIMITS.descriptionMax)
           : v.description,
     }));
-    setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
+    setSuggestions({ coverImageUrl: data?.coverImageUrl, iconImageUrl: data?.iconImageUrl });
     // Reveal the "we found your details" note whenever the link yielded anything the
     // author can accept (computed from `data` directly — NOT the async setValues
     // updater, whose side effects haven't run yet at this point).
     if (
-      data.name ||
-      data.tagline ||
-      data.description ||
-      data.coverImageUrl ||
-      data.iconImageUrl
+      data &&
+      (data.name || data.tagline || data.description || data.coverImageUrl || data.iconImageUrl)
     ) {
       setAutofillApplied(true);
     }
-  }, [metaQuery.data, metaUrl]);
+  }, [metaUrl, metaQuery.isFetching, metaQuery.data, metaQuery.isError]);
 
   const submitMutation = trpc.appListings.submitExternalListing.useMutation({
     onSuccess: (res: Submitted) => {
@@ -210,10 +226,15 @@ function ExternalCreateForm() {
 
   function applyNormalizedUrl(normalized: string) {
     const derived = deriveListingFromUrl(normalized);
+    // Stash the host-derived name as a FALLBACK for the meta effect — do NOT set the
+    // `name` field here. Setting it up front (this fires before the OG-meta fetch
+    // resolves) would make the meta effect's "only fill if empty" guard skip the real
+    // page `<title>`, so the uglier host name would preempt the better title. The slug
+    // IS set immediately (slugs are hyphenated + there's no better source for them).
+    hostNameFallbackRef.current = derived.name;
     setValues((v) => ({
       ...v,
       externalUrl: normalized,
-      name: v.name.trim().length === 0 && derived.name ? derived.name : v.name,
       slug: v.slug.trim().length === 0 && derived.slug ? derived.slug : v.slug,
     }));
   }
