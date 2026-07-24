@@ -94,23 +94,93 @@ One modelling decision, six failures, different files and authors — that is th
 > **Do not justify this work on performance.** See [Improvements](#improvements-and-risks) — the wins are
 > correctness and comprehensibility. There is no benchmark to point at.
 
-### Target shape
+### Target: a unified paywall, not a ModelVersion cleanup
+
+The goal is a **reusable paywall** that models, comics, and future entity types all plug into — one place to fix,
+one place to extend. This is more achievable than it sounds, because **half of it already exists**: the
+*purchase* side (`EntityAccess`) is already polymorphic (`accessToType`/`accessToId`, a `permissions` bitmask).
+What is not unified is the *config* side — the `earlyAccessConfig` blob bolted onto `ModelVersion`. `PaidAccess`
+is that config half finally matching the shape the entitlement half already has.
+
+Structure it as **one shared core + thin per-entity adapters.**
 
 ```text
+-- SHARED, entity-agnostic --------------------------------------------------
+EntityAccess   (exists)   who holds which grant        [purchase side]
+PaidAccess     (new)      what is for sale, when it ends [config side]
+Promotion      (new)      time-boxed price overrides
+
 PaidAccess
   entityType  PaidAccess_EntityType   -- 'ModelVersion' | 'ComicChapter' | …
   entityId    int
-
-  anchorAt    timestamp(3) NOT NULL   -- WRITE-ONCE: when the sale began
-  endsAt      timestamp(3) NULL       -- NULL = permanent. Authoritative, NOT derived (see below)
-
-  termsVersion  int NOT NULL         -- lets the shape below evolve deliberately
-  terms         jsonb NOT NULL       -- what is purchasable (see below)
-
-  donationGoalId  int NULL  -- real FK → DonationGoal(id); today it hides inside the jsonb
-
+  ownerId     int                     -- DENORMALIZED at write; owner-scoped cap counts, entity-agnostic
+  endsAt      timestamp(3) NULL       -- MATERIALIZED effective end; NULL = permanent-or-pending
+  termsVersion int NOT NULL
+  terms       jsonb NOT NULL          -- what is purchasable (see below)
   @@id([entityType, entityId])        -- one gate per entity
+
+-- the anchor stays on each ENTITY (ModelVersion.initialPublishedAt, etc.),
+-- write-once, used only at publish time to compute `endsAt`.
 ```
+
+**The core read path is one call, works for any entity:**
+
+```text
+resolveAccess({ entityType, entityId, userId, grant }) -> { gated, hasAccess, price }
+  paid = PaidAccess(entityType, entityId)
+  if !paid or !isPaidAccessActive(paid)   -> { gated:false }          // free
+  if grant not in paid.terms              -> { gated:false }          // that grant is free
+  price     = activePromotion(...)?.price ?? paid.terms[grant].price
+  hasAccess = EntityAccess holds bit(grant) for (entity, user)
+  -> { gated:true, hasAccess, price }
+```
+
+`isPaidAccessActive`, price/promotion resolution, and the `EntityAccess` bit check are all entity-agnostic —
+that is the reusable module.
+
+**The four seams — where per-entity adapters plug in.** Two are dissolved by decisions already made:
+
+1. **The anchor** (`initialPublishedAt`) lives on each entity. → *Dissolved by materialized `endsAt`*: the shared
+   read path never needs the anchor, only the entity's own publish flow does (at write). This is the decisive
+   reason `endsAt` beats storing a duration.
+2. **Owner-scoped cap counts** need an owner that lives on the entity. → *Dissolved by denormalizing `ownerId`
+   onto `PaidAccess`* — the same stamp-at-write pattern as the licensing-fee owner work and `reactions.ownerId`.
+3. **Grant vocabulary** — models have `download`/`generation`; a comic has `read`. The bitmask is generic ints;
+   what each bit means is per-type. → the adapter declares the entity's grant set + bit mapping.
+4. **Enforcement + lifecycle wiring** — the download endpoint, generation resolver, comic reader are per-entity
+   call sites that each call `resolveAccess`; and entity deletion must delete the `PaidAccess` row (polymorphic
+   → no FK cascade). → a thin adapter per entity.
+
+**Caps are adapter policy, NOT shared core.** Read resolution never touches caps; they fire only at write. And
+they differ by mode *and* entity type:
+
+| | Gated by | Limits |
+| --- | --- | --- |
+| Early access (timed) | creator **score** | concurrent count (`scoreQuantityUnlock`) **and** max days (`scoreTimeFrameUnlock`) |
+| Permanent | CP **tier** | concurrent count (`bronze 3 / silver 10 / gold ∞`) |
+| Comics | **unknown** | **unknown** — different axis, or none |
+
+So the split is:
+
+- **shared plumbing**: `countActivePaidAccess({ ownerId, entityType, mode })` where `mode` = `permanent`
+  (`endsAt IS NULL`) or `timed` (`endsAt > now()`). Same query for everyone; `ownerId` makes it work across
+  types. Plus a generic `assertWithinCap`.
+- **adapter policy**: the limits and what gates them. `assertPermanentAccessAllowed` (already written) becomes
+  the *ModelVersion adapter's* permanent check on this plumbing. The Comics adapter supplies comics' rules — or
+  none.
+
+**Caps are scoped per entity type by default** (`count … WHERE entityType = 'ModelVersion'`), so models and
+comics are limited independently. A shared cross-type budget would be a *deliberate later* decision, not baked
+in. **The framework must not know any entity's caps** — that is exactly what lets comics differ without touching
+the core.
+
+> **Open question (comics owner):** what are a comic's paid-access limits — same score/tier axes, something
+> else, or none? The design does not need the answer; it only needs to not foreclose it, which per-type adapters
+> do.
+
+No `donationGoalId` on `PaidAccess`. A donation goal is a **threshold end condition** (see the reframe below),
+and the link already exists in the correct direction — `DonationGoal.modelVersionId` — so it is a forward query,
+not a back-reference to denormalize.
 
 ### The rule for what is a column vs what is JSON
 
@@ -121,11 +191,10 @@ fixing came from `permanent` and `timeframe` living in JSON **while also determi
 exactly why a trigger had to project them into columns so queries could see them. Prices never had that
 problem: nothing gates on them, they are read once you already know the entity.
 
-| Belongs in a column | Belongs in `terms` | Belongs in its own table |
+| Belongs in a column | Belongs in `terms` | Belongs in its own row/table |
 | --- | --- | --- |
-| `anchorAt`, `endsAt` — every "is it gated" query | prices, trial limits, which grants are sold | anything with its own lifecycle |
-| `entityType` / `entityId` — the join key | future purchase options | `DonationGoal` (already) |
-| `donationGoalId` — a real FK needing integrity | | future: discounts, bundles |
+| `endsAt`, `ownerId` — every "is it gated" / cap query (anchor is `initialPublishedAt` on the entity) | prices, trial limits, which grants are sold | end conditions (date is `endsAt`; threshold is the `DonationGoal`) |
+| `entityType` / `entityId` — the join key | future purchase options | `DonationGoal` — links back via `modelVersionId`, already |
 
 **So new purchase options need no migration** — only new *gating semantics* do, and those are rare and should
 be deliberate.
@@ -162,12 +231,69 @@ JSON — so "we might want to filter by price someday" is not a reason to add co
 are already tracked per-grant. `terms` should mirror that structure rather than collapse it, so the config and
 the entitlement agree on what was sold.
 
-### Donation goals are not a payment term
+### "Donation goal" is the wrong noun — it is an *end condition*
 
-They are a separate entity with their own lifecycle. `donationGoalId` points at a `DonationGoal` row created at
-publish, and today it is **a foreign key stored inside a jsonb blob** — no referential integrity, no cascade,
-not joinable. It is exactly the kind of field that belongs in a column by the rule above, because the system
-must join on it rather than merely read it.
+**Reframe (2026-07-24).** A donation goal is not a payment term and not really a fundraiser. It is a
+**second way for a paid-access sale to end** — a *threshold* end, the sibling of the *date* end (`endsAt`).
+`donation-goal.service.ts` proves it: when `total >= goalAmount` it runs the same "sale is over" mutation as the
+timer. It just wears a public presentation (title, description, progress bar) that hides the mechanic.
+
+So the real model is: **a paid-access sale ends by zero or more end conditions; it ends when the first one
+fires.**
+
+| Sale ends by | Encoding | Notes |
+| --- | --- | --- |
+| never (permanent) | no end conditions | |
+| a date | `endsAt` | self-evaluating |
+| a threshold | a threshold condition (target + a running total) | event-driven |
+| date **or** threshold | both present | earliest wins — a creator will want this |
+
+This subsumes today's donation goal and opens exactly the cases you flagged: "sell for 7 days", "sell until 100
+buyers", "sell for 7 days *or* until 100 buyers, whichever first".
+
+#### The one hard asymmetry — do not paper over it
+
+**Date conditions are static; threshold conditions are stateful.** `now() < endsAt` needs nothing but the row.
+A threshold needs a *running total* that lives elsewhere and an *event* that fires termination when it is
+crossed — which is why the current donation-goal path has to actively flip state on completion, and a pure
+timer does not. Treating a threshold as "just another end date" would hide that it needs a counter and an
+updater.
+
+The read path stays cheap anyway, because the threshold **materializes** into `endsAt` when it fires:
+
+- **gate read (the paywall, the ~37 sites):** `active = row exists AND (endsAt IS NULL OR now() < endsAt)`.
+  Permanent and threshold-pending both present as "active, no end date" — which is *correct*; the gate does not
+  need to know *why* it is active.
+- **the updater** watches rows that have a threshold condition and sets `endsAt = now()` when the total crosses.
+- **config / display** distinguishes the kinds by *which conditions exist* (a date, a threshold, both, or
+  neither), never by overloading `endsAt`.
+
+So `endsAt IS NULL` meaning both "permanent" and "threshold-pending" is fine here — unlike today's NULL
+overload, both of those states are genuinely *active*, so the gate treats them identically.
+
+#### Separate the mechanic from the presentation
+
+"Donation goal" bundles a threshold end-condition with a public fundraising skin. Those are two things:
+
+- **end condition** — a threshold on a metric that terminates the sale. Belongs to the sale.
+- **goal presentation** — title, description, progress bar, the "help me reach X" framing. Optional.
+
+Decoupling them lets a creator run a private "sell 100 then stop" with no fundraiser UI, *and* lets a public
+goal exist without necessarily gating access. `DonationGoal` is already a real entity that points at the version
+(`modelVersionId`); the only hack is the redundant **back-link** (`donationGoalId` in jsonb) — drop it, and let
+the threshold end-condition be discovered by the forward FK. The goal presentation *points at* the sale; the
+sale does not name the goal.
+
+#### Scope
+
+This is a **product expansion**, not part of shipping permanent access. Record it as the conceptual target so
+the `PaidAccess` shape does not foreclose it:
+
+- keep `endsAt` as the materialized effective-end (works for permanent, date, and fired-threshold);
+- model end conditions explicitly rather than a single `donationGoalId` — even if v1 only implements
+  `date` + the existing donation-goal threshold, the shape should read as "a sale with end conditions";
+- do **not** build generic threshold sales as part of the current refactor unless asked — it needs the counter,
+  the updater, and the materialization path, and touches the purchase/entitlement side.
 
 ### `endsAt` is authoritative, not derived — a donation goal can end the sale early
 
@@ -177,10 +303,10 @@ the window has **two** ways to end — the timer, and the goal being met.
 
 Consequences:
 
-- `endsAt` cannot be modelled as "`anchorAt` + duration"; it is the source of truth and may be **moved earlier**
+- `endsAt` cannot be modelled as "anchor + duration"; it is the source of truth and may be **moved earlier**
   by goal completion. Storing it (rather than deriving it) is therefore required, not merely convenient.
-- **Only `anchorAt` is write-once.** `endsAt` is mutable — by the creator changing the duration, or by goal
-  completion.
+- **The anchor (`ModelVersion.initialPublishedAt`) is write-once; `endsAt` is mutable** — changed by the creator
+  editing the duration, or by goal completion.
 - The cache-invalidation sweeper must handle **both** termination paths, not just the timer.
 - Donation goals are frozen once published (enforced in `mergeEarlyAccessConfig`), so goal edits and access
   edits have different rules and should not share a validation path.
@@ -202,17 +328,19 @@ by the `permanent` flag. Here they are structurally different.
 explicitly removes paid/early access**. The row is the *gate configuration*, not the sales ledger — purchases
 live in `buzzTransactions` / `resourceCompensations` — so deleting it loses no financial history.
 
-**Why `anchorAt`, not `publishedAt`:** the platform **rewrites `publishedAt`** (the expiry job re-dates lapsed
-versions to `NOW()` so they resurface as "New" — see [traps](#reference--how-access-state-works-today)).
-Anchoring to it would shift the window on its own, before any user tried to game it. `anchorAt` is write-once
-and mirrors nothing, so unpublish/republish cannot move the gate. Enforce with a `BEFORE UPDATE` trigger so the
-anti-gaming property is structural, not a convention.
+**Why a separate anchor (`initialPublishedAt`), not `publishedAt`:** the platform **rewrites `publishedAt`** (the
+expiry job re-dates lapsed versions to `NOW()` so they resurface as "New" — see
+[traps](#reference--how-access-state-works-today)). Computing anything from it would shift on its own, before any
+user tried to game it. A write-once `initialPublishedAt` on the entity mirrors nothing, so unpublish/republish
+cannot move the gate — and because it never changes, the end can be computed **once at publish** and stored,
+which is what removes the trigger (the trigger only exists to recompute against a *moving* anchor).
 
-**Why `endsAt` is stored, not derived:** it is the source of truth for when the sale ends, and it has two
-independent writers — the creator setting a duration, and a donation goal completing early (see below). It
-therefore cannot be a function of `anchorAt` + duration. Storing it also avoids today's failure, where the end
-is derived from the *mutable* `publishedAt`. Duration for display is `endsAt - anchorAt`; there is no separate
-duration column to disagree with the dates.
+**Why `endsAt` is stored (materialized), not derived from a duration:** it is the source of truth for when the
+sale ends, with two independent writers — the creator editing the duration, and a goal completing early. A
+threshold end has no duration to write; it produces a concrete timestamp, so `endsAt` is the field it fires
+into. Storing the materialized end also keeps the **shared** read path from needing each entity's anchor (see
+the unified-paywall section) — the decisive reason to store `endsAt` rather than a duration. Duration for
+display is `endsAt - initialPublishedAt`.
 
 **Counting for caps — these differ:**
 
@@ -240,11 +368,11 @@ optional:
 
 | Stage | Change | Notes |
 | --- | --- | --- |
-| 1 | Sweep reads onto `@civitai/buzz/paid-access` | Prereq for everything; no schema change. Also the requirements-gathering for stages 2+ |
-| 2 | Retire `earlyAccessTimeFrame` (duplicate duration) | One duration source; kills a falsy-sentinel site |
-| 3 | Create `PaidAccess`, dual-write, backfill | Backfill is derivational; **0 permanent rows in prod today**, so only timed rows convert |
-| 4 | Move reads onto `PaidAccess`; drop the trigger's derivation | Trigger logic moves to the service, testable in CI |
-| 5 | Migrate `ComicChapter` onto the same table | The payoff for going polymorphic |
+| 1 | Sweep reads onto `@civitai/buzz/paid-access` | Prereq for everything; no schema change. Inventory in [paid-access-query-sites.md](paid-access-query-sites.md) |
+| 2 | Add `ModelVersion.initialPublishedAt` (write-once); retire `earlyAccessTimeFrame` | Stable anchor kills the `publishedAt`-rewrite trap and the trigger's reason to exist; one duration source |
+| 3 | Create polymorphic `PaidAccess` (+ `ownerId`), dual-write, backfill | Backfill is derivational; **0 permanent rows in prod today**, so only timed rows convert |
+| 4 | Move reads onto the shared `resolveAccess`; compute `endsAt` in the service, drop the trigger | Trigger logic → service, testable in CI |
+| 5 | Extract per-entity adapters; migrate `ComicChapter` onto the shared core | The payoff for going polymorphic; comics gets permanent + promotions for free |
 | 6 | Stop writing payment meaning into `availability` | **Largest ripple — 213 `EarlyAccess` references.** Do last, or never |
 
 **Do the sweep first regardless.** It is required either way, and it tells you how many sites ask "is it paid?"
