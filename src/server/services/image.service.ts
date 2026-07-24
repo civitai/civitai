@@ -899,7 +899,21 @@ export const ingestImage = async ({
       callbackUrl,
       priority: lowPriority ? 'low' : undefined,
     });
-    if (!workflowResponse) return false;
+    if (!workflowResponse) {
+      // The orchestrator submit already logs the transient failure in
+      // createImageIngestionRequest, but from here it's otherwise a silent
+      // `return false` — surface it at the dispatch layer so the failure is
+      // attributable to a specific image + media type.
+      logToAxiom({
+        name: 'image-ingestion',
+        type: 'error',
+        reason: 'no-workflow-response',
+        failureType: 'send-fail',
+        imageId: id,
+        mediaType: type,
+      }).catch(() => null);
+      return false;
+    }
     const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
     await dbClient.$executeRaw`
         UPDATE "Image"

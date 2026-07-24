@@ -177,19 +177,27 @@ export async function processImageScanWorkflow({
   completedAt?: Date | string | null;
 }) {
   if (status !== 'succeeded') {
-    const retryCount = await markImageScanError({ workflowId, imageId });
-    // This branch is otherwise silent: it flips the image to `Error` and burns a
-    // retry regardless of whether the workflow genuinely failed or merely timed
-    // out (`expired`). Log it so we can measure the status split and how often
-    // transient orchestrator failures eat an image's retry budget before deciding
-    // how to branch them. See docs/image-scan-reliability.md §5.1/§5.4.
+    // Classify the non-success so Axiom can group by failureType + mediaType.
+    // `expired` is an orchestrator timeout (transient) vs a genuine
+    // `workflow-failed`; both currently burn a retry identically — we only LOG
+    // the distinction here so the retry-budget behavior can be measured before
+    // it's changed. See docs/image-scan-reliability.md §5.1/§5.4.
+    const failureType = status === 'expired' ? 'expired' : 'workflow-failed';
+    const { retryCount, mediaType } = await markImageScanError({
+      workflowId,
+      imageId,
+      status,
+      failureType,
+    });
     logToAxiom(
       {
         name: 'image-scan-result',
         type: 'warning',
         message: `workflow not succeeded: ${status}`,
         source: 'image-scan-result.service',
+        failureType,
         imageId,
+        mediaType,
         workflowId,
         status,
         retryCount,
@@ -419,34 +427,46 @@ async function blockImageFromRating({
 }
 
 /**
- * Flip an image to `Error` and increment its scan `retryCount`. Returns the new
- * (post-increment) retryCount so callers can log it, or `null` when no row matched
- * (e.g. the image was deleted between scan request and callback).
+ * Flip an image to `Error`, increment its scan `retryCount`, and stamp a small
+ * `scanJobs.error = { status, failureType, at }` so a plain Postgres query can
+ * tell WHY a scan errored without an orchestrator lookup. Returns the new
+ * (post-increment) retryCount and the image's mediaType so callers can log them;
+ * both are `null` when no row matched (e.g. the image was deleted between scan
+ * request and callback).
  */
 async function markImageScanError({
   workflowId,
   imageId,
+  status,
+  failureType,
 }: {
   workflowId: string;
   imageId: number;
-}): Promise<number | null> {
-  const rows = await dbWrite.$queryRaw<{ retryCount: number | null }[]>`
+  status: string;
+  failureType: string;
+}): Promise<{ retryCount: number | null; mediaType: string | null }> {
+  const errorJson = JSON.stringify({ status, failureType, at: new Date().toISOString() });
+  const rows = await dbWrite.$queryRaw<{ retryCount: number | null; mediaType: string | null }[]>`
     UPDATE "Image"
     SET
       "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
       "scanJobs" = jsonb_set(
         jsonb_set(
-          COALESCE("scanJobs", '{}'),
-          '{retryCount}',
-          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+          jsonb_set(
+            COALESCE("scanJobs", '{}'),
+            '{retryCount}',
+            to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+          ),
+          '{workflowId}',
+          ${JSON.stringify(workflowId)}::jsonb
         ),
-        '{workflowId}',
-        ${JSON.stringify(workflowId)}::jsonb
+        '{error}',
+        ${errorJson}::jsonb
       )
     WHERE id = ${imageId}
-    RETURNING ("scanJobs"->>'retryCount')::int as "retryCount"
+    RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType"
   `;
-  return rows[0]?.retryCount ?? null;
+  return { retryCount: rows[0]?.retryCount ?? null, mediaType: rows[0]?.mediaType ?? null };
 }
 
 // Image loading

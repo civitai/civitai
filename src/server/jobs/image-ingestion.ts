@@ -4,6 +4,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
+import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -187,6 +188,49 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 
   const totalSent =
     sentUserPendingIds.length + sentBackfillIds.length + sentRescanIds.length + sentErrorIds.length;
+
+  // Failed sends = attempted minus successfully-dispatched, across every lane.
+  // sendImagesForScanBulk returns only the ids it managed to send, so the
+  // difference is the count that exhausted their in-batch retries.
+  const failedSends =
+    pendingUserUploads.length -
+    sentUserPendingIds.length +
+    (pendingBackfill.length - sentBackfillIds.length) +
+    (rescanImages.length - sentRescanIds.length) +
+    (errorImages.length - sentErrorIds.length);
+
+  logToAxiom(
+    {
+      name: 'image-ingestion',
+      type: 'job-summary',
+      sent: totalSent,
+      sentUserPending: sentUserPendingIds.length,
+      sentBackfill: sentBackfillIds.length,
+      sentRescan: sentRescanIds.length,
+      sentError: sentErrorIds.length,
+      pending: pendingImages.length,
+      rescan: rescanImages.length,
+      error: errorImages.length,
+      waitingForRetry: waitingForRetryIds.size,
+      staleRemoved: staleIds.length,
+      failedSends,
+    },
+    'webhooks'
+  ).catch(() => null);
+
+  if (failedSends > 0) {
+    logToAxiom(
+      {
+        name: 'image-ingestion',
+        type: 'error',
+        message: 'image scan sends failed',
+        failureType: 'send-fail',
+        failedSends,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+
   return {
     sent: totalSent,
     sentUserPending: sentUserPendingIds.length,
@@ -195,6 +239,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     sentError: sentErrorIds.length,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
+    failedSends,
   };
 });
 
