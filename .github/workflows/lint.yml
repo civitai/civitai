@@ -1,0 +1,95 @@
+name: Lint
+
+# Regression guard for code quality. Deliberately scoped so it stays green and fast:
+# ESLint and Prettier run ONLY on files the PR changed (the repo carries thousands of
+# pre-existing findings; a full-repo gate would fail every PR and get switched off).
+# Typecheck is full-repo because it is already expected to pass.
+
+on:
+  pull_request:
+    branches: [main, release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eslint:
+    name: ESLint + Prettier (changed files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Collect changed files
+        id: changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch -q --depth=1 origin "$BASE_REF"
+          git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > changed.txt || true
+          echo "changed files:"
+          cat changed.txt
+          if [ -s changed.txt ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: ESLint
+        if: steps.changed.outputs.any == 'true'
+        run: |
+          set -euo pipefail
+          # eslint only has a config for src/ and packages/; skip anything else.
+          grep -E '^(src|packages)/' changed.txt > lintable.txt || true
+          if [ -s lintable.txt ]; then
+            xargs -a lintable.txt pnpm exec eslint --no-error-on-unmatched-pattern
+          else
+            echo "no lintable files changed"
+          fi
+
+      - name: Prettier
+        if: steps.changed.outputs.any == 'true'
+        run: xargs -a changed.txt pnpm exec prettier --check
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # event-engine-common is a private submodule; without it tsc fails with a wall
+      # of "Cannot find module" errors that cascade into unrelated implicit-any noise.
+      - name: Setup SSH for submodule
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SUBMODULE_SSH_KEY }}
+
+      - name: Init submodule
+        run: git submodule update --init event-engine-common
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
