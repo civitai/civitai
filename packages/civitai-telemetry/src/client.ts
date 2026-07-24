@@ -1,4 +1,11 @@
-import type { Counter, Gauge, Histogram, Metric, Registry } from 'prom-client';
+import type {
+  Counter,
+  Gauge,
+  Histogram,
+  HistogramConfiguration,
+  Metric,
+  Registry,
+} from 'prom-client';
 import client from 'prom-client';
 
 export const PROM_PREFIX = 'civitai_app_';
@@ -98,12 +105,16 @@ export function registerHistogram<T extends string = string>({
   // Do this to deal with HMR in nextjs
   const fullName = prefix + name;
   try {
-    return new client.Histogram({
-      name: fullName,
-      help,
-      labelNames: labelNames ? [...labelNames] : undefined,
-      buckets: buckets ? [...buckets] : undefined,
-    });
+    // Only set labelNames/buckets when provided. Passing `undefined` for either
+    // overrides prom-client's own defaults (labelNames -> [], buckets -> the
+    // default set) via Object.assign, and an undefined labelNames makes the
+    // Histogram constructor throw AFTER it has already self-registered — leaving
+    // a bucketless zombie in the registry that the catch below then hands back,
+    // so a later .observe() dies on `undefined.length` in findBound.
+    const config: HistogramConfiguration<T> = { name: fullName, help };
+    if (labelNames) config.labelNames = [...labelNames];
+    if (buckets) config.buckets = [...buckets];
+    return new client.Histogram(config);
   } catch (e) {
     return client.register.getSingleMetric(fullName) as Histogram<T>;
   }
