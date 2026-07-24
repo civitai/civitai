@@ -762,6 +762,8 @@ describe('MySubmissionsList — P4 onsite owner status badge', () => {
     renderWithProviders(
       <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
+    // A mod-removed app now lives in its own default-collapsed section — expand it.
+    await page.getByTestId('apps-submissions-section-mod-removed-toggle').click();
     // The overridden status badge.
     await expect
       .element(page.getByText('removed by a moderator', { exact: true }))
@@ -772,6 +774,48 @@ describe('MySubmissionsList — P4 onsite owner status badge', () => {
     expect(page.getByTestId('apps-onsite-republish-gone-app').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-onsite-unpublish-gone-app').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-submissions-open-gone-app').elements()).toHaveLength(0);
+  });
+});
+
+describe('MySubmissionsList — mod-removed collapsed section', () => {
+  test('a moderator-removed app sits in its OWN section, collapsed by default (aria-expanded=false), NOT in Live', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[live(), modRemoved()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // The Live app is visible (Live is always expanded); the moderator-removed app is
+    // NOT — it's in the default-collapsed "Removed by a moderator" section.
+    await expect.element(page.getByText('live-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByText('gone-app', { exact: false }).elements()).toHaveLength(0);
+
+    // The section exists and its toggle starts collapsed.
+    await expect
+      .element(page.getByTestId('apps-submissions-section-mod-removed'))
+      .toBeInTheDocument();
+    const toggle = page.getByTestId('apps-submissions-section-mod-removed-toggle');
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('false');
+    // The header uses the "removed by a moderator" wording.
+    await expect
+      .element(page.getByText('Removed by a moderator', { exact: false }))
+      .toBeInTheDocument();
+
+    // Expanding reveals the mod-removed app.
+    await toggle.click();
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('true');
+    await expect.element(page.getByText('gone-app', { exact: false })).toBeInTheDocument();
+  });
+
+  test('an OWNER-hidden app stays in Live (never swept into the mod-removed section)', async () => {
+    renderWithProviders(
+      <MySubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    // Owner-hidden is a distinct, republishable state — it keeps its Live placement
+    // (visible up-front) and the mod-removed section never renders.
+    await expect.element(page.getByText('hidden-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByTestId('apps-submissions-section-mod-removed').elements()).toHaveLength(0);
   });
 });
 
@@ -820,6 +864,8 @@ describe('MySubmissionsList — P4 onsite unpublish / republish / history', () =
     renderWithProviders(
       <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
+    // Expand the default-collapsed moderator-removed section to reach the row.
+    await page.getByTestId('apps-submissions-section-mod-removed-toggle').click();
     await page.getByTestId('apps-onsite-history-gone-app').click();
     await expect.element(page.getByText('Reported for policy')).toBeInTheDocument();
     await expect.element(page.getByText('Delisted')).toBeInTheDocument();
@@ -861,6 +907,8 @@ describe('MySubmissionsList — P4 surfaced manage links', () => {
     renderWithProviders(
       <MySubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
+    // Expand the default-collapsed moderator-removed section to reach the row.
+    await page.getByTestId('apps-submissions-section-mod-removed-toggle').click();
     await expect.element(page.getByTestId('apps-onsite-revenue-gone-app')).toBeInTheDocument();
     expect(page.getByTestId('apps-onsite-edit-gone-app').elements()).toHaveLength(0);
   });

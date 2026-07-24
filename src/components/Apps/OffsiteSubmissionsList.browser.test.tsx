@@ -232,6 +232,44 @@ describe('OffsiteSubmissionsList — status sections', () => {
     expect(editLink.element().getAttribute('href')).toBe('/apps/submit?edit=l-a');
   });
 
+  test('a moderator-removed listing sits in its OWN section, collapsed by default (aria-expanded=false), NOT in Live', async () => {
+    renderWithProviders(
+      <OffsiteSubmissionsList
+        submissions={[live(), modRemoved()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    // Live listing is visible up-front; the moderator-removed one is hidden in its
+    // default-collapsed section.
+    await expect.element(page.getByText('live-off', { exact: false })).toBeInTheDocument();
+    expect(page.getByText('gone-off', { exact: false }).elements()).toHaveLength(0);
+
+    await expect
+      .element(page.getByTestId('apps-offsite-submissions-section-mod-removed'))
+      .toBeInTheDocument();
+    const toggle = page.getByTestId('apps-offsite-submissions-section-mod-removed-toggle');
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('false');
+    await expect
+      .element(page.getByText('Removed by a moderator', { exact: false }))
+      .toBeInTheDocument();
+
+    // Expanding reveals the mod-removed listing.
+    await toggle.click();
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('true');
+    await expect.element(page.getByText('gone-off', { exact: false })).toBeInTheDocument();
+  });
+
+  test('an OWNER-hidden listing stays in Live (never swept into the mod-removed section)', async () => {
+    renderWithProviders(
+      <OffsiteSubmissionsList submissions={[ownerHidden()]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await expect.element(page.getByText('hidden-off', { exact: false })).toBeInTheDocument();
+    expect(
+      page.getByTestId('apps-offsite-submissions-section-mod-removed').elements()
+    ).toHaveLength(0);
+  });
+
   test('the text filter narrows rows within their sections', async () => {
     renderWithProviders(
       <OffsiteSubmissionsList
@@ -313,6 +351,8 @@ describe('OffsiteSubmissionsList — owner republish vs moderator takedown (load
     renderWithProviders(
       <OffsiteSubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
+    // A mod-removed listing now lives in its own default-collapsed section — expand it.
+    await page.getByTestId('apps-offsite-submissions-section-mod-removed-toggle').click();
     await expect.element(page.getByTestId('apps-offsite-mod-removed-gone-off')).toBeInTheDocument();
     // The load-bearing safety guard: NO republish affordance on a mod takedown.
     expect(page.getByTestId('apps-offsite-republish-gone-off').elements()).toHaveLength(0);
@@ -339,6 +379,8 @@ describe('OffsiteSubmissionsList — moderation history modal', () => {
     renderWithProviders(
       <OffsiteSubmissionsList submissions={[modRemoved()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
+    // Expand the default-collapsed moderator-removed section to reach the row.
+    await page.getByTestId('apps-offsite-submissions-section-mod-removed-toggle').click();
     await page.getByTestId('apps-offsite-history-gone-off').click();
     // The timeline renders both events (verbatim reason + the action chip labels).
     await expect.element(page.getByText('Reported for spam')).toBeInTheDocument();

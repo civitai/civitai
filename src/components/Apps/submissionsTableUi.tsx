@@ -146,6 +146,11 @@ export const STATUS_SECTION_META: Record<
   pending: { label: 'Pending', color: 'blue', collapsible: false },
   rejected: { label: 'Rejected', color: 'red', collapsible: true },
   withdrawn: { label: 'Withdrawn', color: 'gray', collapsible: true },
+  // OWNER-view moderator-takedown section: a listing a moderator removed (distinct
+  // from the owner's own unpublish, which stays Republish-able in Live). Terminal +
+  // not self-recoverable, so it's default-COLLAPSED. Label mirrors the red
+  // `ownerStateChip` "removed by a moderator" wording.
+  'mod-removed': { label: 'Removed by a moderator', color: 'red', collapsible: true },
   // Mod-view sections (Live/Pending/Rejected reuse the entries above). `removed`
   // (the mod takedown state) stays ALWAYS-EXPANDED — a removed listing still has
   // relist/purge/claim actions a mod needs in view; `draft` is a quiet, terminal
