@@ -189,6 +189,11 @@ describe('upsertUserChallenge (create) — collection ownership', () => {
     const callArg = mockTx.collection.create.mock.calls[0][0];
     expect(callArg.data.userId).toBe(JUDGE_USER_ID);
     expect(callArg.data.userId).not.toBe(CREATOR_USER_ID);
+
+    // Creator auto-tracks their own challenge (see challenge.service.ts upsertUserChallenge).
+    expect(mockTx.challengeEngagement.create).toHaveBeenCalledWith({
+      data: { type: 'Notify', challengeId: 2, userId: CREATOR_USER_ID },
+    });
   });
 
   it('does not open a transaction when no judge can be resolved', async () => {
