@@ -15,14 +15,14 @@ into `/models` to manage monetization, `/earnings` for the full breakdown, `/lic
 
 `@civitai/ui` (shadcn-svelte) primitives — don't hand-build:
 
-- **`card`** — one per headline stat (earned this period, CP cash pending, CP cash settled, top-earning model) and one
-  "earnings by source" summary card. **`separator`** between groups.
+- **`card`** — one per headline stat (~3-4: **generation count · buzz earned · downloads · access spend**; later
+  cosmetic/merch sales once the shop lands) and one "earnings by source" summary card. **`separator`** between groups.
 - **`badge`** for source labels (comp / license fee / tip) and member/non-member state; **`tooltip`** for metric
   definitions and the pending/settled distinction.
 - **Section link cards** (`card` + `button`) as entry points into `/models`, `/earnings`, `/licensing`, `/settings`.
 - **`skeleton`** for each card while server data resolves.
-- **No chart component exists in `@civitai/ui`** — a trend sparkline on the summary card would need a new primitive or
-  a raw SVG; flag this and default v1 to numbers-only. See [analytics.md](analytics.md) for the charted view.
+- **Sparkline** — a trend sparkline on the summary card is worth a **shared chart primitive** (LayerChart, added to
+  `@civitai/ui`; see [analytics.md](analytics.md)). Include it in v1 rather than numbers-only.
 
 ## Data (reads) — `+page.server.ts`
 
@@ -37,8 +37,8 @@ All scoped to `locals.user.id`. **No monetization writes on this page.**
   dashboard either app-side `WHERE modelVersionId IN (…)` (doesn't scale for prolific creators) or drops top-earners.
 - **CP cash** — `creatorProgram.getCash` / `getBanked` / `getCompensationPool` ([plan §5.2](../creator-studio-plan.md#52-reuse-existing-main-app-endpointsservices))
   for pending/settled figures. Not ClickHouse.
-- **Member `tier`** — `CustomerSubscription → Product.metadata.tier` (via `@civitai/db` kysely) to decide member vs
-  upsell rendering. *(Tier vs full-CP gate is a pending confirm — [plan §9](../creator-studio-plan.md#9-decisions--open-questions).)*
+- **Creator Program membership** — via `creatorProgram.getCreatorRequirements` (the single gate) to decide member vs
+  upsell rendering.
 - **Headline counts** — model/version count from `@civitai/db` kysely; period earnings from the rollup above.
 
 ## Actions (writes)
@@ -60,8 +60,8 @@ CTA here would only **link** to `/earnings` or `/settings`, not perform the acti
 ## Gating
 
 Any logged-in user can access `/`. Nothing on this page is member-gated to *view* — earnings and CP cash show for
-everyone who has them. The member vs non-member split only changes whether the upsell card renders. Exact member bar
-pending ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)).
+everyone who has them. The member vs non-member split only changes whether the upsell card renders. The member bar is
+**Creator Program membership**.
 
 ## Shared / cross-refs
 
@@ -69,17 +69,23 @@ pending ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)).
   is [analytics.md](analytics.md) (`/earnings/analytics`).
 - The creator-earnings ClickHouse query logic is **shared with `/earnings`** — build it once as a server-side read
   module, not duplicated here ([plan §7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)).
-- CP cash reads (`getCash`/`getBanked`) are the same as [settings.md](settings.md)'s Tipalti/tier surface.
+- CP cash reads (`getCash`/`getBanked`) are the same as [settings.md](settings.md)'s Tipalti/membership surface.
 - Nav lives in the shared app-local `nav.ts` ([plan §3](../creator-studio-plan.md#3-page-list-v1)).
 
-## Open questions
+## Decisions (resolved 2026-07-02)
 
-- **Headline metrics + default window** — which 3–4 stats, and this-month vs last-30-days as the default period?
-- **CP cash here or defer?** — surface pending/settled + a withdrawal CTA on the dashboard, or keep cash entirely on
-  [/earnings](earnings.md) and just link out?
-- **"Top-earning models" widget** — depends on the owner-keyed rollup ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views));
-  v1 or fast-follow? Fallback if the MV isn't ready at launch.
-- **Overlap with `/earnings`** — what is *unique* to the dashboard vs a condensed preview of earnings? Risk of two
-  places showing the same numbers that can drift.
-- **Sparkline** — worth adding a chart primitive to `@civitai/ui` for a trend line, or numbers-only in v1?
-- **New-creator empty state** — copy + which CTA (upload on main app vs set a fee on `/models`).
+- **DASH-1 — Headline metrics + window.** Default **last 30 days**. ~3-4 stats: **generation count, buzz earned,
+  downloads, access spend** (the amount others spent to access their models); add cosmetic/merch sales later once the
+  shop lands. Stats shown depend on what the creator actually does.
+- **DASH-2 — CP cash.** Cash lives on [/earnings](earnings.md). The dashboard shows a **condensed preview + links out**;
+  no full withdraw flow here.
+- **DASH-3 — "Top-earning models" widget.** Depends on the owner-keyed rollup (EARN-2). **v1 if the rollup lands, else
+  fast-follow** with the version-ID fallback.
+- **DASH-4 — Overlap with `/earnings`.** Dashboard = **condensed preview**; `/earnings` = full buzz + cash detail.
+  Boundary is buzz vs non-buzz per EARN-3.
+- **DASH-5 — Sparkline.** **Yes** — worth a **shared chart primitive** (LayerChart in `@civitai/ui`); there will be many
+  charts in this app.
+- **DASH-6 — New-creator empty state.** Stats render empty; the CTA is a **dual action**: **Train** (primary, → the
+  training experience where they pick a dataset) + **Upload** (secondary, → upload their first model).
+
+**Still open / deferred:** the "top-earning models" widget (DASH-3) hinges on the owner-keyed rollup (EARN-2) landing.

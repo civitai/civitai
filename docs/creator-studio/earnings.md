@@ -18,13 +18,17 @@ it"* view (generations, downloads, per-model funnels) lives on [analytics.md](an
 `@civitai/ui` (shadcn-svelte) primitives — don't hand-build:
 
 - **Totals `card`s** — one per source (License fees · Tips · Compensation · Access sales · Cosmetic sales) + a grand
-  total, each with the window's sum and a `badge` for delta vs. prior window.
-- **`table`** — earnings by source × period (or a breakdown table under the chart); `tabs` to switch window
-  (7d / 30d / all) or granularity (daily / monthly).
-- **Time-series chart** — daily/stacked-by-source earnings. ⚠️ **No chart primitive in `@civitai/ui`** — the charting
-  lib is a shared decision with [analytics.md](analytics.md) (flag, don't pick here).
-- **CP cash panel** — pending + settled cash and a **Withdraw** button that **links out** to the existing CP flow
-  (don't rebuild payout); see Shared.
+  total, each with the window's sum and a `badge` for delta vs. prior window. A **source filter** lets creators focus a
+  single source; **compensation + licenses can share a chart** (comp is being retired).
+- **`table`** — earnings by source × period (or a breakdown table under the chart); a **granularity switcher**
+  (daily / weekly / monthly) and a **date-range picker** (last 7 / last 30 / last month / custom), default **last 30 days**.
+- **Time-series chart** — earnings-over-time stacked by source. Charting lib is **LayerChart** (via shadcn-svelte,
+  primitives in `@civitai/ui`) — the shared decision with [analytics.md](analytics.md).
+- **Currency** — display earnings **in the currency they were received in** (buzz or USD); **no conversion/mapping**
+  (there is no rate). USD is only relevant for select users.
+- **CP cash panel** — pending + settled cash. This is the **single home for cash + withdrawal**; for v1 the **Withdraw**
+  button **links out** to the existing CP cash flow (`/user/buzz-dashboard`) and setup links to `/tipalti/setup` —
+  copy the withdrawal gate as **"$50 Ready to Withdraw"** (settled cash, not pending); see Shared.
 - **`skeleton`** for load; **`sonner`** only for the (rare) refresh/error toast.
 
 ## Data (reads) — `+page.server.ts`
@@ -39,7 +43,10 @@ service is too slow) ([plan §5.1](../creator-studio-plan.md#51-the-core-archite
   ([§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views) **gap #2**) — see Open questions.
 - **Owner-keyed rollup dependency** — every earnings table is keyed by `modelVersionId`, **not** the creator's
   `userId`; "creator X's earnings" needs the `(ownerUserId, date, source)` MV + `modelVersion → ownerUserId` dictionary
-  ([§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views) **gap #1**). Blocks this page.
+  ([§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views) **gap #1**). Resolved approach: build it
+  via **ClickPipe/CDC → a `modelVersion → ownerUserId` ClickHouse dictionary → an owner-keyed AggregatingMergeTree MV**
+  (build handoff: [docs/plans/creator-studio-owner-rollup-handoff.md](../plans/creator-studio-owner-rollup-handoff.md)).
+  The per-owner version-ID query stays as a fallback for small creators until the MV lands.
 - **CP cash / banked** — `creatorProgram.getCash` / `getBanked`
   ([plan §5.2](../creator-studio-plan.md#52-reuse-existing-main-app-endpointsservices)) for the pending/settled panel.
 - **Not** the buzz service; **no** per-version monetization writes here (those are [models.md](models.md)).
@@ -61,9 +68,8 @@ flow ([plan §5.2](../creator-studio-plan.md#52-reuse-existing-main-app-endpoint
 
 ## Gating
 
-**Any logged-in user can access** — this is a read, and member-`tier` gating is per-*action* (fee-setting on
-[models.md](models.md)), not per-view ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)). Non-members
-see their own earnings normally.
+**Any logged-in user can access** — this is a read, and Creator Program membership gating is per-*action* (fee-setting on
+[models.md](models.md)), not per-view. Non-members see their own earnings normally.
 
 ## Shared / cross-refs
 
@@ -76,16 +82,23 @@ see their own earnings normally.
 - Legacy `getDailyCompensationRewardByUser` (main app) is being redirected; both converge on one CH read module at the
   full cutover ([§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)).
 
-## Open questions
+## Decisions (resolved 2026-07-02)
 
-- **Which sources ship in v1?** comp / license / tip are ready today; **access-sale + cosmetic-sale** need the gap #2
-  per-`toAccountId` buzz-earnings MV ([§7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)) —
-  include in v1 or defer to fast-follow?
-- **Owner-keyed rollup (gap #1)** is a hard dependency — is the `(ownerUserId, date, source)` MV + `modelVersion →
-  ownerUserId` dictionary scheduled before v1?
-- **`/earnings` vs `/earnings/analytics` vs dashboard boundary** — what is *unique* to `/earnings` (by-source totals +
-  cash) so it doesn't duplicate the other two?
-- **CP cash + withdrawal — inline or link-out?** Surface pending/settled + Withdraw here, or send fully to the existing
-  CP flow?
-- **Time granularity + default window** — daily vs monthly; default 30d? Shared with [analytics.md](analytics.md).
-- **Charting lib** — none in `@civitai/ui`; pick jointly with [analytics.md](analytics.md).
+- **EARN-1 — v1 sources.** **All sources day 1** ideally, with a **source filter** (model access, cosmetic, comp,
+  licenses, tips; merch later). **Comp + licenses can share a chart** (comp is being retired). This means access-sale +
+  cosmetic-sale are in v1 and need the **gap #2** per-`toAccountId` buzz-earnings MV.
+- **EARN-2 — Owner-keyed rollup.** Build via **ClickPipe/CDC → a `modelVersion → ownerUserId` ClickHouse dictionary →
+  an owner-keyed AggregatingMergeTree MV** (reusing the existing Buzz ClickPipe pattern; CH can't reach the
+  Bastion-gated prod DB directly). Build handoff:
+  [docs/plans/creator-studio-owner-rollup-handoff.md](../plans/creator-studio-owner-rollup-handoff.md). The per-owner
+  version-ID query is the launch fallback.
+- **EARN-3 — Boundary.** **Analytics = non-buzz usage** (generations, downloads); **earnings = everything buzz +
+  real-dollar cash/banking/withdrawal**. `/earnings` owns the by-source money detail and the cash surface.
+- **EARN-4 — Cash + withdrawal home.** Lives here on `/earnings` as the **single entry point** — surfaced inline. For
+  v1 the actual withdrawal **links out** to the existing CP cash flow (`/user/buzz-dashboard`); the dashboard only shows
+  a condensed preview and links here.
+- **EARN-5 — Granularity + window.** A **switcher (daily / weekly / monthly)**, default **last 30 days**, plus a custom
+  range (last 7 / last 30 / last month / custom). Shared with [analytics.md](analytics.md).
+
+**Still open / deferred:** access-sale + cosmetic-sale earnings depend on the **gap #2** MV being built; the owner-keyed
+rollup (EARN-2) lands v1 if it's ready, else fast-follow with the version-ID fallback.
