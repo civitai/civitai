@@ -311,3 +311,30 @@ describe('processVaultItem — lease claim/clear', () => {
     expect(failWrite.data.meta.processingStartedAt).toBeNull();
   });
 });
+
+// 🟡-1: the S3 upload PUTs must be bounded so a hung upstream can't make a single
+// item outlive its lease. fetchBlob (the image download) is mocked, so the only
+// global `fetch` calls here are the S3 uploads — each must carry an AbortSignal.
+describe('processVaultItem — bounded S3 upload timeout', () => {
+  it('invokes every S3 upload PUT with an AbortSignal (per-attempt timeout)', async () => {
+    await processVaultItem(makeItem({ meta: { failures: 0 } }), ctx);
+
+    const uploadCalls = (fetch as unknown as { mock: { calls: any[][] } }).mock.calls;
+    // details PDF + images zip + cover (one image with idx 0 -> coverImage set).
+    expect(uploadCalls.length).toBeGreaterThanOrEqual(2);
+    for (const [, init] of uploadCalls) {
+      expect(init?.method).toBe('PUT');
+      // AbortSignal.timeout(...) yields an AbortSignal; assert the PUT is bounded.
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it('keeps the lease staleness window comfortably above the bounded worst-case item runtime', () => {
+    // Worst case (mirrors the code comment): 10-image downloads (2 waves x 5min)
+    // + pdf/zip generation (~2min) + parallel uploads (4 attempts x 60s = 4min).
+    const worstCaseMs = (2 * 5 + 2 + 4) * 60 * 1000; // ≈ 16 min
+    expect(LEASE_STALENESS_MS).toBeGreaterThan(worstCaseMs);
+    // ...with a clear (>2x) margin so a legit-slow item never ages out mid-run.
+    expect(LEASE_STALENESS_MS).toBeGreaterThan(2 * worstCaseMs);
+  });
+});

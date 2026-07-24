@@ -27,21 +27,42 @@ export const VAULT_ITEMS_BATCH_SIZE = 50;
 // Promise.all buffered every image of a gallery into memory at once — a large
 // gallery alone could exceed the container memory limit.
 export const IMAGE_DOWNLOAD_CONCURRENCY = 5;
+// Per-upload S3 PUT timeout. The S3 uploads (details PDF + images zip + optional
+// cover) previously had NO timeout, so a hung upstream could park an item for
+// undici's ~300s default PER attempt AND — via withRetries — across multiple
+// attempts, making a single item's wall-clock runtime effectively unbounded and
+// able to outlive the lease (see LEASE_STALENESS_MS). Bounding each PUT with an
+// AbortSignal.timeout makes the worst case computable. 60s is generous for an
+// internal S3 PUT of a details PDF or a ≤10-image zip; a slower-than-that upload
+// is aborted and retried by withRetries rather than hanging indefinitely.
+export const VAULT_UPLOAD_TIMEOUT_MS = 60 * 1000; // 60 seconds
 // A run stamps each item it starts with a `processingStartedAt` lease timestamp
 // (see processVaultItem). The scheduler can start a new run before the previous
-// one finishes — a run is allowed to outlast the cron interval (a bounded batch
-// where a single item can still take a while: up to ~10 images each with a
-// multi-minute fetch timeout). Without a guard, two overlapping runs both do the
-// heavy download+zip work on the SAME item and last-writer-wins on the meta blob,
-// losing failure-count updates and duplicating the very work the batch cap exists
-// to bound. Excluding freshly-leased items from the eligibility query prevents
-// that overlap. The lease is advisory only: a run killed mid-item (e.g. OOM) can
-// never clear its lease, so a lease older than this staleness window is treated
-// as abandoned and the item becomes eligible again. The window is deliberately
-// generous (well past a normal run) so a still-working run is never pre-empted;
-// a pathological run that exceeds it can at worst be double-processed, which is
-// still strictly better than the previous no-guard behavior.
-export const LEASE_STALENESS_MS = 30 * 60 * 1000; // 30 minutes
+// one finishes — a run is allowed to outlast the cron interval. Without a guard,
+// two overlapping runs both do the heavy download+zip work on the SAME item and
+// last-writer-wins on the meta blob, losing failure-count updates and duplicating
+// the very work the batch cap exists to bound. Excluding freshly-leased items from
+// the eligibility query prevents that overlap. The lease is advisory only: a run
+// killed mid-item (e.g. OOM) can never clear its lease, so a lease older than this
+// staleness window is treated as abandoned and the item becomes eligible again.
+//
+// This window must comfortably exceed the now-BOUNDED worst-case per-item runtime,
+// so a legit-slow item never ages out mid-run and gets re-claimed (which would
+// re-introduce the exact double-process / lost-update the lease prevents). The
+// lease is stamped at the START of each item (not at batch fetch), so only ONE
+// item's runtime matters here. Worst-case per item (all inputs at their caps):
+//   - image downloads: images are capped at 10/version (vault.service
+//     `imagesPerVersion: 10`), fetched at IMAGE_DOWNLOAD_CONCURRENCY=5 with a
+//     300s fetchBlob timeout each → ceil(10/5) × 300s = 2 waves × 5 min = 10 min
+//   - PDF + in-memory zip generation (bounded by the 10-image cap)     ≈  2 min
+//   - S3 uploads: 3 blobs in parallel, each withRetries(3) → worst-case
+//     4 attempts × VAULT_UPLOAD_TIMEOUT_MS (60s) = 240s = 4 min wall (parallel)
+//   ---------------------------------------------------------------------------
+//   worst-case per-item runtime ≈ 16 min
+// 45 min gives a comfortable ~2.8× margin (16 min << 45 min) so a still-working
+// run is never pre-empted; a pathological run that somehow exceeds even 45 min can
+// at worst be double-processed, still strictly better than the no-guard behavior.
+export const LEASE_STALENESS_MS = 45 * 60 * 1000; // 45 minutes (see worst-case math above)
 
 const logErrors = (data: MixedObject) => {
   logToAxiom({ name: 'process-vault-items', type: 'error', ...data }, 'webhooks').catch();
@@ -91,6 +112,16 @@ export const getEligibleVaultItemsQuery = () => {
         // the `failures` filter above, which is a proven-working pattern here).
         {
           OR: [
+            // JSON-path null semantics this design HINGES on: `path +
+            // equals: Prisma.AnyNull` matches rows where the key is ABSENT inside
+            // a non-null `meta` blob (SQL `jsonb #> path IS NULL`), so never-leased
+            // items AND legacy items predating this field stay eligible — they are
+            // NOT stranded out of the backlog. This is the same pattern a prod
+            // billing job relies on: process-subscriptions-requiring-renewal.ts
+            // uses `metadata: { path: ['renewalEmailSent'], equals: Prisma.AnyNull }`
+            // to select rows whose renewal-email key is absent. Do NOT "simplify"
+            // this to an explicit-null-only check on a Prisma upgrade — that would
+            // silently exclude every absent-key row and freeze the backlog.
             {
               meta: {
                 path: ['processingStartedAt'],
@@ -217,6 +248,10 @@ export async function processVaultItem(vaultItem: VaultItemRow, ctx: ProcessCont
               headers: {
                 ...upload.headers,
               },
+              // Bound each PUT so a hung upstream can't make this item outlive its
+              // lease (see VAULT_UPLOAD_TIMEOUT_MS / LEASE_STALENESS_MS). A timeout
+              // aborts this attempt and withRetries retries rather than hanging.
+              signal: AbortSignal.timeout(VAULT_UPLOAD_TIMEOUT_MS),
             })
           )
         )
