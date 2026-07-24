@@ -304,7 +304,7 @@ export default function UserTrainingModels() {
     if (opened) return;
     if (e.button === 1 || (e.button === 0 && (e.ctrlKey || e.metaKey))) {
       e.preventDefault();
-      window.open(href, '_blank');
+      window.open(href, '_blank', 'noopener');
     } else if (e.button === 0) {
       router.push(href).then();
     }
@@ -380,7 +380,7 @@ export default function UserTrainingModels() {
             component={Link}
             href={getModelTrainingWizardUrl(row.original)}
             onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
-            underline="never"
+            underline="hover"
             c="inherit"
           >
             <Group gap={4} wrap="nowrap">
@@ -956,9 +956,13 @@ export default function UserTrainingModels() {
           }}
           mantineTableBodyRowProps={({ row }) => ({
             onClick: (e) => goToModel(e, getModelTrainingWizardUrl(row.original)),
-            onAuxClick: (e) => goToModel(e, getModelTrainingWizardUrl(row.original)),
+            onAuxClick: (e) => {
+              if (e.button !== 1) return;
+              if ((e.target as HTMLElement).closest('a,button')) return;
+              goToModel(e, getModelTrainingWizardUrl(row.original));
+            },
             onMouseDown: (e) => {
-              if (e.button === 1) e.preventDefault();
+              if (e.button === 1 && !(e.target as HTMLElement).closest('a')) e.preventDefault();
             },
             style: { cursor: 'pointer' },
           })}
