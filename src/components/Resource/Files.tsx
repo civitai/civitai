@@ -35,7 +35,7 @@ import {
   IconFile3d,
   IconLayersLinked,
 } from '@tabler/icons-react';
-import { isEqual } from 'lodash-es';
+import { isEqual, startCase } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -43,6 +43,7 @@ import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
+import { baseModelHasFileSize } from '~/shared/constants/basemodel.constants';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
@@ -947,9 +948,10 @@ function FileEditForm({
   fileTypes: ModelFileType[];
 }) {
   const [initialFile, setInitialFile] = useState({ ...versionFile });
-  const { errors, updateFile, validationCheck } = useFilesContext();
+  const { errors, updateFile, validationCheck, baseModel } = useFilesContext();
   const error = errors?.[index];
   const { precisions, quantTypes } = useModelFileOptions();
+  const showSize = baseModelHasFileSize(baseModel);
 
   const { mutate, isPending: isLoading } = trpc.modelFile.update.useMutation({
     onSuccess: () => {
@@ -1032,8 +1034,8 @@ function FileEditForm({
           value={versionFile.type ?? null}
           onChange={(value) => {
             const newType = value as ModelFileType | null;
-            // Preserve precision when relabeling the file type — re-picking it
-            // every time is tedious and it's usually still correct.
+            // Preserve precision/size when relabeling the file type — re-picking
+            // them every time is tedious and they're usually still correct.
             updateFile(versionFile.uuid, { type: newType });
           }}
         />
@@ -1091,6 +1093,26 @@ function FileEditForm({
                 value={versionFile.fp ?? null}
                 onChange={(value) => {
                   updateFile(versionFile.uuid, { fp: value as ModelFileFp | null });
+                }}
+              />
+            </div>
+          )}
+
+          {isCheckpoint && showSize && (
+            <div>
+              <SelectLabel>Size</SelectLabel>
+              <Select
+                allowDeselect={false}
+                size="xs"
+                w={80}
+                placeholder="Size"
+                data={constants.modelFileSizes.map((size) => ({
+                  label: startCase(size),
+                  value: size,
+                }))}
+                value={versionFile.size ?? null}
+                onChange={(value) => {
+                  updateFile(versionFile.uuid, { size: value as 'full' | 'pruned' | null });
                 }}
               />
             </div>

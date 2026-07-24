@@ -28,10 +28,12 @@ import {
   IconGitMerge,
   IconTarget,
 } from '@tabler/icons-react';
+import { startCase } from 'lodash-es';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
+import { baseModelHasFileSize } from '~/shared/constants/basemodel.constants';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -45,6 +47,7 @@ import { trpc } from '~/utils/trpc';
 
 type FileMetadataUpdate = {
   fp?: ModelFileFp | null;
+  size?: (typeof constants.modelFileSizes)[number] | null;
   format?: ModelFileFormat | null;
   quantType?: ModelFileQuantType | null;
   isRequired?: boolean | null;
@@ -551,6 +554,7 @@ export default function MergeVersions({ modelId }: { modelId: number }) {
                           mapping={fileTypeMappings.find((m) => m.fileId === file.id)}
                           onUpdate={(updates) => updateFileMapping(file.id, updates)}
                           modelType={model?.type}
+                          baseModel={targetVersion.baseModel}
                         />
                       ))}
                     </Stack>
@@ -596,6 +600,7 @@ export default function MergeVersions({ modelId }: { modelId: number }) {
                             onUpdate={(updates) => updateFileMapping(file.id, updates)}
                             showRequiredToggle
                             modelType={model?.type}
+                            baseModel={version.baseModel}
                           />
                         ))}
                       </Stack>
@@ -903,6 +908,7 @@ function MergeFileCard({
   onUpdate,
   showRequiredToggle,
   modelType,
+  baseModel,
 }: {
   file: {
     id: number;
@@ -915,9 +921,11 @@ function MergeFileCard({
   onUpdate: (updates: Partial<Omit<FileTypeMapping, 'fileId'>>) => void;
   showRequiredToggle?: boolean;
   modelType?: string;
+  baseModel?: string | null;
 }) {
   const effectiveType = (mapping?.type ?? file.type) as ModelFileType;
   const effectiveFp = (mapping?.metadata?.fp ?? file.metadata?.fp ?? null) as string | null;
+  const effectiveSize = (mapping?.metadata?.size ?? file.metadata?.size ?? null) as string | null;
   const effectiveFormat = (mapping?.metadata?.format ?? file.metadata?.format ?? null) as
     | string
     | null;
@@ -941,6 +949,7 @@ function MergeFileCard({
   const isComponentFile =
     effectiveType && (componentFileTypes as readonly string[]).includes(effectiveType);
   const showMetadataSelects = isCheckpoint || isComponentFile;
+  const showSize = baseModelHasFileSize(baseModel);
   const isGguf = file.name.endsWith('.gguf');
   const isZip = file.name.endsWith('.zip');
 
@@ -1070,6 +1079,28 @@ function MergeFileCard({
                     value={effectiveFp}
                     onChange={(value) => {
                       onUpdate({ metadata: { fp: value as ModelFileFp | null } });
+                    }}
+                    comboboxProps={{ withinPortal: true }}
+                    styles={selectInputStyles}
+                  />
+                </div>
+              )}
+
+              {isCheckpoint && showSize && (
+                <div>
+                  <SelectLabel>Size</SelectLabel>
+                  <Select
+                    allowDeselect={false}
+                    size="xs"
+                    w={80}
+                    placeholder="Size"
+                    data={constants.modelFileSizes.map((s) => ({
+                      label: startCase(s),
+                      value: s,
+                    }))}
+                    value={effectiveSize}
+                    onChange={(value) => {
+                      onUpdate({ metadata: { size: value as 'full' | 'pruned' | null } });
                     }}
                     comboboxProps={{ withinPortal: true }}
                     styles={selectInputStyles}
