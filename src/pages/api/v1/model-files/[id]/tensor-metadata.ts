@@ -6,13 +6,19 @@ import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { persistModelTensorHeaderMetadata } from '~/server/services/tensor-metadata-persistence.service';
 import { getFullTensorAnalysisCached } from '~/server/services/tensor-metadata.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import {
+  detectModelTypeFromTensors,
+  getDominantWeightPrecision,
+  getModelFileTypeCorrection,
   inferTensorMetadataFormat,
   parseModelTensorMetadata,
   supportsTensorVramEstimate,
+  type ModelTensorAnalysis,
+  weightPrecisionToModelFileFp,
 } from '~/utils/model-tensor-metadata';
 
 const schema = z.object({
@@ -20,6 +26,9 @@ const schema = z.object({
   summaryOnly: z.preprocess((val) => val === 'true' || val === true, z.boolean().optional()),
 });
 const TENSOR_METADATA_CACHE_CONTROL = 'public, max-age=31536000, s-maxage=31536000, immutable';
+// Version the small summary independently so existing full tensor caches can be
+// enriched without another model-host range request.
+const TENSOR_METADATA_SUMMARY_VERSION = 2;
 
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
@@ -39,6 +48,7 @@ export default MixedAuthEndpoint(async function handler(
       id: true,
       modelVersionId: true,
       name: true,
+      url: true,
       type: true,
       sizeKB: true,
       metadata: true,
@@ -70,6 +80,55 @@ export default MixedAuthEndpoint(async function handler(
       modelType: file.modelVersion.model.type,
       fileType: file.type,
     });
+    const currentMetadata = file.metadata as BasicFileMetadata | null;
+    const addDerivedMetadata = <
+      T extends Pick<ModelTensorAnalysis, 'dtypeCounts'> &
+        Partial<Pick<ModelTensorAnalysis, 'weightPrecision' | 'detectedModelType' | 'tensors'>>
+    >(
+      data: T
+    ) => {
+      // Cached analyses can contain older derived values. Recompute whenever the
+      // underlying dtype totals or tensor names are available.
+      const weightPrecision = getDominantWeightPrecision(data.dtypeCounts);
+      const detectedModelType =
+        format === 'SafeTensor'
+          ? data.tensors
+            ? detectModelTypeFromTensors(data.tensors)
+            : data.detectedModelType ?? null
+          : null;
+      return { ...data, weightPrecision, detectedModelType };
+    };
+    const persistDerivedMetadata = async <
+      T extends Pick<ModelTensorAnalysis, 'dtypeCounts'> &
+        Partial<Pick<ModelTensorAnalysis, 'weightPrecision' | 'detectedModelType' | 'tensors'>>
+    >(
+      data: T
+    ) => {
+      const enriched = addDerivedMetadata(data);
+      const fp =
+        format === 'SafeTensor' ? weightPrecisionToModelFileFp(enriched.weightPrecision) : null;
+      const correctedFileType =
+        format === 'SafeTensor'
+          ? getModelFileTypeCorrection({
+              detectedModelType: enriched.detectedModelType,
+              modelType: file.modelVersion.model.type,
+              currentFileType: file.type,
+            })
+          : null;
+
+      await persistModelTensorHeaderMetadata({
+        fileId: file.id,
+        fileUrl: file.url,
+        modelVersionId: file.modelVersionId,
+        currentWeightPrecision: currentMetadata?.weightPrecision,
+        weightPrecision: enriched.weightPrecision,
+        currentFp: currentMetadata?.fp,
+        fp,
+        currentFileType: file.type,
+        correctedFileType,
+      });
+      return enriched;
+    };
 
     // Tensor metadata is derived purely from immutable file content, so cache the parsed
     // analysis by file id. Auth is still re-checked per request above via getFileForModelVersion.
@@ -90,26 +149,26 @@ export default MixedAuthEndpoint(async function handler(
     // wraps the redis-backed fetch in a bounded in-process LRU of the DECODED object, so a
     // hot model is decoded at most once per pod (the redis memory win is preserved — the
     // blob stays compressed+split in redis; we only remove the repeated hot-path decode).
-    const fetchFull = () =>
-      getFullTensorAnalysisCached(id, () =>
-        fetchThroughCache(
-          `${REDIS_KEYS.CACHES.TENSOR_METADATA}:${id}`,
-          () =>
-            parseModelTensorMetadata({
-              url: fileResult.url,
-              format,
-              fileSizeBytes: file.sizeKB * 1024,
-              estimateVram,
-            }),
-          { ttl: CacheTTL.month, compress: true }
+    const fetchFull = async () =>
+      addDerivedMetadata(
+        await getFullTensorAnalysisCached(id, () =>
+          fetchThroughCache(
+            `${REDIS_KEYS.CACHES.TENSOR_METADATA}:${id}`,
+            () =>
+              parseModelTensorMetadata({
+                url: fileResult.url,
+                format,
+                fileSizeBytes: file.sizeKB * 1024,
+                estimateVram,
+              }),
+            { ttl: CacheTTL.month, compress: true }
+          )
         )
       );
 
-    res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
-
     if (summaryOnly) {
       const summary = await fetchThroughCache(
-        `${REDIS_KEYS.CACHES.TENSOR_METADATA_SUMMARY}:${id}`,
+        `${REDIS_KEYS.CACHES.TENSOR_METADATA_SUMMARY}:${TENSOR_METADATA_SUMMARY_VERSION}:${id}`,
         async () => {
           const analysis = await fetchFull();
           const { tensors, ...rest } = analysis;
@@ -117,12 +176,17 @@ export default MixedAuthEndpoint(async function handler(
         },
         { ttl: CacheTTL.month }
       );
-      return res.status(200).json(summary);
+      const response = await persistDerivedMetadata(summary);
+      res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
+      return res.status(200).json(response);
     }
 
     const analysis = await fetchFull();
-    res.status(200).json(analysis);
+    const response = await persistDerivedMetadata(analysis);
+    res.setHeader('Cache-Control', TENSOR_METADATA_CACHE_CONTROL);
+    res.status(200).json(response);
   } catch (error) {
+    res.setHeader('Cache-Control', 'private, no-store');
     const err = error instanceof Error ? error : new Error(String(error));
     logToAxiom({
       name: 'model-file-tensor-metadata',

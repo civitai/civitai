@@ -1,3 +1,5 @@
+import type { ModelFileType } from '~/server/common/constants';
+
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
 
@@ -11,6 +13,15 @@ const COMFY_DYNAMIC_VRAM_PAGE_BYTES = 32 * MiB;
 type FetchLike = typeof fetch;
 
 export type ModelTensorFormat = 'SafeTensor' | 'GGUF';
+export type DetectedModelTensorType =
+  | 'Checkpoint'
+  | 'LoRA'
+  | 'VAE'
+  | 'TextEncoder'
+  | 'VisionEncoder'
+  | 'UNet'
+  | 'DiffusionModel'
+  | 'ControlNet';
 export type ModelTensorVramSupport = {
   modelType?: string | null;
   fileType?: string | null;
@@ -57,6 +68,8 @@ export type ModelTensorAnalysis = {
   tensorCount: number;
   totalTensorBytes: number;
   dtypeCounts: ModelTensorDtypeSummary[];
+  weightPrecision: string | null;
+  detectedModelType: DetectedModelTensorType | null;
   largestTensor: ModelTensorInfo | null;
   vramEstimate: ModelVramEstimate | null;
   tensors: ModelTensorInfo[];
@@ -110,15 +123,224 @@ export function analyzeModelTensors(
     dtypeCounts.set(tensor.dtype, summary);
   }
 
+  const dtypeSummary = [...dtypeCounts.values()].sort((a, b) => b.bytes - a.bytes);
+
   return {
     format,
     tensorCount: tensors.length,
     totalTensorBytes,
-    dtypeCounts: [...dtypeCounts.values()].sort((a, b) => b.bytes - a.bytes),
+    dtypeCounts: dtypeSummary,
+    weightPrecision: getDominantWeightPrecision(dtypeSummary),
+    detectedModelType: format === 'SafeTensor' ? detectModelTypeFromTensors(tensors) : null,
     largestTensor,
     vramEstimate: estimateVram ? estimateComfyDynamicOffloadVram(tensors) : null,
     tensors,
   };
+}
+
+export function getDominantWeightPrecision(dtypeCounts: ModelTensorDtypeSummary[]) {
+  const bytesByPrecision = new Map<string, number>();
+
+  for (const { dtype, bytes } of dtypeCounts) {
+    if (!Number.isFinite(bytes) || bytes <= 0) continue;
+    const precision = toWeightPrecision(dtype);
+    bytesByPrecision.set(precision, (bytesByPrecision.get(precision) ?? 0) + bytes);
+  }
+
+  let dominant: { precision: string; bytes: number } | null = null;
+  for (const [precision, bytes] of bytesByPrecision) {
+    if (!dominant || bytes > dominant.bytes) dominant = { precision, bytes };
+  }
+
+  return dominant?.precision ?? null;
+}
+
+export function weightPrecisionToModelFileFp(
+  weightPrecision: string | null | undefined
+): ModelFileFp | null {
+  switch (weightPrecision?.toUpperCase()) {
+    case 'FP32':
+    case 'FP64':
+      return 'fp32';
+    case 'FP16':
+      return 'fp16';
+    case 'BF16':
+      return 'bf16';
+    case 'FP8':
+      return 'fp8';
+    case 'NF4':
+      return 'nf4';
+    default:
+      return null;
+  }
+}
+
+export function detectModelTypeFromTensors(
+  tensors: Pick<ModelTensorInfo, 'name'>[]
+): DetectedModelTensorType | null {
+  const names = tensors.map(({ name }) => name.toLowerCase());
+  const has = (predicate: (name: string) => boolean) => names.some(predicate);
+  const count = (predicate: (name: string) => boolean) => names.filter(predicate).length;
+  const startsWithAny = (name: string, prefixes: string[]) =>
+    prefixes.some((prefix) => name.startsWith(prefix));
+
+  const hasLoraA = has((name) => /\.lora_(?:a|down)\.weight$/.test(name));
+  const hasLoraB = has((name) => /\.lora_(?:b|up)\.weight$/.test(name));
+  if (hasLoraA && hasLoraB) return 'LoRA';
+
+  if (
+    has((name) =>
+      startsWithAny(name, [
+        'control_model.',
+        'controlnet_blocks.',
+        'controlnet_down_blocks.',
+        'controlnet_mid_block.',
+        'zero_convs.',
+        'input_hint_block.',
+      ])
+    )
+  )
+    return 'ControlNet';
+
+  const diffusionPrefixes = ['model.diffusion_model.', 'diffusion_model.'];
+  const hasDiffusionNamespace = has((name) => startsWithAny(name, diffusionPrefixes));
+  const hasCheckpointComponents = has((name) =>
+    startsWithAny(name, ['first_stage_model.', 'cond_stage_model.', 'conditioner.embedders.'])
+  );
+  if (hasDiffusionNamespace && hasCheckpointComponents) return 'Checkpoint';
+
+  const encoderCount = count((name) => name.startsWith('encoder.'));
+  const decoderCount = count((name) => name.startsWith('decoder.'));
+  const hasVaeEncoderStructure = has((name) =>
+    /^(?:encoder\.(?:down|downsamples|conv_in|mid)|quant_conv\.)/.test(name)
+  );
+  const hasVaeDecoderStructure = has((name) =>
+    /^(?:decoder\.(?:up|upsamples|conv_out|mid)|post_quant_conv\.)/.test(name)
+  );
+  if (encoderCount >= 2 && decoderCount >= 2 && hasVaeEncoderStructure && hasVaeDecoderStructure)
+    return 'VAE';
+
+  if (
+    has((name) => name.includes('vision_model.embeddings.')) &&
+    has((name) => name.includes('vision_model.encoder.'))
+  )
+    return 'VisionEncoder';
+
+  const hasClipTextEncoder =
+    has((name) => name.includes('text_model.embeddings.')) &&
+    has((name) => name.includes('text_model.encoder.'));
+  const hasLlmTextEncoder =
+    has((name) => name.endsWith('embed_tokens.weight')) &&
+    count((name) => /(?:^|\.)layers\.\d+\./.test(name)) >= 2;
+  const hasT5TextEncoder =
+    has((name) => name === 'shared.weight' || name.endsWith('.shared.weight')) &&
+    count((name) => /(?:^|\.)encoder\.block\.\d+\./.test(name)) >= 2;
+  if (hasClipTextEncoder || hasLlmTextEncoder || hasT5TextEncoder) return 'TextEncoder';
+
+  const hasInputBlocks = has((name) =>
+    /^(?:(?:model\.)?diffusion_model\.)?input_blocks\./.test(name)
+  );
+  const hasMiddleBlock = has((name) =>
+    /^(?:(?:model\.)?diffusion_model\.)?middle_block\./.test(name)
+  );
+  const hasOutputBlocks = has((name) =>
+    /^(?:(?:model\.)?diffusion_model\.)?output_blocks\./.test(name)
+  );
+  if (hasInputBlocks && hasMiddleBlock && hasOutputBlocks) return 'UNet';
+
+  const hasFluxBlocks =
+    has((name) => name.startsWith('double_blocks.')) &&
+    has((name) => name.startsWith('single_blocks.'));
+  const hasJointTransformer =
+    has((name) => name.startsWith('joint_blocks.')) &&
+    has((name) => /^(?:x|context)_embedder\./.test(name));
+  const hasDiffusersTransformer =
+    has((name) => name.startsWith('transformer_blocks.')) &&
+    has((name) => /^(?:patch_embed|pos_embed|proj_in|x_embedder)\./.test(name));
+  const hasKreaTransformer =
+    count((name) => /^blocks\.\d+\./.test(name)) >= 2 &&
+    has((name) => name === 'first.weight') &&
+    has((name) => name === 'last.linear.weight');
+  if (hasFluxBlocks || hasJointTransformer || hasDiffusersTransformer || hasKreaTransformer)
+    return 'DiffusionModel';
+
+  return null;
+}
+
+export function getModelFileTypeCorrection({
+  detectedModelType,
+  modelType,
+  currentFileType,
+}: {
+  detectedModelType: DetectedModelTensorType | null | undefined;
+  modelType?: string | null;
+  currentFileType?: string | null;
+}): ModelFileType | null {
+  if (!detectedModelType) return null;
+
+  let canonicalType: ModelFileType;
+  let compatibleTypes: readonly string[] = [];
+
+  switch (detectedModelType) {
+    case 'Checkpoint':
+      canonicalType = 'Model';
+      compatibleTypes = modelType === 'Checkpoint' ? ['Model', 'Pruned Model'] : ['Model'];
+      break;
+    case 'LoRA':
+      if (modelType === 'LORA' || modelType === 'DoRA' || modelType === 'LoCon') {
+        canonicalType = 'Model';
+        compatibleTypes = ['Model', 'Pruned Model'];
+      } else {
+        canonicalType = 'Enhancement LoRA';
+      }
+      break;
+    case 'VAE':
+      canonicalType = modelType === 'VAE' ? 'Model' : 'VAE';
+      break;
+    case 'TextEncoder':
+      canonicalType = modelType === 'TextEncoder' ? 'Model' : 'Text Encoder';
+      break;
+    case 'VisionEncoder':
+      canonicalType =
+        modelType === 'CLIPVision'
+          ? 'Model'
+          : modelType === 'CLIP'
+          ? 'Vision Encoder'
+          : 'CLIPVision';
+      break;
+    case 'UNet':
+      canonicalType = modelType === 'UNet' ? 'Model' : 'UNet';
+      break;
+    case 'DiffusionModel':
+      canonicalType = modelType === 'UNet' ? 'Model' : 'Diffusion Model';
+      break;
+    case 'ControlNet':
+      canonicalType = modelType === 'Controlnet' ? 'Model' : 'ControlNet';
+      break;
+  }
+
+  if (currentFileType === canonicalType || compatibleTypes.includes(currentFileType ?? ''))
+    return null;
+  return canonicalType;
+}
+
+function toWeightPrecision(dtype: string) {
+  const normalized = normalizePrecision(dtype);
+  if (normalized.startsWith('F8')) return 'FP8';
+
+  const floatMatch = /^F(\d+)$/.exec(normalized);
+  if (floatMatch) return `FP${floatMatch[1]}`;
+
+  const quantizedMatch = /^(I?Q)(\d+)/.exec(normalized);
+  if (quantizedMatch) return `${quantizedMatch[1]}${quantizedMatch[2]}`;
+
+  const integerMatch = /^I(\d+)$/.exec(normalized);
+  if (integerMatch) return `INT${integerMatch[1]}`;
+
+  const unsignedIntegerMatch = /^U(\d+)$/.exec(normalized);
+  if (unsignedIntegerMatch) return `UINT${unsignedIntegerMatch[1]}`;
+
+  return normalized;
 }
 
 export function supportsTensorVramEstimate({ modelType, fileType }: ModelTensorVramSupport) {
