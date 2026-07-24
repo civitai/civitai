@@ -85,6 +85,7 @@ const ModelSelector = ({
   isCustom = false,
   isVideo = false,
   allowedKeys,
+  customBaseModels,
 }: {
   selectedRun: TrainingRun;
   color: MantineColor;
@@ -96,6 +97,7 @@ const ModelSelector = ({
   isCustom?: boolean;
   isVideo?: boolean;
   allowedKeys?: string[];
+  customBaseModels?: string[];
 }) => {
   const versions = Object.entries(trainingModelInfo).filter(
     ([k, v]) =>
@@ -152,7 +154,13 @@ const ModelSelector = ({
                 {
                   type: ModelType.Checkpoint,
                   // nb: when adding here, make sure logic is added in castBase below
-                  baseModels: ['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony', 'Illustrious'],
+                  baseModels: customBaseModels ?? [
+                    'SD 1.4',
+                    'SD 1.5',
+                    'SDXL 1.0',
+                    'Pony',
+                    'Illustrious',
+                  ],
                 },
               ],
             }}
@@ -204,6 +212,8 @@ const ModelSelector = ({
                   ? 'flux2klein'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'
+                  : ([...getBaseModelsByGroup('Anima')] as string[]).includes(baseModel)
+                  ? 'anima'
                   : 'sd15';
 
                 const cLink = stringifyAIR({
@@ -767,6 +777,14 @@ export const ModelSelect = ({
                     baseType="sdxl" // unused
                     makeDefaultParams={makeDefaultParams}
                     isCustom
+                    customBaseModels={[
+                      'SD 1.4',
+                      'SD 1.5',
+                      'SDXL 1.0',
+                      'Pony',
+                      'Illustrious',
+                      ...(features.animaTraining ? getBaseModelsByGroup('Anima') : []),
+                    ]}
                   />
                 </>
               )}

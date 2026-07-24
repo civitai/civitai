@@ -9,6 +9,7 @@ import type {
   AiToolkitTrainingInput,
   SdxlAiToolkitTrainingInput,
   Sd1AiToolkitTrainingInput,
+  AnimaAiToolkitTrainingInput,
 } from '@civitai/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
@@ -218,6 +219,13 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       model,
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as SdxlAiToolkitTrainingInput;
+  } else if (aiToolkitParams.ecosystem === 'anima') {
+    // Anima accepts a `model` (the official base AIR, or a custom Anima
+    // checkpoint which the orchestrator trains over the base Anima repo).
+    trainingInput = {
+      ...trainingInput,
+      model,
+    } as AnimaAiToolkitTrainingInput;
   }
 
   // ACE-Step audio ecosystems accept per-prompt sample overrides. The SDK
