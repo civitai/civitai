@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ORCHESTRATOR_PROXY_HOST,
-  deepRewriteOrchestratorUrls,
   rewriteOrchestratorUrlToProxy,
+  rewriteOrchestratorUrlsDeep,
 } from '~/server/orchestrator/region-proxy';
 
 describe('rewriteOrchestratorUrlToProxy', () => {
@@ -35,7 +35,7 @@ describe('rewriteOrchestratorUrlToProxy', () => {
   });
 });
 
-describe('deepRewriteOrchestratorUrls', () => {
+describe('rewriteOrchestratorUrlsDeep', () => {
   it('rewrites orchestrator URLs nested in arrays and objects, in place', () => {
     const payload = {
       items: [
@@ -48,7 +48,8 @@ describe('deepRewriteOrchestratorUrls', () => {
       ],
       video: 'https://orchestration-new.civitai.com/v2/consumer/blobs/v.mp4?sig=3',
     };
-    deepRewriteOrchestratorUrls(payload);
+    const returned = rewriteOrchestratorUrlsDeep(payload);
+    expect(returned).toBe(payload);
     expect(payload.items[0].url).toBe(
       `https://${ORCHESTRATOR_PROXY_HOST}/v2/consumer/blobs/a.jpeg?sig=1`
     );
@@ -58,5 +59,19 @@ describe('deepRewriteOrchestratorUrls', () => {
     expect(payload.items[0].nsfwLevel).toBe(4);
     expect(payload.items[0].cdn).toBe('https://image.civitai.com/keep.jpeg');
     expect(payload.video).toBe(`https://${ORCHESTRATOR_PROXY_HOST}/v2/consumer/blobs/v.mp4?sig=3`);
+  });
+
+  it('rewrites a bare top-level string payload', () => {
+    expect(
+      rewriteOrchestratorUrlsDeep(
+        'https://orchestration-new.civitai.com/v2/consumer/blobs/a.jpeg?sig=1'
+      )
+    ).toBe(`https://${ORCHESTRATOR_PROXY_HOST}/v2/consumer/blobs/a.jpeg?sig=1`);
+  });
+
+  it('leaves primitives and null untouched', () => {
+    expect(rewriteOrchestratorUrlsDeep(null)).toBe(null);
+    expect(rewriteOrchestratorUrlsDeep(42)).toBe(42);
+    expect(rewriteOrchestratorUrlsDeep(undefined)).toBe(undefined);
   });
 });

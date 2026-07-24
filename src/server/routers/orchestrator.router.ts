@@ -59,8 +59,7 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { deepRewriteOrchestratorUrls } from '~/server/orchestrator/region-proxy';
-import { getRegion } from '~/server/utils/region-blocking';
+import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
   getPresetModelConfig,
@@ -152,17 +151,6 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
       ctx.res?.setHeader('x-generation-update-notes', decodeRedisString(genClient.notes));
   }
 
-  return result;
-});
-
-// RU ISPs DPI-block the bare orchestration origin, so browser-direct blob
-// fetches time out region-wide. Rewrite orchestrator URLs in the response to the
-// Cloudflare-fronted proxy for RU requests. See ClickUp 868kdkv93 / 868ke4d0f.
-const regionProxyMiddleware = middleware(async ({ ctx, next }) => {
-  const result = await next();
-  if (!result.ok || !ctx.req) return result;
-  if (getRegion(ctx.req).countryCode !== 'RU') return result;
-  deepRewriteOrchestratorUrls(result.data);
   return result;
 });
 

@@ -6,6 +6,10 @@ import { isOrchestratorUrl } from '~/server/common/constants';
 // host bypasses the block region-wide. See ClickUp 868kdkv93 / 868ke4d0f.
 export const ORCHESTRATOR_PROXY_HOST = 'orchestration-proxy.civitai.com';
 
+// Bounds the recursive walk. tRPC payloads are JSON-serializable (acyclic) in
+// practice, so this is a defense-in-depth stack-overflow guard, not a real limit.
+const MAX_REWRITE_DEPTH = 64;
+
 /**
  * Swap an orchestrator URL's host to the Cloudflare-fronted proxy. Path and
  * query (incl. the presign `sig`) are preserved — the proxy is a transparent CF
@@ -25,24 +29,24 @@ export function rewriteOrchestratorUrlToProxy(url: string): string {
 }
 
 /**
- * Recursively rewrite every orchestrator URL string found in a tRPC response
- * payload to the proxy host, in place. Only invoked for proxied regions (RU), so
+ * Recursively rewrite every orchestrator URL string in a value to the proxy
+ * host, returning the (in-place mutated) value. Handles a bare-string payload as
+ * well as strings nested in arrays/objects. Only invoked for proxied regions, so
  * the traversal cost never touches the common path.
  */
-export function deepRewriteOrchestratorUrls(value: unknown): void {
-  if (!value || typeof value !== 'object') return;
+export function rewriteOrchestratorUrlsDeep(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return rewriteOrchestratorUrlToProxy(value);
+  if (!value || typeof value !== 'object' || depth >= MAX_REWRITE_DEPTH) return value;
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      const item = value[i];
-      if (typeof item === 'string') value[i] = rewriteOrchestratorUrlToProxy(item);
-      else deepRewriteOrchestratorUrls(item);
+      value[i] = rewriteOrchestratorUrlsDeep(value[i], depth + 1);
     }
-    return;
+    return value;
   }
   const record = value as Record<string, unknown>;
   for (const key in record) {
-    const item = record[key];
-    if (typeof item === 'string') record[key] = rewriteOrchestratorUrlToProxy(item);
-    else deepRewriteOrchestratorUrls(item);
+    if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+    record[key] = rewriteOrchestratorUrlsDeep(record[key], depth + 1);
   }
+  return value;
 }
