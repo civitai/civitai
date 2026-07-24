@@ -2097,6 +2097,14 @@ export const REDIS_KEYS = {
     // change via `invalidateSubscriptionCaches`; TTL backstops the non-webhook paths.
     // See `getValidCreatorMembershipMap` in creator-membership.service.
     CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
+    // Per-user `id -> { hideModelBuzz, hideModelDownloads, hideModelGenerations }` — the
+    // three model-metric-privacy DEFAULT flags read off `User.settings` at read time
+    // (#3266). A tiny derived slice so the hot model-read paths (feed / v1 list /
+    // associated) never fetch + synchronously deserialize the FULL `settings` blob per
+    // owner per request just to read three booleans. Busted on any settings write via
+    // `setUserSetting`; `CacheTTL.md` backstops any other writer. See
+    // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
+    USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

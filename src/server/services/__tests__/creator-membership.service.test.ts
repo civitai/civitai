@@ -14,7 +14,10 @@ import { CacheTTL } from '~/server/common/constants';
  */
 
 const { mockDbRead, mockRedis } = vi.hoisted(() => ({
-  mockDbRead: { customerSubscription: { findMany: vi.fn() } },
+  mockDbRead: {
+    customerSubscription: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
+  },
   mockRedis: {
     packed: { mGet: vi.fn(), set: vi.fn() },
     del: vi.fn(),
@@ -24,16 +27,25 @@ const { mockDbRead, mockRedis } = vi.hoisted(() => ({
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 vi.mock('~/server/redis/client', () => ({
   redis: mockRedis,
-  REDIS_KEYS: { CACHES: { CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid' } },
+  REDIS_KEYS: {
+    CACHES: {
+      CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
+      USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
+    },
+  },
 }));
 
 import {
   bustCreatorMembershipValidCache,
+  bustUserMetricPrivacyDefaultsCache,
+  getUserMetricPrivacyDefaultsMap,
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
 } from '~/server/services/creator-membership.service';
 
 const keyFor = (id: number) => `packed:caches:creator-membership-valid:${id}`;
+const defaultsKeyFor = (id: number) => `packed:caches:user-metric-privacy-defaults:${id}`;
+const ALL_FALSE = { hideModelBuzz: false, hideModelDownloads: false, hideModelGenerations: false };
 
 type SubRow = {
   userId: number;
@@ -225,5 +237,173 @@ describe('bustCreatorMembershipValidCache', () => {
   it('swallows a redis error (best-effort bust never throws)', async () => {
     mockRedis.del.mockRejectedValue(new Error('redis down'));
     await expect(bustCreatorMembershipValidCache(5)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * `getUserMetricPrivacyDefaultsMap` replaces the per-request full-`settings` findMany
+ * the read-time paths (feed / v1 list / associated) ran over every owner just to read
+ * three booleans — the measured api-primary longtask. It must return the SAME three
+ * `hideModel*` booleans as reading them straight off `settings` (byte-identical), and
+ * it must never over-hide: an unset flag is `false`.
+ */
+describe('getUserMetricPrivacyDefaultsMap — derived read-through cache', () => {
+  it('returns an empty map (touching neither redis nor db) for empty input', async () => {
+    const result = await getUserMetricPrivacyDefaultsMap([]);
+    expect(result.size).toBe(0);
+    expect(mockRedis.packed.mGet).not.toHaveBeenCalled();
+    expect(mockDbRead.user.findMany).not.toHaveBeenCalled();
+  });
+
+  it('derives only the three hideModel* flags off settings (ignores unrelated keys)', async () => {
+    mockDbRead.user.findMany.mockResolvedValue([
+      {
+        id: 1,
+        settings: {
+          hideModelBuzz: true,
+          hideModelDownloads: false,
+          hideModelGenerations: true,
+          // Unrelated settings that must NOT bloat the cached value:
+          dismissedAlerts: ['a', 'b', 'c'],
+          hideDonationGoals: true,
+          tourState: { seen: true },
+        },
+      },
+    ]);
+    const result = await getUserMetricPrivacyDefaultsMap([1]);
+    expect(result.get(1)).toEqual({
+      hideModelBuzz: true,
+      hideModelDownloads: false,
+      hideModelGenerations: true,
+    });
+    // Backfilled with exactly the tiny triple + TTL.
+    expect(mockRedis.packed.set).toHaveBeenCalledWith(
+      defaultsKeyFor(1),
+      { hideModelBuzz: true, hideModelDownloads: false, hideModelGenerations: true },
+      { EX: CacheTTL.md }
+    );
+  });
+
+  it('returns all-false for a user with no settings / no flags (never over-hides)', async () => {
+    mockDbRead.user.findMany.mockResolvedValue([
+      { id: 1, settings: null },
+      { id: 2, settings: {} },
+    ]);
+    const result = await getUserMetricPrivacyDefaultsMap([1, 2, 3]); // 3 absent from db
+    expect(result.get(1)).toEqual(ALL_FALSE);
+    expect(result.get(2)).toEqual(ALL_FALSE);
+    expect(result.get(3)).toEqual(ALL_FALSE); // total function: absent -> all false
+  });
+
+  it('serves a cached triple from redis without querying the db', async () => {
+    mockRedis.packed.mGet.mockResolvedValue([
+      { hideModelBuzz: true, hideModelDownloads: false, hideModelGenerations: false },
+    ]);
+    const result = await getUserMetricPrivacyDefaultsMap([1]);
+    expect(result.get(1)).toEqual({
+      hideModelBuzz: true,
+      hideModelDownloads: false,
+      hideModelGenerations: false,
+    });
+    expect(mockDbRead.user.findMany).not.toHaveBeenCalled();
+    expect(mockRedis.packed.set).not.toHaveBeenCalled();
+  });
+
+  it('batch miss-fill: queries ONLY the missing ids and backfills them', async () => {
+    mockRedis.packed.mGet.mockResolvedValue([
+      { hideModelBuzz: true, hideModelDownloads: false, hideModelGenerations: false }, // id 1 cached
+      null, // id 2 miss
+      null, // id 3 miss
+    ]);
+    mockDbRead.user.findMany.mockResolvedValue([
+      { id: 2, settings: { hideModelDownloads: true } },
+      // id 3 has no row -> all false
+    ]);
+    const result = await getUserMetricPrivacyDefaultsMap([1, 2, 3]);
+    expect(result.get(1)?.hideModelBuzz).toBe(true);
+    expect(result.get(2)).toEqual({
+      hideModelBuzz: false,
+      hideModelDownloads: true,
+      hideModelGenerations: false,
+    });
+    expect(result.get(3)).toEqual(ALL_FALSE);
+
+    const whereIn = mockDbRead.user.findMany.mock.calls[0][0].where.id.in;
+    expect([...whereIn].sort()).toEqual([2, 3]);
+    // Only the two misses were backfilled.
+    expect(mockRedis.packed.set).toHaveBeenCalledTimes(2);
+    expect(mockRedis.packed.set).not.toHaveBeenCalledWith(
+      defaultsKeyFor(1),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it('fails open to the db when the cache read throws (redis down never 500s)', async () => {
+    mockRedis.packed.mGet.mockRejectedValue(new Error('redis down'));
+    mockDbRead.user.findMany.mockResolvedValue([{ id: 1, settings: { hideModelBuzz: true } }]);
+    const result = await getUserMetricPrivacyDefaultsMap([1]);
+    expect(result.get(1)?.hideModelBuzz).toBe(true);
+    expect(mockDbRead.user.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fail the request when the backfill write throws', async () => {
+    mockRedis.packed.mGet.mockResolvedValue([null]);
+    mockRedis.packed.set.mockRejectedValue(new Error('redis write down'));
+    mockDbRead.user.findMany.mockResolvedValue([{ id: 1, settings: { hideModelGenerations: true } }]);
+    const result = await getUserMetricPrivacyDefaultsMap([1]);
+    expect(result.get(1)?.hideModelGenerations).toBe(true);
+  });
+
+  it('cache-served result is byte-identical to the uncached db result for a mixed batch', async () => {
+    const rows = [
+      { id: 1, settings: { hideModelBuzz: true } },
+      { id: 2, settings: {} },
+      { id: 3, settings: { hideModelDownloads: true, hideModelGenerations: true } },
+    ];
+    mockRedis.packed.mGet.mockResolvedValueOnce([null, null, null]);
+    mockDbRead.user.findMany.mockResolvedValue(rows);
+    const uncached = await getUserMetricPrivacyDefaultsMap([1, 2, 3]);
+
+    mockDbRead.user.findMany.mockClear();
+    mockRedis.packed.mGet.mockResolvedValueOnce([
+      uncached.get(1)!,
+      uncached.get(2)!,
+      uncached.get(3)!,
+    ]);
+    const cached = await getUserMetricPrivacyDefaultsMap([1, 2, 3]);
+
+    expect([...cached.entries()].sort()).toEqual([...uncached.entries()].sort());
+    expect(cached.get(3)).toEqual({
+      hideModelBuzz: false,
+      hideModelDownloads: true,
+      hideModelGenerations: true,
+    });
+    expect(mockDbRead.user.findMany).not.toHaveBeenCalled(); // fully served from cache
+  });
+
+  it('dedupes ids before the db query', async () => {
+    mockDbRead.user.findMany.mockResolvedValue([{ id: 1, settings: {} }]);
+    await getUserMetricPrivacyDefaultsMap([1, 1, 1]);
+    const whereIn = mockDbRead.user.findMany.mock.calls[0][0].where.id.in;
+    expect([...whereIn]).toEqual([1]);
+  });
+});
+
+describe('bustUserMetricPrivacyDefaultsCache', () => {
+  it('deletes the defaults key for a single user and an array of users', async () => {
+    await bustUserMetricPrivacyDefaultsCache(5);
+    expect(mockRedis.del).toHaveBeenCalledWith(defaultsKeyFor(5));
+    await bustUserMetricPrivacyDefaultsCache([6, 7]);
+    expect(mockRedis.del).toHaveBeenCalledWith(defaultsKeyFor(6));
+    expect(mockRedis.del).toHaveBeenCalledWith(defaultsKeyFor(7));
+  });
+
+  it('is a no-op for empty / falsy ids and swallows a redis error', async () => {
+    await bustUserMetricPrivacyDefaultsCache([]);
+    await bustUserMetricPrivacyDefaultsCache(0);
+    expect(mockRedis.del).not.toHaveBeenCalled();
+    mockRedis.del.mockRejectedValue(new Error('redis down'));
+    await expect(bustUserMetricPrivacyDefaultsCache(5)).resolves.toBeUndefined();
   });
 });
