@@ -1944,6 +1944,9 @@ export const REDIS_SYS_KEYS = {
   },
   WEBHOOKS: {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
+    // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
+    // callbacks so the terminal workflow event can classify the failure. Short TTL.
+    IMAGE_SCAN_JOB_REASON: 'webhooks:image-scan:job-reason',
   },
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',

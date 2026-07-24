@@ -10,6 +10,7 @@ import { deleteImages, ingestImage } from '~/server/services/image.service';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
@@ -19,6 +20,12 @@ type IngestImageRow = IngestImageInput & {
   scanRequestedAt: Date | null;
   ingestion: string;
   retryCount: number | null;
+  /**
+   * Reason-derived failure class stamped by the scan webhook
+   * (`scanJobs.error.failureClass`), used to pick the Error retry ceiling.
+   * Null for images that have never errored or errored before classification shipped.
+   */
+  failureClass: string | null;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -59,6 +66,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
            i."scanRequestedAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
+           i."scanJobs"->'error'->>'failureClass' as "failureClass",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -97,12 +105,17 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
       Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
   );
 
+  // Error retries use a reason-aware ceiling: transient infra churn (Siglip
+  // container instability, 5xx, timeouts, expiry) keeps retrying under a higher
+  // bounded cap; permanent (unscannable media) gives up almost immediately;
+  // unknown keeps the historical 9-cap. retryCount always increments, so the cap
+  // is a hard backstop against re-flooding the scanner.
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&
       img.scanRequestedAt &&
       new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
-      Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
+      Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass)
   );
 
   // Categorize images for proper queue cleanup:
@@ -133,11 +146,13 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
           const underRetryLimit = Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT;
           return waitingForDelay && underRetryLimit;
         }
-        // Error but waiting for retry delay or under retry limit
+        // Error but waiting for retry delay or under retry limit. Mirror the
+        // reason-aware ceiling used by errorImages above.
         if (img.ingestion === 'Error') {
           const waitingForDelay =
             img.scanRequestedAt && new Date(img.scanRequestedAt).getTime() > errorRetryDate;
-          const underRetryLimit = Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT;
+          const underRetryLimit =
+            Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass);
           return waitingForDelay && underRetryLimit;
         }
         return false;
