@@ -265,7 +265,7 @@ const handleJobQueueCleanIfEmpty = createJob(
               JOIN "Model" m ON m.id = mv."modelId"
               WHERE mv.id = p."modelVersionId"
                 AND p."userId" = m."userId"
-                AND mv.status = 'Published'::"ModelVersionStatus"
+                AND mv.status = 'Published'::"ModelStatus"
             )
         `;
       });
