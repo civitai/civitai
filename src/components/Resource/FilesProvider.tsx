@@ -35,6 +35,7 @@ type SchemaError = {
   format?: ZodErrorSchema;
   quantType?: ZodErrorSchema;
 };
+type FileErrors = Array<SchemaError | undefined>;
 
 // Both link mutations (the Meili picker and linkOfficialFileByHash) return the
 // same server shape; map it to a client LinkedComponent in one place.
@@ -76,7 +77,7 @@ export type FileFromContextProps = {
 
 type FilesContextState = {
   hasPending: boolean;
-  errors: SchemaError[] | null;
+  errors: FileErrors | null;
   files: FileFromContextProps[];
   linkedComponents: LinkedComponent[];
   modelId?: number;
@@ -88,7 +89,7 @@ type FilesContextState = {
   retry: (uuid: string) => Promise<void>;
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
   removeFile: (uuid: string) => void;
-  validationCheck: () => boolean;
+  validationCheck: (uuid?: string) => boolean;
   addLinkedComponent: (
     component: LinkedComponent | Omit<LinkedComponent, 'fileId' | 'fileName' | 'sizeKB'>
   ) => Promise<void>;
@@ -117,7 +118,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
 
-  const [errors, setErrors] = useState<SchemaError[] | null>(null);
+  const [errors, setErrors] = useState<FileErrors | null>(null);
   const [files, setFiles] = useState<FileFromContextProps[]>(() => {
     const initialFiles = (version?.files?.map((file) => ({
       id: file.id,
@@ -325,17 +326,25 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     }
   };
 
-  const checkValidation = () => {
+  // Passing a uuid validates only that file — editing one file's settings shouldn't
+  // fail because another file in the version is still missing metadata.
+  const checkValidation = (uuid?: string) => {
     setErrors(null);
 
-    const validation = metadataSchema.safeParse(files);
+    const targetIndex = uuid ? files.findIndex((x) => x.uuid === uuid) : -1;
+    const toValidate = targetIndex >= 0 ? [files[targetIndex]] : files;
+
+    const validation = metadataSchema.safeParse(toValidate);
     if (!validation.success) {
-      const errors = validation.error.format() as unknown as Array<{
+      const formatted = validation.error.format() as unknown as Array<{
         [k: string]: ZodErrorSchema;
       }>;
+      const errors =
+        targetIndex >= 0
+          ? files.map((_, i) => (i === targetIndex ? formatted[0] : undefined))
+          : formatted;
       setErrors(errors);
 
-      // Build user-friendly error messages per file
       const missingFields: string[] = [];
       errors.forEach((err, i) => {
         if (!err) return;
@@ -356,6 +365,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
       return false;
     }
+
+    if (targetIndex >= 0) return true;
 
     // External-generation versions (mod-only, routed via external engines) intentionally
     // ship without files; skip the component-count requirement for them.
@@ -390,16 +401,22 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       }
     }
 
-    const noConflicts = checkConflictingFiles(files);
-    if (!noConflicts) {
+    const conflicts = getConflictingFiles(files);
+    if (conflicts.length) {
       showErrorNotification({
         title: 'Duplicate file types',
         error: new Error(
-          'There are multiple files with the same type and size, please adjust your files'
+          conflicts
+            .map(
+              (group) =>
+                `${group.map((f) => f.name).join(', ')}: same type and settings, please adjust`
+            )
+            .join('\n')
         ),
       });
+      return false;
     }
-    return noConflicts;
+    return true;
   };
 
   const createFileMutation = trpc.modelFile.create.useMutation({
@@ -785,19 +802,19 @@ const metadataSchema = modelFileMetadataSchema
   })
   .array();
 
-// TODO.manuel: This is a hacky way to check for duplicates
-export const checkConflictingFiles = (files: FileFromContextProps[]) => {
-  const conflictCount: Record<string, number> = {};
+// The key is positional so absent fields can't collapse two distinct files onto
+// the same key.
+export const getConflictingFiles = (files: FileFromContextProps[]) => {
+  const groups = new Map<string, FileFromContextProps[]>();
 
   files.forEach((item) => {
     const key = [item.size, item.type, item.fp, getModelFileFormat(item.name), item.quantType]
-      .filter(Boolean)
-      .join('-');
-    if (conflictCount[key]) conflictCount[key] += 1;
-    else conflictCount[key] = 1;
+      .map((value) => value ?? '')
+      .join('|');
+    groups.set(key, [...(groups.get(key) ?? []), item]);
   });
 
-  return Object.values(conflictCount).every((count) => count === 1);
+  return [...groups.values()].filter((group) => group.length > 1);
 };
 
 /** Model types whose primary file is an archive/config rather than model weights */

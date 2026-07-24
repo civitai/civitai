@@ -10,19 +10,31 @@ export function getModelFileFormat(filename: string): ModelFileFormat {
   return 'Other';
 }
 
-/** Map a safetensors dtype string to a ModelFileFp precision value. */
+const SAFETENSORS_DTYPE_TO_FP: Record<string, string> = {
+  F16: 'fp16',
+  BF16: 'bf16',
+  F32: 'fp32',
+  F64: 'fp32',
+  F8_E8M0: 'mxfp8',
+  I8: 'int8',
+  U8: 'int8',
+};
+
+/**
+ * Map a safetensors dtype string to a precision value. Scaling schemes
+ * (fp8_scaled, nvfp4, …) aren't dtypes and can't be inferred from the header.
+ * The cast covers precisions that are mod-managed at runtime but not yet in the
+ * ModelFileFp union.
+ */
 function safetensorsDtypeToFp(dtype: string): ModelFileFp | null {
   const d = dtype.toUpperCase();
-  if (d === 'F16') return 'fp16';
-  if (d === 'BF16') return 'bf16';
-  if (d === 'F32' || d === 'F64') return 'fp32';
-  if (d.startsWith('F8')) return 'fp8';
-  return null;
+  const fp = SAFETENSORS_DTYPE_TO_FP[d] ?? (d.startsWith('F8') ? 'fp8' : null);
+  return fp as ModelFileFp | null;
 }
 
 /**
  * Read a .safetensors file's header (client-side) and infer the dominant weight
- * precision (fp16/bf16/fp32/fp8). Returns null when it can't be determined.
+ * precision. Returns null when it can't be determined.
  * Only the JSON header is read — never the tensor data — so this is cheap.
  */
 export async function inferSafetensorsPrecision(file: File): Promise<ModelFileFp | null> {
