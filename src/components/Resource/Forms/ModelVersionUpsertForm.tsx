@@ -45,7 +45,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Flags } from '~/shared/utils/flags';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 import {
-  constants,
   EARLY_ACCESS_CONFIG,
   isNonCommercialBaseModel,
   nsfwRestrictedBaseModels,
@@ -148,7 +147,6 @@ const schema = modelVersionUpsertSchema2
   );
 type Schema = z.infer<typeof schema>;
 
-const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
 const capitalizeFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const licensingOptionLabel = (versionName: string, fee: number | null) =>
   `${capitalizeFirst(versionName)}${fee != null ? ` (${fee} Buzz)` : ''}`;
@@ -193,7 +191,6 @@ export function ModelVersionUpsertForm({
     'Wildcards',
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
-  const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
   const isEarlyAccessOver =
     version?.status === 'Published' &&
@@ -205,7 +202,7 @@ export function ModelVersionUpsertForm({
     ...version,
     name: version?.name ?? 'v1.0',
     baseModel: initialBaseModel,
-    baseModelType: hasBaseModelType ? version?.baseModelType ?? 'Standard' : undefined,
+    baseModelType: version?.baseModelType ?? undefined,
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
       ? version?.trainedWords
@@ -409,7 +406,7 @@ export function ModelVersionUpsertForm({
             ? null
             : data.earlyAccessConfig,
         trainedWords: skipTrainedWords ? [] : trainedWords,
-        baseModelType: hasBaseModelType ? data.baseModelType : undefined,
+        baseModelType: data.baseModelType,
         monetization: data.monetization,
         recommendedResources,
         templateId,
@@ -944,15 +941,6 @@ export function ModelVersionUpsertForm({
               // type to filter (e.g. "wan") instead of clearing the field first.
               onFocus={(e) => e.currentTarget.select()}
             />
-            {hasBaseModelType && (
-              <InputSelect
-                name="baseModelType"
-                label="Base Model Type"
-                placeholder="Base Model Type"
-                data={baseModelTypeOptions}
-                allowDeselect={false}
-              />
-            )}
           </Group>
           {showLicensingPicker && (
             <Stack gap="xs">

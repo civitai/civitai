@@ -28,7 +28,6 @@ import {
   IconGitMerge,
   IconTarget,
 } from '@tabler/icons-react';
-import { startCase } from 'lodash-es';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ModelFileType } from '~/server/common/constants';
@@ -46,7 +45,6 @@ import { trpc } from '~/utils/trpc';
 
 type FileMetadataUpdate = {
   fp?: ModelFileFp | null;
-  size?: (typeof constants.modelFileSizes)[number] | null;
   format?: ModelFileFormat | null;
   quantType?: ModelFileQuantType | null;
   isRequired?: boolean | null;
@@ -920,7 +918,6 @@ function MergeFileCard({
 }) {
   const effectiveType = (mapping?.type ?? file.type) as ModelFileType;
   const effectiveFp = (mapping?.metadata?.fp ?? file.metadata?.fp ?? null) as string | null;
-  const effectiveSize = (mapping?.metadata?.size ?? file.metadata?.size ?? null) as string | null;
   const effectiveFormat = (mapping?.metadata?.format ?? file.metadata?.format ?? null) as
     | string
     | null;
@@ -1010,7 +1007,6 @@ function MergeFileCard({
                 onUpdate({
                   type: newType ?? undefined,
                   metadata: {
-                    size: null,
                     fp: null,
                     isRequired: newType
                       ? (componentFileTypes as readonly string[]).includes(newType)
@@ -1074,28 +1070,6 @@ function MergeFileCard({
                     value={effectiveFp}
                     onChange={(value) => {
                       onUpdate({ metadata: { fp: value as ModelFileFp | null } });
-                    }}
-                    comboboxProps={{ withinPortal: true }}
-                    styles={selectInputStyles}
-                  />
-                </div>
-              )}
-
-              {isCheckpoint && (
-                <div>
-                  <SelectLabel>Size</SelectLabel>
-                  <Select
-                    allowDeselect={false}
-                    size="xs"
-                    w={80}
-                    placeholder="Size"
-                    data={constants.modelFileSizes.map((s) => ({
-                      label: startCase(s),
-                      value: s,
-                    }))}
-                    value={effectiveSize}
-                    onChange={(value) => {
-                      onUpdate({ metadata: { size: value as 'full' | 'pruned' | null } });
                     }}
                     comboboxProps={{ withinPortal: true }}
                     styles={selectInputStyles}

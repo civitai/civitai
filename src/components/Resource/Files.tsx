@@ -35,7 +35,7 @@ import {
   IconFile3d,
   IconLayersLinked,
 } from '@tabler/icons-react';
-import { isEqual, startCase } from 'lodash-es';
+import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -460,7 +460,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
                 <li>Users&apos; preferences will auto-select the best match for their setup</li>
                 <li>Link to existing models when the component already exists on Civitai</li>
                 <li>
-                  Only create a new <strong>version</strong>{' '}when you&apos;ve actually
+                  Only create a new <strong>version</strong> when you&apos;ve actually
                   trained/updated the model
                 </li>
               </ul>
@@ -552,19 +552,17 @@ function LinkedComponentCard({
 
 /**
  * Whether a file still needs required metadata before it's publishable — mirrors
- * the server metadata refinements: a type for everything, quant type for GGUF,
- * and size + precision for Checkpoint model weights. Drives the "Needs info" badge
- * so auto-uploaded files that couldn't be auto-detected get flagged instead of
+ * the client validation refinements: a type for everything, quant type for GGUF,
+ * precision for Checkpoint model weights. Drives the "Needs info" badge so
+ * auto-uploaded files that couldn't be auto-detected get flagged instead of
  * silently persisting incomplete.
  */
 function isMissingRequiredInfo(file: FileFromContextProps): boolean {
   if (!file.type) return true;
   const isGguf = file.name.toLowerCase().endsWith('.gguf');
   const isCheckpointModel = file.type === 'Model' && file.modelType === 'Checkpoint';
-  // GGUF always needs a quant type; Checkpoint weights additionally need a size
-  // regardless of extension (precision is the only field GGUF Checkpoints skip).
-  if (isGguf) return !file.quantType || (isCheckpointModel && !file.size);
-  if (isCheckpointModel) return !file.size || !file.fp;
+  if (isGguf) return !file.quantType;
+  if (isCheckpointModel) return !file.fp;
   return false;
 }
 
@@ -1034,8 +1032,8 @@ function FileEditForm({
           value={versionFile.type ?? null}
           onChange={(value) => {
             const newType = value as ModelFileType | null;
-            // Preserve precision/size when relabeling the file type — re-picking
-            // them every time is tedious and they're usually still correct.
+            // Preserve precision when relabeling the file type — re-picking it
+            // every time is tedious and it's usually still correct.
             updateFile(versionFile.uuid, { type: newType });
           }}
         />
@@ -1093,27 +1091,6 @@ function FileEditForm({
                 value={versionFile.fp ?? null}
                 onChange={(value) => {
                   updateFile(versionFile.uuid, { fp: value as ModelFileFp | null });
-                }}
-              />
-            </div>
-          )}
-
-          {isCheckpoint && (
-            <div>
-              <SelectLabel>Size</SelectLabel>
-              <Select
-                allowDeselect={false}
-                size="xs"
-                w={80}
-                placeholder="Size"
-                error={error?.size?._errors[0]}
-                data={constants.modelFileSizes.map((size) => ({
-                  label: startCase(size),
-                  value: size,
-                }))}
-                value={versionFile.size ?? null}
-                onChange={(value) => {
-                  updateFile(versionFile.uuid, { size: value as 'full' | 'pruned' | null });
                 }}
               />
             </div>

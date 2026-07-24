@@ -30,7 +30,6 @@ import { isDefined } from '~/utils/type-guards';
 type ZodErrorSchema = { _errors: string[] };
 type SchemaError = {
   type?: ZodErrorSchema;
-  size?: ZodErrorSchema;
   fp?: ZodErrorSchema;
   format?: ZodErrorSchema;
   quantType?: ZodErrorSchema;
@@ -349,7 +348,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         if (!err) return;
         const fileName = files[i]?.name ?? `File ${i + 1}`;
         const fields: string[] = [];
-        if (err.size?._errors?.length) fields.push('model size');
         if (err.fp?._errors?.length) fields.push('precision');
         if (err.quantType?._errors?.length) fields.push('quant type');
         if (err.type?._errors?.length) fields.push('file type');
@@ -778,13 +776,6 @@ const metadataSchema = modelFileMetadataSchema
     modelType: z.enum(ModelType),
     name: z.string(),
   })
-  .refine(
-    (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),
-    {
-      error: 'Model size is required for model files',
-      path: ['size'],
-    }
-  )
   .refine(
     (data) =>
       data.type === 'Model' && data.modelType === 'Checkpoint' && !data.name.endsWith('.gguf')
