@@ -379,6 +379,15 @@ export const getUserCollectionsWithPermissions = async <
     AND.push(Prisma.sql`(c."type" = ${input.type}::"CollectionType" OR c."type" IS NULL)`);
   }
 
+  // When surfacing active contests, Contest-mode collections must come ONLY through the
+  // ownership+window-gated branch below — never via the contributor/public-read branches, which
+  // carry no ownership or submission-window check and would leak followed or closed contests into
+  // the picker for models the user doesn't own. Off for non-model callers, leaving the normal
+  // follow flow untouched. Owned contests still surface via the owned-collections branch (query 1).
+  const excludeContests = includeActiveContests
+    ? Prisma.sql`AND c."mode" IS DISTINCT FROM ${CollectionMode.Contest}::"CollectionMode"`
+    : Prisma.empty;
+
   const queries: Prisma.Sql[] = [
     Prisma.sql`(
       ${SELECT}
@@ -415,6 +424,7 @@ export const getUserCollectionsWithPermissions = async <
       FROM "Collection" c
       WHERE "read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        ${excludeContests}
 
     `);
   }
@@ -432,6 +442,7 @@ export const getUserCollectionsWithPermissions = async <
           )}]::"CollectionContributorPermission"[]
           AND cc."collectionId" IS NOT NULL
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+          ${excludeContests}
     )`);
   }
 
