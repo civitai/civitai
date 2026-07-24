@@ -79,6 +79,10 @@ describe('challenge-starting on activation', () => {
 
   it('does not notify when a concurrent tick already claimed the activation', async () => {
     mocks.setChallengeActive.mockResolvedValueOnce({ activated: false });
+    // Non-empty on purpose: with the default [] recipients, `not.toHaveBeenCalled()` below would
+    // pass regardless of the won-claim guard — it must fail here for a reason other than "nobody
+    // to notify."
+    mocks.getChallengeNotifyRecipients.mockResolvedValueOnce([1, 2, 3]);
 
     await runChallengeActivation();
 
