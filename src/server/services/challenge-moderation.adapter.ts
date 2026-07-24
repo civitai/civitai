@@ -103,10 +103,12 @@ export const challengeModerationAdapter: ModerationAdapter = {
     // state). A green-user-challenge NSFW escalation may still hide/void it inside
     // applyChallengeNsfwEscalation, but that void is captured separately by challenge_voided_total —
     // this metric reflects the moderation CALLBACK verdict, not the final ingestion column.
-    const scanned = await dbRead.challenge.findUnique({
-      where: { id: entityId },
-      select: { source: true },
-    });
+    // Guarded with `.catch(() => null)` (mirrors the applyFailure sibling) so a transient DB hiccup
+    // on this TELEMETRY-only read can never throw out of applyResult and skip the real safety step
+    // (applyChallengeNsfwEscalation) below. null → source 'unknown' via the normalizer.
+    const scanned = await dbRead.challenge
+      .findUnique({ where: { id: entityId }, select: { source: true } })
+      .catch(() => null);
     recordChallengeScanResult({ source: scanned?.source, result: 'scanned' });
 
     await applyChallengeNsfwEscalation({ entityId, isNsfw });

@@ -282,19 +282,22 @@ export function recordChallengeRefundFailure(args: {
 }
 
 // ---------------------------------------------------------------------------
-// C. State gauges (async collect(), low cardinality, memoized ~20s)
+// C. State gauges (async collect(), low cardinality, memoized ~45s)
 // ---------------------------------------------------------------------------
 // The Challenge table is small (thousands of rows, not the Image-table millions), so the four
 // GROUP BYs are cheap — but /metrics is scraped ~15s and there can be several scrapers/pod, so a
-// single memoized read (TTL ~20s) refreshed lazily OFF the scrape path serves every gauge from
+// single memoized read (TTL ~45s) refreshed lazily OFF the scrape path serves every gauge from
 // last-known values. A scrape only ever kicks a background refresh, never blocks on it. A defensive
 // statement_timeout caps a replica cold-cache spike; on any error we keep the last-good values.
 //
 // GATING: this repo exposes no clean pod-role / jobs-pool signal (only PODNAME, a bare pod name),
-// so per the "don't invent a fragile gate" rule these gauges run on ALL pods behind the 20s memo.
+// so per the "don't invent a fragile gate" rule these gauges run on ALL pods behind the 45s memo.
 // The read hits the replica pool (pgDbRead). Follow-up: gate to the -jobs pool if a role signal is
 // added (e.g. an env POD_ROLE), so only a couple of pods query.
-const CHALLENGE_GAUGE_TTL_MS = 20_000;
+// Challenge table ~217 rows (2026-07), GROUP BYs are trivial seq/index scans; revisit fleet-wide
+// gauge gating only if the table grows orders of magnitude. TTL 45s matches the proven in-prod
+// image_ingestion_backlog gauge this pattern was modeled on.
+const CHALLENGE_GAUGE_TTL_MS = 45_000;
 const CHALLENGE_GAUGE_STATEMENT_TIMEOUT_MS = 5_000;
 const COMPLETING_STUCK_MINUTES = 30;
 
