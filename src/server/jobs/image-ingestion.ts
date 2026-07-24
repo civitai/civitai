@@ -199,15 +199,14 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 
   if (!isProd) return;
 
-  const sentUserPendingIds = await sendImagesForScanBulk(pendingUserUploads);
-  const sentBackfillIds = await sendImagesForScanBulk(pendingBackfill, { lowPriority: true });
-  const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });
-  const sentErrorIds = await sendImagesForScanBulk(errorImages, { lowPriority: true });
-
-  // Only remove stale items from queue (status changed to non-scannable or retry limit exceeded)
-  // Processed items stay in queue - if scan succeeds, they become stale next run
-  // This handles both immediate failures (ingestImage returns false) AND silent failures
-  // (scan sent but never completes) - items are retried after the delay passes
+  // Prune stale rows (status changed to non-scannable or retry limit exceeded)
+  // BEFORE the send loop, not after: the sends fan out hundreds–thousands of
+  // orchestrator calls and can be slow or error out, and gating the prune behind
+  // them lets stale rows accumulate faster than they clear — the queue bloats,
+  // runs get heavier, and the prune keeps not happening. The stale set is derived
+  // purely from the rows already loaded above, so it's safe to delete first.
+  // Processed items intentionally stay in the queue and become stale next run only
+  // if their scan never completes, which preserves retry-on-silent-failure.
   const idsToRemove = [...staleIds];
   if (idsToRemove.length > 0) {
     await dbWrite.$executeRaw`
@@ -217,6 +216,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
         AND "entityId" = ANY(${idsToRemove})
     `;
   }
+
+  const sentUserPendingIds = await sendImagesForScanBulk(pendingUserUploads);
+  const sentBackfillIds = await sendImagesForScanBulk(pendingBackfill, { lowPriority: true });
+  const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });
+  const sentErrorIds = await sendImagesForScanBulk(errorImages, { lowPriority: true });
 
   const totalSent =
     sentUserPendingIds.length + sentBackfillIds.length + sentRescanIds.length + sentErrorIds.length;
