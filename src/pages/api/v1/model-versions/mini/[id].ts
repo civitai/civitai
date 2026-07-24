@@ -6,11 +6,13 @@ import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   getShouldChargeForResources,
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
+import { getModelTensorSummaryCachedWithTimeout } from '~/server/services/tensor-metadata-cache.service';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
@@ -27,6 +29,16 @@ import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import {
+  classifyModelWeightPrecision,
+  inferTensorMetadataFormat,
+  parseModelTensorMetadata,
+  supportsTensorVramEstimate,
+  type ModelWeightPrecision,
+} from '~/utils/model-tensor-metadata';
+
+const WEIGHT_PRECISION_TIMEOUT_MS = 10_000;
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -193,20 +205,25 @@ export default MixedAuthEndpoint(async function handler(
         : 'Missing model file',
     });
   }
+  const targetFileMetadata = targetFile.metadata ?? {};
 
   const baseUrl = getBaseUrl();
   let air: string;
   let downloadUrl: string;
+  let weightPrecision: ModelWeightPrecision | null = null;
 
-  if (modelVersion.availability === Availability.Private && !!targetFile.metadata.trainingResults) {
+  if (modelVersion.availability === Availability.Private && !!targetFileMetadata.trainingResults) {
+    // A private epoch URL identifies orchestrator job output, not the bytes
+    // stored under targetFile.id. Do not reuse the per-file tensor cache for it;
+    // leave precision unknown until epoch outputs have an immutable content id.
     const epoch =
-      targetFile.metadata.trainingResults.epochs?.find((e) => {
+      targetFileMetadata.trainingResults.epochs?.find((e) => {
         if ('epoch_number' in e) {
           return e.epoch_number === results.data.epoch;
         }
 
         return e.epochNumber === results.data.epoch;
-      }) ?? targetFile.metadata.trainingResults.epochs?.pop();
+      }) ?? targetFileMetadata.trainingResults.epochs?.pop();
 
     if (!epoch) {
       return res.status(404).json({ error: 'Missing epoch' });
@@ -235,13 +252,73 @@ export default MixedAuthEndpoint(async function handler(
       fileId: modelFileId,
       primary: !modelFileId,
     })}`;
+
+    const tensorFormat = inferTensorMetadataFormat({
+      name: targetFile.name,
+      metadata: targetFileMetadata,
+    });
+    if (tensorFormat) {
+      try {
+        let timedOut = false;
+        const summary = await getModelTensorSummaryCachedWithTimeout(
+          { fileId: targetFile.id, fileUrl: targetFile.url },
+          async () => {
+            const { url } = await resolveDownloadUrl(
+              targetFile.id,
+              targetFile.url,
+              targetFile.name
+            );
+            return parseModelTensorMetadata({
+              url,
+              format: tensorFormat,
+              fileSizeBytes: targetFile.sizeKB * 1024,
+              estimateVram: supportsTensorVramEstimate({
+                modelType: modelVersion.type,
+                fileType: targetFile.type,
+              }),
+            });
+          },
+          WEIGHT_PRECISION_TIMEOUT_MS,
+          () => {
+            timedOut = true;
+          }
+        );
+        if (summary) {
+          weightPrecision = classifyModelWeightPrecision(summary.dtypeCounts);
+        } else if (timedOut) {
+          // The shared cache fill continues in the background. Keep this
+          // ResourceGrain result short-lived so its next read can use it.
+          res.setHeader('X-Expires', new Date(Date.now() + 5 * 60 * 1000).toISOString());
+          logToAxiom({
+            type: 'warning',
+            name: 'model-file-weight-precision-timeout',
+            message: 'Timed out deriving model weight precision from tensor metadata',
+            modelVersionId: modelVersion.id,
+            fileId: targetFile.id,
+            timeoutMs: WEIGHT_PRECISION_TIMEOUT_MS,
+          }).catch(() => undefined);
+        }
+      } catch (error) {
+        // ResourceGrain otherwise retains this fail-open null for its normal
+        // lifetime. Ask it to retry soon without shortening successful results.
+        res.setHeader('X-Expires', new Date(Date.now() + 5 * 60 * 1000).toISOString());
+        logToAxiom({
+          type: 'warning',
+          name: 'model-file-weight-precision',
+          message: 'Failed to derive model weight precision from tensor metadata',
+          modelVersionId: modelVersion.id,
+          fileId: targetFile.id,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined);
+      }
+    }
   }
 
   // if req url domain contains `api.`, strip /api/ from the download url
   if (req.headers.host?.includes('api.')) {
     downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
-  const { format } = targetFile.metadata;
+  const { format } = targetFileMetadata;
 
   const genStates = await resolveCanGenerateForVersions(
     [
@@ -372,6 +449,7 @@ export default MixedAuthEndpoint(async function handler(
     hashes: targetFile.hashes,
     downloadUrls: [downloadUrl], // nullable
     format, // nullable
+    weightPrecision,
     canGenerate,
     isFeatured,
     requireAuth: modelVersion.requireAuth,
