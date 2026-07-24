@@ -47,6 +47,22 @@ export function ownerListingState(input: {
   return 'inactive';
 }
 
+/**
+ * True when a listing is a MODERATOR takedown — `AppListing.status='removed'` whose
+ * last moderation event is NOT the owner's own `owner-unpublish` (see
+ * {@link ownerListingState}). The /apps/my-submissions owner lists use this to route
+ * such a listing into its own default-collapsed "removed by a moderator" section,
+ * taking precedence over the any-approved→Live bucketing. Deliberately EXCLUDES an
+ * owner-hidden listing (last event = `owner-unpublish`), which stays Republish-able
+ * and keeps its normal (Live) placement.
+ */
+export function isModRemovedListing(input: {
+  listingStatus: string | null | undefined;
+  lastModerationAction: string | null | undefined;
+}): boolean {
+  return ownerListingState(input) === 'mod-removed';
+}
+
 /** True when the owner may unpublish (hide) the listing — only a live listing. */
 export function canOwnerUnpublish(state: OwnerListingState): boolean {
   return state === 'live';
