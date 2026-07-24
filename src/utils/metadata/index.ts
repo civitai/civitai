@@ -5,6 +5,7 @@ import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata'
 import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
 import { rfooocusMetadataProcessor } from '~/utils/metadata/rfooocus.metadata';
 import { swarmUIMetadataProcessor } from '~/utils/metadata/swarmui.metadata';
+import { readVideoMetadata } from '~/utils/metadata/video-metadata';
 
 const parsers = {
   automatic: automaticMetadataProcessor,
@@ -12,6 +13,40 @@ const parsers = {
   rfooocus: rfooocusMetadataProcessor,
   comfy: comfyMetadataProcessor,
 };
+
+function createMetadataParser(exif: Record<string, unknown>) {
+  let matchedExif = exif;
+  let matchedParser: (typeof parsers)[keyof typeof parsers] | undefined;
+  for (const p of Object.values(parsers)) {
+    const exifCopy = { ...exif };
+    if (p.canParse(exifCopy)) {
+      matchedParser = p;
+      matchedExif = exifCopy;
+      break;
+    }
+  }
+
+  function parse() {
+    try {
+      return matchedParser?.parse(matchedExif);
+    } catch (e) {
+      console.error('Error parsing metadata', e);
+    }
+  }
+
+  async function getMetadata() {
+    try {
+      const metadata = parse();
+      const result = imageMetaSchema.safeParse(metadata ?? {});
+      return result.success ? result.data : {};
+    } catch (e) {
+      console.error(e);
+      return {};
+    }
+  }
+
+  return { parse, getMetadata, matchedParser };
+}
 
 export async function ExifParser(file: File | string) {
   let tags: ExifReader.Tags = {} as ExifReader.Tags;
@@ -32,25 +67,7 @@ export async function ExifParser(file: File | string) {
   }
 
   // Clone exif before each canParse to prevent cross-parser mutation
-  let matchedExif = exif;
-  let matchedParser: (typeof parsers)[keyof typeof parsers] | undefined;
-  for (const [, p] of Object.entries(parsers)) {
-    const exifCopy = { ...exif };
-    if (p.canParse(exifCopy)) {
-      matchedParser = p;
-      matchedExif = exifCopy;
-      break;
-    }
-  }
-  const parser = matchedParser;
-
-  function parse() {
-    try {
-      return parser?.parse(matchedExif);
-    } catch (e) {
-      console.error('Error parsing metadata', e);
-    }
-  }
+  const { parse, getMetadata, matchedParser: parser } = createMetadataParser(exif);
 
   function encode(meta: ImageMetaProps) {
     try {
@@ -67,18 +84,13 @@ export async function ExifParser(file: File | string) {
     return artist === 'ai';
   }
 
-  async function getMetadata() {
-    try {
-      const metadata = parse();
-      const result = imageMetaSchema.safeParse(metadata ?? {});
-      return result.success ? result.data : {};
-    } catch (e) {
-      console.error(e);
-      return {};
-    }
-  }
-
   return { exif, parse, encode, getMetadata, isMadeOnSite };
+}
+
+export async function VideoMetadataParser(file: Blob) {
+  const exif = await readVideoMetadata(file);
+  const { parse, getMetadata } = createMetadataParser(exif);
+  return { exif, parse, getMetadata };
 }
 
 export async function getMetadata(file: File | string) {

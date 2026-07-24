@@ -35,10 +35,11 @@ import {
   IconX,
 } from '@tabler/icons-react';
 
-import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
-import { ExifParser } from '~/utils/metadata';
+import { ExifParser, VideoMetadataParser } from '~/utils/metadata';
+import { detectVideoContainer } from '~/utils/metadata/video-metadata';
 import { trpc } from '~/utils/trpc';
 import { isAndroidDevice } from '~/utils/device-helpers';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
@@ -46,15 +47,15 @@ import { getEcosystem } from '~/shared/constants/basemodel.constants';
 import { generationGraphStore, generationGraphPanel } from '~/store/generation-graph.store';
 import { ResourceItemContent } from './ResourceItemContent';
 
-/** Try to extract an image URL from a drop event (e.g. dragging an on-site image). */
-function getDroppedImageUrl(event: React.DragEvent): string | undefined {
+/** Try to extract a media URL from a drop event (e.g. dragging on-site media). */
+function getDroppedMediaUrl(event: React.DragEvent): string | undefined {
   // Prefer uri-list, fall back to plain text
   const uri =
     event.dataTransfer.getData('text/uri-list') || event.dataTransfer.getData('text/plain');
   if (!uri) return undefined;
   try {
     const url = new URL(uri);
-    // Only allow http(s) URLs that look like images
+    // Only allow http(s) URLs
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
     return url.href;
   } catch {
@@ -79,18 +80,23 @@ function getDroppedMediaInfo(
   return { id, type: type === 'video' ? 'video' : 'image' };
 }
 
-/** Fetch a remote image and return it as a File. */
-async function fetchImageAsFile(url: string): Promise<File> {
+/** Fetch remote media and return it as a File. */
+async function fetchMediaAsFile(url: string): Promise<File> {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
+  if (!res.ok) throw new Error(`Failed to fetch media: ${res.status}`);
   const blob = await res.blob();
   const ext = blob.type.split('/')[1] ?? 'png';
-  return new File([blob], `image.${ext}`, { type: blob.type });
+  return new File([blob], `media.${ext}`, { type: blob.type });
+}
+
+async function isVideoFile(file: Blob): Promise<boolean> {
+  return file.type.startsWith('video/') || !!(await detectVideoContainer(file));
 }
 
 export function MetadataExtractionPanel() {
   const theme = useMantineTheme();
   const [file, setFile] = useState<File>();
+  const [isLocalVideo, setIsLocalVideo] = useState(false);
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   // When an on-site media is dropped, we extract its DB id and type to fetch metadata server-side
   const [droppedMedia, setDroppedMedia] = useState<{ id: number; type: 'image' | 'video' }>();
@@ -104,7 +110,9 @@ export function MetadataExtractionPanel() {
     (files: File[]) => {
       setDroppedMedia(undefined);
       store.clear();
-      setFile(files[0]);
+      const nextFile = files[0];
+      setIsLocalVideo(nextFile?.type.startsWith('video/') ?? false);
+      setFile(nextFile);
     },
     [store]
   );
@@ -115,7 +123,7 @@ export function MetadataExtractionPanel() {
       // If the drop contains files, let the Dropzone handle it normally
       if (event.dataTransfer.files.length > 0) return;
 
-      const url = getDroppedImageUrl(event);
+      const url = getDroppedMediaUrl(event);
       if (!url) return;
 
       event.preventDefault();
@@ -126,6 +134,7 @@ export function MetadataExtractionPanel() {
 
       store.clear();
       setFile(undefined);
+      setIsLocalVideo(false);
       setDroppedMedia(undefined);
       setIsFetchingUrl(true);
       try {
@@ -146,12 +155,13 @@ export function MetadataExtractionPanel() {
             }
           }
         } else {
-          // External image: fetch as file for EXIF extraction
-          const imageFile = await fetchImageAsFile(url);
-          setFile(imageFile);
+          // External media: fetch as a local file for metadata extraction
+          const mediaFile = await fetchMediaAsFile(url);
+          setIsLocalVideo(await isVideoFile(mediaFile));
+          setFile(mediaFile);
         }
       } catch (e) {
-        console.error('Failed to load dropped image URL:', e);
+        console.error('Failed to load dropped media URL:', e);
       } finally {
         setIsFetchingUrl(false);
       }
@@ -161,6 +171,7 @@ export function MetadataExtractionPanel() {
 
   const handleClear = useCallback(() => {
     setFile(undefined);
+    setIsLocalVideo(false);
     setDroppedMedia(undefined);
     setSelectedResourceIds(new Set());
     store.clear();
@@ -178,45 +189,54 @@ export function MetadataExtractionPanel() {
     generationGraphPanel.open();
   }, []);
 
-  // Convert dropped file to a data URL (persists beyond component unmount for img2img use)
-  // Skip when droppedMedia is set — fileUrl is set directly in handleUrlDrop for that path
+  // Images use a persistent data URL for img2img. Videos use a revocable object URL for preview.
   useEffect(() => {
     if (droppedMedia) return;
     if (!file) {
+      setIsLocalVideo(false);
       store.setFileUrl(undefined);
       return;
     }
     let cancelled = false;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (!cancelled) store.setFileUrl(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    let objectUrl: string | undefined;
+    void (async () => {
+      const video = await isVideoFile(file);
+      if (cancelled) return;
+      setIsLocalVideo(video);
+      if (video) {
+        objectUrl = URL.createObjectURL(file);
+        store.setFileUrl(objectUrl);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (!cancelled) store.setFileUrl(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    })();
     return () => {
       cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file]);
 
-  // Extract metadata when file changes (client-side EXIF path only)
+  // Extract metadata when a local file changes.
   useEffect(() => {
     if (droppedMedia) return; // Server path handles metadata
     if (!file) {
       store.setMetadata(undefined);
       return;
     }
-    // Skip EXIF extraction for video files — only images have extractable EXIF data
-    if (file.type.startsWith('video/')) {
-      store.setMetadata(undefined);
-      return;
-    }
-
     let cancelled = false;
     store.setIsExtracting(true);
 
     (async () => {
       try {
-        const parser = await ExifParser(file);
+        const parser = (await isVideoFile(file))
+          ? await VideoMetadataParser(file)
+          : await ExifParser(file);
         const { extra } = parser.parse() ?? {};
         const meta = { ...(await parser.getMetadata()), ...extra };
         delete meta.extra;
@@ -257,7 +277,7 @@ export function MetadataExtractionPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverData, droppedMedia]);
 
-  // --- Client-side path: resolve EXIF metadata via resolveImageMeta (external/local drops) ---
+  // --- Client-side path: resolve extracted metadata via resolveImageMeta (external/local drops) ---
   const hasMetadataForQuery = !!store.metadata && Object.keys(store.metadata).length > 0;
 
   // Strip large fields (e.g. ComfyUI workflow graph) that aren't used server-side
@@ -271,7 +291,7 @@ export function MetadataExtractionPanel() {
 
   const { data: resolved, isFetching } = trpc.generation.resolveImageMeta.useQuery(
     { metadata: queryMetadata },
-    // Only run EXIF-based resolution when we don't have a server-side image ID
+    // Only run extracted-metadata resolution when we don't have a server-side media ID
     { enabled: hasMetadataForQuery && !droppedMedia, staleTime: 5 * 60 * 1000 }
   );
 
@@ -301,7 +321,7 @@ export function MetadataExtractionPanel() {
 
   return (
     <Stack gap="sm">
-      {/* Dropzone — always rendered so users can drop a new image even when one is loaded */}
+      {/* Dropzone — always rendered so users can drop new media even when a file is loaded */}
       <div
         onDrop={handleUrlDrop}
         onDragOver={(e) => {
@@ -317,7 +337,7 @@ export function MetadataExtractionPanel() {
       >
         <Dropzone
           onDrop={handleDrop}
-          accept={IMAGE_MIME_TYPE}
+          accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           maxFiles={1}
           maxSize={50 * 1024 ** 2}
           useFsAccessApi={!isAndroidDevice()}
@@ -333,6 +353,12 @@ export function MetadataExtractionPanel() {
                   options={{ anim: true }}
                   style={{ maxHeight: 200 }}
                   wrapperProps={{ className: 'w-full rounded-md overflow-hidden' }}
+                />
+              ) : isLocalVideo ? (
+                <video
+                  src={store.fileUrl}
+                  controls
+                  className="max-h-[200px] w-full rounded-md object-contain"
                 />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -366,10 +392,12 @@ export function MetadataExtractionPanel() {
               </Dropzone.Idle>
               <div>
                 <Text size="sm" align="center">
-                  {isFetchingUrl ? 'Loading image...' : 'Drop an image here or click to select'}
+                  {isFetchingUrl
+                    ? 'Loading media...'
+                    : 'Drop an image or video here or click to select'}
                 </Text>
                 <Text size="xs" c="dimmed" align="center" mt={4}>
-                  Extract generation parameters from AI-generated images
+                  Extract generation parameters from AI-generated images or videos
                 </Text>
               </div>
             </div>
@@ -395,7 +423,7 @@ export function MetadataExtractionPanel() {
               <IconFileSearch size={18} />
             </ThemeIcon>
             <Text c="dimmed" size="sm">
-              No generation metadata found in this image.
+              No generation metadata found in this image or video.
             </Text>
           </div>
         </Card>
@@ -404,7 +432,7 @@ export function MetadataExtractionPanel() {
       {/* Metadata display */}
       {hasMetadata && (
         <>
-          {/* Resolved resources — only show for client-side EXIF path */}
+          {/* Resolved resources — only show for the client-side extraction path */}
           {!droppedMedia && isFetching && (
             <div className="flex items-center gap-2 py-2">
               <Loader size="sm" />
