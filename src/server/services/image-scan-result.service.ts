@@ -178,10 +178,14 @@ export async function processImageScanWorkflow({
 }) {
   if (status !== 'succeeded') {
     // Classify the non-success so Axiom can group by failureType + mediaType.
-    // `expired` is an orchestrator timeout (transient) vs a genuine
-    // `workflow-failed`; both currently burn a retry identically — we only LOG
-    // the distinction here so the retry-budget behavior can be measured before
-    // it's changed. See docs/image-scan-reliability.md §5.1/§5.4.
+    // `expired` is an orchestrator timeout (transient) — the workflow ran out of
+    // wall-clock before its mediaRating step finished, common when the
+    // low-priority lane is starved during a backlog. That is NOT the image's
+    // fault, so `markImageScanError` re-queues it WITHOUT burning one of the 9
+    // retries (see there); only a genuine `workflow-failed` (real decode/rating
+    // failure) consumes a retry. The app can't change the orchestrator-side
+    // expiry, so not-giving-up is the only app-side lever to keep scanning
+    // through a backlog. See docs/image-scan-reliability.md §5.1/§5.4.
     const failureType = status === 'expired' ? 'expired' : 'workflow-failed';
     const { retryCount, mediaType } = await markImageScanError({
       workflowId,
@@ -427,12 +431,21 @@ async function blockImageFromRating({
 }
 
 /**
- * Flip an image to `Error`, increment its scan `retryCount`, and stamp a small
- * `scanJobs.error = { status, failureType, at }` so a plain Postgres query can
- * tell WHY a scan errored without an orchestrator lookup. Returns the new
- * (post-increment) retryCount and the image's mediaType so callers can log them;
- * both are `null` when no row matched (e.g. the image was deleted between scan
- * request and callback).
+ * Flip an image to `Error`, stamp a small `scanJobs.error = { status,
+ * failureType, at }` so a plain Postgres query can tell WHY a scan errored
+ * without an orchestrator lookup, and conditionally bump `scanJobs.retryCount`.
+ *
+ * Retry budget: only a genuine `workflow-failed` (real decode/rating failure)
+ * consumes one of the 9 retries. An `expired`/timeout is transient (orchestrator
+ * ran out of wall-clock, usually a starved lane during a backlog), so it is
+ * re-queued WITHOUT incrementing retryCount — `Error` is already a re-scannable
+ * state that `ingest-images` picks back up after the error-retry delay, so the
+ * image keeps getting rescanned until the backlog drains instead of hitting the
+ * cap and getting permanently stuck.
+ *
+ * Returns the (possibly-unchanged) retryCount and the image's mediaType so
+ * callers can log them; both are `null` when no row matched (e.g. the image was
+ * deleted between scan request and callback).
  */
 async function markImageScanError({
   workflowId,
@@ -446,26 +459,34 @@ async function markImageScanError({
   failureType: string;
 }): Promise<{ retryCount: number | null; mediaType: string | null }> {
   const errorJson = JSON.stringify({ status, failureType, at: new Date().toISOString() });
-  const rows = await dbWrite.$queryRaw<{ retryCount: number | null; mediaType: string | null }[]>`
-    UPDATE "Image"
-    SET
-      "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
-      "scanJobs" = jsonb_set(
-        jsonb_set(
+  const burnRetry = failureType !== 'expired';
+
+  const withRetryBump = Prisma.sql`
+    jsonb_set(
+      COALESCE("scanJobs", '{}'),
+      '{retryCount}',
+      to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+    )`;
+  const scanJobsBase = burnRetry ? withRetryBump : Prisma.sql`COALESCE("scanJobs", '{}')`;
+
+  const rows = await dbWrite.$queryRaw<{ retryCount: number | null; mediaType: string | null }[]>(
+    Prisma.sql`
+      UPDATE "Image"
+      SET
+        "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+        "scanJobs" = jsonb_set(
           jsonb_set(
-            COALESCE("scanJobs", '{}'),
-            '{retryCount}',
-            to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+            ${scanJobsBase},
+            '{workflowId}',
+            ${JSON.stringify(workflowId)}::jsonb
           ),
-          '{workflowId}',
-          ${JSON.stringify(workflowId)}::jsonb
-        ),
-        '{error}',
-        ${errorJson}::jsonb
-      )
-    WHERE id = ${imageId}
-    RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType"
-  `;
+          '{error}',
+          ${errorJson}::jsonb
+        )
+      WHERE id = ${imageId}
+      RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType"
+    `
+  );
   return { retryCount: rows[0]?.retryCount ?? null, mediaType: rows[0]?.mediaType ?? null };
 }
 
