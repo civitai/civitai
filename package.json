@@ -361,7 +361,7 @@
     "eslint-config-airbnb": "^19.0.4",
     "eslint-config-airbnb-typescript": "^17.0.0",
     "eslint-config-mantine": "2.0.0",
-    "eslint-config-next": "^16.2.7",
+    "eslint-config-next": "^15.5.19",
     "eslint-config-prettier": "^8.5.0",
     "eslint-import-resolver-typescript": "^3.5.1",
     "eslint-plugin-import": "^2.26.0",
