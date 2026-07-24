@@ -1185,6 +1185,9 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     isModerator: false,
     userId,
     force: true,
+    // Skip toggleBan's Moderated block; softDeleteUser applies its own CSAM
+    // block below. Avoids a redundant double-write and a Moderated->CSAM flip.
+    removeContent: false,
   });
 
   await dbWrite.image.updateMany({
@@ -1786,22 +1789,20 @@ export const toggleBan = async ({
     ]);
 
     // Opt-in "remove all content": block (not delete) the banned user's images,
-    // defaulting ON for SexualMinor bans. Blocking preserves the 7-day appeal
-    // window — the remove-blocked-images job hard-deletes them after that.
+    // defaulting ON for SexualMinor bans. Blocking (Moderated) preserves the
+    // 7-day appeal window — the remove-blocked-images job hard-deletes them
+    // after that. CSAM semantics stay reserved for the softDeleteUser path.
     const shouldRemoveContent =
       removeContent === true ||
       (reasonCode === BanReasonCode.SexualMinor && removeContent !== false);
     if (shouldRemoveContent) {
       try {
         await dbWrite.image.updateMany({
-          where: { userId: id },
+          where: { userId: id, ingestion: { not: 'Blocked' } },
           data: {
             ingestion: 'Blocked',
             nsfwLevel: NsfwLevel.Blocked,
-            blockedFor:
-              reasonCode === BanReasonCode.SexualMinor
-                ? BlockedReason.CSAM
-                : BlockedReason.Moderated,
+            blockedFor: BlockedReason.Moderated,
           },
         });
       } catch (error) {

@@ -11,7 +11,10 @@ const schema = z.object({
   reasonCode: z.enum(BanReasonCode).optional(),
   detailsExternal: z.string().optional(),
   detailsInternal: z.string().optional(),
-  removeContent: z.coerce.boolean().optional(),
+  removeContent: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
