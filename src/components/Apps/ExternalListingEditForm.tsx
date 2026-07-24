@@ -203,6 +203,17 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     // Client mirror of the server validation (URL/name/slug/bounds) before the
     // round-trip; the server stays the source of truth.
     const nextErrors = validateOffsiteSubmitForm(values);
+
+    // Validate that every sensitive scope has a non-empty justification before
+    // allowing save. (DerivedScopesDisclosure surfaces the errors when
+    // `showScopeErrors` is set, but this guard prevents the round-trip.)
+    if (
+      edit.connectClientId != null &&
+      Object.values(values.scopeJustifications ?? {}).some((v) => !v?.trim())
+    ) {
+      nextErrors.scopeJustifications = 'Justifications are required for all sensitive scopes.';
+    }
+
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       // Steer the author to the step that carries the first error.
