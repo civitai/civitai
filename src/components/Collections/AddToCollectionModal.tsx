@@ -189,6 +189,9 @@ function CollectionListForm({
       ],
       type: props.type,
       includeActiveContests,
+      // Active contests only surface for models the user owns, so the server can gate the branch
+      // on ownership. Only meaningful when includeActiveContests is true (Model saves).
+      contestModelId: props.modelId,
     });
 
   const { data: collectionItems = [], isLoading: loadingStatus } =

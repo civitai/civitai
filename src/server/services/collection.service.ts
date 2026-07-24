@@ -361,7 +361,13 @@ export const getUserCollectionsWithPermissions = async <
 }: {
   input: GetAllUserCollectionsInputSchema & { userId: number };
 }) => {
-  const { userId, permission, contributingOnly = true, includeActiveContests = false } = input;
+  const {
+    userId,
+    permission,
+    contributingOnly = true,
+    includeActiveContests = false,
+    contestModelId,
+  } = input;
   let { permissions = [] } = input;
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
@@ -435,7 +441,9 @@ export const getUserCollectionsWithPermissions = async <
   // contest ever created (old contests / daily challenges store no submission dates). Start date,
   // if present, must have passed. Kept independent of contributor joins so it also surfaces
   // contests the user hasn't joined; UNION de-dupes any that already appear via the branches above.
-  if (includeActiveContests) {
+  // Gated on the user owning the target model: you can only submit your own models to a contest,
+  // so a non-owned model (or an absent contestModelId) fails closed and surfaces nothing.
+  if (includeActiveContests && contestModelId) {
     queries.push(Prisma.sql`(
         ${SELECT}
         FROM "Collection" c
@@ -447,6 +455,10 @@ export const getUserCollectionsWithPermissions = async <
           AND (
             c."metadata"->>'submissionStartDate' IS NULL
             OR (c."metadata"->>'submissionStartDate')::timestamptz <= now()
+          )
+          AND EXISTS (
+            SELECT 1 FROM "Model" m
+            WHERE m."id" = ${contestModelId} AND m."userId" = ${userId}
           )
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
         LIMIT 100
@@ -2122,6 +2134,19 @@ export const validateContestCollectionEntry = async ({
     (metadata.submissionEndDate && new Date(metadata.submissionEndDate) < new Date())
   ) {
     throw throwBadRequestError('Collection is not accepting submissions at this time');
+  }
+
+  // You can only submit your own models to a contest. Enforced independently of the
+  // submissionStartDate window below so it holds for windowless contests too.
+  if (modelIds.length > 0 && !isModerator) {
+    const submittedModels = await dbRead.model.findMany({
+      where: { id: { in: modelIds } },
+      select: { id: true, userId: true },
+    });
+
+    if (submittedModels.some((model) => model.userId !== userId)) {
+      throw throwBadRequestError('You can only submit your own models to a contest.');
+    }
   }
 
   if (metadata.submissionStartDate) {
