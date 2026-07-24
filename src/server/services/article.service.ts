@@ -2222,8 +2222,8 @@ export async function recomputeArticleIngestion(articleId: number): Promise<void
  * `resolveIngestionError` to set the level + lock + `ingestion=Scanned`, then
  * recomputes the article so it leaves Error/Blocked and re-queues the search
  * index. Works for Blocked images too — un-blocking a policy-blocked image is an
- * intentional moderator decision (the lock keeps a later rescan from re-blocking
- * a clean result; a hard violation still re-blocks).
+ * intentional moderator decision, and the resulting lock keeps a later article
+ * rescan from ever re-queuing the image (`rescanArticle` skips locked images).
  */
 export async function resolveArticleImageScan({
   articleId,
@@ -2236,6 +2236,20 @@ export async function resolveArticleImageScan({
   nsfwLevel: NsfwLevel;
   userId: number;
 }): Promise<void> {
+  // Guard against a mistyped/cross-article imageId silently overriding an
+  // unrelated image: the image must be this article's cover or one of its
+  // content-image connections.
+  const [article, connection] = await Promise.all([
+    dbRead.article.findUnique({ where: { id: articleId }, select: { coverId: true } }),
+    dbRead.imageConnection.findFirst({
+      where: { entityId: articleId, entityType: ImageConnectionType.Article, imageId },
+      select: { imageId: true },
+    }),
+  ]);
+  if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
+  if (article.coverId !== imageId && !connection)
+    throw throwBadRequestError(`Image ${imageId} does not belong to article ${articleId}`);
+
   await resolveIngestionError({ id: imageId, nsfwLevel, userId });
   await recomputeArticleIngestion(articleId);
   await articlesSearchIndex.queueUpdate([
