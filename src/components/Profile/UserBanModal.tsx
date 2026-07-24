@@ -150,11 +150,17 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
             checked={removeMedia}
             onChange={(event) => setRemoveMedia(event.currentTarget.checked)}
           />
-          {(removeModels || removeMedia) && (
+          {banPreview && (removeModels || removeMedia) && (
             <Alert color="red" p="xs">
               {[
-                removeModels && banPreview ? `${banPreview.modelCount} models` : null,
-                removeMedia && banPreview ? `${banPreview.imageCount} images & videos` : null,
+                removeModels
+                  ? `${banPreview.modelCount} model${banPreview.modelCount === 1 ? '' : 's'}`
+                  : null,
+                removeMedia
+                  ? `${banPreview.imageCount} image${
+                      banPreview.imageCount === 1 ? '' : 's'
+                    } & videos`
+                  : null,
               ]
                 .filter(Boolean)
                 .join(' and ')}{' '}
