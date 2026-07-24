@@ -242,7 +242,7 @@ const quantDescriptions: Record<string, string> = {
   Q4_K_M: '4-bit GGUF, smaller file',
   Q4_K_S: '4-bit small GGUF',
   IQ4_KS: '4-bit imatrix GGUF, small',
-  Q3_K_XL: '3-bit dynamic GGUF, better quality than Q3_K_M',
+  Q3_K_XL: '3-bit dynamic GGUF, better quality than Q3_K_L',
   Q3_K_M: '3-bit GGUF, compact',
   IQ3_M: '3-bit imatrix GGUF, medium',
   IQ3_S: '3-bit imatrix GGUF, small',
