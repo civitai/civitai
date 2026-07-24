@@ -45,12 +45,12 @@ type Row = {
 };
 
 const A: SubmissionAccessors<Row> = {
-  identity: (r) => r.identity,
-  name: (r) => r.name,
-  slug: (r) => r.slug,
-  status: (r) => r.status,
-  submittedAt: (r) => toDate(r.submittedAt),
-  reviewedAt: (r) => toDate(r.reviewedAt),
+  identity: (r: Row) => r.identity,
+  name: (r: Row) => r.name,
+  slug: (r: Row) => r.slug,
+  status: (r: Row) => r.status,
+  submittedAt: (r: Row) => toDate(r.submittedAt),
+  reviewedAt: (r: Row) => toDate(r.reviewedAt),
 };
 
 function row(overrides: Partial<Row>): Row {
@@ -139,7 +139,7 @@ describe('groupSubmissionsByApp — version collapse', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].versionCount).toBe(3);
     expect(groups[0].latest.id).toBe('v3'); // newest
-    expect(groups[0].older.map((r) => r.id)).toEqual(['v2', 'v1']); // newest-first
+    expect(groups[0].older.map((r: Row) => r.id)).toEqual(['v2', 'v1']); // newest-first
   });
 
   it('a single-version app yields one group with no older versions', () => {
@@ -160,7 +160,7 @@ describe('groupSubmissionsByApp — version collapse', () => {
       row({ id: 'a2', identity: 'alpha', submittedAt: '2026-05-01T00:00:00Z' }),
     ];
     const groups = groupSubmissionsByApp(rows, A.identity, A.submittedAt);
-    expect(groups.map((g) => g.identity)).toEqual(['bravo', 'alpha']);
+    expect(groups.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['bravo', 'alpha']);
     expect(groups[1].versionCount).toBe(2);
     expect(groups[1].latest.id).toBe('a2');
   });
@@ -175,17 +175,17 @@ describe('groupSubmissionsByApp — version collapse', () => {
     ];
     const groups = groupSubmissionsByApp(rows, A.identity, A.submittedAt);
     expect(groups).toHaveLength(2);
-    const block = groups.find((g) => g.identity === 'block-123');
+    const block = groups.find((g: SubmissionGroup<Row>) => g.identity === 'block-123');
     expect(block?.versionCount).toBe(2);
     expect(block?.latest.id).toBe('onsite-2');
-    expect(groups.find((g) => g.identity === 'my-slug')?.versionCount).toBe(1);
+    expect(groups.find((g: SubmissionGroup<Row>) => g.identity === 'my-slug')?.versionCount).toBe(1);
   });
 
   it('does not mutate the input array', () => {
     const rows = [row({ id: 'a' }), row({ id: 'b', identity: 'app', submittedAt: '2026-09-01' })];
-    const snapshot = rows.map((r) => r.id);
+    const snapshot = rows.map((r: Row) => r.id);
     groupSubmissionsByApp(rows, A.identity, A.submittedAt);
-    expect(rows.map((r) => r.id)).toEqual(snapshot);
+    expect(rows.map((r: Row) => r.id)).toEqual(snapshot);
   });
 });
 
@@ -207,7 +207,7 @@ describe('filterGroups — matches if ANY version matches', () => {
   });
 
   it('filters out a group when no version matches', () => {
-    expect(filterGroups(groups, 'Other', A).map((g) => g.identity)).toEqual(['other']);
+    expect(filterGroups(groups, 'Other', A).map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['other']);
   });
 
   it('an empty query returns all groups', () => {
@@ -239,7 +239,7 @@ describe('sortGroups — by the latest version of each group', () => {
     A.submittedAt
   );
 
-  const ids = (s: SortState) => sortGroups(groups, s, A).map((g) => g.identity);
+  const ids = (s: SortState) => sortGroups(groups, s, A).map((g: SubmissionGroup<Row>) => g.identity);
 
   it('sorts by App text asc/desc', () => {
     expect(ids({ column: 'app', direction: 'asc' })).toEqual(['alpha', 'bravo']);
@@ -263,9 +263,9 @@ describe('sortGroups — by the latest version of each group', () => {
   });
 
   it('does not mutate the input group array', () => {
-    const before = groups.map((g) => g.identity);
+    const before = groups.map((g: SubmissionGroup<Row>) => g.identity);
     sortGroups(groups, { column: 'app', direction: 'desc' }, A);
-    expect(groups.map((g) => g.identity)).toEqual(before);
+    expect(groups.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(before);
   });
 });
 
@@ -385,7 +385,7 @@ describe('statusBucket / bucketGroupsByStatus — status sections', () => {
       A.submittedAt
     );
     const buckets = bucketGroupsByStatus(groups, A.status);
-    expect(buckets.rejected.map((g) => g.identity)).toEqual(['app']);
+    expect(buckets.rejected.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['app']);
     expect(buckets.live).toEqual([]);
   });
 
@@ -403,7 +403,7 @@ describe('statusBucket / bucketGroupsByStatus — status sections', () => {
         A.submittedAt
       );
       const buckets = bucketGroupsByStatus(groups, A.status);
-      expect(buckets.live.map((g) => g.identity)).toEqual(['app']);
+      expect(buckets.live.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['app']);
       expect(buckets.pending).toEqual([]);
       expect(buckets.rejected).toEqual([]);
       expect(buckets.withdrawn).toEqual([]);
@@ -423,11 +423,11 @@ describe('statusBucket / bucketGroupsByStatus — status sections', () => {
       A.submittedAt
     );
     const buckets = bucketGroupsByStatus(groups, A.status);
-    expect(buckets.live.map((g) => g.identity)).toEqual(['live-app']);
-    expect(buckets.pending.map((g) => g.identity)).toEqual(['pending-app']);
-    expect(buckets.rejected.map((g) => g.identity)).toEqual(['rejected-app']);
+    expect(buckets.live.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['live-app']);
+    expect(buckets.pending.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['pending-app']);
+    expect(buckets.rejected.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['rejected-app']);
     // Unknown status ('archived') falls back into the closed Withdrawn section.
-    expect(buckets.withdrawn.map((g) => g.identity)).toEqual(['withdrawn-app', 'weird-app']);
+    expect(buckets.withdrawn.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['withdrawn-app', 'weird-app']);
   });
 
   it('preserves the incoming group order within a bucket (a pre-applied sort is kept)', () => {
@@ -440,7 +440,7 @@ describe('statusBucket / bucketGroupsByStatus — status sections', () => {
       A.submittedAt
     );
     const buckets = bucketGroupsByStatus(groups, A.status);
-    expect(buckets.pending.map((g) => g.identity)).toEqual(['p1', 'p2']);
+    expect(buckets.pending.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['p1', 'p2']);
   });
 
   it('yields all (empty) owner buckets for no groups', () => {
@@ -497,7 +497,7 @@ describe('bucketGroupsByStatus — mod-removed override (precedence fix)', () =>
       }),
     ];
     const buckets = bucketize(rows);
-    expect(buckets['mod-removed'].map((g) => g.identity)).toEqual(['app']);
+    expect(buckets['mod-removed'].map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['app']);
     expect(buckets.live).toEqual([]);
     expect(buckets.rejected).toEqual([]);
     expect(buckets.withdrawn).toEqual([]);
@@ -519,7 +519,7 @@ describe('bucketGroupsByStatus — mod-removed override (precedence fix)', () =>
     ];
     const buckets = bucketize(rows);
     expect(buckets['mod-removed']).toEqual([]);
-    expect(buckets.live.map((g) => g.identity)).toEqual(['app']);
+    expect(buckets.live.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['app']);
   });
 
   it('rejected / withdrawn / pending groups are unchanged by the override', () => {
@@ -531,9 +531,9 @@ describe('bucketGroupsByStatus — mod-removed override (precedence fix)', () =>
       row({ id: 'w', identity: 'withdrawn-app', status: 'withdrawn' }),
     ];
     const buckets = bucketize(rows);
-    expect(buckets.pending.map((g) => g.identity)).toEqual(['pending-app']);
-    expect(buckets.rejected.map((g) => g.identity)).toEqual(['rejected-app']);
-    expect(buckets.withdrawn.map((g) => g.identity)).toEqual(['withdrawn-app']);
+    expect(buckets.pending.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['pending-app']);
+    expect(buckets.rejected.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['rejected-app']);
+    expect(buckets.withdrawn.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['withdrawn-app']);
     expect(buckets['mod-removed']).toEqual([]);
     expect(buckets.live).toEqual([]);
   });
@@ -552,7 +552,7 @@ describe('bucketGroupsByStatus — mod-removed override (precedence fix)', () =>
       }),
     ];
     const buckets = bucketize(rows);
-    expect(buckets['mod-removed'].map((g) => g.identity)).toEqual(['app']);
+    expect(buckets['mod-removed'].map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['app']);
     expect(buckets.live).toEqual([]);
   });
 
@@ -572,7 +572,7 @@ describe('bucketGroupsByStatus — mod-removed override (precedence fix)', () =>
       groupSubmissionsByApp(rows, A.identity, A.submittedAt),
       A.status
     );
-    expect(buckets.live.map((g) => g.identity)).toEqual(['app']);
+    expect(buckets.live.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['app']);
     expect(buckets['mod-removed']).toEqual([]);
   });
 });
