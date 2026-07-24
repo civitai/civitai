@@ -1,5 +1,7 @@
-// Mantine's own [data-accept]/[data-reject] rules live in @layer mantine and use
-// :where(), so any unlayered class or inline style on the root silently wins.
+// Keyed off [data-idle] rather than [data-accept]: on dragenter react-dropzone
+// only has DataTransferItems, which expose no filename and an empty type for
+// .safetensors/.ckpt/.pt, so an extension-based accept map can never match and
+// every drag reports as a reject until the actual drop.
 .dropzone {
   border: 2px dashed var(--mantine-color-dark-4);
   border-radius: var(--mantine-radius-md);
@@ -7,18 +9,15 @@
   cursor: pointer;
   transition: background-color 100ms ease, border-color 100ms ease;
 
-  &:hover {
-    border-color: var(--mantine-color-blue-5);
-    background-color: rgba(34, 139, 230, 0.05);
+  @media (hover: hover) {
+    &:where(:hover) {
+      border-color: var(--mantine-color-blue-5);
+      background-color: color-mix(in srgb, var(--mantine-color-blue-5) 5%, transparent);
+    }
   }
 
-  &[data-accept] {
+  &:not([data-idle]) {
     border-color: var(--mantine-color-blue-5);
-    background-color: rgba(34, 139, 230, 0.15);
-  }
-
-  &[data-reject] {
-    border-color: var(--mantine-color-red-6);
-    background-color: rgba(250, 82, 82, 0.15);
+    background-color: color-mix(in srgb, var(--mantine-color-blue-5) 15%, transparent);
   }
 }
