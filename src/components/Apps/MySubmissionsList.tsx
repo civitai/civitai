@@ -479,6 +479,10 @@ export function MySubmissionsList({
       ONSITE_ACCESSORS
     );
     return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status, OWNER_STATUS_BUCKETS, (g) =>
+      // INVARIANT: the backing-listing fields (`listingStatus` + `lastModerationAction`)
+      // are keyed per APP (the single `AppListing`), not per version — the server
+      // projects the same values onto every publish-request row in the group — so
+      // reading them off `g.latest` is equivalent to reading them off any version.
       isModRemovedListing({
         listingStatus: g.latest.listingStatus,
         lastModerationAction: g.latest.lastModerationAction,

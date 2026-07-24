@@ -817,6 +817,44 @@ describe('MySubmissionsList — mod-removed collapsed section', () => {
     await expect.element(page.getByText('hidden-app', { exact: false })).toBeInTheDocument();
     expect(page.getByTestId('apps-submissions-section-mod-removed').elements()).toHaveLength(0);
   });
+
+  test('the collapsed header is an at-a-glance signal: shows the count in a RED accent while rows stay hidden', async () => {
+    // Two moderator-removed apps → the collapsed header must read "Removed by a
+    // moderator (2)" in red BEFORE expanding, with the two rows still out of the DOM.
+    const modRemoved2 = () => ({
+      ...modRemoved(),
+      id: 'm2',
+      slug: 'gone-app-2',
+      appBlockId: 'block-m2',
+      appListingId: 'l-m2',
+    });
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[live(), modRemoved(), modRemoved2()]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+
+    const toggle = page.getByTestId('apps-submissions-section-mod-removed-toggle');
+    await expect.element(toggle).toBeInTheDocument();
+    // Collapsed by default, and both rows are hidden until expand.
+    expect(toggle.element().getAttribute('aria-expanded')).toBe('false');
+    expect(page.getByText('gone-app', { exact: false }).elements()).toHaveLength(0);
+    expect(page.getByText('gone-app-2', { exact: false }).elements()).toHaveLength(0);
+
+    // The header itself carries the label + the count (2) without expanding.
+    const headerText = toggle.element().textContent ?? '';
+    expect(headerText).toContain('Removed by a moderator');
+    expect(headerText).toContain('2');
+
+    // RED accent: the section is styled with the red/danger token — asserted via the
+    // deterministic `data-accent` (the visual `c="red"` label + red count badge need
+    // Mantine's theme CSS, which the browser-test env doesn't load, so the token is the
+    // stable signal). Ties the at-a-glance accent to the danger color, not a coincidence.
+    const section = page.getByTestId('apps-submissions-section-mod-removed');
+    expect(section.element().getAttribute('data-accent')).toBe('red');
+  });
 });
 
 describe('MySubmissionsList — P4 onsite unpublish / republish / history', () => {

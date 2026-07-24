@@ -188,9 +188,13 @@ function StatusSection({
     </Badge>
   );
 
+  // `data-accent` surfaces the section's color TOKEN deterministically (the visual is
+  // the `c={color}` label + `color={color}` badge, which need Mantine's theme CSS to
+  // resolve — not loaded in the browser-test env). Tests assert this token to prove the
+  // red/danger accent without depending on computed-color resolution.
   if (!collapsible) {
     return (
-      <Stack gap="xs" data-testid={testId}>
+      <Stack gap="xs" data-testid={testId} data-accent={color}>
         <Group gap={6}>
           <Text size="sm" fw={700}>
             {label}
@@ -203,15 +207,24 @@ function StatusSection({
   }
 
   return (
-    <Stack gap="xs" data-testid={testId}>
+    <Stack gap="xs" data-testid={testId} data-accent={color}>
       <UnstyledButton
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         data-testid={`${testId}-toggle`}
         style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
       >
-        {open ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
-        <Text size="sm" fw={700}>
+        {/* Collapsible sections are the terminal/negative ones (Rejected / Withdrawn /
+            Removed-by-a-moderator). Their collapsed header adopts the section's color
+            token — chevron + label + count badge — so an owner reads e.g. "Removed by
+            a moderator (N)" in red AT A GLANCE without expanding (rows stay hidden in
+            the Collapse until opened). Mirrors the red `ownerStateChip` accent. */}
+        {open ? (
+          <IconChevronDown size={16} color={`var(--mantine-color-${color}-6)`} />
+        ) : (
+          <IconChevronRight size={16} color={`var(--mantine-color-${color}-6)`} />
+        )}
+        <Text size="sm" fw={700} c={color}>
           {label}
         </Text>
         {countBadge}

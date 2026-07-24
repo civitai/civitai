@@ -575,6 +575,31 @@ describe('bucketGroupsByStatus — mod-removed override (precedence fix)', () =>
     expect(buckets.live.map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['app']);
     expect(buckets['mod-removed']).toEqual([]);
   });
+
+  it('an in-flight update (latest pending/rejected) over an approved+mod-removed listing → mod-removed, not live', () => {
+    // The precedence must beat BOTH signals at once: the group has an approved version
+    // in history (would → Live via any-approved) AND its latest request is an in-flight
+    // pending/rejected update (would → Pending/Rejected via latest-status). Because the
+    // backing listing is a moderator takedown, the override wins over both.
+    for (const latestStatus of ['pending', 'rejected'] as const) {
+      const rows = [
+        row({ id: 'v1', identity: 'app', status: 'approved', submittedAt: '2026-01-01' }),
+        row({
+          id: 'v2',
+          identity: 'app',
+          status: latestStatus,
+          submittedAt: '2026-02-01',
+          listingStatus: 'removed',
+          lastModerationAction: 'delist',
+        }),
+      ];
+      const buckets = bucketize(rows);
+      expect(buckets['mod-removed'].map((g: SubmissionGroup<Row>) => g.identity)).toEqual(['app']);
+      expect(buckets.live).toEqual([]);
+      expect(buckets.pending).toEqual([]);
+      expect(buckets.rejected).toEqual([]);
+    }
+  });
 });
 
 describe('toDate', () => {
