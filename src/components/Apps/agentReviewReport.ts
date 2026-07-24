@@ -248,6 +248,51 @@ export function severityBreakdown(findings: AgentFinding[]): SeverityBreakdown {
   return b;
 }
 
+// --- Deep-link to a finding (pure, unit-testable) --------------------------
+
+/** The report renderer's tab identifiers (in display order). */
+export type ReportTabValue = 'summary' | 'code' | 'security' | 'scopes';
+
+const REPORT_TAB_VALUES: readonly ReportTabValue[] = ['summary', 'code', 'security', 'scopes'];
+
+/** The two tabs that carry per-finding anchors (summary/scopes do not). */
+export type FindingTab = 'code' | 'security';
+
+/**
+ * The DOM id / deep-link anchor for a single finding. `index` is the finding's
+ * position in the SEVERITY-SORTED render list (the order the moderator sees), so
+ * a shared `#finding-<tab>-<index>` link lands on the same visible card.
+ */
+export function findingAnchorId(tab: FindingTab, index: number): string {
+  return `finding-${tab}-${index}`;
+}
+
+/** `finding-<code|security>-<index>` where index is a non-negative integer. */
+const FINDING_ANCHOR_RE = /^finding-(code|security)-(\d+)$/;
+
+/**
+ * Parse a report URL hash into a tab + optional finding anchor. Total and
+ * defensive — never throws on junk. Recognizes:
+ *   - `#finding-security-2` → { tab: 'security', anchorId: 'finding-security-2' }
+ *   - a bare `#code` / `#summary` / `#security` / `#scopes` → { tab }
+ *   - empty / unknown / malformed → {}
+ * Tolerates a leading `#` or none. A tab value outside the union is ignored.
+ */
+export function parseReportHash(hash: string): { tab?: ReportTabValue; anchorId?: string } {
+  if (typeof hash !== 'string') return {};
+  const raw = (hash.startsWith('#') ? hash.slice(1) : hash).trim();
+  if (!raw) return {};
+  const findingMatch = FINDING_ANCHOR_RE.exec(raw);
+  if (findingMatch) {
+    // Group 1 is 'code' | 'security', both members of the tab union.
+    return { tab: findingMatch[1] as FindingTab, anchorId: raw };
+  }
+  if ((REPORT_TAB_VALUES as readonly string[]).includes(raw)) {
+    return { tab: raw as ReportTabValue };
+  }
+  return {};
+}
+
 /**
  * Detect a FAILED analysis section. The runner persists each of
  * `codeReview` / `securityAudit` / `scopeVerdicts` verbatim; if a sub-analysis

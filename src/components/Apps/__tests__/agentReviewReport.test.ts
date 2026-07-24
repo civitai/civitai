@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   fileLineLabel,
+  findingAnchorId,
   findingBody,
   formatCostUsd,
   parseAgentReport,
+  parseReportHash,
   sectionAnalysisError,
   severityBreakdown,
   severityRank,
@@ -224,6 +226,70 @@ describe('severityBreakdown', () => {
       { evidence: [] },
     ]);
     expect(b).toEqual({ total: 8, critical: 1, high: 1, medium: 2, low: 1, info: 1, other: 2 });
+  });
+});
+
+describe('findingAnchorId', () => {
+  it('builds finding-<tab>-<index> for the two finding tabs', () => {
+    expect(findingAnchorId('code', 0)).toBe('finding-code-0');
+    expect(findingAnchorId('security', 2)).toBe('finding-security-2');
+  });
+  it('tolerates odd indices without throwing (never a hard requirement)', () => {
+    expect(findingAnchorId('code', -1)).toBe('finding-code--1');
+    expect(findingAnchorId('security', Number.NaN)).toBe('finding-security-NaN');
+  });
+});
+
+describe('parseReportHash', () => {
+  it('parses a finding anchor into { tab, anchorId }', () => {
+    expect(parseReportHash('#finding-security-2')).toEqual({
+      tab: 'security',
+      anchorId: 'finding-security-2',
+    });
+    expect(parseReportHash('#finding-code-0')).toEqual({
+      tab: 'code',
+      anchorId: 'finding-code-0',
+    });
+  });
+
+  it('tolerates a missing leading #', () => {
+    expect(parseReportHash('finding-security-1')).toEqual({
+      tab: 'security',
+      anchorId: 'finding-security-1',
+    });
+    expect(parseReportHash('code')).toEqual({ tab: 'code' });
+  });
+
+  it('parses a bare tab hash', () => {
+    expect(parseReportHash('#summary')).toEqual({ tab: 'summary' });
+    expect(parseReportHash('#code')).toEqual({ tab: 'code' });
+    expect(parseReportHash('#security')).toEqual({ tab: 'security' });
+    expect(parseReportHash('#scopes')).toEqual({ tab: 'scopes' });
+  });
+
+  it('returns {} for empty / unknown / malformed input', () => {
+    expect(parseReportHash('')).toEqual({});
+    expect(parseReportHash('#')).toEqual({});
+    expect(parseReportHash('#unknown')).toEqual({});
+    // A tab value outside the union is ignored (not a finding tab, not a bare tab).
+    expect(parseReportHash('#finding-scopes-2')).toEqual({});
+    expect(parseReportHash('#finding-summary-0')).toEqual({});
+    // Non-numeric / missing index does not match the finding anchor.
+    expect(parseReportHash('#finding-security-')).toEqual({});
+    expect(parseReportHash('#finding-security-abc')).toEqual({});
+    // A trailing suffix must not match (anchored regex).
+    expect(parseReportHash('#finding-security-2x')).toEqual({});
+    // Whitespace-only.
+    expect(parseReportHash('   ')).toEqual({});
+  });
+
+  it('round-trips findingAnchorId → parseReportHash', () => {
+    for (const tab of ['code', 'security'] as const) {
+      for (const i of [0, 1, 7, 42]) {
+        const anchorId = findingAnchorId(tab, i);
+        expect(parseReportHash(`#${anchorId}`)).toEqual({ tab, anchorId });
+      }
+    }
   });
 });
 
