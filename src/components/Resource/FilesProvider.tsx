@@ -820,7 +820,12 @@ const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
     title: 'Duplicate file types',
     error: new Error(
       conflicts
-        .map((group) => `${group.map((f) => f.name).join(', ')}: same type and settings`)
+        .map(
+          (group) =>
+            `${group
+              .map((f) => f.name)
+              .join(', ')}: same type, format, precision and quant — one must differ`
+        )
         .join('\n')
     ),
   });

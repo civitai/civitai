@@ -956,7 +956,7 @@ function MergeFileCard({
   const tc = useThemeColors();
 
   const fileTypeOptions = constants.modelFileTypes
-    .filter((t) => filterFileTypeByExtension(t, file.name))
+    .filter((t) => t === effectiveType || filterFileTypeByExtension(t, file.name))
     .map((x) => ({
       label: comfyFileTypeLabels[x] ?? (x === 'Model' && modelType ? modelType : x),
       value: x,

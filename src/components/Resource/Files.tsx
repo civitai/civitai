@@ -984,8 +984,10 @@ function FileEditForm({
     }
   };
 
+  // Keep the file's own type selectable even when it's no longer offered, so a
+  // legacy type doesn't render as a blank Select.
   const filterByFileExtension = (value: ModelFileType) =>
-    filterFileTypeByExtension(value, versionFile.name);
+    value === versionFile.type || filterFileTypeByExtension(value, versionFile.name);
 
   const handleReset = () => {
     updateFile(versionFile.uuid, {
