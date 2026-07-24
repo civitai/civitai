@@ -27,7 +27,7 @@ const {
         jobQueue: {
           // Simulate a DB LIMIT: return at most `take` rows from a backlog of
           // TOTAL_QUEUE, oldest-first. This is what bounds the run.
-          findMany: vi.fn(async ({ take }: { take: number }) => {
+          findMany: vi.fn(async ({ take }: { take: number; orderBy?: unknown; where?: unknown }) => {
             const n = Math.min(take, TOTAL_QUEUE);
             pulled.ids = Array.from({ length: n }, (_, i) => i + 1);
             return pulled.ids.map((entityId) => ({ entityId }));

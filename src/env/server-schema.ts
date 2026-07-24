@@ -375,7 +375,11 @@ export const serverSchema = z
     // throughput so a large backlog drains gradually across runs instead of in one
     // dump. New user uploads scan directly via ingestImage on creation and are NOT
     // gated by this. Conservative default; tune via env without a redeploy.
-    IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().default(1000),
+    // Positive integer guard: an empty/0 value would make findMany take:0 (all
+    // retries silently wedged) and a negative value would flip Prisma's take to
+    // newest-first (starving the oldest backlog) — a bad hand-tune must fail
+    // loudly at boot instead.
+    IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
     IMAGE_SCANNER_NEW: zc.booleanString.default(false),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
