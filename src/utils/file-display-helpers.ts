@@ -121,7 +121,7 @@ export function getFileIconConfig(
  * when picking a type. 'Pruned Model' encodes the SD1-era full/pruned split,
  * which SD 1.x expresses through the file's `size` metadata instead.
  */
-const retiredFileTypes: readonly string[] = ['Pruned Model'];
+const retiredFileTypes: readonly ModelFileType[] = ['Pruned Model'];
 
 /**
  * Filter which ModelFileType options are valid for a given file extension.

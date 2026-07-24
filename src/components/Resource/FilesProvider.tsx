@@ -824,7 +824,7 @@ const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
           (group) =>
             `${group
               .map((f) => f.name)
-              .join(', ')}: same type, format, precision and quant — one must differ`
+              .join(', ')}: same type, size, format, precision and quant, one must differ`
         )
         .join('\n')
     ),
