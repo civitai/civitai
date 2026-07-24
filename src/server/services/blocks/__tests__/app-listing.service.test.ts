@@ -40,6 +40,7 @@ import {
   encodeListingCursor,
   getListingDetail,
   listAvailableListings,
+  moderationStatusWhere,
   projectListingCard,
   projectListingDetail,
   recommendRollup,
@@ -730,5 +731,40 @@ describe('getListingDetail — approved-only + maturity gate', () => {
     });
     const detail = await getListingDetail({ slug: 'cool-app' }, { redCapable: true });
     expect(detail?.contentRating).toBe('x');
+  });
+});
+
+/**
+ * The mod-table status filter, made EFFECTIVE-STATUS-AWARE: a draft external
+ * listing that has a live pending publish request is "awaiting first review", so
+ * the "Pending" filter must surface it and the "Draft" filter must exclude it.
+ */
+describe('moderationStatusWhere', () => {
+  it('undefined (all) → no status constraint', () => {
+    expect(moderationStatusWhere(undefined)).toEqual({});
+  });
+
+  it('pending → real-pending OR draft-with-a-live-pending-request', () => {
+    expect(moderationStatusWhere('pending')).toEqual({
+      OR: [
+        { status: 'pending' },
+        { status: 'draft', publishRequests: { some: { status: 'pending' } } },
+      ],
+    });
+  });
+
+  it('draft → only TRUE orphan drafts (no live pending request)', () => {
+    expect(moderationStatusWhere('draft')).toEqual({
+      status: 'draft',
+      publishRequests: { none: { status: 'pending' } },
+    });
+  });
+
+  it('approved → an exact status match', () => {
+    expect(moderationStatusWhere('approved')).toEqual({ status: 'approved' });
+  });
+
+  it('removed → an exact status match', () => {
+    expect(moderationStatusWhere('removed')).toEqual({ status: 'removed' });
   });
 });

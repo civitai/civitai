@@ -483,7 +483,7 @@ export async function getMyChallenges({
       ${blockSql ? Prisma.sql`AND ${blockSql}` : Prisma.empty}
       ${
         effectiveBrowsingLevel > 0
-          ? Prisma.sql`AND (c."createdById" = ${userId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
+          ? Prisma.sql`AND (c."createdById" = ${userId} OR ((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)))`
           : Prisma.empty
       }
     ORDER BY COALESCE(my."myEnteredAt", c."createdAt") DESC
@@ -650,9 +650,10 @@ export async function getInfiniteChallenges(
     conditions.push(Prisma.sql`c."eventId" = ${challengeEventId}`);
   }
 
-  // Content level filter — models-style: exclude a challenge outright when its REAL cover image
-  // level doesn't intersect the viewer's effective browsing level, rather than trusting the
-  // challenge's declared `allowedNsfwLevel`. On green the level is capped server-side (see
+  // Content level filter — the challenge's own rating (`nsfwLevel`, the highest level its
+  // `allowedNsfwLevel` permits) must intersect the viewer's effective browsing level. The REAL
+  // cover level is required to intersect too, so a challenge that under-declares its rating can't
+  // leak an NSFW cover into an SFW feed. On green the level is capped server-side (see
   // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
   // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
   // above.
@@ -662,10 +663,9 @@ export async function getInfiniteChallenges(
     requested: browsingLevel,
   });
   if (effectiveBrowsingLevel > 0) {
+    const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
     conditions.push(
-      currentUserId
-        ? Prisma.sql`(c."createdById" = ${currentUserId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
-        : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)`
+      currentUserId ? Prisma.sql`(c."createdById" = ${currentUserId} OR ${levelSql})` : levelSql
     );
   }
 
@@ -3675,19 +3675,18 @@ export async function getCompletedChallengesWithWinners(
   const blockSql = challengeCreatorBlockSql(await getChallengeExcludedUserIds(currentUserId));
   if (blockSql) conditions.push(blockSql);
 
-  // Content level filter — parity with the feed: exclude a challenge whose REAL cover image level
-  // doesn't intersect the viewer's effective (green-capped) browsing level, rather than trusting
-  // the declared allowedNsfwLevel. Creator sees their own.
+  // Content level filter — parity with the feed: the challenge's own rating and its REAL cover
+  // level must both intersect the viewer's effective (green-capped) browsing level. Creator sees
+  // their own.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen: isGreen ?? false,
     isLoggedIn: currentUserId != null,
     requested: browsingLevel,
   });
   if (effectiveBrowsingLevel > 0) {
+    const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
     conditions.push(
-      currentUserId
-        ? Prisma.sql`(c."createdById" = ${currentUserId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
-        : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)`
+      currentUserId ? Prisma.sql`(c."createdById" = ${currentUserId} OR ${levelSql})` : levelSql
     );
   }
 

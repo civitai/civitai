@@ -437,22 +437,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </div>
             </AlertWithIcon>
           )}
-          {isOwner &&
-            (article.ingestion === ArticleIngestionStatus.Error ||
-              article.ingestion === ArticleIngestionStatus.Blocked) && (
-              <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
-                <div>
-                  <Text fw={600} size="lg" mb="xs">
-                    This article isn&apos;t visible to the public
-                  </Text>
-                  <Text size="sm">
-                    {article.ingestion === ArticleIngestionStatus.Blocked
-                      ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
-                      : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
-                  </Text>
-                </div>
-              </AlertWithIcon>
-            )}
           {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
             <ArticleScanStatus
               articleId={article.id}
@@ -548,6 +532,24 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               creator={article.user}
               attachments={article.attachments}
               articleId={article.id}
+              hiddenNotice={
+                isOwner &&
+                (article.ingestion === ArticleIngestionStatus.Error ||
+                  article.ingestion === ArticleIngestionStatus.Blocked) ? (
+                  <AlertWithIcon
+                    align="center"
+                    color="red"
+                    iconColor="red"
+                    icon={<IconAlertCircle size={28} />}
+                    title="This article isn't visible to the public"
+                    size="sm"
+                  >
+                    {article.ingestion === ArticleIngestionStatus.Blocked
+                      ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
+                      : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
+                  </AlertWithIcon>
+                ) : null
+              }
             />
           </ContainerGrid2.Col>
         </ContainerGrid2>
@@ -609,10 +611,7 @@ function ArticleOwnerRatingControls({
   // pre-fill the dispute modal with an invalid level. Owner can still open
   // the dispute modal via the inline button in that case.
   const showStaleOverrideBanner =
-    derivedRatingDroppedBelowOverride &&
-    canResubmit &&
-    derivedLevel != null &&
-    derivedLevel >= 1;
+    derivedRatingDroppedBelowOverride && canResubmit && derivedLevel != null && derivedLevel >= 1;
 
   const handleOpen = (initialSuggestedLevel?: number) => {
     openArticleRatingReviewModal({ articleId, currentLevel: nsfwLevel, initialSuggestedLevel });
@@ -640,9 +639,7 @@ function ArticleOwnerRatingControls({
       </Tooltip>
     );
   } else if (isResolved && !canResubmit) {
-    const resolvedDate = myReview!.resolvedAt
-      ? formatDate(new Date(myReview!.resolvedAt))
-      : '';
+    const resolvedDate = myReview!.resolvedAt ? formatDate(new Date(myReview!.resolvedAt)) : '';
     const statusLabel =
       myReview!.status === 'Actioned'
         ? 'approved'

@@ -218,7 +218,7 @@ export function ariaSortFor(
 // ── status sections (UX pass) ──────────────────────────────────────────────────
 
 /**
- * The four status SECTIONS the /apps/my-submissions lists render, in display order.
+ * The status SECTIONS the /apps/my-submissions lists render, in display order.
  * A group is bucketed by its `latest` submission's status:
  *   - `approved` → **Live** (the row badge still distinguishes the onsite deploy
  *     sub-state building/deploying/live/failed — we DON'T split approved by it),
@@ -227,8 +227,15 @@ export function ariaSortFor(
  *   - `withdrawn` → **Withdrawn** (default-collapsed),
  *   - any other/unknown status → **Withdrawn** (a safe closed default so a future
  *     status degrades gracefully rather than vanishing).
+ *
+ * `mod-removed` is NOT derived from a submission status — it is an OVERRIDE bucket
+ * for a listing a moderator took down (backing `AppListing.status='removed'` whose
+ * last moderation event is a mod action, not the owner's own `owner-unpublish`).
+ * The caller supplies it via {@link bucketGroupsByStatus}'s `overrideBucketOf`; it
+ * takes precedence over the any-approved→Live rule so a once-live-now-removed app
+ * lands in its own default-collapsed section instead of masquerading as Live.
  */
-export type StatusBucket = 'live' | 'pending' | 'rejected' | 'withdrawn';
+export type StatusBucket = 'live' | 'pending' | 'rejected' | 'withdrawn' | 'mod-removed';
 
 /**
  * The MOD-view status buckets (Live / Pending / Rejected / **Removed** / Draft).
@@ -244,12 +251,18 @@ export type ModStatusBucket = 'live' | 'pending' | 'rejected' | 'removed' | 'dra
 /** Every bucket ANY consumer can render (owner ∪ mod) — the section-META key set. */
 export type AnyStatusBucket = StatusBucket | ModStatusBucket;
 
-/** The OWNER section render order (Live → Pending → Rejected → Withdrawn). */
+/**
+ * The OWNER section render order (Live → Pending → Rejected → Withdrawn →
+ * Removed-by-a-moderator). The moderator-takedown section sits LAST — it's the most
+ * terminal state (the owner can't self-republish), so it trails the other
+ * default-collapsed sections.
+ */
 export const STATUS_SECTION_ORDER: readonly StatusBucket[] = [
   'live',
   'pending',
   'rejected',
   'withdrawn',
+  'mod-removed',
 ];
 
 /**
@@ -352,15 +365,30 @@ export type BucketedGroups<T, B extends string = StatusBucket> = Record<
  * approved bucket by their `latest` submission's status (see the config's `bucketOf`).
  * (For the mod table each row is a single listing — one "version" — so the
  * any-approved→live rule reduces to "an `approved` listing is Live".)
+ *
+ * `overrideBucketOf` (optional) gets FIRST refusal on each group: when it returns a
+ * bucket, that wins over BOTH the any-approved→Live rule and the latest-status
+ * bucketing. The owner lists use it to route a moderator-removed listing (its backing
+ * `AppListing.status='removed'` + a non-owner last moderation event) into the
+ * `mod-removed` section even though the group still has an approved version — the fix
+ * for a taken-down-but-once-live app misfiling under Live. A bucket the config doesn't
+ * declare is ignored (defensively falls through to the default logic) so a stray
+ * override can never crash on an uninitialised key.
  */
 export function bucketGroupsByStatus<T, B extends string = StatusBucket>(
   groups: readonly SubmissionGroup<T>[],
   statusOf: (row: T) => string,
-  config: StatusBucketConfig<B> = OWNER_STATUS_BUCKETS as unknown as StatusBucketConfig<B>
+  config: StatusBucketConfig<B> = OWNER_STATUS_BUCKETS as unknown as StatusBucketConfig<B>,
+  overrideBucketOf?: (group: SubmissionGroup<T>) => B | null
 ): BucketedGroups<T, B> {
   const result = {} as BucketedGroups<T, B>;
   for (const b of config.buckets) result[b] = [];
   for (const group of groups) {
+    const override = overrideBucketOf?.(group) ?? null;
+    if (override !== null && result[override] !== undefined) {
+      result[override].push(group);
+      continue;
+    }
     const hasPublishedVersion = [group.latest, ...group.older].some(
       (v) => statusOf(v) === 'approved'
     );

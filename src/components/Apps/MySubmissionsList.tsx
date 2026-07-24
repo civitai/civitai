@@ -24,6 +24,7 @@ import { isStaleDeploy } from '~/components/Apps/deploy-status';
 import {
   canOwnerRepublish,
   canOwnerUnpublish,
+  isModRemovedListing,
   ownerListingState,
   ownerStateChip,
   type OwnerListingState,
@@ -37,6 +38,7 @@ import {
   currentlyPublishedVersionId,
   filterGroups,
   groupSubmissionsByApp,
+  OWNER_STATUS_BUCKETS,
   sortGroups,
   toDate,
   type SubmissionAccessors,
@@ -458,9 +460,12 @@ export function MySubmissionsList({
   };
 
   // Group by app, apply the text filter, sort newest-first, then partition into
-  // status SECTIONS (Live / Pending / Rejected / Withdrawn). Status is now the
-  // section, so the column header is no longer sortable — a plain submittedAt-desc
-  // sort within each section keeps the newest request on top.
+  // status SECTIONS (Live / Pending / Rejected / Withdrawn / Removed-by-a-moderator).
+  // Status is now the section, so the column header is no longer sortable — a plain
+  // submittedAt-desc sort within each section keeps the newest request on top. The
+  // `overrideBucketOf` routes a moderator-removed listing into its own collapsed
+  // section, taking precedence over the any-approved→Live rule (a once-live app a mod
+  // took down would otherwise misfile under Live).
   const buckets = useMemo(() => {
     const grouped = groupSubmissionsByApp(
       submissions,
@@ -473,14 +478,26 @@ export function MySubmissionsList({
       { column: 'submitted', direction: 'desc' },
       ONSITE_ACCESSORS
     );
-    return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status);
+    return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status, OWNER_STATUS_BUCKETS, (g) =>
+      // INVARIANT: the backing-listing fields (`listingStatus` + `lastModerationAction`)
+      // are keyed per APP (the single `AppListing`), not per version — the server
+      // projects the same values onto every publish-request row in the group — so
+      // reading them off `g.latest` is equivalent to reading them off any version.
+      isModRemovedListing({
+        listingStatus: g.latest.listingStatus,
+        lastModerationAction: g.latest.lastModerationAction,
+      })
+        ? 'mod-removed'
+        : null
+    );
   }, [submissions, query]);
 
   const totalGroups =
     buckets.live.length +
     buckets.pending.length +
     buckets.rejected.length +
-    buckets.withdrawn.length;
+    buckets.withdrawn.length +
+    buckets['mod-removed'].length;
 
   const toggle = (identity: string) =>
     setExpanded((prev) => {

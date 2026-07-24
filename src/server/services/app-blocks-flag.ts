@@ -606,3 +606,79 @@ export async function isAppBlocksSharedStorageEnabled(opts?: {
   const user = opts.user;
   return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG, String(user.id), buildFliptContext(user));
 }
+
+/**
+ * Dedicated GLOBAL flag for the PUBLIC EXTERNAL App-store read GA — the mechanism
+ * that lets the store serve `kind='offsite'` (external app) listings to the
+ * ANONYMOUS public while `kind='onsite'` App Blocks stay gated to the existing
+ * mods + app-dev-testers cohort. This is a SEPARATE, ORTHOGONAL axis from the
+ * `app-listings` catalog-visibility flag: `app-listings` gates WHO sees the FULL
+ * catalog (all kinds); this flag opens ONLY the offsite subset to EVERYONE.
+ *
+ * ## Why a GLOBAL boolean (not segmented)
+ *
+ * The audience is the anonymous public — an anon viewer carries NO user context,
+ * so a segment could never match and the flag would silently stay dark. It is
+ * therefore evaluated globally (entityId='global', empty context), mirroring
+ * `isAppBlocksPipelineEnabled` / `isAppBlocksRuntimeEnabled` exactly, and MUST be
+ * created in Flipt as a PLAIN base-`enabled` boolean (NO segment).
+ *
+ * ## Fail-closed / dark posture
+ *
+ * The flag does NOT exist in Flipt at merge time (it is created in a LATER phase,
+ * base `enabled: false`, only when the offsite store is ready to go public) or if
+ * Flipt is unreachable → `isFlipt` returns `false` → `resolveStoreVisibilityScope`
+ * returns `none` for a non-privileged viewer and `full` for a mod/tester — i.e.
+ * BYTE-IDENTICAL to today. This flag NEVER upgrades a mod/tester away from `full`;
+ * it only ever moves a non-privileged viewer from `none` → `public-external`.
+ */
+export const APP_LISTINGS_PUBLIC_EXTERNAL_FLAG = 'app-listings-public-external';
+
+/**
+ * GLOBAL gate for the PUBLIC EXTERNAL App-store read GA. Evaluates the dedicated
+ * `app-listings-public-external` flag with no user context (entityId='global',
+ * empty context), mirroring `isAppBlocksPipelineEnabled`. Fail-closed: absent flag
+ * / Flipt-down → `false`. See APP_LISTINGS_PUBLIC_EXTERNAL_FLAG.
+ */
+export async function isExternalListingsPublicEnabled(): Promise<boolean> {
+  return isFlipt(APP_LISTINGS_PUBLIC_EXTERNAL_FLAG);
+}
+
+/**
+ * The store read-path VISIBILITY SCOPE resolved once per request, then threaded
+ * into every store read proc + the data-layer kind predicate:
+ *   - `full`            — the caller sees ALL kinds (today's mod/tester gate).
+ *   - `public-external` — the caller sees ONLY `kind='offsite'` approved listings
+ *     (both `connect` and `external-link` sub-kinds); onsite is excluded.
+ *   - `none`            — the caller sees NOTHING (dark; today's public default).
+ */
+export type StoreVisibilityScope = 'full' | 'public-external' | 'none';
+
+/**
+ * Resolve the {@link StoreVisibilityScope} for a store read request. The two flags
+ * are INDEPENDENT axes and are checked in priority order so the mod/tester path is
+ * NEVER narrowed by the public flag:
+ *   1. `isAppListingsEnabled({ user })` (mods + app-dev-testers, OR-falling-back to
+ *      `app-blocks-enabled`) → `full` — sees every kind, byte-identical to today.
+ *   2. else `isExternalListingsPublicEnabled()` (the global public flag) →
+ *      `public-external` — sees only offsite listings.
+ *   3. else → `none` — dark.
+ *
+ * 🔴 DARK-by-default invariant: with `app-listings-public-external` ABSENT in Flipt
+ * (its as-merged state), a mod/tester still resolves `full` and everyone else
+ * resolves `none` — ZERO observable change until the public flag is created +
+ * enabled in a later phase.
+ */
+export async function resolveStoreVisibilityScope(opts?: {
+  user?: SessionUser;
+}): Promise<StoreVisibilityScope> {
+  // Axis 1 — the existing catalog-visibility gate (mods + app-dev-testers). MUST be
+  // checked FIRST so a privileged viewer always gets `full`, never `public-external`
+  // (the public flag can only ever LIFT a non-privileged viewer, never narrow a mod).
+  if (await isAppListingsEnabled(opts)) return 'full';
+  // Axis 2 — the global public-external flag (anon + everyone). Global eval; a
+  // non-privileged viewer sees ONLY offsite listings.
+  if (await isExternalListingsPublicEnabled()) return 'public-external';
+  // Fail-closed: neither flag → dark.
+  return 'none';
+}

@@ -66,6 +66,26 @@ const ROWS = [
   }),
 ];
 
+// Effective-status dataset: an EXTERNAL listing awaiting its first review is stored
+// as status='draft' WITH a live pending publish request → it must bucket under
+// Pending + badge "Pending". A draft with NO pending request is a true orphan and
+// stays under Draft.
+const DRAFT_ROWS = [
+  offsite({
+    id: 'apl_dp',
+    slug: 'draft-pending-ext',
+    name: 'Draft Pending Ext',
+    status: 'draft',
+    pendingRequest: {
+      id: 'alpr_dp',
+      submittedAt: new Date('2026-01-01T00:00:00Z'),
+      changelog: null,
+      submittedBy: { id: 1, username: 'dev', image: null },
+    },
+  }),
+  offsite({ id: 'apl_do', slug: 'draft-orphan-ext', name: 'Draft Orphan', status: 'draft' }),
+];
+
 // Two-page dataset (paged mode) — page 1 carries a nextCursor, page 2 does not.
 const PAGE1 = [offsite({ id: 'apl_a', slug: 'alpha-live', name: 'Alpha', status: 'approved' })];
 const PAGE2 = [offsite({ id: 'apl_z', slug: 'zebra-live', name: 'Zebra', status: 'approved' })];
@@ -108,6 +128,8 @@ const mocks = vi.hoisted(() => ({
   // D-stranding regression: page 1 is a FULL server page of on-site pending rows (all
   // filtered out client-side) but a next cursor exists; page 2 carries a visible row.
   strandedD: false,
+  // Effective-status: a draft-with-a-live-pending-request + a true orphan draft.
+  draftPending: false,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -158,6 +180,15 @@ vi.mock('~/utils/trpc', () => {
                 isLoading: false,
                 isFetching: false,
                 error,
+                refetch: mocks.refetch,
+              };
+            }
+            if (mocks.draftPending) {
+              return {
+                data: { items: DRAFT_ROWS, nextCursor: null },
+                isLoading: false,
+                isFetching: false,
+                error: null,
                 refetch: mocks.refetch,
               };
             }
@@ -225,6 +256,7 @@ beforeEach(() => {
   mocks.queryErrorCode = null;
   mocks.paged = false;
   mocks.strandedD = false;
+  mocks.draftPending = false;
   showError.mockClear();
 });
 
@@ -266,6 +298,35 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
     await expect.element(page.getByTestId('apps-mod-listing-row-pending-ext')).toBeInTheDocument();
     // On-site pending filtered out entirely (no row, no dead-end).
     expect(page.getByTestId('apps-mod-listing-row-onsite-pending').elements()).toHaveLength(0);
+  });
+});
+
+// A draft external listing awaiting its FIRST review (status='draft' + a live pending
+// request) must read as EFFECTIVELY Pending in the mod table: bucketed under the
+// Pending section + badged "Pending" (so it agrees with the submitter's my-submissions
+// view and a mod filtering by Pending sees it). A true orphan draft stays under Draft.
+describe('AppListingsModerationTable — effective status (draft-with-pending → Pending)', () => {
+  test('a draft-with-a-live-pending-request buckets under Pending; a true orphan draft stays Draft', async () => {
+    mocks.draftPending = true;
+    renderWithProviders(<AppListingsModerationTable />);
+
+    const pendingSection = page.getByTestId('apps-mod-listings-section-pending');
+    const draftSection = page.getByTestId('apps-mod-listings-section-draft');
+    await expect.element(pendingSection).toBeInTheDocument();
+    await expect.element(draftSection).toBeInTheDocument();
+
+    const draftPendingRow = page.getByTestId('apps-mod-listing-row-draft-pending-ext');
+    const orphanRow = page.getByTestId('apps-mod-listing-row-draft-orphan-ext');
+    await expect.element(draftPendingRow).toBeInTheDocument();
+    await expect.element(orphanRow).toBeInTheDocument();
+
+    // Bucketing: the draft-with-pending sits in the Pending section, the orphan in Draft.
+    expect(pendingSection.element().contains(draftPendingRow.element())).toBe(true);
+    expect(draftSection.element().contains(orphanRow.element())).toBe(true);
+
+    // Badge: the draft-with-pending badges "Pending" (effective), the orphan "Draft".
+    expect(draftPendingRow.element().textContent ?? '').toContain('Pending');
+    expect(orphanRow.element().textContent ?? '').toContain('Draft');
   });
 });
 

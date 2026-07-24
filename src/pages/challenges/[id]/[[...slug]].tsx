@@ -711,9 +711,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>
           <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
             <Stack gap="md">
-              {/* Cover Image */}
+              {/* w-full is load-bearing: `mx-auto` cancels the parent Stack's cross-axis stretch,
+                  so without a definite width the box is fit-content — and the blurred branch's only
+                  content is MediaHash's absolutely-positioned canvas, collapsing the cover to 0x0. */}
               {challenge.coverImage && (
-                <div className="relative mx-auto max-w-2xl overflow-hidden rounded-lg">
+                <div className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-lg">
                   <ImageGuard2 image={challenge.coverImage}>
                     {(safe) => (
                       <>

@@ -370,6 +370,16 @@ export const serverSchema = z
     TEXT_MODERATION_CALLBACK: z.string().optional(),
     IMAGE_SCANNING_MODEL: z.string().optional(),
     IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
+    // Upper bound on how many queued images the `ingest-images` retry/backfill cron
+    // pulls (and therefore can submit) per run. Sized to the scanner's sustainable
+    // throughput so a large backlog drains gradually across runs instead of in one
+    // dump. New user uploads scan directly via ingestImage on creation and are NOT
+    // gated by this. Conservative default; tune via env without a redeploy.
+    // Positive integer guard: an empty/0 value would make findMany take:0 (all
+    // retries silently wedged) and a negative value would flip Prisma's take to
+    // newest-first (starving the oldest backlog) — a bad hand-tune must fail
+    // loudly at boot instead.
+    IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
     IMAGE_SCANNER_NEW: zc.booleanString.default(false),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
