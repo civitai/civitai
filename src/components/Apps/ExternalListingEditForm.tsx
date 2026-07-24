@@ -26,7 +26,6 @@ import {
   OFFSITE_SUBMIT_LIMITS,
   isUrlStepComplete,
   normalizeLinkUrl,
-  scopeJustificationError,
   validateOffsiteSubmitForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
@@ -204,13 +203,6 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     // Client mirror of the server validation (URL/name/slug/bounds) before the
     // round-trip; the server stays the source of truth.
     const nextErrors = validateOffsiteSubmitForm(values);
-    // SENSITIVE-only justification model (parity with create): every sensitive scope
-    // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
-    // read-only + never required. No connect client → no scopes → nothing to check.
-    if (edit.connectClientId != null) {
-      const scopeError = scopeJustificationError(values);
-      if (scopeError) nextErrors.scopeJustifications = scopeError;
-    }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       // Steer the author to the step that carries the first error.
@@ -320,7 +312,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
             <Stack gap="md" mt="md">
               <TextInput
                 label="App URL"
-                description="Your app’s public https link — users open it from the listing."
+                description="Your app's public https link — users open it from the listing."
                 placeholder="example.com/app"
                 value={values.externalUrl}
                 onChange={(e) => setField('externalUrl', e.currentTarget.value)}
@@ -340,7 +332,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 >
                   <Text size="sm">
                     This listing has no App URL. Adding one lets users open your app (and lets us
-                    suggest a name, description and images) — but it’s optional here.
+                    suggest a name, description and images) — but it's optional here.
                   </Text>
                 </Alert>
               )}
