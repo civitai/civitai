@@ -485,6 +485,45 @@ into search/feeds.
 
 ---
 
+## Caching `getPaidAccess`
+
+**Use the existing batch primitive.** `createCachedObject` (`src/server/utils/cache-helpers.ts`) is a
+per-key, batch-fill cache: give it `lookupFn(ids)` + `idKey` and it returns a map, hitting the DB only for
+misses. `resource-data.redis.ts` already uses it. `getPaidAccess` is a new `createCachedObject` keyed by a
+synthetic `"${entityType}:${entityId}"` (createCachedObject keys on one stringified field), which lets models
+and comics share one cache namespace.
+
+**Design for multi-entity; single is a one-key call.** The hot paths are batched:
+
+- **generation** resolves *all* a request's resources at once (`getEntityAccess([...resources, ...substitutes])`);
+- **feeds / lists** render N entities.
+- the **detail page** is the only true single — a one-element call.
+
+So the signature is `getPaidAccess(keys: {entityType, entityId}[]) -> Map`. `resolveAccess` batch-fetches
+`PaidAccess` config for N entities and `EntityAccess` entitlements for N, then zips them.
+
+**The rule that makes a money-gate cache safe: cache the row, not the verdict.** Store the `PaidAccess` row
+(`endsAt`, `terms`, `ownerId`) and compute `isPaidAccessActive(row, now())` **at read time**. Because `endsAt`
+is materialized, active-ness is derived live from the cached inputs. Consequences:
+
+- the cache **never goes stale on expiry** — time passing is *not* an invalidation event;
+- invalidate only on **config change**: creator edit · threshold firing (writes `endsAt`) · creator removal ·
+  entity delete.
+
+This is the same reason a materialized view was rejected (an MV caches the *derived* state, stale the instant
+the window passes) — here we cache the *inputs* and derive live. It also fixes a hidden coupling in the current
+cache: `resource-data.redis.ts:34` bakes `earlyAccessEndsAt >= NOW()` **into the cached value at build time**,
+so its answer is only correct until the expiry job busts the key — i.e. the job is doubling as the
+cache-invalidation event. Caching the raw row removes that dependence, one less reason the job must exist.
+
+```text
+getPaidAccess(keys[])  -> Map<"type:id", PaidAccessRow>   -- createCachedObject, batch, per-key TTL
+resolveAccess(...)     -> isPaidAccessActive(row, now())  -- derived live, never cached
+invalidate on:         edit · threshold-fires · remove · entity-delete   (NOT time)
+```
+
+---
+
 ## References
 
 - Canonical read helper — `packages/civitai-buzz/src/paid-access.ts`
