@@ -37,6 +37,7 @@ import { articleDetailSelect } from '~/server/selectors/article.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -2021,31 +2022,18 @@ export async function recomputeArticleIngestionInTx(
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
   const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
 
-  // --- Derive ingestion state ---
-  //
-  // A moderator-set NSFW override supplies the article's rating outright
-  // (updateArticleNsfwLevels COALESCEs it over the derived level), so an
-  // overridden article should not sit hidden in Pending waiting on a scan whose
-  // *rating* the override already supersedes — that's what bounced official
-  // articles out of the feed on every edit.
-  //
-  // It substitutes for Pending ONLY. Blocked and Error still win: an override is
-  // a rating decision, not a moderation bypass. A policy-blocked image can't
-  // surface through nsfwLevel either (the derivation joins `ingestion = 'Scanned'`
-  // images only, and the override COALESCEs over it), so `ingestion = Blocked` is
-  // the sole guard keeping it out of the feed and the search index.
+  // --- Derive ingestion state (precedence documented on deriveArticleIngestionState) ---
   const hasModeratorOverride = current.moderatorNsfwLevel != null;
 
-  let next: ArticleIngestionStatus;
-  if (imageBlocked || textBlocked) {
-    next = ArticleIngestionStatus.Blocked;
-  } else if (imageError || textError) {
-    next = ArticleIngestionStatus.Error;
-  } else if ((imageDone && textDone) || hasModeratorOverride) {
-    next = ArticleIngestionStatus.Scanned;
-  } else {
-    next = ArticleIngestionStatus.Pending;
-  }
+  const next = deriveArticleIngestionState({
+    imageBlocked,
+    imageError,
+    imageDone,
+    textBlocked,
+    textError,
+    textDone,
+    hasModeratorOverride,
+  });
 
   const flipToPublished =
     next === ArticleIngestionStatus.Scanned && current.status === ArticleStatus.Processing;
