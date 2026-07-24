@@ -1,6 +1,24 @@
-.dropzoneReject {
+// Mantine's own [data-accept]/[data-reject] rules live in @layer mantine and use
+// :where(), so any unlayered class or inline style on the root silently wins.
+.dropzone {
+  border: 2px dashed var(--mantine-color-dark-4);
+  border-radius: var(--mantine-radius-md);
+  background-color: transparent;
+  cursor: pointer;
+  transition: background-color 100ms ease, border-color 100ms ease;
+
+  &:hover {
+    border-color: var(--mantine-color-blue-5);
+    background-color: rgba(34, 139, 230, 0.05);
+  }
+
+  &[data-accept] {
+    border-color: var(--mantine-color-blue-5);
+    background-color: rgba(34, 139, 230, 0.15);
+  }
+
   &[data-reject] {
-    background: var(--mantine-color-dark-5);
-    border-color: var(--mantine-color-dark-4);
+    border-color: var(--mantine-color-red-6);
+    background-color: rgba(250, 82, 82, 0.15);
   }
 }
