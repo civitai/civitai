@@ -15,6 +15,7 @@ import { eventEngine } from '~/server/events';
 import {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
+  getUserMetricPrivacyDefaultsMap,
 } from '~/server/services/creator-program.service';
 import {
   anyMetricHidden,
@@ -1637,15 +1638,9 @@ export const getAssociatedResourcesCardDataHandler = async ({
     let assocMembershipMap = new Map<number, boolean>();
     if (metricPrivacyEnabled) {
       const assocOwnerIds = [...new Set(models.map((m) => m.user.id))];
-      const assocOwnerSettings = assocOwnerIds.length
-        ? await dbRead.user.findMany({
-            where: { id: { in: assocOwnerIds } },
-            select: { id: true, settings: true },
-          })
-        : [];
-      assocOwnerSettingsMap = new Map<number, unknown>(
-        assocOwnerSettings.map((o) => [o.id, o.settings])
-      );
+      // Cache-backed per-owner metric-privacy DEFAULT flags — see the feed path in
+      // getModelsRaw; avoids deserializing every owner's full `settings` blob per request.
+      assocOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(assocOwnerIds);
       const assocMembershipCandidates = new Set<number>();
       for (const m of models) {
         const ownerId = m.user.id;

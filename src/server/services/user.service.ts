@@ -66,6 +66,7 @@ import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.s
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
+import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
 import { userModelCountCache } from '~/server/redis/caches';
@@ -2593,6 +2594,9 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
   }
 
   await userSettingsCache.bust([userId]);
+  // Keep the read-time metric-privacy defaults cache consistent with a settings write
+  // (the `hideModel*` flags live in `settings`); TTL backstops any other writer.
+  await bustUserMetricPrivacyDefaultsCache(userId);
 }
 
 export async function setDismissedAlerts(userId: number, alertIds: string[]) {

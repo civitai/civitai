@@ -125,7 +125,10 @@ import {
   resolveVersionHiddenMetrics,
   type HiddenModelMetrics,
 } from '~/server/utils/model-metric-privacy';
-import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
+import {
+  getValidCreatorMembershipMap,
+  getUserMetricPrivacyDefaultsMap,
+} from '~/server/services/creator-program.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
@@ -1422,19 +1425,16 @@ export const getModelsWithImagesAndModelVersions = async ({
   // owner-settings + `getValidCreatorMembershipMap` block is skipped and raw metrics
   // are emitted (pre-#3266 visibility).
   const isMod = !!user?.isModerator;
+  // Cache-backed per-owner metric-privacy DEFAULT flags (the three `hideModel*`
+  // booleans). Replaces a per-request `dbRead.user.findMany({ settings })` that
+  // deserialized every owner's full `settings` blob just to read three booleans — the
+  // measured api-primary read-time longtask (#3266). Values are the tiny derived slice,
+  // fed unchanged into the resolvers below (byte-identical).
   let feedOwnerSettingsMap = new Map<number, unknown>();
   let feedMembershipMap = new Map<number, boolean>();
   if (metricPrivacyEnabled) {
     const feedOwnerIds = [...new Set(items.map((m) => m.user.id))];
-    const feedOwnerSettings = feedOwnerIds.length
-      ? await dbRead.user.findMany({
-          where: { id: { in: feedOwnerIds } },
-          select: { id: true, settings: true },
-        })
-      : [];
-    feedOwnerSettingsMap = new Map<number, unknown>(
-      feedOwnerSettings.map((o) => [o.id, o.settings])
-    );
+    feedOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(feedOwnerIds);
     const membershipCandidates = new Set<number>();
     for (const it of items) {
       const ownerId = it.user.id;
@@ -3347,15 +3347,9 @@ export async function getModelsWithVersions({
   const isMod = !!user?.isModerator;
   const viewerId = user?.id;
   const apiOwnerIds = [...new Set(items.map((m) => m.user.id))];
-  const apiOwnerSettings = apiOwnerIds.length
-    ? await dbRead.user.findMany({
-        where: { id: { in: apiOwnerIds } },
-        select: { id: true, settings: true },
-      })
-    : [];
-  const apiOwnerSettingsMap = new Map<number, unknown>(
-    apiOwnerSettings.map((o) => [o.id, o.settings])
-  );
+  // Cache-backed per-owner metric-privacy DEFAULT flags — see the feed path above;
+  // avoids deserializing every owner's full `settings` blob per request.
+  const apiOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(apiOwnerIds);
   const apiMembershipCandidates = new Set<number>();
   for (const it of items) {
     const ownerId = it.user.id;
