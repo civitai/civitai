@@ -16,6 +16,7 @@ import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { SupportContent } from '~/components/Support/SupportContent';
 import { banReasonDetails } from '~/server/common/constants';
 import { BanReasonCode } from '~/server/common/enums';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -130,9 +131,9 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
             label="Unpublish all models"
             description={
               banPreview
-                ? `Unpublishes this user's ${banPreview.modelCount} published model${
-                    banPreview.modelCount === 1 ? '' : 's'
-                  }.`
+                ? `Unpublishes this user's ${numberWithCommas(
+                    banPreview.modelCount
+                  )} published model${banPreview.modelCount === 1 ? '' : 's'}.`
                 : 'Unpublishes all of this user’s published models.'
             }
             checked={removeModels}
@@ -142,7 +143,7 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
             label="Remove all images & videos"
             description={
               banPreview
-                ? `Blocks this user's ${banPreview.imageCount} image${
+                ? `Blocks this user's ${numberWithCommas(banPreview.imageCount)} image${
                     banPreview.imageCount === 1 ? '' : 's'
                   } & videos (7-day appeal window, then deleted).`
                 : 'Blocks all of this user’s images & videos.'
@@ -154,10 +155,12 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
             <Alert color="red" p="xs">
               {[
                 removeModels
-                  ? `${banPreview.modelCount} model${banPreview.modelCount === 1 ? '' : 's'}`
+                  ? `${numberWithCommas(banPreview.modelCount)} model${
+                      banPreview.modelCount === 1 ? '' : 's'
+                    }`
                   : null,
                 removeMedia
-                  ? `${banPreview.imageCount} image${
+                  ? `${numberWithCommas(banPreview.imageCount)} image${
                       banPreview.imageCount === 1 ? '' : 's'
                     } & videos`
                   : null,
