@@ -3,6 +3,9 @@
   "version": "5.0.2168",
   "private": true,
   "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "start": "next start",
@@ -329,7 +332,7 @@
     "@types/lodash-es": "^4.17.7",
     "@types/mailchimp__mailchimp_marketing": "^3.0.12",
     "@types/marked": "^4.0.7",
-    "@types/node": "20.19.9",
+    "@types/node": "22.20.1",
     "@types/node-os-utils": "^1.3.1",
     "@types/nodemailer": "^6.4.7",
     "@types/offscreencanvas": "^2019.7.3",
