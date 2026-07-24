@@ -253,7 +253,7 @@ describe('isAppListingsEnabled — dedicated visibility flag + OR-fallback (W13)
 
   function fakeVisibilityFlags(
     flag: string,
-    entityId = 'global',
+    _entityId = 'global',
     context: Record<string, string> = {}
   ): boolean {
     if (flag === 'app-blocks-enabled') return context.isModerator === 'true';

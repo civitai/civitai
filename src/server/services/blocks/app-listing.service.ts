@@ -527,14 +527,16 @@ export async function listAvailableListings(
 
   // Hydrate the public projection for the page, then re-apply the keyset order
   // (findMany does not preserve the `IN (...)` order).
-  const pageIds = trimmed.map((r) => r.id);
+  const pageIds = trimmed.map((r: { id: string; sort_key: string }) => r.id);
   const hydrated = await dbRead.appListing.findMany({
     where: { id: { in: pageIds } },
     select: listingHydrateSelect,
   });
-  const byId = new Map(hydrated.map((r) => [r.id, r]));
+  const byId = new Map(
+    hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r])
+  );
   const items = pageIds
-    .map((id) => byId.get(id))
+    .map((id: string) => byId.get(id))
     .filter((r): r is HydratedListing => r != null)
     .map(projectListingCard);
 

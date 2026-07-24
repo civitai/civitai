@@ -315,7 +315,7 @@ describe('listAppListingReviews', () => {
     // limit 2 → take 3; return 3 rows → hasNext, cursor = last VISIBLE row id.
     mockRead.appListingReview.findMany.mockResolvedValue([row(5), row(4), row(3)]);
     const res = await listAppListingReviews({ appListingId: APP_ID, limit: 2 });
-    expect(res.items.map((i) => i.id)).toEqual([5, 4]);
+    expect(res.items.map((i: { id: number }) => i.id)).toEqual([5, 4]);
     expect(res.nextCursor).toBe(4);
   });
 
