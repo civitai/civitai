@@ -157,6 +157,27 @@ describe('listAvailableListings — STORE-SCOPE kind gate in the keyset WHERE', 
     await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
     expect(capturedSql()).not.toMatch(/al\.kind = 'offsite'/i);
   });
+
+  it("public-external + client override input.kind='onsite' → offsite predicate STILL wins (empty)", async () => {
+    // Security-audit (a): a public viewer cannot escape the offsite-only gate by
+    // asking for onsite. The scope predicate `al.kind = 'offsite'` is emitted
+    // UNCONDITIONALLY, alongside the client kind filter (`al.kind = <onsite>`), so
+    // the WHERE self-contradicts (onsite AND offsite) → no onsite row can return.
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]);
+    const result = await listAvailableListings(
+      { kind: 'onsite', sort: 'newest', limit: 20 },
+      { scope: 'public-external' }
+    );
+    const sql = capturedSql();
+    // The scope predicate is present regardless of the client-supplied kind...
+    expect(sql).toMatch(/al\.kind = 'offsite'/i);
+    // ...AND the client kind filter clause is ALSO applied (the parameterized
+    // `... IS NULL OR al.kind = ...`), so an onsite override can never DROP the
+    // offsite predicate — the two clauses AND together, never replace each other.
+    expect(sql).toMatch(/IS NULL OR al\.kind =/i);
+    // Net effect at the DB: contradictory WHERE → no onsite listing is returned.
+    expect(result).toEqual({ items: [], nextCursor: undefined });
+  });
 });
 
 describe('getListingDetail — STORE-SCOPE kind gate (app-layer)', () => {
