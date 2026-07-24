@@ -63,12 +63,18 @@ async function deleteJobQueueItems(
   );
 }
 
+// Bounds how much of a backlog one run pulls in. The job runs every minute and
+// deletes only what it processed, so the remainder drains across later runs.
+const UPDATE_NSFW_LEVEL_BATCH_SIZE = 10000;
+
 const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async (e) => {
   // const [lastRun, setLastRun] = await getJobDate('update-nsfw-levels');
   // const now = new Date();
   try {
     const jobQueue = await dbRead.jobQueue.findMany({
       where: { type: JobQueueType.UpdateNsfwLevel, entityType: { not: EntityType.Collection } },
+      orderBy: { createdAt: 'asc' },
+      take: UPDATE_NSFW_LEVEL_BATCH_SIZE,
     });
 
     const jobQueueIds = reduceJobQueueToIds(jobQueue);
