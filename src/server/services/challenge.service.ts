@@ -1833,7 +1833,7 @@ export async function upsertUserChallenge({
       },
     });
 
-    return tx.challenge.create({
+    const created = await tx.challenge.create({
       data: {
         ...commonData,
         collectionId: collection.id,
@@ -1847,6 +1847,14 @@ export async function upsertUserChallenge({
         ...(themeEls && { metadata: { themeElements: themeEls } }),
       },
     });
+
+    // Creator auto-tracks their own challenge so they get ending-soon/results notifications
+    // without opting in; same txn so a failed write rolls the challenge back.
+    await tx.challengeEngagement.create({
+      data: { type: 'Notify', challengeId: created.id, userId },
+    });
+
+    return created;
   });
 
   // Escrow the creator's initial prize (if any). On failure, roll back the unfunded

@@ -19,6 +19,9 @@ const {
       update: vi.fn().mockResolvedValue({ id: 1 }),
       create: vi.fn().mockResolvedValue({ id: 2, collectionId: 10 }),
     },
+    challengeEngagement: {
+      create: vi.fn().mockResolvedValue({}),
+    },
     collection: {
       create: vi.fn().mockResolvedValue({ id: 10 }),
       update: vi.fn().mockResolvedValue({ id: 10 }),
