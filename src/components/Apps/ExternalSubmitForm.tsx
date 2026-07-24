@@ -37,7 +37,6 @@ import {
   emptyOffsiteSubmitForm,
   isClientStepComplete,
   isCreateDetailsStepComplete,
-  isCreateUrlStepComplete,
   normalizeLinkUrl,
   toSubmitExternalInput,
   validateExternalCreateForm,
@@ -234,7 +233,7 @@ function ExternalCreateForm() {
 
   function handleAdvanceFromUrl() {
     if (values.externalUrl.trim().length === 0) {
-      setErrors((prev) => ({ ...prev, externalUrl: 'Enter your app’s URL to continue.' }));
+      setErrors((prev) => ({ ...prev, externalUrl: 'Enter your app\'s URL to continue.' }));
       return;
     }
     const result = normalizeLinkUrl(values.externalUrl);
@@ -289,6 +288,11 @@ function ExternalCreateForm() {
     submitMutation.mutate(toSubmitExternalInput(values));
   }
 
+  function isCreateUrlStepComplete(vals: OffsiteSubmitFormValues): boolean {
+    if (vals.externalUrl.trim().length === 0) return false;
+    return !normalizeLinkUrl(vals.externalUrl).error;
+  }
+
   function handleStepClick(step: number) {
     if (submitted) return;
     if (step === STEP_URL) setActive(STEP_URL);
@@ -315,9 +319,9 @@ function ExternalCreateForm() {
       >
         <Text size="sm">
           List an app hosted off-site by linking your registered OAuth app so users can grant it
-          access. Start with your app’s URL — we’ll pull in a name, description and images you can
+          access. Start with your app's URL — we'll pull in a name, description and images you can
           tweak. A moderator reviews it before it appears. This does not change what your app can
-          do: your OAuth client’s allowed scopes stay the limit.
+          do: your OAuth client's allowed scopes stay the limit.
         </Text>
       </Alert>
 
@@ -345,7 +349,7 @@ function ExternalCreateForm() {
             <Stack gap="md" mt="md">
               <TextInput
                 label="App URL"
-                description="Your app’s public https link — users open it from the listing, and we’ll suggest a name, description and images from it."
+                description="Your app's public https link — users open it from the listing, and we'll suggest a name, description and images from it."
                 placeholder="example.com/app"
                 leftSection={<IconWorld size={16} />}
                 value={values.externalUrl}
@@ -480,7 +484,7 @@ function ExternalCreateForm() {
                   >
                     <Text size="sm">
                       We pulled these details from your link — edit anything, or clear what you
-                      don’t want.
+                      don't want.
                     </Text>
                   </Alert>
                 </FadeIn>
