@@ -277,7 +277,69 @@ describe('manifestSettingsSchema — string cross-field', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts valid RegExp pattern', () => {
+  it('accepts valid RegExp pattern (with required max_length)', () => {
+    const result = manifestSettingsSchema.safeParse({
+      s: {
+        scope: 'publisher',
+        type: 'string',
+        label: 'L',
+        description: 'D',
+        pattern: '^[a-z0-9-]+$',
+        max_length: 64,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('manifestSettingsSchema — ReDoS-prone pattern rejection', () => {
+  // A pattern can COMPILE fine yet be catastrophically exponential. The old
+  // gate only checked `new RegExp(pattern)` succeeded; these would have slipped
+  // through and armed a ReDoS against the viewer save path.
+  it.each([
+    '(a+)+$', // classic nested unbounded quantifier
+    '(x+x+)+y', // adjacent unbounded quantifiers under a quantified group
+    '(.*)*', // nested star
+    '([a-zA-Z]+)*$', // nested quantifier over a char class
+  ])('rejects the exponential pattern %s (compiles, but super-linear)', (pattern) => {
+    // sanity: it DOES compile — so "is it a valid RegExp" alone would pass it
+    expect(() => new RegExp(pattern)).not.toThrow();
+    const result = manifestSettingsSchema.safeParse({
+      s: {
+        scope: 'publisher',
+        type: 'string',
+        label: 'L',
+        description: 'D',
+        pattern,
+        max_length: 64,
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toMatch(/catastrophic backtracking/);
+    }
+  });
+
+  it('still rejects a non-compiling pattern (unchanged behavior)', () => {
+    const result = manifestSettingsSchema.safeParse({
+      s: {
+        scope: 'publisher',
+        type: 'string',
+        label: 'L',
+        description: 'D',
+        pattern: '(unclosed',
+        max_length: 64,
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toMatch(/not a valid RegExp source/);
+    }
+  });
+});
+
+describe('manifestSettingsSchema — pattern requires max_length', () => {
+  it('rejects a field that declares a pattern but no max_length', () => {
     const result = manifestSettingsSchema.safeParse({
       s: {
         scope: 'publisher',
@@ -285,6 +347,40 @@ describe('manifestSettingsSchema — string cross-field', () => {
         label: 'L',
         description: 'D',
         pattern: '^[a-z]+$',
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toMatch(/max_length is required/);
+    }
+  });
+
+  it('rejects a patterned field whose max_length exceeds the hard ceiling', () => {
+    const result = manifestSettingsSchema.safeParse({
+      s: {
+        scope: 'publisher',
+        type: 'string',
+        label: 'L',
+        description: 'D',
+        pattern: '^[a-z]+$',
+        max_length: 5000, // > MAX_PATTERNED_INPUT_LEN (1000)
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toMatch(/max_length must be <=/);
+    }
+  });
+
+  it('accepts a patterned field with a sane max_length', () => {
+    const result = manifestSettingsSchema.safeParse({
+      s: {
+        scope: 'publisher',
+        type: 'string',
+        label: 'L',
+        description: 'D',
+        pattern: '^[a-z0-9-]+$',
+        max_length: 128,
       },
     });
     expect(result.success).toBe(true);
