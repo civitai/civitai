@@ -1823,7 +1823,7 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     }),
     dbRead.article.findUnique({
       where: { id },
-      select: { title: true, content: true },
+      select: { title: true, content: true, coverId: true },
     }),
     dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType: 'Article', entityId: id } },
@@ -1831,21 +1831,34 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     }),
   ]);
 
-  const total = connections.length;
-  const scannedImages = connections.filter(
-    (c) => c.image.ingestion === ImageIngestionStatus.Scanned
+  // Cover lives on `Article.coverId`, not in `ImageConnection`, so a cover-only
+  // problem (no content images) would otherwise render nothing. Fold it into the
+  // scannable set, deduped against any connection that also references it.
+  const cover = article?.coverId
+    ? await dbRead.image.findUnique({
+        where: { id: article.coverId },
+        select: {
+          id: true,
+          url: true,
+          ingestion: true,
+          blockedFor: true,
+          nsfwLevelLocked: true,
+          scanJobs: true,
+        },
+      })
+    : null;
+
+  const images = connections.map((c) => c.image);
+  if (cover && !images.some((image) => image.id === cover.id)) images.push(cover);
+
+  const total = images.length;
+  const scannedImages = images.filter((i) => i.ingestion === ImageIngestionStatus.Scanned);
+  const blockedImages = images.filter((i) => i.ingestion === ImageIngestionStatus.Blocked);
+  const errorImages = images.filter(
+    (i) =>
+      i.ingestion === ImageIngestionStatus.Error || i.ingestion === ImageIngestionStatus.NotFound
   );
-  const blockedImages = connections.filter(
-    (c) => c.image.ingestion === ImageIngestionStatus.Blocked
-  );
-  const errorImages = connections.filter(
-    (c) =>
-      c.image.ingestion === ImageIngestionStatus.Error ||
-      c.image.ingestion === ImageIngestionStatus.NotFound
-  );
-  const pendingImages = connections.filter(
-    (c) => c.image.ingestion === ImageIngestionStatus.Pending
-  );
+  const pendingImages = images.filter((i) => i.ingestion === ImageIngestionStatus.Pending);
 
   const required = article ? articleHasText(article.title, article.content) : false;
   const textTerminalStatuses = new Set<EntityModerationStatus>([
@@ -1864,28 +1877,28 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     pending: pendingImages.length,
     allComplete: pendingImages.length === 0 && textDone,
     images: {
-      blocked: blockedImages.map((c) => ({
-        id: c.image.id,
-        url: c.image.url,
-        ingestion: c.image.ingestion,
-        blockedFor: c.image.blockedFor,
-        nsfwLevelLocked: c.image.nsfwLevelLocked,
+      blocked: blockedImages.map((i) => ({
+        id: i.id,
+        url: i.url,
+        ingestion: i.ingestion,
+        blockedFor: i.blockedFor,
+        nsfwLevelLocked: i.nsfwLevelLocked,
       })),
-      error: errorImages.map((c) => {
-        const { failureClass, reason } = extractScanFailure(c.image.scanJobs);
+      error: errorImages.map((i) => {
+        const { failureClass, reason } = extractScanFailure(i.scanJobs);
         return {
-          id: c.image.id,
-          url: c.image.url,
-          ingestion: c.image.ingestion,
-          nsfwLevelLocked: c.image.nsfwLevelLocked,
+          id: i.id,
+          url: i.url,
+          ingestion: i.ingestion,
+          nsfwLevelLocked: i.nsfwLevelLocked,
           failureClass,
           reason,
         };
       }),
-      pending: pendingImages.map((c) => ({
-        id: c.image.id,
-        url: c.image.url,
-        ingestion: c.image.ingestion,
+      pending: pendingImages.map((i) => ({
+        id: i.id,
+        url: i.url,
+        ingestion: i.ingestion,
       })),
     },
     textModeration: {

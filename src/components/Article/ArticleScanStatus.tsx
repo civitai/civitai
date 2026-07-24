@@ -7,7 +7,7 @@
 import { Alert, Button, Text, Group, Stack, Badge, Loader, Paper } from '@mantine/core';
 import { IconAlertCircle, IconCheck, IconRadar2, IconShield } from '@tabler/icons-react';
 import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import clsx from 'clsx';
 import { ArticleProblematicImages, type TextModerationIssue } from './ArticleProblematicImages';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -28,12 +28,21 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
     articleId,
   });
 
-  // Call onComplete callback when scanning finishes
+  // Fire onComplete only on an actual in-progress → complete TRANSITION, never
+  // when the article is already terminal on first load. Otherwise the parent's
+  // getById invalidation refetches on mount and flashes the page LoadingOverlay.
+  const wasIncompleteRef = useRef(false);
   useEffect(() => {
-    if (isComplete && onComplete) {
-      onComplete();
+    if (!status) return;
+    if (!isComplete) {
+      wasIncompleteRef.current = true;
+      return;
     }
-  }, [isComplete]);
+    if (wasIncompleteRef.current) {
+      wasIncompleteRef.current = false;
+      onComplete?.();
+    }
+  }, [status, isComplete]);
 
   // Derive a terminal text-moderation issue (if any) from the scan status.
   // Blocked takes precedence over failed/expired/canceled because it's a
