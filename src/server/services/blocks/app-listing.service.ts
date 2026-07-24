@@ -702,6 +702,40 @@ export function projectModerationListing(row: HydratedModerationRow): Moderation
 }
 
 /**
+ * The Prisma `where` fragment for the mod table's status filter, made
+ * EFFECTIVE-STATUS-AWARE so display and filter agree on "awaiting first review".
+ *
+ * An external listing awaiting its FIRST review is stored as `status='draft'`
+ * with a live pending publish request (see {@link effectiveModerationStatus}).
+ *
+ *   - undefined (all) → `{}` (no status constraint)
+ *   - 'pending'       → real-pending OR a draft WITH a live pending request
+ *   - 'draft'         → only TRUE orphan drafts (a draft with NO pending request,
+ *                        so a draft-with-pending isn't double-listed under Draft)
+ *   - anything else   → an exact `{ status }` match
+ *
+ * Pure, total. Returned as its own fragment so the caller composes it under `AND`
+ * (this clause may itself be an `OR`, which would collide with the `search` `OR`).
+ */
+export function moderationStatusWhere(
+  status: string | undefined
+): Prisma.AppListingWhereInput {
+  if (!status) return {};
+  if (status === 'pending') {
+    return {
+      OR: [
+        { status: 'pending' },
+        { status: 'draft', publishRequests: { some: { status: 'pending' } } },
+      ],
+    };
+  }
+  if (status === 'draft') {
+    return { status: 'draft', publishRequests: { none: { status: 'pending' } } };
+  }
+  return { status };
+}
+
+/**
  * List listings across ALL lifecycle statuses for the mod management table.
  * Filters (all optional): `status`, `kind`, and a server-side `search` over
  * name/slug (case-insensitive). Keyset-paginated by the ULID `id` DESC (newest
@@ -714,19 +748,24 @@ export async function listAllListingsForModeration(
   const limit = Math.min(input.limit ?? 25, 50);
   const search = input.search?.trim();
 
+  // Both the status filter and the search may each be an `OR` clause — composing
+  // them via `AND` (dropping the empty ones) keeps both `OR`s alive instead of one
+  // overwriting the other's `OR` key on the object.
+  const statusClause = moderationStatusWhere(input.status);
+  const searchClause: Prisma.AppListingWhereInput = search
+    ? {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { slug: { contains: search, mode: 'insensitive' } },
+        ],
+      }
+    : {};
+
   const where: Prisma.AppListingWhereInput = {
     // Never surface a SHADOW revision draft as its own row (mirrors the read path).
     revisionOfId: null,
-    ...(input.status ? { status: input.status } : {}),
     ...(input.kind ? { kind: input.kind } : {}),
-    ...(search
-      ? {
-          OR: [
-            { name: { contains: search, mode: 'insensitive' } },
-            { slug: { contains: search, mode: 'insensitive' } },
-          ],
-        }
-      : {}),
+    AND: [statusClause, searchClause].filter((c) => Object.keys(c).length > 0),
   };
 
   const rows = await dbRead.appListing.findMany({

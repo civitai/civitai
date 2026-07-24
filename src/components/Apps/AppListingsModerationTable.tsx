@@ -23,6 +23,7 @@ import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurfac
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
 import {
+  effectiveModerationStatus,
   isDestructiveListingModAction,
   listingKindChip,
   listingModActionLabel,
@@ -70,7 +71,9 @@ const MOD_ACCESSORS: SubmissionAccessors<ModerationListingRow> = {
   identity: (r) => r.id,
   name: (r) => r.name || r.slug,
   slug: (r) => r.slug,
-  status: (r) => r.status,
+  // Bucket by the EFFECTIVE status so a draft-with-a-live-pending-request lands in
+  // the Pending section (it's an external listing awaiting its first review).
+  status: (r) => effectiveModerationStatus(r),
   submittedAt: (r) => toDate(r.pendingRequest?.submittedAt ?? null),
   reviewedAt: () => null,
 };
@@ -200,7 +203,7 @@ export function AppListingsModerationTable() {
           const seen = new Set(accumulated.map((r) => r.id));
           return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
         })();
-    return merged.filter((r) => !(r.kind === 'onsite' && r.status === 'pending'));
+    return merged.filter((r) => !(r.kind === 'onsite' && effectiveModerationStatus(r) === 'pending'));
   }, [accumulated, page, cursor]);
 
   // Group (one group per listing — the mod view isn't version-collapsed), apply the
@@ -265,7 +268,9 @@ export function AppListingsModerationTable() {
           {groups.map((g) => {
             const row = g.latest;
             const kindChip = listingKindChip(row.kind);
-            const statusChip = listingStatusChip(row.status);
+            // Badge reads the EFFECTIVE status ("Pending" for a draft-with-pending),
+            // matching the bucket. Actions below intentionally keep the REAL status.
+            const statusChip = listingStatusChip(effectiveModerationStatus(row));
             const actions = listingModActions({
               status: row.status,
               kind: row.kind,
