@@ -335,6 +335,13 @@ export const getUserEntryCountSchema = z.object({
   challengeId: z.number(),
 });
 
+// Toggle "notify me" tracking on a challenge
+export const toggleChallengeNotifySchema = z.object({
+  challengeId: z.number(),
+  setTo: z.boolean().optional(),
+});
+export type ToggleChallengeNotifyInput = z.infer<typeof toggleChallengeNotifySchema>;
+
 // Moderator: Get all challenges (including drafts and hidden)
 export type GetModeratorChallengesInput = z.infer<typeof getModeratorChallengesSchema>;
 export const getModeratorChallengesSchema = infiniteQuerySchema.merge(
