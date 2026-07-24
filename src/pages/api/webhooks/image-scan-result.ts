@@ -36,6 +36,7 @@ import {
   upsertTagsOnImageNew,
 } from '~/server/services/tagsOnImageNew.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import { imageScanWebhookCounter } from '~/server/prom/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { getComputedTags } from '~/server/utils/tag-rules';
@@ -131,6 +132,7 @@ export default WebhookEndpoint(async (req, res) => {
       // ACK with 200 so the orchestrator drops the workflow instead of retrying
       // a result for a row that no longer exists.
       if (e instanceof Error && e.message.startsWith('image not found')) {
+        imageScanWebhookCounter.inc({ result: 'deleted_skip' });
         return res.status(200).json({ ok: true, skipped: 'deleted' });
       }
       if (e instanceof Error) {
@@ -142,8 +144,10 @@ export default WebhookEndpoint(async (req, res) => {
           cause: e?.cause,
         });
       }
+      imageScanWebhookCounter.inc({ result: 'error' });
       return res.status(400).send({ error: e.message });
     }
+    imageScanWebhookCounter.inc({ result: 'success' });
     return res.status(200).json({ ok: true });
   }
 
@@ -156,6 +160,7 @@ export default WebhookEndpoint(async (req, res) => {
 
   const data = bodyResults.data;
 
+  let webhookResult: 'success' | 'not_found' | 'unscannable';
   try {
     switch (bodyResults.data.status) {
       case Status.NotFound:
@@ -163,6 +168,7 @@ export default WebhookEndpoint(async (req, res) => {
           where: { id: data.id, ingestion: { in: pendingStates } },
           data: { ingestion: ImageIngestionStatus.NotFound },
         });
+        webhookResult = 'not_found';
         break;
       case Status.Unscannable:
         await updateImageScanJobs({
@@ -171,9 +177,11 @@ export default WebhookEndpoint(async (req, res) => {
           incrementRetryCount: true,
           whereIngestionIn: pendingStates,
         });
+        webhookResult = 'unscannable';
         break;
       case Status.Success:
         await handleSuccess(data, req);
+        webhookResult = 'success';
         break;
       default: {
         await logScanResultError({ id: data.id, message: 'unhandled data type' });
@@ -196,13 +204,17 @@ export default WebhookEndpoint(async (req, res) => {
       });
     }
 
+    imageScanWebhookCounter.inc({ result: webhookResult });
     return res.status(200).json({ ok: true });
   } catch (e: any) {
     // Image was deleted between scan submit and callback — there's nothing to
     // update. ACK with 200 so the scanner drops the job instead of re-delivering
     // the result for a row that no longer exists.
-    if (e.message === 'Image not found')
+    if (e.message === 'Image not found') {
+      imageScanWebhookCounter.inc({ result: 'deleted_skip' });
       return res.status(200).json({ ok: true, skipped: 'deleted' });
+    }
+    imageScanWebhookCounter.inc({ result: 'error' });
     return res.status(400).send({ error: e.message });
   }
 });

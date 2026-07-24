@@ -44,6 +44,85 @@ declare global {
   var pgGaugeInitialized: boolean;
   // eslint-disable-next-line no-var
   var heavyBulkheadGaugeInitialized: boolean;
+  // eslint-disable-next-line no-var
+  var imageIngestionGaugeInitialized: boolean;
+}
+
+// Image-ingestion working-state backlog + oldest-age gauges. These are DB-derived,
+// so they must NOT hit Postgres on every /metrics scrape (~15s). The query is served
+// from an in-process cache with a short TTL and refreshed lazily off the scrape path
+// (fire-and-forget) — a scrape only ever kicks a background refresh, never blocks on
+// it, and reads the last-known values.
+//
+// DB SAFETY: the Image table is enormous and Scanned dominates it, so an unfiltered
+// GROUP BY over `ingestion` would seq-scan the whole table and can take prod down. The
+// query is scoped to the four non-terminal working states and its predicate matches
+// the partial index `Image_ingestion_pending_idx` EXACTLY so the count + per-status
+// min(createdAt) are served from the (small) partial index, never the heap.
+const INGESTION_GAUGE_TTL_MS = 45_000;
+
+type IngestionBacklogRow = { ingestion: string; count: number; oldestAgeSeconds: number };
+let ingestionBacklogCache: IngestionBacklogRow[] = [];
+let ingestionBacklogFetchedAt = 0;
+let ingestionBacklogInflight: Promise<void> | null = null;
+
+function refreshIngestionBacklog() {
+  if (ingestionBacklogInflight) return ingestionBacklogInflight;
+  ingestionBacklogInflight = pgDbRead
+    .query<{ ingestion: string; count: string; oldest_age_seconds: string | null }>(
+      `SELECT ingestion::text AS ingestion,
+              COUNT(*) AS count,
+              EXTRACT(EPOCH FROM (now() - MIN("createdAt"))) AS oldest_age_seconds
+       FROM "Image"
+       WHERE ingestion IN ('Pending', 'Error', 'Rescan', 'PendingManualAssignment')
+       GROUP BY ingestion`
+    )
+    .then((res) => {
+      ingestionBacklogCache = res.rows.map((r) => ({
+        ingestion: r.ingestion,
+        count: Number(r.count),
+        oldestAgeSeconds: r.oldest_age_seconds != null ? Number(r.oldest_age_seconds) : 0,
+      }));
+      ingestionBacklogFetchedAt = Date.now();
+    })
+    .catch(() => {
+      // Swallow: keep the last-known values so a transient DB hiccup can't break the
+      // whole /metrics scrape. A stale gauge is better than a 500 on the scrape.
+    })
+    .finally(() => {
+      ingestionBacklogInflight = null;
+    });
+  return ingestionBacklogInflight;
+}
+
+function maybeRefreshIngestionBacklog() {
+  if (Date.now() - ingestionBacklogFetchedAt > INGESTION_GAUGE_TTL_MS)
+    void refreshIngestionBacklog();
+}
+
+if (!global.imageIngestionGaugeInitialized) {
+  new client.Gauge({
+    name: PROM_PREFIX + 'image_ingestion_backlog',
+    help: 'Images in a non-terminal working ingestion state (Pending/Error/Rescan/PendingManualAssignment)',
+    labelNames: ['status'],
+    collect() {
+      maybeRefreshIngestionBacklog();
+      this.reset();
+      for (const row of ingestionBacklogCache) this.set({ status: row.ingestion }, row.count);
+    },
+  });
+  new client.Gauge({
+    name: PROM_PREFIX + 'image_ingestion_oldest_age_seconds',
+    help: 'Age in seconds of the oldest image (now - min(createdAt)) per non-terminal ingestion state',
+    labelNames: ['status'],
+    collect() {
+      maybeRefreshIngestionBacklog();
+      this.reset();
+      for (const row of ingestionBacklogCache)
+        this.set({ status: row.ingestion }, row.oldestAgeSeconds);
+    },
+  });
+  global.imageIngestionGaugeInitialized = true;
 }
 
 // Heavy-route bulkhead observability (per pod). collect()-based so it reflects the

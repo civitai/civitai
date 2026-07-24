@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
+import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -37,10 +38,12 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
   });
 
   if (!jobQueue.length) {
+    imageIngestCronQueueDepth.set(0);
     console.log('No images in queue');
     return { processed: 0 };
   }
 
+  imageIngestCronQueueDepth.set(jobQueue.length);
   const imageIds = jobQueue.map((j) => j.entityId);
   console.log(`Found ${imageIds.length} images in queue`);
 
@@ -187,6 +190,14 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 
   const totalSent =
     sentUserPendingIds.length + sentBackfillIds.length + sentRescanIds.length + sentErrorIds.length;
+
+  imageIngestCronCounter.inc({ bucket: 'sentUserPending' }, sentUserPendingIds.length);
+  imageIngestCronCounter.inc({ bucket: 'sentBackfill' }, sentBackfillIds.length);
+  imageIngestCronCounter.inc({ bucket: 'sentRescan' }, sentRescanIds.length);
+  imageIngestCronCounter.inc({ bucket: 'sentError' }, sentErrorIds.length);
+  imageIngestCronCounter.inc({ bucket: 'waitingForRetry' }, waitingForRetryIds.size);
+  imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
+
   return {
     sent: totalSent,
     sentUserPending: sentUserPendingIds.length,

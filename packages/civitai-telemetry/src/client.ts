@@ -72,6 +72,15 @@ export function registerCounterWithLabels<T extends string>({
   }
 }
 
+export function registerGauge({ name, help }: { name: string; help: string }) {
+  // Do this to deal with HMR in nextjs
+  try {
+    return new client.Gauge({ name: PROM_PREFIX + name, help });
+  } catch (e) {
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Gauge<string>;
+  }
+}
+
 export function registerGaugeWithLabels<T extends string>({
   name,
   help,
@@ -457,6 +466,48 @@ export const appStorageLatencyHistogram = registerHistogram({
   help: 'App Blocks KV procedure latency',
   labelNames: ['op'] as const,
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
+// Image ingestion / scan pipeline. The image-ingestion path (submit → scanner →
+// webhook write-back → cron drain) previously had ZERO Prometheus coverage; these
+// give per-lane submission volume, webhook-outcome split, cron throughput, and (via
+// collect()-based gauges in src/server/prom/client.ts) the working-state backlog.
+export const imageScanWebhookCounter = registerCounterWithLabels({
+  name: 'image_scan_webhook_total',
+  help: 'Image scan-result webhook callbacks by outcome',
+  labelNames: ['result'] as const,
+});
+
+export const imageScanSubmittedCounter = registerCounterWithLabels({
+  name: 'image_scan_submitted_total',
+  help: 'ingestImage() scan submissions by lane (new|legacy) and result (success|failed)',
+  labelNames: ['lane', 'result'] as const,
+});
+
+export const imageIngestCronCounter = registerCounterWithLabels({
+  name: 'image_ingest_cron_total',
+  help: 'ingest-images cron per-bucket image counts (sent lanes, waitingForRetry, staleRemoved)',
+  labelNames: ['bucket'] as const,
+});
+
+export const imageIngestCronQueueDepth = registerGauge({
+  name: 'image_ingest_cron_queue_depth',
+  help: 'ImageScan JobQueue depth read by the ingest-images cron on its most recent run',
+});
+
+// Fleet-wide cron job health (createJob in src/server/jobs/job.ts). Makes a
+// dead/erroring cron — e.g. ingest-images — visible: job_errors_total spikes and
+// the duration histogram flatlines when a job stops running.
+export const jobDurationHistogram = registerHistogram({
+  name: 'job_duration_seconds',
+  help: 'Cron job wall-clock run duration by job name',
+  labelNames: ['job'] as const,
+  buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+});
+export const jobErrorsCounter = registerCounterWithLabels({
+  name: 'job_errors_total',
+  help: 'Cron job runs that threw, by job name',
+  labelNames: ['job'] as const,
 });
 
 // NOTE: the DB pool-depth gauges live in the app (src/server/prom/client.ts) — they

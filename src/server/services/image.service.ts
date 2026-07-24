@@ -64,6 +64,7 @@ import {
 import { postMetrics } from '~/server/metrics';
 import {
   clickhouseFailSoftCounter,
+  imageScanSubmittedCounter,
   leakingContentCounter,
   registerCounter,
   registerCounterWithLabels,
@@ -899,7 +900,10 @@ export const ingestImage = async ({
       callbackUrl,
       priority: lowPriority ? 'low' : undefined,
     });
-    if (!workflowResponse) return false;
+    if (!workflowResponse) {
+      imageScanSubmittedCounter.inc({ lane: 'new', result: 'failed' });
+      return false;
+    }
     const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
     await dbClient.$executeRaw`
         UPDATE "Image"
@@ -913,6 +917,7 @@ export const ingestImage = async ({
           END
         WHERE id = ${id}
       `;
+    imageScanSubmittedCounter.inc({ lane: 'new', result: 'success' });
     return true;
   }
 
@@ -965,6 +970,7 @@ export const ingestImage = async ({
       `;
     }
 
+    imageScanSubmittedCounter.inc({ lane: 'legacy', result: 'success' });
     return true;
   } else {
     await logToAxiom({
@@ -975,6 +981,7 @@ export const ingestImage = async ({
       responseStatus: response.status,
     });
 
+    imageScanSubmittedCounter.inc({ lane: 'legacy', result: 'failed' });
     return false;
   }
 };
