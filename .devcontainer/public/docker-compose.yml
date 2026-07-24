@@ -8,7 +8,7 @@ services:
       NODE_ENV: development
 
   civitai:
-    image: mcr.microsoft.com/devcontainers/typescript-node:1-20
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-22
     volumes:
       - ..:/workspaces:cached
 
