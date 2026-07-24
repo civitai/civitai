@@ -1185,9 +1185,10 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     isModerator: false,
     userId,
     force: true,
-    // Skip toggleBan's Moderated block; softDeleteUser applies its own CSAM
-    // block below. Avoids a redundant double-write and a Moderated->CSAM flip.
-    removeContent: false,
+    // Skip toggleBan's Moderated media block; softDeleteUser applies its own
+    // CSAM block below. Avoids a redundant double-write and a Moderated->CSAM
+    // flip. Models still unpublish (removeModels defaults on).
+    removeMedia: false,
   });
 
   await dbWrite.image.updateMany({
@@ -1702,7 +1703,8 @@ export const toggleBan = async ({
   userId,
   isModerator,
   force,
-  removeContent,
+  removeMedia,
+  removeModels,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
   // Get user with username for search index deletion
   const user = await getUserById({
@@ -1740,16 +1742,22 @@ export const toggleBan = async ({
     // Run cleanup operations in parallel groups
     // Group A: DB-heavy operations (run together)
     // Group B: External API operations (run together)
+    // Unpublishing models defaults ON for every ban (historical behavior); a
+    // moderator can opt out per-ban. Only `removeModels === false` skips it.
+    const shouldRemoveModels = removeModels !== false;
+
     await Promise.all([
       // Group A: Bulk unpublish models and handle bids
-      bulkUnpublishModelsForBannedUser({ odRef: id, odRefuserId: userId }).catch((error) => {
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-bulk-unpublish',
-          message: error.message,
-          error,
-        });
-      }),
+      shouldRemoveModels
+        ? bulkUnpublishModelsForBannedUser({ odRef: id, odRefuserId: userId }).catch((error) => {
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-bulk-unpublish',
+              message: error.message,
+              error,
+            });
+          })
+        : Promise.resolve(),
 
       // Wipe public-profile UserLink rows so banned users' off-site links
       // disappear immediately (replaces a manual Retool DELETE step).
@@ -1788,14 +1796,13 @@ export const toggleBan = async ({
       ]),
     ]);
 
-    // Opt-in "remove all content": block (not delete) the banned user's images,
-    // defaulting ON for SexualMinor bans. Blocking (Moderated) preserves the
-    // 7-day appeal window — the remove-blocked-images job hard-deletes them
+    // Opt-in "remove all images & videos": block (not delete) the banned user's
+    // media, defaulting ON for SexualMinor bans. Blocking (Moderated) preserves
+    // the 7-day appeal window — the remove-blocked-images job hard-deletes them
     // after that. CSAM semantics stay reserved for the softDeleteUser path.
-    const shouldRemoveContent =
-      removeContent === true ||
-      (reasonCode === BanReasonCode.SexualMinor && removeContent !== false);
-    if (shouldRemoveContent) {
+    const shouldRemoveMedia =
+      removeMedia === true || (reasonCode === BanReasonCode.SexualMinor && removeMedia !== false);
+    if (shouldRemoveMedia) {
       try {
         await dbWrite.image.updateMany({
           where: { userId: id, ingestion: { not: 'Blocked' } },
@@ -1867,10 +1874,18 @@ export const toggleBan = async ({
 };
 
 export const getBanContentPreview = async ({ userId }: { userId: number }) => {
-  const imageCount = await dbRead.image.count({
-    where: { userId, ingestion: { not: 'Blocked' } },
-  });
-  return { imageCount };
+  const [imageCount, modelCount] = await Promise.all([
+    dbRead.image.count({
+      where: { userId, ingestion: { not: 'Blocked' } },
+    }),
+    dbRead.model.count({
+      where: {
+        userId,
+        status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+      },
+    }),
+  ]);
+  return { imageCount, modelCount };
 };
 
 export const toggleContestBan = async ({
