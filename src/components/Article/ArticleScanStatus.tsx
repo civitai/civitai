@@ -131,6 +131,7 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
             errorImages={status.images?.error || []}
             textIssue={textIssue}
             canOverride={!!currentUser?.isModerator}
+            canRetry={!!currentUser}
           />
           {currentUser && (
             <Button

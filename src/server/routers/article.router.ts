@@ -19,6 +19,7 @@ import {
   getArticleRatingReviewsSchema,
   resolveArticleRatingReviewSchema,
   resolveArticleImageScanSchema,
+  rescanArticleImageSchema,
 } from '~/server/schema/article.schema';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -36,6 +37,7 @@ import {
   getArticleRatingReviewCounts,
   resolveArticleRatingReview,
   resolveArticleImageScan,
+  rescanArticleImage,
 } from '~/server/services/article.service';
 import {
   unpublishArticleHandler,
@@ -148,6 +150,17 @@ export const articleRouter = router({
     .input(resolveArticleImageScanSchema)
     .use(isFlagProtected('articleImageScanning'))
     .mutation(({ input, ctx }) => resolveArticleImageScan({ ...input, userId: ctx.user.id })),
+  rescanImage: protectedProcedure
+    .meta({ requiredScope: TokenScope.ArticlesWrite })
+    .input(rescanArticleImageSchema)
+    .use(isFlagProtected('articleImageScanning'))
+    .mutation(({ input, ctx }) =>
+      rescanArticleImage({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   createRatingReview: protectedProcedure
     .use(isFlagProtected('articleRatingDispute'))
     .input(createArticleRatingReviewSchema)

@@ -12,6 +12,7 @@ import {
   IconExclamationCircle,
   IconFileText,
   IconShieldCheck,
+  IconRefresh,
 } from '@tabler/icons-react';
 import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -52,11 +53,13 @@ interface ArticleProblematicImagesProps {
   errorImages: ErrorImage[];
   textIssue?: TextModerationIssue | null;
   canOverride?: boolean;
+  canRetry?: boolean;
 }
 
 // Human, class-aware cause for an image the scanner couldn't clear.
 function errorImageCause(image: ErrorImage): string {
-  if (image.ingestion === ImageIngestionStatus.NotFound) return 'Image not found — re-upload it.';
+  if (image.ingestion === ImageIngestionStatus.NotFound)
+    return 'Image couldn’t be loaded during scanning. Try Retry scan; if it keeps failing, re-upload the image.';
   switch (image.failureClass) {
     case 'transient':
       return 'Scanning failed, retrying automatically.';
@@ -124,6 +127,36 @@ function ImageOverrideControl({
   );
 }
 
+function ImageRetryButton({ articleId, imageId }: { articleId: number; imageId: number }) {
+  const queryUtils = trpc.useUtils();
+  const { mutate, isPending } = trpc.article.rescanImage.useMutation({
+    async onSuccess() {
+      showSuccessNotification({ message: 'Image sent for rescan' });
+      await queryUtils.article.getScanStatus.invalidate({ id: articleId });
+      await queryUtils.article.getById.invalidate({ id: articleId });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not rescan image',
+      });
+    },
+  });
+
+  return (
+    <Button
+      size="xs"
+      variant="light"
+      color="blue"
+      leftSection={<IconRefresh size={14} />}
+      loading={isPending}
+      onClick={() => mutate({ articleId, imageId })}
+    >
+      Retry scan
+    </Button>
+  );
+}
+
 function TextModerationSection({ issue }: { issue: TextModerationIssue }) {
   const isBlocked = issue.kind === 'blocked';
   const accentColor = isBlocked ? 'red' : 'yellow';
@@ -185,6 +218,7 @@ export function ArticleProblematicImages({
   errorImages,
   textIssue,
   canOverride,
+  canRetry,
 }: ArticleProblematicImagesProps) {
   const hasImageProblems = blockedImages.length > 0 || errorImages.length > 0;
   const hasTextProblem = !!textIssue;
@@ -289,12 +323,19 @@ export function ArticleProblematicImages({
                         Image ID: {image.id} • Status: {image.ingestion}
                       </Text>
                     </Stack>
-                    {canOverride && (
-                      <ImageOverrideControl
-                        articleId={articleId}
-                        imageId={image.id}
-                        locked={image.nsfwLevelLocked}
-                      />
+                    {(canRetry || canOverride) && (
+                      <Stack gap="xs" align="flex-end">
+                        {canRetry && !image.nsfwLevelLocked && (
+                          <ImageRetryButton articleId={articleId} imageId={image.id} />
+                        )}
+                        {canOverride && (
+                          <ImageOverrideControl
+                            articleId={articleId}
+                            imageId={image.id}
+                            locked={image.nsfwLevelLocked}
+                          />
+                        )}
+                      </Stack>
                     )}
                   </Group>
                 </Paper>

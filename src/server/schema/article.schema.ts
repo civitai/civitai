@@ -119,6 +119,12 @@ export const resolveArticleImageScanSchema = z.object({
   }),
 });
 
+export type RescanArticleImageInput = z.infer<typeof rescanArticleImageSchema>;
+export const rescanArticleImageSchema = z.object({
+  articleId: z.number(),
+  imageId: z.number(),
+});
+
 export type ArticleMetadata = {
   theme?: string;
   prizes?: Array<{ buzz: number; points: number }>;

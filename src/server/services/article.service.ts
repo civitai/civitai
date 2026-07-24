@@ -2423,6 +2423,91 @@ export async function rescanArticle({
   }).catch();
 }
 
+/**
+ * Retry scanning a single article image (owner or moderator). Re-queuing an
+ * image runs it back through `ingestImage`, which re-fetches the blob — so a
+ * transient `NotFound` (or `Error`) cover/content image can recover without
+ * re-uploading. The scan webhook (`fanOutArticleImageUpdates`) recomputes the
+ * article on completion for both cover and connection images, so no manual
+ * recompute is needed here.
+ */
+export async function rescanArticleImage({
+  articleId,
+  imageId,
+  userId,
+  isModerator,
+}: {
+  articleId: number;
+  imageId: number;
+  userId: number;
+  isModerator?: boolean;
+}): Promise<void> {
+  const db = await getDbWithoutLag('article', articleId);
+  const article = await db.article.findUnique({
+    where: { id: articleId },
+    select: { userId: true, coverId: true },
+  });
+  if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
+  if (article.userId !== userId && !isModerator)
+    throw throwAuthorizationError('You cannot perform this action');
+
+  // Image must belong to the article: its cover or a content-image connection.
+  const belongs =
+    article.coverId === imageId ||
+    !!(await dbRead.imageConnection.findFirst({
+      where: { entityId: articleId, entityType: ImageConnectionType.Article, imageId },
+      select: { imageId: true },
+    }));
+  if (!belongs)
+    throw throwBadRequestError(`Image ${imageId} does not belong to article ${articleId}`);
+
+  // --- Rate limit (owners only, mods bypass) ---
+  const cacheKey = `${REDIS_KEYS.ARTICLE.RESCAN}:image:${imageId}` as const;
+  if (!isModerator) {
+    const attempts = (await redis.packed.get<number[]>(cacheKey)) ?? [];
+    const cutoff = Date.now() - RESCAN_WINDOW_SECONDS * 1000;
+    if (attempts.filter((t) => t > cutoff).length >= RESCAN_LIMIT) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: `This image can only be rescanned ${RESCAN_LIMIT} times per day. Please try again later.`,
+      });
+    }
+  }
+
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+  });
+  if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
+
+  // Consistent with rescanArticle: never re-queue an in-flight or locked image.
+  if (image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked) {
+    enqueueImageIngestion({
+      images: [image],
+      name: 'article-rescan-image',
+      userId: article.userId,
+      lowPriority: true,
+    });
+  }
+
+  const attempts = (await redis.packed.get<number[]>(cacheKey)) ?? [];
+  attempts.push(Date.now());
+  const cutoff = Date.now() - RESCAN_WINDOW_SECONDS * 1000;
+  await redis.packed.set(
+    cacheKey,
+    attempts.filter((t) => t > cutoff)
+  );
+  await redis.expire(cacheKey, RESCAN_WINDOW_SECONDS);
+
+  logToAxiom({
+    type: 'info',
+    name: 'article-rescan-image',
+    articleId,
+    imageId,
+    isModerator,
+  }).catch();
+}
+
 // =============================================================================
 // Article NSFW level dispute / review
 // =============================================================================
