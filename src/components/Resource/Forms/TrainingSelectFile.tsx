@@ -4,7 +4,6 @@ import {
   Center,
   Flex,
   Group,
-  Image,
   Loader,
   Menu,
   Paper,
@@ -23,8 +22,10 @@ import {
   IconDotsVertical,
   IconFileDownload,
   IconRepeat,
+  IconZoomIn,
 } from '@tabler/icons-react';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
@@ -66,6 +67,9 @@ const TRANSMITTER_KEY = 'trainer';
 
 const EpochRow = ({
   epoch,
+  epochIndex,
+  columnCount,
+  onOpenSample,
   prompts,
   selectedFile,
   setSelectedFile,
@@ -81,6 +85,9 @@ const EpochRow = ({
   modelName,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
+  epochIndex: number;
+  columnCount: number;
+  onOpenSample: (epochIndex: number, sampleIndex: number) => void;
   prompts: TrainingResultsV2['sampleImagesPrompts'];
   selectedFile: string | undefined;
   setSelectedFile: React.Dispatch<React.SetStateAction<string | undefined>>;
@@ -252,55 +259,75 @@ const EpochRow = ({
             </Group>
           )}
         </Group>
-        <Group
-          className={classes.epochRow}
-          style={{ justifyContent: 'space-evenly', alignItems: 'flex-start' }}
-        >
-          {epoch.sampleImages && epoch.sampleImages.length > 0 ? (
-            epoch.sampleImages.map((url, index) => (
-              <Stack key={index} style={{ justifyContent: 'flex-start' }}>
-                {isVideo ? (
-                  <video
-                    loop
-                    playsInline
-                    disablePictureInPicture
-                    muted
-                    autoPlay
-                    controls={false}
-                    height={200}
-                    // width={180}
-                    className="w-full object-cover"
-                  >
-                    <source src={url} type="video/mp4" />
-                  </video>
-                ) : (
-                  <Image
-                    alt={`Sample image #${index}`}
-                    src={url}
-                    style={{
-                      height: '200px',
-                      // if we want to show full image, change objectFit to contain
-                      objectFit: 'cover',
-                      // object-position: top;
-                      width: '100%',
-                    }}
-                  />
-                )}
-                <Textarea
-                  autosize
-                  minRows={1}
-                  maxRows={4}
-                  value={prompts[index] || '(no prompt provided)'}
-                  readOnly
-                />
-              </Stack>
-            ))
-          ) : (
-            <Center p="md">
-              <Text>No images available</Text>
-            </Center>
-          )}
-        </Group>
+        {columnCount === 0 ? (
+          <Center p="md">
+            <Text>No images available</Text>
+          </Center>
+        ) : (
+          <div className="overflow-x-auto">
+            <div
+              className={classes.sampleGrid}
+              style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(160px, 1fr))` }}
+            >
+              {Array.from({ length: columnCount }, (_, index) => {
+                const url = epoch.sampleImages?.[index];
+                return (
+                  <Stack key={index} gap="xs">
+                    {url ? (
+                      <button
+                        type="button"
+                        aria-label={`View epoch ${epoch.epochNumber} sample ${index + 1} full size`}
+                        className="group relative block h-[200px] w-full cursor-zoom-in overflow-hidden rounded p-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenSample(epochIndex, index);
+                        }}
+                      >
+                        {isVideo ? (
+                          <video
+                            loop
+                            playsInline
+                            disablePictureInPicture
+                            muted
+                            autoPlay
+                            controls={false}
+                            className="size-full object-cover"
+                          >
+                            <source src={url} type="video/mp4" />
+                          </video>
+                        ) : (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            alt={`Epoch ${epoch.epochNumber} sample ${index + 1}`}
+                            src={url}
+                            loading="lazy"
+                            className="size-full object-cover"
+                          />
+                        )}
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                          <IconZoomIn size={28} color="white" />
+                        </span>
+                      </button>
+                    ) : (
+                      <Center className="h-[200px] w-full rounded border border-dashed border-gray-4">
+                        <Text size="xs" c="dimmed">
+                          No sample
+                        </Text>
+                      </Center>
+                    )}
+                    <Textarea
+                      autosize
+                      minRows={1}
+                      maxRows={4}
+                      value={prompts[index] || '(no prompt provided)'}
+                      readOnly
+                    />
+                  </Stack>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </Stack>
     </Paper>
   );
@@ -694,6 +721,25 @@ export default function TrainingSelectFile({
   }
   epochs = [...epochs].sort((a, b) => b.epochNumber - a.epochNumber);
 
+  // Sample index N is the same prompt in every epoch (`sampleImagesPrompts` is stored once per
+  // run), so columns stay aligned even when an epoch emitted fewer samples than its neighbours.
+  const columnCount = Math.max(
+    0,
+    ...epochs.map((e) => e.sampleImages?.length ?? 0),
+    epochs.length ? samplePrompts.length : 0
+  );
+
+  const openSample = (epochIndex: number, sampleIndex: number) => {
+    import('~/components/Training/TrainingSampleViewer/TrainingSampleViewer').then(
+      ({ default: TrainingSampleViewer }) => {
+        dialogStore.trigger({
+          component: TrainingSampleViewer,
+          props: { epochs, prompts: samplePrompts, isVideo, epochIndex, sampleIndex },
+        });
+      }
+    );
+  };
+
   // Check if epoch images may be blurred due to buzz type.
   // Images are blurred when paid with green buzz or blue buzz without a membership.
   // Images are NOT blurred when paid with yellow buzz or blue buzz with a membership.
@@ -703,7 +749,6 @@ export default function TrainingSelectFile({
       ? (trainingResults as unknown as TrainingResultsV2)
       : undefined;
   const buzzType = tResultsV2?.transactionData?.find((t) => t.accountType)?.accountType;
-  console.log({ tResultsV2, buzzType });
   // Show alert when NOT paid with yellow buzz (yellow is the only type that guarantees no blur)
   const epochImagesMayBeBlurred = buzzType !== 'yellow';
 
@@ -891,6 +936,9 @@ export default function TrainingSelectFile({
           </Center>
           <EpochRow
             epoch={epochs[0]}
+            epochIndex={0}
+            columnCount={columnCount}
+            onOpenSample={openSample}
             prompts={samplePrompts}
             selectedFile={selectedFile}
             setSelectedFile={setSelectedFile}
@@ -916,6 +964,9 @@ export default function TrainingSelectFile({
                 <EpochRow
                   key={idx}
                   epoch={e}
+                  epochIndex={idx + 1}
+                  columnCount={columnCount}
+                  onOpenSample={openSample}
                   prompts={samplePrompts}
                   selectedFile={selectedFile}
                   setSelectedFile={setSelectedFile}
