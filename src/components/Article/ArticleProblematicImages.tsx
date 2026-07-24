@@ -5,10 +5,21 @@
  * that are blocking an article from being published.
  */
 
-import { Alert, Text, Stack, Group, Paper } from '@mantine/core';
-import { IconAlertTriangle, IconX, IconExclamationCircle, IconFileText } from '@tabler/icons-react';
+import { Alert, Text, Stack, Group, Paper, Select, Button, Badge } from '@mantine/core';
+import {
+  IconAlertTriangle,
+  IconX,
+  IconExclamationCircle,
+  IconFileText,
+  IconShieldCheck,
+} from '@tabler/icons-react';
+import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import type { EntityModerationStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 export type TextModerationIssue = {
   // Terminal-state reason the text pipeline produced an article-blocking result.
@@ -18,15 +29,99 @@ export type TextModerationIssue = {
   updatedAt: Date | null;
 };
 
+type BlockedImage = {
+  id: number;
+  url: string;
+  ingestion: ImageIngestionStatus;
+  blockedFor: string | null;
+  nsfwLevelLocked: boolean;
+};
+
+type ErrorImage = {
+  id: number;
+  url: string;
+  ingestion: ImageIngestionStatus;
+  nsfwLevelLocked: boolean;
+  failureClass: string | null;
+  reason: string | null;
+};
+
 interface ArticleProblematicImagesProps {
-  blockedImages: Array<{
-    id: number;
-    url: string;
-    ingestion: ImageIngestionStatus;
-    blockedFor: string | null;
-  }>;
-  errorImages: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+  articleId: number;
+  blockedImages: BlockedImage[];
+  errorImages: ErrorImage[];
   textIssue?: TextModerationIssue | null;
+  canOverride?: boolean;
+}
+
+// Human, class-aware cause for an image the scanner couldn't clear.
+function errorImageCause(image: ErrorImage): string {
+  if (image.ingestion === ImageIngestionStatus.NotFound) return 'Image not found — re-upload it.';
+  switch (image.failureClass) {
+    case 'transient':
+      return 'Scanning failed, retrying automatically.';
+    case 'permanent':
+      return 'This image can’t be scanned (unsupported or corrupt) — replace it.';
+    default:
+      return image.reason || 'This image failed to scan.';
+  }
+}
+
+function ImageOverrideControl({
+  articleId,
+  imageId,
+  locked,
+}: {
+  articleId: number;
+  imageId: number;
+  locked: boolean;
+}) {
+  const queryUtils = trpc.useUtils();
+  const [level, setLevel] = useState<string | null>(null);
+
+  const { mutate, isPending } = trpc.article.resolveImageScan.useMutation({
+    async onSuccess() {
+      showSuccessNotification({ message: 'Image override applied' });
+      await queryUtils.article.getScanStatus.invalidate({ id: articleId });
+      await queryUtils.article.getById.invalidate({ id: articleId });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not override image',
+      });
+    },
+  });
+
+  if (locked)
+    return (
+      <Badge color="green" variant="light" leftSection={<IconShieldCheck size={12} />}>
+        Overridden
+      </Badge>
+    );
+
+  return (
+    <Group gap="xs" wrap="nowrap">
+      <Select
+        size="xs"
+        placeholder="Set rating"
+        value={level}
+        onChange={setLevel}
+        data={browsingLevels.map((l) => ({ value: String(l), label: browsingLevelLabels[l] }))}
+        w={110}
+      />
+      <Button
+        size="xs"
+        variant="light"
+        color="green"
+        loading={isPending}
+        disabled={!level}
+        onClick={() => level && mutate({ articleId, imageId, nsfwLevel: Number(level) })}
+      >
+        Override
+      </Button>
+    </Group>
+  );
 }
 
 function TextModerationSection({ issue }: { issue: TextModerationIssue }) {
@@ -85,9 +180,11 @@ function TextModerationSection({ issue }: { issue: TextModerationIssue }) {
 }
 
 export function ArticleProblematicImages({
+  articleId,
   blockedImages,
   errorImages,
   textIssue,
+  canOverride,
 }: ArticleProblematicImagesProps) {
   const hasImageProblems = blockedImages.length > 0 || errorImages.length > 0;
   const hasTextProblem = !!textIssue;
@@ -149,6 +246,13 @@ export function ArticleProblematicImages({
                         Image ID: {image.id}
                       </Text>
                     </Stack>
+                    {canOverride && (
+                      <ImageOverrideControl
+                        articleId={articleId}
+                        imageId={image.id}
+                        locked={image.nsfwLevelLocked}
+                      />
+                    )}
                   </Group>
                 </Paper>
               ))}
@@ -165,9 +269,6 @@ export function ArticleProblematicImages({
                 Failed Images ({errorImages.length}) - Scan Error
               </Text>
             </Group>
-            <Text size="xs" c="dimmed">
-              These images failed to scan or were not found
-            </Text>
             <Stack gap="sm">
               {errorImages.map((image) => (
                 <Paper key={image.id} p="xs" className="bg-yellow-1 dark:bg-yellow-9/20" withBorder>
@@ -180,9 +281,21 @@ export function ArticleProblematicImages({
                         alt="Error image (may be broken)"
                       />
                     </div>
-                    <Text size="xs" c="dimmed">
-                      Image ID: {image.id} • Status: {image.ingestion}
-                    </Text>
+                    <Stack gap={4} className="flex-1">
+                      <Text size="xs" fw={500} c="yellow.7">
+                        {errorImageCause(image)}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        Image ID: {image.id} • Status: {image.ingestion}
+                      </Text>
+                    </Stack>
+                    {canOverride && (
+                      <ImageOverrideControl
+                        articleId={articleId}
+                        imageId={image.id}
+                        locked={image.nsfwLevelLocked}
+                      />
+                    )}
                   </Group>
                 </Paper>
               ))}

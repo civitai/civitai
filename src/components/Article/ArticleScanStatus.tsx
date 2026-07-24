@@ -117,9 +117,11 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
       return (
         <Stack gap="md">
           <ArticleProblematicImages
+            articleId={articleId}
             blockedImages={status.images?.blocked || []}
             errorImages={status.images?.error || []}
             textIssue={textIssue}
+            canOverride={!!currentUser?.isModerator}
           />
           {currentUser && (
             <Button

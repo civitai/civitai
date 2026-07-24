@@ -107,6 +107,13 @@ export const upsertArticleInput = z.object({
   status: z.enum(ArticleStatus).optional(),
 });
 
+export type ResolveArticleImageScanInput = z.infer<typeof resolveArticleImageScanSchema>;
+export const resolveArticleImageScanSchema = z.object({
+  articleId: z.number(),
+  imageId: z.number(),
+  nsfwLevel: z.enum(NsfwLevel),
+});
+
 export type ArticleMetadata = {
   theme?: string;
   prizes?: Array<{ buzz: number; points: number }>;

@@ -48,6 +48,7 @@ import {
   createImage,
   deleteImageById,
   enqueueImageIngestion,
+  resolveIngestionError,
 } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -1755,6 +1756,25 @@ export type ArticleTextModerationStatus = {
   updatedAt: Date | null;
 };
 
+// `scanJobs.error` is stamped by `markImageScanError` (image-scan-result.service)
+// and carries the classifier's verdict (transient | permanent | unknown) plus the
+// human reason, letting the scan-status UI render a class-aware cause.
+function extractScanFailure(scanJobs: Prisma.JsonValue): {
+  failureClass: string | null;
+  reason: string | null;
+} {
+  const error =
+    scanJobs && typeof scanJobs === 'object' && !Array.isArray(scanJobs)
+      ? (scanJobs as Record<string, unknown>).error
+      : null;
+  if (!error || typeof error !== 'object') return { failureClass: null, reason: null };
+  const { failureClass, reason } = error as { failureClass?: unknown; reason?: unknown };
+  return {
+    failureClass: typeof failureClass === 'string' ? failureClass : null,
+    reason: typeof reason === 'string' ? reason : null,
+  };
+}
+
 export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   total: number;
   scanned: number;
@@ -1768,8 +1788,16 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
       url: string;
       ingestion: ImageIngestionStatus;
       blockedFor: string | null;
+      nsfwLevelLocked: boolean;
     }>;
-    error: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+    error: Array<{
+      id: number;
+      url: string;
+      ingestion: ImageIngestionStatus;
+      nsfwLevelLocked: boolean;
+      failureClass: string | null;
+      reason: string | null;
+    }>;
     pending: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
   };
   textModeration: ArticleTextModerationStatus;
@@ -1780,7 +1808,18 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
         entityId: id,
         entityType: ImageConnectionType.Article,
       },
-      include: { image: { select: { id: true, url: true, ingestion: true, blockedFor: true } } },
+      include: {
+        image: {
+          select: {
+            id: true,
+            url: true,
+            ingestion: true,
+            blockedFor: true,
+            nsfwLevelLocked: true,
+            scanJobs: true,
+          },
+        },
+      },
     }),
     dbRead.article.findUnique({
       where: { id },
@@ -1825,9 +1864,29 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     pending: pendingImages.length,
     allComplete: pendingImages.length === 0 && textDone,
     images: {
-      blocked: blockedImages.map((c) => c.image),
-      error: errorImages.map((c) => c.image),
-      pending: pendingImages.map((c) => c.image),
+      blocked: blockedImages.map((c) => ({
+        id: c.image.id,
+        url: c.image.url,
+        ingestion: c.image.ingestion,
+        blockedFor: c.image.blockedFor,
+        nsfwLevelLocked: c.image.nsfwLevelLocked,
+      })),
+      error: errorImages.map((c) => {
+        const { failureClass, reason } = extractScanFailure(c.image.scanJobs);
+        return {
+          id: c.image.id,
+          url: c.image.url,
+          ingestion: c.image.ingestion,
+          nsfwLevelLocked: c.image.nsfwLevelLocked,
+          failureClass,
+          reason,
+        };
+      }),
+      pending: pendingImages.map((c) => ({
+        id: c.image.id,
+        url: c.image.url,
+        ingestion: c.image.ingestion,
+      })),
     },
     textModeration: {
       required,
@@ -2158,6 +2217,32 @@ export async function recomputeArticleIngestion(articleId: number): Promise<void
   await dispatchArticleIngestionPostCommit(result);
 }
 
+/**
+ * Moderator override for a single article image stuck at Error/Blocked. Reuses
+ * `resolveIngestionError` to set the level + lock + `ingestion=Scanned`, then
+ * recomputes the article so it leaves Error/Blocked and re-queues the search
+ * index. Works for Blocked images too — un-blocking a policy-blocked image is an
+ * intentional moderator decision (the lock keeps a later rescan from re-blocking
+ * a clean result; a hard violation still re-blocks).
+ */
+export async function resolveArticleImageScan({
+  articleId,
+  imageId,
+  nsfwLevel,
+  userId,
+}: {
+  articleId: number;
+  imageId: number;
+  nsfwLevel: NsfwLevel;
+  userId: number;
+}): Promise<void> {
+  await resolveIngestionError({ id: imageId, nsfwLevel, userId });
+  await recomputeArticleIngestion(articleId);
+  await articlesSearchIndex.queueUpdate([
+    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+}
+
 const RESCAN_LIMIT = 3;
 const RESCAN_WINDOW_SECONDS = CacheTTL.day; // 24 hours
 
@@ -2224,12 +2309,31 @@ export async function rescanArticle({
   // --- Re-queue already-processed images for rescan ---
   const connections = await dbRead.imageConnection.findMany({
     where: { entityId: id, entityType: ImageConnectionType.Article },
-    include: { image: { select: { id: true, url: true, ingestion: true, type: true } } },
+    include: {
+      image: {
+        select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+      },
+    },
   });
 
-  const imagesToIngest = connections
-    .filter((conn) => conn.image.ingestion !== ImageIngestionStatus.Pending)
-    .map((conn) => conn.image);
+  // Cover lives on `Article.coverId`, not in `ImageConnection`, so a broken
+  // cover would never be re-queued without folding it in here.
+  const cover = article.coverId
+    ? await dbRead.image.findUnique({
+        where: { id: article.coverId },
+        select: { id: true, url: true, ingestion: true, type: true, nsfwLevelLocked: true },
+      })
+    : null;
+
+  const candidates = connections.map((conn) => conn.image);
+  if (cover && !candidates.some((image) => image.id === cover.id)) candidates.push(cover);
+
+  // Never re-scan a locked image: a moderator override sets `nsfwLevelLocked`,
+  // and re-queuing would let a hard-violation rescan overwrite that human
+  // decision, so the override must stay sticky.
+  const imagesToIngest = candidates.filter(
+    (image) => image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked
+  );
 
   enqueueImageIngestion({
     images: imagesToIngest,

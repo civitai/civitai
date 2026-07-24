@@ -18,6 +18,7 @@ import {
   getMyArticleRatingReviewSchema,
   getArticleRatingReviewsSchema,
   resolveArticleRatingReviewSchema,
+  resolveArticleImageScanSchema,
 } from '~/server/schema/article.schema';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -34,6 +35,7 @@ import {
   getArticleRatingReviews,
   getArticleRatingReviewCounts,
   resolveArticleRatingReview,
+  resolveArticleImageScan,
 } from '~/server/services/article.service';
 import {
   unpublishArticleHandler,
@@ -142,6 +144,10 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
     .query(({ input }) => getArticleScanStatus(input)),
+  resolveImageScan: moderatorProcedure
+    .input(resolveArticleImageScanSchema)
+    .use(isFlagProtected('articleImageScanning'))
+    .mutation(({ input, ctx }) => resolveArticleImageScan({ ...input, userId: ctx.user.id })),
   createRatingReview: protectedProcedure
     .use(isFlagProtected('articleRatingDispute'))
     .input(createArticleRatingReviewSchema)
