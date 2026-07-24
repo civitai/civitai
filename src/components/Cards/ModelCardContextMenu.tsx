@@ -1,5 +1,5 @@
 import { Menu } from '@mantine/core';
-import { IconInfoCircle, IconTagOff } from '@tabler/icons-react';
+import { IconBabyCarriage, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -12,6 +12,7 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
+import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { env } from '~/env/client';
@@ -164,6 +165,28 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
         >
           Lookup Model
         </Menu.Item>
+      ),
+    });
+  }
+
+  if (currentUser?.isModerator) {
+    contextMenuItems.push({
+      key: 'set-minor',
+      component: (
+        <ToggleMinorModel key="set-minor" modelId={data.id} minor={data.minor}>
+          {({ onClick }) => (
+            <Menu.Item
+              leftSection={<IconBabyCarriage size={14} stroke={1.5} />}
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClick();
+              }}
+            >
+              {data.minor ? 'Unset as Minor' : 'Set as Minor'}
+            </Menu.Item>
+          )}
+        </ToggleMinorModel>
       ),
     });
   }

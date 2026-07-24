@@ -57,6 +57,7 @@ import type {
   PublishPrivateModelInput,
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
+  SetModelMinorInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
@@ -95,6 +96,7 @@ import {
   publishModelById,
   publishPrivateModel,
   restoreModelById,
+  setModelMinor,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
   toggleLockModel,
@@ -1349,6 +1351,21 @@ export const reorderModelVersionsHandler = async ({
 export const toggleModelLockHandler = async ({ input }: { input: ToggleModelLockInput }) => {
   try {
     await toggleLockModel(input);
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const setModelMinorHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetModelMinorInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await setModelMinor({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -65,6 +65,7 @@ import type {
   PublishModelSchema,
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
+  SetModelMinorInput,
   SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
@@ -107,6 +108,7 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
@@ -1961,6 +1963,202 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
   });
 };
 
+export async function applyModelFlagSideEffects({
+  before,
+  after,
+  tagsChanged = false,
+  nameChanged = false,
+  descriptionChanged = false,
+}: {
+  before: {
+    poi: boolean;
+    minor: boolean;
+    sfwOnly: boolean;
+    nsfw: boolean;
+    gallerySettings: Prisma.JsonValue;
+  };
+  after: {
+    id: number;
+    name: string;
+    description: string | null;
+    poi: boolean;
+    nsfw: boolean;
+    minor: boolean;
+    sfwOnly: boolean;
+    status: ModelStatus;
+    gallerySettings: Prisma.JsonValue;
+  };
+  tagsChanged?: boolean;
+  nameChanged?: boolean;
+  descriptionChanged?: boolean;
+}): Promise<void> {
+  const { id } = after;
+  const poiChanged = after.poi !== before.poi;
+  const minorChanged = after.minor !== before.minor || after.sfwOnly !== before.sfwOnly;
+  const nsfwChanged = after.nsfw !== before.nsfw;
+
+  // Update search index if listing changes
+  if (tagsChanged || poiChanged || minorChanged) {
+    await modelTagCache.refresh(id);
+    if (tagsChanged) await modelVotableTagsCache.bust(id);
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  }
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+  const newGallerySettings = after.gallerySettings as ModelGallerySettingsSchema;
+  const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
+
+  if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+
+  // Ingest model if it's published and any of the following fields have changed:
+  if (
+    (after.status === 'Published' || after.status === 'Scheduled') &&
+    (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
+  ) {
+    const parsedModel = ingestModelSchema.parse(after);
+    // Run it in the background to prevent blocking the request
+    ingestModel({ ...parsedModel }).catch((error) =>
+      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+    );
+  }
+
+  if (minorChanged || poiChanged) {
+    const modelVersions = await dbWrite.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true },
+    });
+
+    const modelVersionIds = modelVersions.map(({ id }) => id);
+
+    if (modelVersionIds.length !== 0) {
+      // Set-based on purpose: a gallery can hold hundreds of thousands of images, and
+      // binding one parameter per image id blows past Postgres' 65535 parameter limit.
+      const updatedImages = await dbWrite.$queryRaw<{ id: number }[]>`
+        UPDATE "Image" i
+          SET minor = ${after.minor},
+              poi = ${after.poi}
+        FROM "Post" p
+        WHERE i."postId" = p.id
+          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
+        RETURNING i.id
+      `;
+
+      if (updatedImages.length !== 0) {
+        await queueImageSearchIndexUpdate({
+          ids: updatedImages.map(({ id }) => id),
+          action: SearchIndexUpdateQueueAction.Update,
+        });
+      }
+
+      await bustMvCache(modelVersionIds, id);
+    }
+  }
+}
+
+// Kept in sync with `lockableProperties` in ModelUpsertForm.tsx — these are the
+// fields the "Set as Minor" quick action locks against creator edits.
+export const MINOR_LOCKED_PROPERTIES = ['minor', 'nsfw', 'sfwOnly'];
+
+export async function setModelMinor({
+  id,
+  minor,
+  userId,
+}: SetModelMinorInput & { userId: number }) {
+  const before = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      nsfw: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  const prevLockedProperties = before.lockedProperties ?? [];
+  const lockedProperties = minor
+    ? uniq([...prevLockedProperties, ...MINOR_LOCKED_PROPERTIES])
+    : prevLockedProperties.filter((prop) => !MINOR_LOCKED_PROPERTIES.includes(prop));
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+
+  const result = await dbWrite.model.update({
+    where: { id },
+    // Unset deliberately leaves sfwOnly/nsfw/gallerySettings untouched — the model may
+    // have been legitimately SFW-only before it was flagged, and guessing wrong would
+    // silently re-open NSFW generation nobody asked to re-open.
+    data: minor
+      ? {
+          minor: true,
+          nsfw: false,
+          sfwOnly: true,
+          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+          lockedProperties,
+        }
+      : {
+          minor: false,
+          lockedProperties,
+        },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+    },
+  });
+
+  await preventReplicationLag('model', id);
+  // Audit before the fan-out: the flag write has already committed, so a fan-out
+  // failure must not cost us the record of who flipped it. The audit write itself
+  // must not block the fan-out either, so failures are logged, not thrown.
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: id,
+    activity: minor ? 'setMinor' : 'unsetMinor',
+  }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'set-model-minor-track-activity',
+      message: `Failed to track mod activity for model ${id}`,
+      error,
+    })
+  );
+  await applyModelFlagSideEffects({ before, after: result });
+
+  return result;
+}
+
+/**
+ * Locks come from the stored row, never the payload: enforcing against a client-supplied
+ * `lockedProperties` lets a creator unlock their own model, and letting that array reach
+ * the write erases the stored locks outright.
+ */
+function enforceLockedProperties<T extends { lockedProperties?: string[] }>({
+  data,
+  storedLockedProperties,
+  isModerator,
+}: {
+  data: T;
+  storedLockedProperties?: string[] | null;
+  isModerator?: boolean;
+}) {
+  if (isModerator) return;
+
+  const lockedProperties = uniq([
+    ...(storedLockedProperties ?? []),
+    ...(data.lockedProperties ?? []),
+  ]);
+  for (const prop of lockedProperties) delete (data as Record<string, unknown>)[prop];
+  delete (data as Record<string, unknown>).lockedProperties;
+}
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
@@ -1984,20 +2182,34 @@ export const upsertModel = async (
   } = input;
   let { meta } = input;
 
-  // don't allow updating of locked properties
-  if (!isModerator) {
-    const lockedProperties = data.lockedProperties ?? [];
-    for (const prop of lockedProperties) {
-      const key = prop as keyof typeof data;
-      if (data[key] !== undefined) delete data[key];
-    }
+  const beforeUpdate =
+    id && !templateId
+      ? await dbRead.model.findUnique({
+          where: { id },
+          select: {
+            name: true,
+            description: true,
+            poi: true,
+            userId: true,
+            minor: true,
+            sfwOnly: true,
+            nsfw: true,
+            lockedProperties: true,
+            gallerySettings: true,
+            meta: true,
+          },
+        })
+      : null;
 
+  const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
+  enforceLockedProperties({ data, storedLockedProperties, isModerator });
+
+  if (!isModerator) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // If profanity exceeds thresholds, mark model as NSFW
     if (evaluation.shouldMarkNSFW && !data.nsfw) {
       meta = {
         ...(meta ?? {}),
@@ -2007,11 +2219,12 @@ export const upsertModel = async (
           metrics: evaluation.metrics,
         },
       };
-      data.nsfw = true;
-      data.lockedProperties =
-        data.lockedProperties && !data.lockedProperties.includes('nsfw')
-          ? [...data.lockedProperties, 'nsfw']
-          : ['nsfw'];
+      // A stored nsfw lock is a moderator's call (minor-flagging sets it false): keep the
+      // detection for review, but never let the filter overturn it.
+      if (!storedLockedProperties.includes('nsfw')) {
+        data.nsfw = true;
+        data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
+      }
     }
   }
 
@@ -2097,20 +2310,6 @@ export const upsertModel = async (
     }
     return { ...result, meta: modelMeta };
   } else {
-    const beforeUpdate = await dbRead.model.findUnique({
-      where: { id },
-      select: {
-        name: true,
-        description: true,
-        poi: true,
-        userId: true,
-        minor: true,
-        sfwOnly: true,
-        nsfw: true,
-        gallerySettings: true,
-        meta: true,
-      },
-    });
     if (!beforeUpdate) return null;
 
     const isOwner = beforeUpdate.userId === userId || isModerator;
@@ -2169,78 +2368,19 @@ export const upsertModel = async (
       },
     });
     await preventReplicationLag('model', id);
+    await userModelCountCache.refresh(userId);
 
-    // Check any changes that would require a search index update
-    const poiChanged = result.poi !== beforeUpdate.poi;
-    const minorChanged =
-      result.minor !== beforeUpdate.minor || result.sfwOnly !== beforeUpdate.sfwOnly;
-    const nsfwChanged = result.nsfw !== beforeUpdate.nsfw;
-    const nameChanged = input.name !== beforeUpdate.name;
-    const descriptionChanged = input.description !== beforeUpdate.description;
     const modelMeta = result.meta as ModelMeta | null;
     const showcaseCollectionChanged =
       modelMeta?.showcaseCollectionId !== (beforeUpdate.meta as ModelMeta)?.showcaseCollectionId;
 
-    // Update search index if listing changes
-    if (tagsOnModels || poiChanged || minorChanged) {
-      await modelTagCache.refresh(result.id);
-      if (tagsOnModels) await modelVotableTagsCache.bust(result.id);
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    }
-
-    const newGallerySettings = result.gallerySettings as ModelGallerySettingsSchema;
-    const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
-
-    if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
-
-    await userModelCountCache.refresh(userId);
-
-    // Ingest model if it's published and any of the following fields have changed:
-    if (
-      (result.status === 'Published' || result.status === 'Scheduled') &&
-      (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
-    ) {
-      const parsedModel = ingestModelSchema.parse(result);
-      // Run it in the background to prevent blocking the request
-      ingestModel({ ...parsedModel }).catch((error) =>
-        logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-      );
-    }
-
-    if (minorChanged || poiChanged) {
-      // Update all images:
-      const modelVersions = await dbWrite.modelVersion.findMany({
-        where: { modelId: id },
-        select: { id: true },
-      });
-
-      const modelVersionIds = modelVersions.map(({ id }) => id);
-
-      if (modelVersionIds.length !== 0) {
-        const imageIds = await dbRead.$queryRaw<{ id: number }[]>`
-          SELECT i.id
-          FROM "Image" i
-          JOIN "Post" p ON i."postId" = p.id
-          WHERE p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
-        `;
-
-        if (imageIds.length !== 0) {
-          await dbWrite.$executeRaw`
-            UPDATE "Image"
-              SET minor = ${result.minor},
-                  poi = ${result.poi}
-            WHERE id IN (${Prisma.join(
-              imageIds.map(({ id }) => id),
-              ','
-            )})
-          `;
-
-          await imagesSearchIndex.queueUpdate(
-            imageIds.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-          );
-        }
-      }
-    }
+    await applyModelFlagSideEffects({
+      before: beforeUpdate,
+      after: result,
+      tagsChanged: !!tagsOnModels,
+      nameChanged: input.name !== beforeUpdate.name,
+      descriptionChanged: input.description !== beforeUpdate.description,
+    });
 
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
@@ -3967,11 +4107,26 @@ export const privateModelFromTraining = async ({
 }: PrivateModelFromTrainingInput & {
   user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
 }) => {
-  if (!input.user.isModerator) {
-    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
-  }
-
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
+
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+      lockedProperties: true,
+    },
+  });
+
+  if (!model) return null;
+
+  const isOwner = model.userId === user.id || user.isModerator;
+  if (!isOwner) return null;
+
+  enforceLockedProperties({
+    data,
+    storedLockedProperties: model.lockedProperties,
+    isModerator: user.isModerator,
+  });
 
   const totalPrivateModels = await dbRead.model.count({
     where: {
@@ -3992,27 +4147,6 @@ export const privateModelFromTraining = async ({
   if (totalPrivateModels >= maxPrivateModels) {
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
-
-  // don't allow updating of locked properties
-  if (!user.isModerator) {
-    const lockedProperties = data.lockedProperties ?? [];
-    for (const prop of lockedProperties) {
-      const key = prop as keyof typeof data;
-      if (data[key] !== undefined) delete data[key];
-    }
-  }
-
-  const model = await dbRead.model.findUnique({
-    where: { id },
-    select: {
-      userId: true,
-    },
-  });
-
-  if (!model) return null;
-
-  const isOwner = model.userId === user.id || user.isModerator;
-  if (!isOwner) return null;
 
   try {
     const result = await dbWrite.model.update({
