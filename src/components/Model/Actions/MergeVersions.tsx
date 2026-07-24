@@ -920,7 +920,11 @@ function MergeFileCard({
   modelType?: string;
 }) {
   const effectiveType = (mapping?.type ?? file.type) as ModelFileType;
-  const effectiveFp = (mapping?.metadata?.fp ?? file.metadata?.fp ?? null) as string | null;
+  // Key presence, not `??`: the quant select writes an explicit `fp: null` to clear a stale
+  // precision, and `??` would fall through to the source file's value and re-show it.
+  const effectiveFp = (
+    mapping?.metadata && 'fp' in mapping.metadata ? mapping.metadata.fp : file.metadata?.fp ?? null
+  ) as string | null;
   const effectiveSize = (mapping?.metadata?.size ?? file.metadata?.size ?? null) as string | null;
   const effectiveFormat = (mapping?.metadata?.format ?? file.metadata?.format ?? null) as
     | string
