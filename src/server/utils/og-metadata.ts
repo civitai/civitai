@@ -30,6 +30,14 @@ const MAX_DESCRIPTION_LEN = 2000; // mirrors OFFSITE_DESCRIPTION_MAX
  * fallback skips it. A logo is never 32px or smaller on either declared side.
  */
 const MIN_HEADER_IMG_PX = 32;
+// Only the first slice of a document is parsed for metadata — all signals (og:*,
+// <title>, <link rel=icon>, brand/header <img>) live at the page top. Bounds the
+// cost of scanning adversarial HTML (see extractListingMeta).
+const META_HTML_PARSE_CAP = 256_000;
+// A single <header>/<nav> block is never anywhere near this large; bounding the
+// lazy inner capture stops the container regex from rescanning to EOF at every
+// unmatched open tag (the O(n^2) event-loop-freeze vector on hostile input).
+const HEADER_NAV_BLOCK_MAX = 8_000;
 
 export type ListingMetaSuggestion = {
   name?: string;
@@ -161,7 +169,10 @@ function extractHeaderNavImgHref(html: string): string | undefined {
 
   // (1) Every <img> inside each <header>/<nav> block, in document order (highest
   // priority). All of them — so a leading spacer/pixel doesn't shadow the real logo.
-  const containerRe = /<(header|nav)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  const containerRe = new RegExp(
+    `<(header|nav)\\b[^>]*>([\\s\\S]{0,${HEADER_NAV_BLOCK_MAX}}?)<\\/\\1>`,
+    'gi'
+  );
   let container: RegExpExecArray | null;
   while ((container = containerRe.exec(html)) !== null) {
     const inner = container[2];
@@ -242,6 +253,14 @@ function clamp(s: string | undefined, max: number): string | undefined {
  * manual entry / upload). Never throws.
  */
 export function extractListingMeta(html: string, finalUrl: string): ListingMetaSuggestion {
+  // Parse only a prefix of the document. Every signal we pull (og:*, <title>,
+  // <link rel=icon>, and a brand/header <img>) lives at the top of the page, so a
+  // cap costs no extraction quality — but it bounds the cost of scanning
+  // adversarial HTML (the fetch's byte cap is ~1.5MB; without this cap the
+  // header/nav container scan is super-linear and a hostile body can freeze the
+  // event loop for tens of seconds). Defence-in-depth with the bounded quantifier
+  // in extractHeaderNavImgHref.
+  if (html.length > META_HTML_PARSE_CAP) html = html.slice(0, META_HTML_PARSE_CAP);
   const meta = extractMetaMap(html);
 
   const name = clamp(meta.get('og:title') ?? extractTitle(html), MAX_NAME_LEN);

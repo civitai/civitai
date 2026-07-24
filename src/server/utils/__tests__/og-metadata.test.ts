@@ -144,4 +144,27 @@ describe('extractListingMeta', () => {
       expect(extractListingMeta(html, BASE).iconImageUrl).toBeUndefined();
     });
   });
+
+  describe('adversarial-input cost (event-loop-freeze / ReDoS guard)', () => {
+    // Regression for the O(n^2) container-regex freeze: many unclosed <header>
+    // open tags forced the lazy backreference match to rescan to EOF at every
+    // start position. A ~1.5MB body froze the event loop ~45s. The parse cap +
+    // bounded lazy quantifier make it linear-with-small-constant. Threshold is
+    // generous (CI variance) but still ~10x under the broken time.
+    it('parses a 1.5MB run of unclosed <header> tags in bounded time', () => {
+      const html = '<header>'.repeat(200_000); // ~1.6MB, no closer, no <link icon>
+      const t0 = Date.now();
+      const r = extractListingMeta(html, BASE);
+      const elapsed = Date.now() - t0;
+      expect(r.iconImageUrl).toBeUndefined(); // nothing extractable, but no hang
+      expect(elapsed).toBeLessThan(4000);
+    });
+
+    it('parses a 1.5MB run of mismatched header/nav tags in bounded time', () => {
+      const html = '<header>x</nav>'.repeat(120_000); // backref never satisfied
+      const t0 = Date.now();
+      extractListingMeta(html, BASE);
+      expect(Date.now() - t0).toBeLessThan(4000);
+    });
+  });
 });
