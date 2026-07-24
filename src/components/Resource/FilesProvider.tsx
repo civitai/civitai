@@ -336,13 +336,12 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
     const validation = metadataSchema.safeParse(toValidate);
     if (!validation.success) {
-      const formatted = validation.error.format() as unknown as Array<{
-        [k: string]: ZodErrorSchema;
-      }>;
+      // format() returns an object keyed by failing index, not an array.
+      const formatted = validation.error.format() as unknown as Record<number, SchemaError>;
       const errors =
         targetIndex >= 0
           ? files.map((_, i) => (i === targetIndex ? formatted[0] : undefined))
-          : formatted;
+          : files.map((_, i) => formatted[i]);
       setErrors(errors);
 
       const missingFields: string[] = [];
@@ -366,7 +365,17 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       return false;
     }
 
-    if (targetIndex >= 0) return true;
+    if (targetIndex >= 0) {
+      // Only conflicts the edited file is part of — an unrelated pair of siblings
+      // that happen to share a key isn't this save's problem.
+      const target = files[targetIndex];
+      const conflicts = getConflictingFiles(files).filter((group) => group.includes(target));
+      if (conflicts.length) {
+        showConflictNotification(conflicts);
+        return false;
+      }
+      return true;
+    }
 
     // External-generation versions (mod-only, routed via external engines) intentionally
     // ship without files; skip the component-count requirement for them.
@@ -403,17 +412,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
     const conflicts = getConflictingFiles(files);
     if (conflicts.length) {
-      showErrorNotification({
-        title: 'Duplicate file types',
-        error: new Error(
-          conflicts
-            .map(
-              (group) =>
-                `${group.map((f) => f.name).join(', ')}: same type and settings, please adjust`
-            )
-            .join('\n')
-        ),
-      });
+      showConflictNotification(conflicts);
       return false;
     }
     return true;
@@ -817,6 +816,17 @@ export const getConflictingFiles = (files: FileFromContextProps[]) => {
   return [...groups.values()].filter((group) => group.length > 1);
 };
 
+const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
+  showErrorNotification({
+    title: 'Duplicate file types',
+    error: new Error(
+      conflicts
+        .map((group) => `${group.map((f) => f.name).join(', ')}: same type and settings`)
+        .join('\n')
+    ),
+  });
+};
+
 /** Model types whose primary file is an archive/config rather than model weights */
 const archivePrimaryModelTypes: ModelType[] = [
   ModelType.Workflows,
@@ -852,7 +862,6 @@ function inferFileType(fileName: string, modelType?: ModelType | null): ModelFil
       return undefined;
   }
 }
-
 
 /**
  * Pick a default type for a file dropped into the Additional Components section so
