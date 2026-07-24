@@ -2045,9 +2045,10 @@ export async function applyModelFlagSideEffects({
       `;
 
       if (updatedImages.length !== 0) {
-        await imagesSearchIndex.queueUpdate(
-          updatedImages.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-        );
+        await queueImageSearchIndexUpdate({
+          ids: updatedImages.map(({ id }) => id),
+          action: SearchIndexUpdateQueueAction.Update,
+        });
       }
 
       await bustMvCache(modelVersionIds, id);
