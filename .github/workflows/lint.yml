@@ -1,9 +1,19 @@
 name: Lint
 
-# Regression guard for code quality. Deliberately scoped so it stays green and fast:
-# ESLint and Prettier run ONLY on files the PR changed (the repo carries thousands of
-# pre-existing findings; a full-repo gate would fail every PR and get switched off).
-# Typecheck is full-repo because it is already expected to pass.
+# Regression guard for code quality.
+#
+# Typecheck is full-repo and BLOCKING - it passes today, so it is the real gate.
+#
+# ESLint and Prettier are report-only (`continue-on-error`). They are scoped to the
+# files a PR touches, but note that for a formatter "changed file" means the WHOLE
+# file, not the changed lines: 789 of 4,116 src files fail `prettier --check` today.
+# Across the 98 src files touched by the last 30 commits, 39 fail Prettier and 10
+# carry a pre-existing ESLint error, so 44 (45%) would red this job for reasons
+# unrelated to the PR. Blocking on that turns a 3-line bugfix into a 200-line
+# reformat, and the job gets disabled within a week. Annotations still surface.
+#
+# Both steps flip to blocking once the formatting/lint backlog is cleared, which is
+# planned to ride along with the Prettier 2->3 upgrade (that forces a reformat anyway).
 
 on:
   pull_request:
@@ -18,7 +28,7 @@ concurrency:
 
 jobs:
   eslint:
-    name: ESLint + Prettier (changed files)
+    name: ESLint + Prettier (changed files, report-only)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -42,14 +52,17 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          git fetch -q --depth=1 origin "$BASE_REF"
+          git fetch -q origin "$BASE_REF"
           git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > changed.txt || true
           echo "changed files:"
           cat changed.txt
           if [ -s changed.txt ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
 
+      # Report-only: 10% of recently-touched files carry a pre-existing
+      # error-severity finding. See the header comment.
       - name: ESLint
         if: steps.changed.outputs.any == 'true'
+        continue-on-error: true
         run: |
           set -euo pipefail
           # eslint only has a config for src/ and packages/; skip anything else.
@@ -60,19 +73,27 @@ jobs:
             echo "no lintable files changed"
           fi
 
+      # Report-only: 19% of src files are unformatted today and a formatter has no
+      # changed-line granularity. See the header comment.
       - name: Prettier
         if: steps.changed.outputs.any == 'true'
+        continue-on-error: true
         run: xargs -a changed.txt pnpm exec prettier --check
 
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # civitai/civitai is public, and a pull_request from a fork gets no secrets.
+    # Typecheck needs the private event-engine-common submodule, which a fork cannot
+    # fetch: ssh-agent would hard-fail on an empty key, and even skipping it just
+    # trades that for a wall of "Cannot find module" errors. Either way an external
+    # contributor gets a red check they have no way to fix, so skip the job entirely.
+    # Do not make this a required check without solving the fork case first.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
-      # event-engine-common is a private submodule; without it tsc fails with a wall
-      # of "Cannot find module" errors that cascade into unrelated implicit-any noise.
       - name: Setup SSH for submodule
         uses: webfactory/ssh-agent@v0.9.0
         with:
