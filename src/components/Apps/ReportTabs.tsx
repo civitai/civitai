@@ -257,11 +257,13 @@ export function FindingsCards({
   findings,
   emptyLabel,
   tab,
+  deepLinkable,
   highlightedId,
 }: {
   findings: AgentFinding[];
   emptyLabel: string;
   tab: FindingTab;
+  deepLinkable?: boolean;
   highlightedId?: string | null;
 }) {
   if (findings.length === 0) return <EmptyState label={emptyLabel} />;
@@ -269,13 +271,17 @@ export function FindingsCards({
   return (
     <Stack gap={6} data-testid="findings-cards">
       {sorted.map((f, i) => {
-        const anchorId = findingAnchorId(tab, i);
+        // Anchors + copy-link are attached ONLY when deep-linking is active (the
+        // dedicated review page). In the modal reuse path they're omitted, so a
+        // copy-link can't produce a `…/apps/review#finding-…` URL that reopens
+        // nothing.
+        const anchorId = deepLinkable ? findingAnchorId(tab, i) : undefined;
         return (
           <FindingCard
             key={i}
             finding={f}
             anchorId={anchorId}
-            highlighted={highlightedId === anchorId}
+            highlighted={anchorId != null && highlightedId === anchorId}
           />
         );
       })}
@@ -351,10 +357,12 @@ export function SummaryTab({
 export function CodeReviewTab({
   codeReview,
   error,
+  deepLinkable,
   highlightedId,
 }: {
   codeReview: CodeReviewView;
   error: string | null;
+  deepLinkable?: boolean;
   highlightedId?: string | null;
 }) {
   if (error) return <SectionFailed error={error} />;
@@ -364,6 +372,7 @@ export function CodeReviewTab({
         findings={codeReview.findings}
         emptyLabel="No code-review findings."
         tab="code"
+        deepLinkable={deepLinkable}
         highlightedId={highlightedId}
       />
       {codeReview.priorFindingsReconciled.length > 0 && (
@@ -399,10 +408,12 @@ export function CodeReviewTab({
 export function SecurityAuditTab({
   securityAudit,
   error,
+  deepLinkable,
   highlightedId,
 }: {
   securityAudit: SecurityAuditView;
   error: string | null;
+  deepLinkable?: boolean;
   highlightedId?: string | null;
 }) {
   if (error) return <SectionFailed error={error} />;
@@ -412,6 +423,7 @@ export function SecurityAuditTab({
         findings={securityAudit.findings}
         emptyLabel="No security-audit findings."
         tab="security"
+        deepLinkable={deepLinkable}
         highlightedId={highlightedId}
       />
 
@@ -719,55 +731,91 @@ export function ReportTabs({
   const view = parseAgentReport(report);
   const { codeReview, securityAudit, scopeVerdicts, tokenUsage } = view;
 
-  // --- Deep-link-to-a-finding wiring -------------------------------------
-  // Controlled tabs + a transient highlight, driven off the URL hash. We read
-  // the hash directly (NOT next/router) to keep this component router-agnostic
-  // + reusable, and to sidestep the review page's route-leave navigation guard:
-  // `history.replaceState` updates the URL WITHOUT a router navigation, so the
-  // guard never fires. All window/document/history access lives inside effects
-  // and event handlers (SSR-safe).
+  // --- Deep-link-to-a-finding wiring (dedicated review PAGE only) ----------
+  // ReportTabs renders in BOTH the flag-gated review PAGE (/apps/review/<id>)
+  // and the legacy review MODAL (/apps/review). Deep-linking (hash read/write,
+  // per-finding anchors, copy-link) only makes sense on the dedicated page — in
+  // the modal a copy-link URL would reopen nothing and tab clicks would rewrite
+  // the queue URL. So the whole behavior is gated on `deepLinkable`, derived
+  // from the actual route (the page is /apps/review/<id>; the modal is exactly
+  // /apps/review). When off, this behaves EXACTLY as before the feature: plain
+  // controlled tabs, no hash side-effects, no anchors, no copy-link.
+  //
+  // We read the hash directly (NOT next/router) to keep this component
+  // router-agnostic and to sidestep the review page's route-leave navigation
+  // guard: `history.replaceState` updates the URL WITHOUT a router navigation,
+  // so the guard never fires. All window/document/history access lives inside
+  // effects and event handlers (SSR-safe).
+  const [deepLinkable, setDeepLinkable] = useState(false);
   const [activeTab, setActiveTab] = useState<ReportTabValue>('summary');
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  // The finding to scroll to once its tab has COMMITTED. keepMounted panels are
+  // display:none until active, so we defer the scroll to the [activeTab] effect
+  // below rather than a single rAF that can fire before the tab-switch commit.
+  const [pendingAnchor, setPendingAnchor] = useState<string | null>(null);
   const highlightTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const applyHash = useCallback(() => {
+  // Resolve deep-linkability from the route on mount (client-only → SSR renders
+  // the pre-feature shape, then the page enables it after hydration; the modal
+  // never does, so it keeps the pre-feature behavior).
+  useEffect(() => {
     if (typeof window === 'undefined') return;
+    setDeepLinkable(window.location.pathname.startsWith('/apps/review/'));
+  }, []);
+
+  const applyHash = useCallback(() => {
+    if (!deepLinkable || typeof window === 'undefined') return;
     const { tab, anchorId } = parseReportHash(window.location.hash);
     if (tab) setActiveTab(tab);
-    if (anchorId) {
-      // keepMounted panels are display:none until active, so a target card
-      // can't be scrolled to until its tab is activated. Activate first (above),
-      // then scroll on the next frame once the panel is visible.
-      requestAnimationFrame(() => {
-        const el = document.getElementById(anchorId);
-        if (!el) return;
-        el.scrollIntoView({ block: 'center' });
-        setHighlightedId(anchorId);
-        if (highlightTimeout.current) clearTimeout(highlightTimeout.current);
-        highlightTimeout.current = setTimeout(() => setHighlightedId(null), 2000);
-      });
-    }
-  }, []);
+    // Queue the scroll; the post-commit effect below performs it once the tab
+    // (and thus the target panel's visibility) is committed to the DOM.
+    if (anchorId) setPendingAnchor(anchorId);
+  }, [deepLinkable]);
 
   useEffect(() => {
+    if (!deepLinkable) return;
     applyHash();
     window.addEventListener('hashchange', applyHash);
-    return () => {
-      window.removeEventListener('hashchange', applyHash);
-      if (highlightTimeout.current) clearTimeout(highlightTimeout.current);
-    };
-  }, [applyHash]);
+    return () => window.removeEventListener('hashchange', applyHash);
+  }, [deepLinkable, applyHash]);
 
-  // Manual tab clicks reflect into the URL via history.replaceState (again, NOT
-  // a router navigation — never trips the route-leave guard, never loops since
-  // replaceState does not fire `hashchange`).
-  const handleTabChange = useCallback((value: string | null) => {
-    if (!value) return;
-    setActiveTab(value as ReportTabValue);
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', `#${value}`);
+  // Post-commit scroll: runs AFTER the active tab is committed (target panel is
+  // now display:block), so scrollIntoView lands reliably. The highlight is set
+  // ONLY when the element is actually found; the pending anchor is cleared
+  // either way so it fires exactly once.
+  useEffect(() => {
+    if (!deepLinkable || !pendingAnchor || typeof document === 'undefined') return;
+    const el = document.getElementById(pendingAnchor);
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      setHighlightedId(pendingAnchor);
+      if (highlightTimeout.current) clearTimeout(highlightTimeout.current);
+      highlightTimeout.current = setTimeout(() => setHighlightedId(null), 2000);
     }
-  }, []);
+    setPendingAnchor(null);
+  }, [activeTab, pendingAnchor, deepLinkable]);
+
+  // Clear any pending highlight timer on unmount.
+  useEffect(
+    () => () => {
+      if (highlightTimeout.current) clearTimeout(highlightTimeout.current);
+    },
+    []
+  );
+
+  // Manual tab clicks reflect into the URL via history.replaceState (page only;
+  // NOT a router navigation — never trips the route-leave guard, never loops
+  // since replaceState does not fire `hashchange`).
+  const handleTabChange = useCallback(
+    (value: string | null) => {
+      if (!value) return;
+      setActiveTab(value as ReportTabValue);
+      if (deepLinkable && typeof window !== 'undefined') {
+        window.history.replaceState(null, '', `#${value}`);
+      }
+    },
+    [deepLinkable]
+  );
 
   // Structural failed-section detection runs on the RAW slots (before the
   // tolerant parse flattens an `{ error }` object to an empty section).
@@ -835,12 +883,18 @@ export function ReportTabs({
           />
         </Tabs.Panel>
         <Tabs.Panel value="code" pt="sm">
-          <CodeReviewTab codeReview={codeReview} error={codeError} highlightedId={highlightedId} />
+          <CodeReviewTab
+            codeReview={codeReview}
+            error={codeError}
+            deepLinkable={deepLinkable}
+            highlightedId={highlightedId}
+          />
         </Tabs.Panel>
         <Tabs.Panel value="security" pt="sm">
           <SecurityAuditTab
             securityAudit={securityAudit}
             error={securityError}
+            deepLinkable={deepLinkable}
             highlightedId={highlightedId}
           />
         </Tabs.Panel>
