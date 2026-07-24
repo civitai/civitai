@@ -292,6 +292,25 @@ describe('listAppListingReviews', () => {
     expect(args.where).toMatchObject({ appListing: { is: { status: 'approved' } } });
   });
 
+  it('public-external scope → relation filter ANDs kind:offsite (an onsite listing\'s reviews are empty)', async () => {
+    mockRead.appListingReview.findMany.mockResolvedValue([]);
+    await listAppListingReviews({ appListingId: APP_ID, limit: 20 }, { scope: 'public-external' });
+    const args = mockRead.appListingReview.findMany.mock.calls[0][0];
+    // Under the public scope the target listing must ITSELF be offsite — so a
+    // crafted onsite appListingId matches nothing (empty), the review security gate.
+    expect(args.where).toMatchObject({
+      appListing: { is: { status: 'approved', kind: 'offsite' } },
+    });
+  });
+
+  it('full scope (default) → NO kind restriction on the relation filter (unchanged)', async () => {
+    mockRead.appListingReview.findMany.mockResolvedValue([]);
+    await listAppListingReviews({ appListingId: APP_ID, limit: 20 }, { scope: 'full' });
+    const args = mockRead.appListingReview.findMany.mock.calls[0][0];
+    expect(args.where.appListing.is).toEqual({ status: 'approved' });
+    expect(args.where.appListing.is.kind).toBeUndefined();
+  });
+
   it('emits a nextCursor when a full page + 1 comes back (keyset)', async () => {
     // limit 2 → take 3; return 3 rows → hasNext, cursor = last VISIBLE row id.
     mockRead.appListingReview.findMany.mockResolvedValue([row(5), row(4), row(3)]);
