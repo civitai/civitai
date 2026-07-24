@@ -194,13 +194,17 @@ export function getFileLabel(file: FileForDisplay): string | null {
   const { fp, quantType, format, size } = file.metadata ?? {};
 
   // For GGUF files, show quant type
-  if (format === 'GGUF' && quantType) {
+  if (format === 'GGUF' && quantType && quantType !== 'None') {
     return quantType;
   }
 
   // For SafeTensor and others, show fp precision
   if (fp) {
     return fp;
+  }
+
+  if (format === 'GGUF' && quantType === 'None') {
+    return 'Unquantized';
   }
 
   // Fallback to size
@@ -216,6 +220,38 @@ export function getFileLabel(file: FileForDisplay): string | null {
   return null;
 }
 
+const fpDescriptions: Record<string, string> = {
+  fp32: 'Full precision, largest file',
+  fp16: 'Half precision, best balance',
+  bf16: 'BF16, good balance',
+  mxfp8: 'Block-scaled 8-bit, near-FP16 quality',
+  fp8_mixed: 'Mixed FP8, sensitive layers kept at higher precision',
+  fp8_scaled: 'Scaled 8-bit, better quality than plain FP8',
+  fp8: '8-bit, smaller file',
+  int8: '8-bit integer, smaller file',
+  nf4: '4-bit normalized',
+  nvfp4: 'NVFP4 4-bit, Blackwell-optimized',
+  int4: '4-bit integer, smallest',
+};
+
+const quantDescriptions: Record<string, string> = {
+  Q8_0: '8-bit GGUF, highest quality',
+  Q6_K: '6-bit GGUF, high quality',
+  Q5_K_M: '5-bit GGUF, balanced',
+  Q4_K_XL: '4-bit dynamic GGUF, better quality than Q4_K_M',
+  Q4_K_M: '4-bit GGUF, smaller file',
+  Q4_K_S: '4-bit small GGUF',
+  IQ4_KS: '4-bit imatrix GGUF, small',
+  Q3_K_XL: '3-bit dynamic GGUF, better quality than Q3_K_M',
+  Q3_K_M: '3-bit GGUF, compact',
+  IQ3_M: '3-bit imatrix GGUF, medium',
+  IQ3_S: '3-bit imatrix GGUF, small',
+  Q2_K_XL: '2-bit dynamic GGUF, better quality than Q2_K',
+  Q2_K: '2-bit GGUF, smallest',
+  TQ2_0: '2-bit ternary GGUF, extremely small',
+  TQ1_0: '1.7-bit ternary GGUF, smallest',
+};
+
 /**
  * Get a human-readable description for a file variant.
  * Returns empty string when nothing meaningful can be derived — callers should skip rendering.
@@ -226,21 +262,13 @@ export function getFileDescription(file: FileForDisplay): string {
   const parts: string[] = [];
 
   if (format === 'GGUF') {
-    if (quantType === 'Q8_0') parts.push('8-bit GGUF, highest quality');
-    else if (quantType === 'Q6_K') parts.push('6-bit GGUF, high quality');
-    else if (quantType === 'Q5_K_M') parts.push('5-bit GGUF, balanced');
-    else if (quantType === 'Q4_K_M') parts.push('4-bit GGUF, smaller file');
-    else if (quantType === 'Q4_K_S') parts.push('4-bit small GGUF');
-    else if (quantType === 'Q3_K_M') parts.push('3-bit GGUF, compact');
-    else if (quantType === 'Q2_K') parts.push('2-bit GGUF, smallest');
-    else if (quantType) parts.push(`${quantType} quantization`);
-  } else {
-    if (fp === 'fp32') parts.push('Full precision, largest file');
-    else if (fp === 'fp16') parts.push('Half precision, best balance');
-    else if (fp === 'bf16') parts.push('BF16, good balance');
-    else if (fp === 'fp8') parts.push('8-bit, smaller file');
-    else if (fp === 'nf4') parts.push('4-bit normalized');
-    else if (fp) parts.push(`${fp} precision`);
+    if (quantType === 'None') {
+      parts.push(fp ? `Unquantized GGUF, ${fp} precision` : 'Unquantized GGUF');
+    } else if (quantType) {
+      parts.push(quantDescriptions[quantType] ?? `${quantType} quantization`);
+    }
+  } else if (fp) {
+    parts.push(fpDescriptions[fp] ?? `${fp} precision`);
   }
 
   if (size === 'pruned') {

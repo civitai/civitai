@@ -6,8 +6,8 @@ ClickUp: [868k69pey](https://app.clickup.com/t/868k69pey)
 Move the two hardcoded model-file metadata lists out of `constants.ts` and into the DB so mods
 can edit them without a deploy (these lists grow over time as new GGUF quant types / precisions appear).
 
-- **precisions** (`modelFileFp`): currently `['fp16','fp8','nf4','fp32','bf16']`
-- **quantTypes** (`modelFileQuantTypes`): currently 25 `Q*`/`IQ*` values
+- **precisions** (`modelFileFp`): 11 values, best-to-worst `fp32 … int4`
+- **quantTypes** (`modelFileQuantTypes`): 34 values — `None` (unquantized) plus the `Q*`/`IQ*`/`TQ*` set
 
 ## Storage
 Single `KeyValue` row, key `modelFileOptions`:

@@ -460,7 +460,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
                 <li>Users&apos; preferences will auto-select the best match for their setup</li>
                 <li>Link to existing models when the component already exists on Civitai</li>
                 <li>
-                  Only create a new <strong>version</strong>{' '}when you&apos;ve actually
+                  Only create a new <strong>version</strong> when you&apos;ve actually
                   trained/updated the model
                 </li>
               </ul>
@@ -1061,7 +1061,7 @@ function FileEditForm({
             </div>
           )}
 
-          {isGguf ? (
+          {isGguf && (
             <div>
               <SelectLabel>Quant</SelectLabel>
               <Select
@@ -1080,7 +1080,9 @@ function FileEditForm({
                 }}
               />
             </div>
-          ) : (
+          )}
+
+          {(!isGguf || versionFile.quantType === 'None') && (
             <div>
               <SelectLabel>Precision</SelectLabel>
               <Select

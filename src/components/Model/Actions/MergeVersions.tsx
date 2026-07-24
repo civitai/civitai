@@ -1044,7 +1044,7 @@ function MergeFileCard({
                 </div>
               )}
 
-              {isGguf ? (
+              {isGguf && (
                 <div>
                   <SelectLabel>Quant</SelectLabel>
                   <Select
@@ -1062,7 +1062,9 @@ function MergeFileCard({
                     styles={selectInputStyles}
                   />
                 </div>
-              ) : (
+              )}
+
+              {(!isGguf || effectiveQuantType === 'None') && (
                 <div>
                   <SelectLabel>Precision</SelectLabel>
                   <Select
