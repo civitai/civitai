@@ -109,6 +109,38 @@ only to confirm no `.permanent`/`.timeframe` access-decision hides outside A.
 
 ---
 
+## E. Part-2 column-drop work-list (from the 2026-07-24 safety review)
+
+Section A is scoped to the *permanent bug*. These sites are **not** permanent-bug holes (they inherit a
+cache's build-time gate) but they read the **columns/blob** and therefore break when Part 2 drops them, so they
+must be migrated before the drop. Grouped separately because §A misses them.
+
+### Main app (`src/`)
+
+| File:line | What it reads | Migrate to |
+| --- | --- | --- |
+| `src/pages/api/v1/model-versions/[id].ts:69` | public API selects `earlyAccessEndsAt`/`earlyAccessConfig` | `getPaidAccess` decorate |
+| `src/server/services/creator-shop.service.ts:660` | `getEarlyAccessModelPrices` reads config | `terms` via `getPaidAccess` |
+| `src/server/services/generation/generation.service.ts:1362,1490` | `earlyAccessConfig.freeGeneration` (**dropped**) / `generationTrialLimit` (→ `terms.generation.trialLimit`) | `terms` |
+
+### creator-studio spoke (`apps/creator-studio/`)
+
+The spoke queries the **same DB** via Kysely; reads permanence from `earlyAccessConfig->>'permanent'` (its
+Kysely lacks the column), so it breaks on the `earlyAccessConfig` drop specifically. Kysely types need
+`PaidAccess` added.
+
+| File:line | What it drives | How |
+| --- | --- | --- |
+| `lib/server/models.ts:10` | `accessFilter` "sold in any form" | **P** → `PaidAccess` `EXISTS` |
+| `lib/server/models.ts:208,258` | select + `hasEarlyAccess` | D → `getPaidAccess` |
+| `lib/server/monetization/early-access.ts:98` | permanent **cap count** | count `PaidAccess WHERE kind='Permanent'` |
+| `lib/server/monetization/early-access.ts:114` | timed-window **cap count** | count active `Timed` `PaidAccess` |
+
+Spoke **writes** go through the main app's REST early-access endpoint (`early-access.ts:62-68`) → covered by the
+main-app dual-write; no separate spoke write change.
+
+---
+
 ## How to classify a site (the rule)
 
 Ask **what the code does with the answer**:

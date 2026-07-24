@@ -74,7 +74,7 @@ Schema file: `packages/civitai-db-schema/prisma/schema.prisma`.
 ```diff
   model ModelVersion {
     // …
-    availability         Availability @default(Public)   // KEEP — visibility only (stop writing payment into it: stage 6)
+    availability         Availability @default(Public)   // KEEP; gains a `PaidAccess` enum value the write path maintains (Migration 3d); full EarlyAccess→PaidAccess retirement = stage 6
 +   initialPublishedAt   DateTime?                        // write-once anchor; set on first publish, never rewritten
 -   earlyAccessEndsAt    DateTime?                        // → PaidAccess.endsAt
 -   earlyAccessConfig    Json?                            // → PaidAccess.terms (+ the DonationGoal back-link is dropped)
@@ -103,8 +103,14 @@ trigger go away.
 
 Nothing changes on `DonationGoal`. The hack was the **back-link** (`earlyAccessConfig.donationGoalId`), which
 disappears when `earlyAccessConfig` is removed above. "The goal for this sale" becomes the forward query
-`DonationGoal WHERE modelVersionId = ? AND isEarlyAccess AND active`. A completed goal writes
-`PaidAccess.endsAt = now()` (the threshold materializing).
+`DonationGoal WHERE modelVersionId = ? AND isEarlyAccess AND active`.
+
+**Invariant: an early-access `DonationGoal` always has a `PaidAccess` row for its version.** A completed goal
+**updates that `PaidAccess` row** — `endsAt = now()` (the threshold materializing, the window closes early).
+Critically, this is `now()`, **never `NULL`**: in the new model `endsAt IS NULL` means *permanent*, so clearing
+it would flip "goal met → free" into "permanently paid" (the inversion the safety review caught). Today the
+completion path writes the old columns via raw SQL ([donation-goal.service.ts:157](../../src/server/services/donation-goal.service.ts));
+it must be an explicit member of the dual-write set (Migration Part 1 step 3b).
 
 **Why it stays a first-class entity, not a facet of `PaidAccess` (empirical, prod 2026-07-24).** A goal is
 funded by two paths into one pot: an early-access *purchase* (records a `Donation` for the price + grants
@@ -212,8 +218,8 @@ is dropped.
 
 | Field | New home | Note |
 | --- | --- | --- |
-| `timeframe` | consumed → `kind` + `PaidAccess.endsAt` | `> 0` → `kind = Timed`, `endsAt = initialPublishedAt + timeframe` (not stored; form re-derives "N days" from `endsAt − initialPublishedAt`). `0` → `kind = Permanent`, `endsAt NULL`. |
-| `permanent` | `PaidAccess.kind = Permanent` | (⟺ `endsAt IS NULL`). No boolean column. |
+| `timeframe` | consumed → `endsAt` (timed only) | for a timed row, `endsAt = initialPublishedAt + timeframe`; not stored (form re-derives "N days"). **`0` does NOT imply permanent** — expired versions also carry `timeframe:0`; see `permanent`. |
+| `permanent` | `kind = Permanent` (`endsAt NULL`) | permanent is the **`earlyAccessPermanent` flag**, *not* `timeframe:0`. Expired versions carry `timeframe:0` without the flag and are **not backfilled** (they're free — Migration §, Part 1 step 2). |
 | `chargeForDownload` | `terms.download` present | today: enables a download purchase; not redundant — see gating note. New model: a `download` grant means download is paid. |
 | `downloadPrice` | `terms.download.price` | `min(100)` floor kept in §7 validation. |
 | `chargeForGeneration` | `terms.generation` present | today: enables a generation-only purchase tier. New model: a `generation` grant means generation is paid. |
@@ -384,41 +390,122 @@ that is cheap insurance — but if `terms` stays additive-only, it is droppable 
 
 ---
 
-## Migration — two-part expand/contract
+## Migration — expand → flip → contract
 
-Shipped in two independently-deployable parts. **Part 1 is additive and fully reversible; Part 2 is the
-destructive cleanup**, run only after Part 1 has soaked in production. Migrations are applied by hand here, so
-Part 2's drops are hand-run SQL (preview → staging → prod).
+Shipped in stages, each independently deployable. **Expand and flip are additive and reversible; contract is
+the destructive cleanup**, run only after a soak. Migrations are hand-applied here, so the drops are hand-run
+SQL (preview → staging → prod). The load-bearing details below — the backfill *predicate*, translate-don't-
+mirror dual-write, the helper reimplementation, and the `availability` takeover — are what make the cutover
+safe; they fold in the 2026-07-24 cutover safety review.
 
 ### Part 1 — expand (additive, reversible)
 
-1. **Create** `PaidAccess` (+ `PaidAccessKind` / `PaidAccessEntityType` enums), and add `initialPublishedAt` to
-   `ModelVersion` (and to `ComicChapter` at its stage-5 turn). All additive — no existing column is touched.
-2. **Backfill** `PaidAccess` + `initialPublishedAt` from the current early-access columns. Prod has **0**
-   permanent rows, so every backfilled row is `kind = Timed`. The **173 download-only versions** get a
-   materialized `generation` grant (decision **(a)**, §6); everything else maps mechanically (§6 table).
-3. **Dual-write** — keep writing the old columns *and* `PaidAccess`. This is what makes Part 1 reversible (old
-   readers still work; roll back with no data loss) and keeps both stores consistent while both exist. The
-   existing DB trigger keeps maintaining `earlyAccessEndsAt`; `PaidAccess.endsAt` is materialized alongside.
-4. **Switch reads** to the helper — `getPaidAccess` (decorate) / `paidAccessSql` (predicate) — across the
-   [~37 sweep sites](paid-access-query-sites.md).
+1. **Create** `PaidAccess` (+ `PaidAccessKind` / `PaidAccessEntityType` enums); add `initialPublishedAt` to
+   `ModelVersion` (`ComicChapter` at stage 5); add an **`Availability.PaidAccess`** enum value (used in step 3d).
+   All additive — no existing column is touched.
+2. **Backfill — the row-selection predicate is the safety-critical part.** Insert a `PaidAccess` row **only for
+   currently-gated versions**:
 
-Deploy. Old columns stay intact and maintained, so Part 1 ships on its own and is fully back-outable. Let it
-soak; confirm nothing reads the old columns before proceeding.
+   ```sql
+   WHERE availability = 'EarlyAccess' AND (earlyAccessEndsAt > now() OR earlyAccessPermanent = true)
+   ```
+
+   **Not** "has an `earlyAccessConfig` blob" — expired versions retain the blob with `timeframe:0` +
+   `earlyAccessEndsAt = NULL` (the expiry job and goal completion stamp them), so a config-presence predicate
+   would map **~26k expired versions to `kind = Permanent` and permanently paywall free content**. Validate the
+   backfill produces **0** `Permanent` rows (prod has 0 permanent today).
+   - `initialPublishedAt = COALESCE(earlyAccessConfig->>'originalPublishedAt', publishedAt)` — expired rows had
+     `publishedAt` rewritten, so the true first-publish date is stashed in the config.
+   - The **173 download-only** versions get a materialized `generation` grant (decision **(a)**, §6).
+   - Run the §7 `terms` validation over backfilled rows (floors, `download ≥ generation`); clamp/report dirty
+     historical prices before cutover.
+3. **Dual-write — translate, don't mirror, and cover *every* writer.**
+   - a. **All app write paths** — the tRPC upsert, the REST early-access endpoint, and the publish paths
+     (`publishModelVersionsWithEarlyAccess`, scheduled publishing) — write `PaidAccess` alongside the columns.
+   - b. **The raw-SQL writers must be included explicitly** — **donation-goal completion**
+     (`donation-goal.service.ts:157`) and the **expiry job** (`process-ending-early-access.ts`) bypass app code;
+     each must update `PaidAccess` in the *same* transaction. (Per the design, a `DonationGoal` always has a
+     `PaidAccess` row for its version — §3.)
+   - c. **The encoding is inverted — map it, don't copy it.** The old "ended" state (`earlyAccessEndsAt = NULL`
+     with `availability = Public`, written by goal completion / expiry) is the **opposite** of the new model,
+     where `endsAt IS NULL` means *permanent*. A blind mirror would flip ended→permanent. Translate:
+
+     | old columns | → `PaidAccess` |
+     | --- | --- |
+     | `earlyAccessPermanent = true` | `kind = Permanent`, `endsAt = NULL` |
+     | active timed (`earlyAccessEndsAt > now()`) | `kind = Timed`, `endsAt = earlyAccessEndsAt` (mirror) |
+     | **ended** (goal met / expired: `earlyAccessEndsAt = NULL`, not permanent) | `kind = Timed`, **`endsAt = now()`** — **never NULL** |
+
+     Mirroring `earlyAccessEndsAt` for active-timed rows also resolves the two-anchor divergence: `endsAt`
+     tracks the trigger's output (computed off `publishedAt`) during Part 1, so old- and new-path agree even for
+     republished versions. `initialPublishedAt` only *becomes* the endsAt anchor in Part 2, when the trigger is
+     gone and the service computes `endsAt = initialPublishedAt + timeframe` on write.
+   - d. **`availability` takeover.** The trigger sets `availability = 'EarlyAccess'` today, and Part 2 drops the
+     trigger. The `PaidAccess` write path takes over: set `availability = 'PaidAccess'` when a version is gated,
+     back to `Public` when it ends (`Private` still takes precedence). Invariant: active `PaidAccess` row ⟺
+     `availability = 'PaidAccess'` (unless `Private`). This is what lets the trigger drop safely in Part 2.
+4. **Route reads through the helper** across the [~37 sweep sites](paid-access-query-sites.md) — at this point
+   the helper still reads the *old columns*; this just centralizes them (no behavior change) so the data source
+   can be flipped in one place next.
+5. **Cache:** every `PaidAccess` write must **also bust the legacy caches** (`bustMvCache`, `RESOURCE_DATA`,
+   `dataForModelsCache`) — they bake the gate in at build time and stay live throughout Part 1.
+
+Deploy. Old columns intact and maintained → reversible; roll back loses nothing.
+
+### Part 1.5 — flip the helper onto `PaidAccess` (additive, reversible)
+
+Reimplement `packages/civitai-buzz/src/paid-access.ts` to read `PaidAccess` instead of the columns. **We do
+need the helper** — it's the single boundary that lets the data source flip without editing 37 sites at once;
+without it, the column drop breaks every site simultaneously.
+
+- **JS:** `isPaidAccessActive(row)` over a `PaidAccess` row — `row.kind === 'Permanent' || (row.endsAt && row.endsAt > now)` — fed by `getPaidAccess`.
+- **SQL:** `paidAccessSql` changes shape from a `mv.`-column fragment to an **`EXISTS` subquery**:
+  `EXISTS (SELECT 1 FROM "PaidAccess" pa WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id AND (pa.kind = 'Permanent' OR pa."endsAt" > now()))`. Sites that inlined the old fragment adopt the exists form.
+- **Invert the NULL semantics** and rewrite the permanent cases in `paid-access.test.ts` to assert
+  `endsAt IS NULL ⇒ active` (the current tests assert the opposite).
+- **Migrate the two money-gates off `availability` here** — `resource-data.redis.ts:34` and `mini/[id].ts:134`
+  gate on `PaidAccess` presence via the new predicate, dropping the `availability = 'EarlyAccess'` condition, so
+  they no longer depend on the trigger.
+
+Now reads come from `PaidAccess`; old columns are dual-written backup. Soak; confirm nothing reads the old
+columns (grep clean once the broader Part-2 inventory below is migrated).
 
 ### Part 2 — contract (destructive, after soak)
 
 1. **Stop dual-writing** the old columns.
 2. **Drop** the deprecated columns — `earlyAccessEndsAt`, `earlyAccessConfig`, `earlyAccessPermanent`,
-   `earlyAccessTimeFrame` on `ModelVersion` (and `earlyAccessEndsAt` / `earlyAccessConfig` on `ComicChapter` at
-   stage 5).
-3. **Drop the DB trigger(s)** (`early_access_ends_at`, `comic_chapter_early_access`) — `endsAt` is now
-   materialized at write from `initialPublishedAt`, so the trigger is redundant.
-4. **Retarget the expiry job** (`process-ending-early-access`) to cache/search invalidation only; its
-   `publishedAt`-rewrite hack goes away (`initialPublishedAt` is the stable anchor).
+   `earlyAccessTimeFrame` on `ModelVersion` (comics pair at stage 5). Requires the **broader reader inventory**
+   below migrated first — not just §A of the sweep.
+3. **Drop the DB trigger(s)** — safe now: `endsAt` and `availability` are service-maintained (steps 3c/3d).
+4. **Retarget the expiry job** to cache/search invalidation only; `initialPublishedAt` is the stable anchor.
 
-`Availability.EarlyAccess` retirement is a **separate, later** project (~213 refs) — not part of either part.
-Broader program-level staging lives in [onsite-monetization-parity.md](onsite-monetization-parity.md).
+**Broader Part-2 reader inventory** (beyond sweep §A — these read the *columns/blob* for decoration and break
+at the drop, though they are not permanent-bug holes): `model-versions/[id].ts:69` (public API),
+`creator-shop.service.ts:660` (`getEarlyAccessModelPrices`), `generation.service.ts:1362/1490` (`freeGeneration`
+→ dropped; `generationTrialLimit` → `terms.generation.trialLimit`). Add these to the query-sites doc as the
+Part-2 work-list.
+
+### Cross-app: the creator-studio spoke reads this too
+
+The SvelteKit spoke (`apps/creator-studio`) queries the **same database** via Kysely, so it is part of the
+sweep alongside `src/` — its reads break at the Part-2 column drop just like the main app's:
+
+- `lib/server/models.ts:10` — `accessFilter` predicate `(earlyAccessEndsAt IS NOT NULL OR earlyAccessConfig->>'permanent')` → the `PaidAccess` `EXISTS` predicate.
+- `lib/server/models.ts:208/258` — selects `earlyAccessEndsAt`/`earlyAccessConfig`, sets `hasEarlyAccess` → decorate via `getPaidAccess`.
+- `lib/server/monetization/early-access.ts:98` — permanent **cap count** (`earlyAccessConfig->>'permanent'`) → count `PaidAccess WHERE kind = 'Permanent'`.
+- `lib/server/monetization/early-access.ts:114` — timed-window **cap count** → count active `Timed` `PaidAccess`.
+
+Two spoke-specific notes: (1) it reads permanence from **`earlyAccessConfig->>'permanent'`** (its Kysely "lacks
+the column"), so it breaks on the `earlyAccessConfig` drop specifically and must move to `PaidAccess.kind` — and
+its Kysely types need `PaidAccess` added (`@civitai/db-schema`). (2) The spoke's **writes** go through the main
+app's REST early-access endpoint (`early-access.ts:62-68`), so they're covered as long as that endpoint
+dual-writes (step 3a) — no separate spoke write change. The shared `@civitai/buzz` `paid-access.ts` helper is
+reused by both, so its Part-1.5 reimplementation benefits the spoke automatically; only the spoke's *raw
+Kysely* queries above migrate separately.
+
+Full `Availability.EarlyAccess` → `PaidAccess` retirement (the other ~11 feed/filter readers) is a **separate,
+later** project — the `PaidAccess` enum value + service takeover (3d) is the bridge until then. Program-level
+staging: [onsite-monetization-parity.md](onsite-monetization-parity.md).
 
 ## Open (not blocking this schema)
 
