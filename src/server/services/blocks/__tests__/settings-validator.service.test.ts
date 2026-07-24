@@ -334,6 +334,53 @@ describe('validateBlockSettings — patterned-input length cap (ReDoS defense-in
   });
 });
 
+describe('validateBlockSettings — no fail-open on the slug pattern (F3 regression)', () => {
+  // The removed `safe-regex` gate false-positived on the canonical slug pattern
+  // `^[a-z0-9]+(-[a-z0-9]+)*$` and made `manifestSettingsSchema.safeParse` FAIL,
+  // which on the install/save paths fell through to `input.settings` — skipping
+  // ALL field validation (the fail-open). The meta-schema now accepts the slug
+  // pattern (compile-check only), so field validation actually runs against it.
+  const slugManifest: ManifestSettings = {
+    handle: {
+      scope: 'publisher',
+      type: 'string',
+      widget: 'text',
+      label: 'Handle',
+      description: 'A slug the app uses as an identifier.',
+      pattern: '^[a-z0-9]+(-[a-z0-9]+)*$',
+      max_length: 40,
+    },
+  };
+
+  it('parses the slug-pattern manifest via manifestSettingsSchema (no fail-open)', async () => {
+    const { manifestSettingsSchema } = await import(
+      '../../../schema/blocks/manifest-settings.meta.schema'
+    );
+    expect(manifestSettingsSchema.safeParse(slugManifest).success).toBe(true);
+  });
+
+  it('ENFORCES the slug pattern (rejects a value that violates it)', () => {
+    expect(() =>
+      validateBlockSettings({
+        manifestSettings: slugManifest,
+        inputSettings: { handle: 'Bad Handle!' }, // spaces + caps fail the slug pattern
+        declaredScopes,
+        forScope: 'publisher',
+      })
+    ).toThrowError(/handle.*invalid/);
+  });
+
+  it('accepts a value that satisfies the slug pattern', () => {
+    const result = validateBlockSettings({
+      manifestSettings: slugManifest,
+      inputSettings: { handle: 'my-cool-app' },
+      declaredScopes,
+      forScope: 'publisher',
+    });
+    expect(result.handle).toBe('my-cool-app');
+  });
+});
+
 describe('validateBlockSettings — empty manifest', () => {
   it('returns an empty object regardless of input', () => {
     const result = validateBlockSettings({

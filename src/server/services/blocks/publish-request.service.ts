@@ -2100,7 +2100,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           o.toLowerCase()
         ),
       };
-  const validation = BlockManifestValidator.validate(manifest, validationCtx);
+  const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx);
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +

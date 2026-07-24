@@ -5031,7 +5031,7 @@ export const blocksRouter = router({
         allowedScopes: block.app?.allowedScopes ?? 0,
         allowedOrigins: (block.app?.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
       };
-      const validation = BlockManifestValidator.validate(merged, appContext);
+      const validation = await BlockManifestValidator.validateSubmission(merged, appContext);
       if (!validation.valid) {
         throw new TRPCError({
           code: 'BAD_REQUEST',

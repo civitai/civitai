@@ -42,6 +42,15 @@ interface RawManifest {
     sandbox?: unknown;
   };
   requiredContext?: unknown;
+  /**
+   * Manifest-driven settings declaration (the W3 `manifestSettingsSchema` shape,
+   * keyed by snake_case field name). Structurally validated at install/runtime by
+   * `manifestSettingsSchema` / `validateBlockSettings`; here the SUBMISSION gate
+   * (`validateSubmission`) additionally enforces that any string field's `pattern`
+   * is not ReDoS-vulnerable and that a patterned field bounds its input via
+   * `max_length`. Optional — most manifests declare no settings.
+   */
+  settings?: unknown;
   assetBundleUrl?: unknown;
   /**
    * H-3: publisher-controlled allowlist of `settings` keys that listForModel
@@ -643,6 +652,55 @@ export class BlockManifestValidator {
       ) {
         errors.push('outputDir must not contain path traversal ("..") or absolute/Windows paths');
       }
+    }
+
+    return errors.length === 0 ? { valid: true } : { valid: false, errors };
+  }
+
+  /**
+   * SUBMISSION gate. Runs the synchronous shape/security `validate` above AND the
+   * accurate ReDoS + input-bound check on `settings` field patterns, merging the
+   * errors. This is the method every manifest SUBMISSION path must call (git-push
+   * webhook, developer manifest API, `blocks.updateManifest`, publish-request
+   * approve) — it makes "a stored/approved manifest ⇒ its setting patterns are
+   * non-exponential and input-bounded" an ENFORCED invariant, giving the
+   * developer real feedback at submit time instead of a silent fail-open later.
+   *
+   * `validate` stays synchronous (client-safe, used everywhere else). The ReDoS
+   * analysis lives in a SERVER-ONLY module reached via dynamic `import()` so
+   * `recheck` never enters the client bundle, and it is only loaded when the
+   * manifest actually declares a string pattern (the common no-pattern manifest
+   * pays nothing).
+   */
+  static async validateSubmission(
+    manifest: unknown,
+    app: AppContext | number
+  ): Promise<ValidationResult> {
+    const base = this.validate(manifest, app);
+    const errors: string[] = base.valid ? [] : [...base.errors];
+
+    const settings =
+      manifest && typeof manifest === 'object' && !Array.isArray(manifest)
+        ? (manifest as RawManifest).settings
+        : undefined;
+    // Only pay the recheck load when there's at least one string `pattern` to
+    // analyze — keeps the overwhelmingly-common no-pattern submission cheap.
+    const hasStringPattern =
+      !!settings &&
+      typeof settings === 'object' &&
+      !Array.isArray(settings) &&
+      Object.values(settings as Record<string, unknown>).some(
+        (def) =>
+          !!def &&
+          typeof def === 'object' &&
+          !Array.isArray(def) &&
+          typeof (def as { pattern?: unknown }).pattern === 'string'
+      );
+    if (hasStringPattern) {
+      const { collectSettingsPatternErrors } = await import(
+        '~/server/services/blocks/settings-pattern-guard'
+      );
+      errors.push(...(await collectSettingsPatternErrors(settings)));
     }
 
     return errors.length === 0 ? { valid: true } : { valid: false, errors };

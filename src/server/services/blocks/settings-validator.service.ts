@@ -123,10 +123,10 @@ function validateField(key: string, def: ManifestSettingField, raw: unknown): un
       }
       if (def.pattern) {
         // Defense-in-depth: `def.pattern` is app-developer-authored and only
-        // mod-reviewed. The submission gate (manifestSettingsSchema) now rejects
-        // super-linear patterns AND forces a patterned field to declare
-        // `max_length <= MAX_PATTERNED_INPUT_LEN` — but a pattern STORED before
-        // that gate existed could lack a max_length, leaving `raw` unbounded.
+        // mod-reviewed. The submission gate (BlockManifestValidator.validateSubmission)
+        // now rejects ReDoS-vulnerable patterns AND forces a patterned field to
+        // declare `max_length <= MAX_PATTERNED_INPUT_LEN` — but a pattern STORED
+        // before that gate existed could lack a max_length, leaving `raw` unbounded.
         // Hard-cap the input the regex sees regardless, so a viewer can't feed
         // a long string into a (legacy) pathological pattern and freeze the
         // event loop. This tames polynomial patterns fully; exponential ones
