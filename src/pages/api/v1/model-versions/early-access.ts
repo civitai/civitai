@@ -1,15 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { updateEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
 import {
+  assertPermanentAccessAllowed,
   getUserEarlyAccessModelVersions,
   getVersionById,
   updateModelVersionEarlyAccessConfig,
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getMaxEarlyAccessDays, getMaxEarlyAccessModels } from '~/server/utils/early-access-helpers';
+import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
-import { env } from '~/env/server';
 import type { SessionUser } from '~/types/session';
 
 // Narrow cross-app write for a model version's early-access config — the creator
@@ -40,11 +43,18 @@ export default AuthedEndpoint(
 
     const { earlyAccessConfig } = input;
 
-    // Permanent access is set only from the Creator Studio (which enforces the tier cap); require the shared token.
-    if (earlyAccessConfig?.permanent && !user.isModerator && req.query.token !== env.WEBHOOK_TOKEN) {
-      return res
-        .status(403)
-        .json({ error: 'Permanent access can only be set from the Creator Studio.' });
+    // Permanent access is settable from any surface now (Creator Studio + the onsite model-version form); the
+    // per-tier cap is enforced server-side here rather than by the caller.
+    if (earlyAccessConfig?.permanent) {
+      try {
+        await assertPermanentAccessAllowed({
+          userId: user.id,
+          isModerator: user.isModerator,
+          versionId: input.id,
+        });
+      } catch (e) {
+        return res.status(400).json({ error: (e as Error).message });
+      }
     }
 
     if (earlyAccessConfig?.timeframe && !user.isModerator) {

@@ -50,16 +50,9 @@ export function earlyAccessQuantityForScore(modelsScore: number): number {
   return quantity;
 }
 
-// Permanent pay-for-access cap by Creator-Program tier (CU 868ke4949).
-export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
-  bronze: 3,
-  silver: 10,
-  gold: Infinity,
-};
-
-export function maxPermanentAccessModels(tier: string | null | undefined): number {
-  return tier ? PERMANENT_ACCESS_LIMIT_BY_TIER[tier] ?? 0 : 0;
-}
+// Permanent pay-for-access cap by Creator-Program tier (CU 868ke4949). Lives in @civitai/buzz because the onsite
+// model-version form sets permanent access too, and the main app enforces the cap server-side.
+export { PERMANENT_ACCESS_LIMIT_BY_TIER, maxPermanentAccessModels } from '@civitai/buzz';
 
 export type EarlyAccessConfig = {
   timeframe: number;

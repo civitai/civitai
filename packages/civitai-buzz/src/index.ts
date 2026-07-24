@@ -5,3 +5,5 @@ export * from './responses';
 export * from './queries';
 export * from './licensing-fee';
 export * from './creator-program';
+export * from './early-access';
+export * from './paid-access';

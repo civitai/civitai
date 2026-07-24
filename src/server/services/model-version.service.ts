@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { maxPermanentAccessModels } from '@civitai/buzz';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from '~/types/session';
 import { env } from '~/env/server';
@@ -338,6 +340,50 @@ function assertEarlyAccessChargeConfig(config: ModelVersionEarlyAccessConfig | n
   if (config?.chargeForGeneration && !config.generationPrice) {
     throw throwBadRequestError(
       'You must provide a generation price when charging for generations.'
+    );
+  }
+}
+
+// Permanent access is capped per Creator-Program tier. Both write paths (the tRPC upsert behind the onsite form
+// and the REST endpoint Creator Studio posts to) must call this — the cap used to live only in the Studio's
+// action, which made it a client-side invariant rather than a platform guarantee.
+export async function assertPermanentAccessAllowed({
+  userId,
+  isModerator,
+  versionId,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  versionId?: number;
+}) {
+  if (isModerator) return;
+
+  const subscription = await getHighestTierSubscription(userId);
+  const cap = maxPermanentAccessModels(subscription?.tier);
+  if (cap <= 0) {
+    throw throwBadRequestError('Permanent access requires an active Creator Program membership.');
+  }
+  if (!Number.isFinite(cap)) return;
+
+  // Counts on the primary (not the replica): two saves in quick succession must not both read a pre-write
+  // snapshot and each pass the cap. Uses the trigger-maintained `earlyAccessPermanent` column — the same field
+  // the download paywall reads — rather than re-deriving from JSON, and ignores deleted models so a creator
+  // isn't locked out by versions they can no longer see. Excludes the version being edited so re-saving an
+  // already-permanent version never trips its own cap.
+  const [{ count }] = await dbWrite.$queryRaw<{ count: bigint }[]>`
+    SELECT count(*) AS count
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE m."userId" = ${userId}
+      AND m."deletedAt" IS NULL
+      AND mv."earlyAccessPermanent"
+      AND (${versionId ?? null}::int IS NULL OR mv.id != ${versionId ?? null}::int)
+  `;
+  if (Number(count) >= cap) {
+    throw throwBadRequestError(
+      `Your membership tier allows ${cap} permanent access ${
+        cap === 1 ? 'version' : 'versions'
+      }. Turn one off before adding another.`
     );
   }
 }

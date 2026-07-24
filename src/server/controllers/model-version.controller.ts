@@ -44,6 +44,7 @@ import {
   toggleNotifyModelVersion,
   unpublishModelVersionById,
   updateModelVersionById,
+  assertPermanentAccessAllowed,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
@@ -391,6 +392,14 @@ export const upsertModelVersionHandler = async ({
           'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
         );
       }
+    }
+
+    if (input?.earlyAccessConfig?.permanent) {
+      await assertPermanentAccessAllowed({
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+        versionId: input.id,
+      });
     }
 
     if (
