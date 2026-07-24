@@ -813,7 +813,15 @@ export const getConflictingFiles = (files: FileFromContextProps[]) => {
     groups.set(key, [...(groups.get(key) ?? []), item]);
   });
 
-  return [...groups.values()].filter((group) => group.length > 1);
+  // Component files need none of size/fp/quantType, so a group where no member has
+  // any of them (e.g. two bare Text Encoders) has nothing to disambiguate on and
+  // isn't a real duplicate.
+  const hasDistinguishingSettings = (file: FileFromContextProps) =>
+    !!(file.size || file.fp || file.quantType);
+
+  return [...groups.values()].filter(
+    (group) => group.length > 1 && group.some(hasDistinguishingSettings)
+  );
 };
 
 const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
