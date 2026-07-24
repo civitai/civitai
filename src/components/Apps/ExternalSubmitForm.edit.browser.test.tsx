@@ -200,23 +200,26 @@ describe('ExternalSubmitForm — edit mode', () => {
     expect(mocks.removeScreenshot).toHaveBeenCalledWith({ screenshotId: 'shadow-ss-1' });
   });
 
-  test('shows the derived scopes READ-ONLY + editable justifications and saves the scope patch', async () => {
-    // A connect listing: the client currently allows UserRead(1)|ModelsRead(4)|ModelsWrite(8) = 13.
+  test('shows the derived scopes READ-ONLY + editable SENSITIVE justifications and saves the scope patch', async () => {
+    // A connect listing: the client allows ModelsRead(4)|ModelsWrite(8) = 12.
+    // ModelsWrite is SENSITIVE (gets a required input); ModelsRead is not (collapsed).
     const ctx = makeCtx({
       status: 'draft',
       connectClientId: 'oauth-1',
-      connectAllowedScopes: 13,
-      connectRequestedScopes: 13,
-      connectScopeJustifications: { ModelsRead: 'original reason' },
+      connectAllowedScopes: 12,
+      connectRequestedScopes: 12,
+      connectScopeJustifications: { ModelsWrite: 'original reason' },
     });
     renderWithProviders(<ExternalSubmitForm edit={ctx} />);
     // URL → Details (the scope disclosure lives on Details).
     await page.getByRole('button', { name: 'Next' }).click();
     await expect.element(page.getByTestId('apps-offsite-scope-readonly')).toBeInTheDocument();
     expect(page.getByTestId('sensitive-scope-badge').elements().length).toBeGreaterThan(0);
+    // The non-sensitive ModelsRead(4) has NO justification input (it's collapsed).
+    expect(page.getByTestId('apps-offsite-justification-4').elements()).toHaveLength(0);
 
-    // Edit the ModelsRead (bit 4) justification, then save.
-    await page.getByTestId('apps-offsite-justification-4').fill('updated reason');
+    // Edit the ModelsWrite (bit 8) SENSITIVE justification, then save.
+    await page.getByTestId('apps-offsite-justification-8').fill('updated reason');
     await page.getByTestId('apps-offsite-edit-save').click();
 
     await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
@@ -224,13 +227,63 @@ describe('ExternalSubmitForm — edit mode', () => {
       expect.objectContaining({
         listingId: 'apl_parent',
         patch: expect.objectContaining({
-          requestedScopes: 13,
-          scopeJustifications: { ModelsRead: 'updated reason' },
+          requestedScopes: 12,
+          scopeJustifications: { ModelsWrite: 'updated reason' },
         }),
       })
     );
     // A justification-only edit on a DRAFT is in-place — no revision.
     expect(mocks.submitRevision).not.toHaveBeenCalled();
+  });
+
+  test('a SENSITIVE justification is REQUIRED on save — an empty one blocks the save', async () => {
+    // UserRead(1) is sensitive; the prefill has no justification for it.
+    const ctx = makeCtx({
+      status: 'draft',
+      connectClientId: 'oauth-1',
+      connectAllowedScopes: 1,
+      connectRequestedScopes: 1,
+      connectScopeJustifications: {},
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    // Change the name so there IS a scalar change to save.
+    await page.getByRole('textbox', { name: /^Name/ }).fill('Renamed');
+    await page.getByTestId('apps-offsite-edit-save').click();
+    // Save is blocked — no mutation fires — and the required error is surfaced.
+    await expect
+      .element(page.getByText('A justification is required for this permission.'))
+      .toBeInTheDocument();
+    expect(mocks.updateListing).not.toHaveBeenCalled();
+    // Filling the justification unblocks the save.
+    await page.getByTestId('apps-offsite-justification-1').fill('needed to greet the user');
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+  });
+
+  test('an existing listing with a BLANK App URL is grandfathered — prompts but does not block', async () => {
+    const ctx = makeCtx({
+      status: 'draft',
+      scalars: {
+        name: 'Vitrine',
+        tagline: null,
+        description: null,
+        category: null,
+        contentRating: 'g',
+        externalUrl: '', // pre-existing blank URL
+      },
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    // The URL step prompts to add one (does NOT hard-block).
+    await expect.element(page.getByTestId('apps-offsite-edit-url-prompt')).toBeInTheDocument();
+    // Advancing is allowed despite the blank URL.
+    await page.getByTestId('apps-offsite-wizard-next-url').click();
+    await page.getByRole('textbox', { name: /^Name/ }).fill('Vitrine Renamed');
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+    expect(mocks.updateListing).toHaveBeenCalledWith(
+      expect.objectContaining({ listingId: 'apl_parent', patch: { name: 'Vitrine Renamed' } })
+    );
   });
 
   test('a listing with no connect client shows no scope section', async () => {

@@ -26,11 +26,13 @@ import {
   OFFSITE_SUBMIT_LIMITS,
   isUrlStepComplete,
   normalizeLinkUrl,
+  scopeJustificationError,
   validateOffsiteSubmitForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
+import { FadeIn } from '~/components/Apps/wizardMotion';
 import { ListingAssetStep, type MetaSuggestions } from '~/components/Apps/ListingAssetStep';
 import {
   buildScalarPatch,
@@ -80,6 +82,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const [errors, setErrors] = useState<OffsiteSubmitFormErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [assetsDirty, setAssetsDirty] = useState(false);
+  // Reveal the required error on every empty SENSITIVE justification after a blocked
+  // save (mirrors the create wizard's sensitive-only justification model).
+  const [showScopeErrors, setShowScopeErrors] = useState(false);
 
   // Effective asset/detail target. draft/pending → the listing itself; approved →
   // the SHADOW revision. 🔴 The shadow is resolved SERVER-SIDE by `getMyListingForEdit`
@@ -109,6 +114,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       ...v,
       name: v.name.trim().length === 0 && data.name ? data.name : v.name,
       tagline: v.tagline.trim().length === 0 && data.tagline ? data.tagline : v.tagline,
+      // Description autofill: fill ONLY when empty, truncated to the field bound —
+      // never clobbers existing copy (non-destructive OG re-pull on a URL change).
+      description:
+        v.description.trim().length === 0 && data.description
+          ? data.description.slice(0, OFFSITE_SUBMIT_LIMITS.descriptionMax)
+          : v.description,
     }));
     setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
   }, [metaQuery.data, metaUrl]);
@@ -137,6 +148,11 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   }
 
   function handleUrlBlur() {
+    // A blank URL is GRANDFATHERED on an existing listing — leave it be (no error).
+    if (values.externalUrl.trim().length === 0) {
+      setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+      return;
+    }
     const result = normalizeLinkUrl(values.externalUrl);
     if (result.error) return;
     setField('externalUrl', result.url);
@@ -144,6 +160,14 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   }
 
   function handleAdvanceFromUrl() {
+    // GRANDFATHER: a pre-existing listing may have no App URL. Don't force-fill or
+    // block — advance and let the inline prompt nudge the author to add one. (Create
+    // requires it; an existing blank does not hard-block an edit.)
+    if (values.externalUrl.trim().length === 0) {
+      setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+      setActive(STEP_DETAILS);
+      return;
+    }
     const result = normalizeLinkUrl(values.externalUrl);
     if (result.error) {
       setErrors((prev) => ({ ...prev, externalUrl: result.error }));
@@ -180,13 +204,24 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     // Client mirror of the server validation (URL/name/slug/bounds) before the
     // round-trip; the server stays the source of truth.
     const nextErrors = validateOffsiteSubmitForm(values);
+    // SENSITIVE-only justification model (parity with create): every sensitive scope
+    // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
+    // read-only + never required. No connect client → no scopes → nothing to check.
+    if (edit.connectClientId != null) {
+      const scopeError = scopeJustificationError(values);
+      if (scopeError) nextErrors.scopeJustifications = scopeError;
+    }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       // Steer the author to the step that carries the first error.
       if (nextErrors.externalUrl) setActive(STEP_URL);
-      else setActive(STEP_DETAILS);
+      else {
+        if (nextErrors.scopeJustifications) setShowScopeErrors(true);
+        setActive(STEP_DETAILS);
+      }
       return;
     }
+    setShowScopeErrors(false);
 
     const patch = buildScalarPatch(edit, values);
     const scalarChanged = hasScalarChanges(patch);
@@ -281,30 +316,41 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           description="The link"
           data-testid="apps-offsite-wizard-step-url"
         >
-          <Stack gap="md" mt="md">
-            <TextInput
-              label="Link URL"
-              description="Where users land when they open your app."
-              placeholder="example.com/app"
-              value={values.externalUrl}
-              onChange={(e) => setField('externalUrl', e.currentTarget.value)}
-              onBlur={handleUrlBlur}
-              onKeyDown={handleUrlKeyDown}
-              error={errors.externalUrl}
-              maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
-              required
-              data-autofocus
-              data-testid="apps-offsite-edit-url"
-            />
-            <Group justify="flex-end">
-              <Button
-                onClick={handleAdvanceFromUrl}
-                data-testid="apps-offsite-wizard-next-url"
-              >
-                Next
-              </Button>
-            </Group>
-          </Stack>
+          <FadeIn>
+            <Stack gap="md" mt="md">
+              <TextInput
+                label="App URL"
+                description="Your app’s public https link — users open it from the listing."
+                placeholder="example.com/app"
+                value={values.externalUrl}
+                onChange={(e) => setField('externalUrl', e.currentTarget.value)}
+                onBlur={handleUrlBlur}
+                onKeyDown={handleUrlKeyDown}
+                error={errors.externalUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
+                data-autofocus
+                data-testid="apps-offsite-edit-url"
+              />
+              {values.externalUrl.trim().length === 0 && (
+                <Alert
+                  color="yellow"
+                  variant="light"
+                  icon={<IconInfoCircle size={16} />}
+                  data-testid="apps-offsite-edit-url-prompt"
+                >
+                  <Text size="sm">
+                    This listing has no App URL. Adding one lets users open your app (and lets us
+                    suggest a name, description and images) — but it’s optional here.
+                  </Text>
+                </Alert>
+              )}
+              <Group justify="flex-end">
+                <Button onClick={handleAdvanceFromUrl} data-testid="apps-offsite-wizard-next-url">
+                  Next
+                </Button>
+              </Group>
+            </Stack>
+          </FadeIn>
         </Stepper.Step>
 
         <Stepper.Step
@@ -313,6 +359,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           allowStepClick={isUrlStepComplete(values)}
           data-testid="apps-offsite-wizard-step-details"
         >
+          <FadeIn>
           <Stack gap="md" mt="md">
             <TextInput
               label="Name"
@@ -387,6 +434,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 justifications={values.scopeJustifications}
                 onJustificationChange={handleJustificationChange}
                 disabled={saving}
+                forceShowErrors={showScopeErrors}
                 intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."
               />
             )}
@@ -398,6 +446,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               <Button onClick={() => setActive(STEP_ASSETS)}>Next</Button>
             </Group>
           </Stack>
+          </FadeIn>
         </Stepper.Step>
 
         <Stepper.Step
