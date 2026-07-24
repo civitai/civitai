@@ -36,7 +36,6 @@ import {
   useBankedBuzz,
   useCompensationPool,
   useCreatorPoolListener,
-  useCreatorProgramForecast,
   useCreatorProgramMutate,
   useCreatorProgramPhase,
   useCreatorProgramRequirements,
