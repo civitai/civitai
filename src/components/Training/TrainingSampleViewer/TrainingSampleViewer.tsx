@@ -18,8 +18,9 @@ import {
   IconZoomIn,
   IconZoomOut,
 } from '@tabler/icons-react';
+import { useHotkeys } from '@mantine/hooks';
 import clsx from 'clsx';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 
@@ -36,6 +37,8 @@ export type TrainingSampleViewerProps = {
   sampleIndex: number;
 };
 
+// A sample that failed to render is stored as an empty string in place, so presence is
+// emptiness, never array length.
 export const hasSampleAt = (epoch: TrainingSampleEpoch | undefined, index: number) =>
   !!epoch?.sampleImages?.[index];
 
@@ -53,51 +56,78 @@ export default function TrainingSampleViewer({
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
   const epoch = epochs[epochIndex];
-  const url = epoch?.sampleImages?.[sampleIndex];
+  const samples = epoch?.sampleImages ?? [];
+  const url = samples[sampleIndex];
   const prompt = prompts[sampleIndex];
 
-  // Epochs are laid out newest-first, so "up" is a later epoch. Epochs that never emitted a
-  // sample at this index are skipped so the vertical axis always lands on a comparable image.
-  const findEpochWithSample = useCallback(
-    (step: number) => {
-      for (let i = epochIndex + step; i >= 0 && i < epochs.length; i += step) {
-        if (hasSampleAt(epochs[i], sampleIndex)) return i;
-      }
-      return undefined;
-    },
-    [epochs, epochIndex, sampleIndex]
-  );
+  // Epochs are laid out newest-first, so "up" is a later epoch. Both axes skip past samples that
+  // were never produced so navigation can never land on an empty frame.
+  const findEpochWithSample = (step: number) => {
+    for (let i = epochIndex + step; i >= 0 && i < epochs.length; i += step) {
+      if (hasSampleAt(epochs[i], sampleIndex)) return i;
+    }
+    return undefined;
+  };
+
+  const findSampleInEpoch = (step: number) => {
+    for (let i = sampleIndex + step; i >= 0 && i < samples.length; i += step) {
+      if (samples[i]) return i;
+    }
+    return undefined;
+  };
 
   const prevEpochIndex = findEpochWithSample(-1);
   const nextEpochIndex = findEpochWithSample(1);
-  const canPrevSample = sampleIndex > 0;
-  const canNextSample = sampleIndex < (epoch?.sampleImages?.length ?? 0) - 1;
+  const prevSampleIndex = findSampleInEpoch(-1);
+  const nextSampleIndex = findSampleInEpoch(1);
+
+  const navigableCount = samples.filter(Boolean).length;
+  const navigablePosition = samples.slice(0, sampleIndex + 1).filter(Boolean).length;
 
   useEffect(() => {
     setStatus('loading');
     setZoomed(false);
   }, [url]);
 
+  const missing = !epoch || !url;
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
-      if (!keys.includes(e.key)) return;
-      e.preventDefault();
-      if (e.key === 'ArrowLeft' && canPrevSample) setSampleIndex((i) => i - 1);
-      else if (e.key === 'ArrowRight' && canNextSample) setSampleIndex((i) => i + 1);
-      else if (e.key === 'ArrowUp' && prevEpochIndex !== undefined) setEpochIndex(prevEpochIndex);
-      else if (e.key === 'ArrowDown' && nextEpochIndex !== undefined) setEpochIndex(nextEpochIndex);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [canPrevSample, canNextSample, prevEpochIndex, nextEpochIndex]);
+    if (missing) dialog.onClose();
+  }, [missing]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!epoch || !url) return null;
+  const isTopLevel = dialog.closeOnEscape !== false;
+  useHotkeys(
+    isTopLevel
+      ? [
+          [
+            'ArrowLeft',
+            () => prevSampleIndex !== undefined && setSampleIndex(prevSampleIndex),
+            { preventDefault: prevSampleIndex !== undefined },
+          ],
+          [
+            'ArrowRight',
+            () => nextSampleIndex !== undefined && setSampleIndex(nextSampleIndex),
+            { preventDefault: nextSampleIndex !== undefined },
+          ],
+          [
+            'ArrowUp',
+            () => prevEpochIndex !== undefined && setEpochIndex(prevEpochIndex),
+            { preventDefault: prevEpochIndex !== undefined },
+          ],
+          [
+            'ArrowDown',
+            () => nextEpochIndex !== undefined && setEpochIndex(nextEpochIndex),
+            { preventDefault: nextEpochIndex !== undefined },
+          ],
+        ]
+      : []
+  );
+
+  if (missing) return null;
 
   const mediaClassName = clsx(
     'transition-opacity',
     status === 'loaded' ? 'opacity-100' : 'opacity-0',
-    zoomed ? 'max-w-none' : 'max-h-full max-w-full object-contain'
+    zoomed ? 'm-auto max-w-none' : 'max-h-full max-w-full object-contain'
   );
 
   return (
@@ -106,7 +136,6 @@ export default function TrainingSampleViewer({
       fullScreen
       withOverlay={false}
       withinPortal={!dialog.target}
-      zIndex={dialog.target ? undefined : 400}
       closeButtonProps={{ 'aria-label': 'Close sample viewer' }}
       styles={{
         inner: { position: 'absolute' },
@@ -121,8 +150,8 @@ export default function TrainingSampleViewer({
             Epoch #{epoch.epochNumber}
           </Badge>
           <Text size="sm" c="dimmed">
-            {epochIndex + 1} of {epochs.length} epochs &middot; sample {sampleIndex + 1} of{' '}
-            {epoch.sampleImages.length}
+            {epochIndex + 1} of {epochs.length} epochs &middot; sample {navigablePosition} of{' '}
+            {navigableCount}
           </Text>
         </Group>
         {!isVideo && (
@@ -142,8 +171,10 @@ export default function TrainingSampleViewer({
       <div className="relative flex min-h-0 flex-1">
         <div
           className={clsx(
-            'flex flex-1 items-center justify-center',
-            zoomed ? 'overflow-auto' : 'overflow-hidden'
+            'flex flex-1',
+            // `m-auto` on the media rather than flex centering — a centered flex item clamps
+            // scrollLeft/Top at 0, making the start edge of a zoomed sample unreachable.
+            zoomed ? 'overflow-auto' : 'items-center justify-center overflow-hidden'
           )}
         >
           {status === 'loading' && (
@@ -163,8 +194,11 @@ export default function TrainingSampleViewer({
             </Center>
           )}
           {isVideo ? (
+            // `src` on the element, not a child <source> — resource errors on <source> do not
+            // bubble, leaving a failed sample stuck on the loading spinner.
             <video
               key={url}
+              src={url}
               loop
               playsInline
               disablePictureInPicture
@@ -174,15 +208,13 @@ export default function TrainingSampleViewer({
               className={mediaClassName}
               onLoadedData={() => setStatus('loaded')}
               onError={() => setStatus('error')}
-            >
-              <source src={url} type="video/mp4" />
-            </video>
+            />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               key={url}
               src={url}
-              alt={`Epoch ${epoch.epochNumber} sample ${sampleIndex + 1}`}
+              alt={`Epoch ${epoch.epochNumber} sample ${navigablePosition}`}
               className={clsx(mediaClassName, 'cursor-zoom-in', zoomed && 'cursor-zoom-out')}
               onClick={() => setZoomed((z) => !z)}
               onLoad={() => setStatus('loaded')}
@@ -192,18 +224,24 @@ export default function TrainingSampleViewer({
         </div>
 
         <NavButton
-          label="Previous sample (Left)"
+          label={
+            prevSampleIndex !== undefined
+              ? 'Previous sample (Left)'
+              : 'No earlier sample in this epoch'
+          }
           className="left-2 top-1/2 -translate-y-1/2"
-          disabled={!canPrevSample}
-          onClick={() => setSampleIndex((i) => i - 1)}
+          disabled={prevSampleIndex === undefined}
+          onClick={() => prevSampleIndex !== undefined && setSampleIndex(prevSampleIndex)}
         >
           <IconChevronLeft size={24} />
         </NavButton>
         <NavButton
-          label="Next sample (Right)"
+          label={
+            nextSampleIndex !== undefined ? 'Next sample (Right)' : 'No later sample in this epoch'
+          }
           className="right-2 top-1/2 -translate-y-1/2"
-          disabled={!canNextSample}
-          onClick={() => setSampleIndex((i) => i + 1)}
+          disabled={nextSampleIndex === undefined}
+          onClick={() => nextSampleIndex !== undefined && setSampleIndex(nextSampleIndex)}
         >
           <IconChevronRight size={24} />
         </NavButton>

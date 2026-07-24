@@ -259,7 +259,7 @@ const EpochRow = ({
             </Group>
           )}
         </Group>
-        {columnCount === 0 ? (
+        {!epoch.sampleImages?.some(Boolean) ? (
           <Center p="md">
             <Text>No images available</Text>
           </Center>
@@ -309,7 +309,7 @@ const EpochRow = ({
                         </span>
                       </button>
                     ) : (
-                      <Center className="h-[200px] w-full rounded border border-dashed border-gray-4">
+                      <Center className="h-[200px] w-full rounded border border-dashed border-gray-4 dark:border-dark-4">
                         <Text size="xs" c="dimmed">
                           No sample
                         </Text>
@@ -722,12 +722,8 @@ export default function TrainingSelectFile({
   epochs = [...epochs].sort((a, b) => b.epochNumber - a.epochNumber);
 
   // Sample index N is the same prompt in every epoch (`sampleImagesPrompts` is stored once per
-  // run), so columns stay aligned even when an epoch emitted fewer samples than its neighbours.
-  const columnCount = Math.max(
-    0,
-    ...epochs.map((e) => e.sampleImages?.length ?? 0),
-    epochs.length ? samplePrompts.length : 0
-  );
+  // run), so columns stay aligned even when an epoch is missing a sample at some index.
+  const columnCount = Math.max(0, ...epochs.map((e) => e.sampleImages?.length ?? 0));
 
   const openSample = (epochIndex: number, sampleIndex: number) => {
     import('~/components/Training/TrainingSampleViewer/TrainingSampleViewer').then(
