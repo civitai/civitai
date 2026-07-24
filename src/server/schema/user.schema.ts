@@ -453,6 +453,12 @@ export const toggleBanUserSchema = z.object({
   detailsInternal: z.string().optional(),
   detailsExternal: z.string().optional(),
   type: z.enum(['universal', 'contest']).default('universal').optional(),
+  removeContent: z.boolean().optional(),
+});
+
+export type GetBanContentPreviewInput = z.infer<typeof getBanContentPreviewSchema>;
+export const getBanContentPreviewSchema = z.object({
+  userId: z.number(),
 });
 
 // Email verification schemas

@@ -25,6 +25,7 @@ import {
   getUsernameAvailableHandler,
   getUserPaymentMethodsHandler,
   getUserPurchasedRewardsHandler,
+  getBanContentPreviewHandler,
   getUserSettingsHandler,
   getUserTagsHandler,
   setLeaderboardEligibilityHandler,
@@ -58,6 +59,7 @@ import {
   getUserTagsSchema,
   setLeaderboardEligbilitySchema,
   setUserSettingsInput,
+  getBanContentPreviewSchema,
   toggleBanUserSchema,
   toggleFavoriteInput,
   toggleFeatureInputSchema,
@@ -246,6 +248,9 @@ export const userRouter = router({
     .mutation(toggleFollowUserHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(toggleBanUserSchema).mutation(toggleBanHandler),
+  getBanContentPreview: moderatorProcedure
+    .input(getBanContentPreviewSchema)
+    .query(getBanContentPreviewHandler),
   restoreAccount: moderatorProcedure.input(restoreUserSchema).mutation(restoreUserHandler),
   getToken: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })

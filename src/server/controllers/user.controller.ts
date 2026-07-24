@@ -25,6 +25,7 @@ import type {
   DeleteUserInput,
   GetAllUsersInput,
   GetEngagedModelsByIdsInput,
+  GetBanContentPreviewInput,
   GetByUsernameSchema,
   GetUserByUsernameSchema,
   GetUserCosmeticsSchema,
@@ -75,6 +76,7 @@ import {
   equipCosmetic,
   getCreators,
   getUserBookmarkCollections,
+  getBanContentPreview,
   getUserById,
   getUserByUsername,
   getUserCosmetics,
@@ -1119,6 +1121,15 @@ export const toggleBanHandler = async ({
   });
 
   return updatedUser;
+};
+
+export const getBanContentPreviewHandler = async ({
+  input,
+}: {
+  input: GetBanContentPreviewInput;
+  ctx: ProtectedContext;
+}) => {
+  return getBanContentPreview({ userId: input.userId });
 };
 
 export const getUserCosmeticsHandler = async ({
