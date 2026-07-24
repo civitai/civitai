@@ -5,8 +5,13 @@ import {
   emptyOffsiteSubmitForm,
   isClientStepComplete,
   isCreateDetailsStepComplete,
+  isCreateUrlStepComplete,
+  missingSensitiveJustifications,
+  partitionScopesBySensitivity,
   pruneJustificationsToMask,
+  scopeJustificationError,
   shapeScopeJustifications,
+  shapeSensitiveJustifications,
   toSubmitExternalInput,
   validateConnectFields,
   validateExternalCreateForm,
@@ -131,19 +136,35 @@ describe('validateExternalCreateForm (metadata + connect combined)', () => {
 });
 
 describe('step gates', () => {
-  it('client step complete needs a client + a valid subset', () => {
+  it('client step complete needs a client + a valid subset (URL now gated on its own step)', () => {
     expect(isClientStepComplete(full({ requestedScopes: TokenScope.ModelsRead }), CEILING)).toBe(true);
     expect(isClientStepComplete(full({ connectClientId: null }), 0)).toBe(false);
     expect(isClientStepComplete(full({ requestedScopes: TokenScope.MediaWrite }), CEILING)).toBe(false);
-  });
-
-  it('client step rejects a present-but-invalid homepage URL', () => {
+    // The App URL is no longer part of this gate — a present-but-invalid URL doesn't
+    // block the App-&-scopes step (it's caught on the first App URL step instead).
     expect(
       isClientStepComplete(
         full({ requestedScopes: TokenScope.ModelsRead, externalUrl: 'http://insecure.example.com' }),
         CEILING
       )
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it('client step BLOCKS until every SENSITIVE scope is justified', () => {
+    // UserRead(1) + ModelsWrite(8) are sensitive; ModelsRead(4) is not.
+    const missing = full({ requestedScopes: CEILING });
+    expect(isClientStepComplete(missing, CEILING)).toBe(false);
+    const justified = full({
+      requestedScopes: CEILING,
+      scopeJustifications: { UserRead: 'reads the profile', ModelsWrite: 'uploads models' },
+    });
+    expect(isClientStepComplete(justified, CEILING)).toBe(true);
+  });
+
+  it('isCreateUrlStepComplete REQUIRES a valid https App URL (blank blocks; http blocks)', () => {
+    expect(isCreateUrlStepComplete(full({ externalUrl: '' }))).toBe(false);
+    expect(isCreateUrlStepComplete(full({ externalUrl: 'http://insecure.example.com' }))).toBe(false);
+    expect(isCreateUrlStepComplete(full({ externalUrl: 'https://app.example.com' }))).toBe(true);
   });
 
   it('details step complete needs the whole create mirror valid', () => {
@@ -151,16 +172,79 @@ describe('step gates', () => {
       true
     );
     expect(isCreateDetailsStepComplete(full({ name: '' }), CEILING)).toBe(false);
+    // A sensitive scope without a justification blocks the details/create gate.
+    expect(
+      isCreateDetailsStepComplete(full({ requestedScopes: TokenScope.UserRead }), TokenScope.UserRead)
+    ).toBe(false);
+  });
+});
+
+describe('sensitive-only justification model', () => {
+  it('partitions a mask into sensitive vs non-sensitive scopes', () => {
+    const { sensitive, nonSensitive } = partitionScopesBySensitivity(CEILING);
+    expect(sensitive.map((s) => s.key).sort()).toEqual(['ModelsWrite', 'UserRead']);
+    expect(nonSensitive.map((s) => s.key)).toEqual(['ModelsRead']);
+  });
+
+  it('missingSensitiveJustifications lists only unjustified SENSITIVE scopes', () => {
+    // ModelsRead (non-sensitive) is never required even when blank.
+    const v = full({
+      requestedScopes: CEILING,
+      scopeJustifications: { UserRead: 'ok' },
+    });
+    expect(missingSensitiveJustifications(v)).toEqual(['ModelsWrite']);
+    const done = full({
+      requestedScopes: CEILING,
+      scopeJustifications: { UserRead: 'ok', ModelsWrite: 'ok' },
+    });
+    expect(missingSensitiveJustifications(done)).toEqual([]);
+  });
+
+  it('validateConnectFields REQUIRES sensitive justifications but not non-sensitive ones', () => {
+    // Non-sensitive-only scope with no justification → valid.
+    expect(
+      validateConnectFields(full({ requestedScopes: TokenScope.ModelsRead }), CEILING)
+        .scopeJustifications
+    ).toBeUndefined();
+    // A sensitive scope with no justification → error.
+    expect(
+      validateConnectFields(full({ requestedScopes: TokenScope.UserRead }), CEILING)
+        .scopeJustifications
+    ).toBeTruthy();
+    // Justified sensitive scope → no error.
+    expect(
+      validateConnectFields(
+        full({ requestedScopes: TokenScope.UserRead, scopeJustifications: { UserRead: 'why' } }),
+        CEILING
+      ).scopeJustifications
+    ).toBeUndefined();
+  });
+
+  it('scopeJustificationError flags over-length before missing-required', () => {
+    const v = full({
+      requestedScopes: TokenScope.UserRead,
+      scopeJustifications: { UserRead: 'x'.repeat(SCOPE_JUSTIFICATION_MAX_LENGTH + 1) },
+    });
+    expect(scopeJustificationError(v)).toMatch(/at most/);
+  });
+
+  it('shapeSensitiveJustifications keeps ONLY requested sensitive scopes (prunes non-sensitive)', () => {
+    const out = shapeSensitiveJustifications(
+      { UserRead: '  keep  ', ModelsRead: 'drop-nonsensitive', ModelsWrite: 'keep2' },
+      CEILING
+    );
+    expect(out).toEqual({ UserRead: 'keep', ModelsWrite: 'keep2' });
   });
 });
 
 describe('toSubmitExternalInput', () => {
-  it('trims text + omits empty optionals (including a blank homepage URL)', () => {
+  it('trims text + omits empty optionals (including a blank App URL)', () => {
     const v = full({
       slug: ' connect-app ',
       name: ' Connect App ',
-      requestedScopes: TokenScope.ModelsRead,
-      scopeJustifications: { ModelsRead: '  reason  ' },
+      // UserRead is SENSITIVE → its justification is kept (non-sensitive would prune).
+      requestedScopes: TokenScope.UserRead,
+      scopeJustifications: { UserRead: '  reason  ' },
     });
     const input = toSubmitExternalInput(v);
     expect(input.slug).toBe('connect-app');
@@ -168,7 +252,7 @@ describe('toSubmitExternalInput', () => {
     expect(input.tagline).toBeUndefined();
     expect(input.externalUrl).toBeUndefined();
     expect(input.connectClientId).toBe('oauth-client-1');
-    expect(input.scopeJustifications).toEqual({ ModelsRead: 'reason' });
+    expect(input.scopeJustifications).toEqual({ UserRead: 'reason' });
   });
 
   it('passes a provided homepage URL through', () => {
@@ -179,22 +263,24 @@ describe('toSubmitExternalInput', () => {
     expect(toSubmitExternalInput(v).externalUrl).toBe('https://app.example.com');
   });
 
-  it('drops empty + non-requested justifications', () => {
+  it('drops empty, non-requested, and NON-SENSITIVE justifications', () => {
     const v = full({
-      requestedScopes: TokenScope.ModelsRead,
+      requestedScopes: TokenScope.UserRead,
       scopeJustifications: {
-        ModelsRead: '   ', // empty after trim → dropped
+        UserRead: '   ', // sensitive but empty after trim → dropped
         ModelsWrite: 'not requested', // scope not in mask → dropped
       },
     });
     expect(toSubmitExternalInput(v).scopeJustifications).toEqual({});
   });
 
-  it('keeps only requested + non-empty justifications', () => {
+  it('keeps only requested + non-empty SENSITIVE justifications (non-sensitive pruned)', () => {
     const v = full({
+      // ModelsRead(non-sensitive) + UserRead(sensitive) requested.
       requestedScopes: TokenScope.ModelsRead | TokenScope.UserRead,
-      scopeJustifications: { ModelsRead: 'a', UserRead: '', ModelsWrite: 'x' },
+      scopeJustifications: { ModelsRead: 'a', UserRead: 'keep me', ModelsWrite: 'x' },
     });
-    expect(toSubmitExternalInput(v).scopeJustifications).toEqual({ ModelsRead: 'a' });
+    // ModelsRead is non-sensitive → pruned; ModelsWrite not requested → dropped.
+    expect(toSubmitExternalInput(v).scopeJustifications).toEqual({ UserRead: 'keep me' });
   });
 });
