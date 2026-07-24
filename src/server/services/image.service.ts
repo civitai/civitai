@@ -4907,6 +4907,11 @@ export const getImage = async ({
     if (!withoutPost) {
       AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
     }
+
+    // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
+    // mod review) — never serve it by direct id to anyone but the owner. Feeds already
+    // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
+    AND.push(Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`);
   }
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
