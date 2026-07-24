@@ -2,18 +2,30 @@ name: Lint
 
 # Regression guard for code quality.
 #
-# Typecheck is full-repo and BLOCKING - it passes today, so it is the real gate.
+# Typecheck is full-repo and BLOCKING on internal PRs, and is the only real gate
+# here. It is skipped on fork PRs (see the job comment), so a fork gets no gating
+# from this workflow at all.
 #
-# ESLint and Prettier are report-only (`continue-on-error`). They are scoped to the
-# files a PR touches, but note that for a formatter "changed file" means the WHOLE
-# file, not the changed lines: 789 of 4,116 src files fail `prettier --check` today.
-# Across the 98 src files touched by the last 30 commits, 39 fail Prettier and 10
-# carry a pre-existing ESLint error, so 44 (45%) would red this job for reasons
-# unrelated to the PR. Blocking on that turns a 3-line bugfix into a 200-line
-# reformat, and the job gets disabled within a week. Annotations still surface.
+# ESLint and Prettier are split by how the PR touched the file:
 #
-# Both steps flip to blocking once the formatting/lint backlog is cleared, which is
-# planned to ride along with the Prettier 2->3 upgrade (that forces a reformat anyway).
+#   ADDED files      -> BLOCKING. A new file has no pre-existing findings by
+#                       definition, so this is free, and it stops the backlog
+#                       from growing while the full flip waits.
+#   MODIFIED/RENAMED -> report-only (`continue-on-error`). For a formatter,
+#                       "changed file" means the WHOLE file, not the changed
+#                       lines: 789 of 4,116 src files fail `prettier --check`
+#                       today. Across the 98 src files touched by the last 30
+#                       commits, 39 fail Prettier and 10 carry a pre-existing
+#                       ESLint error - 44 (45%) would red the job for reasons
+#                       unrelated to the PR, turning a 3-line bugfix into a
+#                       200-line reformat. The job would be off within a week.
+#
+# Findings surface as file annotations on the PR diff: ESLint via the problem
+# matcher in .github/problem-matchers/, Prettier via ::warning / ::error commands.
+# Report-only steps still show a failed-but-ignored marker in the checks list.
+#
+# The modified-file steps flip to blocking once the backlog is cleared, planned to
+# ride along with the Prettier 2->3 upgrade (which forces a reformat anyway).
 
 on:
   pull_request:
@@ -28,7 +40,7 @@ concurrency:
 
 jobs:
   eslint:
-    name: ESLint + Prettier (changed files, report-only)
+    name: ESLint + Prettier (changed files)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -53,32 +65,70 @@ jobs:
         run: |
           set -euo pipefail
           git fetch -q origin "$BASE_REF"
-          git diff --name-only --diff-filter=ACMR FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > changed.txt || true
-          echo "changed files:"
-          cat changed.txt
-          if [ -s changed.txt ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+          git diff --name-only --diff-filter=A FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > added.txt
+          git diff --name-only --diff-filter=CMR FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > modified.txt
+          # eslint only has a config for src/ and packages/; skip anything else.
+          grep -E '^(src|packages)/' added.txt > added-lint.txt || true
+          grep -E '^(src|packages)/' modified.txt > modified-lint.txt || true
+          echo "added ($(wc -l < added.txt)):"; cat added.txt
+          echo "modified ($(wc -l < modified.txt)):"; cat modified.txt
+
+      - name: Register ESLint problem matcher
+        run: echo "::add-matcher::.github/problem-matchers/eslint-unix.json"
+
+      # BLOCKING. New files start clean, so holding them to the rules costs nothing.
+      # Errors only (no --max-warnings): the repo has 3,470 warnings and 1,762 uses of
+      # `any`, so failing new files on warnings would hold them to a stricter bar than
+      # anything already merged. Warnings still annotate.
+      - name: ESLint (added files)
+        run: |
+          set -euo pipefail
+          if [ ! -s added-lint.txt ]; then echo "no new lintable files"; exit 0; fi
+          xargs -a added-lint.txt pnpm exec eslint --format unix \
+            | sed "s|^$GITHUB_WORKSPACE/||"
+
+      - name: Prettier (added files)
+        run: |
+          set -euo pipefail
+          if [ ! -s added.txt ]; then echo "no new files"; exit 0; fi
+          xargs -a added.txt pnpm exec prettier --list-different > unformatted-added.txt || true
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            echo "::error file=$f::Not formatted. Run: pnpm exec prettier --write $f"
+          done < unformatted-added.txt
+          if [ -s unformatted-added.txt ]; then
+            echo "$(wc -l < unformatted-added.txt) new file(s) are not formatted."
+            exit 1
+          fi
+          echo "all new files formatted"
 
       # Report-only: 10% of recently-touched files carry a pre-existing
       # error-severity finding. See the header comment.
-      - name: ESLint
-        if: steps.changed.outputs.any == 'true'
+      - name: ESLint (modified files, report-only)
         continue-on-error: true
         run: |
           set -euo pipefail
-          # eslint only has a config for src/ and packages/; skip anything else.
-          grep -E '^(src|packages)/' changed.txt > lintable.txt || true
-          if [ -s lintable.txt ]; then
-            xargs -a lintable.txt pnpm exec eslint --no-error-on-unmatched-pattern
-          else
-            echo "no lintable files changed"
-          fi
+          if [ ! -s modified-lint.txt ]; then echo "no modified lintable files"; exit 0; fi
+          xargs -a modified-lint.txt pnpm exec eslint --format unix \
+            | sed "s|^$GITHUB_WORKSPACE/||"
 
       # Report-only: 19% of src files are unformatted today and a formatter has no
       # changed-line granularity. See the header comment.
-      - name: Prettier
-        if: steps.changed.outputs.any == 'true'
+      - name: Prettier (modified files, report-only)
         continue-on-error: true
-        run: xargs -a changed.txt pnpm exec prettier --check
+        run: |
+          set -euo pipefail
+          if [ ! -s modified.txt ]; then echo "no modified files"; exit 0; fi
+          xargs -a modified.txt pnpm exec prettier --list-different > unformatted.txt || true
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            echo "::warning file=$f::Not formatted (pre-existing, not blocking). Run: pnpm exec prettier --write $f"
+          done < unformatted.txt
+          if [ -s unformatted.txt ]; then
+            echo "$(wc -l < unformatted.txt) modified file(s) are not formatted."
+            exit 1
+          fi
+          echo "all modified files formatted"
 
   typecheck:
     name: Typecheck
