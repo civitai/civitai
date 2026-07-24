@@ -67,6 +67,12 @@ describe('deriveArticleIngestionState', () => {
         })
       ).toBe(ArticleIngestionStatus.Blocked);
     });
+
+    it('resolves Scanned for a clean, fully-scanned article', () => {
+      expect(
+        deriveArticleIngestionState({ ...base, hasModeratorOverride: true })
+      ).toBe(ArticleIngestionStatus.Scanned);
+    });
   });
 
   describe('no override (default path unchanged)', () => {
@@ -85,6 +91,12 @@ describe('deriveArticleIngestionState', () => {
     it('resolves Blocked when a content image is policy-blocked', () => {
       expect(
         deriveArticleIngestionState({ ...base, imageBlocked: true })
+      ).toBe(ArticleIngestionStatus.Blocked);
+    });
+
+    it('resolves Blocked when an image is BOTH blocked and errored (Blocked beats Error — locks line order guarding the CSAM guard)', () => {
+      expect(
+        deriveArticleIngestionState({ ...base, imageBlocked: true, imageError: true })
       ).toBe(ArticleIngestionStatus.Blocked);
     });
 
