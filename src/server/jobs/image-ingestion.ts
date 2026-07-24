@@ -29,10 +29,24 @@ type IngestImageRow = IngestImageInput & {
 export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () => {
   const now = new Date();
 
+  // Bound how many queued images we pull (and therefore can submit) per run. The
+  // media-rating scanner sustains only a limited throughput; pulling the whole
+  // queue at once (previously a hardcoded 10,000) can dump ~5x what the scanner
+  // can absorb, so bulk rating jobs expire before they run, workflows fail, and
+  // images flip to Error — which the cron then re-queues, amplifying the flood
+  // into a congestion collapse. Since every downstream step (filtering, the
+  // submission fan-out, and the JobQueue cleanup) is derived only from the rows
+  // pulled here, capping this pull caps per-run submissions AND leaves the rows
+  // we did NOT pull this run untouched in the queue. Oldest-first (createdAt asc)
+  // keeps draining fair, so a backlog drains gradually across runs. New user
+  // uploads scan directly via ingestImage on creation and are unaffected by this
+  // cap — this cron is only the retry/backfill path.
+  const maxPerRun = env.IMAGE_SCANNING_MAX_PER_RUN;
+
   // Pull from JobQueue instead of scanning Image table with partial indexes
   const jobQueue = await dbRead.jobQueue.findMany({
     where: { type: JobQueueType.ImageScan, entityType: EntityType.Image },
-    take: 10000,
+    take: maxPerRun,
     orderBy: { createdAt: 'asc' },
   });
 
