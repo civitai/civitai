@@ -7,13 +7,13 @@
 
 import { Alert, Text, Stack, Group, Paper, Select, Button, Badge } from '@mantine/core';
 import {
-  IconAlertTriangle,
   IconX,
   IconExclamationCircle,
   IconFileText,
   IconShieldCheck,
   IconRefresh,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { trpc } from '~/utils/trpc';
@@ -185,7 +185,7 @@ function TextModerationSection({ issue }: { issue: TextModerationIssue }) {
       <Paper
         p="xs"
         withBorder
-        className={isBlocked ? 'bg-red-1 dark:bg-red-9/20' : 'bg-yellow-1 dark:bg-yellow-9/20'}
+        className={clsx('border-l-2', isBlocked ? 'border-l-red-6' : 'border-l-yellow-6')}
       >
         <Group gap="sm" wrap="nowrap" align="flex-start">
           <div
@@ -239,12 +239,7 @@ export function ArticleProblematicImages({
       : 'The following images must be removed or replaced before your article can be published:';
 
   return (
-    <Alert
-      icon={<IconAlertTriangle size={16} />}
-      title={title}
-      color="red"
-      className="border-l-4 border-red-6"
-    >
+    <Alert title={title} color="red" className="border-l-4 border-red-6">
       <Stack gap="md">
         <Text size="sm">{leadText}</Text>
 
@@ -262,7 +257,7 @@ export function ArticleProblematicImages({
             </Group>
             <Stack gap="sm">
               {blockedImages.map((image) => (
-                <Paper key={image.id} p="xs" withBorder className="bg-red-1 dark:bg-red-9/20">
+                <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-red-6">
                   <Group gap="sm" wrap="nowrap">
                     <div className="relative size-16 shrink-0 overflow-hidden rounded border border-red-6">
                       <EdgeMedia
@@ -276,9 +271,11 @@ export function ArticleProblematicImages({
                       <Text size="xs" fw={500} c="red.7">
                         Blocked: {image.blockedFor || 'Policy violation'}
                       </Text>
-                      <Text size="xs" c="dimmed">
-                        Image ID: {image.id}
-                      </Text>
+                      {canOverride && (
+                        <Text size="xs" c="dimmed">
+                          ID: {image.id}
+                        </Text>
+                      )}
                     </Stack>
                     {canOverride && (
                       <ImageOverrideControl
@@ -305,7 +302,7 @@ export function ArticleProblematicImages({
             </Group>
             <Stack gap="sm">
               {errorImages.map((image) => (
-                <Paper key={image.id} p="xs" className="bg-yellow-1 dark:bg-yellow-9/20" withBorder>
+                <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-yellow-6">
                   <Group gap="sm" wrap="nowrap">
                     <div className="relative size-16 shrink-0 overflow-hidden rounded border border-yellow-6 bg-gray-1 dark:bg-gray-8">
                       <EdgeMedia
@@ -319,12 +316,14 @@ export function ArticleProblematicImages({
                       <Text size="xs" fw={500} c="yellow.7">
                         {errorImageCause(image)}
                       </Text>
-                      <Text size="xs" c="dimmed">
-                        Image ID: {image.id} • Status: {image.ingestion}
-                      </Text>
+                      {canOverride && (
+                        <Text size="xs" c="dimmed">
+                          ID: {image.id}
+                        </Text>
+                      )}
                     </Stack>
                     {(canRetry || canOverride) && (
-                      <Stack gap="xs" align="flex-end">
+                      <Group gap="xs" wrap="nowrap">
                         {canRetry && !image.nsfwLevelLocked && (
                           <ImageRetryButton articleId={articleId} imageId={image.id} />
                         )}
@@ -335,7 +334,7 @@ export function ArticleProblematicImages({
                             locked={image.nsfwLevelLocked}
                           />
                         )}
-                      </Stack>
+                      </Group>
                     )}
                   </Group>
                 </Paper>

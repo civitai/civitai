@@ -1858,7 +1858,12 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     (i) =>
       i.ingestion === ImageIngestionStatus.Error || i.ingestion === ImageIngestionStatus.NotFound
   );
-  const pendingImages = images.filter((i) => i.ingestion === ImageIngestionStatus.Pending);
+  // Rescan is a re-queued (in-flight) image — treat it as non-terminal alongside
+  // Pending so `allComplete` is false and the client keeps polling until it settles.
+  const pendingImages = images.filter(
+    (i) =>
+      i.ingestion === ImageIngestionStatus.Pending || i.ingestion === ImageIngestionStatus.Rescan
+  );
 
   const required = article ? articleHasText(article.title, article.content) : false;
   const textTerminalStatuses = new Set<EntityModerationStatus>([
@@ -2362,6 +2367,16 @@ export async function rescanArticle({
     (image) => image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked
   );
 
+  // Mark re-queued images non-terminal so the article reads as in-progress
+  // (allComplete=false) and the status poll keeps running until they resolve.
+  const imageIdsToIngest = imagesToIngest.map((image) => image.id);
+  if (imageIdsToIngest.length) {
+    await dbWrite.image.updateMany({
+      where: { id: { in: imageIdsToIngest } },
+      data: { ingestion: ImageIngestionStatus.Rescan },
+    });
+  }
+
   enqueueImageIngestion({
     images: imagesToIngest,
     name: 'article-rescan-image',
@@ -2482,6 +2497,13 @@ export async function rescanArticleImage({
 
   // Consistent with rescanArticle: never re-queue an in-flight or locked image.
   if (image.ingestion !== ImageIngestionStatus.Pending && !image.nsfwLevelLocked) {
+    // Flip to Rescan so the image is no longer terminal: getArticleScanStatus
+    // then reports the article as in-progress (allComplete=false), which resumes
+    // the 15s status poll so the eventual result loads without a manual refresh.
+    await dbWrite.image.update({
+      where: { id: image.id },
+      data: { ingestion: ImageIngestionStatus.Rescan },
+    });
     enqueueImageIngestion({
       images: [image],
       name: 'article-rescan-image',
