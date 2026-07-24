@@ -92,13 +92,15 @@ import {
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { enrichMyChallengeCards } from '~/server/services/challenge-participation.util';
 import {
-  challengeCreatorBlockSql,
-  getChallengeExcludedUserIds,
   getEffectiveBrowsingLevel,
   isChallengeHiddenByCoverScan,
   isChallengeHiddenByPoiCover,
   isImageHiddenFromGreenViewer,
 } from '~/server/games/daily-challenge/challenge-visibility';
+import {
+  getChallengeExcludedUserIds,
+  challengeCreatorBlockSql,
+} from '~/server/services/challenge-block.service';
 import {
   buildWinnerPayoutTransactions,
   chargeInitialPrize,
