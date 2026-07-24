@@ -271,7 +271,7 @@ export const challengeRouter = router({
   voidChallenge: moderatorProcedure
     .input(challengeQuickActionSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input }) => voidChallenge(input.id)),
+    .mutation(({ input }) => voidChallenge(input.id, 'moderator')),
 
   // Moderator: Re-run the content scan (moderated text + cover image) for a challenge
   rescan: moderatorProcedure

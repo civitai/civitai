@@ -59,7 +59,7 @@ export async function applyChallengeNsfwEscalation({
     // collection closed + prize refunded, all idempotent) is always safe. Void FIRST so a crash
     // before the scan-state write leaves it Cancelled/hidden, never Scanned-and-visible.
     if (challenge.status === ChallengeStatus.Scheduled) {
-      await voidChallenge(entityId);
+      await voidChallenge(entityId, 'nsfw');
       await dbWrite.challenge.update({
         where: { id: entityId },
         data: { ingestion: ChallengeIngestionStatus.Scanned, scannedAt: new Date() },
@@ -91,7 +91,7 @@ export async function applyChallengeNsfwEscalation({
     if (challenge.status === ChallengeStatus.Active) {
       // A lost claim means the completion cron won the race and is paying out — fall through to
       // the hold branch rather than telling the creator about a refund that never happened.
-      const { voided } = await voidChallenge(entityId);
+      const { voided } = await voidChallenge(entityId, 'nsfw');
       if (voided) {
         await dbWrite.challenge.update({
           where: { id: entityId },

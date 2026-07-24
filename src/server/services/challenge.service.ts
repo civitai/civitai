@@ -19,6 +19,15 @@ import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challeng
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import {
+  recordChallengeCreated,
+  recordChallengeScanResult,
+  recordChallengeReviewRequested,
+  recordChallengeCompleted,
+  recordChallengeVoided,
+  recordChallengeDeleted,
+  recordChallengePrizePaidBuzz,
+} from '~/server/prom/challenge.metrics';
+import {
   ChallengeParticipation,
   ChallengeSort,
   challengeJudgingCategoriesSchema,
@@ -1911,6 +1920,10 @@ export async function upsertUserChallenge({
   // Moderation scan (fail-soft) — flips Pending → Scanned/Blocked; hidden until Scanned.
   await scanUserChallenge(created.id);
 
+  // Funnel telemetry (create path only — edits return above). This function only ever creates
+  // source=User challenges (ChallengeSource.User is written into commonData above).
+  recordChallengeCreated({ source: ChallengeSource.User, buzzType });
+
   return created;
 }
 
@@ -1922,7 +1935,14 @@ export async function upsertUserChallenge({
 export async function scanUserChallenge(challengeId: number): Promise<void> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { title: true, description: true, theme: true, invitation: true, metadata: true },
+    select: {
+      title: true,
+      description: true,
+      theme: true,
+      invitation: true,
+      metadata: true,
+      source: true,
+    },
   });
   if (!challenge) return;
 
@@ -1939,7 +1959,9 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
     });
   } catch (e) {
     // Submit failure already persists a Failed EntityModeration row (the retry cron re-submits);
-    // log but don't rethrow so create/edit isn't blocked on a moderation-gateway hiccup.
+    // log but don't rethrow so create/edit isn't blocked on a moderation-gateway hiccup. Counted as
+    // a scan 'error' — a distinct SUBMIT-time failure vs the adapter's terminal applyFailure error.
+    recordChallengeScanResult({ source: challenge.source, result: 'error' });
     logToAxiom({
       type: 'error',
       name: 'user-challenge-scan-failed',
@@ -2089,7 +2111,7 @@ export async function deleteChallenge(id: number) {
     }
     // Idempotent via deterministic externalTransactionId prefixes (the buzz service dedups), so
     // re-refunding an already-Cancelled challenge is a net-zero no-op, not a double-spend.
-    await refundUserChallengeFunds(id);
+    await refundUserChallengeFunds(id, 'delete');
   }
 
   const collectionId = challenge.collectionId;
@@ -2152,7 +2174,9 @@ export async function deleteUserChallenge({ id, userId }: { id: number; userId: 
   }
   // deleteChallenge re-reads status and only refunds/deletes a Scheduled or Cancelled row, so a race
   // with the activation job fails safe (blocks Active) rather than double-refunding.
-  return deleteChallenge(id);
+  const result = await deleteChallenge(id);
+  recordChallengeDeleted({ source: existing.source });
+  return result;
 }
 
 // User-safe fetch for the edit form. getChallengeForEdit is moderator-only; this guards ownership
@@ -2323,6 +2347,7 @@ export async function requestReview(
     `;
   }
 
+  recordChallengeReviewRequested({ source: challenge.source });
   return { queued: eligibleEntries.length, totalCost };
 }
 
@@ -2511,7 +2536,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         // account 0 (no payout runs below). Reverse the actual charges (mint-safe + idempotent —
         // keyed off real charges) BEFORE marking Completed. No-op for daily/mod/system.
         if (challenge.source === ChallengeSource.User) {
-          const { refundedEntries } = await refundUserChallengeFunds(challengeId);
+          const { refundedEntries } = await refundUserChallengeFunds(challengeId, 'completion');
           log(`Refunded ${refundedEntries} entry fees (no winners)`);
           if (refundedEntries > 0) {
             await notifyEntrantsOfCancellation(challenge);
@@ -2522,6 +2547,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           data: { status: ChallengeStatus.Completed },
         });
         log('No judged entries, challenge marked as completed without winners');
+        recordChallengeCompleted({ source: challenge.source });
         return { success: true, winnersCount: 0 };
       }
 
@@ -2588,6 +2614,14 @@ export async function endChallengeAndPickWinners(challengeId: number) {
       )
     );
     log('Prizes sent');
+
+    // Economy telemetry: total winner-prize Buzz paid this completion (paid in the challenge's
+    // stored currency). Entry-participation prizes below are a separate blue-Buzz reward, not counted.
+    recordChallengePrizePaidBuzz({
+      source: challenge.source,
+      buzzType: challenge.buzzType,
+      amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
+    });
 
     // Send entry participation prizes to all eligible users
     if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
@@ -2695,6 +2729,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     }
     log('Winners notified');
 
+    recordChallengeCompleted({ source: challenge.source });
     return { success: true, winnersCount: winningEntries.length };
   } catch (error) {
     // On failure, challenge stays in 'Completing' for recovery to handle
@@ -2770,7 +2805,12 @@ async function notifyEntrantsOfCancellation(challenge: {
  * Void/cancel a challenge without picking winners.
  * Closes the collection and marks the challenge as Cancelled.
  */
-export async function voidChallenge(challengeId: number) {
+export async function voidChallenge(
+  challengeId: number,
+  // Telemetry-only: why the void was triggered. Normalized to a closed set in the metric helper
+  // (moderator|nsfw|activation|other); does not affect behavior.
+  reason: 'moderator' | 'nsfw' | 'activation' | 'other' = 'other'
+) {
   // Get the challenge
   const challenge = await getChallengeById(challengeId);
   if (!challenge) {
@@ -2822,12 +2862,13 @@ export async function voidChallenge(challengeId: number) {
   await closeChallengeCollection(challenge);
   log('Collection closed');
 
-  const { refundedEntries } = await refundUserChallengeFunds(challengeId);
+  const { refundedEntries } = await refundUserChallengeFunds(challengeId, 'void');
   log(`Refunded ${refundedEntries} entry fees`);
   if (refundedEntries > 0) {
     await notifyEntrantsOfCancellation(challenge);
   }
 
+  recordChallengeVoided({ source: challenge.source, reason });
   return { success: true, voided: true };
 }
 

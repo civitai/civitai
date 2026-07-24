@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { recordChallengeOperationSpentBuzz } from '~/server/prom/challenge.metrics';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import { isImageHiddenFromGreenViewer } from '~/server/games/daily-challenge/challenge-visibility';
@@ -761,6 +762,23 @@ export async function incrementOperationSpent(challengeId: number, amount: numbe
     SET "operationSpent" = "operationSpent" + ${amount}
     WHERE id = ${challengeId}
   `;
+
+  // Economy telemetry (fully guarded — a metrics failure must never break the spend increment).
+  // A cheap PK read supplies the source/buzzType labels; operation-spend events are infrequent
+  // (judging batches), so the extra lookup is negligible.
+  try {
+    const challenge = await dbRead.challenge.findUnique({
+      where: { id: challengeId },
+      select: { source: true, buzzType: true },
+    });
+    recordChallengeOperationSpentBuzz({
+      source: challenge?.source,
+      buzzType: challenge?.buzzType,
+      amount,
+    });
+  } catch {
+    /* never throw from telemetry */
+  }
 }
 
 // =============================================================================

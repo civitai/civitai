@@ -23,6 +23,9 @@ describe('challengeModerationAdapter.applyFailure', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+    // applyFailure now reads the challenge source (for the scan-result 'error' metric) after a real
+    // Pending→Error transition; give findUnique a resolved value so the chained .catch() is valid.
+    mockDbRead.challenge.findUnique.mockResolvedValue({ source: 'User' });
   });
 
   it('only marks Error on a challenge still Pending', async () => {

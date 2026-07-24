@@ -18,6 +18,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -1934,19 +1935,35 @@ const chargeContestEntryFeesForCollection = async ({
   imageIds: number[];
 }) => {
   if (imageIds.length === 0) return undefined;
+  // Look up the active source=User challenge for this collection WITHOUT the old `entryFee > 0`
+  // filter, so free-entry User challenges are counted too (chargeEntryFees no-ops on entryFee<=0,
+  // returning every image as paid — so behavior is unchanged for the caller, which still commits
+  // when unpaidImageIds is empty). System/Mod (daily) + community-contest collections have no
+  // source=User row → null → undefined (unchanged, no metric).
   const feeChallenge = await dbRead.challenge.findFirst({
-    where: { collectionId, source: 'User', entryFee: { gt: 0 }, status: 'Active' },
+    where: { collectionId, source: 'User', status: 'Active' },
     select: { id: true, entryFee: true, buzzType: true },
   });
   if (!feeChallenge) return undefined;
   const { chargeEntryFees } = await import('~/server/games/daily-challenge/challenge-funding');
-  return chargeEntryFees({
+  const buzzType = feeChallenge.buzzType === 'green' ? 'green' : 'yellow';
+  const result = await chargeEntryFees({
     challengeId: feeChallenge.id,
     userId,
     imageIds,
     entryFee: feeChallenge.entryFee,
-    fromAccountType: feeChallenge.buzzType === 'green' ? 'green' : 'yellow',
+    fromAccountType: buzzType,
   });
+  // Single chokepoint for the entry funnel: count each committable entry once (both fee paths —
+  // the non-defer validate path and the deferred bulkSaveItems path — flow through here, so no
+  // double count). paidImageIds are the images actually charged (paid) or all images (free).
+  recordChallengeEntrySubmitted({
+    source: 'User',
+    buzzType,
+    paid: feeChallenge.entryFee > 0,
+    count: result.paidImageIds.length,
+  });
+  return result;
 };
 
 export const validateContestCollectionEntry = async ({
