@@ -160,6 +160,8 @@ type CreatableMultiSelectProps = Omit<PillsInputProps, 'onChange'> & {
   parsePaste?: boolean;
   clearable?: boolean;
   maxValues?: number;
+  /** Set false when rendered inside a popover the dropdown must stay within */
+  withinPortal?: boolean;
 };
 
 export function CreatableMultiSelect({
@@ -171,6 +173,7 @@ export function CreatableMultiSelect({
   clearable,
   parsePaste,
   maxValues = Infinity,
+  withinPortal = true,
   ...props
 }: CreatableMultiSelectProps) {
   const combobox = useCombobox({
@@ -234,7 +237,12 @@ export function CreatableMultiSelect({
   const reachedMaxValues = value.length >= maxValues;
 
   return (
-    <Combobox store={combobox} onOptionSubmit={handleValueSelect} withinPortal={false}>
+    <Combobox
+      store={combobox}
+      onOptionSubmit={handleValueSelect}
+      withinPortal={withinPortal}
+      zIndex={500}
+    >
       <Combobox.DropdownTarget>
         <PillsInput
           {...props}
