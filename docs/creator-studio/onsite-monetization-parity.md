@@ -102,11 +102,88 @@ PaidAccess
   entityId    int
 
   anchorAt    timestamp(3) NOT NULL   -- WRITE-ONCE: when the sale began
-  endsAt      timestamp(3) NULL       -- NULL = permanent
-  terms       jsonb                   -- prices, trial limit, what's purchasable
+  endsAt      timestamp(3) NULL       -- NULL = permanent. Authoritative, NOT derived (see below)
+
+  termsVersion  int NOT NULL         -- lets the shape below evolve deliberately
+  terms         jsonb NOT NULL       -- what is purchasable (see below)
+
+  donationGoalId  int NULL  -- real FK → DonationGoal(id); today it hides inside the jsonb
 
   @@id([entityType, entityId])        -- one gate per entity
 ```
+
+### The rule for what is a column vs what is JSON
+
+**Columns for what the gate branches on. JSON for what only the application reads.**
+
+This is the line that keeps the design extensible without recreating the current mess. The bug class we are
+fixing came from `permanent` and `timeframe` living in JSON **while also determining access state** — which is
+exactly why a trigger had to project them into columns so queries could see them. Prices never had that
+problem: nothing gates on them, they are read once you already know the entity.
+
+| Belongs in a column | Belongs in `terms` | Belongs in its own table |
+| --- | --- | --- |
+| `anchorAt`, `endsAt` — every "is it gated" query | prices, trial limits, which grants are sold | anything with its own lifecycle |
+| `entityType` / `entityId` — the join key | future purchase options | `DonationGoal` (already) |
+| `donationGoalId` — a real FK needing integrity | | future: discounts, bundles |
+
+**So new purchase options need no migration** — only new *gating semantics* do, and those are rare and should
+be deliberate.
+
+### Shape `terms` so invalid states stay unrepresentable
+
+Being JSON does not mean being loose. Model grants as **optional nested objects**, where absence means "not
+sold" — never a boolean beside a value that can contradict it:
+
+```json
+{
+  "download":   { "price": 5000 },
+  "generation": { "price": 2500, "trialLimit": 10 }
+}
+```
+
+Today's `chargeForDownload` + `downloadPrice` are separate fields that *can* disagree — which is why
+`assertEarlyAccessChargeConfig` exists to throw *"You must provide a download price when charging for
+downloads."* That runtime guard is a symptom of a shape that permits an invalid state; the nesting above makes
+it unrepresentable and the assert unnecessary. It is the same flag-plus-value pattern that produced
+`permanent` + `timeframe: 0`.
+
+Keep `freeGeneration` expressible as a distinct case (generation has three states: charged, free, or
+trial-limited), validate with zod at the boundary as today, and bump `termsVersion` when the shape changes so
+readers can migrate rather than guess.
+
+**Escape hatches if a term later needs to be queried:** add a jsonb expression index
+(`(terms->'download'->>'price')`), or promote that one field to a column. Neither is blocked by starting in
+JSON — so "we might want to filter by price someday" is not a reason to add columns now.
+
+### Download and generation are separate grants
+
+`EntityAccessPermission` is a bitmask — `EarlyAccessGeneration = 1`, `EarlyAccessDownload = 2` — so purchases
+are already tracked per-grant. `terms` should mirror that structure rather than collapse it, so the config and
+the entitlement agree on what was sold.
+
+### Donation goals are not a payment term
+
+They are a separate entity with their own lifecycle. `donationGoalId` points at a `DonationGoal` row created at
+publish, and today it is **a foreign key stored inside a jsonb blob** — no referential integrity, no cascade,
+not joinable. It is exactly the kind of field that belongs in a column by the rule above, because the system
+must join on it rather than merely read it.
+
+### `endsAt` is authoritative, not derived — a donation goal can end the sale early
+
+**Correction to an earlier draft.** A completed donation goal *terminates* paid access:
+`donation-goal.service.ts` runs the same mutation as the expiry job when `goal.total >= goal.goalAmount`. So
+the window has **two** ways to end — the timer, and the goal being met.
+
+Consequences:
+
+- `endsAt` cannot be modelled as "`anchorAt` + duration"; it is the source of truth and may be **moved earlier**
+  by goal completion. Storing it (rather than deriving it) is therefore required, not merely convenient.
+- **Only `anchorAt` is write-once.** `endsAt` is mutable — by the creator changing the duration, or by goal
+  completion.
+- The cache-invalidation sweeper must handle **both** termination paths, not just the timer.
+- Donation goals are frozen once published (enforced in `mergeEarlyAccessConfig`), so goal edits and access
+  edits have different rules and should not share a validation path.
 
 **Four distinct states** — no sentinel, no overload:
 
@@ -131,8 +208,10 @@ Anchoring to it would shift the window on its own, before any user tried to game
 and mirrors nothing, so unpublish/republish cannot move the gate. Enforce with a `BEFORE UPDATE` trigger so the
 anti-gaming property is structural, not a convention.
 
-**Why `endsAt` is stored, not derived:** both inputs are immutable, so it cannot go stale — unlike today's,
-which derives from the mutable `publishedAt`. Duration for display is `endsAt - anchorAt`; there is no separate
+**Why `endsAt` is stored, not derived:** it is the source of truth for when the sale ends, and it has two
+independent writers — the creator setting a duration, and a donation goal completing early (see below). It
+therefore cannot be a function of `anchorAt` + duration. Storing it also avoids today's failure, where the end
+is derived from the *mutable* `publishedAt`. Duration for display is `endsAt - anchorAt`; there is no separate
 duration column to disagree with the dates.
 
 **Counting for caps — these differ:**
