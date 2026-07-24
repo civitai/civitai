@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getChallengeExcludedUserIds } from '~/server/services/challenge-block.service';
-import { ChallengeStatus } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 const NOTIFY = 'Notify' as const;
 
@@ -25,13 +25,9 @@ export async function toggleChallengeNotify({
 }): Promise<boolean> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { id: true, status: true, createdById: true },
+    select: { id: true, status: true, createdById: true, source: true },
   });
   if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
-
-  const excluded = await getChallengeExcludedUserIds(userId);
-  if (challenge.createdById && excluded.includes(challenge.createdById))
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
 
   const existing = await dbRead.challengeEngagement.findUnique({
     where: { type_challengeId_userId: { type: NOTIFY, challengeId, userId } },
@@ -40,10 +36,18 @@ export async function toggleChallengeNotify({
 
   const next = setTo ?? !existing;
 
-  if (next && !TRACKABLE_STATUSES.includes(challenge.status))
-    throw new TRPCError({ code: 'BAD_REQUEST', message: 'This challenge is no longer open' });
-
   if (next) {
+    // System challenges share a bot/judge account as createdById — a block on that account must
+    // not lock users out of every System challenge (see challengeCreatorBlockSql for the same guard).
+    if (challenge.source === ChallengeSource.User && challenge.createdById) {
+      const excluded = await getChallengeExcludedUserIds(userId);
+      if (excluded.includes(challenge.createdById))
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+    }
+
+    if (!TRACKABLE_STATUSES.includes(challenge.status))
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'This challenge is no longer open' });
+
     if (existing) return true;
     try {
       await dbWrite.challengeEngagement.create({

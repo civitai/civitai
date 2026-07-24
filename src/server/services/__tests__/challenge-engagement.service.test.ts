@@ -50,6 +50,9 @@ describe('toggleChallengeNotify', () => {
 
     expect(result).toBe(true);
     expect(mockDb.challengeEngagement.create).toHaveBeenCalledTimes(1);
+    expect(mockDb.challengeEngagement.create).toHaveBeenCalledWith({
+      data: { type: 'Notify', challengeId: 7, userId: 42 },
+    });
   });
 
   it('deletes the row and returns false when one exists (blind toggle off)', async () => {
@@ -59,6 +62,9 @@ describe('toggleChallengeNotify', () => {
 
     expect(result).toBe(false);
     expect(mockDb.challengeEngagement.delete).toHaveBeenCalledTimes(1);
+    expect(mockDb.challengeEngagement.delete).toHaveBeenCalledWith({
+      where: { type_challengeId_userId: { type: 'Notify', challengeId: 7, userId: 42 } },
+    });
   });
 
   it('explicit setTo:true on an existing row is an idempotent no-op, never a delete', async () => {
@@ -118,6 +124,41 @@ describe('toggleChallengeNotify', () => {
     mockDb.challengeEngagement.findUnique.mockResolvedValueOnce(null);
 
     await expect(toggleChallengeNotify({ challengeId: 7, userId: 42 })).rejects.toThrow();
+  });
+
+  it('rejects tracking a User-sourced challenge whose creator is excluded', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      source: 'User',
+    });
+    getExcluded.mockResolvedValueOnce([99]);
+
+    await expect(toggleChallengeNotify({ challengeId: 7, userId: 42 })).rejects.toThrow();
+    expect(mockDb.challengeEngagement.create).not.toHaveBeenCalled();
+  });
+
+  it('allows tracking a System-sourced challenge even when its (shared judge) createdById is excluded', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      source: 'System',
+    });
+    getExcluded.mockResolvedValueOnce([99]);
+    mockDb.challengeEngagement.findUnique.mockResolvedValueOnce(null);
+
+    const result = await toggleChallengeNotify({ challengeId: 7, userId: 42 });
+
+    expect(result).toBe(true);
+    expect(mockDb.challengeEngagement.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows untracking even when the creator is in the excluded set', async () => {
+    getExcluded.mockResolvedValueOnce([99]);
+    mockDb.challengeEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+
+    const result = await toggleChallengeNotify({ challengeId: 7, userId: 42, setTo: false });
+
+    expect(result).toBe(false);
+    expect(mockDb.challengeEngagement.delete).toHaveBeenCalledTimes(1);
   });
 });
 
