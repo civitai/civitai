@@ -318,6 +318,16 @@ const featureFlags = createFeatureFlags({
     fliptKey: 'model-metric-privacy-readtime',
   },
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
+  // Rewrite orchestrator blob URLs to the Cloudflare-fronted proxy for RU users
+  // (their ISPs DPI-block the bare orchestration origin). `availability: []` =
+  // DARK by default and FAILS CLOSED (empty availability → static eval false when
+  // Flipt is absent/down), so the rewrite stays OFF unless the `ru-orchestrator-proxy`
+  // Flipt flag is enabled — the flag is both the on-switch at rollout AND the
+  // instant kill-switch if the proxy misbehaves. The rewrite itself additionally
+  // gates on cf-ipcountry === 'RU', so non-RU users are never affected either way.
+  // See ClickUp 868kdkv93 / 868ke4d0f. (Mirrors the `creatorControls` /
+  // `hiddenPrefsCompact` `availability: []` fail-closed precedent.)
+  ruOrchestratorProxy: { availability: [], fliptKey: 'ru-orchestrator-proxy' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue', 'red'],

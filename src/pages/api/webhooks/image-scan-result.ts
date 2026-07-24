@@ -178,6 +178,17 @@ export default WebhookEndpoint(async (req, res) => {
           whereIngestionIn: pendingStates,
         });
         webhookResult = 'unscannable';
+        logToAxiom(
+          {
+            name: 'image-scan-result',
+            type: 'warning',
+            message: 'legacy scanner returned Unscannable',
+            source: 'webhook-legacy',
+            failureType: 'unscannable',
+            imageId: data.id,
+          },
+          'webhooks'
+        ).catch(() => null);
         break;
       case Status.Success:
         await handleSuccess(data, req);
