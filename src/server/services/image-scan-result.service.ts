@@ -138,14 +138,16 @@ type OrchestratorJobEvent = {
   reason?: string | null;
 };
 
-// Job events carry a top-level `jobId`; workflow events never do. We only subscribe
-// to job:failed/expired/canceled, so any job event reaching us is a failure.
-function isJobEvent(event: unknown): event is OrchestratorJobEvent {
-  return typeof (event as OrchestratorJobEvent)?.jobId === 'string';
-}
-
 // Stash the job's failure `reason` keyed by workflowId. No DB/orchestrator round-trip:
 // just a short-lived Redis write so the terminal workflow event can classify.
+//
+// Correlation contract: job events fire before the terminal workflow event, so the
+// reason is stashed by the time the workflow event reads it. Across a workflow's
+// several jobs this is last-write-wins (fine — image scans typically have one failing
+// job; the reason strings we classify on are equivalent). If the reason is missing
+// (race, or a job event that never arrived) the failure classifies as Unknown, which
+// retries conservatively under the bounded cap — safe by construction. The TTL bounds
+// a stash that never gets a following workflow event so it can't linger.
 async function captureJobFailureReason(event: OrchestratorJobEvent) {
   const workflowId = event.workflowId;
   const reason = typeof event.reason === 'string' ? event.reason.trim() : '';
@@ -164,10 +166,14 @@ async function readJobFailureReason(workflowId: string): Promise<string | null> 
 export async function processImageScanResult(req: NextApiRequest) {
   const event: WorkflowEvent = req.body;
 
-  // A job-level failure event only carries the reason — capture it and return.
-  // The workflow-level terminal event (below) does the actual ingestion update.
-  if (isJobEvent(event)) {
-    await captureJobFailureReason(event);
+  // A job-level failure event only carries the reason — capture it and return; the
+  // workflow-level terminal event (below) does the actual ingestion update. Job
+  // events carry a top-level `jobId` (workflow events never do), and we only
+  // subscribe to job:failed/expired/canceled, so any job event here is a failure.
+  // Cast rather than a type predicate so `event` stays a WorkflowEvent afterwards.
+  const jobEvent = event as OrchestratorJobEvent;
+  if (typeof jobEvent.jobId === 'string') {
+    await captureJobFailureReason(jobEvent);
     return;
   }
 

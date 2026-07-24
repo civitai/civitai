@@ -31,7 +31,9 @@ export type ImageScanFailureClass =
 // against that ever-incrementing count.
 export const IMAGE_SCAN_TRANSIENT_RETRY_LIMIT = 30; // bounded, but well above the old 9-cap
 export const IMAGE_SCAN_UNKNOWN_RETRY_LIMIT = 9; // historical flood-protection cap
-export const IMAGE_SCAN_PERMANENT_RETRY_LIMIT = 1; // one more attempt, then give up
+// Give up on the first failure: markImageScanError already bumped retryCount to 1, so
+// `retryCount < 1` is false on the next cron pass and the image is never re-queued.
+export const IMAGE_SCAN_PERMANENT_RETRY_LIMIT = 1;
 
 // Reason substrings that mark infra-transient failures. Matched case-insensitively.
 const TRANSIENT_REASON_PATTERNS = [
@@ -50,6 +52,10 @@ const TRANSIENT_REASON_PATTERNS = [
 ];
 
 // Orchestrator middleware / step markers that are infra-transient regardless of message.
+// Aspirational: the v2 job event doesn't expose `current_middleware` today, so in
+// practice container failures classify via the reason text ("Failed to create
+// container…") below. Kept so classification improves for free if middleware ever
+// arrives (via the passed `middleware` or a failing step named after it).
 const TRANSIENT_MIDDLEWARE_PATTERNS = ['preparemanagedcontainer', 'preparecontainer'];
 
 // Reason substrings that mark a permanently-bad input (the media can't be fetched/decoded).
