@@ -48,17 +48,21 @@ These test `earlyAccessEndsAt` against `now()` or null. Each is where the perman
 
 ### 🔴 Needs the helper — infers paid from the date, misses permanent
 
-| File:line | What it drives |
-| --- | --- |
-| `src/components/Model/ModelVersions/ModelVersionDetails.tsx:279` | the version-detail "isEarlyAccess" → generate button gating/UI |
-| `src/components/Model/ModelVersionList/ModelVersionList.tsx:133` | the early-access badge in the version list |
-| `src/components/Model/ModelVersions/ModelVersionDonationGoals.tsx:54` | whether the donation-goal block shows |
-| `src/server/services/model-version.service.ts:268` | Prisma `where earlyAccessEndsAt: { gt: now }` — a **query filter** for "in early access" |
-| `src/server/services/model-version.service.ts:835` | guards an early-access-only branch on save |
-| `src/server/services/model-version.service.ts:2615` | early-access check in version copy/duplicate |
-| `src/server/services/model.service.ts:2882` | `find(v => !!v.earlyAccessEndsAt)` — "does this model have EA" |
-| `src/server/services/donation-goal.service.ts:157` | gates the goal-creation-on-publish path |
-| `src/server/redis/donation-goals-cache.ts:136` | `!endsAt \|\| endsAt <= now` → drops the goal; a permanent version's goal is wrongly treated as ended |
+**How** column: **D** = decorate a known/loaded row → `isPaidAccessActive(row)` (fed by `getPaidAccess` on
+hot paths); **P** = the row set is *filtered/counted* by access state → `paidAccessSql()` in the query. See
+the decorate-vs-predicate rule in [onsite-monetization-parity.md](onsite-monetization-parity.md#caching-getpaidaccess).
+
+| File:line | How | What it drives |
+| --- | --- | --- |
+| `src/components/Model/ModelVersions/ModelVersionDetails.tsx:279` | D | the version-detail "isEarlyAccess" → generate button gating/UI |
+| `src/components/Model/ModelVersionList/ModelVersionList.tsx:133` | D | the early-access badge in the version list |
+| `src/components/Model/ModelVersions/ModelVersionDonationGoals.tsx:54` | D | whether the donation-goal block shows |
+| `src/server/services/model-version.service.ts:268` | **P** | Prisma `where earlyAccessEndsAt: { gt: now }` — a **query filter** for "in early access" |
+| `src/server/services/model-version.service.ts:835` | D | guards an early-access-only branch on save |
+| `src/server/services/model-version.service.ts:2615` | D | early-access check in version copy/duplicate |
+| `src/server/services/model.service.ts:2882` | D→P? | `find(v => !!v.earlyAccessEndsAt)` — "does this model have EA"; app-side over loaded versions today, a candidate to push down to `EXISTS` |
+| `src/server/services/donation-goal.service.ts:157` | D | gates the goal-creation-on-publish path |
+| `src/server/redis/donation-goals-cache.ts:136` | D | `!endsAt \|\| endsAt <= now` → drops the goal; a permanent version's goal is wrongly treated as ended |
 
 ### 🪟 Window-specific — leave as-is
 

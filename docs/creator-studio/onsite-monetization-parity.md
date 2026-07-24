@@ -43,9 +43,7 @@ No schema change, no migration, no backfill.
 - [ ] **Exercise in a browser.** Nothing here has been clicked through; typecheck + unit tests only. Cover:
       set a fee ratio, set permanent on an unpublished version, set permanent on a *published* version, hit the
       tier cap, and round-trip a fee between Studio and onsite.
-- [ ] **Decide the feature flag.** Does permanent ride the existing `licensing-fee` Flipt flag or get its own?
-      Mirror the fee block's escape hatch (versions that already have a fee keep rendering it) so toggling the
-      flag can't strand a version in an uneditable state.
+- [x] **Feature flag — decided (2026-07-24): no flag.** Permanent access releases with Creator Studio.
 - [ ] **Targeted mini-sweep of user-visible "is this paid" surfaces.** Not the full sweep (see Track 2) — just
       the badges/filters/labels a creator or buyer will see for a *permanent* version. Use
       `isPaidAccessActive`.
@@ -55,10 +53,13 @@ No schema change, no migration, no backfill.
 - [ ] **Full call-site sweep** — ~37 predicate sites. **Not a money risk**: the paywall
       (`file.service.ts`), the mini endpoint and the redis resource-data query already handle permanent
       correctly. The exposure is cosmetic — permanent versions may read as un-gated in some lists/UI.
-- [ ] **Membership source mismatch.** The UI reads `requirements.validMembership`
-      (`status IN ('incomplete','active')`, `LIMIT 1`, no tier ordering); the server reads
-      `getHighestTierSubscription` (excludes canceled/past_due/unpaid, picks the highest tier). A user with
-      multiple subs, or a `trialing` one, can see one cap and get another enforced. Pick one as authoritative.
+- [ ] **Membership source mismatch — direction decided (2026-07-24).** The UI reads
+      `requirements.validMembership` (`status IN ('incomplete','active')`, `LIMIT 1`, no tier ordering); the
+      server enforces with `getHighestTierSubscription` (excludes canceled/past_due/unpaid, picks the highest
+      tier). **The server is authoritative; the UI should display the server-computed cap, not recompute tier
+      client-side.** Have the form loader return `{ permanentCap, permanentUsed }` computed with the same helper
+      enforcement uses — then displayed == enforced by construction, and it also delivers the live "X of Y"
+      count below. (Same pattern as creator-studio's loader.)
 - [ ] **Live "X of Y set" count onsite.** Only the tier *allowance* is shown today; the usage count needs a
       small tRPC query. Hitting the cap currently surfaces as a server error with a specific message.
 - [ ] **Naming divergence.** UI says "Paid Access"; every field is `earlyAccess*`. Rename deliberately or
@@ -108,7 +109,8 @@ Structure it as **one shared core + thin per-entity adapters.**
 -- SHARED, entity-agnostic --------------------------------------------------
 EntityAccess   (exists)   who holds which grant        [purchase side]
 PaidAccess     (new)      what is for sale, when it ends [config side]
-Promotion      (new)      time-boxed price overrides
+--                        promotions live in terms jsonb as per-grant sale periods (decided 2026-07-24),
+--                        not a table — see the schema doc.
 
 PaidAccess
   entityType  PaidAccess_EntityType   -- 'ModelVersion' | 'ComicChapter' | …
@@ -130,7 +132,7 @@ resolveAccess({ entityType, entityId, userId, grant }) -> { gated, hasAccess, pr
   paid = PaidAccess(entityType, entityId)
   if !paid or !isPaidAccessActive(paid)   -> { gated:false }          // free
   if grant not in paid.terms              -> { gated:false }          // that grant is free
-  price     = activePromotion(...)?.price ?? paid.terms[grant].price
+  price     = activeSale(paid.terms[grant], now)?.price ?? paid.terms[grant].price  // sale periods in terms
   hasAccess = EntityAccess holds bit(grant) for (entity, user)
   -> { gated:true, hasAccess, price }
 ```
@@ -372,7 +374,7 @@ optional:
 | 2 | Add `ModelVersion.initialPublishedAt` (write-once); retire `earlyAccessTimeFrame` | Stable anchor kills the `publishedAt`-rewrite trap and the trigger's reason to exist; one duration source |
 | 3 | Create polymorphic `PaidAccess` (+ `ownerId`), dual-write, backfill | Backfill is derivational; **0 permanent rows in prod today**, so only timed rows convert |
 | 4 | Move reads onto the shared `resolveAccess`; compute `endsAt` in the service, drop the trigger | Trigger logic → service, testable in CI |
-| 5 | Extract per-entity adapters; migrate `ComicChapter` onto the shared core | The payoff for going polymorphic; comics gets permanent + promotions for free |
+| 5 | Extract per-entity adapters; migrate `ComicChapter` onto the shared core | The payoff for going polymorphic; comics gets shared fixes + promotions for free (permanent NOT added to comics now) |
 | 6 | Stop writing payment meaning into `availability` | **Largest ripple — 213 `EarlyAccess` references.** Do last, or never |
 
 **Do the sweep first regardless.** It is required either way, and it tells you how many sites ask "is it paid?"
@@ -522,10 +524,38 @@ resolveAccess(...)     -> isPaidAccessActive(row, now())  -- derived live, never
 invalidate on:         edit · threshold-fires · remove · entity-delete   (NOT time)
 ```
 
+### `getPaidAccess` decorates; a DB predicate filters
+
+The accessor answers *"for these ids I already have, what is the access state?"* — it **decorates a bounded
+set**. That is the hot path (feed, generation, cards): fetch the entity (its own cache) + `getPaidAccess`
+(this cache) + zip. No join, and the two caches invalidate independently.
+
+A **DB-side predicate** (`paidAccessSql()` → `JOIN` / `EXISTS` / `IN`) is required *only* when access state
+participates in **selecting, ordering, or counting** rows — those must run in the DB to be correct:
+
+- **Filtered pagination** — `WHERE (gated|not) … LIMIT/OFFSET`. You cannot page in the DB then drop gated rows
+  in app code: the page shrinks and the counts lie.
+- **Sort by access state** — order by `endsAt` ("ending soon") *before* `LIMIT`.
+- **Aggregation / counts** — the owner cap count (a standalone `PaidAccess` query on the `ownerId` index — no
+  join), paid-vs-free analytics.
+- **PaidAccess-as-driver** — the expiry cron scans `endsAt <= now` to *find* entities; there are no ids to hand
+  the accessor yet.
+- **`EXISTS` in a larger entity query** — "does this model have *any* gated version", pushed down instead of
+  loading every version to check in app.
+
+**Rule: decorate known ids → `getPaidAccess`; select / sort / count by access state → `paidAccessSql`.** The
+two do not compete — the predicate cases are exactly the dynamic, query-specific result sets a per-entity cache
+cannot serve anyway, so joining there does not defeat the cache.
+
+**The trap:** never use `getPaidAccess` to post-filter a paginated feed (fetch page → drop gated → return a
+short page). The moment access state changes *which* or *how many* rows, it must be a DB predicate. Per-site
+tagging (D = decorate, P = predicate) is in [paid-access-query-sites.md](paid-access-query-sites.md).
+
 ---
 
 ## References
 
+- Concrete schema (table diffs + `terms` type) — [paid-access-schema.md](paid-access-schema.md)
 - Canonical read helper — `packages/civitai-buzz/src/paid-access.ts`
   (+ `src/shared/utils/__tests__/paid-access.test.ts`)
 - Fee ratio helper — `packages/civitai-buzz/src/licensing-fee.ts`
