@@ -1,27 +1,29 @@
 import { keepPreviousData } from '@tanstack/react-query';
 import {
+  Alert,
   Anchor,
   Badge,
   Button,
   Card,
   Center,
+  Chip,
   Container,
   Group,
   Loader,
-  SegmentedControl,
   Select,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
-import { IconBolt } from '@tabler/icons-react';
+import { IconBolt, IconDownload } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/router';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -31,9 +33,10 @@ import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { capitalize } from '~/utils/string-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import type {
   BuzzTransactionDetails,
-  GetUserBuzzTransactionsSchema,
+  GetUserBuzzTransactionsMultiSchema,
 } from '~/server/schema/buzz.schema';
 
 const transactionTypes = [
@@ -51,11 +54,22 @@ const transactionTypes = [
   TransactionType[TransactionType.Redeemable],
 ];
 
-const defaultFilters = {
-  accountType: 'yellow' as const,
+function safeJsonParse(body: string): { error?: string } {
+  try {
+    return JSON.parse(body) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+// Built per-mount, not at module scope: dayjs() there is evaluated once per
+// process, so a long-lived pod would serve last month's defaults and cap the
+// "To" picker below the current month.
+const buildDefaultFilters = () => ({
+  accountTypes: ['yellow'] as BuzzSpendType[],
   start: dayjs().subtract(1, 'month').startOf('month').startOf('day').toDate(),
   end: dayjs().endOf('month').endOf('day').toDate(),
-};
+});
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -68,20 +82,22 @@ export const getServerSideProps = createServerSideProps({
 
 export default function UserTransactions() {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
 
   // Get account type from query parameter
   const queryAccountType = router.query.accountType as BuzzSpendType | undefined;
-  const initialAccountType =
+  const initialAccountTypes =
     queryAccountType && buzzSpendTypes.includes(queryAccountType)
-      ? queryAccountType
-      : defaultFilters.accountType;
+      ? [queryAccountType]
+      : (['yellow'] as BuzzSpendType[]);
 
-  const [filters, setFilters] = useState<GetUserBuzzTransactionsSchema>({
+  const [defaultFilters] = useState(buildDefaultFilters);
+  const [filters, setFilters] = useState<GetUserBuzzTransactionsMultiSchema>({
     ...defaultFilters,
-    accountType: initialAccountType,
+    accountTypes: initialAccountTypes,
   });
-  const { data, isLoading, fetchNextPage, isFetchingNextPage, hasNextPage } =
+  const { data, isLoading, error, fetchNextPage, isFetchingNextPage, hasNextPage } =
     trpc.buzz.getUserTransactions.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.cursor,
       placeholderData: keepPreviousData,
@@ -93,26 +109,121 @@ export default function UserTransactions() {
   );
 
   const handleDateChange = (name: 'start' | 'end') => (value: Date | null) => {
+    // Both bounds are required server-side, so a cleared date is a no-op.
+    if (!value) return;
     setFilters((current) => ({ ...current, [name]: value }));
+  };
+
+  const [exporting, setExporting] = useState(false);
+
+  // The export streams as a file download rather than a JSON response, so the
+  // browser can write it to disk without buffering the CSV.
+  const exportUrl = useMemo(() => {
+    const params = new URLSearchParams({
+      accountTypes: filters.accountTypes.join(','),
+      start: filters.start.toISOString(),
+      end: filters.end.toISOString(),
+    });
+    if (filters.type != null) params.set('type', String(filters.type));
+    return `/api/download/user-transactions?${params.toString()}`;
+  }, [filters]);
+
+  // A browser-driven download has no way to show the user a server error, so we
+  // ask first and only navigate once we know the export will be accepted.
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const response = await fetch(`${exportUrl}&probe=1`);
+      if (!response.ok) {
+        const { error } = await response.json().catch(() => ({ error: undefined }));
+        showErrorNotification({
+          title: 'Export unavailable',
+          error: new Error(error ?? 'Could not export transactions right now.'),
+        });
+        return;
+      }
+      // A hidden iframe rather than a navigation, so a refusal between the probe
+      // and here (a second tab, a double-click, the kill switch being flipped)
+      // doesn't replace this page with a raw JSON document.
+      //
+      // A successful response carries Content-Disposition, which the browser
+      // turns into a download WITHOUT firing `load` on the frame. So `load`
+      // firing at all means what arrived was an error body, not a file — that's
+      // the only signal available, and without it a failure is invisible.
+      const frame = document.createElement('iframe');
+      frame.style.display = 'none';
+      frame.onload = () => {
+        // Appending a src-less frame queues a load for its initial about:blank
+        // document, so src is assigned first — otherwise that phantom event can
+        // fire a false error and remove the frame before the real request runs.
+        if (frame.contentWindow?.location.href === 'about:blank') return;
+
+        window.clearTimeout(cleanup);
+        const body = frame.contentDocument?.body?.textContent ?? '';
+        const { error } = safeJsonParse(body);
+        showErrorNotification({
+          title: 'Export unavailable',
+          error: new Error(error ?? 'Could not export transactions right now.'),
+        });
+        frame.remove();
+      };
+      frame.src = exportUrl;
+      document.body.appendChild(frame);
+
+      // Long enough never to interrupt a real download; only reclaims the node
+      // if nothing ever arrives. A successful download detaches from the frame,
+      // so removing it later is safe.
+      const cleanup = window.setTimeout(() => frame.remove(), 30 * 60_000);
+    } catch {
+      showErrorNotification({
+        title: 'Export unavailable',
+        error: new Error('Could not reach the server. Check your connection and try again.'),
+      });
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
     <Container size="sm">
       <Stack gap="xl">
         <Title order={1}>Transaction History</Title>
-        <SegmentedControl
-          value={filters.accountType}
-          onChange={(v) => setFilters({ accountType: v as BuzzSpendType })}
-          data={buzzSpendTypes.map((type) => ({ label: capitalize(type), value: type }))}
-        />
-        <Group gap="sm">
+        <Group justify="space-between" gap="sm">
+          <Chip.Group
+            multiple
+            value={filters.accountTypes}
+            onChange={(value) => {
+              // Deselecting the last chip would leave nothing to query, so it's a no-op.
+              if (!value.length) return;
+              setFilters((current) => ({ ...current, accountTypes: value as BuzzSpendType[] }));
+            }}
+          >
+            <Group gap="xs">
+              {buzzSpendTypes.map((type) => (
+                <Chip key={type} value={type}>
+                  {capitalize(type)}
+                </Chip>
+              ))}
+            </Group>
+          </Chip.Group>
+          {features.buzzTransactionExport && (
+            <Button
+              variant="light"
+              loading={exporting}
+              onClick={handleExport}
+              leftSection={<IconDownload size={16} />}
+            >
+              Export CSV
+            </Button>
+          )}
+        </Group>
+        <Group gap="sm" grow align="flex-start">
           <DatePickerInput
             label="From"
             name="start"
             placeholder="Start date"
             onChange={handleDateChange('start')}
-            w="calc(50% - 12px)"
-            defaultValue={defaultFilters.start}
+            value={filters.start}
             maxDate={dayjs(filters.end).subtract(1, 'day').toDate()}
           />
           <DatePickerInput
@@ -120,8 +231,7 @@ export default function UserTransactions() {
             name="end"
             placeholder="End date"
             onChange={handleDateChange('end')}
-            w="calc(50% - 12px)"
-            defaultValue={defaultFilters.end}
+            value={filters.end}
             minDate={dayjs(filters.start).add(1, 'day').toDate()}
             maxDate={defaultFilters.end}
           />
@@ -146,12 +256,15 @@ export default function UserTransactions() {
           <Center py="xl">
             <Loader />
           </Center>
+        ) : error ? (
+          <Alert color="red">{error.message}</Alert>
         ) : transactions.length ? (
           <Stack gap="md">
             {transactions.map((transaction, index) => {
               const { amount, date, fromUser, toUser, details, type } = transaction;
-              let { description } = transaction;
+              let description = transaction.description ?? undefined;
               const isDebit = amount < 0;
+              const accountType = isDebit ? transaction.fromAccountType : transaction.toAccountType;
               const isImage = details?.entityType === 'Image';
               const { url, label }: { url?: string; label?: string } = details
                 ? parseBuzzTransactionDetails(details as BuzzTransactionDetails, type)
@@ -167,6 +280,11 @@ export default function UserTransactions() {
                       <Group gap={8}>
                         <Text fw="500">{formatDate(date)}</Text>
                         <Badge>{TransactionType[type]}</Badge>
+                        {filters.accountTypes.length > 1 && (
+                          <Badge variant="light" color={accountType}>
+                            {capitalize(accountType)}
+                          </Badge>
+                        )}
                       </Group>
                       <Text c={isDebit ? 'red' : 'green'}>
                         <Group gap={4}>

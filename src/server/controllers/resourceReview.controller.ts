@@ -42,7 +42,11 @@ export const upsertResourceReviewHandler = async ({
       throw throwAuthorizationError('You do not have access to this model version.');
     }
 
-    return await upsertResourceReview({ ...input, userId: ctx.user.id });
+    return await upsertResourceReview({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
   } catch (error) {
     throw throwDbError(error);
   }

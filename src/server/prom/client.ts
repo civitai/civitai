@@ -44,6 +44,111 @@ declare global {
   var pgGaugeInitialized: boolean;
   // eslint-disable-next-line no-var
   var heavyBulkheadGaugeInitialized: boolean;
+  // eslint-disable-next-line no-var
+  var imageIngestionGaugeInitialized: boolean;
+}
+
+// Image-ingestion working-state backlog + oldest-age gauges. These are DB-derived,
+// so they must NOT hit Postgres on every /metrics scrape (~15s). The query is served
+// from an in-process cache with a short TTL and refreshed lazily off the scrape path
+// (fire-and-forget) — a scrape only ever kicks a background refresh, never blocks on
+// it, and reads the last-known values.
+//
+// DB SAFETY: the Image table is enormous and Scanned dominates it, so an unfiltered
+// GROUP BY over `ingestion` would seq-scan the whole table. Instead each working state
+// is counted independently and UNION ALL'd, which lets Postgres serve every branch
+// index-only from the existing per-state indexes (~1s). A defensive statement_timeout
+// caps the rare replica cold-cache spike; on timeout we keep the last-known values.
+const INGESTION_GAUGE_TTL_MS = 45_000;
+const INGESTION_GAUGE_STATEMENT_TIMEOUT_MS = 10_000;
+
+const INGESTION_BACKLOG_SQL = `
+  SELECT 'Pending' AS status, count(*) AS backlog, min("createdAt") AS oldest
+    FROM "Image" WHERE ingestion='Pending'
+  UNION ALL
+  SELECT 'Error', count(*), min("createdAt")
+    FROM "Image" WHERE ingestion='Error'
+  UNION ALL
+  SELECT 'Rescan', count(*), min("createdAt")
+    FROM "Image" WHERE ingestion='Rescan'
+  UNION ALL
+  SELECT 'PendingManualAssignment', count(*), min("createdAt")
+    FROM "Image" WHERE ingestion='PendingManualAssignment'`;
+
+type IngestionBacklogRow = { status: string; backlog: number; oldestAgeSeconds: number };
+let ingestionBacklogCache: IngestionBacklogRow[] = [];
+let ingestionBacklogFetchedAt = 0;
+let ingestionBacklogInflight: Promise<void> | null = null;
+
+async function queryIngestionBacklog() {
+  // SET LOCAL binds the statement_timeout to this backend for the txn only, so the
+  // pool's default policy is untouched. Checkout is required for it to apply.
+  const dbClient = await pgDbRead.connect();
+  try {
+    await dbClient.query('BEGIN');
+    await dbClient.query(`SET LOCAL statement_timeout = ${INGESTION_GAUGE_STATEMENT_TIMEOUT_MS}`);
+    const res = await dbClient.query<{ status: string; backlog: string; oldest: Date | null }>(
+      INGESTION_BACKLOG_SQL
+    );
+    await dbClient.query('COMMIT');
+    return res.rows;
+  } catch (e) {
+    await dbClient.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally {
+    dbClient.release();
+  }
+}
+
+function refreshIngestionBacklog() {
+  if (ingestionBacklogInflight) return ingestionBacklogInflight;
+  ingestionBacklogInflight = queryIngestionBacklog()
+    .then((rows) => {
+      ingestionBacklogCache = rows.map((r) => ({
+        status: r.status,
+        backlog: Number(r.backlog),
+        oldestAgeSeconds: r.oldest != null ? (Date.now() - new Date(r.oldest).getTime()) / 1000 : 0,
+      }));
+      ingestionBacklogFetchedAt = Date.now();
+    })
+    .catch(() => {
+      // Swallow (incl. statement_timeout): keep the last-known values so a transient
+      // DB hiccup can't break the /metrics scrape. A stale gauge beats a 500.
+    })
+    .finally(() => {
+      ingestionBacklogInflight = null;
+    });
+  return ingestionBacklogInflight;
+}
+
+function maybeRefreshIngestionBacklog() {
+  if (Date.now() - ingestionBacklogFetchedAt > INGESTION_GAUGE_TTL_MS)
+    void refreshIngestionBacklog();
+}
+
+if (!global.imageIngestionGaugeInitialized) {
+  new client.Gauge({
+    name: PROM_PREFIX + 'image_ingestion_backlog',
+    help: 'Images in a non-terminal working ingestion state (Pending/Error/Rescan/PendingManualAssignment)',
+    labelNames: ['status'],
+    collect() {
+      maybeRefreshIngestionBacklog();
+      this.reset();
+      for (const row of ingestionBacklogCache) this.set({ status: row.status }, row.backlog);
+    },
+  });
+  new client.Gauge({
+    name: PROM_PREFIX + 'image_ingestion_oldest_age_seconds',
+    help: 'Age in seconds of the oldest image (now - min(createdAt)) per non-terminal ingestion state',
+    labelNames: ['status'],
+    collect() {
+      maybeRefreshIngestionBacklog();
+      this.reset();
+      for (const row of ingestionBacklogCache)
+        this.set({ status: row.status }, row.oldestAgeSeconds);
+    },
+  });
+  global.imageIngestionGaugeInitialized = true;
 }
 
 // Heavy-route bulkhead observability (per pod). collect()-based so it reflects the

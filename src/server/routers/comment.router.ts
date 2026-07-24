@@ -9,6 +9,7 @@ import {
   getCommentsInfiniteHandler,
   setTosViolationHandler,
   toggleHideCommentHandler,
+  togglePinCommentHandler,
   toggleLockHandler,
   upsertCommentHandler,
 } from '~/server/controllers/comment.controller';
@@ -138,6 +139,10 @@ export const commentRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(getByIdSchema)
     .mutation(toggleHideCommentHandler),
+  togglePin: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(getByIdSchema)
+    .mutation(togglePinCommentHandler),
   toggleLock: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(getByIdSchema)

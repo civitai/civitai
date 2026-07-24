@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { recordChallengeOperationSpentBuzz } from '~/server/prom/challenge.metrics';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import { isImageHiddenFromGreenViewer } from '~/server/games/daily-challenge/challenge-visibility';
@@ -32,12 +33,6 @@ import {
 // Re-export pure pool computation (lives in separate file to avoid pulling
 // DB/Redis into client bundles)
 export { computeDynamicPool, distributePrizes } from './challenge-pool';
-
-// Labels requested for the challenge text scan. Only `nsfw` is currently reliable in XGuard, so we
-// scan for it alone; `suggestive`/`explicit` are omitted until they're trustworthy. Trade-off: nsfw's
-// 0.75 threshold misses borderline sexual text (a theme scoring ~0.68 slips through) — only clearly
-// NSFW text escalates for now. Any triggered label counts as NSFW downstream.
-export const CHALLENGE_MODERATION_LABELS = ['nsfw'] as const;
 
 // Author-supplied text sent to the text-moderation scan. Description is RTE HTML, so tags are
 // stripped.
@@ -441,17 +436,24 @@ export type CreateChallengeInput = {
 export async function createChallengeCollection(input: {
   title: string;
   description?: string;
-  userId: number;
+  judgeId?: number | null;
   startsAt: Date;
   endsAt: Date;
   maxEntriesPerUser: number;
   allowedNsfwLevel?: number; // Bitwise NSFW levels (default 1 = PG only)
 }): Promise<number> {
+  // Dynamic import: this file -> challenge-collection-owner -> daily-challenge.utils imports
+  // closeChallengeCollection etc. back from this file, so a static import here is a require cycle.
+  const { resolveChallengeCollectionOwnerId } = await import(
+    '~/server/games/daily-challenge/challenge-collection-owner'
+  );
+  const userId = await resolveChallengeCollectionOwnerId(input.judgeId);
+
   const collection = await dbWrite.collection.create({
     data: {
       name: `Challenge: ${input.title}`,
       description: input.description || `Entries for challenge: ${input.title}`,
-      userId: input.userId,
+      userId,
       mode: CollectionMode.Contest,
       metadata: {
         maxItemsPerUser: input.maxEntriesPerUser,
@@ -708,7 +710,7 @@ export async function createChallengeWithCollection(
   const collectionId = await createChallengeCollection({
     title: input.title,
     description: input.description,
-    userId: input.createdById,
+    judgeId: input.judgeId,
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     maxEntriesPerUser: input.maxEntriesPerUser ?? 20,
@@ -760,6 +762,23 @@ export async function incrementOperationSpent(challengeId: number, amount: numbe
     SET "operationSpent" = "operationSpent" + ${amount}
     WHERE id = ${challengeId}
   `;
+
+  // Economy telemetry (fully guarded — a metrics failure must never break the spend increment).
+  // A cheap PK read supplies the source/buzzType labels; operation-spend events are infrequent
+  // (judging batches), so the extra lookup is negligible.
+  try {
+    const challenge = await dbRead.challenge.findUnique({
+      where: { id: challengeId },
+      select: { source: true, buzzType: true },
+    });
+    recordChallengeOperationSpentBuzz({
+      source: challenge?.source,
+      buzzType: challenge?.buzzType,
+      amount,
+    });
+  } catch {
+    /* never throw from telemetry */
+  }
 }
 
 // =============================================================================

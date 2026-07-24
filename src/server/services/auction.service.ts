@@ -29,7 +29,7 @@ import {
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
-import { getImagesForModelVersionCache } from '~/server/services/image.service';
+import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   throwBadRequestError,
@@ -42,6 +42,11 @@ import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
+import { isDefined } from '~/utils/type-guards';
+
+// Reads here stay on the primary. Placing a bid invalidates getBySlug/getMyBids and
+// refetches immediately, so a replica that is even slightly behind shows the user a list
+// without the bid they just paid for.
 
 export const getAuctionTransactionPrefix = (auctionId: number, userId: number) =>
   `auction-${auctionId}-${userId}-${new Date().getTime()}`;
@@ -59,7 +64,7 @@ export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   description: true,
 });
 
-export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
+export const auctionWithoutBidsSelect = Prisma.validator<Prisma.AuctionSelect>()({
   id: true,
   startAt: true,
   endAt: true,
@@ -67,6 +72,13 @@ export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
   validTo: true,
   quantity: true,
   minPrice: true,
+  auctionBase: {
+    select: auctionBaseSelect,
+  },
+});
+
+export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
+  ...auctionWithoutBidsSelect,
   bids: {
     select: {
       entityId: true,
@@ -76,24 +88,19 @@ export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
       auctionId: true,
     },
   },
-  auctionBase: {
-    select: auctionBaseSelect,
-  },
 });
 const auctionValidator = Prisma.validator<Prisma.AuctionFindFirstArgs>()({
   select: auctionSelect,
 });
 type AuctionSelectType = Prisma.AuctionGetPayload<typeof auctionValidator>;
 
-// TODO surround all in try catch
-
 export type GetAllAuctionsReturn = AsyncReturnType<typeof getAllAuctions>;
 
-// The origin (uncached) fetch: reads the active-auction set from the PRIMARY DB
-// (`dbWrite`) and reduces each to `{ id, auctionBase, lowestBidRequired }`. The
-// output is fully user-independent (no `ctx`/`userId`) — the requiredScope on the
-// router gates ACCESS, not the payload — so a single global cache entry is correct
-// for every caller. Kept as a separate export so tests can assert cache-hit skips it.
+// The origin (uncached) fetch: reduces each active auction to
+// `{ id, auctionBase, lowestBidRequired }`. The output is fully user-independent
+// (no `ctx`/`userId`) — the requiredScope on the router gates ACCESS, not the
+// payload — so a single global cache entry is correct for every caller. Kept as a
+// separate export so tests can assert cache-hit skips it.
 export async function getAllAuctionsUncached() {
   const now = new Date();
 
@@ -135,19 +142,9 @@ export async function getAllAuctionsUncached() {
   });
 }
 
-// Short-TTL (30s) read-through over the user-independent active-auction list to cut
-// load on the PRIMARY DB (`getAllAuctionsUncached` reads `dbWrite`), which
-// `auction.getAll` hits ~21.8x/s at peak. Output is byte-identical to the uncached
-// path; the only delta is up-to-30s staleness. That is safe here:
-//   - the active set is time-windowed (startAt<=now<endAt); a <=30s lag in an
-//     auction appearing/disappearing is imperceptible, and
-//   - `lowestBidRequired` is a DISPLAY hint — bid submission re-validates the true
-//     minimum server-side (`createBid`), so a slightly-stale value can't let an
-//     under-minimum bid through.
-// No bust: the frequently-mutating input is bids (~21/s), so busting per-bid would
-// defeat the cache; auction create/close happens in the daily `handle-auctions` job
-// and is already bounded by the 30s TTL. `fetchThroughCache` fails OPEN to the origin
-// on a Redis error, so this never adds a failure mode over the uncached path.
+// Never busted, so callers can be up to 30s stale. Safe because the active set is
+// time-windowed, and because `lowestBidRequired` is a display hint that `createBid`
+// re-validates — a stale value can't let an under-minimum bid through.
 export async function getAllAuctions() {
   return fetchThroughCache(REDIS_KEYS.CACHES.ACTIVE_AUCTIONS, getAllAuctionsUncached, {
     ttl: 30,
@@ -161,32 +158,45 @@ export const prepareBids = (
   },
   returnAll = false
 ) => {
-  return Object.values(
-    a.bids
-      .filter((bid) => !bid.deleted)
-      .reduce((acc, { entityId, amount }) => {
-        if (!acc[entityId]) {
-          acc[entityId] = { entityId, totalAmount: 0, count: 0 };
-        }
-        acc[entityId].totalAmount += amount;
-        acc[entityId].count += 1;
+  return (
+    Object.values(
+      a.bids
+        .filter((bid) => !bid.deleted)
+        .reduce((acc, { entityId, amount }) => {
+          if (!acc[entityId]) {
+            acc[entityId] = { entityId, totalAmount: 0, count: 0 };
+          }
+          acc[entityId].totalAmount += amount;
+          acc[entityId].count += 1;
 
-        return acc;
-      }, {} as Record<string, { entityId: number; totalAmount: number; count: number }>)
-  )
-    .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count)
-    .slice(0, returnAll ? undefined : a.quantity)
-    .map((b, idx) => ({
-      ...b,
-      position: idx + 1,
-    }));
+          return acc;
+        }, {} as Record<string, { entityId: number; totalAmount: number; count: number }>)
+    )
+      // The entityId tiebreak has to match the `ranked` CTE in getMyBids, or the same tied
+      // bid gets a different position on the auction page than in My Bids. It currently
+      // holds either way — integer-like keys make Object.values return entityId-ascending
+      // and sort is stable — but only by accident, and a Map here would silently break it.
+      .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count || a.entityId - b.entityId)
+      .slice(0, returnAll ? undefined : a.quantity)
+      .map((b, idx) => ({
+        ...b,
+        position: idx + 1,
+      }))
+  );
 };
+
+// Image metadata is the largest field in the auction payload and no card reads it. The
+// annotation keeps the field's declared type — inferring `null` narrows it and rejects
+// callers that build this shape from a real image (e.g. ResourceSelectCard).
+const stripMetadata = <T extends { metadata: unknown }>(entity: T) => ({
+  ...entity,
+  metadata: null as T['metadata'],
+});
 
 // { entityId: number; totalAmount: number; count: number; position: number }
 const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
   const entityIds = data.map((x) => x.entityId);
 
-  // TODO switch back to dbRead
   const mvData = await dbWrite.modelVersion.findMany({
     where: { id: { in: entityIds } },
     select: {
@@ -210,10 +220,13 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
       },
     },
   });
-  const imageData = await getImagesForModelVersionCache(entityIds);
+  // The tag-attaching wrapper (`getImagesForModelVersionCache`) costs a second cache
+  // round-trip for tags no auction card reads.
+  const imageData = await imagesForModelVersionsCache.fetch(entityIds);
+  const mvById = new Map(mvData.map((d) => [d.id, d]));
 
   return data.map((b) => {
-    const mvMatch = mvData.find((d) => d.id === b.entityId);
+    const mvMatch = mvById.get(b.entityId);
 
     if (!mvMatch) {
       return {
@@ -222,9 +235,8 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
       };
     }
 
-    const { meta, ...modelData } = mvMatch.model;
-    const firstImage =
-      imageData[b.entityId]?.images?.length > 0 ? imageData[b.entityId]?.images?.[0] : undefined;
+    const { meta, user, ...modelData } = mvMatch.model;
+    const firstImage = imageData[b.entityId]?.images?.[0];
 
     return {
       ...b,
@@ -232,12 +244,29 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
         ...mvMatch,
         model: {
           ...modelData,
+          user: {
+            ...user,
+            profilePicture: user.profilePicture
+              ? stripMetadata(user.profilePicture)
+              : user.profilePicture,
+          },
           cannotPromote: (meta as ModelMeta | null | undefined)?.cannotPromote ?? false,
         },
-        image: firstImage,
+        image: firstImage ? stripMetadata(firstImage) : undefined,
       },
     };
   });
+};
+
+// Just the name, for the server-rendered title — link unfurlers don't run the client
+// effect that sets it. The slug can't be detitled: it drops the separator and flattens
+// the ecosystem casing (`featured-resources-noobai` -> "Featured Resources - NoobAI").
+export const getAuctionNameBySlug = async (slug: string) => {
+  const auctionBase = await dbWrite.auctionBase.findFirst({
+    where: { slug },
+    select: { name: true },
+  });
+  return auctionBase?.name ?? null;
 };
 
 export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
@@ -274,78 +303,125 @@ export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
   };
 }
 
+// Past bids are shown indefinitely otherwise; the heaviest bidder has 4.7k bids
+// across 1.5k auctions, and every one of them drags in that auction's whole bid set.
+export const MY_BIDS_HISTORY_DAYS = 90;
+
+type MyBidRow = {
+  id: number;
+  entityId: number;
+  amount: number;
+  createdAt: Date;
+  fromRecurring: boolean;
+  isRefunded: boolean;
+  accountType: string;
+  auctionId: number;
+  position: number | null;
+  totalAmount: number | null;
+  winners: number;
+  lowestWinning: number | null;
+};
+
 export type GetMyBidsReturn = AsyncReturnType<typeof getMyBids>;
 export const getMyBids = async ({ userId }: { userId: number }) => {
   try {
-    const bids = await dbWrite.bid.findMany({
-      where: { userId, deleted: false },
-      select: {
-        id: true,
-        entityId: true,
-        amount: true,
-        createdAt: true,
-        fromRecurring: true,
-        isRefunded: true,
-        accountType: true,
-        auction: {
-          select: auctionSelect,
-        },
-      },
+    // The per-entity totals, ranking and winning threshold are computed in SQL so we
+    // ship one row per bid the user placed, rather than every bid of every auction
+    // they ever participated in.
+    const rows = await dbWrite.$queryRaw<MyBidRow[]>`
+      WITH "myBids" AS (
+        SELECT b.id, b."entityId", b.amount, b."createdAt", b."fromRecurring",
+               b."isRefunded", b."accountType", b."auctionId"
+        FROM "Bid" b
+        JOIN "Auction" a ON a.id = b."auctionId"
+        WHERE b."userId" = ${userId}
+          AND b.deleted = false
+          AND a."endAt" > now() - ${`${MY_BIDS_HISTORY_DAYS} days`}::interval
+      ),
+      "myAuctionIds" AS (SELECT DISTINCT "auctionId" FROM "myBids"),
+      "entityTotals" AS (
+        SELECT b."auctionId", b."entityId",
+               SUM(b.amount)::int AS "totalAmount",
+               COUNT(*)::int AS "bidCount"
+        FROM "Bid" b
+        JOIN "myAuctionIds" ON "myAuctionIds"."auctionId" = b."auctionId"
+        WHERE b.deleted = false
+        GROUP BY 1, 2
+      ),
+      -- Ordering must match prepareBids, including the entityId tiebreak.
+      "ranked" AS (
+        SELECT "entityTotals".*,
+               ROW_NUMBER() OVER (
+                 PARTITION BY "auctionId"
+                 ORDER BY "totalAmount" DESC, "bidCount" DESC, "entityId"
+               )::int AS position
+        FROM "entityTotals"
+      ),
+      "winningThresholds" AS (
+        SELECT r."auctionId",
+               COUNT(*)::int AS winners,
+               MIN(r."totalAmount")::int AS "lowestWinning"
+        FROM "ranked" r
+        JOIN "Auction" a ON a.id = r."auctionId"
+        WHERE r."totalAmount" >= a."minPrice" AND r.position <= a.quantity
+        GROUP BY 1
+      )
+      SELECT m.*, r.position, r."totalAmount",
+             COALESCE(t.winners, 0) AS winners, t."lowestWinning"
+      FROM "myBids" m
+      LEFT JOIN "ranked" r ON r."auctionId" = m."auctionId" AND r."entityId" = m."entityId"
+      LEFT JOIN "winningThresholds" t ON t."auctionId" = m."auctionId"
+    `;
+
+    if (!rows.length) return [];
+
+    const auctions = await dbWrite.auction.findMany({
+      where: { id: { in: uniq(rows.map((r) => r.auctionId)) } },
+      select: auctionWithoutBidsSelect,
     });
+    const auctionsById = new Map(auctions.map((a) => [a.id, a]));
 
     const now = new Date();
-    const enhancedData = bids.map((b) => {
-      const sortedBids = prepareBids(b.auction, true);
-      const match = sortedBids.find((sb) => sb.entityId === b.entityId);
+    const enhancedData = rows
+      .map(({ auctionId, position, totalAmount, winners, lowestWinning, ...bid }) => {
+        const auction = auctionsById.get(auctionId);
+        if (!auction) return null;
 
-      let position, aboveThreshold, additionalPriceNeeded, totalAmount, isActive;
-      if (!match) {
-        position = 0;
-        aboveThreshold = false;
-        additionalPriceNeeded = 0;
-        totalAmount = 0;
-        isActive = false;
-      } else {
-        position = match.position;
-        aboveThreshold = match.totalAmount >= b.auction.minPrice;
+        if (position === null || totalAmount === null) {
+          return {
+            ...bid,
+            auction,
+            position: 0,
+            aboveThreshold: false,
+            additionalPriceNeeded: 0,
+            totalAmount: 0,
+            isActive: false,
+          };
+        }
 
-        const bidsAbove = sortedBids
-          .slice(0, b.auction.quantity)
-          .filter((sb) => sb.totalAmount >= b.auction.minPrice);
-
+        const aboveThreshold = totalAmount >= auction.minPrice;
         const lowestPrice =
-          bidsAbove.length > 0
-            ? bidsAbove.length >= b.auction.quantity
-              ? bidsAbove[bidsAbove.length - 1].totalAmount + 1
-              : b.auction.minPrice ?? 1
-            : b.auction.minPrice ?? 1;
-        additionalPriceNeeded = aboveThreshold ? 0 : lowestPrice - match.totalAmount;
+          winners >= auction.quantity && lowestWinning !== null
+            ? lowestWinning + 1
+            : auction.minPrice ?? 1;
 
-        totalAmount = match.totalAmount;
-
-        isActive = b.auction.startAt <= now && b.auction.endAt > now;
-      }
-
-      return {
-        ...b,
-        position,
-        aboveThreshold,
-        additionalPriceNeeded,
-        totalAmount,
-        isActive,
-      };
-    });
+        return {
+          ...bid,
+          auction,
+          position,
+          aboveThreshold,
+          additionalPriceNeeded: aboveThreshold ? 0 : lowestPrice - totalAmount,
+          totalAmount,
+          isActive: auction.startAt <= now && auction.endAt > now,
+        };
+      })
+      .filter(isDefined);
 
     const enhancedBids = await getAuctionMVData(enhancedData);
 
-    return enhancedBids
-      .map(({ auction: { bids, ...auctionRest }, ...rest }) => ({
-        ...rest,
-        auction: auctionRest,
-      }))
-      .sort(
-        (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.totalAmount - a.totalAmount
-      );
+    return enhancedBids.sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.totalAmount - a.totalAmount
+    );
   } catch (error) {
     throw throwDbError(error);
   }
@@ -429,7 +505,6 @@ export const createBid = async ({
 
   // - Check if entityId is valid for this auction type
   if (auctionData.auctionBase.type === AuctionType.Model) {
-    // TODO switch back to dbRead
     const mv = await dbWrite.modelVersion.findFirst({
       where: { id: entityId },
       select: {

@@ -27,6 +27,10 @@ import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { JudgeScore } from '~/server/games/daily-challenge/daily-challenge.utils';
 
+// Lives here rather than in the service util that derives it: the util and the client-side card
+// helpers both need it, and services depend on schema, never the reverse.
+export type MyChallengeResult = 'won' | 'placed' | 'judging' | 'entered' | 'hosting';
+
 // Cover image type for challenges (compatible with ImageGuard2)
 export type ChallengeCoverImage = {
   id: number;
@@ -75,6 +79,7 @@ export type ChallengeListItem = {
   endsAt: Date;
   status: ChallengeStatus;
   source: ChallengeSource;
+  buzzType: 'green' | 'yellow';
   nsfwLevel: number;
   allowedNsfwLevel: number;
   prizePool: number;
@@ -82,16 +87,23 @@ export type ChallengeListItem = {
   commentCount: number;
   modelVersionIds: number[];
   collectionId: number | null;
-  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
   createdById: number;
-  createdBy: {
-    id: number;
-    username: string | null;
-    image: string | null;
-    profilePicture?: ProfileImage | null;
-    cosmetics?: UserWithCosmetics['cosmetics'] | null;
-    deletedAt: Date | null;
-  };
+  createdBy: ChallengeDisplayUser;
+  judge: ChallengeJudgeInfo | null;
+};
+
+// The viewer's own challenges — entered or created — for the Challenges Center "Your Challenges" row.
+export const getMyChallengesSchema = z.object({
+  limit: z.number().min(1).max(20).default(6),
+});
+export type GetMyChallengesInput = z.infer<typeof getMyChallengesSchema>;
+
+export type MyChallengeItem = ChallengeListItem & {
+  myPlace: number | null;
+  myResult: MyChallengeResult;
+  isLive: boolean;
+  // Entry time for challenges you entered; creation time for ones you host.
+  myActivityAt: Date;
 };
 
 // Completion summary stored in Challenge.metadata when winners are picked
@@ -127,11 +139,28 @@ export function parseChallengeMetadata(raw: unknown): ChallengeMetadata {
   return result.success ? result.data : {};
 }
 
+// The author shown on a challenge card/detail. For User challenges this is the real creator; for
+// System/Mod challenges the client swaps in the judge (see getChallengeDisplayUser). `createdBy`
+// always carries the real creator regardless — the swap is display-only.
+export type ChallengeDisplayUser = {
+  id: number;
+  username: string | null;
+  image: string | null;
+  profilePicture?: ProfileImage | null;
+  cosmetics?: UserWithCosmetics['cosmetics'] | null;
+  deletedAt?: Date | null;
+};
+
+// `id` is the ChallengeJudge row id; `userId` + the User fields identify the account the judge posts
+// as, so the judge can render as an author avatar.
 export type ChallengeJudgeInfo = {
   id: number;
   userId: number;
   name: string;
   bio: string | null;
+  username: string | null;
+  image: string | null;
+  deletedAt: Date | null;
   profilePicture?: ProfileImage | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
 };
@@ -185,16 +214,8 @@ export type ChallengeDetail = {
   reviewCostType: ChallengeReviewCostType;
   reviewCost: number;
   entryCount: number;
-  // Real creator id, distinct from createdBy.id which displays the judge when one is assigned.
   createdById: number;
-  createdBy: {
-    id: number;
-    username: string | null;
-    image: string | null;
-    profilePicture?: ProfileImage | null;
-    cosmetics?: UserWithCosmetics['cosmetics'] | null;
-    deletedAt?: Date | null;
-  };
+  createdBy: ChallengeDisplayUser;
   judge: ChallengeJudgeInfo | null;
   winners: Array<{
     place: number;
@@ -259,6 +280,7 @@ export const ChallengeParticipation = {
   Entered: 'entered',
   NotEntered: 'not_entered',
   Won: 'won',
+  Created: 'created',
 } as const;
 export type ChallengeParticipation =
   (typeof ChallengeParticipation)[keyof typeof ChallengeParticipation];
@@ -288,10 +310,12 @@ export const getInfiniteChallengesSchema = z.object({
       ChallengeParticipation.Entered,
       ChallengeParticipation.NotEntered,
       ChallengeParticipation.Won,
+      ChallengeParticipation.Created,
     ])
     .optional(),
   includeEnded: z.boolean().default(false),
   excludeEventChallenges: z.boolean().default(false),
+  challengeEventId: z.number().optional(),
   browsingLevel: z.number().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
 });
@@ -580,6 +604,7 @@ export const getCompletedChallengesWithWinnersSchema = z.object({
   eventId: z.number().optional(),
   browsingLevel: z.number().optional(),
   query: z.string().optional(),
+  source: z.enum(ChallengeSource).array().optional(),
 });
 
 // --- Winner Cooldown ---
@@ -604,6 +629,7 @@ export type ChallengeEventListItem = {
   title: string;
   description: string | null;
   titleColor: string | null;
+  coverImage: ChallengeCoverImage | null;
   startDate: Date;
   endDate: Date;
   challenges: ChallengeListItem[];
@@ -630,6 +656,7 @@ export const upsertChallengeEventBaseSchema = z.object({
   endDate: z.date(),
   active: z.boolean().default(true),
   winnerCooldownDays: z.number().int().min(0).max(365).nullable().optional(),
+  coverImage: imageSchema.nullable().optional(),
 });
 
 export const upsertChallengeEventSchema = upsertChallengeEventBaseSchema.refine(

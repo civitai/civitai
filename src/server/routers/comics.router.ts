@@ -11,6 +11,7 @@ import {
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
+import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -140,8 +141,11 @@ async function getComicMetricRows(projectIds: number[]) {
 }
 
 const comicFlag = isFlagProtected('comicCreator');
-const comicProtectedProcedure = protectedProcedure.use(comicFlag);
-const comicPublicProcedure = publicProcedure.use(comicFlag);
+// Comic panel responses can surface raw orchestrator blob URLs (e.g.
+// `blurredPreviewUrl` on a blocked panel), which RU ISPs DPI-block. Rewrite them
+// to the Cloudflare-fronted proxy for RU requests. See ClickUp 868kdkv93.
+const comicProtectedProcedure = protectedProcedure.use(comicFlag).use(regionProxyMiddleware);
+const comicPublicProcedure = publicProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
 // Comic panel generation runs on the shared preset image-gen service

@@ -122,6 +122,7 @@ import type {
   Model3DStatus,
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
+  OutboxEntity,
 } from './enums';
 
 export type Account = {
@@ -433,6 +434,8 @@ export type AppListingScreenshot = {
 export type AppReviewAgentReport = {
   id: string;
   publish_request_id: string;
+  slug: string;
+  kind: Generated<string>;
   app_block_id: string | null;
   oauth_client_id: string | null;
   version: string;
@@ -1405,6 +1408,7 @@ export type ChallengeEvent = {
   endDate: Timestamp;
   active: Generated<boolean>;
   winnerCooldownDays: number | null;
+  coverImageId: number | null;
   createdById: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
@@ -1841,6 +1845,7 @@ export type Comment = {
   modelId: number;
   locked: Generated<boolean | null>;
   hidden: Generated<boolean | null>;
+  pinnedAt: Timestamp | null;
 };
 export type CommentReaction = {
   id: Generated<number>;
@@ -2389,6 +2394,7 @@ export type Model = {
   lockedProperties: Generated<string[]>;
   scannedAt: Timestamp | null;
   sfwOnly: Generated<boolean>;
+  isOfficial: Generated<boolean>;
   allowNoCredit: Generated<boolean>;
   allowCommercialUse: Generated<CommercialUse[]>;
   allowDerivatives: Generated<boolean>;
@@ -2672,6 +2678,7 @@ export type ModelVersion = {
   nsfwLevel: Generated<number>;
   earlyAccessEndsAt: Timestamp | null;
   earlyAccessConfig: unknown | null;
+  earlyAccessPermanent: Generated<boolean>;
   uploadType: Generated<ModelUploadType>;
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
@@ -2788,6 +2795,15 @@ export type OauthConsent = {
   buzzLimit: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Generated<Timestamp>;
+};
+export type Outbox = {
+  id: Generated<string>;
+  event: string;
+  entityType: OutboxEntity;
+  entityId: string;
+  createdAt: Generated<Timestamp | null>;
+  details: unknown | null;
+  attempts: number | null;
 };
 export type Partner = {
   id: Generated<number>;
@@ -4045,6 +4061,7 @@ export type DB = {
   NewOrderSmite: NewOrderSmite;
   OauthClient: OauthClient;
   OauthConsent: OauthConsent;
+  Outbox: Outbox;
   Partner: Partner;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;

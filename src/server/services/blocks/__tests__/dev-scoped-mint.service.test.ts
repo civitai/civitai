@@ -36,6 +36,7 @@ import {
   DEV_BUZZ_BUDGET_DEFAULT,
   DEV_TOKEN_SCOPE_ALLOWLIST,
   FORCED_SFW_CEILING,
+  parseManifestBuzzBudget,
   resolveDevBuzzBudget,
   REVIEW_MINT_SCOPE_ALLOWLIST,
   signDevScopedPageToken,
@@ -280,9 +281,58 @@ describe('resolveDevBuzzBudget', () => {
     expect(resolveDevBuzzBudget(['ai:write:budgeted'], 100000)).toBe(DEV_BUZZ_BUDGET_CAP);
     expect(resolveDevBuzzBudget(['ai:write:budgeted'], 10)).toBe(10);
   });
-  it('defaults to DEV_BUZZ_BUDGET_DEFAULT when no budget is requested', () => {
+  it('defaults to DEV_BUZZ_BUDGET_DEFAULT when no budget is requested AND no manifest default', () => {
     expect(resolveDevBuzzBudget(['ai:write:budgeted'])).toBe(DEV_BUZZ_BUDGET_DEFAULT);
   });
+
+  // Fix 2 (dogfood follow-up): a recipe/app whose manifest budget exceeds the flat
+  // 50 default must be dev-testable without a manual budget request.
+  it('DEFAULTS to the resolved app manifest budget when present (no explicit request)', () => {
+    // manifest page.buzzBudgetPerGen = 180 (> the flat 50 default) → 180.
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'], undefined, 180)).toBe(180);
+  });
+  it('clamps a manifest default above the CAP to DEV_BUZZ_BUDGET_CAP', () => {
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'], undefined, 100000)).toBe(
+      DEV_BUZZ_BUDGET_CAP
+    );
+  });
+  it('an EXPLICIT requested budget still wins over the manifest default', () => {
+    // requestedBudget (30) takes precedence over the manifest default (180).
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'], 30, 180)).toBe(30);
+  });
+  it('falls back to the flat default when the manifest default is absent (ephemeral no-row mode)', () => {
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'], undefined, undefined)).toBe(
+      DEV_BUZZ_BUDGET_DEFAULT
+    );
+  });
+  it('never mints a budget when ai:write:budgeted was not granted, even with a manifest default', () => {
+    expect(resolveDevBuzzBudget(['user:read:self'], undefined, 180)).toBeUndefined();
+  });
+});
+
+describe('parseManifestBuzzBudget', () => {
+  it('returns the positive-integer page.buzzBudgetPerGen', () => {
+    expect(parseManifestBuzzBudget({ path: '/', buzzBudgetPerGen: 180 })).toBe(180);
+  });
+  it('returns undefined when the field is absent (→ caller uses the flat default)', () => {
+    expect(parseManifestBuzzBudget({ path: '/', title: 'X' })).toBeUndefined();
+  });
+  it.each([
+    ['fractional', 12.5],
+    ['zero', 0],
+    ['negative', -10],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['string', '180' as unknown as number],
+  ])('ignores a %s budget (→ undefined, never flowed through)', (_label, value) => {
+    expect(parseManifestBuzzBudget({ buzzBudgetPerGen: value })).toBeUndefined();
+  });
+  it.each([[null], [undefined], ['not-an-object'], [[1, 2, 3]]])(
+    'returns undefined for a non-object page (%s)',
+    (page) => {
+      expect(parseManifestBuzzBudget(page)).toBeUndefined();
+    }
+  );
 });
 
 describe('signDevScopedPageToken', () => {

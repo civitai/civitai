@@ -18,6 +18,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
+import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -63,6 +64,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -73,6 +75,7 @@ import { getYoutubeRefreshToken } from '~/server/youtube/client';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import {
+  ChallengeSource,
   CollectionContributorPermission,
   CollectionItemStatus,
   CollectionMode,
@@ -349,6 +352,7 @@ type CollectionForPermission = {
   write: CollectionWriteConfiguration;
   imageId?: number;
   type?: CollectionType;
+  mode?: CollectionMode | null;
 };
 
 export const getUserCollectionsWithPermissions = async <
@@ -358,17 +362,32 @@ export const getUserCollectionsWithPermissions = async <
 }: {
   input: GetAllUserCollectionsInputSchema & { userId: number };
 }) => {
-  const { userId, permission, contributingOnly = true } = input;
+  const {
+    userId,
+    permission,
+    contributingOnly = true,
+    includeActiveContests = false,
+    contestModelId,
+  } = input;
   let { permissions = [] } = input;
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode"`
   );
 
   if (input.type) {
     AND.push(Prisma.sql`(c."type" = ${input.type}::"CollectionType" OR c."type" IS NULL)`);
   }
+
+  // When surfacing active contests, Contest-mode collections must come ONLY through the
+  // ownership+window-gated branch below — never via the contributor/public-read branches, which
+  // carry no ownership or submission-window check and would leak followed or closed contests into
+  // the picker for models the user doesn't own. Off for non-model callers, leaving the normal
+  // follow flow untouched. Owned contests still surface via the owned-collections branch (query 1).
+  const excludeContests = includeActiveContests
+    ? Prisma.sql`AND c."mode" IS DISTINCT FROM ${CollectionMode.Contest}::"CollectionMode"`
+    : Prisma.empty;
 
   const queries: Prisma.Sql[] = [
     Prisma.sql`(
@@ -406,6 +425,7 @@ export const getUserCollectionsWithPermissions = async <
       FROM "Collection" c
       WHERE "read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        ${excludeContests}
 
     `);
   }
@@ -423,6 +443,37 @@ export const getUserCollectionsWithPermissions = async <
           )}]::"CollectionContributorPermission"[]
           AND cc."collectionId" IS NOT NULL
           ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+          ${excludeContests}
+    )`);
+  }
+
+  // Active-window contest collections the user can submit to for review WITHOUT following first.
+  // Contest + Review-write + Public-read, with a real submission window that is open RIGHT NOW.
+  // A defined, in-future submissionEndDate is REQUIRED: without it we'd surface every windowless
+  // contest ever created (old contests / daily challenges store no submission dates). Start date,
+  // if present, must have passed. Kept independent of contributor joins so it also surfaces
+  // contests the user hasn't joined; UNION de-dupes any that already appear via the branches above.
+  // Gated on the user owning the target model: you can only submit your own models to a contest,
+  // so a non-owned model (or an absent contestModelId) fails closed and surfaces nothing.
+  if (includeActiveContests && contestModelId) {
+    queries.push(Prisma.sql`(
+        ${SELECT}
+        FROM "Collection" c
+        WHERE c."mode" = ${CollectionMode.Contest}::"CollectionMode"
+          AND c."write" = ${CollectionWriteConfiguration.Review}::"CollectionWriteConfiguration"
+          AND c."read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
+          AND c."metadata"->>'submissionEndDate' IS NOT NULL
+          AND (c."metadata"->>'submissionEndDate')::timestamptz >= now()
+          AND (
+            c."metadata"->>'submissionStartDate' IS NULL
+            OR (c."metadata"->>'submissionStartDate')::timestamptz <= now()
+          )
+          AND EXISTS (
+            SELECT 1 FROM "Model" m
+            WHERE m."id" = ${contestModelId} AND m."userId" = ${userId}
+          )
+          ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+        LIMIT 100
     )`);
   }
 
@@ -517,10 +568,15 @@ export const saveItemInCollections = async ({
     userId,
     isModerator,
     removeFromCollectionIds,
+    canAccessUserChallenges,
     ...input
   },
 }: {
-  input: AddCollectionItemInput & { userId: number; isModerator?: boolean };
+  input: AddCollectionItemInput & {
+    userId: number;
+    isModerator?: boolean;
+    canAccessUserChallenges?: boolean;
+  };
 }) => {
   const itemKey = Object.keys(inputToCollectionType).find((key) =>
     input.hasOwnProperty(key)
@@ -557,6 +613,7 @@ export const saveItemInCollections = async ({
         collectionId: contestCollection.id,
         userId,
         isModerator,
+        canAccessUserChallenges,
         [`${itemKey}s`]: [input[itemKey]],
       });
     }
@@ -634,8 +691,15 @@ export const saveItemInCollections = async ({
           });
         }
 
-        if (!permission.isContributor && !permission.isOwner) {
-          // Person adding content to stuff they don't follow.
+        // Non-owners who don't contribute may still submit to Public-write (write) or Review-write
+        // (writeReview) collections — the follow above is skipped when disableFollowOnSubmission is
+        // set, so gate on the standing write grant rather than contributor status.
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !permission.writeReview &&
+          !permission.write
+        ) {
           return null;
         }
 
@@ -1908,35 +1972,53 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
 }
 
 // Charge the active user-challenge entry fee for `imageIds` on this collection, if any.
-// Idempotent per (challenge, image) — see chargeEntryFees. No-op for moderators, empty input,
-// or collections without an Active fee challenge. Returns the paid/unpaid partition when a
-// charge ran; entry fees are NEVER refunded (see challenge-funding.ts), so callers must
-// commit only `paidImageIds` — an unpaid image self-heals if the user retries.
+// Idempotent per (challenge, image) — see chargeEntryFees. No-op for empty input or collections
+// without an Active fee challenge. Returns the paid/unpaid partition when a charge ran; entry
+// fees are NEVER refunded (see challenge-funding.ts), so callers must commit only
+// `paidImageIds` — an unpaid image self-heals if the user retries.
+//
+// Moderators are charged like everyone else: a fee-exempt entry is still eligible to win, so it
+// would pay out from a pool it never funded (challenge 413 completed with 2 mod entries and a
+// prizePool of 0).
 const chargeContestEntryFeesForCollection = async ({
   collectionId,
   userId,
   imageIds,
-  isModerator,
 }: {
   collectionId: number;
   userId: number;
   imageIds: number[];
-  isModerator?: boolean;
 }) => {
-  if (isModerator || imageIds.length === 0) return undefined;
+  if (imageIds.length === 0) return undefined;
+  // Look up the active source=User challenge for this collection WITHOUT the old `entryFee > 0`
+  // filter, so free-entry User challenges are counted too (chargeEntryFees no-ops on entryFee<=0,
+  // returning every image as paid — so behavior is unchanged for the caller, which still commits
+  // when unpaidImageIds is empty). System/Mod (daily) + community-contest collections have no
+  // source=User row → null → undefined (unchanged, no metric).
   const feeChallenge = await dbRead.challenge.findFirst({
-    where: { collectionId, source: 'User', entryFee: { gt: 0 }, status: 'Active' },
+    where: { collectionId, source: 'User', status: 'Active' },
     select: { id: true, entryFee: true, buzzType: true },
   });
   if (!feeChallenge) return undefined;
   const { chargeEntryFees } = await import('~/server/games/daily-challenge/challenge-funding');
-  return chargeEntryFees({
+  const buzzType = feeChallenge.buzzType === 'green' ? 'green' : 'yellow';
+  const result = await chargeEntryFees({
     challengeId: feeChallenge.id,
     userId,
     imageIds,
     entryFee: feeChallenge.entryFee,
-    fromAccountType: feeChallenge.buzzType === 'green' ? 'green' : 'yellow',
+    fromAccountType: buzzType,
   });
+  // Single chokepoint for the entry funnel: count each committable entry once (both fee paths —
+  // the non-defer validate path and the deferred bulkSaveItems path — flow through here, so no
+  // double count). paidImageIds are the images actually charged (paid) or all images (free).
+  recordChallengeEntrySubmitted({
+    source: 'User',
+    buzzType,
+    paid: feeChallenge.entryFee > 0,
+    count: result.paidImageIds.length,
+  });
+  return result;
 };
 
 export const validateContestCollectionEntry = async ({
@@ -1951,6 +2033,9 @@ export const validateContestCollectionEntry = async ({
   // bulkSaveItems defers the entry-fee charge until AFTER the CollectionItem write (so a failed
   // save can't leave a paid-but-missing entry); every other caller charges here, before its write.
   deferEntryFeeCharge = false,
+  // `userChallenges` for the submitting user. Defaults to denied: entries arrive through the
+  // generic collection mutations, so a caller that forgets to thread the flag must fail closed.
+  canAccessUserChallenges = false,
 }: {
   collectionId: number;
   userId: number;
@@ -1961,6 +2046,7 @@ export const validateContestCollectionEntry = async ({
   imageIds?: number[];
   postIds?: number[];
   deferEntryFeeCharge?: boolean;
+  canAccessUserChallenges?: boolean;
 }) => {
   const user = await dbRead.user.findUnique({
     where: { id: userId },
@@ -1976,7 +2062,24 @@ export const validateContestCollectionEntry = async ({
     throw throwBadRequestError('You are banned from participating in contests');
   }
 
-  // Challenge creators may not enter their own challenge (self-dealing on the prize pool).
+  // The source=User challenge (if any) that owns this collection. One lookup, reused by the flag
+  // gate, the block gate, and the accepting-entries timing gate below — System/Mod (daily) and
+  // community-contest collections have no such row, so this is null for them.
+  const userChallenge = await dbRead.challenge.findFirst({
+    where: { collectionId, source: ChallengeSource.User },
+    select: { id: true, createdById: true, status: true },
+  });
+
+  // User-created challenges are still flag-gated, but entries reach this function through the
+  // generic collection mutations, which carry no challenge-specific guard — so a direct link to
+  // the challenge would otherwise be enough to submit. Scoped to source=User: ordinary contest
+  // collections and System/Mod (daily) challenges are unaffected.
+  if (!canAccessUserChallenges && userChallenge)
+    throw throwAuthorizationError('This challenge is not currently available.');
+
+  // Challenge creators may not enter their own challenge (self-dealing on the prize pool). Its own
+  // lookup: it filters on createdById across ANY source, so it also catches a System/Mod challenge
+  // the viewer created — which the source=User lookup above would miss.
   if (!isModerator) {
     const ownChallenge = await dbRead.challenge.findFirst({
       where: { collectionId, createdById: userId },
@@ -1985,6 +2088,16 @@ export const validateContestCollectionEntry = async ({
     if (ownChallenge) {
       throw throwBadRequestError('You cannot submit entries to your own challenge.');
     }
+  }
+
+  // A viewer the challenge creator has blocked can't submit an entry — parity with the detail-page
+  // block gate. Scoped to source=User (System/mod challenges have no owner); moderators exempt.
+  if (!isModerator && userChallenge) {
+    const blocked = await amIBlockedByUser({
+      userId,
+      targetUserId: userChallenge.createdById ?? undefined,
+    });
+    if (blocked) throw throwBadRequestError('This challenge is not available.');
   }
 
   // Block re-submitting an image a challenge judge has already scored. Removal
@@ -2017,7 +2130,7 @@ export const validateContestCollectionEntry = async ({
 
   // User challenges accept entries only once Active — makes the entry WRITE agree with the fee
   // CHARGE (which already requires Active). No-op for daily/system/community collections.
-  await assertUserChallengeAcceptingEntries(collectionId);
+  await assertUserChallengeAcceptingEntries(collectionId, userChallenge);
 
   if (!metadata) {
     return;
@@ -2051,6 +2164,19 @@ export const validateContestCollectionEntry = async ({
     (metadata.submissionEndDate && new Date(metadata.submissionEndDate) < new Date())
   ) {
     throw throwBadRequestError('Collection is not accepting submissions at this time');
+  }
+
+  // You can only submit your own models to a contest. Enforced independently of the
+  // submissionStartDate window below so it holds for windowless contests too.
+  if (modelIds.length > 0 && !isModerator) {
+    const submittedModels = await dbRead.model.findMany({
+      where: { id: { in: modelIds } },
+      select: { id: true, userId: true },
+    });
+
+    if (submittedModels.some((model) => model.userId !== userId)) {
+      throw throwBadRequestError('You can only submit your own models to a contest.');
+    }
   }
 
   if (metadata.submissionStartDate) {
@@ -2239,7 +2365,6 @@ export const validateContestCollectionEntry = async ({
       collectionId,
       userId,
       imageIds,
-      isModerator,
     });
     if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
       // Nothing was written yet, so aborting strands no entry. Any legs that DID charge stay
@@ -2317,10 +2442,15 @@ export const bulkSaveItems = async ({
     postIds = [],
     tagId,
     isModerator,
+    canAccessUserChallenges,
   },
   permissions,
 }: {
-  input: BulkSaveCollectionItemsInput & { userId: number; isModerator?: boolean };
+  input: BulkSaveCollectionItemsInput & {
+    userId: number;
+    isModerator?: boolean;
+    canAccessUserChallenges?: boolean;
+  };
   permissions: CollectionContributorPermissionFlags;
 }) => {
   const collection = await dbRead.collection.findUnique({
@@ -2370,6 +2500,7 @@ export const bulkSaveItems = async ({
       collectionId,
       userId,
       isModerator,
+      canAccessUserChallenges,
       articleIds,
       modelIds,
       imageIds,
@@ -2495,8 +2626,7 @@ export const bulkSaveItems = async ({
           logToAxiom({
             type: 'error',
             name: 'contest-entry-fee-rollback-failed',
-            message:
-              rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+            message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
             stack: rollbackError instanceof Error ? rollbackError.stack : undefined,
             originalError: originalError instanceof Error ? originalError.message : undefined,
             collectionId,
@@ -2512,7 +2642,6 @@ export const bulkSaveItems = async ({
         collectionId,
         userId,
         imageIds: chargeImageIds,
-        isModerator,
       });
     } catch (e) {
       // Transport/service failure — per-image payment state is unknown, so remove every row
@@ -2766,13 +2895,10 @@ export const removeCollectionItem = async ({
 
   isOwner = item.userId === userId;
 
-  if (
-    !permissions.write &&
-    !permissions.writeReview &&
-    !isOwner &&
-    !permissions.manage &&
-    !isModerator
-  ) {
+  // Deliberately does NOT accept `permissions.write` / `permissions.writeReview`: both are granted
+  // to every authenticated user on a Public/Review-write collection regardless of ownership, so
+  // honoring them here let anyone delete anyone else's item. A write grant authorizes adding.
+  if (!isOwner && !permissions.manage && !isModerator) {
     throw throwAuthorizationError(
       'You do not have permission to remove items from this collection.'
     );

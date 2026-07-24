@@ -45,6 +45,28 @@ export const getUserBuzzTransactionsSchema = z.object({
   accountType: z.enum(buzzAccountTypes).optional(),
 });
 
+const userTransactionFilters = {
+  type: z.enum(TransactionType).optional(),
+  start: z.date(),
+  end: z.date(),
+  accountTypes: z
+    .array(z.enum(buzzSpendTypes))
+    .min(1)
+    .default([...buzzSpendTypes]),
+};
+
+export type GetUserBuzzTransactionsMultiSchema = z.infer<typeof getUserBuzzTransactionsMultiSchema>;
+export const getUserBuzzTransactionsMultiSchema = z.object({
+  ...userTransactionFilters,
+  // `date|transactionId` — the sort key needs the tie-break, since bursts of
+  // generation transactions routinely share a second.
+  cursor: z.string().optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type ExportUserBuzzTransactionsSchema = z.infer<typeof exportUserBuzzTransactionsSchema>;
+export const exportUserBuzzTransactionsSchema = z.object(userTransactionFilters);
+
 export const buzzTransactionDetails = z
   .object({
     user: z.string().optional(),

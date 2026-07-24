@@ -1494,14 +1494,28 @@ describe('buildCustomComfyWorkflowInput (translator)', () => {
 describe('createBlockCustomComfyStep (step wrapper)', () => {
   const recipe = getRecipe('seamless-pano-360')!;
 
-  it('wraps the input as a customComfy step and stamps the recipe timeout (HH:MM:SS)', () => {
+  it('wraps the input as a customComfy step and stamps the resolved per-engine timeout (HH:MM:SS)', () => {
     const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
-    const step = createBlockCustomComfyStep(recipe, input);
+    // v1.1: the caller resolves the timeout from the params' budget and threads it.
+    const { stepTimeoutSeconds } = recipe.budgetFor({ prompt: 'a lake', engine: 'qwen-image' });
+    const step = createBlockCustomComfyStep(input, stepTimeoutSeconds);
     expect(step.$type).toBe('customComfy');
     expect(step.name).toBe(BLOCK_CUSTOM_COMFY_STEP_NAME);
-    // 180s ceiling → 00:03:00 (NOT the reference's loose 01:00:00).
+    // qwen 180s ceiling → 00:03:00 (NOT the reference's loose 01:00:00).
     expect(step.timeout).toBe('00:03:00');
     expect(step.input).toBe(input);
+  });
+
+  it('formats the timeout per engine: zimage 90s → 00:01:30, flux2 150s → 00:02:30', () => {
+    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
+    expect(
+      createBlockCustomComfyStep(input, recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds)
+        .timeout
+    ).toBe('00:01:30');
+    expect(
+      createBlockCustomComfyStep(input, recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds)
+        .timeout
+    ).toBe('00:02:30');
   });
 });
 

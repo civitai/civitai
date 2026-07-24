@@ -264,6 +264,17 @@ export async function hasValidCreatorMembership(userId: number) {
   return !!tier && tier !== 'free' && tier !== 'founder';
 }
 
+// Batched read-time membership gate lives in a dependency-light module so the
+// donation-goals lookup can reuse it without pulling this heavy graph. Re-exported
+// here for the existing metric-privacy callers. `hasValidCreatorMembershipCached` is
+// the single-user, cache-backed variant for read-time display gating (byte-identical
+// validity to `hasValidCreatorMembership`, served from the shared read-through cache).
+export {
+  getValidCreatorMembershipMap,
+  hasValidCreatorMembershipCached,
+  getUserMetricPrivacyDefaultsMap,
+} from '~/server/services/creator-membership.service';
+
 export async function joinCreatorsProgram(userId: number) {
   const requirements = await getCreatorRequirements(userId);
 

@@ -12,6 +12,7 @@ import {
   clampDevScopes,
   DEV_TOKEN_SCOPE_ALLOWLIST,
   FORCED_SFW_CEILING,
+  parseManifestBuzzBudget,
   resolveDevBuzzBudget,
   signDevScopedPageToken,
 } from '~/server/services/blocks/dev-scoped-mint.service';
@@ -491,6 +492,13 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     signAppId: string;
     signAppBlockId: string;
     blockInstanceId: string;
+    // The RESOLVED app manifest's declared `page.buzzBudgetPerGen`, used as the
+    // DEFAULT dev-token budget (step 8) when the caller passed no explicit
+    // `buzzBudget`. Set on the approved + pending modes (a manifest is
+    // resolvable); UNDEFINED on the ephemeral no-row mode (no server manifest →
+    // resolveDevBuzzBudget falls back to DEV_BUZZ_BUDGET_DEFAULT). Clamped to
+    // DEV_BUZZ_BUDGET_CAP by resolveDevBuzzBudget regardless.
+    manifestBudgetDefault?: number;
   };
   let resolved: Resolved | null = null;
   // Set ONLY on the local-manifest (pending) path so the structured mint-audit
@@ -550,6 +558,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       // lifetime — otherwise a dev revocation (or a 4h marker) would bleed into
       // production page tokens for the SAME app (collision on `page_<appBlockId>`).
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
+      // DEV budget default = the APPROVED manifest's declared per-gen budget so
+      // an app whose `page.buzzBudgetPerGen` exceeds the flat 50 default is
+      // dev-testable without a manual `buzzBudget` request. Clamped to
+      // DEV_BUZZ_BUDGET_CAP by resolveDevBuzzBudget; undefined → the flat default.
+      manifestBudgetDefault: parseManifestBuzzBudget(manifest.page),
     };
   } else if (slug) {
     // 6b. LOCAL-MANIFEST path (Phase 4). Reached ONLY when no owned approved row
@@ -627,6 +640,14 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // Stable, BlockRevocation-checkable synthetic instance id derived from the
         // publish-request id (no AppBlock.id to key on).
         blockInstanceId: `${PAGE_INSTANCE_PREFIX}pubreq_${pending.id}`,
+        // DEV budget default = the PENDING request's UN-REVIEWED manifest
+        // `page.buzzBudgetPerGen`. This is a developer-controlled value, but it
+        // only raises the per-call BUDGET (never a spend AUTHORITY): spend is
+        // still bounded by DEV_BUZZ_BUDGET_CAP (the clamp in resolveDevBuzzBudget),
+        // the per-user daily cap, the dev-session cap, and the 7f AIServicesWrite
+        // bearer gate. Mirrors the approved path so a pending recipe with a >50
+        // budget is dev-testable pre-approval without a manual `buzzBudget`.
+        manifestBudgetDefault: parseManifestBuzzBudget(manifest.page),
       };
     } else if (block == null) {
       // 6c. NO-ROW (local-manifest) path (Phase 4 — deferred mode). Reached ONLY
@@ -673,6 +694,16 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         signAppBlockId: `page_local_${slug}`,
         // Stable, BlockRevocation-checkable synthetic instance id.
         blockInstanceId: `${PAGE_INSTANCE_PREFIX}local_${slug}`,
+        // TODO(ephemeral dev budget): the no-row mode has NO server manifest to
+        // read `page.buzzBudgetPerGen` from — the manifest lives only in the
+        // dev's LOCAL `block.manifest.json`, which the CLI does not send on this
+        // path (only `scopes`/`buzzBudget` cross the wire). So the dev default
+        // stays the flat DEV_BUZZ_BUDGET_DEFAULT here; a dev iterating on a
+        // brand-new (unsubmitted) app whose recipe ceiling exceeds 50 must pass
+        // an explicit `buzzBudget` in the request body (still clamped to
+        // DEV_BUZZ_BUDGET_CAP). To auto-default this mode, the CLI would need to
+        // send the local manifest's `page.buzzBudgetPerGen` in the body — deferred.
+        manifestBudgetDefault: undefined,
       };
     }
   }
@@ -725,7 +756,12 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   });
 
   // 8. BUDGET CAP — only meaningful when ai:write:budgeted survived the clamp.
-  const buzzBudget = resolveDevBuzzBudget(granted, requestedBudget);
+  // DEFAULT to the resolved app manifest's `page.buzzBudgetPerGen` (approved +
+  // pending modes) so an app/recipe whose per-gen budget exceeds the flat 50
+  // default is dev-testable WITHOUT a manual `buzzBudget` request; an explicit
+  // caller `requestedBudget` still wins, and DEV_BUZZ_BUDGET_CAP still clamps.
+  // The ephemeral no-row mode carries no manifest default → the flat fallback.
+  const buzzBudget = resolveDevBuzzBudget(granted, requestedBudget, resolved.manifestBudgetDefault);
 
   // 8b. PENDING-PATH MINT AUDIT (FIX 🟡-1). The pending (local-manifest) path is
   // the ONLY mint without durable, queryable audit rows: recordSpendAttribution

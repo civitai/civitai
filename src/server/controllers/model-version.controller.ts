@@ -265,6 +265,7 @@ const loadModelVersion = async ({
           covered: version.generationCoverage?.covered ?? false,
           modelUserId: version.model.user.id,
           modelType: version.model.type,
+          flags: version.flags,
           modelVersionAlias: (version.meta as ModelVersionMeta | null)?.generationAlias,
         },
       ],

@@ -46,8 +46,9 @@ import {
 } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import clsx from 'clsx';
-import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
+import { useSpotlight } from '~/hooks/useSpotlight';
 import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
 import { benefitIconSize, PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -627,24 +628,6 @@ export function ReferralDashboardFull({
       </Text>
     </Stack>
   );
-}
-
-function useSpotlight() {
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(400px circle at ${x}px ${y}px, light-dark(rgba(0,0,0,0.03), rgba(255,255,255,0.05)), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
-  return { spotlightRef, handleMouseMove, handleMouseLeave };
 }
 
 function ReferralCodeBlock({ code, shareLink }: { code: string; shareLink: string }) {

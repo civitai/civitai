@@ -54,7 +54,7 @@ export async function runChallengeActivation() {
             }
             if (rescanned !== ChallengeIngestionStatus.Blocked && !gracePassed) return;
           }
-          await voidChallenge(challengeId);
+          await voidChallenge(challengeId, 'activation');
           log(`Voided unscanned user challenge ${challengeId} (${ingestion})`);
         } catch (error) {
           const err = error as Error;

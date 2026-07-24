@@ -33,6 +33,7 @@ import { articleDetailSelect } from '~/server/selectors/article.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -1845,6 +1846,7 @@ export async function recomputeArticleIngestionInTx(
       title: true,
       content: true,
       coverId: true,
+      moderatorNsfwLevel: true,
     },
   });
 
@@ -1898,17 +1900,18 @@ export async function recomputeArticleIngestionInTx(
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
   const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
 
-  // --- Derive ingestion state ---
-  let next: ArticleIngestionStatus;
-  if (imageBlocked || textBlocked) {
-    next = ArticleIngestionStatus.Blocked;
-  } else if (imageError || textError) {
-    next = ArticleIngestionStatus.Error;
-  } else if (imageDone && textDone) {
-    next = ArticleIngestionStatus.Scanned;
-  } else {
-    next = ArticleIngestionStatus.Pending;
-  }
+  // --- Derive ingestion state (precedence documented on deriveArticleIngestionState) ---
+  const hasModeratorOverride = current.moderatorNsfwLevel != null;
+
+  const next = deriveArticleIngestionState({
+    imageBlocked,
+    imageError,
+    imageDone,
+    textBlocked,
+    textError,
+    textDone,
+    hasModeratorOverride,
+  });
 
   const flipToPublished =
     next === ArticleIngestionStatus.Scanned && current.status === ArticleStatus.Processing;

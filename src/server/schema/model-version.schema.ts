@@ -363,6 +363,9 @@ export const MAX_LICENSING_FEE = 100;
 export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
 export const modelVersionEarlyAccessConfigSchema = z.object({
   timeframe: z.number(),
+  // Permanent pay-for-access (CU 868ke4949): the gate never expires. Creator-Program-member-only; enforced
+  // at the write endpoint. `timeframe` is 0 for permanent (the trigger's permanent branch ignores it).
+  permanent: z.boolean().optional().default(false),
   chargeForDownload: z.boolean().default(false),
   downloadPrice: z.number().min(100).max(MAX_DONATION_GOAL).optional(),
   chargeForGeneration: z.boolean().default(false),
@@ -438,6 +441,14 @@ export const modelVersionUpsertSchema2 = z.object({
   // Inherit another version's licensing fee (a LicensingRoot for this baseModel).
   // Null falls back to the (baseModel, modelType) rule.
   licensingSourceVersionId: z.number().nullish(),
+  // Creator Controls: per-version metric privacy (merged into ModelVersion.meta).
+  meta: z
+    .object({
+      hideBuzz: z.boolean().optional(),
+      hideDownloads: z.boolean().optional(),
+      hideGenerations: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;

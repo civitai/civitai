@@ -40,6 +40,7 @@ import {
   IconRecycle,
   IconReload,
   IconRepeat,
+  IconRosetteDiscountCheck,
   IconTagOff,
   IconTrash,
 } from '@tabler/icons-react';
@@ -92,6 +93,10 @@ import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
+import {
+  HIDDEN_METRIC_MESSAGE,
+  HiddenMetricNotice,
+} from '~/components/Model/HiddenMetricNotice';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -109,6 +114,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import useIsClient from '~/hooks/useIsClient';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
@@ -388,6 +394,7 @@ export default function ModelDetailsV2({
 
   const [opened, { toggle }] = useDisclosure();
   const canShowRail = useMediaQuery(`(min-width: ${RAIL_ACTIVATE_WIDTH}px)`, false);
+  const allowAds = useBrowsingSettings((x) => x.allowAds);
 
   const { blockedUsers } = useHiddenPreferencesData();
 
@@ -653,6 +660,25 @@ export default function ModelDetailsV2({
     toggleCannotPromoteMutation.mutate({ id });
   };
 
+  const setOfficialMutation = trpc.model.setOfficial.useMutation({
+    async onSuccess({ id, isOfficial }) {
+      const prevModel = queryUtils.model.getById.getData({ id });
+      await queryUtils.model.getById.cancel({ id });
+      if (prevModel) {
+        queryUtils.model.getById.setData({ id }, { ...prevModel, isOfficial });
+      }
+      showSuccessNotification({
+        message: isOfficial ? 'Marked as official' : 'Unmarked as official',
+      });
+    },
+    onError(error) {
+      showErrorNotification({ title: 'Failed to update', error: new Error(error.message) });
+    },
+  });
+  const handleSetOfficial = (isOfficial: boolean) => {
+    setOfficialMutation.mutate({ id, isOfficial });
+  };
+
   const view = router.query.view;
   const basicView = view === 'basic' && isModerator;
   const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
@@ -791,7 +817,8 @@ export default function ModelDetailsV2({
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${model.meta?.customMessage ?? 'Flagged by system'}.`;
   const isBannedFromPromotion = model.meta?.cannotPromote ?? false;
-  const showRail = !model.poi;
+  const adsDisabledByUser = (currentUser?.isMember ?? false) && !allowAds;
+  const showRail = !model.poi && !adsDisabledByUser;
 
   return (
     <Gated
@@ -860,10 +887,15 @@ export default function ModelDetailsV2({
                     <StatHoverCard
                       label="Unique Downloads"
                       value={model.rank?.downloadCountAllTime ?? 0}
+                      message={model.hiddenMetrics?.downloads ? HIDDEN_METRIC_MESSAGE : undefined}
                     >
                       <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                         <Text className={classes.modelBadgeText}>
-                          {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
+                          {model.hiddenMetrics?.downloads ? (
+                            <HiddenMetricNotice size={18} withTooltip={false} />
+                          ) : (
+                            abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)
+                          )}
                         </Text>
                       </IconBadge>
                     </StatHoverCard>
@@ -875,7 +907,11 @@ export default function ModelDetailsV2({
                       >
                         <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
                           <Text className={classes.modelBadgeText}>
-                            {abbreviateNumber(model.rank?.generationCountAllTime ?? 0)}
+                            {model.hiddenMetrics?.generations ? (
+                              <HiddenMetricNotice size={18} />
+                            ) : (
+                              abbreviateNumber(model.rank?.generationCountAllTime ?? 0)
+                            )}
                           </Text>
                         </IconBadge>
                       </GenerateButton>
@@ -903,7 +939,11 @@ export default function ModelDetailsV2({
                       </StatHoverCard>
                     )}
                     {!model.poi && (
-                      <StatHoverCard label="Buzz Earned" value={buzzEarned}>
+                      <StatHoverCard
+                        label="Buzz Earned"
+                        value={buzzEarned}
+                        message={model.hiddenMetrics?.buzz ? HIDDEN_METRIC_MESSAGE : undefined}
+                      >
                         <div>
                           <InteractiveTipBuzzButton
                             toUserId={model.user.id}
@@ -919,7 +959,11 @@ export default function ModelDetailsV2({
                               }
                             >
                               <Text className={classes.modelBadgeText}>
-                                {abbreviateNumber(buzzEarned)}
+                                {model.hiddenMetrics?.buzz ? (
+                                  <HiddenMetricNotice size={18} withTooltip={false} />
+                                ) : (
+                                  abbreviateNumber(buzzEarned)
+                                )}
                               </Text>
                             </IconBadge>
                           </InteractiveTipBuzzButton>
@@ -1037,6 +1081,13 @@ export default function ModelDetailsV2({
                               onClick={() => handleToggleCannotPromote()}
                             >
                               {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
+                            </Menu.Item>
+                            <Menu.Item
+                              color="blue"
+                              leftSection={<IconRosetteDiscountCheck size={14} stroke={1.5} />}
+                              onClick={() => handleSetOfficial(!model.isOfficial)}
+                            >
+                              {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
                             </Menu.Item>
                             <Menu.Item
                               color="red.6"

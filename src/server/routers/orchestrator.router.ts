@@ -59,6 +59,7 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
   getPresetModelConfig,
@@ -155,11 +156,13 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
 
 const orchestratorProcedure = protectedProcedure
   .use(orchestratorMiddleware)
-  .use(enforceGenerationVersion);
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 const orchestratorGuardedProcedure = guardedProcedure
   .use(orchestratorMiddleware)
   .use(experimentalMiddleware)
-  .use(enforceGenerationVersion);
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
 // The iterative editor's default preset model. The model registry itself lives
@@ -477,8 +480,7 @@ export const orchestratorRouter = router({
             name: 'what-if-from-graph',
             type: 'info',
             payload: input,
-            error:
-              e instanceof TRPCError ? { code: e.code, name: e.name, message: e.message } : e,
+            error: e instanceof TRPCError ? { code: e.code, name: e.name, message: e.message } : e,
           }).catch();
         } else {
           logToAxiom({

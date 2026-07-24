@@ -42,7 +42,9 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     // its own extraction, otherwise its rendered panorama is silently dropped.
     if (step.$type === 'customComfy') {
       const blobs = (
-        step as unknown as { output?: { blobs?: Array<{ url?: string | null; available?: boolean }> } }
+        step as unknown as {
+          output?: { blobs?: Array<{ url?: string | null; available?: boolean }> };
+        }
       ).output?.blobs;
       for (const blob of blobs ?? []) {
         if (blob.available && typeof blob.url === 'string' && blob.url.length > 0) {
@@ -268,6 +270,7 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
       // its behaviour is byte-identical to before this select grew.
       availability: true,
       usageControl: true,
+      flags: true,
       meta: true,
       generationCoverage: { select: { covered: true } },
       model: { select: { id: true, type: true, userId: true } },
@@ -304,6 +307,7 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
       covered: version.generationCoverage?.covered ?? false,
       modelUserId: version.model.userId,
       modelType: version.model.type,
+      flags: version.flags,
       modelVersionAlias:
         (version.meta as { generationAlias?: unknown } | null)?.generationAlias ?? null,
     },
@@ -353,6 +357,7 @@ export async function resolvePageResourceContext(modelVersionId: number) {
       status: true,
       availability: true,
       usageControl: true,
+      flags: true,
       meta: true,
       generationCoverage: { select: { covered: true } },
       model: { select: { id: true, type: true, userId: true } },
@@ -375,6 +380,7 @@ export async function resolvePageResourceContext(modelVersionId: number) {
       covered: version.generationCoverage?.covered ?? false,
       modelUserId: version.model.userId,
       modelType: version.model.type,
+      flags: version.flags,
       modelVersionAlias:
         (version.meta as { generationAlias?: unknown } | null)?.generationAlias ?? null,
     },
@@ -441,7 +447,8 @@ export function resolveBlockImageWorkflowType(
 ): BlockImageWorkflowType {
   if (!body.sourceImage) return 'txt2img';
   if (ecosystemId != null && isWorkflowAvailable('img2img', ecosystemId)) return 'img2img';
-  if (ecosystemId != null && isWorkflowAvailable('img2img:edit', ecosystemId)) return 'img2img:edit';
+  if (ecosystemId != null && isWorkflowAvailable('img2img:edit', ecosystemId))
+    return 'img2img:edit';
   throw new TRPCError({
     code: 'BAD_REQUEST',
     message:
@@ -673,11 +680,14 @@ function formatStepTimeout(totalSeconds: number): string {
 
 /**
  * Wrap a recipe's customComfy step input into the `$type:'customComfy'` step,
- * STAMPING the recipe's aggressive `stepTimeoutSeconds` as the step `timeout`
+ * STAMPING the resolved per-engine `stepTimeoutSeconds` as the step `timeout`
  * (formatted `HH:MM:SS`). That timeout is the ONLY deterministic per-job Buzz
  * bound the orchestrator offers: at `job.ExpireAt` the job is canceled and
  * billed for measured runtime, so worst-case Buzz = `ceil(timeout_s × 1)` =
- * `recipe.maxBuzz` (plan §5). This is what makes the post-paid path bounded.
+ * the engine's `maxBuzz` (plan §5). This is what makes the post-paid path
+ * bounded. v1.1: the timeout is PER ENGINE, so the caller resolves it from the
+ * params (`recipe.budgetFor(params).stepTimeoutSeconds`) and threads it in — the
+ * `maxBuzz` reserved against the caps and this timeout MUST move together.
  *
  * Sibling of `createBlockTextToImageStep` (blocks.router.ts) — but a customComfy
  * step is built by DIRECT object construction (the recipe's graph), NOT through
@@ -685,13 +695,13 @@ function formatStepTimeout(totalSeconds: number): string {
  * `createWorkflowStepsFromGraphInput` machinery.
  */
 export function createBlockCustomComfyStep(
-  recipe: AnyBlockRecipe,
-  input: CustomComfyStepInput
+  input: CustomComfyStepInput,
+  stepTimeoutSeconds: number
 ): CustomComfyStepTemplate {
   return {
     $type: 'customComfy',
     name: BLOCK_CUSTOM_COMFY_STEP_NAME,
-    timeout: formatStepTimeout(recipe.stepTimeoutSeconds),
+    timeout: formatStepTimeout(stepTimeoutSeconds),
     input,
   };
 }

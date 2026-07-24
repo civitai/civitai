@@ -1,0 +1,9 @@
+{
+  "name": "postgres-query-skill",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "PostgreSQL query skill for Claude Code",
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}

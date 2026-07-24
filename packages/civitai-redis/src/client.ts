@@ -1944,6 +1944,9 @@ export const REDIS_SYS_KEYS = {
   },
   WEBHOOKS: {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
+    // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
+    // callbacks so the terminal workflow event can classify the failure. Short TTL.
+    IMAGE_SCAN_JOB_REASON: 'webhooks:image-scan:job-reason',
   },
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
@@ -2001,6 +2004,7 @@ export const REDIS_KEYS = {
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
+    ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
@@ -2023,6 +2027,7 @@ export const REDIS_KEYS = {
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
     FEATURED_MODELS: 'packed:featured-models-2',
+    OFFICIAL_MODELS: 'packed:caches:official-models',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
@@ -2081,6 +2086,28 @@ export const REDIS_KEYS = {
     // only (bid submission re-validates the true minimum server-side). See
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
+    // url -> {id, url, hideMeta} lookup backing the internal image-delivery endpoint
+    // (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
+    // `Image WHERE url = $1` single-row read is the highest-volume DB query in the
+    // profile. Keyed by the EXACT url (case/whitespace-sensitive — the WHERE key is not
+    // normalized), positive results only (an unknown url stays uncached so a newly
+    // registered image resolves immediately), busted when `hideMeta` flips in
+    // updatePostImage. See `getCachedImageDeliveryMetadata` in image-delivery.service.
+    IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata',
+    // Per-user `id -> isValidCreatorMember(boolean)` for the read-time metric-privacy /
+    // donation-goal hide gate (#3266). Near-static per user; both TRUE and FALSE are
+    // cached (the resolver is a total function over the id). Busted on any subscription
+    // change via `invalidateSubscriptionCaches`; TTL backstops the non-webhook paths.
+    // See `getValidCreatorMembershipMap` in creator-membership.service.
+    CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
+    // Per-user `id -> { hideModelBuzz, hideModelDownloads, hideModelGenerations }` — the
+    // three model-metric-privacy DEFAULT flags read off `User.settings` at read time
+    // (#3266). A tiny derived slice so the hot model-read paths (feed / v1 list /
+    // associated) never fetch + synchronously deserialize the FULL `settings` blob per
+    // owner per request just to read three booleans. Busted on any settings write via
+    // `setUserSetting`; `CacheTTL.md` backstops any other writer. See
+    // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
+    USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

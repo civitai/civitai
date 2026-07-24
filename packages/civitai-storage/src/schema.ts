@@ -10,8 +10,17 @@ import * as z from 'zod';
 //   - b2       → S3_UPLOAD_B2_*     (Backblaze model-files bucket)
 //   - b2Image  → S3_IMAGE_B2_*      (Backblaze media-uploads / image bucket)
 //   - csam     → CSAM_UPLOAD_*      (CSAM evidence bucket)
+//
+// `storageBackend` is the FULL wire union the service validates POST bodies against — it must include
+// `csam` because the dedicated CSAM client legitimately targets it. Everyday callers never touch it:
+// the primary `createStorageClient` narrows its inputs to `publicStorageBackend`, and CSAM goes through
+// the separate `createCsamStorageClient` (which pins `backend: 'csam'` internally). See client.ts.
 export const storageBackend = z.enum(['default', 'b2', 'b2Image', 'csam']);
 export type StorageBackend = z.infer<typeof storageBackend>;
+
+// The backends the primary client exposes — everything EXCEPT the locked-down CSAM evidence bucket.
+export const publicStorageBackend = z.enum(['default', 'b2', 'b2Image']);
+export type PublicStorageBackend = z.infer<typeof publicStorageBackend>;
 
 // `bucket` is an optional override; when omitted the service uses the backend's configured bucket.
 const target = z.object({

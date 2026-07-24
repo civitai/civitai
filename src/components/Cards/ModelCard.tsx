@@ -29,7 +29,9 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { AnimatedCount, Metrics } from '~/components/Metrics';
+import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
+import type { HiddenModelMetrics } from '~/server/utils/model-metric-privacy';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
@@ -96,7 +98,10 @@ function ModelCardContent({ data }: Props) {
   );
 
   const { useModelVersionRedirect, activeBaseModels } = useModelCardContext();
-  const cardBaseModels = getCardBaseModels(data as Parameters<typeof getCardBaseModels>[0], activeBaseModels);
+  const cardBaseModels = getCardBaseModels(
+    data as Parameters<typeof getCardBaseModels>[0],
+    activeBaseModels
+  );
   // In search, data.version is the primary version; data.versions[] carries all of
   // them, so link to the version that matched the active base-model filter. The feed
   // has no versions[] (data.version is already the matched one), so it falls back.
@@ -221,6 +226,7 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
   const { isEngaged } = useEngagedModelMembership(data.id);
   const hasReview = isEngaged('Recommended');
   const isPOI = data.poi;
+  const hiddenMetrics = (data as { hiddenMetrics?: HiddenModelMetrics }).hiddenMetrics;
 
   const baseMetrics = useMemo(
     () => ({
@@ -235,12 +241,7 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
   );
 
   return (
-    <Metrics
-      entityType="Model"
-      entityId={data.id}
-      initial={baseMetrics}
-      useLive={inView !== false}
-    >
+    <Metrics entityType="Model" entityId={data.id} initial={baseMetrics} useLive={inView !== false}>
       {(m) => {
         const totalCount = m.thumbsUpCount + m.thumbsDownCount;
         const positiveRating = totalCount > 0 ? m.thumbsUpCount / totalCount : 0;
@@ -256,7 +257,11 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
                 <div className="flex items-center gap-0.5">
                   <IconDownload size={14} strokeWidth={2.5} />
                   <Text size="xs" lh={1} fw="bold">
-                    <AnimatedCount value={m.downloadCount} />
+                    {hiddenMetrics?.downloads ? (
+                      <HiddenMetricNotice size={12} />
+                    ) : (
+                      <AnimatedCount value={m.downloadCount} />
+                    )}
                   </Text>
                 </div>
                 <div className="flex items-center gap-0.5">
@@ -280,7 +285,11 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
                     <div className="flex items-center gap-0.5">
                       <IconBolt size={14} strokeWidth={2.5} />
                       <Text size="xs" lh={1} fw="bold">
-                        <AnimatedCount value={m.tippedAmountCount + tippedAmount} />
+                        {hiddenMetrics?.buzz ? (
+                          <HiddenMetricNotice size={12} />
+                        ) : (
+                          <AnimatedCount value={m.tippedAmountCount + tippedAmount} />
+                        )}
                       </Text>
                     </div>
                   </InteractiveTipBuzzButton>

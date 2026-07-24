@@ -23,8 +23,7 @@ const {
 }));
 
 vi.mock('~/server/db/client', () => ({
-  // `getAllAuctionsUncached` reads the PRIMARY DB (`dbWrite`) — that's the load this
-  // cache removes, so the win is asserted by counting calls to THIS mock.
+  // Call count on this mock is the cache-hit assertion.
   dbWrite: { auction: { findMany: auctionFindMany } },
   dbRead: {},
 }));
@@ -56,10 +55,7 @@ vi.mock('~/server/redis/client', async (importOriginal) => {
   };
 });
 
-import {
-  getAllAuctions,
-  getAllAuctionsUncached,
-} from '~/server/services/auction.service';
+import { getAllAuctions, getAllAuctionsUncached } from '~/server/services/auction.service';
 import { REDIS_KEYS } from '~/server/redis/client';
 
 const KEY = REDIS_KEYS.CACHES.ACTIVE_AUCTIONS; // 'packed:caches:active-auctions'

@@ -773,10 +773,13 @@ export function withBlockScope(
     // `app_block_id` cardinality: a normal (approved/pre-approval) token carries
     // a real FK appBlockId bounded to the approved-app set. A DEV token
     // (`claims.dev === true`, the same discriminator the max-age cap + audit path
-    // use) carries a CALLER-CONSTRUCTED, synthetic, non-resolving appBlockId (see
-    // dev-scoped-mint.service) — an unbounded label vector even though minting is
-    // mod/dev-cohort gated. Bucket ALL dev tokens to the single stable label
-    // 'dev' so that vector is closed while real per-app attribution is preserved.
+    // use) carries EITHER a CALLER-CONSTRUCTED, synthetic, non-resolving appBlockId
+    // (see dev-scoped-mint.service) OR — since #3285 — a real `apb_` id for an owner
+    // dev-tunnelling their OWN suspended/pending/deprecated app; the synthetic case
+    // makes this an unbounded label vector even though minting is mod/dev-cohort
+    // gated. Bucket ALL dev tokens (real-id or synthetic) to the single stable
+    // label 'dev' so that vector is closed while real per-app attribution is
+    // preserved for non-dev tokens.
     const appBlockIdLabel = claims.dev === true ? 'dev' : claims.appBlockId;
     const metricStart = process.hrtime.bigint();
     let metricRecorded = false;
@@ -930,8 +933,11 @@ export function withBlockScope(
               statusCode: res.statusCode,
               ...(actionDetail ? { detail: actionDetail } : {}),
               // Phase 2: a dev token MAY carry a synthetic non-FK appBlockId (a
-              // pre-approval dev-tunnel app) — let the audit write persist it via
-              // the nullable-appBlockId path instead of FK-failing + swallowing.
+              // pre-approval dev-tunnel app) OR — since #3285 — a real `apb_` id
+              // (an owner dev-tunnelling their own suspended/pending/deprecated
+              // app). Passing `dev` lets the audit write persist a synthetic id via
+              // the nullable-appBlockId path instead of FK-failing + swallowing; a
+              // real id persists normally.
               dev: claims.dev === true,
             })
           )

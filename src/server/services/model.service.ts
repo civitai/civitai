@@ -65,6 +65,7 @@ import type {
   PublishModelSchema,
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
+  SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   TransferModelOwnershipInput,
@@ -93,7 +94,6 @@ import {
   saveItemInCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
@@ -116,6 +116,19 @@ import {
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import {
+  anyMetricHidden,
+  gateHiddenMetrics,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveModelHiddenMetrics,
+  resolveVersionHiddenMetrics,
+  type HiddenModelMetrics,
+} from '~/server/utils/model-metric-privacy';
+import {
+  getValidCreatorMembershipMap,
+  getUserMetricPrivacyDefaultsMap,
+} from '~/server/services/creator-program.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
@@ -163,6 +176,7 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { isDev } from '~/env/other';
 import { userUpdateCounter } from '~/server/prom/client';
 import { pgDbRead } from '~/server/db/pgDb';
@@ -189,6 +203,7 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
 type ModelRaw = {
   id: number;
   name: string;
+  meta?: ModelMeta | null;
   description?: string | null;
   type: ModelType;
   poi?: boolean;
@@ -234,6 +249,7 @@ type ModelRaw = {
     publishedAt: Date | null;
     status: ModelStatus;
     covered: boolean;
+    flags: number;
   }[];
   userId: number;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
@@ -252,6 +268,7 @@ export const getModelsRaw = async ({
   input,
   include,
   user: sessionUser,
+  ignoreBrowsingAddons,
   _forceBaseModelMetrics,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
@@ -260,14 +277,25 @@ export const getModelsRaw = async ({
   };
   include?: Array<'details' | 'cosmetics'>;
   user?: { id: number; isModerator?: boolean; username?: string };
+  /**
+   * Drop the addon-derived discovery exclusions — for by-id lookups, whose
+   * `browsingLevel` is a permission ceiling rather than viewer intent.
+   * Deliberately a sibling of `input` (not a field on it) so it can never arrive
+   * from parsed query params.
+   */
+  ignoreBrowsingAddons?: boolean;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
-  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
-    id: sessionUser?.id,
-    username: sessionUser?.username,
-    isModerator: sessionUser?.isModerator,
-  });
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
+    input,
+    {
+      id: sessionUser?.id,
+      username: sessionUser?.username,
+      isModerator: sessionUser?.isModerator,
+    },
+    { ignoreBrowsingAddons }
+  );
   if (blockedEnforcement.emptyResult) return { items: [], isPrivate: false };
 
   const {
@@ -842,6 +870,7 @@ export const getModelsRaw = async ({
       mm."lastVersionAt",
       m."publishedAt",
       m."locked",
+      m."meta",
       m."earlyAccessDeadline",
       ${pSql}."mode",
       ${pSql}."availability",
@@ -951,7 +980,7 @@ export const getModelsRaw = async ({
   return {
     items: withSpan('model:getAll:transform', () =>
       models
-        .map(({ rank, cursorId, ...model }) => {
+        .map(({ rank, cursorId, meta, ...model }) => {
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
@@ -1033,6 +1062,7 @@ export const getModelsRaw = async ({
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
+            metricPrivacy: getMetaMetricPrivacy(meta),
           };
         })
         .filter(isDefined)
@@ -1318,11 +1348,18 @@ export const getModelsWithImagesAndModelVersions = async ({
   // When true (flag-ON browse feed only) pick the nsfw-biased coverage slice instead
   // of the naive first-`imagesPerModel`, so reducing the count adds ~zero feed drops.
   biasImageSlice = false,
+  // Read-time Creator-Controls metric-privacy gate (#3266 A/B). DEFAULTS TRUE so
+  // callers that don't thread it (home blocks, collections) keep today's behavior;
+  // the browse-feed controller passes the once-per-request `modelMetricPrivacyReadtime`
+  // flag. When false, the per-request owner-settings + membership work below is
+  // skipped and raw metrics are emitted (pre-#3266 visibility).
+  metricPrivacyEnabled = true,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
   imagesPerModel?: number;
   biasImageSlice?: boolean;
+  metricPrivacyEnabled?: boolean;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1381,12 +1418,44 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
-  const unavailableGenResources = await getUnavailableResources();
+  // Creator Controls metric privacy for the card feed. Fetch owner defaults once,
+  // then only resolve CP membership for owners who actually have a hide flag set
+  // (keeps the common no-flags case free of membership lookups).
+  // Flag-gated (#3266 A/B): when `metricPrivacyEnabled` is false the whole batched
+  // owner-settings + `getValidCreatorMembershipMap` block is skipped and raw metrics
+  // are emitted (pre-#3266 visibility).
+  const isMod = !!user?.isModerator;
+  // Cache-backed per-owner metric-privacy DEFAULT flags (the three `hideModel*`
+  // booleans). Replaces a per-request `dbRead.user.findMany({ settings })` that
+  // deserialized every owner's full `settings` blob just to read three booleans — the
+  // measured api-primary read-time longtask (#3266). Values are the tiny derived slice,
+  // fed unchanged into the resolvers below (byte-identical).
+  let feedOwnerSettingsMap = new Map<number, unknown>();
+  let feedMembershipMap = new Map<number, boolean>();
+  if (metricPrivacyEnabled) {
+    const feedOwnerIds = [...new Set(items.map((m) => m.user.id))];
+    feedOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(feedOwnerIds);
+    const membershipCandidates = new Set<number>();
+    for (const it of items) {
+      const ownerId = it.user.id;
+      if (isMod || ownerId === user?.id) continue;
+      const defHidden = getUserMetricPrivacyDefaults(feedOwnerSettingsMap.get(ownerId));
+      if (anyMetricHidden(it.metricPrivacy) || anyMetricHidden(defHidden))
+        membershipCandidates.add(ownerId);
+    }
+    feedMembershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
+  }
+  const toMetaShape = (h: HiddenModelMetrics) => ({
+    hideBuzz: h.buzz,
+    hideDownloads: h.downloads,
+    hideGenerations: h.generations,
+  });
+
   const result = {
     nextCursor,
     isPrivate,
     items: items
-      .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
+      .map(({ hashes, modelVersions, rank, tagsOnModels, metricPrivacy, ...model }) => {
         const [version] = modelVersions;
         if (!version) {
           return null;
@@ -1405,20 +1474,35 @@ export const getModelsWithImagesAndModelVersions = async ({
 
         const canGenerate =
           !!version?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1 &&
+          !isGenerationDisabled(version.flags) &&
           isBaseModelGenerationSupported(version.baseModel, model.type);
+
+        const isOwner = isMod || model.user.id === user?.id;
+        const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
+          resolveModelHiddenMetrics({
+            modelMeta: toMetaShape(metricPrivacy),
+            userSettings: feedOwnerSettingsMap.get(model.user.id),
+            isOwnerOrModerator: isOwner,
+            hasValidMembership: feedMembershipMap.get(model.user.id) ?? false,
+          })
+        );
 
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
           hashes: hashes.map((hash) => hash.toLowerCase()),
+          hiddenMetrics: modelHidden,
           rank: {
-            downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
+            downloadCount: modelHidden.downloads
+              ? null
+              : rank?.[`downloadCount${input.period}`] ?? 0,
             thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
             thumbsDownCount: rank?.[`thumbsDownCount${input.period}`] ?? 0,
             commentCount: rank?.[`commentCount${input.period}`] ?? 0,
             collectedCount: rank?.[`collectedCount${input.period}`] ?? 0,
-            tippedAmountCount: rank?.[`tippedAmountCount${input.period}`] ?? 0,
+            tippedAmountCount: modelHidden.buzz
+              ? null
+              : rank?.[`tippedAmountCount${input.period}`] ?? 0,
           },
           version,
           // // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
@@ -1442,6 +1526,25 @@ export const getModelsWithImagesAndModelVersions = async ({
   return result;
 };
 
+/**
+ * Re-queue a user's published models for search reindex. Creator Controls metric
+ * privacy is baked into the search doc (effective = flag AND active membership), so
+ * a `hideModel*` user-setting flip or a membership lapse must re-run the transform,
+ * otherwise the search cards stay stale (over-hidden after a lapse; user-default
+ * flips invisible until an incidental reindex).
+ */
+export async function queueModelMetricPrivacyReindex(userId: number) {
+  if (!userId) return;
+  const models = await dbRead.model.findMany({
+    where: { userId, status: ModelStatus.Published },
+    select: { id: true },
+  });
+  if (!models.length) return;
+  await modelsSearchIndex.queueUpdate(
+    models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+}
+
 export const getModelVersionsMicro = async ({
   id,
   excludeUnpublished: excludeDrafts,
@@ -1457,14 +1560,15 @@ export const getModelVersionsMicro = async ({
       name: true,
       index: true,
       earlyAccessEndsAt: true,
+      earlyAccessPermanent: true,
       createdAt: true,
       publishedAt: true,
     },
   });
 
-  return versions.map(({ earlyAccessEndsAt, ...v }) => ({
+  return versions.map(({ earlyAccessEndsAt, earlyAccessPermanent, ...v }) => ({
     ...v,
-    isEarlyAccess: earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt),
+    isEarlyAccess: earlyAccessPermanent || (!!earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt)),
   }));
 };
 
@@ -3174,6 +3278,7 @@ export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpoi
 export async function getModelsWithVersions({
   input,
   user,
+  ignoreBrowsingAddons,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -3182,11 +3287,14 @@ export async function getModelsWithVersions({
     username?: string;
     filePreferences?: UserFilePreferences;
   };
+  /** See `getModelsRaw` — by-id lookups opt out of the addon discovery gates. */
+  ignoreBrowsingAddons?: boolean;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
     user,
     include: ['details'],
+    ignoreBrowsingAddons,
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
@@ -3234,21 +3342,49 @@ export async function getModelsWithVersions({
     where: { modelVersionId: { in: modelVersionIds } },
   });
 
-  function getStatsForModel(modelId: number) {
+  // Creator Controls metric privacy for the v1 public API. Only download + tipped
+  // are exposed today (no generation count in v1 stats), so we gate what exists.
+  const isMod = !!user?.isModerator;
+  const viewerId = user?.id;
+  const apiOwnerIds = [...new Set(items.map((m) => m.user.id))];
+  // Cache-backed per-owner metric-privacy DEFAULT flags — see the feed path above;
+  // avoids deserializing every owner's full `settings` blob per request.
+  const apiOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(apiOwnerIds);
+  const apiMembershipCandidates = new Set<number>();
+  for (const it of items) {
+    const ownerId = it.user.id;
+    if (isMod || ownerId === user?.id) continue;
+    const defHidden = getUserMetricPrivacyDefaults(apiOwnerSettingsMap.get(ownerId));
+    if (anyMetricHidden(it.metricPrivacy) || anyMetricHidden(defHidden))
+      apiMembershipCandidates.add(ownerId);
+  }
+  const apiMembershipMap = await getValidCreatorMembershipMap([...apiMembershipCandidates]);
+
+  // Version-level meta isn't carried by dataForModelsCache, so fetch it to honor the
+  // version-OR-model-OR-user precedence for v1 version stats (a version-only hide).
+  const versionMetaRows = modelVersionIds.length
+    ? await dbRead.modelVersion.findMany({
+        where: { id: { in: modelVersionIds } },
+        select: { id: true, meta: true },
+      })
+    : [];
+  const versionMetaMap = new Map<number, unknown>(versionMetaRows.map((v) => [v.id, v.meta]));
+
+  function getStatsForModel(modelId: number, hidden: HiddenModelMetrics) {
     const stats = metrics.find((x) => x.modelId === modelId);
     return {
-      downloadCount: stats?.downloadCount ?? 0,
+      downloadCount: hidden.downloads ? null : stats?.downloadCount ?? 0,
       thumbsUpCount: stats?.thumbsUpCount ?? 0,
       thumbsDownCount: stats?.thumbsDownCount ?? 0,
       commentCount: stats?.commentCount ?? 0,
-      tippedAmountCount: stats?.tippedAmountCount ?? 0,
+      tippedAmountCount: hidden.buzz ? null : stats?.tippedAmountCount ?? 0,
     };
   }
 
-  function getStatsForVersion(versionId: number) {
+  function getStatsForVersion(versionId: number, hidden: HiddenModelMetrics) {
     const stats = versionMetrics.find((x) => x.modelVersionId === versionId);
     return {
-      downloadCount: stats?.downloadCount ?? 0,
+      downloadCount: hidden.downloads ? null : stats?.downloadCount ?? 0,
       thumbsUpCount: stats?.thumbsUpCount ?? 0,
       thumbsDownCount: stats?.thumbsDownCount ?? 0,
     };
@@ -3267,71 +3403,98 @@ export async function getModelsWithVersions({
         createdAt,
         lastVersionAt,
         user,
+        metricPrivacy,
         ...model
-      }) => ({
-        ...model,
-        user: user.username === 'civitai' ? undefined : user,
-        supportsGeneration: modelVersions.some((x) => x.covered),
-        modelVersions: modelVersions.map(({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
-          const stats = getStatsForVersion(version.id);
-          const vaeVersionId = vaeMap.get(version.id);
-          const vaeFile = vaeVersionId
-            ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)
-            : [];
-          const files = groupedFiles[version.id]?.files ?? [];
-          files.push(...vaeFile);
+      }) => {
+        const isOwner = isMod || user.id === viewerId;
+        const modelHidden = resolveModelHiddenMetrics({
+          modelMeta: {
+            hideBuzz: metricPrivacy.buzz,
+            hideDownloads: metricPrivacy.downloads,
+            hideGenerations: metricPrivacy.generations,
+          },
+          userSettings: apiOwnerSettingsMap.get(user.id),
+          isOwnerOrModerator: isOwner,
+          hasValidMembership: apiMembershipMap.get(user.id) ?? false,
+        });
+        return {
+          ...model,
+          user: user.username === 'civitai' ? undefined : user,
+          supportsGeneration: modelVersions.some((x) => x.covered),
+          modelVersions: modelVersions.map(
+            ({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
+              const versionHidden = resolveVersionHiddenMetrics({
+                versionMeta: versionMetaMap.get(version.id),
+                modelMeta: {
+                  hideBuzz: metricPrivacy.buzz,
+                  hideDownloads: metricPrivacy.downloads,
+                  hideGenerations: metricPrivacy.generations,
+                },
+                userSettings: apiOwnerSettingsMap.get(user.id),
+                isOwnerOrModerator: isOwner,
+                hasValidMembership: apiMembershipMap.get(user.id) ?? false,
+              });
+              const stats = getStatsForVersion(version.id, versionHidden);
+              const vaeVersionId = vaeMap.get(version.id);
+              const vaeFile = vaeVersionId
+                ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)
+                : [];
+              const files = groupedFiles[version.id]?.files ?? [];
+              files.push(...vaeFile);
 
-          let earlyAccessDeadline = getEarlyAccessDeadline({
-            versionCreatedAt: version.createdAt,
-            publishedAt: version.publishedAt,
-            earlyAccessTimeframe: earlyAccessTimeFrame,
-          });
-          if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
-            earlyAccessDeadline = undefined;
-
-          return {
-            ...version,
-            files: files.map(({ metadata: metadataRaw, modelVersionId, ...file }) => {
-              const metadata = metadataRaw as FileMetadata | undefined;
+              let earlyAccessDeadline = getEarlyAccessDeadline({
+                versionCreatedAt: version.createdAt,
+                publishedAt: version.publishedAt,
+                earlyAccessTimeframe: earlyAccessTimeFrame,
+              });
+              if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
+                earlyAccessDeadline = undefined;
 
               return {
-                ...file,
-                metadata: {
-                  format: metadata?.format,
-                  size: metadata?.size,
-                  fp: metadata?.fp,
-                  quantType: metadata?.quantType,
-                  isRequired: metadata?.isRequired,
-                },
+                ...version,
+                files: files.map(({ metadata: metadataRaw, modelVersionId, ...file }) => {
+                  const metadata = metadataRaw as FileMetadata | undefined;
+
+                  return {
+                    ...file,
+                    metadata: {
+                      format: metadata?.format,
+                      size: metadata?.size,
+                      fp: metadata?.fp,
+                      quantType: metadata?.quantType,
+                      isRequired: metadata?.isRequired,
+                    },
+                  };
+                }),
+                earlyAccessDeadline,
+                stats,
+                // images: images
+                //   .filter((image) => image.modelVersionId === version.id)
+                //   .map(
+                //     ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
+                //       ...image,
+                //     })
+                //   ),
+                images: (images[version.id]?.images ?? []).map(
+                  ({
+                    modelVersionId,
+                    name,
+                    userId,
+                    sizeKB,
+                    availability,
+                    metadata,
+                    tags,
+                    ...image
+                  }) => ({
+                    ...image,
+                  })
+                ),
               };
-            }),
-            earlyAccessDeadline,
-            stats,
-            // images: images
-            //   .filter((image) => image.modelVersionId === version.id)
-            //   .map(
-            //     ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
-            //       ...image,
-            //     })
-            //   ),
-            images: (images[version.id]?.images ?? []).map(
-              ({
-                modelVersionId,
-                name,
-                userId,
-                sizeKB,
-                availability,
-                metadata,
-                tags,
-                ...image
-              }) => ({
-                ...image,
-              })
-            ),
-          };
-        }),
-        stats: getStatsForModel(model.id),
-      })
+            }
+          ),
+          stats: getStatsForModel(model.id, modelHidden),
+        };
+      }
     ),
     nextCursor,
   };
@@ -4156,6 +4319,30 @@ export const toggleCannotPublish = async ({
     id: updated.id,
     meta: updated.meta as ModelMeta | null,
   };
+};
+
+export const setModelOfficial = async ({
+  id,
+  isOfficial,
+  isModerator,
+}: SetModelOfficialInput & {
+  isModerator: boolean;
+}) => {
+  if (!isModerator) throw throwAuthorizationError();
+
+  const model = await getModel({ id, select: { id: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+  const updated = await dbWrite.model.update({
+    where: { id },
+    data: { isOfficial },
+    select: { id: true, isOfficial: true },
+  });
+
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.OFFICIAL_MODELS);
+
+  return updated;
 };
 
 export async function getTopWeeklyEarners(fresh = false) {

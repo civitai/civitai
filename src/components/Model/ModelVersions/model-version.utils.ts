@@ -63,9 +63,10 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
   }
 
   const [access] = entities ?? [];
-  const isEarlyAccess =
-    modelVersion?.earlyAccessEndsAt && modelVersion?.earlyAccessEndsAt > new Date();
   const earlyAccessConfig = modelVersion?.earlyAccessConfig as ModelVersionEarlyAccessConfig;
+  const isEarlyAccess =
+    !!(modelVersion?.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt > new Date()) ||
+    !!earlyAccessConfig?.permanent;
   const isOwnerOrMod =
     modelVersion?.model?.user?.id === currentUser?.id || currentUser?.isModerator;
   const isDownloadable =

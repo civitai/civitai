@@ -4,10 +4,13 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
+import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
+import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
@@ -17,6 +20,12 @@ type IngestImageRow = IngestImageInput & {
   scanRequestedAt: Date | null;
   ingestion: string;
   retryCount: number | null;
+  /**
+   * Reason-derived failure class stamped by the scan webhook
+   * (`scanJobs.error.failureClass`), used to pick the Error retry ceiling.
+   * Null for images that have never errored or errored before classification shipped.
+   */
+  failureClass: string | null;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -29,18 +38,34 @@ type IngestImageRow = IngestImageInput & {
 export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () => {
   const now = new Date();
 
+  // Bound how many queued images we pull (and therefore can submit) per run. The
+  // media-rating scanner sustains only a limited throughput; pulling the whole
+  // queue at once (previously a hardcoded 10,000) can dump ~5x what the scanner
+  // can absorb, so bulk rating jobs expire before they run, workflows fail, and
+  // images flip to Error — which the cron then re-queues, amplifying the flood
+  // into a congestion collapse. Since every downstream step (filtering, the
+  // submission fan-out, and the JobQueue cleanup) is derived only from the rows
+  // pulled here, capping this pull caps per-run submissions AND leaves the rows
+  // we did NOT pull this run untouched in the queue. Oldest-first (createdAt asc)
+  // keeps draining fair, so a backlog drains gradually across runs. New user
+  // uploads scan directly via ingestImage on creation and are unaffected by this
+  // cap — this cron is only the retry/backfill path.
+  const maxPerRun = env.IMAGE_SCANNING_MAX_PER_RUN;
+
   // Pull from JobQueue instead of scanning Image table with partial indexes
   const jobQueue = await dbRead.jobQueue.findMany({
     where: { type: JobQueueType.ImageScan, entityType: EntityType.Image },
-    take: 10000,
+    take: maxPerRun,
     orderBy: { createdAt: 'asc' },
   });
 
   if (!jobQueue.length) {
+    imageIngestCronQueueDepth.set(0);
     console.log('No images in queue');
     return { processed: 0 };
   }
 
+  imageIngestCronQueueDepth.set(jobQueue.length);
   const imageIds = jobQueue.map((j) => j.entityId);
   console.log(`Found ${imageIds.length} images in queue`);
 
@@ -55,6 +80,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
            i."scanRequestedAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
+           i."scanJobs"->'error'->>'failureClass' as "failureClass",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -93,12 +119,17 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
       Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
   );
 
+  // Error retries use a reason-aware ceiling: transient infra churn (Siglip
+  // container instability, 5xx, timeouts, expiry) keeps retrying under a higher
+  // bounded cap; permanent (unscannable media) gives up almost immediately;
+  // unknown keeps the historical 9-cap. retryCount always increments, so the cap
+  // is a hard backstop against re-flooding the scanner.
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&
       img.scanRequestedAt &&
       new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
-      Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT
+      Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass)
   );
 
   // Categorize images for proper queue cleanup:
@@ -129,11 +160,13 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
           const underRetryLimit = Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT;
           return waitingForDelay && underRetryLimit;
         }
-        // Error but waiting for retry delay or under retry limit
+        // Error but waiting for retry delay or under retry limit. Mirror the
+        // reason-aware ceiling used by errorImages above.
         if (img.ingestion === 'Error') {
           const waitingForDelay =
             img.scanRequestedAt && new Date(img.scanRequestedAt).getTime() > errorRetryDate;
-          const underRetryLimit = Number(img.retryCount ?? 0) < IMAGE_SCANNING_RETRY_LIMIT;
+          const underRetryLimit =
+            Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass);
           return waitingForDelay && underRetryLimit;
         }
         return false;
@@ -187,6 +220,56 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 
   const totalSent =
     sentUserPendingIds.length + sentBackfillIds.length + sentRescanIds.length + sentErrorIds.length;
+
+  imageIngestCronCounter.inc({ bucket: 'sentUserPending' }, sentUserPendingIds.length);
+  imageIngestCronCounter.inc({ bucket: 'sentBackfill' }, sentBackfillIds.length);
+  imageIngestCronCounter.inc({ bucket: 'sentRescan' }, sentRescanIds.length);
+  imageIngestCronCounter.inc({ bucket: 'sentError' }, sentErrorIds.length);
+  imageIngestCronCounter.inc({ bucket: 'waitingForRetry' }, waitingForRetryIds.size);
+  imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
+
+  // Failed sends = attempted minus successfully-dispatched, across every lane.
+  // sendImagesForScanBulk returns only the ids it managed to send, so the
+  // difference is the count that exhausted their in-batch retries.
+  const failedSends =
+    pendingUserUploads.length -
+    sentUserPendingIds.length +
+    (pendingBackfill.length - sentBackfillIds.length) +
+    (rescanImages.length - sentRescanIds.length) +
+    (errorImages.length - sentErrorIds.length);
+
+  logToAxiom(
+    {
+      name: 'image-ingestion',
+      type: 'job-summary',
+      sent: totalSent,
+      sentUserPending: sentUserPendingIds.length,
+      sentBackfill: sentBackfillIds.length,
+      sentRescan: sentRescanIds.length,
+      sentError: sentErrorIds.length,
+      pending: pendingImages.length,
+      rescan: rescanImages.length,
+      error: errorImages.length,
+      waitingForRetry: waitingForRetryIds.size,
+      staleRemoved: staleIds.length,
+      failedSends,
+    },
+    'webhooks'
+  ).catch(() => null);
+
+  if (failedSends > 0) {
+    logToAxiom(
+      {
+        name: 'image-ingestion',
+        type: 'error',
+        message: 'image scan sends failed',
+        failureType: 'send-fail',
+        failedSends,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+
   return {
     sent: totalSent,
     sentUserPending: sentUserPendingIds.length,
@@ -195,6 +278,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     sentError: sentErrorIds.length,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
+    failedSends,
   };
 });
 

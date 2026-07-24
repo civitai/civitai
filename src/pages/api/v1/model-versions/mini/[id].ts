@@ -131,7 +131,7 @@ export default MixedAuthEndpoint(async function handler(
       u."flags" AS "userFlags",
       (
         (
-            mv."earlyAccessEndsAt" > NOW()
+            (mv."earlyAccessEndsAt" > NOW() OR mv."earlyAccessPermanent")
             AND mv."availability" = 'EarlyAccess'
             AND (mv."earlyAccessConfig"->>'freeGeneration' IS NULL OR mv."earlyAccessConfig"->>'freeGeneration' != 'true')
         )
@@ -254,6 +254,7 @@ export default MixedAuthEndpoint(async function handler(
         covered: modelVersion.covered ?? false,
         modelUserId: modelVersion.modelUserId,
         modelType: modelVersion.type,
+        flags: modelVersion.versionFlags,
         modelVersionAlias: modelVersion.generationAlias,
       },
     ],

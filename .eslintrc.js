@@ -1,5 +1,10 @@
 // The custom `no-io-in-transaction` rule lives in ./eslint-local-rules.js and
 // is loaded via the `eslint-plugin-local-rules` devDependency.
+//
+// Keep `eslint-config-next` on 15.x until we migrate to ESLint 9 + flat config.
+// eslint-config-next 16 is flat-config-only (peer `eslint >=9`); extending it
+// from eslintrc makes @eslint/eslintrc reject it and then crash formatting the
+// error ("Converting circular structure to JSON"), so lint silently never runs.
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',

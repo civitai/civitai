@@ -1386,6 +1386,10 @@ export async function withdrawRequest(opts: {
     // the outcome. Gated on a preview actually having been started so the common
     // no-preview withdraw does zero extra k8s work.
     if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
+    // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY:
+    // an agent can run without a sandbox preview, so this must not be gated on
+    // hadReviewPreview. Idempotent no-op when no agent was dispatched.
+    void teardownAgentReviewForRequest(publishRequestId);
     return;
   }
   if (count === 0) {
@@ -1402,6 +1406,8 @@ export async function withdrawRequest(opts: {
       // fire the review teardown (idempotent) in case THIS call observed a
       // preview but a concurrent withdraw committed first without tearing it down.
       if (hadReviewPreview) void teardownReviewForRequest(publishRequestId);
+      // AGENTIC REVIEW (P1, audit #1) — unconditional agent teardown (idempotent).
+      void teardownAgentReviewForRequest(publishRequestId);
       return;
     }
     // Raced into approved/rejected → the not-pending guarantee, now true under
@@ -1986,6 +1992,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     typeof request.deployState === 'string' && request.deployState.startsWith('preview-');
 
   const manifest = request.manifest as Record<string, unknown>;
+  // `manifestScopes` is written to `AppBlock.approvedScopes` on the three approve paths
+  // below (create / P2002-retry / subsequent-version). 🔴 This mod-approval flow is the
+  // ONLY place that writes `approvedScopes` — a load-bearing invariant the dev-tunnel
+  // owned-non-approved mint relies on (block-tokens/index.ts): a NEVER-approved app has
+  // `approvedScopes = []` ⟹ its dev token is read-only + cannot spend. Writing
+  // `approvedScopes` anywhere OUTSIDE this approval flow would break that safety.
   const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
   const manifestContentRating =
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
@@ -2088,7 +2100,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           o.toLowerCase()
         ),
       };
-  const validation = BlockManifestValidator.validate(manifest, validationCtx);
+  const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx);
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
@@ -2684,6 +2696,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // deploy_state BEFORE markRequestDeployState flipped it to production
   // 'building'), so the common no-preview approve does zero extra DB/k8s work.
   if (hadReviewPreview) void teardownReviewForRequest(request.id);
+  // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
+  // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
+  void teardownAgentReviewForRequest(request.id);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was
   // approved (and is now building/deploying). This runs AFTER the status flip to
@@ -3214,6 +3229,110 @@ export async function resolveReviewPreviewTarget(
   return { id: row.id, slug: row.slug };
 }
 
+/** The review-page modes a single request can be opened in. Mirrors the modal's
+ *  `mode` union minus `reports` (reports are off-site listings, not publish
+ *  requests). A row in any OTHER status (`withdrawn`, superseded) is not a
+ *  reviewable detail and resolves to `null`. */
+export type ReviewRequestMode = 'pending' | 'approved' | 'rejected';
+
+function reviewModeForStatus(status: string): ReviewRequestMode | null {
+  if (status === 'pending') return 'pending';
+  if (status === 'approved') return 'approved';
+  if (status === 'rejected') return 'rejected';
+  return null;
+}
+
+/**
+ * SSR fail-close resolver for the per-submission review PAGE
+ * (`/apps/review/<publishRequestId>`) — the page analogue of
+ * {@link resolveReviewPreviewTarget}, but valid for pending/approved/rejected
+ * (the page shows history too, not only the live-preview-able pending state).
+ *
+ * Returns `{ id, status }` ONLY for an existing request in a reviewable status;
+ * `null` for a missing / withdrawn / superseded row so the page's
+ * `getServerSideProps` 404s without leaking which. Cheap (id+status only) so the
+ * SSR gate stays light; the full request payload is fetched client-side via
+ * {@link getReviewRequestById} (keeps the big manifest/diff blobs off the SSR
+ * props, and Dates on the tRPC/superjson path instead of hand-serialized).
+ *
+ * NO AUTHORIZATION here (like `resolveReviewPreviewTarget`) — leaks a slug/status
+ * by id, so EVERY caller MUST already be moderator-gated (the page resolver runs
+ * `isAppReviewer` before calling).
+ */
+export async function resolveReviewRequestTarget(
+  publishRequestId: string
+): Promise<{ id: string; status: ReviewRequestMode } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: { id: true, status: true },
+  });
+  if (!row) return null;
+  const mode = reviewModeForStatus(row.status);
+  if (!mode) return null;
+  return { id: row.id, status: mode };
+}
+
+/**
+ * Single-request fetch for the review PAGE. Returns the SAME hydrated shape one
+ * item of `listPending/Approved/RejectedRequests` returns (so the extracted
+ * `OnsiteReviewModalBody` renders identically to the modal path), plus the
+ * derived `mode`. Includes the reviewer profile + approval-notes / rejection-
+ * reason so an approved/rejected detail shows the same read-only history the
+ * list tabs surface. Returns `null` for a missing / non-reviewable row.
+ *
+ * MOD-ONLY: like the list builders it performs no authorization — the router
+ * (`moderatorProcedure` + `enforceAppBlocksFlag`) gates it.
+ */
+export async function getReviewRequestById(publishRequestId: string): Promise<{
+  mode: ReviewRequestMode;
+  request: Record<string, unknown>;
+} | null> {
+  const [{ dbRead }, { reviewRepoUrl, repoCommitUrl }] = await Promise.all([
+    import('~/server/db/client'),
+    import('./forgejo.service'),
+  ]);
+  const r = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: publishRequestId },
+    select: {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      version: true,
+      status: true,
+      submittedAt: true,
+      reviewedAt: true,
+      approvalNotes: true,
+      rejectionReason: true,
+      bundleSizeBytes: true,
+      bundleSha256: true,
+      manifest: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      forgejoCommitSha: true,
+      submittedBy: { select: { id: true, username: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, image: true } },
+    },
+  });
+  if (!r) return null;
+  const mode = reviewModeForStatus(r.status);
+  if (!mode) return null;
+
+  // Match the list builders' row mapping exactly (bundle bigint → string,
+  // Forgejo review-repo deep link, push-row canonical-commit link).
+  const { status, ...rest } = r;
+  const request = {
+    ...rest,
+    bundleSizeBytes: r.bundleSizeBytes.toString(),
+    reviewRepoUrl: reviewRepoUrl(r.slug),
+    pushCommitUrl:
+      !r.bundleSha256 && r.forgejoCommitSha
+        ? repoCommitUrl(r.slug, r.forgejoCommitSha)
+        : null,
+  };
+  return { mode, request };
+}
+
 export type MintReviewBlockTokenResult = {
   /** The signed, self-bound, scope-stripped block JWT for the review preview. */
   token: string;
@@ -3401,6 +3520,61 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
     // eslint-disable-next-line no-console
     console.warn(
       `[teardownReviewForRequest] best-effort teardown failed (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
+/**
+ * AGENTIC MOD CODE-REVIEW (P1) — best-effort teardown of any ephemeral review
+ * AGENT for a publish request, DECOUPLED from the sandbox-preview teardown
+ * (audit #1). Called UNCONDITIONALLY on every approve/reject/withdraw — a review
+ * agent can be dispatched WITHOUT ever starting a sandbox preview, so gating this
+ * on `hadReviewPreview` (as the sandbox teardown is) would leak the agent's k8s
+ * objects + a `running` report row + the staged bundle whenever a mod ran only
+ * the agent. Idempotent + label/id-scoped, so it is a no-op when nothing matches.
+ *
+ * Three best-effort steps (order-independent; none throws into the decision path):
+ *   1. delete the review-agent Deployment(s)/Service(s) by label selector,
+ *   2. flip any still-`running` report row → `torn-down` so a late callback can't
+ *      resurrect it (the callback's running-only guard then no-ops),
+ *   3. delete the per-review staged bundle object(s) so staged ZIPs don't
+ *      accumulate (audit #2).
+ * NEVER throws — mirrors teardownReviewForRequest's best-effort contract.
+ */
+export async function teardownAgentReviewForRequest(publishRequestId: string): Promise<void> {
+  try {
+    const { dbWrite } = await import('~/server/db/client');
+    // Cheap indexed gate: only pay the k8s + MinIO teardown I/O when an agent
+    // review actually ran for this request. Agent reviews are dark/rare, so for
+    // the many mod decisions that never trigger an agent this is a single
+    // indexed read (AppReviewAgentReport is indexed on publish_request_id), not
+    // two network round-trips (k8s LIST+DELETE + MinIO LIST+DELETE) on the live
+    // approve/reject/withdraw path.
+    const existing = await dbWrite.appReviewAgentReport.findFirst({
+      where: { publishRequestId },
+      select: { id: true },
+    });
+    if (!existing) return;
+    // (1) agent k8s objects. deleteAgentReviewResources is itself best-effort +
+    // never-throws; its label selector is scoped to publishRequestId + the
+    // review-agent role, so it can only match this review's agent. `slug` is not
+    // part of that selector, so no publish-request lookup is needed here.
+    const { deleteAgentReviewResources } = await import('./agent-review.service');
+    await deleteAgentReviewResources({ slug: '', publishRequestId });
+    // (2) flip any running report row → torn-down.
+    await dbWrite.appReviewAgentReport.updateMany({
+      where: { publishRequestId, status: 'running' },
+      data: { status: 'torn-down', completedAt: new Date() },
+    });
+    // (3) staged bundle cleanup (best-effort; also lifecycle-backstopped in infra).
+    const { deleteStagedBundle } = await import('~/utils/bundle-s3');
+    await deleteStagedBundle(publishRequestId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownAgentReviewForRequest] best-effort teardown failed (id=${publishRequestId}): ${
         err instanceof Error ? err.message : String(err)
       }`
     );
@@ -3805,6 +3979,9 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   // must never affect the outcome. Gated on a preview actually having been
   // started so the common no-preview reject does zero extra work.
   if (hadReviewPreview) void teardownReviewForRequest(row.id);
+  // AGENTIC REVIEW (P1, audit #1) — tear down any review AGENT UNCONDITIONALLY
+  // (an agent can run without a sandbox preview). Idempotent no-op otherwise.
+  void teardownAgentReviewForRequest(row.id);
 
   // POST-COMMIT, best-effort — notify the submitting developer their block was NOT
   // approved, carrying the (already-trimmed) moderator reason so it shows inline on

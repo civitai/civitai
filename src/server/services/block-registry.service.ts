@@ -413,6 +413,34 @@ export interface PageBlockResolution {
 }
 
 /**
+ * APP DEV TUNNEL — the shape resolved for an OWNED, NON-approved page app the
+ * author is dogfooding in their OWN dev tunnel (`resolveOwnedNonApprovedPageBlock`).
+ *
+ * This is the DEV-TUNNEL-ONLY companion to `resolvePageBlock` (which resolves ONLY
+ * `status:'approved'` apps for the PUBLIC run path). A previously-approved app that
+ * is now `suspended` / `pending` (re-submitted) / `deprecated` still owns a REAL
+ * `apb_` row + a moderator-reviewed `approvedScopes` snapshot, so its author can run
+ * it inside their own tunnel — but it stays NON-runnable publicly (`resolvePageBlock`
+ * still returns null for it). The mint sources scopes from `approvedScopes` (the
+ * pinned, mod-reviewed set — NEVER the raw manifest) and the per-gen budget from the
+ * manifest `page.buzzBudgetPerGen`.
+ */
+export interface OwnedNonApprovedPageBlockResolution {
+  /** The REAL AppBlock id (`apb_…`). */
+  appBlockId: string;
+  /** The app slug (== `block_id`), used to resolve the active dev tunnel. */
+  blockId: string;
+  /** The REAL OauthClient id (`appblk-…` / UUIDv4) — attribution resolves it. */
+  appId: string;
+  /** The app's current NON-approved status (suspended / pending / deprecated / …). */
+  status: string;
+  /** The moderator-reviewed approved-scope SNAPSHOT — the ONLY scope source. */
+  approvedScopes: string[];
+  /** The stored manifest — read for `page.buzzBudgetPerGen` only. */
+  manifest: Record<string, unknown>;
+}
+
+/**
  * W10 — the page block shape the SSR route consumes: just enough to render the
  * full-bleed IframeHost (iframe.src + sandbox + trust tier) and mint a token
  * (appBlockId). Public-display fields only; never the raw stored manifest.
@@ -1807,6 +1835,70 @@ export class BlockRegistry {
         app: ab.app ? { allowedScopes: ab.app.allowedScopes } : null,
         currentVersionDeployedAt: ab.currentVersionDeployedAt ?? null,
       },
+    };
+  }
+
+  /**
+   * APP DEV TUNNEL — resolve the caller's OWN, NON-approved page app by its REAL
+   * AppBlock id (`apb_…`), for the dev-tunnel block-token mint ONLY.
+   *
+   * WHY THIS EXISTS — `resolvePageBlock` requires `status:'approved'`, so a
+   * previously-approved page app that is now `suspended` / `pending` (re-submitted)
+   * / `deprecated` resolves to null there and the mint 404s ("Couldn't authenticate
+   * this app"), even though the SSR dev route (`resolveDevPageBlockForAuthor`)
+   * happily mounts it at ANY status. This closes that asymmetry for the DEV TUNNEL
+   * ONLY: the owner can dogfood their non-approved app in their OWN tunnel, while the
+   * PUBLIC run path (`resolvePageBlock`, `resolvePageBlockBySlug`) stays untouched —
+   * a suspended app remains NON-runnable publicly.
+   *
+   * CONTAINMENT (every gate here or at the caller, fail-closed):
+   *   - OWNERSHIP is enforced IN the query (`app.userId === userId`). A foreign or
+   *     missing app returns the SAME bare null (no ownership/existence oracle).
+   *   - status `!= 'approved'` is enforced in the query: an APPROVED app never
+   *     double-resolves through this branch (it mints via `resolvePageBlock`), and
+   *     this method is a NO-OP for the approved case.
+   *   - it MUST declare a page (`manifestDeclaresPage`) — a region/model-only app has
+   *     no full-page surface to mint for.
+   * The caller additionally gates on an ACTIVE dev tunnel + the author/dev-tunnel
+   * flags before it will sign anything (see `tryDevTunnelOwnedNonApprovedMint`).
+   *
+   * SCOPE SOURCE = `approvedScopes` (the moderator-reviewed snapshot pinned at the
+   * app's last approval) — NEVER the raw/re-published manifest, so a suspended app
+   * cannot widen its own scopes by editing its manifest. The caller clamps this
+   * through the SAME tunnel belt (`clampTunnelDeclaredScopes`) as the ephemeral path.
+   */
+  static async resolveOwnedNonApprovedPageBlock(
+    appBlockId: string,
+    userId: number,
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<OwnedNonApprovedPageBlockResolution | null> {
+    if (!appBlockId || !userId) return null;
+    const db = opts?.db === 'read' ? dbRead : dbWrite;
+    const ab = await db.appBlock.findFirst({
+      // Ownership-scoped (app.userId === caller) AND non-approved only. A
+      // foreign/missing/approved row → null → the caller's bare 404 (no oracle).
+      where: { id: appBlockId, app: { userId }, status: { not: 'approved' } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        approvedScopes: true,
+      },
+    });
+    if (!ab) return null;
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    // A page app MUST declare a `page` block (mirrors resolvePageBlock) — otherwise
+    // there is no full-page surface to run.
+    if (!manifestDeclaresPage(manifest)) return null;
+    return {
+      appBlockId: ab.id,
+      blockId: ab.blockId,
+      appId: ab.appId,
+      status: ab.status,
+      approvedScopes: ab.approvedScopes ?? [],
+      manifest,
     };
   }
 

@@ -11,6 +11,7 @@ import type {
   GetBuzzAccountTransactionsSchema,
   GetDailyBuzzCompensationInput,
   GetTransactionsReportSchema,
+  GetUserBuzzTransactionsMultiSchema,
   GetUserBuzzTransactionsSchema,
   PreviewMultiAccountTransactionInput,
   UserBuzzTransactionInputSchema,
@@ -24,6 +25,7 @@ import {
   getTransactionsReport,
   getUserBuzzAccount,
   getUserBuzzTransactions,
+  getUserBuzzTransactionsMulti,
   previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
@@ -77,6 +79,24 @@ export async function getUserTransactionsHandler({
 
     const result = await getUserBuzzTransactions({ ...input, accountId: ctx.user.id });
     return result;
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function getUserTransactionsMultiHandler({
+  input,
+  ctx,
+}: {
+  input: GetUserBuzzTransactionsMultiSchema;
+  ctx: ProtectedContext;
+}) {
+  try {
+    return await getUserBuzzTransactionsMulti({
+      ...input,
+      limit: input.limit ?? DEFAULT_PAGE_SIZE,
+      accountId: ctx.user.id,
+    });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

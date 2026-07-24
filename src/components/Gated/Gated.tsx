@@ -1,4 +1,3 @@
-import { useCallback, useRef } from 'react';
 import { Button, Text, ThemeIcon } from '@mantine/core';
 import {
   IconArrowLeft,
@@ -15,6 +14,7 @@ import {
 import { useRouter } from 'next/router';
 import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useSpotlight } from '~/hooks/useSpotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import {
@@ -246,20 +246,10 @@ function MatureContentRedirect() {
   const router = useRouter();
   const redDomain = useServerDomains().red;
   const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(239,68,68,0.12), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    size: 250,
+    color: 'rgba(239,68,68,0.12)',
+  });
 
   return (
     <div
@@ -340,20 +330,10 @@ function MatureContentRedirect() {
 
 function UnratedContent() {
   const hasHistory = useHasClientHistory();
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(234,179,8,0.12), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    size: 250,
+    color: 'rgba(234,179,8,0.12)',
+  });
 
   return (
     <div
@@ -461,20 +441,10 @@ function FeatureRow({
 function LoginRequiredCard() {
   const router = useRouter();
   const returnUrl = router.asPath;
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(59,130,246,0.14), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    size: 250,
+    color: 'rgba(59,130,246,0.14)',
+  });
 
   return (
     <div

@@ -8,7 +8,7 @@ import {
   getTransactionsReportHandler,
   getUserAccountHandler,
   getUserMultipliersHandler,
-  getUserTransactionsHandler,
+  getUserTransactionsMultiHandler,
   previewMultiAccountTransactionHandler,
 } from '~/server/controllers/buzz.controller';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
@@ -20,7 +20,7 @@ import {
   getDailyBuzzCompensationInput,
   getEarnPotentialSchema,
   getTransactionsReportSchema,
-  getUserBuzzTransactionsSchema,
+  getUserBuzzTransactionsMultiSchema,
   previewMultiAccountTransactionInput,
   userBuzzTransactionInputSchema,
 } from '~/server/schema/buzz.schema';
@@ -32,6 +32,7 @@ import {
   getPoolForecast,
   getUserBuzzAccounts,
 } from '~/server/services/buzz.service';
+import { rateLimit } from '~/server/middleware.trpc';
 import { guardedProcedure, isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -48,8 +49,13 @@ export const buzzRouter = router({
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: buzzProcedure
     .meta({ requiredScope: TokenScope.BuzzRead })
-    .input(getUserBuzzTransactionsSchema)
-    .query(getUserTransactionsHandler),
+    .use(
+      // Each page is a multi-second ClickHouse scan, so paging is far cheaper to
+      // abuse than the export it shares a data source with.
+      rateLimit({ limit: 120, period: 3600 })
+    )
+    .input(getUserBuzzTransactionsMultiSchema)
+    .query(getUserTransactionsMultiHandler),
   tipUser: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialTip, blockApiKeys: true })
     .use(isFlagProtected('buzz'))

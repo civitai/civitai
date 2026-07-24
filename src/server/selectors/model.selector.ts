@@ -44,6 +44,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   poi: true,
   minor: true,
   sfwOnly: true,
+  isOfficial: true,
   nsfwLevel: true,
   nsfw: true,
   type: true,
@@ -114,6 +115,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       trainedWords: true,
       trainingStatus: true,
       trainingDetails: true,
+      flags: true,
       inaccurate: true,
       baseModel: true,
       baseModelType: true,
@@ -209,6 +211,7 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   allowDerivatives: true,
   allowDifferentLicense: true,
   poi: true,
+  isOfficial: true,
   // Joins:
   user: {
     select: userWithCosmeticsSelect,

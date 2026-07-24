@@ -11,6 +11,14 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { buildOgCoverEdgeUrl, fetchImageAsDataUri } from '~/server/utils/og-image-helpers';
+import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
+import {
+  anyMetricHidden,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveModelHiddenMetrics,
+} from '~/server/utils/model-metric-privacy';
+import { isDefined } from '~/utils/type-guards';
 
 // --- Schema & Types ---
 
@@ -142,7 +150,9 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     select: {
       name: true,
       description: true,
-      user: { select: { username: true } },
+      meta: true,
+      userId: true,
+      user: { select: { username: true, settings: true } },
       modelVersions: {
         where: { status: 'Published' },
         select: { id: true, description: true },
@@ -155,6 +165,23 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
 
   const publishedVersion = model.modelVersions[0];
   if (!publishedVersion) return null;
+
+  // Creator Controls: the OG card is a public, shared asset — gate downloads /
+  // generations by the owner's stored flags + active CP membership.
+  // Only resolve CP membership when the owner actually hides something. When nothing is
+  // hidden, the resolver returns NONE regardless of membership, so the cached membership
+  // read can be skipped — byte-identical. The check, when needed, uses the read-through cache.
+  const ownerHidesAnything =
+    anyMetricHidden(getMetaMetricPrivacy(model.meta)) ||
+    anyMetricHidden(getUserMetricPrivacyDefaults(model.user?.settings));
+  const hidden = resolveModelHiddenMetrics({
+    modelMeta: model.meta,
+    userSettings: model.user?.settings,
+    isOwnerOrModerator: false,
+    hasValidMembership: ownerHidesAnything
+      ? await hasValidCreatorMembershipCached(model.userId)
+      : false,
+  });
 
   // Run metric + image queries in parallel
   const [metric, image] = await Promise.all([
@@ -183,11 +210,13 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
 
   const stats: StatItem[] = metric
     ? [
-        { value: formatStat(metric.downloadCount), label: 'Downloads' },
+        !hidden.downloads ? { value: formatStat(metric.downloadCount), label: 'Downloads' } : null,
         { value: formatStat(metric.thumbsUpCount), label: 'Likes' },
-        { value: formatStat(metric.generationCount), label: 'Generations' },
+        !hidden.generations
+          ? { value: formatStat(metric.generationCount), label: 'Generations' }
+          : null,
         { value: formatStat(metric.commentCount), label: 'Comments' },
-      ]
+      ].filter(isDefined)
     : [];
 
   const description = publishedVersion.description || model.description || '';

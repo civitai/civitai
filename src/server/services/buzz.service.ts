@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { createBuzzClient } from '@civitai/buzz';
+import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { v4 as uuid } from 'uuid';
 import { env } from '~/env/server';
@@ -27,8 +28,11 @@ import type {
   GetEarnPotentialSchema,
   // GetTransactionsReportResultSchema,
   GetTransactionsReportSchema,
+  ExportUserBuzzTransactionsSchema,
   GetUserBuzzAccountSchema,
+  GetUserBuzzTransactionsMultiSchema,
   GetUserBuzzTransactionsSchema,
+  BuzzTransactionDetails,
   PreviewMultiAccountTransactionInput,
   // PreviewMultiAccountTransactionResponse,
   RefundMultiAccountTransactionInput,
@@ -60,6 +64,10 @@ import {
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { getUserByUsername, getUsers } from './user.service';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+import { parseBuzzTransactionDetails } from '~/utils/buzz';
+import { toCsv, toCsvRows } from '~/utils/csv';
+import { isDefined } from '~/utils/type-guards';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { grantCosmetics } from '~/server/services/cosmetic.service';
 import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
@@ -295,6 +303,448 @@ export async function getUserBuzzTransactions({
       fromUser: fromUsers.find((u) => u.id === t.fromAccountId),
     })),
   };
+}
+
+// The buzz service caps at 200 transactions per call and takes a single account
+// type, so a multi-account view or an export would need hundreds of sequential
+// round-trips. ClickHouse answers the same question in one query.
+function toClickhouseTransactionType(type: TransactionType) {
+  const name = TransactionType[type];
+  return name.charAt(0).toLowerCase() + name.slice(1);
+}
+
+// Lowercase-only: toString(uuid) is always lowercase and ClickHouse compares
+// strings byte-wise, so an uppercase cursor would land on the wrong side of the
+// entire result set rather than erroring.
+const CURSOR_PATTERN = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|([0-9a-f-]{36})$/;
+
+function toClickhouseCursor(cursor: string) {
+  const match = CURSOR_PATTERN.exec(cursor);
+  if (!match) throw throwBadRequestError('Invalid cursor');
+
+  // A String literal, not toUUID: the predicate's left side is
+  // toString(transactionId), and ClickHouse refuses to compare String with UUID.
+  return `(toDateTime('${match[1]}'), '${match[2]}')`;
+}
+
+function toClickhouseDate(date: Date) {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+type ClickhouseBuzzTransaction = {
+  transactionId: string;
+  date: string;
+  type: string;
+  amount: number;
+  fromAccountId: number;
+  fromAccountType: string;
+  toAccountId: number;
+  toAccountType: string;
+  description: string;
+  details: string;
+  externalTransactionId: string;
+};
+
+// Each direction is its own query. Wrapping both in a UNION ALL defeats
+// projection selection — measured at 388M rows / 2.7 GiB for a 370-day export,
+// versus ~32K rows when each branch runs standalone against byFromAccount /
+// byToAccount. The two result sets are merged in-process instead.
+function buildBranchQuery({
+  direction,
+  accountId,
+  accountTypes,
+  type,
+  start,
+  end,
+  cursor,
+  limit,
+  ordered = true,
+}: TransactionQueryParams & { direction: 'from' | 'to' }) {
+  const types = accountTypes.map((t) => `'${t}'`).join(',');
+  const clauses = [
+    `${direction}AccountId = ${accountId}`,
+    `${direction}AccountType IN (${types})`,
+    `date >= '${toClickhouseDate(start)}'`,
+    `date <= '${toClickhouseDate(end)}'`,
+    cursor ? `(date, toString(transactionId)) < ${toClickhouseCursor(cursor)}` : null,
+    type !== undefined ? `type = '${toClickhouseTransactionType(type)}'` : null,
+  ].filter(isDefined);
+
+  return `
+    SELECT transactionId, date, type, amount, fromAccountId, fromAccountType, toAccountId, toAccountType, description, details, externalTransactionId
+    FROM buzzTransactions
+    WHERE ${clauses.join(' AND ')}
+    ${ordered ? 'ORDER BY date DESC, toString(transactionId) DESC' : ''}
+    ${limit ? `LIMIT ${limit}` : ''}
+  `;
+}
+
+function buildBranchCountQuery(params: TransactionQueryParams & { direction: 'from' | 'to' }) {
+  const rows = buildBranchQuery({ ...params, ordered: false, limit: undefined });
+  return `SELECT count() AS count FROM (${rows})`;
+}
+
+async function queryTransactionCount(query: string) {
+  const [result] = await queryCounts(query);
+  return Number(result?.count ?? 0);
+}
+
+type TransactionQueryParams = {
+  accountId: number;
+  accountTypes: BuzzSpendType[];
+  type?: TransactionType;
+  start: Date;
+  end: Date;
+  cursor?: string;
+  limit?: number;
+  // An ORDER BY makes ClickHouse abandon the byFromAccount / byToAccount
+  // projections — measured at 13M rows read versus 92K for the same slice. Paths
+  // that already bound the row count sort in-process instead.
+  ordered?: boolean;
+};
+
+// The cost budget is what actually bounds a wide request, but it fails OPEN on a
+// Redis error — correct for a read-only export, and it would otherwise leave
+// nothing at all bounding range width during an outage. A 200-year range walks
+// 2,400 empty slices. This is a sanity ceiling, not a product limit.
+const MAX_TRANSACTION_RANGE_YEARS = 10;
+
+export function assertValidTransactionRange({ start, end }: { start: Date; end: Date }) {
+  if (end < start) throw throwBadRequestError('The end date must be after the start date');
+  if (dayjs(end).diff(start, 'year', true) > MAX_TRANSACTION_RANGE_YEARS)
+    throw throwBadRequestError(
+      `Date ranges are limited to ${MAX_TRANSACTION_RANGE_YEARS} years. Narrow the range and try again.`
+    );
+}
+
+// Sorted the same way ClickHouse sorts them, so a cursor built from the last row
+// of one page resumes exactly where that page stopped.
+function sortTransactionsDesc(rows: ClickhouseBuzzTransaction[]) {
+  return rows.sort((a, b) =>
+    a.date === b.date ? b.transactionId.localeCompare(a.transactionId) : a.date < b.date ? 1 : -1
+  );
+}
+
+async function fetchTransactionBranches(params: TransactionQueryParams) {
+  const [to, from] = await Promise.all([
+    queryTransactions(buildBranchQuery({ ...params, direction: 'to' })),
+    queryTransactions(buildBranchQuery({ ...params, direction: 'from' })),
+  ]);
+
+  // A transfer between the caller's own accounts matches both branches.
+  const byId = new Map<string, ClickhouseBuzzTransaction>();
+  for (const row of [...to, ...from]) byId.set(row.transactionId, row);
+
+  return sortTransactionsDesc([...byId.values()]);
+}
+
+function parseDetails(details: string) {
+  if (!details) return undefined;
+  try {
+    return JSON.parse(details) as BuzzTransactionDetails;
+  } catch {
+    return undefined;
+  }
+}
+
+// $query embeds the full generated SQL in its error message, which the client
+// surfaces verbatim in a toast. A failure here is ours, not the caller's, so it
+// stays a 5xx — BAD_REQUEST is classified as a client fault and would keep a
+// ClickHouse outage off the error board.
+async function queryTransactions(query: string) {
+  try {
+    return await clickhouse!.$query<ClickhouseBuzzTransaction>(query);
+  } catch (error) {
+    logToAxiom({
+      name: 'buzz-transactions-query',
+      type: 'error',
+      message: (error as Error).message,
+      stack: (error as Error).stack,
+    }).catch(() => undefined);
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Could not load transactions right now. Please try again shortly.',
+    });
+  }
+}
+
+async function queryCounts(query: string) {
+  try {
+    return await clickhouse!.$query<{ count: number }>(query);
+  } catch (error) {
+    logToAxiom({
+      name: 'buzz-transactions-count',
+      type: 'error',
+      message: (error as Error).message,
+      stack: (error as Error).stack,
+    }).catch(() => undefined);
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Could not load transactions right now. Please try again shortly.',
+    });
+  }
+}
+
+async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId: number) {
+  const counterpartyIds = new Set<number>();
+  for (const row of rows) {
+    if (row.fromAccountId !== 0) counterpartyIds.add(row.fromAccountId);
+    if (row.toAccountId !== 0) counterpartyIds.add(row.toAccountId);
+  }
+
+  const users = counterpartyIds.size ? await getUsers({ ids: [...counterpartyIds] }) : [];
+  const usersById = new Map(users.map((u) => [u.id, u]));
+
+  return rows.map((row) => {
+    const details = parseDetails(row.details);
+    const type =
+      TransactionType[
+        (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
+      ] ?? TransactionType.Tip;
+
+    return {
+      date: new Date(`${row.date.replace(' ', 'T')}Z`),
+      type,
+      // ClickHouse stores every amount as a positive magnitude; the direction
+      // lives in which side of the transaction the account is on.
+      amount: row.fromAccountId === accountId ? -row.amount : row.amount,
+      fromAccountId: row.fromAccountId,
+      toAccountId: row.toAccountId,
+      fromAccountType: row.fromAccountType as BuzzAccountType,
+      toAccountType: row.toAccountType as BuzzAccountType,
+      description: row.description || null,
+      details,
+      externalTransactionId: row.externalTransactionId || null,
+      fromUser: usersById.get(row.fromAccountId),
+      toUser: usersById.get(row.toAccountId),
+    };
+  });
+}
+
+// The busiest real account-month is ~575K rows (account 4882089, 2025-02, of
+// 9.9M transactions all-time), so a calendar month is NOT a safe unit on its
+// own. A slice over this is bisected in time rather than refused — density
+// degrades gracefully instead of hitting a wall the user cannot act on, since
+// narrowing a date range can never make a month smaller.
+const MAX_SLICE_ROWS = 100_000;
+
+// Below this a slice can't usefully be split further, so it is fetched whatever
+// its size. A single second holding 100K transactions is not a real shape.
+const MIN_SLICE_SECONDS = 1;
+
+export async function countTransactionRows(params: TransactionQueryParams) {
+  const [to, from] = await Promise.all([
+    queryTransactionCount(buildBranchCountQuery({ ...params, direction: 'to' })),
+    queryTransactionCount(buildBranchCountQuery({ ...params, direction: 'from' })),
+  ]);
+
+  return to + from;
+}
+
+// Yields the rows for [start, end] newest-first, bisecting until each fetched
+// chunk is small enough to hold in memory. Counting first is cheap (~400ms even
+// on the densest month) and projection-backed, so it costs far less than
+// materializing a slice to discover it was too big.
+async function* emitSliceRows(
+  params: TransactionQueryParams,
+  start: Dayjs,
+  end: Dayjs
+): AsyncGenerator<ClickhouseBuzzTransaction[]> {
+  // Fetching with a bound is self-detecting: an unordered LIMIT keeps the
+  // projection (measured 105ms / 32K rows read, versus 206ms / 89K unbounded),
+  // so one query both answers "is this slice too dense?" and returns the rows
+  // when it isn't. A separate count pre-pass would double the queries on every
+  // slice to learn the same thing.
+  const rows = await fetchTransactionBranches({
+    ...params,
+    start: start.toDate(),
+    end: end.toDate(),
+    ordered: false,
+    limit: MAX_SLICE_ROWS + 1,
+  });
+
+  if (rows.length > MAX_SLICE_ROWS) {
+    if (end.diff(start, 'second') > MIN_SLICE_SECONDS) {
+      const mid = start.add(end.diff(start) / 2, 'millisecond');
+      // Newer half first — the whole walk is descending.
+      yield* emitSliceRows(params, mid.add(1, 'second'), end);
+      yield* emitSliceRows(params, start, mid);
+      return;
+    }
+
+    // Can't split an interval below a second, and the bounded fetch above is
+    // truncated. Re-read it whole rather than emit a short slice: this is a
+    // financial export, where a missing row is both invisible and wrong.
+    // Unreachable in practice — the densest second on record holds 48 rows.
+    const complete = await fetchTransactionBranches({
+      ...params,
+      start: start.toDate(),
+      end: end.toDate(),
+      ordered: false,
+      limit: undefined,
+    });
+
+    if (complete.length) yield complete;
+    return;
+  }
+
+  if (rows.length) yield rows;
+}
+
+// Walks the range one calendar month at a time, newest first. Each slice is
+// fetched unordered so ClickHouse can use the byFromAccount / byToAccount
+// projections, then sorted in-process. Slices are strictly ordered relative to
+// one another, so concatenating them yields a globally descending sequence.
+async function* walkTransactionSlices(params: TransactionQueryParams) {
+  const rangeStart = dayjs(params.start);
+  // The UI's default `end` is the end of the current month, so without this every
+  // default export walks a wholly empty future slice and is charged for it.
+  const rangeEnd = dayjs.min(dayjs(params.end), dayjs());
+  // Seeded from the cursor rather than the range end: the cursor only filters
+  // rows, so without this every deep page re-walks each earlier month and pays
+  // two empty queries per month above it.
+  const cursorDate = params.cursor
+    ? dayjs(`${params.cursor.split('|')[0].replace(' ', 'T')}Z`)
+    : null;
+  let sliceEnd = cursorDate?.isValid() && cursorDate.isBefore(rangeEnd) ? cursorDate : rangeEnd;
+
+  while (!sliceEnd.isBefore(rangeStart)) {
+    const sliceStart = dayjs.max(sliceEnd.subtract(1, 'month'), rangeStart);
+
+    yield* emitSliceRows(params, sliceStart, sliceEnd);
+    if (sliceStart.isSame(rangeStart)) return;
+
+    // Exclusive upper bound on the next slice so a transaction landing exactly
+    // on the boundary second is never emitted twice.
+    sliceEnd = sliceStart.subtract(1, 'second');
+  }
+}
+
+export async function getUserBuzzTransactionsMulti({
+  accountId,
+  limit = 100,
+  ...input
+}: GetUserBuzzTransactionsMultiSchema & { accountId: number }) {
+  if (!clickhouse) throw throwBadRequestError('Transaction history is temporarily unavailable');
+
+  assertValidTransactionRange(input);
+
+  // An ORDER BY would cost the projection — 33M rows read per page view versus
+  // ~54K — so pages are assembled from unordered slices instead. One extra row
+  // tells us whether another page exists.
+  const rows: ClickhouseBuzzTransaction[] = [];
+  for await (const slice of walkTransactionSlices({ accountId, ...input })) {
+    for (const row of slice) rows.push(row);
+    if (rows.length > limit) break;
+  }
+
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+
+  return {
+    cursor: hasMore && last ? `${last.date}|${last.transactionId}` : null,
+    transactions: await hydrateTransactions(page, accountId),
+  };
+}
+
+const EXPORT_COLUMNS = [
+  'date',
+  'type',
+  'amount',
+  'accountType',
+  'fromUser',
+  'toUser',
+  'description',
+  'entityUrl',
+  'externalTransactionId',
+];
+
+// Resolved usernames carry across slices — a heavy account has orders of
+// magnitude fewer counterparties than rows.
+async function formatExportBatch(
+  rows: ClickhouseBuzzTransaction[],
+  accountId: number,
+  usernames: Map<number, string>
+) {
+  const missing = new Set<number>();
+  for (const row of rows) {
+    for (const id of [row.fromAccountId, row.toAccountId])
+      if (id !== 0 && !usernames.has(id)) missing.add(id);
+  }
+  if (missing.size) {
+    for (const user of await getUsers({ ids: [...missing] })) {
+      if (user.username) usernames.set(user.id, user.username);
+    }
+  }
+
+  const baseUrl = getBaseUrl();
+
+  return toCsvRows(
+    rows.map((row) => {
+      const isDebit = row.fromAccountId === accountId;
+      const details = parseDetails(row.details);
+      const type =
+        TransactionType[
+          (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
+        ] ?? TransactionType.Tip;
+      const { url } = parseBuzzTransactionDetails(details, type);
+      const entityUrl = !url ? '' : url.startsWith('http') ? url : `${baseUrl}${url}`;
+
+      return [
+        new Date(`${row.date.replace(' ', 'T')}Z`).toISOString(),
+        TransactionType[type],
+        isDebit ? -row.amount : row.amount,
+        isDebit ? row.fromAccountType : row.toAccountType,
+        counterpartyName(row.fromAccountId, usernames.get(row.fromAccountId)),
+        counterpartyName(row.toAccountId, usernames.get(row.toAccountId)),
+        row.description,
+        entityUrl,
+        row.externalTransactionId,
+      ];
+    })
+  );
+}
+
+export function getTransactionExportFilename(input: ExportUserBuzzTransactionsSchema) {
+  const range = [input.start, input.end].map((date) => toClickhouseDate(date).slice(0, 10));
+  return `civitai-transactions_${input.accountTypes.join('-')}_${range.join('_')}.csv`;
+}
+
+// Yields CSV text incrementally so an export of any size costs a bounded amount
+// of memory on both the pod and the client.
+export async function* streamUserBuzzTransactionsCsv({
+  accountId,
+  ...input
+}: ExportUserBuzzTransactionsSchema & { accountId: number }) {
+  if (!clickhouse) throw throwBadRequestError('Transaction export is temporarily unavailable');
+
+  assertValidTransactionRange(input);
+
+  // The header row is held back until the first slice comes back. Yielding it
+  // up front would commit the response headers before any query ran, which turns
+  // the likeliest failure — ClickHouse unavailable on slice one — into an
+  // unexplained aborted download instead of a readable error.
+  const header = `${toCsv(EXPORT_COLUMNS, [])}\r\n`;
+  const usernames = new Map<number, string>();
+  let started = false;
+
+  for await (const rows of walkTransactionSlices({ ...input, accountId })) {
+    const body = await formatExportBatch(rows, accountId, usernames);
+    if (!started) {
+      started = true;
+      yield header;
+    }
+    yield `${body}\r\n`;
+  }
+
+  // A range with no transactions still gets a well-formed, header-only file.
+  if (!started) yield header;
+}
+
+function counterpartyName(accountId: number, username?: string) {
+  if (accountId === 0) return 'Civitai';
+  return username ?? `User ${accountId}`;
 }
 
 export async function createBuzzTransaction({
@@ -1093,7 +1543,9 @@ export const getDailyCompensationRewardByUser = async ({
         -- License fees can settle to cash OR buzz, so we ignore the accountType filter on that source and surface all of them together.
         AND ${
           accountType && source !== 'licenseFee'
-            ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(accountType)}')`
+            ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(
+                accountType
+              )}')`
             : '1=1'
         }
       GROUP BY modelVersionId, accountType, date

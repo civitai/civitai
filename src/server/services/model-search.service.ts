@@ -182,8 +182,12 @@ export async function runModelSearch(
     primaryFileOnly,
     collectionId,
     searchIds,
+    // Dropped, never forwarded: the ctx value is the only authority. The input
+    // type excludes it, but callers spread parsed query data in through a cast,
+    // and `browsingLevel` now decides the minor gate as well as the level filter.
+    browsingLevel: _clientBrowsingLevel,
     ...data
-  } = input;
+  } = input as typeof input & { browsingLevel?: number };
 
   const { items, nextCursor } = await getModelsWithVersions({
     // Cast: callers supply a partial of GetAllModelsOutput (the public endpoint
@@ -200,8 +204,10 @@ export async function runModelSearch(
       cursor: !query ? cursor : undefined,
       ids: query ? searchIds ?? [] : queryIds,
       collectionId,
+      // No `disableMinor` here on purpose: getModelsRaw resolves it from the live
+      // browsing-settings addons against `browsingLevel`, so it turns on for
+      // ?nsfw=true and stays off for the default SFW request.
       disablePoi: true,
-      disableMinor: true,
     } as Parameters<typeof getModelsWithVersions>[0]['input'],
     user,
   });

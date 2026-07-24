@@ -4,25 +4,33 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * W13 — /apps/submit external-app WIZARD (the MERGED external+connect model). Browser
- * -mode surface test (report-only in Tekton): the stepper starts on the "App & scopes"
- * step with the OAuth-app picker; the homepage URL is now an OPTIONAL field on that
- * step; once a client is chosen the Next button enables and Details is reachable;
- * entering a homepage URL prefills name + slug on Details; and a valid Details submit
- * calls `submitExternalListing`. The pure derivation / normalization / step-gating /
- * payload shaping are unit-tested in `__tests__/deriveListingFromUrl.test.ts`,
- * `__tests__/normalizeLinkUrl.test.ts` and
- * `__tests__/offsiteSubmitFormConfig.oauth-fields.test.ts`.
+ * W13 — /apps/submit external-app WIZARD (redesigned, MERGED external+connect model).
+ * Browser-mode surface test (report-only in Tekton). New step order:
+ *
+ *   App URL (first, REQUIRED) → App & scopes → Details → Assets
+ *
+ * Covers: the App URL gates step 1 (required https); the OAuth picker + SENSITIVE-only
+ * justification model (sensitive scopes get a required input + badge, non-sensitive
+ * scopes collapse with no inputs); the empty-scopes app submits; and the URL autofill
+ * prefills name/slug/description. Pure derivation / gating / payload shaping are
+ * unit-tested in `__tests__/offsiteSubmitFormConfig.oauth-fields.test.ts`.
  */
+
+// TokenScope bits: UserRead=1 (sensitive), ModelsRead=4 (non-sensitive),
+// MediaRead=32 (non-sensitive). Read-only combo (36) has NO sensitive scope.
+const READONLY_SCOPES = 4 | 32; // ModelsRead | MediaRead
 
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   mutate: vi.fn(),
-  // The metadata auto-pull query result the mocked `fetchListingMetaFromUrl` returns.
-  meta: { data: undefined as unknown, isFetching: false, isSuccess: false },
-  // The caller's OAuth clients (`oauthClient.getAll`). Tests mutate this.
+  meta: { data: undefined as unknown, isFetching: false, isSuccess: false } as {
+    data: unknown;
+    isFetching: boolean;
+    isSuccess: boolean;
+    isError?: boolean;
+  },
   clients: {
-    data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 0xffff }] as unknown,
+    data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 4 | 32 }] as unknown,
     isLoading: false,
   },
 }));
@@ -75,58 +83,233 @@ beforeEach(() => {
   mocks.mutate.mockClear();
   mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
   mocks.clients = {
-    data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 0xffff }],
+    data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: READONLY_SCOPES }],
     isLoading: false,
   };
 });
 
-/** Select the (only) OAuth client via the Mantine Select combobox. */
+/** Fill a valid App URL on step 0 and advance to the App & scopes step. */
+async function advanceFromUrl(url = 'https://vitrine.civitai.com') {
+  await page.getByTestId('apps-offsite-submit-url').fill(url);
+  await page.getByTestId('apps-offsite-submit-url').element().blur();
+  await page.getByTestId('apps-offsite-wizard-next-url').click();
+}
+
+/** Select the (only) OAuth client via the Mantine Select combobox (on the App step). */
 async function pickClient() {
   await page.getByTestId('apps-offsite-client-select').click();
   await page.getByRole('option', { name: 'My OAuth App' }).click();
 }
 
-describe('ExternalSubmitForm — merged wizard', () => {
-  test('starts on the "App & scopes" step with the OAuth-app picker + optional homepage URL', async () => {
+describe('ExternalSubmitForm — redesigned wizard', () => {
+  test('starts on the App URL step (first + required); no OAuth picker yet', async () => {
     renderWithProviders(<ExternalSubmitForm />);
-    await expect.element(page.getByTestId('apps-offsite-client-select')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-offsite-submit-url')).toBeInTheDocument();
-    // The homepage URL field advertises that it is optional.
-    await expect.element(page.getByText(/Homepage link \(optional\)/i)).toBeInTheDocument();
-    // The Create-draft button lives on the Details step and is not rendered yet.
-    expect(page.getByRole('button', { name: 'Create draft' }).elements()).toHaveLength(0);
+    // The App URL input carries the accessible "App URL" label.
+    await expect.element(page.getByRole('textbox', { name: /App URL/ })).toBeInTheDocument();
+    // The OAuth picker lives on the SECOND step — not rendered yet.
+    expect(page.getByTestId('apps-offsite-client-select').elements()).toHaveLength(0);
   });
 
-  test('the empty-clients state renders when the user has no eligible OAuth apps', async () => {
+  test('the App URL is REQUIRED — Next is disabled until a valid https URL is entered', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    const next = page.getByTestId('apps-offsite-wizard-next-url');
+    await expect.element(next).toBeDisabled();
+    // A non-https URL keeps it disabled.
+    await page.getByTestId('apps-offsite-submit-url').fill('http://insecure.example.com');
+    await expect.element(next).toBeDisabled();
+    // A valid https URL enables it.
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+    await expect.element(next).toBeEnabled();
+  });
+
+  test('the empty-clients state renders on the App step after advancing from the URL', async () => {
     mocks.clients = { data: [], isLoading: false };
     renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
     await expect.element(page.getByTestId('apps-offsite-no-clients')).toBeInTheDocument();
   });
 
-  test('choosing a client enables Next and reaches the Details step', async () => {
+  test('a client with non-sensitive scopes reaches Details (no justification required)', async () => {
     renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
     await pickClient();
-    await page.getByRole('button', { name: 'Next' }).click();
+    // Non-sensitive scopes are collapsed with NO justification inputs.
+    await expect.element(page.getByTestId('apps-offsite-scope-other-toggle')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-justification-4').elements()).toHaveLength(0);
+    // Next is enabled (nothing required) → Details is reachable.
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
     await expect.element(page.getByRole('button', { name: 'Create draft' })).toBeInTheDocument();
   });
 
-  test('an optional homepage URL prefills name + slug on Details', async () => {
+  test('non-sensitive scopes are behind a keyboard-accessible collapse (no inputs)', async () => {
     renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
     await pickClient();
-    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
-    // Blur to normalize + prefill.
-    await page.getByTestId('apps-offsite-submit-url').element().blur();
-    await page.getByRole('button', { name: 'Next' }).click();
-    await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
-    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('vitrine');
+    const toggle = page.getByTestId('apps-offsite-scope-other-toggle');
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.click();
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect.element(page.getByTestId('apps-offsite-scope-other-list')).toBeInTheDocument();
+  });
+
+  test('a SENSITIVE scope shows a required input + badge and BLOCKS advancing until justified', async () => {
+    mocks.clients = {
+      data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 1 }], // UserRead (sensitive)
+      isLoading: false,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await pickClient();
+    await expect.element(page.getByTestId('apps-offsite-scope-readonly')).toBeInTheDocument();
+    expect(page.getByTestId('sensitive-scope-badge').elements().length).toBeGreaterThan(0);
+    // The picker is gone — no checkboxes.
+    expect(page.getByRole('checkbox').elements()).toHaveLength(0);
+    // Sensitive scope has a required justification input (UserRead = bit 1).
+    await expect.element(page.getByTestId('apps-offsite-justification-1')).toBeInTheDocument();
+    // Next is BLOCKED until the sensitive justification is filled.
+    await expect.element(page.getByTestId('apps-offsite-wizard-next-app')).toBeDisabled();
+    await page.getByTestId('apps-offsite-justification-1').fill('reads the profile to greet the user');
+    await expect.element(page.getByTestId('apps-offsite-wizard-next-app')).toBeEnabled();
+  });
+
+  test('an empty-scopes OAuth app shows the no-scopes state and submits cleanly', async () => {
+    mocks.clients = {
+      data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 0 }],
+      isLoading: false,
+    };
+    // Meta settles with no title → the Name autofills from the host fallback so the
+    // Details step is complete and "Create draft" is enabled.
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await pickClient();
+    await expect.element(page.getByTestId('apps-offsite-scope-empty')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-justification-1').elements()).toHaveLength(0);
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await page.getByRole('button', { name: 'Create draft' }).click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  test('the page <title> (not the host) fills the Name; slug still derives from the host; og:description autofills the Description', async () => {
+    // Regression (bug report): cosmetic-studio.civitai.com must show the real page
+    // <title> "Civitai Cosmetic Studio" in Name, NOT the host-derived "Cosmetic Studio".
+    mocks.meta = {
+      data: {
+        name: 'Civitai Cosmetic Studio',
+        tagline: 'short',
+        description: 'A longer description pulled from the link.',
+        coverImageUrl: undefined,
+        iconImageUrl: undefined,
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://cosmetic-studio.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    // The extracted <title> WINS over the host-derived name ("Cosmetic Studio").
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('Civitai Cosmetic Studio');
+    // Slug still derives from the URL host (hyphenated — slugs keep hyphens).
+    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('cosmetic-studio');
+    // og:description autofills the (empty) Description field.
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-description'))
+      .toHaveValue('A longer description pulled from the link.');
+    // The "we found your details" reveal is shown.
+    await expect.element(page.getByTestId('apps-offsite-autofill-reveal')).toBeInTheDocument();
+  });
+
+  test('when the meta fetch returns NO title, the Name falls back to the de-hyphenated host name', async () => {
+    // Settled with data but no name/title → host fallback, de-hyphenated to a space.
+    mocks.meta = {
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: undefined,
+        iconImageUrl: undefined,
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://cosmetic-studio.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    // No <title> → host-derived name, de-hyphenated ("Cosmetic Studio", not "Cosmetic-Studio").
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('Cosmetic Studio');
+    await expect.element(page.getByRole('textbox', { name: /^Slug/ })).toHaveValue('cosmetic-studio');
+  });
+
+  test('when the meta fetch ERRORS, the Name still falls back to the de-hyphenated host name', async () => {
+    // The fetch settling as an error must not leave Name blank — host fallback applies.
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false, isError: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://cosmetic-studio.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('Cosmetic Studio');
+  });
+
+  test('a Name the user already typed is never overwritten by the title or the host fallback', async () => {
+    // Meta has NOT settled yet when the author reaches Details and types a name.
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false, isError: false };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://cosmetic-studio.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    const name = page.getByTestId('apps-offsite-submit-name');
+    await name.fill('User Typed Name');
+    // The meta fetch now resolves WITH a <title>; force a re-render so the effect runs.
+    mocks.meta = {
+      data: {
+        name: 'Civitai Cosmetic Studio',
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: undefined,
+        iconImageUrl: undefined,
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    await page.getByRole('textbox', { name: /^Tagline/ }).fill('trigger a re-render');
+    // Neither the title nor the host fallback clobbers the typed name.
+    await expect.element(name).toHaveValue('User Typed Name');
+  });
+
+  test('autofill does NOT clobber a description the user already typed', async () => {
+    mocks.meta = {
+      data: { name: undefined, tagline: undefined, description: 'OG desc', coverImageUrl: undefined, iconImageUrl: undefined },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    // Advance to Details first WITHOUT a URL-triggered meta apply, type a description,
+    // then go back to URL and re-advance to fire the autofill — it must not clobber.
+    await advanceFromUrl('https://vitrine.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    const desc = page.getByTestId('apps-offsite-submit-description');
+    await desc.fill('my own words');
+    // The meta already applied on first advance; ensure the typed value stands.
+    await expect.element(desc).toHaveValue('my own words');
   });
 
   test('submitting valid details calls submitExternalListing (server owns the draft)', async () => {
+    // Meta settles with no title → Name autofills from the host fallback, completing Details.
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
     renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
     await pickClient();
-    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
-    await page.getByTestId('apps-offsite-submit-url').element().blur();
-    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
     await page.getByRole('button', { name: 'Create draft' }).click();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
   });

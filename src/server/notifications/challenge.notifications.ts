@@ -8,9 +8,12 @@ export const challengeNotifications = createNotificationProcessor({
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
+      // A user challenge whose pool was never funded pays 0 — don't congratulate them on winning it.
       message: `You placed ${asOrdinal(details.position)} in the "${
         details.challengeName
-      }" challenge! You've won ${numberWithCommas(details.prize)} Buzz.`,
+      }" challenge!${
+        details.prize > 0 ? ` You've won ${numberWithCommas(details.prize)} Buzz.` : ''
+      }`,
       url: `/challenges/${details.challengeId}`,
     }),
   },

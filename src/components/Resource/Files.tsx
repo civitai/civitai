@@ -82,21 +82,11 @@ function InlineDropzone({
       accept={accept}
       maxFiles={maxFiles}
       onReject={onReject}
-      styles={{
-        root: {
-          border: '2px dashed var(--mantine-color-dark-4)',
-          borderRadius: 8,
-          padding: 16,
-          backgroundColor: 'transparent',
-          cursor: 'pointer',
-          '&:hover': {
-            borderColor: 'var(--mantine-color-blue-5)',
-            backgroundColor: 'rgba(34, 139, 230, 0.05)',
-          },
-        },
-      }}
+      useFsAccessApi={!isAndroidDevice()}
+      className="cursor-pointer rounded-lg border-2 border-dashed border-dark-4 bg-transparent hover:border-blue-5 hover:bg-blue-5/5"
+      p="md"
     >
-      <Stack gap={4} align="center">
+      <Stack gap={4} align="center" style={{ pointerEvents: 'none' }}>
         <Group justify="center" gap="xs">
           <IconPlus size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
           <Text size="sm" c="dimmed">

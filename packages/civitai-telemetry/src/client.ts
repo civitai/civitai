@@ -1,4 +1,11 @@
-import type { Counter, Gauge, Histogram, Metric, Registry } from 'prom-client';
+import type {
+  Counter,
+  Gauge,
+  Histogram,
+  HistogramConfiguration,
+  Metric,
+  Registry,
+} from 'prom-client';
 import client from 'prom-client';
 
 export const PROM_PREFIX = 'civitai_app_';
@@ -65,6 +72,15 @@ export function registerCounterWithLabels<T extends string>({
   }
 }
 
+export function registerGauge({ name, help }: { name: string; help: string }) {
+  // Do this to deal with HMR in nextjs
+  try {
+    return new client.Gauge({ name: PROM_PREFIX + name, help });
+  } catch (e) {
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Gauge<string>;
+  }
+}
+
 export function registerGaugeWithLabels<T extends string>({
   name,
   help,
@@ -98,12 +114,16 @@ export function registerHistogram<T extends string = string>({
   // Do this to deal with HMR in nextjs
   const fullName = prefix + name;
   try {
-    return new client.Histogram({
-      name: fullName,
-      help,
-      labelNames: labelNames ? [...labelNames] : undefined,
-      buckets: buckets ? [...buckets] : undefined,
-    });
+    // Only set labelNames/buckets when provided. Passing `undefined` for either
+    // overrides prom-client's own defaults (labelNames -> [], buckets -> the
+    // default set) via Object.assign, and an undefined labelNames makes the
+    // Histogram constructor throw AFTER it has already self-registered — leaving
+    // a bucketless zombie in the registry that the catch below then hands back,
+    // so a later .observe() dies on `undefined.length` in findBound.
+    const config: HistogramConfiguration<T> = { name: fullName, help };
+    if (labelNames) config.labelNames = [...labelNames];
+    if (buckets) config.buckets = [...buckets];
+    return new client.Histogram(config);
   } catch (e) {
     return client.register.getSingleMetric(fullName) as Histogram<T>;
   }
@@ -225,6 +245,39 @@ export const trpcClientReadCapabilityRequests = registerCounterWithLabels({
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
   help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
+});
+
+// Metrics for the BitDex publish re-emitter job (reemit-bitdex-ops): runs is the
+// liveness signal, images_emitted/runs tracks emission volume, and the duration
+// histogram guards the emit statement against getting slow.
+export const reemitAttemptsCounter = registerCounter({
+  name: 'reemit_attempts_total',
+  help: 'BitDex publish re-emitter runs that passed the enabled gate and attempted the emit (incremented before the emit — counts erroring runs too)',
+});
+export const reemitRunsCounter = registerCounter({
+  name: 'reemit_runs_total',
+  help: 'BitDex publish re-emitter runs that emitted SUCCESSFULLY (success-only; compare to reemit_attempts_total for the error rate)',
+});
+export const reemitErrorsCounter = registerCounter({
+  name: 'reemit_errors_total',
+  help: 'BitDex publish re-emitter emits that threw (e.g. a missing shared PG function) before rethrowing',
+});
+export const reemitPostsScannedCounter = registerCounter({
+  name: 'reemit_posts_scanned_total',
+  help: 'Distinct posts scanned by the BitDex publish re-emitter across all runs',
+});
+export const reemitImagesEmittedCounter = registerCounter({
+  name: 'reemit_images_emitted_total',
+  help: 'BitdexOps rows (per-image ops) written by the BitDex publish re-emitter across all runs',
+});
+export const reemitRunDurationHistogram = registerHistogram({
+  name: 'reemit_run_duration_seconds',
+  help: 'Wall-clock duration of the BitDex publish re-emitter INSERT...SELECT emit statement',
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+});
+export const reemitSkippedRateLimitCounter = registerCounter({
+  name: 'reemit_skipped_rate_limit_total',
+  help: 'BitDex publish re-emitter fires skipped by the self rate-limit because too little time has passed since the last successful emit (external scheduler over-firing)',
 });
 
 // Creator compensation metrics
@@ -413,6 +466,48 @@ export const appStorageLatencyHistogram = registerHistogram({
   help: 'App Blocks KV procedure latency',
   labelNames: ['op'] as const,
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
+// Image ingestion / scan pipeline. The image-ingestion path (submit → scanner →
+// webhook write-back → cron drain) previously had ZERO Prometheus coverage; these
+// give per-lane submission volume, webhook-outcome split, cron throughput, and (via
+// collect()-based gauges in src/server/prom/client.ts) the working-state backlog.
+export const imageScanWebhookCounter = registerCounterWithLabels({
+  name: 'image_scan_webhook_total',
+  help: 'Image scan-result webhook callbacks by outcome',
+  labelNames: ['result'] as const,
+});
+
+export const imageScanSubmittedCounter = registerCounterWithLabels({
+  name: 'image_scan_submitted_total',
+  help: 'ingestImage() scan submissions by lane (new|legacy) and result (success|failed)',
+  labelNames: ['lane', 'result'] as const,
+});
+
+export const imageIngestCronCounter = registerCounterWithLabels({
+  name: 'image_ingest_cron_total',
+  help: 'ingest-images cron per-bucket image counts (sent lanes, waitingForRetry, staleRemoved)',
+  labelNames: ['bucket'] as const,
+});
+
+export const imageIngestCronQueueDepth = registerGauge({
+  name: 'image_ingest_cron_queue_depth',
+  help: 'ImageScan JobQueue depth read by the ingest-images cron on its most recent run',
+});
+
+// Fleet-wide cron job health (createJob in src/server/jobs/job.ts). Makes a
+// dead/erroring cron — e.g. ingest-images — visible: job_errors_total spikes and
+// the duration histogram flatlines when a job stops running.
+export const jobDurationHistogram = registerHistogram({
+  name: 'job_duration_seconds',
+  help: 'Cron job wall-clock run duration by job name',
+  labelNames: ['job'] as const,
+  buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+});
+export const jobErrorsCounter = registerCounterWithLabels({
+  name: 'job_errors_total',
+  help: 'Cron job runs that threw, by job name',
+  labelNames: ['job'] as const,
 });
 
 // NOTE: the DB pool-depth gauges live in the app (src/server/prom/client.ts) — they

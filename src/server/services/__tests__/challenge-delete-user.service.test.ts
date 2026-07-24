@@ -68,7 +68,7 @@ describe('deleteUserChallenge', () => {
       where: { id: 1, status: ChallengeStatus.Scheduled },
       data: { status: ChallengeStatus.Cancelled },
     });
-    expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
+    expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1, 'delete');
     expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
     expect(mockDbWrite.collection.delete).toHaveBeenCalledWith({ where: { id: 100 } });
   });
@@ -131,7 +131,7 @@ describe('deleteUserChallenge', () => {
     expect(mockDbRead.collectionItem.count).not.toHaveBeenCalled();
     // Already-Cancelled: no Scheduled->Cancelled claim; refund is the idempotent net-zero recovery.
     expect(mockDbWrite.challenge.updateMany).not.toHaveBeenCalled();
-    expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
+    expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1, 'delete');
     expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
     expect(mockDbWrite.collection.delete).toHaveBeenCalledWith({ where: { id: 100 } });
   });
@@ -158,7 +158,7 @@ describe('deleteChallenge (direct)', () => {
     await deleteChallenge(1);
     // No claim on an already-Cancelled row (nothing to flip); refund is the idempotent recovery.
     expect(mockDbWrite.challenge.updateMany).not.toHaveBeenCalled();
-    expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
+    expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1, 'delete');
     expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
   });
 

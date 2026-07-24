@@ -533,6 +533,48 @@ export async function isAppBlocksReviewSandboxEnabled(opts?: {
 }
 
 /**
+ * Dedicated mod-segmented flag for the AGENTIC MOD CODE-REVIEW (App Blocks P1).
+ *
+ * When a moderator reviews a PENDING publish request they can dispatch an
+ * ephemeral, sandboxed review agent that pulls the reviewed bundle, produces a
+ * structured code-review / security-audit / scope-verdict report, and reports it
+ * back — decision-support for the mod, torn down on the approve/reject decision.
+ *
+ * This is a USER-VISIBILITY gate (the `startAgentReview` tRPC procedure — the
+ * modal button + report rendering + chat are later phases), so — exactly like
+ * `app-blocks-review-sandbox-enabled` — it is mod-segmented and MUST be evaluated
+ * WITH the moderator's context. Create it in Flipt as base `enabled: false` with
+ * the SAME `moderators` segment the user-facing flag uses (`isModerator ==
+ * "true"`), so it can be scoped to a subset of mods during early dogfood.
+ *
+ * The machine-to-machine half (the report callback) has NO user context and
+ * additionally gates on the existing GLOBAL `app-blocks-pipeline-enabled`
+ * kill-switch — the same fail-safe as the review-sandbox build path.
+ *
+ * Fail-safe: the flag does NOT exist in Flipt yet (created only AFTER this
+ * merges) → `isFlipt` returns `false` → `startAgentReview` returns UNAUTHORIZED
+ * and no provisioning ever runs. So the as-merged behaviour is fully dark and
+ * cannot regress the gate open.
+ */
+export const APP_BLOCKS_AGENTIC_REVIEW_FLAG = 'app-blocks-agentic-review';
+
+/**
+ * Mod-segmented gate for the AGENTIC MOD CODE-REVIEW (App Blocks P1). Evaluated
+ * WITH the moderator's context (entityId = user id, context carries server-side
+ * `isModerator`) so the `moderators` segment can match — identical eval shape to
+ * `isAppBlocksReviewSandboxEnabled({ user })`. No user → preserves a global eval
+ * that can never match the segment (fail-closed), and an absent flag also
+ * evaluates false (fail-closed). See APP_BLOCKS_AGENTIC_REVIEW_FLAG.
+ */
+export async function isAppBlocksAgenticReviewEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated fail-closed flag for App Blocks SHARED (app-global / cross-user)
  * storage — the FIRST surface that opens the per-app datastore to PUBLIC
  * cross-user writes (previously mod + app-dev-tester only). Mirrors

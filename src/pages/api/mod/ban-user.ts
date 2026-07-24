@@ -11,10 +11,21 @@ const schema = z.object({
   reasonCode: z.enum(BanReasonCode).optional(),
   detailsExternal: z.string().optional(),
   detailsInternal: z.string().optional(),
+  // Explicit 'true'/'false' string enum, NOT z.coerce.boolean() — coercion
+  // makes the string "false" truthy, which would silently invert the opt-out.
+  removeMedia: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
+  removeModels: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const { userId, reasonCode, detailsExternal, detailsInternal } = schema.parse(req.query);
+  const { userId, reasonCode, detailsExternal, detailsInternal, removeMedia, removeModels } =
+    schema.parse(req.query);
 
   res.status(200).json({
     userId,
@@ -26,6 +37,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       reasonCode,
       detailsExternal,
       detailsInternal,
+      removeMedia,
+      removeModels,
       userId: -1, // using civitai user for banning using webhook
     });
 

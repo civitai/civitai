@@ -2,14 +2,12 @@ import {
   Alert,
   Badge,
   Button,
-  Checkbox,
   Code,
   Group,
   Loader,
   Select,
   Stack,
   Stepper,
-  Table,
   Text,
   TextInput,
   Textarea,
@@ -19,6 +17,8 @@ import {
   IconCheck,
   IconExternalLink,
   IconPlugConnected,
+  IconSparkles,
+  IconWorld,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import {
@@ -33,51 +33,51 @@ import {
   OFFSITE_CONTENT_RATING_OPTIONS,
   OFFSITE_SUBMIT_LIMITS,
   deriveListingFromUrl,
+  deriveScopesFromClient,
   emptyOffsiteSubmitForm,
   isClientStepComplete,
   isCreateDetailsStepComplete,
+  isCreateUrlStepComplete,
   normalizeLinkUrl,
-  scopeKeyForBit,
   toSubmitExternalInput,
-  toggleScopeBit,
   validateExternalCreateForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
+import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
 import { ListingAssetStep, type MetaSuggestions } from '~/components/Apps/ListingAssetStep';
 import { ExternalListingEditForm } from '~/components/Apps/ExternalListingEditForm';
+import { FadeIn } from '~/components/Apps/wizardMotion';
 import type { ListingEditContext } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
-import {
-  tokenScopeGrid,
-  tokenScopeLabels,
-  tokenScopeMaskToList,
-} from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
  * /apps/submit — "External app" mode body (W13 P3a, MERGED external+connect model).
  *
- * Every external app IS an OAuth app, so this ONE flow REQUIRES linking a registered
- * OAuth client the caller OWNS (picker + the disclosed scope subset + per-scope
- * justifications) and carries an OPTIONAL homepage / "Visit ↗" URL, plus the display
- * metadata + assets. Design B1: submit creates a DRAFT listing + a pending request,
- * then the author attaches assets. The server (`submitExternalListing`) is the source
- * of truth; the client mirror (`validateExternalCreateForm`) only surfaces inline
+ * Every external app IS an OAuth app, so this ONE flow links a registered OAuth
+ * client the caller OWNS (the derived scope subset + per-SENSITIVE-scope
+ * justifications) and carries the app's public **App URL** plus display metadata +
+ * assets. Design B1: submit creates a DRAFT listing + a pending request, then the
+ * author attaches assets. The server (`submitExternalListing`) is the source of
+ * truth; the client mirror (`validateExternalCreateForm`) only surfaces inline
  * errors before the round-trip.
+ *
+ * WIZARD ORDER (redesigned): **App URL → App & scopes → Details → Assets**. The App
+ * URL is the FIRST step and is REQUIRED — a valid https URL gates progression and is
+ * the autofill trigger (its OG metadata prefills the name / slug / description and
+ * suggests a cover + icon). The whole flow is subtly animated (Mantine
+ * `Transition`/`Collapse` via {@link FadeIn}, `prefers-reduced-motion` respected).
  *
  * DISCLOSURE/REVIEW-ONLY: the requested-scope subset is stored + reviewed; it does NOT
  * gate OAuth token issuance (the client's `allowedScopes` stays the runtime ceiling
  * via the existing consent flow).
  *
  * DUAL-MODE: when an `edit` context is supplied (`/apps/submit?edit=<listingId>`),
- * this renders the EDIT wizard (`ExternalListingEditForm`) instead — the metadata edit
- * flow over an existing listing (draft/pending in place; approved via a shadow
- * revision). The CREATE path below is unchanged for edits.
+ * this renders the EDIT wizard (`ExternalListingEditForm`) instead.
  *
  * DARK: reachable only behind `app-blocks-author` (the gSSP gate on /apps/submit is
  * unchanged; `deIndex` stays on).
@@ -85,10 +85,11 @@ import { trpc } from '~/utils/trpc';
 
 type Submitted = { listingId: string; publishRequestId: string; slug: string };
 
-/** Wizard step indices — App & scopes → Details → Assets. */
-const STEP_APP = 0;
-const STEP_DETAILS = 1;
-const STEP_ASSETS = 2;
+/** Wizard step indices — App URL → App & scopes → Details → Assets. */
+const STEP_URL = 0;
+const STEP_APP = 1;
+const STEP_DETAILS = 2;
+const STEP_ASSETS = 3;
 
 export function ExternalSubmitForm({ edit }: { edit?: ListingEditContext } = {}) {
   // DUAL-MODE: an edit context routes to the edit wizard (metadata edit, existing
@@ -99,17 +100,25 @@ export function ExternalSubmitForm({ edit }: { edit?: ListingEditContext } = {})
 }
 
 function ExternalCreateForm() {
-  const [active, setActive] = useState<number>(STEP_APP);
+  const [active, setActive] = useState<number>(STEP_URL);
   const [values, setValues] = useState<OffsiteSubmitFormValues>(emptyOffsiteSubmitForm());
   const [errors, setErrors] = useState<OffsiteSubmitFormErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
+  // Flip true once the author has tried to leave the scopes step so every empty
+  // SENSITIVE justification surfaces its required error at once.
+  const [showScopeErrors, setShowScopeErrors] = useState(false);
 
-  // OPTIONAL homepage-URL metadata auto-pull: once a valid URL is entered, fetch the
-  // target page's OG metadata SERVER-side (SSRF-safe) and surface asset suggestions.
+  // App-URL metadata auto-pull: once a valid URL is entered, fetch the target page's
+  // OG metadata SERVER-side (SSRF-safe) and surface prefill + asset suggestions.
   const [metaUrl, setMetaUrl] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<MetaSuggestions>({});
+  const [autofillApplied, setAutofillApplied] = useState(false);
   const appliedMetaRef = useRef<string | null>(null);
+  // Host-derived name kept as a FALLBACK only — used to fill `name` when the OG-meta
+  // fetch settles with no usable `<title>`. The real page title is preferred (see the
+  // meta effect); we never seed this up front so the title can win.
+  const hostNameFallbackRef = useRef<string>('');
 
   const clientsQuery = trpc.oauthClient.getAll.useQuery(undefined, {
     retry: false,
@@ -135,17 +144,47 @@ function ExternalCreateForm() {
     { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
   );
 
+  // Apply the OG-meta prefill ONCE per settled URL. Runs only after the fetch settles
+  // (success OR error) for the current `metaUrl`, so the real page `<title>`
+  // (`data.name`) has a chance to arrive before we touch the `name` field — the Name
+  // input lives on the later Details step, so the fetch has time. NAME precedence:
+  // prefer the extracted `<title>`; if the fetch yields none (or errors), fall back to
+  // the host-derived name. Every field is fill-if-empty, so typed text is never
+  // clobbered.
   useEffect(() => {
-    if (!metaQuery.data || appliedMetaRef.current === metaUrl) return;
-    appliedMetaRef.current = metaUrl;
+    if (!metaUrl || appliedMetaRef.current === metaUrl) return;
+    // Wait until the fetch settles for THIS url. With a per-url cache key + retry:false,
+    // `metaQuery.data` (when present) belongs to `metaUrl`, and `isError` is its result.
+    if (metaQuery.isFetching) return;
     const data = metaQuery.data;
+    const settled = !!data || metaQuery.isError;
+    if (!settled) return;
+    appliedMetaRef.current = metaUrl;
+
+    // Prefer the page <title> (data.name) over the host-derived fallback name.
+    const resolvedName = data?.name || hostNameFallbackRef.current;
     setValues((v) => ({
       ...v,
-      name: v.name.trim().length === 0 && data.name ? data.name : v.name,
-      tagline: v.tagline.trim().length === 0 && data.tagline ? data.tagline : v.tagline,
+      name: v.name.trim().length === 0 && resolvedName ? resolvedName : v.name,
+      tagline: v.tagline.trim().length === 0 && data?.tagline ? data.tagline : v.tagline,
+      // Description autofill: fill ONLY when empty, truncated to the field bound —
+      // a suggestion the author can freely edit or clear (never clobbers typed text).
+      description:
+        v.description.trim().length === 0 && data?.description
+          ? data.description.slice(0, OFFSITE_SUBMIT_LIMITS.descriptionMax)
+          : v.description,
     }));
-    setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
-  }, [metaQuery.data, metaUrl]);
+    setSuggestions({ coverImageUrl: data?.coverImageUrl, iconImageUrl: data?.iconImageUrl });
+    // Reveal the "we found your details" note whenever the link yielded anything the
+    // author can accept (computed from `data` directly — NOT the async setValues
+    // updater, whose side effects haven't run yet at this point).
+    if (
+      data &&
+      (data.name || data.tagline || data.description || data.coverImageUrl || data.iconImageUrl)
+    ) {
+      setAutofillApplied(true);
+    }
+  }, [metaUrl, metaQuery.isFetching, metaQuery.data, metaQuery.isError]);
 
   const submitMutation = trpc.appListings.submitExternalListing.useMutation({
     onSuccess: (res: Submitted) => {
@@ -168,19 +207,14 @@ function ExternalCreateForm() {
   }
 
   function handleSelectClient(clientId: string | null) {
-    // Changing the client resets the requested scopes + justifications — the new
-    // client has a DIFFERENT ceiling, so a carried-over mask could exceed it.
-    setValues((v) => ({
-      ...v,
-      connectClientId: clientId,
-      requestedScopes: 0,
-      scopeJustifications: {},
-    }));
+    // Changing the client RE-DERIVES the requested scopes from the new client's
+    // `allowedScopes` (the listing requests exactly the client's set — no picker) and
+    // re-keys the justifications, dropping any whose scope the new client doesn't have.
+    const nextClient = clientId ? clients.find((c) => c.id === clientId) ?? null : null;
+    const nextAllowed = nextClient?.allowedScopes ?? 0;
+    setValues((v) => deriveScopesFromClient({ ...v, connectClientId: clientId }, nextAllowed));
+    setShowScopeErrors(false);
     setErrors((prev) => ({ ...prev, connectClientId: undefined, requestedScopes: undefined }));
-  }
-
-  function handleToggleScope(bit: number) {
-    setValues((v) => toggleScopeBit(v, bit));
   }
 
   function handleJustificationChange(key: string, text: string) {
@@ -192,22 +226,23 @@ function ExternalCreateForm() {
 
   function applyNormalizedUrl(normalized: string) {
     const derived = deriveListingFromUrl(normalized);
+    // Stash the host-derived name as a FALLBACK for the meta effect — do NOT set the
+    // `name` field here. Setting it up front (this fires before the OG-meta fetch
+    // resolves) would make the meta effect's "only fill if empty" guard skip the real
+    // page `<title>`, so the uglier host name would preempt the better title. The slug
+    // IS set immediately (slugs are hyphenated + there's no better source for them).
+    hostNameFallbackRef.current = derived.name;
     setValues((v) => ({
       ...v,
       externalUrl: normalized,
-      name: v.name.trim().length === 0 && derived.name ? derived.name : v.name,
       slug: v.slug.trim().length === 0 && derived.slug ? derived.slug : v.slug,
     }));
   }
 
-  // The homepage URL is OPTIONAL: a blank field is valid (clears any error, no meta
-  // pull); a non-blank field is normalized to https + validated, and on success kicks
-  // the OG-metadata auto-pull + name/slug prefill.
+  // The App URL is REQUIRED. Blur tidies it into canonical https (no blocking); the
+  // required gate is enforced on advance.
   function handleUrlBlur() {
-    if (values.externalUrl.trim().length === 0) {
-      setErrors((prev) => ({ ...prev, externalUrl: undefined }));
-      return;
-    }
+    if (values.externalUrl.trim().length === 0) return;
     const result = normalizeLinkUrl(values.externalUrl);
     if (result.error) {
       setErrors((prev) => ({ ...prev, externalUrl: result.error }));
@@ -218,14 +253,38 @@ function ExternalCreateForm() {
     setErrors((prev) => ({ ...prev, externalUrl: undefined }));
   }
 
+  function handleAdvanceFromUrl() {
+    if (values.externalUrl.trim().length === 0) {
+      setErrors((prev) => ({ ...prev, externalUrl: 'Enter your app’s URL to continue.' }));
+      return;
+    }
+    const result = normalizeLinkUrl(values.externalUrl);
+    if (result.error) {
+      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
+      return;
+    }
+    applyNormalizedUrl(result.url);
+    setMetaUrl(result.url);
+    setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+    setActive(STEP_APP);
+  }
+
+  function handleUrlKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    handleAdvanceFromUrl();
+  }
+
   function handleAdvanceFromApp() {
     if (!isClientStepComplete(values, allowedScopes)) {
+      setShowScopeErrors(true);
       setErrors((prev) => ({
         ...prev,
         connectClientId: values.connectClientId ? undefined : 'Choose one of your OAuth apps.',
       }));
       return;
     }
+    setShowScopeErrors(false);
     setErrors((prev) => ({ ...prev, connectClientId: undefined, requestedScopes: undefined }));
     setActive(STEP_DETAILS);
   }
@@ -239,20 +298,32 @@ function ExternalCreateForm() {
   function handleCreateDraft() {
     const nextErrors = validateExternalCreateForm(values, allowedScopes);
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
+    if (Object.keys(nextErrors).length > 0) {
+      // Steer the author back to the step carrying the first error.
+      if (nextErrors.externalUrl) setActive(STEP_URL);
+      else if (nextErrors.connectClientId || nextErrors.requestedScopes || nextErrors.scopeJustifications) {
+        setShowScopeErrors(true);
+        setActive(STEP_APP);
+      }
+      return;
+    }
     submitMutation.mutate(toSubmitExternalInput(values));
   }
 
   function handleStepClick(step: number) {
     if (submitted) return;
-    if (step === STEP_APP) setActive(STEP_APP);
-    else if (step === STEP_DETAILS && isClientStepComplete(values, allowedScopes)) {
+    if (step === STEP_URL) setActive(STEP_URL);
+    else if (step === STEP_APP && isCreateUrlStepComplete(values)) setActive(STEP_APP);
+    else if (
+      step === STEP_DETAILS &&
+      isCreateUrlStepComplete(values) &&
+      isClientStepComplete(values, allowedScopes)
+    ) {
       setActive(STEP_DETAILS);
     }
   }
 
   const busy = submitMutation.isPending;
-  const requestedScopeList = tokenScopeMaskToList(values.requestedScopes);
   const clientOptions = clients.map((c) => ({ value: c.id, label: c.name }));
 
   return (
@@ -265,9 +336,9 @@ function ExternalCreateForm() {
       >
         <Text size="sm">
           List an app hosted off-site by linking your registered OAuth app so users can grant it
-          access. Disclose the scopes your app requests and why — a moderator reviews it before it
-          appears. You can add an optional homepage link users can <b>Visit ↗</b>. This does not
-          change what your app can do: your OAuth client’s allowed scopes stay the limit.
+          access. Start with your app’s URL — we’ll pull in a name, description and images you can
+          tweak. A moderator reviews it before it appears. This does not change what your app can
+          do: your OAuth client’s allowed scopes stay the limit.
         </Text>
       </Alert>
 
@@ -286,288 +357,276 @@ function ExternalCreateForm() {
 
       <Stepper active={active} onStepClick={handleStepClick} allowNextStepsSelect={false} size="sm">
         <Stepper.Step
+          label="App URL"
+          description="Where it lives"
+          allowStepClick={!submitted}
+          data-testid="apps-offsite-wizard-step-url"
+        >
+          <FadeIn>
+            <Stack gap="md" mt="md">
+              <TextInput
+                label="App URL"
+                description="Your app’s public https link — users open it from the listing, and we’ll suggest a name, description and images from it."
+                placeholder="example.com/app"
+                leftSection={<IconWorld size={16} />}
+                value={values.externalUrl}
+                onChange={(e) => setField('externalUrl', e.currentTarget.value)}
+                onBlur={handleUrlBlur}
+                onKeyDown={handleUrlKeyDown}
+                error={errors.externalUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
+                required
+                withAsterisk
+                data-autofocus
+                data-testid="apps-offsite-submit-url"
+              />
+
+              {metaQuery.isFetching && (
+                <Group gap={6} data-testid="apps-offsite-meta-loading">
+                  <Loader size={12} />
+                  <Text size="xs" c="dimmed">
+                    Looking for a name, description and images from your link…
+                  </Text>
+                </Group>
+              )}
+
+              <Group justify="space-between">
+                <Button
+                  variant="default"
+                  component={Link}
+                  href="/apps/my-submissions"
+                  disabled={busy}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleAdvanceFromUrl}
+                  disabled={busy || !isCreateUrlStepComplete(values)}
+                  data-testid="apps-offsite-wizard-next-url"
+                >
+                  Next
+                </Button>
+              </Group>
+            </Stack>
+          </FadeIn>
+        </Stepper.Step>
+
+        <Stepper.Step
           label="App & scopes"
           description="Your OAuth app"
-          allowStepClick={!submitted}
+          allowStepClick={!submitted && isCreateUrlStepComplete(values)}
           data-testid="apps-offsite-wizard-step-app"
         >
-          <Stack gap="md" mt="md">
-            {clientsQuery.isLoading ? (
-              <Group gap={8} data-testid="apps-offsite-clients-loading">
-                <Loader size={16} />
-                <Text size="sm" c="dimmed">
-                  Loading your OAuth apps…
-                </Text>
+          <FadeIn>
+            <Stack gap="md" mt="md">
+              {clientsQuery.isLoading ? (
+                <Group gap={8} data-testid="apps-offsite-clients-loading">
+                  <Loader size={16} />
+                  <Text size="sm" c="dimmed">
+                    Loading your OAuth apps…
+                  </Text>
+                </Group>
+              ) : clients.length === 0 ? (
+                <Alert color="gray" variant="light" data-testid="apps-offsite-no-clients">
+                  <Text size="sm">
+                    You have no eligible OAuth apps. Register one in your account settings first,
+                    then come back to list it.
+                  </Text>
+                </Alert>
+              ) : (
+                <>
+                  <Select
+                    label="OAuth app"
+                    description="One of your registered OAuth clients. Users will grant this app access."
+                    placeholder="Choose an app"
+                    data={clientOptions}
+                    value={values.connectClientId}
+                    onChange={handleSelectClient}
+                    error={errors.connectClientId}
+                    disabled={busy}
+                    required
+                    data-testid="apps-offsite-client-select"
+                  />
+
+                  {selectedClient && (
+                    <DerivedScopesDisclosure
+                      requestedScopes={values.requestedScopes}
+                      justifications={values.scopeJustifications}
+                      onJustificationChange={handleJustificationChange}
+                      disabled={busy}
+                      forceShowErrors={showScopeErrors}
+                    />
+                  )}
+                </>
+              )}
+
+              <Group justify="space-between">
+                <Button
+                  variant="default"
+                  onClick={() => setActive(STEP_URL)}
+                  disabled={busy}
+                  data-testid="apps-offsite-wizard-back-app"
+                >
+                  Back
+                </Button>
+                <Button
+                  onClick={handleAdvanceFromApp}
+                  disabled={busy || !isClientStepComplete(values, allowedScopes)}
+                  data-testid="apps-offsite-wizard-next-app"
+                >
+                  Next
+                </Button>
               </Group>
-            ) : clients.length === 0 ? (
-              <Alert color="gray" variant="light" data-testid="apps-offsite-no-clients">
-                <Text size="sm">
-                  You have no eligible OAuth apps. Register one in your account settings first, then
-                  come back to list it.
-                </Text>
-              </Alert>
-            ) : (
-              <>
-                <Select
-                  label="OAuth app"
-                  description="One of your registered OAuth clients. Users will grant this app access."
-                  placeholder="Choose an app"
-                  data={clientOptions}
-                  value={values.connectClientId}
-                  onChange={handleSelectClient}
-                  error={errors.connectClientId}
-                  disabled={busy}
-                  required
-                  data-testid="apps-offsite-client-select"
-                />
-
-                {selectedClient && (
-                  <Stack gap="xs" data-testid="apps-offsite-scope-grid">
-                    <div>
-                      <Text size="sm" fw={500}>
-                        Requested scopes
-                      </Text>
-                      <Text size="xs" c="dimmed">
-                        Check only the scopes your app needs. Scopes greyed out aren’t in this app’s
-                        allowed set.
-                      </Text>
-                    </div>
-                    <Table withTableBorder withColumnBorders>
-                      <Table.Thead>
-                        <Table.Tr>
-                          <Table.Th>Resource</Table.Th>
-                          <Table.Th style={{ textAlign: 'center', width: 70 }}>Read</Table.Th>
-                          <Table.Th style={{ textAlign: 'center', width: 70 }}>Write</Table.Th>
-                          <Table.Th style={{ textAlign: 'center', width: 70 }}>Delete</Table.Th>
-                        </Table.Tr>
-                      </Table.Thead>
-                      <Table.Tbody>
-                        {tokenScopeGrid.map((row) => (
-                          <Table.Tr key={row.label}>
-                            <Table.Td>
-                              <Text size="sm">{row.label}</Text>
-                            </Table.Td>
-                            {(['read', 'write', 'delete'] as const).map((col) => {
-                              const bit = (row as { read?: number; write?: number; delete?: number })[
-                                col
-                              ];
-                              const available = bit != null && Flags.hasFlag(allowedScopes, bit);
-                              return (
-                                <Table.Td key={col} style={{ textAlign: 'center' }}>
-                                  {bit != null ? (
-                                    <Checkbox
-                                      checked={Flags.hasFlag(values.requestedScopes, bit)}
-                                      onChange={() => handleToggleScope(bit)}
-                                      disabled={!available || busy}
-                                      styles={{ input: { cursor: available ? 'pointer' : 'not-allowed' } }}
-                                      data-testid={`apps-offsite-scope-${bit}`}
-                                    />
-                                  ) : (
-                                    <Text size="xs" c="dimmed">
-                                      —
-                                    </Text>
-                                  )}
-                                </Table.Td>
-                              );
-                            })}
-                          </Table.Tr>
-                        ))}
-                      </Table.Tbody>
-                    </Table>
-                    {errors.requestedScopes && (
-                      <Text size="xs" c="red">
-                        {errors.requestedScopes}
-                      </Text>
-                    )}
-
-                    {requestedScopeList.length > 0 && (
-                      <Stack gap="sm" data-testid="apps-offsite-justifications">
-                        <Text size="sm" fw={500}>
-                          Why do you need each scope? (optional, helps review)
-                        </Text>
-                        {requestedScopeList.map(({ bit, key, label }) => {
-                          const justificationKey = scopeKeyForBit(bit);
-                          const text = values.scopeJustifications[justificationKey] ?? '';
-                          return (
-                            <Textarea
-                              key={bit}
-                              label={label || tokenScopeLabels[bit] || key}
-                              placeholder="Explain why your app needs this scope…"
-                              autosize
-                              minRows={2}
-                              maxRows={4}
-                              value={text}
-                              onChange={(e) =>
-                                handleJustificationChange(justificationKey, e.currentTarget.value)
-                              }
-                              maxLength={OFFSITE_SUBMIT_LIMITS.justificationMax}
-                              disabled={busy}
-                              description={`${text.length}/${OFFSITE_SUBMIT_LIMITS.justificationMax}`}
-                              data-testid={`apps-offsite-justification-${bit}`}
-                            />
-                          );
-                        })}
-                      </Stack>
-                    )}
-                  </Stack>
-                )}
-
-                <TextInput
-                  label="Homepage link (optional)"
-                  description="An https link users can Visit ↗. Leave blank if your app has no public homepage — we'll suggest a name + assets from it if provided."
-                  placeholder="example.com/app"
-                  value={values.externalUrl}
-                  onChange={(e) => setField('externalUrl', e.currentTarget.value)}
-                  onBlur={handleUrlBlur}
-                  error={errors.externalUrl}
-                  maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
-                  disabled={busy}
-                  data-testid="apps-offsite-submit-url"
-                />
-              </>
-            )}
-
-            <Group justify="space-between">
-              <Button variant="default" component={Link} href="/apps/my-submissions" disabled={busy}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleAdvanceFromApp}
-                disabled={busy || !isClientStepComplete(values, allowedScopes)}
-                data-testid="apps-offsite-wizard-next-app"
-              >
-                Next
-              </Button>
-            </Group>
-          </Stack>
+            </Stack>
+          </FadeIn>
         </Stepper.Step>
 
         <Stepper.Step
           label="Details"
           description="Name & metadata"
-          allowStepClick={!submitted && isClientStepComplete(values, allowedScopes)}
+          allowStepClick={
+            !submitted && isCreateUrlStepComplete(values) && isClientStepComplete(values, allowedScopes)
+          }
           data-testid="apps-offsite-wizard-step-details"
         >
-          <Stack gap="md" mt="md">
-            {metaQuery.isFetching && (
-              <Group gap={6} data-testid="apps-offsite-meta-loading">
-                <Loader size={12} />
-                <Text size="xs" c="dimmed">
-                  Looking for a name, description and images from your link…
-                </Text>
+          <FadeIn>
+            <Stack gap="md" mt="md">
+              {autofillApplied && (
+                <FadeIn>
+                  <Alert
+                    color="grape"
+                    variant="light"
+                    icon={<IconSparkles size={16} />}
+                    data-testid="apps-offsite-autofill-reveal"
+                  >
+                    <Text size="sm">
+                      We pulled these details from your link — edit anything, or clear what you
+                      don’t want.
+                    </Text>
+                  </Alert>
+                </FadeIn>
+              )}
+              {metaQuery.isFetching && (
+                <Group gap={6} data-testid="apps-offsite-meta-loading">
+                  <Loader size={12} />
+                  <Text size="xs" c="dimmed">
+                    Looking for a name, description and images from your link…
+                  </Text>
+                </Group>
+              )}
+              <TextInput
+                label="Name"
+                placeholder="My External App"
+                value={values.name}
+                onChange={(e) => setField('name', e.currentTarget.value)}
+                onKeyDown={handleDetailsKeyDown}
+                error={errors.name}
+                maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
+                required
+                disabled={busy}
+                data-autofocus
+                data-testid="apps-offsite-submit-name"
+              />
+
+              <TextInput
+                label="Slug"
+                description={`Your app's URL slug (${OFFSITE_SUBMIT_LIMITS.slugMin}–${OFFSITE_SUBMIT_LIMITS.slugMax} chars, lowercase a–z / 0–9 / hyphens).`}
+                placeholder="my-external-app"
+                value={values.slug}
+                onChange={(e) => setField('slug', e.currentTarget.value)}
+                onKeyDown={handleDetailsKeyDown}
+                error={errors.slug}
+                maxLength={OFFSITE_SUBMIT_LIMITS.slugMax}
+                required
+                disabled={busy}
+                data-testid="apps-offsite-submit-slug"
+              />
+
+              <TextInput
+                label="Tagline"
+                description="A short one-liner (optional)."
+                value={values.tagline}
+                onChange={(e) => setField('tagline', e.currentTarget.value)}
+                onKeyDown={handleDetailsKeyDown}
+                error={errors.tagline}
+                maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
+                disabled={busy}
+              />
+
+              <Textarea
+                label="Description"
+                description="What the app does (optional)."
+                autosize
+                minRows={3}
+                maxRows={8}
+                value={values.description}
+                onChange={(e) => setField('description', e.currentTarget.value)}
+                error={errors.description}
+                maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
+                disabled={busy}
+                data-testid="apps-offsite-submit-description"
+              />
+
+              <Group grow align="flex-start">
+                <Select
+                  label="Category"
+                  placeholder="No category"
+                  data={OFFSITE_CATEGORY_OPTIONS}
+                  value={values.category}
+                  onChange={(v: string | null) =>
+                    setField('category', (v as MarketplaceCategory) || null)
+                  }
+                  error={errors.category}
+                  clearable
+                  disabled={busy}
+                />
+                <Select
+                  label="Content rating"
+                  data={OFFSITE_CONTENT_RATING_OPTIONS}
+                  value={values.contentRating}
+                  onChange={(v: string | null) =>
+                    setField('contentRating', (v as OffsiteContentRating) || 'g')
+                  }
+                  error={errors.contentRating}
+                  allowDeselect={false}
+                  disabled={busy}
+                />
               </Group>
-            )}
-            <TextInput
-              label="Name"
-              placeholder="My External App"
-              value={values.name}
-              onChange={(e) => setField('name', e.currentTarget.value)}
-              onKeyDown={handleDetailsKeyDown}
-              error={errors.name}
-              maxLength={OFFSITE_SUBMIT_LIMITS.nameMax}
-              required
-              disabled={busy}
-              data-autofocus
-              data-testid="apps-offsite-submit-name"
-            />
 
-            <TextInput
-              label="Slug"
-              description={`Your app's URL slug (${OFFSITE_SUBMIT_LIMITS.slugMin}–${OFFSITE_SUBMIT_LIMITS.slugMax} chars, lowercase a–z / 0–9 / hyphens).`}
-              placeholder="my-external-app"
-              value={values.slug}
-              onChange={(e) => setField('slug', e.currentTarget.value)}
-              onKeyDown={handleDetailsKeyDown}
-              error={errors.slug}
-              maxLength={OFFSITE_SUBMIT_LIMITS.slugMax}
-              required
-              disabled={busy}
-              data-testid="apps-offsite-submit-slug"
-            />
-
-            <TextInput
-              label="Tagline"
-              description="A short one-liner (optional)."
-              value={values.tagline}
-              onChange={(e) => setField('tagline', e.currentTarget.value)}
-              onKeyDown={handleDetailsKeyDown}
-              error={errors.tagline}
-              maxLength={OFFSITE_SUBMIT_LIMITS.taglineMax}
-              disabled={busy}
-            />
-
-            <Textarea
-              label="Description"
-              description="What the app does (optional)."
-              autosize
-              minRows={3}
-              maxRows={8}
-              value={values.description}
-              onChange={(e) => setField('description', e.currentTarget.value)}
-              error={errors.description}
-              maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
-              disabled={busy}
-            />
-
-            <Group grow align="flex-start">
-              <Select
-                label="Category"
-                placeholder="No category"
-                data={OFFSITE_CATEGORY_OPTIONS}
-                value={values.category}
-                onChange={(v: string | null) =>
-                  setField('category', (v as MarketplaceCategory) || null)
-                }
-                error={errors.category}
-                clearable
+              <Textarea
+                label="What is this app? (optional)"
+                description="A note for the reviewer — recorded on the request."
+                autosize
+                minRows={2}
+                maxRows={6}
+                value={values.changelog}
+                onChange={(e) => setField('changelog', e.currentTarget.value)}
+                error={errors.changelog}
+                maxLength={OFFSITE_SUBMIT_LIMITS.changelogMax}
                 disabled={busy}
               />
-              <Select
-                label="Content rating"
-                data={OFFSITE_CONTENT_RATING_OPTIONS}
-                value={values.contentRating}
-                onChange={(v: string | null) =>
-                  setField('contentRating', (v as OffsiteContentRating) || 'g')
-                }
-                error={errors.contentRating}
-                allowDeselect={false}
-                disabled={busy}
-              />
-            </Group>
 
-            <Textarea
-              label="What is this app? (optional)"
-              description="A note for the reviewer — recorded on the request."
-              autosize
-              minRows={2}
-              maxRows={6}
-              value={values.changelog}
-              onChange={(e) => setField('changelog', e.currentTarget.value)}
-              error={errors.changelog}
-              maxLength={OFFSITE_SUBMIT_LIMITS.changelogMax}
-              disabled={busy}
-            />
-
-            <Group justify="space-between">
-              <Button
-                variant="default"
-                onClick={() => setActive(STEP_APP)}
-                disabled={busy}
-                data-testid="apps-offsite-wizard-back-details"
-              >
-                Back
-              </Button>
-              <Button
-                onClick={handleCreateDraft}
-                loading={busy}
-                disabled={!isCreateDetailsStepComplete(values, allowedScopes)}
-                leftSection={<IconExternalLink size={16} />}
-                data-testid="apps-offsite-submit-create"
-              >
-                Create draft
-              </Button>
-            </Group>
-          </Stack>
+              <Group justify="space-between">
+                <Button
+                  variant="default"
+                  onClick={() => setActive(STEP_APP)}
+                  disabled={busy}
+                  data-testid="apps-offsite-wizard-back-details"
+                >
+                  Back
+                </Button>
+                <Button
+                  onClick={handleCreateDraft}
+                  loading={busy}
+                  disabled={!isCreateDetailsStepComplete(values, allowedScopes)}
+                  leftSection={<IconExternalLink size={16} />}
+                  data-testid="apps-offsite-submit-create"
+                >
+                  Create draft
+                </Button>
+              </Group>
+            </Stack>
+          </FadeIn>
         </Stepper.Step>
 
         <Stepper.Step

@@ -14,10 +14,10 @@ import {
   Stack,
   Switch,
   Text,
-  Textarea,
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
+import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
@@ -32,6 +32,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
+import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
@@ -41,14 +42,8 @@ import {
   ManifestDiffPreview,
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
-import {
-  ReasonGatedField,
-  ReasonGatedSubmitButton,
-  reasonMeetsMin,
-} from '~/components/Apps/ReasonGatedActionModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
-import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
@@ -208,7 +203,11 @@ export function OnsiteReviewModal({
 /** Static, per-request modal title (slug + version + a mode/first-version badge).
  *  Derived purely from `selection` — no transient state — so it lives on the
  *  stable shell, not the keyed body. */
-function OnsiteReviewModalTitle({ selection }: { selection: NonNullable<OnsiteReviewSelection> }) {
+export function OnsiteReviewModalTitle({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
   const { request, mode } = selection;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
   return (
@@ -240,64 +239,38 @@ function OnsiteReviewModalTitle({ selection }: { selection: NonNullable<OnsiteRe
  * mutations. The parent keys this on `selection.request.id`, so all of that
  * state is fresh on every request switch — no manual reset needed, and the
  * `onSuccess → onClose` paths are safe because the next open remounts fresh.
+ *
+ * EXPORTED (with {@link OnsiteReviewModalTitle}) so the per-submission review
+ * PAGE (`/apps/review/<id>`, `appReviewPage` flag) can re-host the exact same
+ * body WITHOUT the `<Modal>` shell — the page passes a resolved `selection`, an
+ * `onClose` that redirects to the queue (Q6), and its own `busyRef`. Keep this
+ * server-graph-free and free of modal-only assumptions so the modal and page
+ * stay behaviour-identical (and so an off-site page could reuse the shared
+ * sub-sections later). The modal shell above remains the only caller that wraps
+ * it in `<Modal>`.
  */
-function OnsiteReviewModalBody({
+export function OnsiteReviewModalBody({
   selection,
   onClose,
   busyRef,
+  hideInlineActions = false,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
   onClose: () => void;
-  busyRef: { current: boolean };
+  /** Modal shell close-guard ref, passed through to the inline action bar.
+   *  Omitted by the page, which renders its own (sticky) action bar. */
+  busyRef?: { current: boolean };
+  /** Suppress the inline approve/reject footer so the page can render the actions
+   *  in its own sticky bottom bar (the modal keeps them inline). */
+  hideInlineActions?: boolean;
 }) {
-  const utils = trpc.useUtils();
-  const [approvalNotes, setApprovalNotes] = useState('');
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
+  const features = useFeatureFlags();
 
   const { request, mode } = selection;
-
-  const approveMut = trpc.blocks.approveRequest.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({
-        message: `Approved ${request.slug} v${request.version}. Build started.`,
-      });
-      await utils.blocks.listPendingRequests.invalidate();
-      await utils.blocks.listApprovedRequests.invalidate();
-      onClose();
-    },
-    onError: (e) => {
-      showErrorNotification({
-        title: 'Approve failed',
-        error: new Error(e.message),
-      });
-    },
-  });
-  const rejectMut = trpc.blocks.rejectRequest.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({
-        message: `Rejected ${request.slug} v${request.version}.`,
-      });
-      await utils.blocks.listPendingRequests.invalidate();
-      await utils.blocks.listRejectedRequests.invalidate();
-      onClose();
-    },
-    onError: (e) => {
-      showErrorNotification({
-        title: 'Reject failed',
-        error: new Error(e.message),
-      });
-    },
-  });
-
-  const readOnly = mode !== 'pending';
 
   const manifest = request.manifest as Record<string, unknown>;
   const fs = (request.fileSummary ?? {}) as FileSummary;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-  const busy = approveMut.isPending || rejectMut.isPending;
-  // Publish the in-flight state up to the shell so its onClose can guard on it.
-  busyRef.current = busy;
 
   const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
   const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
@@ -375,6 +348,18 @@ function OnsiteReviewModalBody({
             mod-gated preview before approving. Pending requests only; dark
             unless the mod-only review-sandbox flag is enabled. */}
         {mode === 'pending' && <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />}
+
+        {/* AGENTIC MOD CODE-REVIEW (App Blocks P2) — dispatch + poll + render an
+            agent code-review/security-audit report before approving. On-site
+            PENDING only, and DARK unless the mod-only `app-blocks-agentic-review`
+            CLIENT flag is enabled (fail-closed: absent Flipt flag → does not
+            render, so the panel is inert on merge). External/connect requests are
+            out of P2 scope — hidden. */}
+        {mode === 'pending' &&
+          !!features?.appBlocksAgenticReview &&
+          isOnsiteReviewRequest(request) && (
+            <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />
+          )}
 
         {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
             images are an abuse vector → the mod sees them (here, derived from
@@ -455,76 +440,12 @@ function OnsiteReviewModalBody({
           <ManifestView manifest={manifest} />
         </Stack>
 
-        {readOnly ? null : actionMode === 'reject' ? (
-          <Stack gap="xs">
-            <ReasonGatedField
-              value={rejectionReason}
-              onChange={setRejectionReason}
-              disabled={busy}
-              label="Rejection reason"
-              placeholder={`Explain what needs to change before this can be approved (≥${OFFSITE_MOD_REASON_MIN} chars, shown to the dev).`}
-              testId="apps-review-reject-reason"
-              minRows={3}
-              maxRows={10}
-            />
-            <Group justify="flex-end" gap="xs">
-              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
-                Cancel
-              </Button>
-              <ReasonGatedSubmitButton
-                onClick={() =>
-                  rejectMut.mutate({
-                    publishRequestId: request.id,
-                    rejectionReason: rejectionReason.trim(),
-                  })
-                }
-                gateOpen={reasonMeetsMin(rejectionReason)}
-                busy={rejectMut.isPending}
-                color="red"
-                leftSection={<IconX size={14} />}
-                label="Reject"
-                testId="apps-review-reject-confirm"
-              />
-            </Group>
-          </Stack>
-        ) : (
-          <Stack gap="xs">
-            <Textarea
-              label="Approval notes (optional)"
-              autosize
-              minRows={2}
-              maxRows={6}
-              placeholder="Optional notes attached to the approval record."
-              value={approvalNotes}
-              onChange={(e) => setApprovalNotes(e.currentTarget.value)}
-              disabled={busy}
-            />
-            <Group justify="flex-end" gap="xs">
-              <Button
-                color="red"
-                variant="default"
-                leftSection={<IconX size={14} />}
-                onClick={() => setActionMode('reject')}
-                disabled={busy}
-              >
-                Reject…
-              </Button>
-              <Button
-                color="green"
-                leftSection={<IconCheck size={14} />}
-                onClick={() =>
-                  approveMut.mutate({
-                    publishRequestId: request.id,
-                    approvalNotes: approvalNotes.trim() || undefined,
-                  })
-                }
-                disabled={busy}
-                loading={approveMut.isPending}
-              >
-                Approve + build
-              </Button>
-            </Group>
-          </Stack>
+        {/* Approve/reject controls. Rendered inline here for the modal (its
+            footer, unchanged), and SUPPRESSED on the page (`hideInlineActions`),
+            which renders the same `ReviewActionBar` pinned in a sticky bottom bar.
+            The bar self-suppresses for read-only approved/rejected history. */}
+        {!hideInlineActions && (
+          <ReviewActionBar selection={selection} onClose={onClose} busyRef={busyRef} />
         )}
       </Stack>
   );

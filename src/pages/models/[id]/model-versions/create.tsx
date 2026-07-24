@@ -39,12 +39,19 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    return { props: { modelId, model } };
+    const latestVersion = await dbRead.modelVersion.findFirst({
+      where: { modelId },
+      orderBy: { index: 'desc' },
+      select: { baseModel: true },
+    });
+
+    return { props: { modelId, model, previousBaseModel: latestVersion?.baseModel ?? null } };
   },
 });
 
 export default function NewModelVersion({
   model,
+  previousBaseModel,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  return <ModelVersionWizard data={model as any} />;
+  return <ModelVersionWizard data={model as any} previousBaseModel={previousBaseModel} />;
 }

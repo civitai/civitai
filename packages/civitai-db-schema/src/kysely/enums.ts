@@ -913,3 +913,11 @@ export const ShopifyMerchOrderStatus = {
 } as const;
 export type ShopifyMerchOrderStatus =
   (typeof ShopifyMerchOrderStatus)[keyof typeof ShopifyMerchOrderStatus];
+export const OutboxEntity = {
+  Article: 'Article',
+  Image: 'Image',
+  Model: 'Model',
+  Post: 'Post',
+  ModelVersion: 'ModelVersion',
+} as const;
+export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];

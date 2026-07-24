@@ -373,6 +373,16 @@ export const serverSchema = z
     TEXT_MODERATION_CALLBACK: z.string().optional(),
     IMAGE_SCANNING_MODEL: z.string().optional(),
     IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
+    // Upper bound on how many queued images the `ingest-images` retry/backfill cron
+    // pulls (and therefore can submit) per run. Sized to the scanner's sustainable
+    // throughput so a large backlog drains gradually across runs instead of in one
+    // dump. New user uploads scan directly via ingestImage on creation and are NOT
+    // gated by this. Conservative default; tune via env without a redeploy.
+    // Positive integer guard: an empty/0 value would make findMany take:0 (all
+    // retries silently wedged) and a negative value would flip Prisma's take to
+    // newest-first (starving the oldest backlog) — a bad hand-tune must fail
+    // loudly at boot instead.
+    IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
     IMAGE_SCANNER_NEW: zc.booleanString.default(false),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
@@ -792,6 +802,21 @@ export const serverSchema = z
     // sync without spuriously failing a healthy preview. Tunable per-environment
     // without a code change. See waitForReviewHostReachable.
     REVIEW_HOST_REACHABLE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(180000),
+    // AGENTIC MOD CODE-REVIEW (App Blocks P1). Per-review spend ceiling handed to
+    // the review agent pod as COST_CAP_USD — the runner self-aborts (status
+    // 'cost-capped') once its LLM spend crosses this. A STRING (envsubst-rendered
+    // straight into the pod env / the report cost accounting), default "2".
+    // Everything else the feature needs reuses existing config (APPS_KUBE_NAMESPACE
+    // for the provisioning Job, BUNDLE_S3_* for the presigned bundle, NEXTAUTH_URL
+    // for the callback base) — no parallel infra knobs.
+    AGENT_REVIEW_COST_CAP_USD: z.string().default('2'),
+    // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
+    // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
+    // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the
+    // per-review bearer never traverse the public internet. Optional: when unset
+    // the callback falls back to NEXTAUTH_URL (the public origin) so the feature
+    // keeps working before infra sets the in-cluster value ahead of un-dark.
+    AGENT_REVIEW_CALLBACK_BASE_URL: z.string().optional(),
     // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
     // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.

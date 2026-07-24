@@ -36,6 +36,21 @@ const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
 
 const alias = [{ find: '~', replacement: path.resolve(__dirname, './src') }, ...civitaiAlias];
 
+// Browser-mode (`component` project) alias: stub the native `sharp` module.
+// A few `.browser.test.tsx` tests import a Next *page* to render its client shell;
+// the page's `getServerSideProps` transitively pulls a server service that does
+// `import sharp from 'sharp'`. Next strips that server-only graph from real client
+// builds, but Vitest's browser build does not — so esbuild's optimizeDeps scan
+// follows the import into sharp and dies bundling its native
+// `require('../build/Release/sharp-*.node')`, killing the WHOLE component suite
+// before any test runs. (The tests `vi.mock` server-side-helpers, but that is a
+// runtime interception and can't stop the build-time static scan.) The `unit`
+// (node) project keeps the real sharp. Must precede the `~` entry so it wins.
+const componentAlias = [
+  { find: /^sharp$/, replacement: path.resolve(__dirname, 'test/stubs/sharp.ts') },
+  ...alias,
+];
+
 // Two Vitest projects sharing one config/runner:
 //  - `unit`      = the existing node-env suite, unchanged.
 //  - `component` = browser-mode (real Chromium via Playwright) for React
@@ -79,7 +94,7 @@ export default defineConfig({
         // components (e.g. @mantine/dropzone) in browser mode, notably on a COLD
         // optimizeDeps cache (fresh CI runs). Canonical fix; protects every
         // component test from this class of dual-React crash.
-        resolve: { alias, dedupe: ['react', 'react-dom'] },
+        resolve: { alias: componentAlias, dedupe: ['react', 'react-dom'] },
         // Pre-bundle deps the component setup mocks/imports so Vitest doesn't
         // discover them mid-run and trigger a "Vite unexpectedly reloaded a
         // test" warning (a flake vector).
@@ -95,6 +110,17 @@ export default defineConfig({
         // the optimize pass happen BEFORE the run starts, so there's no mid-run reload.
         optimizeDeps: {
           include: ['next/router', 'vitest-browser-react', 'react/jsx-dev-runtime', 'react/jsx-runtime'],
+          // `@vitest/browser` seeds optimizeDeps.entries from EVERY `*.browser.test.tsx` file
+          // (globTestFiles), not just the one you ran. The review app-listing browser tests
+          // (src/tests/pages/apps/review/review-{detail-page,queue-nav}.browser.test.tsx, from
+          // #3298 on main) each import their page, which pulls in `createServerSideProps` ->
+          // `appRouter` -> app-listing-assets.service.ts's
+          // `await import('sharp')`. Those tests `vi.mock` `server-side-helpers` so `sharp` is
+          // never evaluated at runtime — but esbuild's static scan follows the import anyway and
+          // can't pre-bundle sharp's native binding (a template-literal `require` of a `.node`
+          // file), failing the whole component project with "No loader is configured for '.node'
+          // files" regardless of which test you targeted. Exclude it; no component test needs it.
+          exclude: ['sharp'],
         },
         test: {
           name: 'component',

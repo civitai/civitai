@@ -25,6 +25,7 @@ import type {
   DeleteUserInput,
   GetAllUsersInput,
   GetEngagedModelsByIdsInput,
+  GetBanContentPreviewInput,
   GetByUsernameSchema,
   GetUserByUsernameSchema,
   GetUserCosmeticsSchema,
@@ -55,9 +56,8 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
-import {
-  getUserResourceReview,
-} from '~/server/services/resourceReview.service';
+import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
+import { getUserResourceReview } from '~/server/services/resourceReview.service';
 import {
   createCustomer,
   deleteCustomerPaymentMethod,
@@ -76,6 +76,7 @@ import {
   equipCosmetic,
   getCreators,
   getUserBookmarkCollections,
+  getBanContentPreview,
   getUserById,
   getUserByUsername,
   getUserCosmetics,
@@ -1122,6 +1123,15 @@ export const toggleBanHandler = async ({
   return updatedUser;
 };
 
+export const getBanContentPreviewHandler = async ({
+  input,
+}: {
+  input: GetBanContentPreviewInput;
+  ctx: ProtectedContext;
+}) => {
+  return getBanContentPreview({ userId: input.userId });
+};
+
 export const getUserCosmeticsHandler = async ({
   input,
   ctx,
@@ -1423,6 +1433,13 @@ export const setUserSettingHandler = async ({
     };
 
     await setUserSetting(id, newSettings);
+
+    const privacyKeys = ['hideModelBuzz', 'hideModelDownloads', 'hideModelGenerations'] as const;
+    const metricPrivacyChanged = privacyKeys.some(
+      (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
+    );
+    if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+
     return newSettings;
   } catch (error) {
     throw throwDbError(error);

@@ -60,4 +60,34 @@ describe('boundExcludedUserIds', () => {
   it('handles empty inputs', () => {
     expect(boundExcludedUserIds([], [], [])).toEqual([]);
   });
+
+  describe('isContentOwner (viewer looking at engagement on their OWN content)', () => {
+    // A blocker (user 42) left a comment/review/downvote on the owner's content, then blocked
+    // the owner. `42` therefore lands in the owner's blockedByUsers list.
+    const blocker = 42;
+
+    it('non-owner viewer still has the blocker excluded (anti-harassment stays)', () => {
+      const result = boundExcludedUserIds([], [blocker], []);
+      expect(result).toContain(blocker);
+    });
+
+    it("owner sees the blocker's engagement on their own content (blockedByUsers dropped)", () => {
+      const result = boundExcludedUserIds([], [blocker], [], { isContentOwner: true });
+      expect(result).not.toContain(blocker);
+    });
+
+    it('owner still excludes people on their OWN hidden/blocked lists', () => {
+      // hidden(7) + own-block(8) must survive; only the involuntary blocked-by(42) is dropped.
+      const result = boundExcludedUserIds([7], [blocker], [8], { isContentOwner: true });
+      expect(result).toContain(7);
+      expect(result).toContain(8);
+      expect(result).not.toContain(blocker);
+    });
+
+    it('isContentOwner: false behaves identically to omitting the option', () => {
+      expect(boundExcludedUserIds([1], [2], [3], { isContentOwner: false })).toEqual(
+        boundExcludedUserIds([1], [2], [3])
+      );
+    });
+  });
 });

@@ -10,6 +10,7 @@ import {
 } from '@tabler/icons-react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ChallengeContextMenu } from '~/components/Challenge/ChallengeContextMenu';
+import { getChallengeDisplayUser } from '~/components/Challenge/challenge.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -91,11 +92,12 @@ export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
     createdById,
     nsfwLevel,
     prizePool,
+    buzzType,
     entryCount,
     commentCount,
-    createdBy,
   } = data;
 
+  const author = getChallengeDisplayUser(data);
   const isActive = status === ChallengeStatus.Active;
 
   const image = coverImage
@@ -157,11 +159,11 @@ export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
       footer={
         <div className="flex w-full flex-col gap-2">
           <UserAvatarSimple
-            id={createdBy.id}
-            username={createdBy.username}
-            profilePicture={createdBy.profilePicture}
-            cosmetics={createdBy.cosmetics}
-            deletedAt={createdBy.deletedAt}
+            id={author.id}
+            username={author.username}
+            profilePicture={author.profilePicture}
+            cosmetics={author.cosmetics}
+            deletedAt={author.deletedAt}
           />
           <div className="flex flex-col gap-1">
             {theme && (
@@ -181,6 +183,7 @@ export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
           <div className="flex items-center justify-between gap-2">
             <CurrencyBadge
               currency={Currency.BUZZ}
+              type={buzzType}
               unitAmount={prizePool}
               radius="xl"
               px={8}

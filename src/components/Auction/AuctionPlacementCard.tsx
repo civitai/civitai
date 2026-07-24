@@ -28,7 +28,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import produce from 'immer';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { hasNSFWWords } from '~/components/Auction/auction.utils';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
@@ -75,6 +75,11 @@ type ModelMyBidData = GetMyBidsReturn[number];
 type ModelMyRecurringBidData = GetMyRecurringBidsReturn[number];
 
 const IMAGE_HEIGHT = 100;
+
+// Lives here because it describes these cards' layout: the row is fixed-height on
+// desktop and stacks at the same `md` breakpoint the cards themselves use. Virtualized
+// lists seed their scrollbar with it.
+export const PLACEMENT_CARD_HEIGHT = { desktop: 116, mobile: 232 };
 
 const PositionData = ({
   position,
@@ -406,13 +411,13 @@ const SectionBidInfo = ({
   );
 };
 
-export const ModelMyBidCard = ({
+export const ModelMyBidCard = memo(function ModelMyBidCard({
   data,
   searchText,
 }: {
   data: ModelMyBidData;
   searchText: string;
-}) => {
+}) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const { handleBuy, createLoading } = usePurchaseBid();
   const queryUtils = trpc.useUtils();
@@ -566,15 +571,15 @@ export const ModelMyBidCard = ({
       </Stack>
     </CosmeticCard>
   );
-};
+});
 
-export const ModelMyRecurringBidCard = ({
+export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
   data,
   searchText,
 }: {
   data: ModelMyRecurringBidData;
   searchText: string;
-}) => {
+}) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const queryUtils = trpc.useUtils();
 
@@ -715,9 +720,10 @@ export const ModelMyRecurringBidCard = ({
       </Stack>
     </CosmeticCard>
   );
-};
+});
 
-export const ModelPlacementCard = ({
+// Memo depends on callers keeping `addBidFn` referentially stable.
+export const ModelPlacementCard = memo(function ModelPlacementCard({
   data,
   aboveThreshold,
   addBidFn,
@@ -729,7 +735,7 @@ export const ModelPlacementCard = ({
   addBidFn: (r: GenerationResource) => void;
   searchText: string;
   canBid: boolean;
-}) => {
+}) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -884,6 +890,4 @@ export const ModelPlacementCard = ({
       </CosmeticCard>
     </div>
   );
-};
-
-// export const ModelPlacementCardMemo = memo(ModelPlacementCard);
+});

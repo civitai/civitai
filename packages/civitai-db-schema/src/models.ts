@@ -234,6 +234,8 @@ export type Model3DEngagementType = "Favorite" | "Hide" | "Notify";
 
 export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 
+export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
+
 export interface Account {
   id: number;
   userId: number;
@@ -799,6 +801,7 @@ export interface Model {
   lockedProperties: string[];
   scannedAt: Date | null;
   sfwOnly: boolean;
+  isOfficial: boolean;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -916,6 +919,7 @@ export interface ModelVersion {
   nsfwLevel: number;
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig: JsonValue | null;
+  earlyAccessPermanent: boolean;
   uploadType: ModelUploadType;
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
@@ -1406,6 +1410,7 @@ export interface Image {
   comicProjectHero?: ComicProject[];
   challengesCover?: Challenge[];
   challengeWins?: ChallengeWinner[];
+  challengeEventCovers?: ChallengeEvent[];
   model3dThumbnails?: Model3D[];
   model3dSources?: Model3D[];
   appListingIcons?: AppListing[];
@@ -2009,6 +2014,8 @@ export interface AppListingModerationEvent {
 export interface AppReviewAgentReport {
   id: string;
   publishRequestId: string;
+  slug: string;
+  kind: string;
   appBlockId: string | null;
   oauthClientId: string | null;
   version: string;
@@ -2271,6 +2278,7 @@ export interface Comment {
   modelId: number;
   locked: boolean | null;
   hidden: boolean | null;
+  pinnedAt: Date | null;
   comments?: Comment[];
   reactions?: CommentReaction[];
   reports?: CommentReport[];
@@ -3742,6 +3750,8 @@ export interface ChallengeEvent {
   endDate: Date;
   active: boolean;
   winnerCooldownDays: number | null;
+  coverImageId: number | null;
+  coverImage?: Image | null;
   createdById: number | null;
   createdBy?: User | null;
   createdAt: Date;
@@ -5025,6 +5035,16 @@ export interface ShopifyMerchOrder {
   userId: number | null;
   grantedAt: Date | null;
   createdAt: Date;
+}
+
+export interface Outbox {
+  id: bigint;
+  event: string;
+  entityType: OutboxEntity;
+  entityId: bigint;
+  createdAt: Date | null;
+  details: JsonValue | null;
+  attempts: number | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

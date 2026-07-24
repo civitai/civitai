@@ -3,7 +3,7 @@ import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { cosmeticEntityCaches } from '~/server/redis/caches';
+import { cosmeticEntityCaches, userCosmeticCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
@@ -53,7 +53,7 @@ export const getPaginatedCosmetics = async (input: GetPaginatedCosmeticsInput) =
   const { take, skip } = getPagination(limit, page);
 
   const where: Prisma.CosmeticFindManyArgs['where'] = {};
-  if (input.name) where.name = { contains: input.name };
+  if (input.name) where.name = { contains: input.name, mode: 'insensitive' };
   if (input.types && input.types.length) where.type = { in: input.types };
   const items = await dbRead.cosmetic.findMany({
     where,
