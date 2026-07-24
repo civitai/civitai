@@ -187,6 +187,17 @@ const SPECIFIC_FALLBACK_TYPES = new Set([
 ]);
 
 /**
+ * Sentinel quant type meaning "not quantized". Removing it from the DB-managed quantTypes list
+ * makes the Precision field unreachable for GGUF uploads — see docs/features/model-file-options.md.
+ */
+export const UNQUANTIZED_QUANT_TYPE = 'None';
+
+/** Renders the `None` sentinel as a word rather than as a missing value. */
+export function formatQuantType(quantType: string): string {
+  return quantType === UNQUANTIZED_QUANT_TYPE ? 'Unquantized' : quantType;
+}
+
+/**
  * Get a short label for a file variant (e.g., "fp16", "Q4_K_M", "Pruned").
  * Returns null when no meaningful label can be derived — callers should skip rendering.
  */
@@ -194,7 +205,7 @@ export function getFileLabel(file: FileForDisplay): string | null {
   const { fp, quantType, format, size } = file.metadata ?? {};
 
   // For GGUF files, show quant type
-  if (format === 'GGUF' && quantType && quantType !== 'None') {
+  if (format === 'GGUF' && quantType && quantType !== UNQUANTIZED_QUANT_TYPE) {
     return quantType;
   }
 
@@ -203,8 +214,8 @@ export function getFileLabel(file: FileForDisplay): string | null {
     return fp;
   }
 
-  if (format === 'GGUF' && quantType === 'None') {
-    return 'Unquantized';
+  if (format === 'GGUF' && quantType === UNQUANTIZED_QUANT_TYPE) {
+    return formatQuantType(quantType);
   }
 
   // Fallback to size
@@ -262,7 +273,7 @@ export function getFileDescription(file: FileForDisplay): string {
   const parts: string[] = [];
 
   if (format === 'GGUF') {
-    if (quantType === 'None') {
+    if (quantType === UNQUANTIZED_QUANT_TYPE) {
       parts.push(fp ? `Unquantized GGUF, ${fp} precision` : 'Unquantized GGUF');
     } else if (quantType) {
       parts.push(quantDescriptions[quantType] ?? `${quantType} quantization`);

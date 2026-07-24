@@ -50,7 +50,11 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { comfyFileTypeLabels, filterFileTypeByExtension } from '~/utils/file-display-helpers';
+import {
+  comfyFileTypeLabels,
+  filterFileTypeByExtension,
+  UNQUANTIZED_QUANT_TYPE,
+} from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -1076,13 +1080,15 @@ function FileEditForm({
                 onChange={(value) => {
                   updateFile(versionFile.uuid, {
                     quantType: value as ModelFileQuantType | null,
+                    // Precision is only editable while unquantized; don't strand a hidden value.
+                    ...(value !== UNQUANTIZED_QUANT_TYPE && { fp: null }),
                   });
                 }}
               />
             </div>
           )}
 
-          {(!isGguf || versionFile.quantType === 'None') && (
+          {(!isGguf || versionFile.quantType === UNQUANTIZED_QUANT_TYPE) && (
             <div>
               <SelectLabel>Precision</SelectLabel>
               <Select

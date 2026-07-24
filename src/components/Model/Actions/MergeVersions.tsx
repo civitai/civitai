@@ -41,6 +41,7 @@ import {
   comfyFileTypeLabels,
   filterFileTypeByExtension,
   getFileIconConfig,
+  UNQUANTIZED_QUANT_TYPE,
 } from '~/utils/file-display-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -1056,7 +1057,13 @@ function MergeFileCard({
                     data={quantTypes}
                     value={effectiveQuantType}
                     onChange={(value) => {
-                      onUpdate({ metadata: { quantType: value as ModelFileQuantType | null } });
+                      onUpdate({
+                        metadata: {
+                          quantType: value as ModelFileQuantType | null,
+                          // Precision is only editable while unquantized; don't strand a hidden value.
+                          ...(value !== UNQUANTIZED_QUANT_TYPE && { fp: null }),
+                        },
+                      });
                     }}
                     comboboxProps={{ withinPortal: true }}
                     styles={selectInputStyles}
@@ -1064,7 +1071,7 @@ function MergeFileCard({
                 </div>
               )}
 
-              {(!isGguf || effectiveQuantType === 'None') && (
+              {(!isGguf || effectiveQuantType === UNQUANTIZED_QUANT_TYPE) && (
                 <div>
                   <SelectLabel>Precision</SelectLabel>
                   <Select

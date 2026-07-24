@@ -20,6 +20,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
 import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
+import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -140,7 +141,8 @@ export function SettingsCard() {
             <Select
               label="Preferred Quant Type"
               name="quantType"
-              data={quantTypes}
+              // "Unquantized" isn't a meaningful download preference; leaving this unset is.
+              data={quantTypes.filter((x) => x !== UNQUANTIZED_QUANT_TYPE)}
               allowDeselect={false}
               value={user.filePreferences?.quantType ?? 'Q4_K_M'}
               onChange={(value: string | null) =>
