@@ -38,13 +38,20 @@ import { MAX_PATTERNED_INPUT_LEN } from '~/server/schema/blocks/manifest-setting
 const RECHECK_TIMEOUT_MS = 5000;
 
 /**
- * Returns true iff `source` is a genuinely ReDoS-vulnerable RegExp pattern
- * (catastrophic backtracking — exponential OR super-linear/polynomial). `safe`
- * and `unknown` classifications return false.
+ * Returns true iff `source` is NOT provably safe — i.e. recheck classifies it as
+ * `vulnerable` (catastrophic backtracking, exponential OR super-linear) OR as
+ * `unknown` (recheck errored / timed out and could not analyze it).
+ *
+ * 🔴 FAIL-CLOSED on `unknown`: a pattern recheck cannot analyze within the
+ * timeout is REJECTED, not accepted. Accepting it would be a bypass — a pattern
+ * crafted to stall recheck's own analysis (status `unknown`) would otherwise sail
+ * through the gate and then run against viewer input at eval time, and an
+ * exponential pattern freezes even on the ≤MAX_PATTERNED_INPUT_LEN-bounded input.
+ * Only a definitive `safe` verdict passes.
  */
 export async function isPatternRedosVulnerable(source: string): Promise<boolean> {
   const diagnostics = await check(source, '', { timeout: RECHECK_TIMEOUT_MS });
-  return diagnostics.status === 'vulnerable';
+  return diagnostics.status !== 'safe';
 }
 
 /**
