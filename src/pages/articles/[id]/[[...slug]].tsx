@@ -437,6 +437,22 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </div>
             </AlertWithIcon>
           )}
+          {isOwner &&
+            (article.ingestion === ArticleIngestionStatus.Error ||
+              article.ingestion === ArticleIngestionStatus.Blocked) && (
+              <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
+                <div>
+                  <Text fw={600} size="lg" mb="xs">
+                    This article isn&apos;t visible to the public
+                  </Text>
+                  <Text size="sm">
+                    {article.ingestion === ArticleIngestionStatus.Blocked
+                      ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
+                      : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
+                  </Text>
+                </div>
+              </AlertWithIcon>
+            )}
           {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
             <ArticleScanStatus
               articleId={article.id}
