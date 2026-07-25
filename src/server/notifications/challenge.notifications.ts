@@ -138,7 +138,7 @@ export const challengeNotifications = createNotificationProcessor({
     category: NotificationCategory.Update,
     toggleable: true,
     prepareMessage: ({ details }) => ({
-      message: `The "${details.challengeTitle}" challenge closes in 24 hours — get your entries in.`,
+      message: `The "${details.challengeTitle}" challenge closes in 8 hours — get your entries in.`,
       url: `/challenges/${details.challengeId}`,
     }),
     prepareQuery: ({ lastSent }) => `
@@ -147,14 +147,14 @@ export const challengeNotifications = createNotificationProcessor({
         FROM "Challenge" c
         WHERE
           c.status = 'Active'
-          -- Now is inside the 24 hour window...
-          AND now() BETWEEN c."endsAt" - interval '24 hours' AND c."endsAt"
+          -- Now is inside the 8 hour window...
+          AND now() BETWEEN c."endsAt" - interval '8 hours' AND c."endsAt"
           -- ...and the last scan was before it, so this fires once on the crossing.
-          AND '${lastSent}'::timestamptz < c."endsAt" - interval '24 hours'
-          -- A challenge <= 24h long crosses its own "24 hours left" mark at go-live, which
+          AND '${lastSent}'::timestamptz < c."endsAt" - interval '8 hours'
+          -- A challenge <= 8h long crosses its own "8 hours left" mark at go-live, which
           -- challenge-starting already announces. Excluding those also removes the race against
           -- the hourly activation cron, which would otherwise never set status=Active in time.
-          AND c."startsAt" < c."endsAt" - interval '24 hours'
+          AND c."startsAt" < c."endsAt" - interval '8 hours'
       ), target_users AS (
         SELECT DISTINCT "challengeId", "userId" FROM (
           SELECT a.id "challengeId", ce."userId"

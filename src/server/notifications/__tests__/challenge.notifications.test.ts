@@ -67,12 +67,12 @@ describe('prepareMessage', () => {
     expect(m.url).toBe('/challenges/12');
   });
 
-  it('challenge-ending-soon states the 24 hour window', () => {
+  it('challenge-ending-soon states the 8 hour window', () => {
     const m = defs['challenge-ending-soon'].prepareMessage({
       details: { challengeId: 12, challengeTitle: 'Neon Dreams' },
     });
     expect(m.message).toContain('Neon Dreams');
-    expect(m.message).toContain('24 hours');
+    expect(m.message).toContain('8 hours');
     expect(m.url).toBe('/challenges/12');
   });
 
@@ -141,20 +141,20 @@ describe('new-challenge-from-following — SQL gates', () => {
 describe('challenge-ending-soon — SQL gates', () => {
   const sql = () => defs['challenge-ending-soon'].prepareQuery!({ lastSent: '2026-01-01 00:00:00' });
 
-  it('fires on the crossing into the 24 hour window, not on every run inside it', () => {
+  it('fires on the crossing into the 8 hour window, not on every run inside it', () => {
     const q = sql();
-    expect(q).toContain(`now() BETWEEN c."endsAt" - interval '24 hours' AND c."endsAt"`);
-    expect(q).toContain(`< c."endsAt" - interval '24 hours'`);
+    expect(q).toContain(`now() BETWEEN c."endsAt" - interval '8 hours' AND c."endsAt"`);
+    expect(q).toContain(`< c."endsAt" - interval '8 hours'`);
   });
 
   it('only reminds about challenges still accepting entries', () => {
     expect(sql()).toContain(`c.status = 'Active'`);
   });
 
-  // A 24h challenge (every daily) crosses "24 hours left" at go-live, which challenge-starting
+  // A challenge no longer than the window crosses its own mark at go-live, which challenge-starting
   // already announces — and the hourly activation cron makes status=Active a race at that instant.
-  it('skips challenges no longer than the 24 hour reminder window', () => {
-    expect(sql()).toContain(`c."startsAt" < c."endsAt" - interval '24 hours'`);
+  it('skips challenges no longer than the 8 hour reminder window', () => {
+    expect(sql()).toContain(`c."startsAt" < c."endsAt" - interval '8 hours'`);
   });
 
   it('targets trackers and entrants', () => {
