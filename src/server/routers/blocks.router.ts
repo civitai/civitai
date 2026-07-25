@@ -4820,16 +4820,6 @@ export const blocksRouter = router({
       if (block.app?.userId !== ctx.user!.id) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
       }
-      // Resolve the app's store listing (auto-created on approve via
-      // mapAppBlockToListing; appBlockId is @unique) so the editor can render the
-      // owner-gated listing-asset surface. NULL for a not-yet-listed app — the
-      // client hides the asset section in that case. Listing images persist via
-      // the appListings.* procs INDEPENDENTLY of the manifest patch (they do NOT
-      // re-enter moderator review).
-      const listing = await dbRead.appListing.findUnique({
-        where: { appBlockId: block.id },
-        select: { id: true, contentRating: true },
-      });
       return {
         appBlockId: block.id,
         slug: block.blockId,
@@ -4841,10 +4831,6 @@ export const blocksRouter = router({
         // client copy is advisory only).
         allowedScopes: block.app?.allowedScopes ?? 0,
         allowedOrigins: block.app?.allowedOrigins ?? [],
-        // The owner's store-listing id (for the immediately-saved listing-asset
-        // surface) + its content rating; NULL when no listing row exists yet.
-        appListingId: listing?.id ?? null,
-        listingContentRating: listing?.contentRating ?? null,
       };
     }),
 

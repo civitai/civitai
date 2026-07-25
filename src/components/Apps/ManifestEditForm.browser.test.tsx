@@ -143,7 +143,7 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
     expect(page.getByRole('checkbox', { name: 'model.sidebar_top' }).elements()).toHaveLength(0);
   });
 
-  test('preserves the manifest existing targets on submit (does not clobber deferred slot apps)', async () => {
+  test('OMITS targets from the patch so the server preserves stored.targets (no strict-schema re-validation of stored slots)', async () => {
     const withTargets = { ...BASE_MANIFEST, targets: [{ slotId: 'model.sidebar_top' }] };
     renderWithProviders(
       <ManifestEditForm
@@ -155,10 +155,13 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
     );
     await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
     const arg = mocks.mutate.mock.calls[0][0] as {
-      patch: { targets?: Array<{ slotId: string }> };
+      patch: Record<string, unknown>;
     };
-    // The loaded targets are passed through unchanged (not wiped, not re-derived).
-    expect(arg.patch.targets).toEqual([{ slotId: 'model.sidebar_top' }]);
+    // `targets` is NOT sent: the server merges {...stored, ...patch}, so omitting
+    // the key preserves stored.targets verbatim. Re-sending them would re-validate
+    // a possibly-malformed stored target against the strict updateManifest schema.
+    expect('targets' in arg.patch).toBe(false);
+    expect(arg.patch.targets).toBeUndefined();
   });
 
   test('clearing all justification inputs submits an explicit empty object (not undefined) so stored rationale is overwritten', async () => {

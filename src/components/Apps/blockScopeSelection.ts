@@ -8,9 +8,9 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
 /**
  * Pure state/derivation helpers for the App-manifest scope selector
  * (`BlockScopeSelector`). Extracted from the component so the selection logic is
- * unit-testable without a DOM: scope-option derivation, selection toggle, the
+ * unit-testable without a DOM: scope-option derivation, selection toggle, and the
  * justification linkage (deselecting a scope drops its justification from the
- * submitted payload), and the targets pass-through preservation.
+ * submitted payload).
  *
  * `SCOPE_DESCRIPTIONS` lives under `server/services/blocks/` but is a plain const
  * with no server-only imports and is ALREADY imported by client components
@@ -84,16 +84,4 @@ export function buildScopeJustifications(
     if (j.length > 0) out[scope] = j;
   }
   return out;
-}
-
-/**
- * Preserve the manifest's existing `targets` on submit. Target slots are a
- * DEFERRED feature — the editor no longer edits them — so we pass the loaded
- * targets through UNCHANGED rather than deriving (and clobbering) them from an
- * editor that no longer exists. Returns the loaded value as-is (`undefined` when
- * the manifest declared none), so a shallow server-side `{...stored, ...patch}`
- * merge either re-writes the identical value or omits the field entirely.
- */
-export function preserveTargets<T>(loadedTargets: T[] | undefined): T[] | undefined {
-  return loadedTargets;
 }

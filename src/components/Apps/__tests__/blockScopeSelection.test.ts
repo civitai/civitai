@@ -3,7 +3,6 @@ import {
   buildScopeJustifications,
   buildScopeOptions,
   KNOWN_BLOCK_SCOPES,
-  preserveTargets,
   toggleScope,
 } from '~/components/Apps/blockScopeSelection';
 import {
@@ -12,9 +11,11 @@ import {
 } from '~/shared/constants/block-scope.constants';
 
 /**
- * Pure state logic for the App-manifest BlockScopeSelector + the targets
- * pass-through preservation. This is the AUTHORITATIVE gate for the scope-editor
- * behaviour (the browser test is report-only).
+ * Pure state logic for the App-manifest BlockScopeSelector. This is the
+ * AUTHORITATIVE gate for the scope-editor behaviour (the browser test is
+ * report-only). Deferred target slots are no longer edited here — the form OMITS
+ * `targets` from the save patch so the server preserves `stored.targets` (asserted
+ * in ManifestEditForm.browser.test.tsx), so there is no pure helper to test.
  */
 
 describe('buildScopeOptions', () => {
@@ -110,25 +111,5 @@ describe('buildScopeJustifications (deselect drops justification)', () => {
 
   test('no selected scopes → empty map', () => {
     expect(buildScopeJustifications([], justifications)).toEqual({});
-  });
-});
-
-describe('preserveTargets (deferred slots pass-through)', () => {
-  test('returns the loaded targets UNCHANGED (never derived/clobbered)', () => {
-    const loaded = [{ slotId: 'model.sidebar_top' }, { slotId: 'model.below_images' }];
-    expect(preserveTargets(loaded)).toBe(loaded);
-    expect(preserveTargets(loaded)).toEqual([
-      { slotId: 'model.sidebar_top' },
-      { slotId: 'model.below_images' },
-    ]);
-  });
-
-  test('returns undefined when the manifest declared no targets', () => {
-    expect(preserveTargets(undefined)).toBeUndefined();
-  });
-
-  test('an empty targets array is preserved as an empty array (not dropped)', () => {
-    const empty: Array<{ slotId: string }> = [];
-    expect(preserveTargets(empty)).toBe(empty);
   });
 });

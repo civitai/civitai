@@ -13,10 +13,7 @@ import { IconAlertTriangle, IconDeviceFloppy, IconInfoCircle } from '@tabler/ico
 import Link from 'next/link';
 import { useState } from 'react';
 import { BlockScopeSelector } from '~/components/Apps/BlockScopeSelector';
-import {
-  buildScopeJustifications,
-  preserveTargets,
-} from '~/components/Apps/blockScopeSelection';
+import { buildScopeJustifications } from '~/components/Apps/blockScopeSelection';
 import { ALLOWED_CONTENT_RATINGS } from '~/server/services/block-manifest-validator.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -126,11 +123,13 @@ export function ManifestEditForm({
         scopes,
         scopeJustifications: shouldSend ? scopeJustifications : undefined,
         // Target slots are a DEFERRED feature — the editor no longer edits them.
-        // Pass the manifest's EXISTING targets through unchanged so an edit here
-        // never clobbers a slot app the manifest already declared.
-        targets: preserveTargets(manifest.targets) as
-          | Array<{ slotId: string }>
-          | undefined,
+        // OMIT `targets` from the patch entirely: the server merges
+        // `{...stored, ...patch}`, so leaving the key out preserves
+        // `stored.targets` verbatim — no round-trip, no clobber. Re-sending the
+        // stored targets would instead re-validate them against the strict
+        // `updateManifest` targets schema, so a pre-existing malformed/oversized
+        // stored target would fail the whole save (the old textarea path never
+        // touched targets either).
       },
     });
   }
