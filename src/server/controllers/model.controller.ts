@@ -78,6 +78,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
+import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
   deleteModelById,
@@ -1204,6 +1205,13 @@ export const getMyDraftModelsHandler = async ({
     const results = await getDraftModelsByUserId({
       ...input,
       userId,
+      // NOTE: `_count: { select: { modelVersions: true } }` is intentionally NOT
+      // selected here. Prisma compiles that per-row aggregate into a LEFT JOIN
+      // against a subquery that GROUPs the ENTIRE ModelVersion table (Postgres
+      // does not push the `Model.id IN (...)` filter into the grouped derived
+      // table) — ~1.17M rows -> ~909k groups -> ~1344ms just to attach a version
+      // count to the ~20 requested models. We instead attach the count below via
+      // one batched, index-only groupBy whose `IN` filter DOES push down.
       select: {
         id: true,
         name: true,
@@ -1218,11 +1226,23 @@ export const getMyDraftModelsHandler = async ({
             },
           },
         },
-        _count: { select: { modelVersions: true } },
       },
     });
 
-    return results;
+    // Batched, pushed-down replacement for the per-row `_count.modelVersions`.
+    // Attaches a byte-identical `_count: { modelVersions }` number to each model
+    // (0 for models with no versions).
+    const versionCountByModelId = await getModelVersionCountsByModelId(
+      results.items.map((model) => model.id)
+    );
+
+    return {
+      ...results,
+      items: results.items.map((model) => ({
+        ...model,
+        _count: { modelVersions: versionCountByModelId.get(model.id) ?? 0 },
+      })),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1237,7 +1257,7 @@ export const getMyTrainingModelsHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    return await getTrainingModelsByUserId({
+    const results = await getTrainingModelsByUserId({
       ...input,
       userId,
       select: {
@@ -1254,11 +1274,10 @@ export const getMyTrainingModelsHandler = async ({
             id: true,
             name: true,
             status: true,
-            _count: {
-              select: {
-                modelVersions: true,
-              },
-            },
+            // `_count: { select: { modelVersions: true } }` intentionally
+            // omitted — see getMyDraftModelsHandler: Prisma compiles it to a
+            // full-table grouped subquery (~1344ms) instead of pushing the id
+            // filter down. Attached below via a batched, index-only groupBy.
           },
         },
 
@@ -1275,6 +1294,23 @@ export const getMyTrainingModelsHandler = async ({
         },
       },
     });
+
+    // Batched, pushed-down replacement for the per-row `model._count.modelVersions`.
+    // Multiple returned training versions can share a model — the helper dedupes.
+    const versionCountByModelId = await getModelVersionCountsByModelId(
+      results.items.map((item) => item.model.id)
+    );
+
+    return {
+      ...results,
+      items: results.items.map((item) => ({
+        ...item,
+        model: {
+          ...item.model,
+          _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
+        },
+      })),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
