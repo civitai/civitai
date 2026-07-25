@@ -5,6 +5,7 @@
 // eslint-config-next 16 is flat-config-only (peer `eslint >=9`); extending it
 // from eslintrc makes @eslint/eslintrc reject it and then crash formatting the
 // error ("Converting circular structure to JSON"), so lint silently never runs.
+// Enforced by the `eslint-config-next: "15"` entry in package.json `pnpm.overrides`.
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
@@ -12,7 +13,7 @@ module.exports = {
     ecmaVersion: 'latest',
     sourceType: 'module',
   },
-  plugins: ['@typescript-eslint', 'prettier', 'local-rules'],
+  plugins: ['@typescript-eslint', 'local-rules'],
   extends: [
     'next/core-web-vitals',
     'plugin:@typescript-eslint/recommended', // lightweight rules (no type info)
@@ -48,16 +49,9 @@ module.exports = {
 
     // 'import/no-cycle': ['error'],
 
-    // prettier overrides
-    'prettier/prettier': [
-      'error',
-      {
-        printWidth: 100,
-        endOfLine: 'auto',
-        singleQuote: true,
-        trailingComma: 'es5',
-      },
-    ],
+    // Formatting is owned by `pnpm prettier:check` / `prettier:write`, not by
+    // eslint-plugin-prettier. `eslint-config-prettier` (extended above) stays so
+    // ESLint's stylistic rules don't fight it.
 
     // rule tweaks
     'no-use-before-define': 'off',
@@ -67,10 +61,6 @@ module.exports = {
     '@typescript-eslint/no-namespace': 'off',
     '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/consistent-type-imports': ['error'],
-    '@typescript-eslint/restrict-template-expressions': [
-      'warn',
-      { allowBoolean: true },
-    ],
 
     'tailwindcss/no-custom-classname': [
       'off',
@@ -80,32 +70,7 @@ module.exports = {
     ],
   },
 
-  overrides: [
-    {
-      files: ['*.ts', '*.tsx'],
-      parserOptions: {
-        project: './tsconfig.json',
-      },
-      // extends: ['plugin:@typescript-eslint/recommended-requiring-type-checking'],
-      rules: {
-        // put only the rules that *need* type info here
-        // example:
-        // '@typescript-eslint/no-floating-promises': 'error',
-        // '@typescript-eslint/no-misused-promises': 'error',
-      },
-    },
-    {
-      // tsconfig.json excludes src/**/__tests__/**, so the type-aware parser above throws a fatal
-      // "TSConfig does not include this file" error on every test file. A fatal parse error means
-      // NO rule runs — including prettier/prettier, which is what the editor's fix-on-save relies
-      // on to format (editor.formatOnSave is off). Result: test files silently never get formatted
-      // and only fail in CI. Nothing here needs type info, so drop the project reference.
-      files: ['**/__tests__/**/*.ts', '**/__tests__/**/*.tsx', '**/*.test.ts', '**/*.test.tsx'],
-      parserOptions: { project: null },
-      rules: {
-        // The only type-aware rule in the shared set; it errors at load time without a project.
-        '@typescript-eslint/restrict-template-expressions': 'off',
-      },
-    },
-  ],
+  // No type-aware linting: `parserOptions.project` costs ~40s of program build plus
+  // ~2.3s/file (2h40m across the repo). If a type-aware rule is ever worth that, add
+  // an `overrides` entry scoped to the narrowest possible file set.
 };

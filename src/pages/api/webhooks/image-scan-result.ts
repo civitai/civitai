@@ -63,6 +63,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 import { processImageScanResult } from '~/server/services/image-scan-result.service';
+import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
@@ -275,6 +276,13 @@ async function updateImage(
   const { id } = image;
   try {
     await dbWrite.image.update({ where: { id }, data });
+
+    // Terminal outcome — drop the ImageScan JobQueue row so completed scans don't
+    // linger as stale entries the ingest-images cron has to prune. Non-terminal
+    // states (e.g. Error) stay queued for retry.
+    if (data.ingestion === 'Scanned' || data.ingestion === 'Blocked') {
+      await removeImageScanJobQueue([id]);
+    }
 
     if (data.ingestion === 'Scanned') {
       if (reviewKey) {
