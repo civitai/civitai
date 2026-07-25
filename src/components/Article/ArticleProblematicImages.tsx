@@ -12,10 +12,12 @@ import {
   IconFileText,
   IconShieldCheck,
   IconRefresh,
+  IconRadar2,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useRescanArticle } from '~/hooks/useRescanArticle';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
@@ -54,6 +56,7 @@ interface ArticleProblematicImagesProps {
   textIssue?: TextModerationIssue | null;
   canOverride?: boolean;
   canRetry?: boolean;
+  canRescan?: boolean;
 }
 
 // Human, class-aware cause for an image the scanner couldn't clear.
@@ -219,7 +222,9 @@ export function ArticleProblematicImages({
   textIssue,
   canOverride,
   canRetry,
+  canRescan,
 }: ArticleProblematicImagesProps) {
+  const { rescan, isLoading: isRescanning } = useRescanArticle();
   const hasImageProblems = blockedImages.length > 0 || errorImages.length > 0;
   const hasTextProblem = !!textIssue;
   if (!hasImageProblems && !hasTextProblem) return null;
@@ -238,8 +243,15 @@ export function ArticleProblematicImages({
       ? 'A text moderation issue is preventing your article from being published:'
       : 'The following images must be removed or replaced before your article can be published:';
 
+  const guidance =
+    hasImageProblems && hasTextProblem
+      ? 'Remove or replace the flagged images and edit the flagged text, then rescan or save to re-check.'
+      : hasTextProblem
+      ? 'Edit the flagged title or body, then rescan or save to re-check.'
+      : 'Remove or replace the flagged images, then rescan or save to re-check.';
+
   return (
-    <Alert title={title} color="red" className="border-l-4 border-red-6">
+    <Alert title={title} color="red">
       <Stack gap="md">
         <Text size="sm">{leadText}</Text>
 
@@ -343,40 +355,23 @@ export function ArticleProblematicImages({
           </Stack>
         )}
 
-        {/* Action Instructions */}
-        <Alert color="blue" variant="light" styles={{ root: { padding: '8px 12px' } }}>
-          <Text size="xs" fw={500}>
-            How to fix:
+        {/* Footer: guidance + rescan CTA */}
+        <Group justify="space-between" wrap="wrap" gap="sm" align="center">
+          <Text size="xs" c="dimmed" className="flex-1">
+            {guidance}
           </Text>
-          <Text size="xs" mt={4}>
-            {hasImageProblems && (
-              <>
-                1. Locate problematic images in your article content
-                <br />
-                2. Remove or replace them with appropriate content
-                <br />
-              </>
-            )}
-            {hasTextProblem && !hasImageProblems && (
-              <>
-                1. Edit the article title and body if the content was flagged
-                <br />
-              </>
-            )}
-            {hasImageProblems && hasTextProblem && (
-              <>
-                3. Edit the article text if it was flagged for policy violation
-                <br />
-              </>
-            )}
-            {(hasImageProblems || hasTextProblem) && (
-              <>
-                {hasImageProblems && hasTextProblem ? '4. ' : hasImageProblems ? '3. ' : '2. '}
-                Save your article or click Rescan Article below to trigger a new scan
-              </>
-            )}
-          </Text>
-        </Alert>
+          {canRescan && (
+            <Button
+              leftSection={<IconRadar2 size={16} />}
+              variant="default"
+              size="sm"
+              loading={isRescanning}
+              onClick={() => rescan(articleId)}
+            >
+              Rescan Article
+            </Button>
+          )}
+        </Group>
       </Stack>
     </Alert>
   );

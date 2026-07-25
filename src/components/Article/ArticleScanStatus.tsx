@@ -4,14 +4,13 @@
  * Displays real-time scanning progress for article content images with modern UI
  */
 
-import { Alert, Button, Text, Group, Stack, Badge, Loader, Paper } from '@mantine/core';
-import { IconAlertCircle, IconCheck, IconRadar2, IconShield } from '@tabler/icons-react';
+import { Alert, Text, Group, Stack, Badge, Loader, Paper } from '@mantine/core';
+import { IconAlertCircle, IconCheck, IconShield } from '@tabler/icons-react';
 import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
 import { useEffect, useMemo, useRef } from 'react';
 import clsx from 'clsx';
 import { ArticleProblematicImages, type TextModerationIssue } from './ArticleProblematicImages';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useRescanArticle } from '~/hooks/useRescanArticle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -23,7 +22,6 @@ interface ArticleScanStatusProps {
 export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusProps) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { rescan: handleRescan, isLoading: isRescanning } = useRescanArticle();
   const { status, isLoading, error, isComplete, hasImages, progress } = useArticleScanStatus({
     articleId,
   });
@@ -124,28 +122,15 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
     // Action required state - blocked/error images or text moderation failure
     if (hasIssues) {
       return (
-        <Stack gap="md">
-          <ArticleProblematicImages
-            articleId={articleId}
-            blockedImages={status.images?.blocked || []}
-            errorImages={status.images?.error || []}
-            textIssue={textIssue}
-            canOverride={!!currentUser?.isModerator}
-            canRetry={!!currentUser}
-          />
-          {currentUser && (
-            <Button
-              leftSection={<IconRadar2 size={16} />}
-              variant="light"
-              color="blue"
-              size="sm"
-              loading={isRescanning}
-              onClick={() => handleRescan(articleId)}
-            >
-              Rescan Article
-            </Button>
-          )}
-        </Stack>
+        <ArticleProblematicImages
+          articleId={articleId}
+          blockedImages={status.images?.blocked || []}
+          errorImages={status.images?.error || []}
+          textIssue={textIssue}
+          canOverride={!!currentUser?.isModerator}
+          canRetry={!!currentUser}
+          canRescan={!!currentUser}
+        />
       );
     }
 
