@@ -44,6 +44,7 @@ import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
 import { baseModelHasFileSize } from '~/shared/constants/basemodel.constants';
+import { useIsOverflown } from '~/hooks/useIsOverflown';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
@@ -643,6 +644,7 @@ function FileCard({
   };
 
   const displayName = versionFile.overrideName ?? versionFile.name;
+  const { ref: nameRef, overflown: nameOverflown } = useIsOverflown<HTMLParagraphElement>();
   const iconConfig = getFileIconConfig(versionFile.name, {
     format: versionFile.format,
   });
@@ -666,13 +668,21 @@ function FileCard({
       p="sm"
     >
       <Group gap="md">
-        <Group gap="md" wrap="nowrap" style={{ flex: 1, minWidth: 220 }}>
+        <Group gap="md" wrap="nowrap" style={{ flex: '1 1 220px', minWidth: 0 }}>
           <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
             <FileIcon size={20} />
           </ThemeIcon>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <Tooltip label={displayName} openDelay={300}>
-              <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
+            <Tooltip
+              label={displayName}
+              disabled={!nameOverflown}
+              openDelay={300}
+              withinPortal
+              multiline
+              maw={420}
+              style={{ overflowWrap: 'anywhere' }}
+            >
+              <Text ref={nameRef} size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
                 {displayName}
               </Text>
             </Tooltip>
