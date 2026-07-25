@@ -244,12 +244,20 @@ export function OffsiteReviewModal({
   request,
   onClose,
   onActioned,
+  readOnly = false,
 }: {
   request: OffsitePendingRow | null;
   onClose: () => void;
   /** Fired after a successful approve/reject — lets a host (e.g. the mod
    *  management table) invalidate its own query in addition to the review queues. */
   onActioned?: () => void | Promise<void>;
+  /** History-tab (Approved/Rejected) posture: HIDE the Approve.../Reject... action
+   *  buttons so the modal is a read-only detail view (an already-decided request
+   *  errors `NOT_PENDING` server-side — the buttons are misleading). Matches the
+   *  on-site history read-only view. Purely presentational: it only conditionally
+   *  RENDERS the buttons; the approve/reject handlers are unchanged. Default false so
+   *  the Pending tab + the mgmt table's pending Review keep full actions. */
+  readOnly?: boolean;
 }) {
   const utils = trpc.useUtils();
   const features = useFeatureFlags();
@@ -535,7 +543,8 @@ export function OffsiteReviewModal({
           </Alert>
         )}
 
-        {actionMode === 'reject' ? (
+        {!readOnly &&
+          (actionMode === 'reject' ? (
           <Stack gap="xs">
             <ReasonGatedField
               value={rejectionReason}
@@ -636,7 +645,7 @@ export function OffsiteReviewModal({
               Approve…
             </Button>
           </Group>
-        )}
+          ))}
       </Stack>
     </Modal>
   );

@@ -96,7 +96,7 @@ vi.mock('~/utils/trpc', () => {
   };
 });
 
-const { OffsiteReviewQueue } = await import('./OffsiteReviewQueue');
+const { OffsiteReviewQueue, OffsiteReviewModal } = await import('./OffsiteReviewQueue');
 
 beforeEach(() => {
   mocks.invalidate.mockClear();
@@ -234,6 +234,30 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
     // The badge values they label are still rendered.
     await expect.element(page.getByText('utility', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('g', { exact: true })).toBeInTheDocument();
+  });
+});
+
+// History-tab parity: opening an offsite row from Approved/Rejected passes readOnly,
+// which HIDES the Approve.../Reject... action buttons (an already-decided request would
+// only error NOT_PENDING server-side) while keeping the detail view — matching the
+// on-site history read-only posture. Purely presentational (no handler change).
+describe('OffsiteReviewModal — readOnly (history) posture hides the action buttons', () => {
+  test('readOnly HIDES both entry action buttons but keeps the content detail view', async () => {
+    renderWithProviders(<OffsiteReviewModal request={OFFSITE_ROW} onClose={vi.fn()} readOnly />);
+    // Detail still renders — the external URL + the content checklist.
+    await expect
+      .element(page.getByText('URL is https and opens externally'))
+      .toBeInTheDocument();
+    await expect.element(page.getByText('Icon present')).toBeInTheDocument();
+    // But NEITHER Approve… nor Reject… action button renders in read-only mode.
+    expect(page.getByTestId('apps-offsite-approve-open').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-reject-open').elements()).toHaveLength(0);
+  });
+
+  test('default (readOnly omitted) still renders the Approve…/Reject… buttons', async () => {
+    renderWithProviders(<OffsiteReviewModal request={OFFSITE_ROW} onClose={vi.fn()} />);
+    await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-reject-open')).toBeInTheDocument();
   });
 });
 

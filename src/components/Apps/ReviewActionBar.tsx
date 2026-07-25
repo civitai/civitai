@@ -45,6 +45,7 @@ export function ReviewActionBar({
   onClose,
   busyRef,
   onStatusChange,
+  onActioned,
   sticky = false,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
@@ -54,6 +55,11 @@ export function ReviewActionBar({
   busyRef?: { current: boolean };
   /** Page-only: mutation-lifecycle status for the aria-live region + leave-guard. */
   onStatusChange?: (status: ReviewActionStatus) => void;
+  /** Fired after a successful approve/reject (before `onClose`). The unified review
+   *  page passes the tab's `resetPaging` so the decided item leaves the accumulated
+   *  list — symmetric with the off-site modal's `onActioned`. Purely additive: it
+   *  does NOT touch the approve/reject mutation logic. */
+  onActioned?: () => void | Promise<void>;
   /** Render as a pinned bottom action bar (page) vs an inline footer (modal). */
   sticky?: boolean;
 }) {
@@ -71,6 +77,7 @@ export function ReviewActionBar({
       onStatusChange?.('approved');
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listApprovedRequests.invalidate();
+      await onActioned?.();
       onClose();
     },
     onError: (e) => {
@@ -89,6 +96,7 @@ export function ReviewActionBar({
       onStatusChange?.('rejected');
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listRejectedRequests.invalidate();
+      await onActioned?.();
       onClose();
     },
     onError: (e) => {
