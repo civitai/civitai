@@ -229,7 +229,7 @@ const OverflowTooltip = ({
   searchText,
   ...highlightProps
 }: { label: string; searchText: string } & Omit<HighlightProps, 'highlight' | 'children'>) => {
-  const { ref, overflown } = useIsOverflown<HTMLDivElement>();
+  const { ref, overflown } = useIsOverflown<HTMLDivElement>([label]);
 
   return (
     <Tooltip label={label} disabled={!overflown} withinPortal multiline>

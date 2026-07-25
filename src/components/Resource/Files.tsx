@@ -644,7 +644,9 @@ function FileCard({
   };
 
   const displayName = versionFile.overrideName ?? versionFile.name;
-  const { ref: nameRef, overflown: nameOverflown } = useIsOverflown<HTMLParagraphElement>();
+  const { ref: nameRef, overflown: nameOverflown } = useIsOverflown<HTMLParagraphElement>([
+    displayName,
+  ]);
   const iconConfig = getFileIconConfig(versionFile.name, {
     format: versionFile.format,
   });
