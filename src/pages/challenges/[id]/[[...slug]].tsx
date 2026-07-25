@@ -503,6 +503,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               {challenge.title}
             </Title>
             <Group gap={4} wrap="nowrap" className="shrink-0">
+              <ChallengeNotifyToggle challenge={{ id: challenge.id, status: challenge.status }} />
               <ShareButton url={router.asPath} title={challenge.title}>
                 <ActionIcon variant="light" size="lg" color="gray">
                   <IconShare3 size={20} />
@@ -678,11 +679,6 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                 Cancelled
               </IconBadge>
             ) : null}
-
-            <ChallengeNotifyToggle
-              challenge={{ id: challenge.id, status: challenge.status }}
-              variant={isScheduled ? 'button' : 'icon'}
-            />
 
             {/* Countdown (active only) */}
             {isActive && (

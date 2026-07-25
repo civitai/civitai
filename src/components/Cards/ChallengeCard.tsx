@@ -10,7 +10,6 @@ import {
 } from '@tabler/icons-react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ChallengeContextMenu } from '~/components/Challenge/ChallengeContextMenu';
-import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { getChallengeDisplayUser } from '~/components/Challenge/challenge.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -149,14 +148,11 @@ export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
               </IconBadge>
             )}
           </div>
-          <div className="flex items-center gap-1">
-            <ChallengeNotifyToggle challenge={{ id, status }} />
-            <ChallengeContextMenu
-              challenge={{ id, createdById, source, status }}
-              position="bottom-end"
-              withinPortal
-            />
-          </div>
+          <ChallengeContextMenu
+            challenge={{ id, createdById, source, status }}
+            position="bottom-end"
+            withinPortal
+          />
         </div>
       }
       footerGradient

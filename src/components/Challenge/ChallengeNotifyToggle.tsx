@@ -1,4 +1,4 @@
-import { Button, Tooltip } from '@mantine/core';
+import { Tooltip } from '@mantine/core';
 import { IconBell, IconBellFilled } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import {
@@ -10,14 +10,12 @@ import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 type Props = {
   challenge: { id: number; status: ChallengeStatus };
-  variant?: 'icon' | 'button';
-  size?: 'sm' | 'md';
 };
 
 // Tracking only buys you something while the challenge still has an event ahead of it.
 const TRACKABLE: ChallengeStatus[] = [ChallengeStatus.Scheduled, ChallengeStatus.Active];
 
-export function ChallengeNotifyToggle({ challenge, variant = 'icon', size = 'sm' }: Props) {
+export function ChallengeNotifyToggle({ challenge }: Props) {
   const currentUser = useCurrentUser();
   const { trackedIds } = useTrackedChallengeIds();
   const { toggleNotify, toggling } = useToggleChallengeNotify();
@@ -39,29 +37,18 @@ export function ChallengeNotifyToggle({ challenge, variant = 'icon', size = 'sm'
     void toggleNotify(challenge.id, !tracking);
   };
 
-  if (variant === 'button') {
-    return (
-      <Button
-        size={size}
-        variant={tracking ? 'filled' : 'light'}
-        leftSection={tracking ? <IconBellFilled size={16} /> : <IconBell size={16} />}
-        loading={toggling}
-        onClick={handleClick}
-      >
-        {label}
-      </Button>
-    );
-  }
-
+  // Sized to sit in the detail-page header alongside the share and overflow actions.
   return (
     <Tooltip label={label} withinPortal>
       <LegacyActionIcon
-        variant="transparent"
+        variant="light"
+        size="lg"
+        color={tracking ? 'blue' : 'gray'}
         aria-label={label}
         disabled={toggling}
         onClick={handleClick}
       >
-        {tracking ? <IconBellFilled size={18} /> : <IconBell size={18} />}
+        {tracking ? <IconBellFilled size={20} /> : <IconBell size={20} />}
       </LegacyActionIcon>
     </Tooltip>
   );
