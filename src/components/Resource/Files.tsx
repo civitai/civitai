@@ -44,6 +44,7 @@ import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
 import { baseModelHasFileSize } from '~/shared/constants/basemodel.constants';
+import { useIsOverflown } from '~/hooks/useIsOverflown';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
@@ -294,7 +295,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
             preferences.
           </Text>
         </Card.Section>
-        <Stack gap="sm" p="md">
+        <Stack gap="sm" pt="md">
           {modelFiles.length > 0 ? (
             <>
               {modelFiles.map((file) => (
@@ -369,7 +370,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
             Components and files that accompany this model. Mark each as required or optional.
           </Text>
         </Card.Section>
-        <Stack gap="sm" p="md">
+        <Stack gap="sm" pt="md">
           {!hasAdditionalContent && (
             <Stack gap="xs" align="center" py="md">
               <IconLayersLinked
@@ -642,6 +643,10 @@ function FileCard({
     renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
   };
 
+  const displayName = versionFile.overrideName ?? versionFile.name;
+  const { ref: nameRef, overflown: nameOverflown } = useIsOverflown<HTMLParagraphElement>([
+    displayName,
+  ]);
   const iconConfig = getFileIconConfig(versionFile.name, {
     format: versionFile.format,
   });
@@ -664,48 +669,60 @@ function FileCard({
       withBorder
       p="sm"
     >
-      <Group gap="md" wrap="nowrap">
-        <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
-          <FileIcon size={20} />
-        </ThemeIcon>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Group gap={6} wrap="nowrap">
-            <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
-              {versionFile.overrideName ?? versionFile.name}
-            </Text>
-            {isMissingRequiredInfo(versionFile) && (
-              <Badge color="yellow" variant="light" size="xs">
-                Needs info
-              </Badge>
-            )}
-          </Group>
-          <Text size="xs" c="dimmed">
-            {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
-          </Text>
-          {versionFile.isCheckingOfficial && (
-            <Group gap={6} wrap="nowrap" mt={4}>
-              <Loader size="xs" />
-              <Text size="xs" c="dimmed">
-                Checking for an existing copy on Civitai&hellip;
+      <Group gap="md">
+        <Group gap="md" wrap="nowrap" style={{ flex: '1 1 220px', minWidth: 0 }}>
+          <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
+            <FileIcon size={20} />
+          </ThemeIcon>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Tooltip
+              label={displayName}
+              disabled={!nameOverflown}
+              openDelay={300}
+              withinPortal
+              multiline
+              maw={420}
+              style={{ overflowWrap: 'anywhere' }}
+            >
+              <Text ref={nameRef} size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
+                {displayName}
               </Text>
+            </Tooltip>
+            <Group gap={6} wrap="nowrap">
+              <Text size="xs" c="dimmed">
+                {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
+              </Text>
+              {isMissingRequiredInfo(versionFile) && (
+                <Badge color="yellow" variant="light" size="xs">
+                  Needs info
+                </Badge>
+              )}
             </Group>
-          )}
-          {showRequiredToggle && !versionFile.isUploading && !versionFile.isCheckingOfficial && (
-            <Switch
-              size="xs"
-              label="Required"
-              checked={versionFile.isRequired ?? false}
-              onChange={(e) =>
-                updateFile(versionFile.uuid, { isRequired: e.currentTarget.checked })
-              }
-              mt={4}
-            />
-          )}
-        </div>
+            {versionFile.isCheckingOfficial && (
+              <Group gap={6} wrap="nowrap" mt={4}>
+                <Loader size="xs" />
+                <Text size="xs" c="dimmed">
+                  Checking for an existing copy on Civitai&hellip;
+                </Text>
+              </Group>
+            )}
+            {showRequiredToggle && !versionFile.isUploading && !versionFile.isCheckingOfficial && (
+              <Switch
+                size="xs"
+                label="Required"
+                checked={versionFile.isRequired ?? false}
+                onChange={(e) =>
+                  updateFile(versionFile.uuid, { isRequired: e.currentTarget.checked })
+                }
+                mt={4}
+              />
+            )}
+          </div>
+        </Group>
         {/* Selects render during upload too, so the user can set type/precision/
             size/quant while the bytes upload — the save reads the latest via
             filesRef. */}
-        <Group gap="xs" wrap="nowrap" align="flex-end">
+        <Group gap="xs" align="flex-end">
           <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
           {!versionFile.isUploading && showRename && versionFile.id && !trackedFile && (
             <Popover
@@ -717,11 +734,7 @@ function FileCard({
               withinPortal
             >
               <Popover.Target>
-                <LegacyActionIcon
-                  onClick={handleRenameOpen}
-                  style={{ marginTop: 18 }}
-                  title="Rename download file"
-                >
+                <LegacyActionIcon onClick={handleRenameOpen} title="Rename download file">
                   <IconPencil size={16} />
                 </LegacyActionIcon>
               </Popover.Target>
@@ -756,7 +769,6 @@ function FileCard({
               color="red"
               onClick={() => handleRemoveFile(versionFile.uuid)}
               loading={deleteFileMutation.isPending}
-              style={{ marginTop: 18 }}
             >
               <IconTrash size={16} />
             </LegacyActionIcon>
@@ -1014,7 +1026,7 @@ function FileEditForm({
   const showMetadataSelects = isCheckpoint || isComponentFile;
 
   return (
-    <Group gap="xs" align="flex-end" wrap="nowrap">
+    <Group gap="xs" align="flex-end">
       <div>
         <SelectLabel>Type</SelectLabel>
         <Select
