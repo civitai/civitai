@@ -2295,7 +2295,13 @@ const mySubmissionSelect = {
       coverId: true,
       description: true,
       tagline: true,
-      _count: { select: { screenshots: true } },
+      // Filtered COUNT — only screenshots whose Image is still live. A row whose
+      // Image was deleted (imageId → null via onDelete: SetNull) has no
+      // displayable asset, so it must not inflate the count, else the
+      // `no-screenshots` warning is a false-negative. Matches the authoritative
+      // asset gate: `appListingScreenshot.count({ where: { imageId: { not: null } } })`
+      // (see assertListingAssetsComplete callsite ~L1103 in this file).
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
     },
   },
 } as const;
