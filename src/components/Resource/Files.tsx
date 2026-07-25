@@ -294,7 +294,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
             preferences.
           </Text>
         </Card.Section>
-        <Stack gap="sm" p="md">
+        <Stack gap="sm" pt="md">
           {modelFiles.length > 0 ? (
             <>
               {modelFiles.map((file) => (
@@ -369,7 +369,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
             Components and files that accompany this model. Mark each as required or optional.
           </Text>
         </Card.Section>
-        <Stack gap="sm" p="md">
+        <Stack gap="sm" pt="md">
           {!hasAdditionalContent && (
             <Stack gap="xs" align="center" py="md">
               <IconLayersLinked
@@ -666,45 +666,47 @@ function FileCard({
       p="sm"
     >
       <Group gap="md">
-        <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
-          <FileIcon size={20} />
-        </ThemeIcon>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <Tooltip label={displayName} openDelay={300}>
-            <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
-              {displayName}
-            </Text>
-          </Tooltip>
-          <Group gap={6} wrap="nowrap">
-            <Text size="xs" c="dimmed">
-              {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
-            </Text>
-            {isMissingRequiredInfo(versionFile) && (
-              <Badge color="yellow" variant="light" size="xs">
-                Needs info
-              </Badge>
-            )}
-          </Group>
-          {versionFile.isCheckingOfficial && (
-            <Group gap={6} wrap="nowrap" mt={4}>
-              <Loader size="xs" />
-              <Text size="xs" c="dimmed">
-                Checking for an existing copy on Civitai&hellip;
+        <Group gap="md" wrap="nowrap" style={{ flex: 1, minWidth: 220 }}>
+          <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
+            <FileIcon size={20} />
+          </ThemeIcon>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Tooltip label={displayName} openDelay={300}>
+              <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
+                {displayName}
               </Text>
+            </Tooltip>
+            <Group gap={6} wrap="nowrap">
+              <Text size="xs" c="dimmed">
+                {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
+              </Text>
+              {isMissingRequiredInfo(versionFile) && (
+                <Badge color="yellow" variant="light" size="xs">
+                  Needs info
+                </Badge>
+              )}
             </Group>
-          )}
-          {showRequiredToggle && !versionFile.isUploading && !versionFile.isCheckingOfficial && (
-            <Switch
-              size="xs"
-              label="Required"
-              checked={versionFile.isRequired ?? false}
-              onChange={(e) =>
-                updateFile(versionFile.uuid, { isRequired: e.currentTarget.checked })
-              }
-              mt={4}
-            />
-          )}
-        </div>
+            {versionFile.isCheckingOfficial && (
+              <Group gap={6} wrap="nowrap" mt={4}>
+                <Loader size="xs" />
+                <Text size="xs" c="dimmed">
+                  Checking for an existing copy on Civitai&hellip;
+                </Text>
+              </Group>
+            )}
+            {showRequiredToggle && !versionFile.isUploading && !versionFile.isCheckingOfficial && (
+              <Switch
+                size="xs"
+                label="Required"
+                checked={versionFile.isRequired ?? false}
+                onChange={(e) =>
+                  updateFile(versionFile.uuid, { isRequired: e.currentTarget.checked })
+                }
+                mt={4}
+              />
+            )}
+          </div>
+        </Group>
         {/* Selects render during upload too, so the user can set type/precision/
             size/quant while the bytes upload — the save reads the latest via
             filesRef. */}
