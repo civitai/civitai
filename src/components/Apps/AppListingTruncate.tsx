@@ -33,7 +33,9 @@ export function useIsOverflowing<T extends HTMLElement = HTMLElement>() {
     measure();
     // ResizeObserver covers card reflow / responsive breakpoints without a
     // window resize listener (the AuctionPlacementCard OverflowTooltip missed
-    // resize — this fixes that gap).
+    // resize — this fixes that gap). Guard for environments without RO
+    // (defense-in-depth) — the one-shot measure() above still runs.
+    if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
