@@ -39,6 +39,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
+import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -677,6 +678,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                 Cancelled
               </IconBadge>
             ) : null}
+
+            <ChallengeNotifyToggle
+              challenge={{ id: challenge.id, status: challenge.status }}
+              variant={isScheduled ? 'button' : 'icon'}
+            />
 
             {/* Countdown (active only) */}
             {isActive && (
