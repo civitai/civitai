@@ -678,6 +678,16 @@ export async function getInfiniteChallenges(
       case ChallengeParticipation.Created:
         conditions.push(Prisma.sql`c."createdById" = ${currentUserId}`);
         break;
+      case ChallengeParticipation.Tracking:
+        conditions.push(
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "ChallengeEngagement" ce
+            WHERE ce."challengeId" = c.id
+              AND ce.type = 'Notify'
+              AND ce."userId" = ${currentUserId}
+          )`
+        );
+        break;
     }
   }
 

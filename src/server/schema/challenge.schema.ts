@@ -281,6 +281,7 @@ export const ChallengeParticipation = {
   NotEntered: 'not_entered',
   Won: 'won',
   Created: 'created',
+  Tracking: 'tracking',
 } as const;
 export type ChallengeParticipation =
   (typeof ChallengeParticipation)[keyof typeof ChallengeParticipation];
@@ -311,6 +312,7 @@ export const getInfiniteChallengesSchema = z.object({
       ChallengeParticipation.NotEntered,
       ChallengeParticipation.Won,
       ChallengeParticipation.Created,
+      ChallengeParticipation.Tracking,
     ])
     .optional(),
   includeEnded: z.boolean().default(false),
