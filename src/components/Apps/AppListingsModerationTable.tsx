@@ -15,10 +15,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconAlertTriangle, IconBox, IconThumbUp } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
-import {
-  OffsiteReviewModal,
-  type OffsitePendingRow,
-} from '~/components/Apps/OffsiteReviewQueue';
+import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
@@ -65,6 +62,12 @@ import { trpc } from '~/utils/trpc';
  * is `moderatorProcedure`, and a query error (non-mod / flag off) renders nothing.
  * Closes the "manage any listing without a report" gap (the report queue only
  * surfaces reported listings) + gives the pending review its table-parity home.
+ *
+ * The off-site review MODAL is PAGE-OWNED (lifted to `src/pages/apps/review.tsx`)
+ * so there is a single, non-divergent instance shared with the unified Pending
+ * list. A pending row's Review action calls the page's `openOffsiteReview` (passing
+ * this table's own `invalidate` as the post-action callback so the table refreshes).
+ * The lifecycle-action modal (`ListingModActionModal`) stays LOCAL to this table.
  */
 
 const MOD_ACCESSORS: SubmissionAccessors<ModerationListingRow> = {
@@ -123,7 +126,16 @@ function toReviewRow(row: ModerationListingRow): OffsitePendingRow | null {
   };
 }
 
-export function AppListingsModerationTable() {
+export function AppListingsModerationTable({
+  openOffsiteReview,
+}: {
+  /** Opens the PAGE-OWNED off-site review modal. The second arg is fired after a
+   *  successful approve/reject so this table can invalidate + reset its own paging. */
+  openOffsiteReview: (
+    row: OffsitePendingRow,
+    onActioned?: () => void | Promise<void>
+  ) => void;
+}) {
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
   const [search, setSearch] = useState('');
@@ -136,7 +148,6 @@ export function AppListingsModerationTable() {
   // already loaded so "Load more" APPENDS rather than replaces.
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [accumulated, setAccumulated] = useState<ModerationListingRow[]>([]);
-  const [reviewRow, setReviewRow] = useState<OffsitePendingRow | null>(null);
   const [pendingAction, setPendingAction] = useState<{
     action: ListingModAction;
     row: ModerationListingRow;
@@ -246,7 +257,9 @@ export function AppListingsModerationTable() {
   const openAction = (action: ListingModAction, row: ModerationListingRow) => {
     if (action === 'review') {
       const reviewable = toReviewRow(row);
-      if (reviewable) setReviewRow(reviewable);
+      // Route to the PAGE-OWNED off-site modal; pass this table's `invalidate` so a
+      // successful approve/reject refreshes + resets the table's paging.
+      if (reviewable) openOffsiteReview(reviewable, invalidate);
       return;
     }
     setPendingAction({ action, row });
@@ -464,11 +477,6 @@ export function AppListingsModerationTable() {
         </>
       )}
 
-      <OffsiteReviewModal
-        request={reviewRow}
-        onClose={() => setReviewRow(null)}
-        onActioned={invalidate}
-      />
       <ListingModActionModal
         pending={pendingAction}
         onClose={() => setPendingAction(null)}
