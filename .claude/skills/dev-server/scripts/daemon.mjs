@@ -13,11 +13,11 @@
 
 import http from 'http';
 import { spawn, execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, rmSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createServer } from 'net';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(__dirname, '..');
@@ -42,6 +42,16 @@ function loadSkillConfig() {
     authHubEnabled: false,
     authHubPath: 'apps/auth',
     authHubPort: 5173,
+    branchWatchEnabled: true,
+    branchWatchInterval: 1000,
+    branchSwitchDebounce: 3000,
+    distCacheKeep: 4,
+    distCacheMaxGb: 40,
+    perBranchDistDir: false,
+    killOnBranchSwitch: false,
+    autoInstall: true,
+    prewarmRoutes: [],
+    prewarmTimeout: 300000,
   };
 
   if (existsSync(envPath)) {
@@ -78,6 +88,39 @@ function loadSkillConfig() {
           break;
         case 'AUTH_HUB_PORT':
           if (value) config.authHubPort = parseInt(value, 10);
+          break;
+        case 'BRANCH_WATCH_ENABLED':
+          config.branchWatchEnabled = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'BRANCH_WATCH_INTERVAL':
+          if (value) config.branchWatchInterval = parseInt(value, 10);
+          break;
+        case 'BRANCH_SWITCH_DEBOUNCE':
+          if (value) config.branchSwitchDebounce = parseInt(value, 10);
+          break;
+        case 'DIST_CACHE_KEEP':
+          if (value) config.distCacheKeep = parseInt(value, 10);
+          break;
+        case 'DIST_CACHE_MAX_GB':
+          if (value) config.distCacheMaxGb = parseFloat(value);
+          break;
+        case 'PER_BRANCH_DIST_DIR':
+          config.perBranchDistDir = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'KILL_ON_BRANCH_SWITCH':
+          config.killOnBranchSwitch = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'AUTO_INSTALL':
+          config.autoInstall = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'PREWARM_ROUTES':
+          config.prewarmRoutes = value
+            .split(',')
+            .map((r) => r.trim())
+            .filter(Boolean);
+          break;
+        case 'PREWARM_TIMEOUT':
+          if (value) config.prewarmTimeout = parseInt(value, 10);
           break;
       }
     }
@@ -208,6 +251,151 @@ function getGitBranch(dir) {
   }
 }
 
+// Locate a worktree's HEAD file. In a linked worktree `.git` is a file pointing at
+// the real gitdir, and that gitdir has its own HEAD — the shared one never moves.
+function resolveGitHeadPath(dir) {
+  const dotGit = resolve(dir, '.git');
+  if (!existsSync(dotGit)) return null;
+  if (statSync(dotGit).isDirectory()) return resolve(dotGit, 'HEAD');
+  const match = readFileSync(dotGit, 'utf-8').match(/^gitdir:\s*(.+)$/m);
+  if (!match) return null;
+  return resolve(dir, match[1].trim(), 'HEAD');
+}
+
+// Branch name (or short sha when detached) straight off HEAD — no git subprocess,
+// so it's cheap enough to poll every second.
+function readHeadRef(headPath) {
+  try {
+    const raw = readFileSync(headPath, 'utf-8').trim();
+    const match = raw.match(/^ref:\s*refs\/heads\/(.+)$/);
+    return match ? match[1] : raw.slice(0, 12);
+  } catch (e) {
+    return null;
+  }
+}
+
+function branchSlug(branch) {
+  const safe = branch.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  const digest = createHash('sha1').update(branch).digest('hex').slice(0, 6);
+  return `${safe.slice(0, 48) || 'detached'}-${digest}`;
+}
+
+const distRoot = 'branches';
+
+function distDirForBranch(branch) {
+  return `.next/${distRoot}/${branchSlug(branch)}`;
+}
+
+function fileHash(path) {
+  try {
+    return createHash('sha1').update(readFileSync(path)).digest('hex');
+  } catch (e) {
+    return null;
+  }
+}
+
+function dirSize(dir) {
+  let total = 0;
+  const stack = [dir];
+  while (stack.length) {
+    let entries;
+    try {
+      entries = readdirSync(stack.pop(), { withFileTypes: true });
+    } catch (e) {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = resolve(entry.parentPath ?? entry.path, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else {
+        try {
+          total += statSync(full).size;
+        } catch (e) {}
+      }
+    }
+  }
+  return total;
+}
+
+// Evict least-recently-used per-branch build dirs until both budgets hold: at most
+// `keep` dirs, and at most `maxBytes` total. The size cap is the one that matters —
+// Turbopack's store grows ~1GB per route compiled and re-grows on every restart, so
+// a count-only cap bounds nothing. The live dir is never evicted.
+function pruneDistDirs(worktree, keepDir, keep, maxBytes, log) {
+  const root = resolve(worktree, '.next', distRoot);
+  if (!existsSync(root)) return;
+  const active = resolve(worktree, keepDir);
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory());
+  } catch (e) {
+    return;
+  }
+
+  const dirs = entries
+    .map((e) => resolve(root, e.name))
+    .map((p) => ({ path: p, mtime: statSync(p).mtimeMs, size: dirSize(p) }))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  const gb = (n) => (n / 1024 ** 3).toFixed(1);
+  let total = dirs.reduce((sum, d) => sum + d.size, 0);
+  log?.('info', `Build cache: ${dirs.length} branch dirs, ${gb(total)} GB total`);
+
+  const evict = (d, why) => {
+    try {
+      rmSync(d.path, { recursive: true, force: true });
+      total -= d.size;
+      log?.('info', `Evicted ${d.path.replace(worktree, '.')} (${gb(d.size)} GB, ${why})`);
+    } catch (e) {
+      log?.('warn', `Could not evict ${d.path}: ${e.message}`);
+    }
+  };
+
+  for (let i = 0; i < dirs.length; i++) {
+    const d = dirs[i];
+    if (d.path === active) continue;
+    if (keep > 0 && i >= keep) evict(d, 'over count');
+    else if (maxBytes > 0 && total > maxBytes) evict(d, 'over size budget');
+  }
+
+  if (maxBytes > 0 && total > maxBytes) {
+    log?.(
+      'warn',
+      `Active branch cache alone is ${gb(total)} GB, over the ${gb(maxBytes)} GB budget — ` +
+        `delete .next/${distRoot} if disk is tight`
+    );
+  }
+}
+
+// Run a package-manager command to completion, streaming into the session log.
+function runCommand(cmd, args, cwd, env, log) {
+  return new Promise((done) => {
+    log('info', `> ${cmd} ${args.join(' ')}`);
+    const child = spawn(cmd, args, {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
+    });
+    const pipe = (stream, level) =>
+      stream.on('data', (d) => {
+        for (const line of d.toString().split('\n')) {
+          if (line.trim()) log(level, line.trim());
+        }
+      });
+    pipe(child.stdout, 'stdout');
+    pipe(child.stderr, 'stderr');
+    child.on('exit', (code) => {
+      log(code === 0 ? 'info' : 'error', `${cmd} exited with code ${code}`);
+      done(code);
+    });
+    child.on('error', (err) => {
+      log('error', `${cmd} failed to start: ${err.message}`);
+      done(-1);
+    });
+  });
+}
+
 // Check if a port is available
 function isPortAvailable(port) {
   return new Promise((resolve) => {
@@ -254,6 +442,32 @@ class DevSession {
     this.healthCheckTimer = null;
     this.healthCheckAbortController = null;
     this.healthCheckRunning = false;
+    this.distDir = null;
+    this.headPath = resolveGitHeadPath(worktree);
+    this.branchWatchTimer = null;
+    this.branchSwitchTimer = null;
+    this.switching = false;
+    this.prewarming = false;
+    this.lockHash = null;
+    this.schemaHash = null;
+  }
+
+  lockfilePath() {
+    return resolve(this.worktree, 'pnpm-lock.yaml');
+  }
+
+  // The authored schema, not `prisma/schema.prisma` — that one is a generated artifact
+  // (scripts/generate-slim-schema.js strips @no-type models out of schema.full.prisma),
+  // so watching it misses schema changes that arrive with a checkout and leaves the
+  // Prisma client stale.
+  schemaPath() {
+    return resolve(
+      this.worktree,
+      'packages',
+      'civitai-db-schema',
+      'prisma',
+      'schema.full.prisma'
+    );
   }
 
   addLog(level, message) {
@@ -284,8 +498,18 @@ class DevSession {
   }
 
   async start() {
-    // Get git branch
-    this.branch = getGitBranch(this.worktree) || 'unknown';
+    // Re-read the skill .env each start so edits to PREWARM_ROUTES et al. take effect
+    // on the next branch switch instead of needing a daemon restart. Mutated in place
+    // because healthCheckConfig aliases this object.
+    Object.assign(skillConfig, loadSkillConfig());
+
+    // Must match what the watcher reads, or a detached HEAD (where `git` reports the
+    // literal "HEAD" and the HEAD file holds a sha) looks like a switch on every tick.
+    this.branch =
+      (this.headPath && readHeadRef(this.headPath)) || getGitBranch(this.worktree) || 'unknown';
+    this.distDir = skillConfig.perBranchDistDir ? distDirForBranch(this.branch) : '.next';
+    this.lockHash = fileHash(this.lockfilePath());
+    this.schemaHash = fileHash(this.schemaPath());
 
     // Load environment variables
     let envVars = loadEnvFile(this.envPath);
@@ -299,6 +523,7 @@ class DevSession {
 
     // Set PORT in environment
     envVars.PORT = String(this.port);
+    envVars.NEXT_DIST_DIR = this.distDir;
 
     // Merge with current process env (for PATH, etc.)
     const env = { ...process.env, ...envVars };
@@ -306,6 +531,17 @@ class DevSession {
     this.addLog('info', `Starting dev server on port ${this.port}`);
     this.addLog('info', `Worktree: ${this.worktree}`);
     this.addLog('info', `Branch: ${this.branch}`);
+    this.addLog('info', `Build dir: ${this.distDir}`);
+
+    if (skillConfig.perBranchDistDir) {
+      pruneDistDirs(
+        this.worktree,
+        this.distDir,
+        skillConfig.distCacheKeep,
+        skillConfig.distCacheMaxGb * 1024 ** 3,
+        (l, m) => this.addLog(l, m)
+      );
+    }
 
     // Spawn npm run dev
     const isWindows = process.platform === 'win32';
@@ -383,14 +619,132 @@ class DevSession {
       this.startHealthCheck();
     }
 
+    this.startBranchWatch();
+
     return {
       id: this.id,
       port: this.port,
       worktree: this.worktree,
       branch: this.branch,
+      distDir: this.distDir,
       status: this.status,
       ready: this.ready,
     };
+  }
+
+  startBranchWatch() {
+    if (!skillConfig.branchWatchEnabled || !this.headPath || this.branchWatchTimer) return;
+
+    this.branchWatchTimer = setInterval(() => {
+      if (this.switching) return;
+      const head = readHeadRef(this.headPath);
+      if (!head || head === this.branch) return;
+      this.onHeadChanged(head);
+    }, skillConfig.branchWatchInterval);
+    this.branchWatchTimer.unref?.();
+  }
+
+  stopBranchWatch() {
+    if (this.branchWatchTimer) {
+      clearInterval(this.branchWatchTimer);
+      this.branchWatchTimer = null;
+    }
+    if (this.branchSwitchTimer) {
+      clearTimeout(this.branchSwitchTimer);
+      this.branchSwitchTimer = null;
+    }
+  }
+
+  // HEAD moved. Measured: leaving the server up through a checkout beats killing it —
+  // its in-memory graph survives, so only what actually changed recompiles (~8s vs a
+  // ~43s cold start), and routes it isn't asked for stay warm. So do nothing here but
+  // wait for the tree to settle. A restart is only forced when node_modules or the
+  // Prisma client must change underneath it (see finishBranchSwitch).
+  onHeadChanged(head) {
+    if (!this.branchSwitchTimer) {
+      this.addLog('info', `HEAD moved to ${head} — waiting for checkout to settle`);
+      if (skillConfig.killOnBranchSwitch) {
+        this.addLog('info', 'KILL_ON_BRANCH_SWITCH set — stopping dev server');
+        this.stopHealthCheck();
+        this.ready = false;
+        this.readyAt = null;
+        this.stop().catch(() => {});
+      }
+    }
+
+    clearTimeout(this.branchSwitchTimer);
+    this.branchSwitchTimer = setTimeout(
+      () => this.finishBranchSwitch(),
+      skillConfig.branchSwitchDebounce
+    );
+  }
+
+  async finishBranchSwitch() {
+    this.branchSwitchTimer = null;
+    this.switching = true;
+    const head = readHeadRef(this.headPath);
+    if (!head) {
+      this.switching = false;
+      return;
+    }
+
+    try {
+      const from = this.branch;
+      this.branch = head;
+      this.addLog('info', `Branch switch: ${from} -> ${head}`);
+
+      const env = { ...process.env, ...loadEnvFile(this.envPath) };
+      const log = (l, m) => this.addLog(l, m);
+      const pnpmCmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+
+      const lockHash = fileHash(this.lockfilePath());
+      const schemaHash = fileHash(this.schemaPath());
+      const lockChanged = lockHash !== this.lockHash;
+      const schemaChanged = schemaHash !== this.schemaHash;
+
+      // Only these force a restart: the running process has node_modules and the
+      // generated Prisma client resolved in memory, and neither can be swapped under
+      // it. Everything else the dev server recompiles on its own, faster than a
+      // restart would.
+      const mustRestart = skillConfig.killOnBranchSwitch || lockChanged || schemaChanged;
+
+      if (skillConfig.autoInstall && lockChanged) {
+        this.addLog('info', 'pnpm-lock.yaml changed — installing');
+        await this.stop();
+        // postinstall runs db:generate, so a schema change needs no separate pass.
+        await runCommand(pnpmCmd, ['install', '--prefer-offline'], this.worktree, env, log);
+      } else if (skillConfig.autoInstall && schemaChanged) {
+        this.addLog('info', 'prisma/schema.prisma changed — regenerating client');
+        await this.stop();
+        await runCommand(pnpmCmd, ['run', 'db:generate'], this.worktree, env, log);
+      }
+
+      this.lockHash = lockHash;
+      this.schemaHash = schemaHash;
+
+      if (mustRestart) {
+        await this.stop();
+        this.restartCount++;
+        this.switching = false;
+        await this.start();
+        return;
+      }
+
+      // Server kept running: nothing to restart, just recompile the routes you use
+      // so the switch cost lands on the daemon rather than your next click.
+      this.switching = false;
+      if (skillConfig.perBranchDistDir) {
+        this.addLog(
+          'warn',
+          'PER_BRANCH_DIST_DIR is set but the server was not restarted — it keeps the ' +
+            'build dir it started with. Per-branch dirs only apply on restart.'
+        );
+      }
+      await this.prewarm();
+    } catch (err) {
+      this.switching = false;
+      this.addLog('error', `Branch switch failed: ${err.message}`);
+    }
   }
 
   startHealthCheck() {
@@ -451,6 +805,7 @@ class DevSession {
           this.readyAt = new Date().toISOString();
           this.addLog('info', 'Server ready (health check passed)');
           this.stopHealthCheck();
+          this.prewarm();
         } else {
           // Non-matching status, schedule next check
           scheduleNextCheck();
@@ -480,6 +835,39 @@ class DevSession {
     check();
   }
 
+  // Compile the routes you actually open, in the background, right after the server
+  // comes up. Cold-compiling this app's graph costs ~50s on the first route; the point
+  // is that the daemon eats that while you're still reading the diff, not you when you
+  // click. Sequential on purpose — parallel requests just contend for the same
+  // compiler and make the first route land later.
+  async prewarm() {
+    const routes = skillConfig.prewarmRoutes;
+    if (!routes.length || this.prewarming) return;
+
+    this.prewarming = true;
+    const startedFor = this.branch;
+    this.addLog('info', `Prewarming ${routes.length} route(s): ${routes.join(', ')}`);
+
+    for (const route of routes) {
+      // A branch switch or shutdown mid-prewarm makes the rest pointless.
+      if (!this.prewarming || this.branch !== startedFor || this.status !== 'running') {
+        this.addLog('info', 'Prewarm abandoned (session moved on)');
+        break;
+      }
+      const started = Date.now();
+      try {
+        const res = await fetch(`http://localhost:${this.port}${route}`, {
+          signal: AbortSignal.timeout(skillConfig.prewarmTimeout),
+        });
+        this.addLog('info', `Prewarmed ${route} -> ${res.status} in ${Date.now() - started}ms`);
+      } catch (err) {
+        this.addLog('warn', `Prewarm ${route} failed after ${Date.now() - started}ms: ${err.message}`);
+      }
+    }
+
+    this.prewarming = false;
+  }
+
   stopHealthCheck() {
     if (!this.healthCheckRunning) {
       return;
@@ -503,6 +891,8 @@ class DevSession {
 
   async stop() {
     this.stopHealthCheck();
+    this.stopBranchWatch();
+    this.prewarming = false;
     if (!this.process) return;
 
     this.addLog('info', 'Stopping dev server...');
@@ -539,6 +929,9 @@ class DevSession {
       id: this.id,
       worktree: this.worktree,
       branch: this.branch,
+      distDir: this.distDir,
+      switching: this.switching,
+      prewarming: this.prewarming,
       port: this.port,
       status: this.status,
       ready: this.ready,

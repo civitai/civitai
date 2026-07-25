@@ -99,6 +99,7 @@ Run `node .claude/skills/dev-server/console.mjs` (or `npm run dev:daemon`) for a
 | `x` | Stop session + exit |
 | `R` | Toggle RGB proxy (start/stop) |
 | `A` | Toggle auth hub (start/stop) |
+| `s` or `Tab` | Switch to the next session (only shown when more than one is running) |
 | `q` | Quit dashboard (server keeps running) |
 | `K` | Kill daemon + quit |
 
@@ -231,6 +232,119 @@ The hub works behind the RGB proxy too. When you browse dev at `https://civitai-
 - **Email magic-link** works out of the box (`EMAIL_*` are set) — no external console changes needed.
 - **Social providers** (GitHub/Google/Discord/Reddit) additionally require the provider console to allow the hub redirect URI `http://localhost:5173/login/<provider>/callback`. Until that's added they fail with `redirect_uri_mismatch`.
 - Any **legacy** `civitai-token` cookie already in your browser still resolves without the hub (verify-only decode) and upgrades to a `civ-token` on next request once the hub is up.
+
+## In-place branch switching
+
+Just run `git checkout <branch>`. The daemon handles the rest — no `rm -rf .next`, no manual reinstall.
+
+What happens on a HEAD move:
+
+1. **The dev server keeps running.** It is not killed. Its in-memory module graph survives the checkout, so only what actually changed recompiles.
+2. **Debounce** (`BRANCH_SWITCH_DEBOUNCE`, default 3s of HEAD quiet) so a rebase or a fast double-switch settles first.
+3. **A restart only if it's unavoidable** — `pnpm-lock.yaml` changed (install, then restart) or `prisma/schema.prisma` changed (`db:generate`, then restart). Those swap `node_modules` and the generated client, which a live process can't pick up. Nothing else forces one.
+4. **Re-prewarm** so the recompile lands on the daemon instead of your next click.
+
+### Why not kill it
+
+That was the original design, on the theory that a checkout mutating the tree under Turbopack's watcher is what wedged the server. Measured, that theory was wrong — killing it is simply worse. Same routes, same machine, switching between two branches:
+
+| | `/models` | `/images` |
+|---|---|---|
+| Cold start after a kill | **42.6s** | 3.1s |
+| Left running, first switch | 23.0s | 0.3s |
+| Left running, subsequent switches | **7.7-9.2s** | 1.0-1.6s |
+
+The server stayed healthy across every switch. Routes it wasn't asked to rebuild stayed warm the whole time.
+
+`KILL_ON_BRANCH_SWITCH=true` restores the old behaviour if a checkout ever does wedge it.
+
+### Per-branch build dirs (off by default)
+
+`PER_BRANCH_DIST_DIR=true` gives each branch its own `.next/branches/<slug>` via `distDir: process.env.NEXT_DIST_DIR || '.next'` in `next.config.mjs`. It only matters when the server actually restarts, so it is off now that switches keep the process alive — and each dir grows to ~4 GB. Sharing one `.next` also lets unchanged modules stay valid across branches, which per-branch dirs threw away.
+
+### Prewarming
+
+`PREWARM_ROUTES` (default `/,/models,/images`) is compiled in the background the moment the server reports ready — on start and after every branch switch. Cold-compiling the first route costs ~45s because it pulls the whole shared graph; prewarming moves that off you.
+
+Measured on a branch with no cache at all:
+
+| | |
+|---|---|
+| Daemon prewarm (background) | `/` 45.2s, `/models` 3.5s, `/images` 2.9s — done at t+62s |
+| Then opening those pages | **0.07-0.14s** |
+| Opening a route *not* in the list (`/articles`) | 10.3s |
+
+Add the routes you actually land on. The cost of a longer list is only more background work, but the list is sequential — parallel requests contend for the same compiler and make the first route land later. Set it empty to disable.
+
+**List pages don't warm their detail pages.** `/models` and `/models/[id]/[[...slug]]` are separate routes with separate compiles — a warm `/models` leaves a model page at a ~30s cold hit. That's why the default list includes a specific model id; the id is arbitrary, only the route it resolves to matters. Redirects are followed, so `/models/<id>` reaches the slug route fine.
+
+The skill `.env` is re-read on every session start, so edits to `PREWARM_ROUTES` apply at the next branch switch without restarting the daemon.
+
+### Why the cache is so big
+
+It is not per-page. Measured from an empty store on this repo:
+
+| Step | Store size | Response |
+|---|---|---|
+| boot + `/api/health` | 1 MB | — |
+| `/models` (first real page) | **3995 MB** | 49.9s |
+| `/images` | 2662 MB | 3.8s |
+| `/articles` | 2822 MB | 8.2s |
+| `/bounties` | 3762 MB | 28.3s |
+
+The first route compiled drags in the whole shared graph — the pages-router `_app` plus its transitive world — and that costs ~4 GB on its own. Every route after adds only a few hundred MB, and the total **oscillates rather than climbs**: it dropped from 3995 to 2662 MB while more routes were being compiled, because compaction reclaimed superseded segments. The store's `LOG` confirms it: single commits of up to 3.4M keys, with `MERGE`/`Compaction` passes running throughout.
+
+So the working set for this app is roughly **2.5-4 GB per branch**, and it is real data, not a leak. It's large because the graph is large (3.4M cache keys, ~210k files in `node_modules`). Source maps are not the driver — they are 0.3% of a sampled segment.
+
+It earns the space: **45.8s cold vs 4.3s warm** on the same route after a restart. Disabling `turbopackFileSystemCacheForDev` trades a 10x slower restart for disk, which is the wrong trade on a machine with room.
+
+Dirs are evicted LRU on every start against **both** budgets: the `DIST_CACHE_KEEP` most recent (default 4) and `DIST_CACHE_MAX_GB` total (default 40). The size cap does the real work — with a ~4 GB working set per branch, a count cap alone lets four branches reach ~16 GB. The active branch is never evicted; if it alone blows the budget the daemon logs a warning instead.
+
+Knobs live in `.claude/skills/dev-server/.env`: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `DIST_CACHE_KEEP`, `AUTO_INSTALL`.
+
+## Worktrees
+
+One session per worktree, each on its own port (3000, 3001, …). Start one with:
+
+```bash
+node .claude/skills/dev-server/cli.mjs start /path/to/worktree
+```
+
+What's already handled:
+
+- **No per-worktree `.env` needed.** Sessions fall back to the main project root's `.env` (`mainEnvPath`). Verified: a worktree with no `.env` at all boots healthy.
+- **Auth on secondary ports.** `NEXTAUTH_URL`, `NEXTAUTH_URL_INTERNAL`, and `NEXT_PUBLIC_BASE_URL` are rewritten to `http://localhost:<port>`, so logins work on non-3000 sessions instead of bouncing to the primary.
+- **Independent branch watching + prewarming** per session.
+
+Fresh worktrees still need `pnpm install` (or a `node_modules` junction) and `git submodule update --init event-engine-common`.
+
+### Cache cannot be shared between worktrees
+
+Tested directly — copy a warm 12 GB cache from one worktree into another and Turbopack dies on startup:
+
+```
+FATAL: An unexpected Turbopack error occurred.
+Error [TurbopackInternalError]: failed to create junction point at ".next\dev\node_modules\..."
+Caused by: removal of existing symbolic link or junction point failed: The directory is not empty. (os error 145)
+```
+
+Two independent blockers: `.next/dev/node_modules` holds junction points that don't survive a copy, and cache keys embed the absolute project path (~3,000 occurrences of `C:/Dev/Repos/work/model-share` in a single 253 MB segment), so most entries would miss even if it did start.
+
+A single `.next` shared by concurrent sessions is worse — two dev servers writing one LSM store corrupts it.
+
+So a new worktree pays one cold build. The mitigation is prewarming: start the session and let the daemon absorb it in the background rather than waiting on your first click.
+
+## RGB proxy and multiple sessions
+
+`rgb-proxy/index.mjs` registers all three colors — plus the `civitai-dev.cyan` alias — against a hardcoded `http://localhost:3000`. So the color hostnames always reach whichever session holds port 3000; other sessions are reachable on `localhost:<port>` only. The TUI says which case a session is in rather than printing URLs that would silently land on another worktree.
+
+## Windows Defender
+
+Real-time protection scans all ~210k files in `node_modules` plus every build-cache write. Run once from an **elevated** PowerShell:
+
+```powershell
+powershell -File .claude\skills\dev-server\scripts\defender-exclusions.ps1
+```
 
 ## Notes
 
