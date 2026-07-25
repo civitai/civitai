@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { getChallengeExcludedUserIds } from '~/server/services/challenge-block.service';
+import { createNotification } from '~/server/services/notification.service';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 const NOTIFY = 'Notify' as const;
@@ -94,6 +97,44 @@ export async function getChallengeReminderRecipients(challengeId: number): Promi
   `;
 
   return [...new Set([...trackers, ...entrants.map((e) => e.userId)])];
+}
+
+/**
+ * Winners and participation-prize earners already receive their own notification for this outcome;
+ * pass their ids as `excludeUserIds` so nobody is told twice about the same result.
+ */
+export async function sendChallengeResultsNotification({
+  challengeId,
+  challengeTitle,
+  excludeUserIds,
+}: {
+  challengeId: number;
+  challengeTitle: string;
+  excludeUserIds: number[];
+}): Promise<void> {
+  try {
+    const exclude = new Set(excludeUserIds);
+    const recipients = (await getChallengeReminderRecipients(challengeId)).filter(
+      (id) => !exclude.has(id)
+    );
+    if (!recipients.length) return;
+
+    await createNotification({
+      type: 'challenge-results',
+      category: NotificationCategory.Update,
+      key: `challenge-results:${challengeId}`,
+      userIds: recipients,
+      details: { challengeId, challengeTitle },
+    });
+  } catch (error) {
+    const err = error as Error;
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-results-notification',
+      message: err.message,
+      challengeId,
+    });
+  }
 }
 
 export async function getTrackedChallengeIds(userId: number): Promise<number[]> {

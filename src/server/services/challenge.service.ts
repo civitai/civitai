@@ -156,6 +156,7 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
+import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { withRetries } from '~/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { AIModel } from '~/server/services/ai/openrouter';
@@ -2708,6 +2709,12 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         },
       });
     }
+
+    await sendChallengeResultsNotification({
+      challengeId,
+      challengeTitle: challenge.title,
+      excludeUserIds: winningEntries.map((e) => e.userId),
+    });
     log('Winners notified');
 
     recordChallengeCompleted({ source: challenge.source });
