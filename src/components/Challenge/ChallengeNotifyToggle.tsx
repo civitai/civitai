@@ -15,7 +15,7 @@ type Props = {
 };
 
 // Tracking only buys you something while the challenge still has an event ahead of it.
-const TRACKABLE = [ChallengeStatus.Scheduled, ChallengeStatus.Active];
+const TRACKABLE: ChallengeStatus[] = [ChallengeStatus.Scheduled, ChallengeStatus.Active];
 
 export function ChallengeNotifyToggle({ challenge, variant = 'icon', size = 'sm' }: Props) {
   const currentUser = useCurrentUser();
