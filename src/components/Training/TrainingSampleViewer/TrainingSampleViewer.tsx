@@ -57,14 +57,25 @@ export default function TrainingSampleViewer({
   const [epochIndex, setEpochIndex] = useState(initialEpochIndex);
   const [sampleIndex, setSampleIndex] = useState(initialSampleIndex);
   const [zoomed, setZoomed] = useState(false);
-  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
-  const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+  // Keyed by url rather than reset in an effect, so a cached sample whose load event beats the
+  // effect can't have its measurements wiped and strand the viewer on the spinner.
+  const [loaded, setLoaded] = useState<{ url: string; width: number; height: number } | null>(null);
+  const [erroredUrl, setErroredUrl] = useState<string | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
+  const carriedRef = useRef<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
 
   const epoch = epochs[epochIndex];
   const samples = epoch?.sampleImages ?? [];
   const url = samples[sampleIndex];
   const prompt = prompts[sampleIndex];
+
+  const natural = loaded?.url === url ? loaded : null;
+  const status = natural ? 'loaded' : erroredUrl === url ? 'error' : 'loading';
 
   // Epochs are laid out newest-first, so "up" is a later epoch. Both axes skip past samples that
   // were never produced so navigation can never land on an empty frame.
@@ -90,22 +101,49 @@ export default function TrainingSampleViewer({
   const navigableCount = samples.filter(Boolean).length;
   const navigablePosition = samples.slice(0, sampleIndex + 1).filter(Boolean).length;
 
-  useEffect(() => {
-    setStatus('loading');
-    setZoomed(false);
-    setNatural(null);
-  }, [url]);
+  // Carry the pan offset onto the next sample so holding Up/Down walks the same magnified region
+  // through the epochs. Only honoured if the incoming sample measures the same.
+  const navigate = (move: () => void) => {
+    const pane = paneRef.current;
+    carriedRef.current =
+      pane && zoomed && natural
+        ? {
+            left: pane.scrollLeft,
+            top: pane.scrollTop,
+            width: natural.width,
+            height: natural.height,
+          }
+        : null;
+    move();
+  };
+  const goSample = (index: number | undefined) =>
+    index !== undefined && navigate(() => setSampleIndex(index));
+  const goEpoch = (index: number | undefined) =>
+    index !== undefined && navigate(() => setEpochIndex(index));
 
+  // Runs once the incoming sample has been measured, so scrollWidth already reflects its zoomed
+  // size — restoring any earlier would clamp to 0 and lose the offset.
   useEffect(() => {
     const pane = paneRef.current;
     if (!pane) return;
     if (!zoomed) {
+      carriedRef.current = null;
       pane.scrollTo(0, 0);
       return;
     }
-    pane.scrollLeft = (pane.scrollWidth - pane.clientWidth) / 2;
-    pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;
-  }, [zoomed, url]);
+    const dims = loaded?.url === url ? loaded : null;
+    if (!dims) return;
+
+    const carried = carriedRef.current;
+    carriedRef.current = null;
+    if (carried && carried.width === dims.width && carried.height === dims.height) {
+      pane.scrollLeft = carried.left;
+      pane.scrollTop = carried.top;
+    } else {
+      pane.scrollLeft = (pane.scrollWidth - pane.clientWidth) / 2;
+      pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;
+    }
+  }, [zoomed, loaded, url]);
 
   const missing = !epoch || !url;
   useEffect(() => {
@@ -118,22 +156,22 @@ export default function TrainingSampleViewer({
       ? [
           [
             'ArrowLeft',
-            () => prevSampleIndex !== undefined && setSampleIndex(prevSampleIndex),
+            () => goSample(prevSampleIndex),
             { preventDefault: prevSampleIndex !== undefined },
           ],
           [
             'ArrowRight',
-            () => nextSampleIndex !== undefined && setSampleIndex(nextSampleIndex),
+            () => goSample(nextSampleIndex),
             { preventDefault: nextSampleIndex !== undefined },
           ],
           [
             'ArrowUp',
-            () => prevEpochIndex !== undefined && setEpochIndex(prevEpochIndex),
+            () => goEpoch(prevEpochIndex),
             { preventDefault: prevEpochIndex !== undefined },
           ],
           [
             'ArrowDown',
-            () => nextEpochIndex !== undefined && setEpochIndex(nextEpochIndex),
+            () => goEpoch(nextEpochIndex),
             { preventDefault: nextEpochIndex !== undefined },
           ],
         ]
@@ -142,7 +180,7 @@ export default function TrainingSampleViewer({
 
   if (missing) return null;
 
-  const canZoom = status === 'loaded' && !!natural;
+  const canZoom = !!natural;
   const zoomActive = zoomed && !!natural;
 
   const mediaClassName = clsx(
@@ -178,8 +216,7 @@ export default function TrainingSampleViewer({
             Epoch #{epoch.epochNumber}
           </Badge>
           <Text size="sm" c="dimmed">
-            {epochIndex + 1} of {epochs.length} epochs &middot; sample {navigablePosition} of{' '}
-            {navigableCount}
+            sample {navigablePosition} of {navigableCount}
           </Text>
         </Group>
         {canZoom && (
@@ -233,11 +270,10 @@ export default function TrainingSampleViewer({
               style={zoomStyle}
               onLoadedData={(e) => {
                 const el = e.currentTarget;
-                setStatus('loaded');
                 if (el.videoWidth && el.videoHeight)
-                  setNatural({ width: el.videoWidth, height: el.videoHeight });
+                  setLoaded({ url, width: el.videoWidth, height: el.videoHeight });
               }}
-              onError={() => setStatus('error')}
+              onError={() => setErroredUrl(url)}
             />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
@@ -253,11 +289,10 @@ export default function TrainingSampleViewer({
               onClick={toggleZoom}
               onLoad={(e) => {
                 const el = e.currentTarget;
-                setStatus('loaded');
                 if (el.naturalWidth && el.naturalHeight)
-                  setNatural({ width: el.naturalWidth, height: el.naturalHeight });
+                  setLoaded({ url, width: el.naturalWidth, height: el.naturalHeight });
               }}
-              onError={() => setStatus('error')}
+              onError={() => setErroredUrl(url)}
             />
           )}
         </div>
@@ -270,7 +305,7 @@ export default function TrainingSampleViewer({
           }
           className="left-2 top-1/2 -translate-y-1/2"
           disabled={prevSampleIndex === undefined}
-          onClick={() => prevSampleIndex !== undefined && setSampleIndex(prevSampleIndex)}
+          onClick={() => goSample(prevSampleIndex)}
         >
           <IconChevronLeft size={24} />
         </NavButton>
@@ -280,7 +315,7 @@ export default function TrainingSampleViewer({
           }
           className="right-2 top-1/2 -translate-y-1/2"
           disabled={nextSampleIndex === undefined}
-          onClick={() => nextSampleIndex !== undefined && setSampleIndex(nextSampleIndex)}
+          onClick={() => goSample(nextSampleIndex)}
         >
           <IconChevronRight size={24} />
         </NavButton>
@@ -292,7 +327,7 @@ export default function TrainingSampleViewer({
           }
           className="left-1/2 top-2 -translate-x-1/2"
           disabled={prevEpochIndex === undefined}
-          onClick={() => prevEpochIndex !== undefined && setEpochIndex(prevEpochIndex)}
+          onClick={() => goEpoch(prevEpochIndex)}
         >
           <IconChevronUp size={24} />
         </NavButton>
@@ -304,7 +339,7 @@ export default function TrainingSampleViewer({
           }
           className="bottom-2 left-1/2 -translate-x-1/2"
           disabled={nextEpochIndex === undefined}
-          onClick={() => nextEpochIndex !== undefined && setEpochIndex(nextEpochIndex)}
+          onClick={() => goEpoch(nextEpochIndex)}
         >
           <IconChevronDown size={24} />
         </NavButton>
