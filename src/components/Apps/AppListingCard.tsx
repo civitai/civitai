@@ -2,6 +2,7 @@ import { Anchor, Avatar, Badge, Box, Button, Card, Group, Image, Stack, Text, Ti
 import {
   IconApps,
   IconExternalLink,
+  IconPencil,
   IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
@@ -14,12 +15,16 @@ import {
   FALLBACK_CATEGORY_ICON,
 } from '~/components/Apps/marketplaceCategoryIcons';
 import {
+  canOwnerEditListing,
   getListingBadge,
   getListingCta,
   getListingDetailHref,
+  getOwnerEditHref,
   getRecommendLabel,
   type ListingBadgeKind,
 } from '~/components/Apps/appListingCardView';
+import { TruncatedBadge, TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   isMarketplaceCategory,
   MARKETPLACE_CATEGORY_LABELS,
@@ -35,8 +40,11 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * Visit ↗ / Connect). Mirrors the visual language of the live `AppBlockCard`
  * (Mantine Card + category-glyph cover placeholder) so listings feel native.
  *
- * DARK / parallel-run: used only by the mod-only `/apps/store-preview` surface —
- * the default `/apps` render (MarketplaceBody → AppBlockCard) is untouched.
+ * LIVE (P2d cut over): this is the DEFAULT `/apps` store card
+ * (`AppListingsMarketplaceBody` → `AppListingCard`) over BOTH kinds. The page is
+ * still flag-gated (the App Blocks Flipt segment + `deIndex`) — no longer
+ * "store-preview only". The unified DETAIL still lives at
+ * `/apps/store-preview/<slug>`.
  *
  * Reuse note: the plan (§6.1) suggests rendering through `AspectRatioImageCard`
  * for cosmetic frames + per-image maturity blur. That component's image slot
@@ -138,13 +146,21 @@ function CreatorChip({ creator }: { creator: ListingCard['creator'] }) {
       c="dimmed"
       onClick={(e: MouseEvent) => e.stopPropagation()}
     >
-      <Group gap={6} wrap="nowrap">
-        <Avatar src={avatarSrc} alt="" radius="xl" size={20}>
+      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+        <Avatar src={avatarSrc} alt="" radius="xl" size={20} style={{ flexShrink: 0 }}>
           {creator.username.charAt(0).toUpperCase()}
         </Avatar>
-        <Text size="xs" c="dimmed" lineClamp={1}>
-          by {creator.username}
-        </Text>
+        {/* Tuned to fit in the common case; the Tooltip reveals a long username
+            only when it would still clip. */}
+        <TruncatedText
+          size="xs"
+          c="dimmed"
+          lineClamp={1}
+          tooltipLabel={creator.username}
+          style={{ minWidth: 0 }}
+        >
+          {`by ${creator.username}`}
+        </TruncatedText>
       </Group>
     </Anchor>
   );
@@ -161,22 +177,39 @@ export interface AppListingCardProps {
 }
 
 export function AppListingCard({ card, canOpenPage = false }: AppListingCardProps) {
+  const currentUser = useCurrentUser();
   const badge = getListingBadge(card);
   const cta = getListingCta(card, { canOpenPage });
   const detailHref = getListingDetailHref(card.slug);
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
   const BadgeIcon = KIND_BADGE_ICON[badge.kind];
 
+  // Owner "Edit" deep-link (Item 2). The public store DTO is approved-only + has
+  // no status field, so gating is owner + editable-status (status omitted →
+  // editable); the href builder returns null when there's no editable target
+  // (an on-site listing with no backing appBlockId) → the button is hidden.
+  const isOwner = !!currentUser?.id && currentUser.id === card.creator?.id;
+  const editHref = getOwnerEditHref(card.kindData, card.id);
+  const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
+
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
       <ListingCover coverUrl={card.coverUrl} category={card.category} name={card.name} />
       <Stack gap="sm" h="100%" pt="sm">
-        <Group justify="space-between" align="flex-start" wrap="nowrap">
-          <Group gap="xs" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
+        <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
+          {/* flex:1 + minWidth:0 lets the text column take the row's slack and
+              shrink gracefully instead of being over-squeezed by the badges. */}
+          <Group gap="xs" wrap="nowrap" align="flex-start" style={{ minWidth: 0, flex: 1 }}>
             {/* App icon (square, publisher-supplied). Decorative — the title
                 carries the accessible name; a missing icon falls back to the
                 app's initial. */}
-            <Avatar src={card.iconUrl ?? undefined} alt="" radius="md" size={40}>
+            <Avatar
+              src={card.iconUrl ?? undefined}
+              alt=""
+              radius="md"
+              size={40}
+              style={{ flexShrink: 0 }}
+            >
               {card.name.charAt(0).toUpperCase()}
             </Avatar>
             <Stack gap={2} style={{ minWidth: 0 }}>
@@ -197,8 +230,12 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               <CreatorChip creator={card.creator} />
             </Stack>
           </Group>
-          <Stack gap={4} align="flex-end">
-            {/* Kind badge — App (on-site) vs Connect app / Off-site (off-site). */}
+          {/* Badge column — capped width + flex-shrink:0 so it never over-squeezes
+              the text column; a long category label ellipsizes with a Tooltip
+              fallback instead of pushing the title/creator out. */}
+          <Stack gap={4} align="flex-end" style={{ flexShrink: 0, maxWidth: 150 }}>
+            {/* Kind badge — App (on-site) vs Connect app / Off-site (off-site).
+                Kind labels are short + fixed, so no truncation needed. */}
             <Badge
               variant="light"
               color={KIND_BADGE_COLOR[badge.kind]}
@@ -210,14 +247,14 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             {card.category && (() => {
               const CategoryIcon = categoryIcon(card.category);
               return (
-                <Badge
+                <TruncatedBadge
                   variant="light"
                   color="grape"
                   size="sm"
+                  maw={150}
                   leftSection={<CategoryIcon size={12} />}
-                >
-                  {categoryLabel(card.category)}
-                </Badge>
+                  label={categoryLabel(card.category)}
+                />
               );
             })()}
           </Stack>
@@ -241,31 +278,50 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             </Text>
           </Group>
 
-          {/* Kind-aware CTA — always has a working target (a direct Open / Visit,
-              or the unified detail). External Visit → new-tab anchor; everything
-              else → an internal Link. */}
-          {cta.external ? (
-            <Button
-              component="a"
-              href={cta.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              size="xs"
-              variant="light"
-              rightSection={<IconExternalLink size={14} />}
-            >
-              {cta.label}
-            </Button>
-          ) : (
-            <Button
-              component={Link}
-              href={cta.href}
-              size="xs"
-              variant={cta.action === 'open' ? 'filled' : 'light'}
-            >
-              {cta.label}
-            </Button>
-          )}
+          <Group gap={6} wrap="nowrap">
+            {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
+                owner + editable status (mod-removed listings hide it). Routes by
+                kind (manifest editor for on-site, submit editor for off-site). */}
+            {showEdit && editHref && (
+              <Button
+                component={Link}
+                href={editHref}
+                size="xs"
+                variant="default"
+                leftSection={<IconPencil size={14} />}
+                data-testid="apps-listing-owner-edit"
+                onClick={(e: MouseEvent) => e.stopPropagation()}
+              >
+                Edit
+              </Button>
+            )}
+
+            {/* Kind-aware CTA — always has a working target (a direct Open / Visit,
+                or the unified detail). External Visit → new-tab anchor; everything
+                else → an internal Link. */}
+            {cta.external ? (
+              <Button
+                component="a"
+                href={cta.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="xs"
+                variant="light"
+                rightSection={<IconExternalLink size={14} />}
+              >
+                {cta.label}
+              </Button>
+            ) : (
+              <Button
+                component={Link}
+                href={cta.href}
+                size="xs"
+                variant={cta.action === 'open' ? 'filled' : 'light'}
+              >
+                {cta.label}
+              </Button>
+            )}
+          </Group>
         </Group>
       </Stack>
     </Card>

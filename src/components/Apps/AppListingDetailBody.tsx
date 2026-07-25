@@ -20,6 +20,7 @@ import {
   IconArrowLeft,
   IconExternalLink,
   IconInfoCircle,
+  IconPencil,
   IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
@@ -32,7 +33,13 @@ import {
   getRecommendLabel,
   type ListingBadgeKind,
 } from '~/components/Apps/appListingCardView';
-import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
+import {
+  canOwnerEditListing,
+  getDetailPrimaryAction,
+  getOwnerEditHref,
+} from '~/components/Apps/appListingDetailView';
+import { TruncatedBadge, TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingComments } from '~/components/Apps/AppListingComments';
 import { ReportListingButton } from '~/components/Apps/ReportListingButton';
 import { ReviewListingButton } from '~/components/Apps/ReviewListingButton';
@@ -161,13 +168,20 @@ function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
       underline="hover"
       c="dimmed"
     >
-      <Group gap={6} wrap="nowrap">
-        <Avatar src={avatarSrc} alt="" radius="xl" size={24}>
+      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+        <Avatar src={avatarSrc} alt="" radius="xl" size={24} style={{ flexShrink: 0 }}>
           {creator.username.charAt(0).toUpperCase()}
         </Avatar>
-        <Text size="sm" c="dimmed" lineClamp={1}>
-          by {creator.username}
-        </Text>
+        {/* Tuned to fit; Tooltip reveals a long username only when it still clips. */}
+        <TruncatedText
+          size="sm"
+          c="dimmed"
+          lineClamp={1}
+          tooltipLabel={creator.username}
+          style={{ minWidth: 0 }}
+        >
+          {`by ${creator.username}`}
+        </TruncatedText>
       </Group>
     </Anchor>
   );
@@ -292,10 +306,18 @@ export interface AppListingDetailBodyProps {
 }
 
 export function AppListingDetailBody({ detail, canOpenPage = false }: AppListingDetailBodyProps) {
+  const currentUser = useCurrentUser();
   const badge = getListingBadge(detail);
   const BadgeIcon = KIND_BADGE_ICON[badge.kind];
   const recommendLabel = getRecommendLabel(detail.recommend, detail.reviewCount);
   const hasRecommend = detail.recommend.recommendPct != null;
+
+  // Owner "Edit" deep-link (Item 2) — owner + editable status (approved-only read
+  // path carries no status → editable); the href builder returns null when there
+  // is no editable target (on-site listing with no backing appBlockId).
+  const isOwner = !!currentUser?.id && currentUser.id === detail.creator?.id;
+  const editHref = getOwnerEditHref(detail.kindData, detail.id);
+  const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
 
   return (
     <Stack gap="lg">
@@ -336,9 +358,14 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
               {detail.category && (() => {
                 const CategoryIcon = categoryIcon(detail.category);
                 return (
-                  <Badge variant="light" color="grape" size="sm" leftSection={<CategoryIcon size={12} />}>
-                    {categoryLabel(detail.category)}
-                  </Badge>
+                  <TruncatedBadge
+                    variant="light"
+                    color="grape"
+                    size="sm"
+                    maw={220}
+                    leftSection={<CategoryIcon size={12} />}
+                    label={categoryLabel(detail.category)}
+                  />
                 );
               })()}
               {detail.contentRating && (
@@ -352,6 +379,20 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
         <Box style={{ flexShrink: 0 }}>
           <Stack gap="xs" align="flex-end">
             <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+            {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
+                owner + editable status (mod-removed listings hide it). Routes by
+                kind (manifest editor for on-site, submit editor for off-site). */}
+            {showEdit && editHref && (
+              <Button
+                component={Link}
+                href={editHref}
+                variant="default"
+                leftSection={<IconPencil size={16} />}
+                data-testid="apps-listing-owner-edit"
+              >
+                Edit
+              </Button>
+            )}
             {/* Review affordance (thumbs/recommend) — hidden for the owner + signed-out
                 viewers; the write proc is protected + flag-gated + self-review-blocked
                 server-side. Feeds the recommend metric below SYNCHRONOUSLY. */}
