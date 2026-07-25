@@ -272,13 +272,11 @@ export function BountyCreateForm() {
                         case BountyType.ModelCreation:
                           form.setValue('details.baseModel', 'SD 1.5');
                           form.setValue('details.modelFormat', 'SafeTensor');
-                          form.setValue('details.modelSize', 'full');
                           break;
                         case BountyType.LoraCreation:
                         case BountyType.EmbedCreation:
                           form.setValue('details.baseModel', 'SD 1.5');
                           form.setValue('details.modelFormat', undefined);
-                          form.setValue('details.modelSize', undefined);
                           break;
                         default:
                           form.setValue('details', undefined);
@@ -538,20 +536,6 @@ export function BountyCreateForm() {
                       data={[...constants.modelFileFormats]}
                       fullWidth
                       orientation="vertical"
-                    />
-                  </Input.Wrapper>
-                  <Input.Wrapper
-                    className={classes.fluid}
-                    label="Preferred model size"
-                    labelProps={{ w: '100%' }}
-                    withAsterisk
-                  >
-                    <InputSegmentedControl
-                      classNames={classes}
-                      name="details.modelSize"
-                      radius="sm"
-                      data={[...constants.modelFileSizes]}
-                      fullWidth
                     />
                   </Input.Wrapper>
                 </Stack>

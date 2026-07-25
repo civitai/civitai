@@ -22,7 +22,6 @@ import type { UserAssistantPersonality } from '~/server/schema/user.schema';
 import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
 import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
@@ -95,22 +94,6 @@ export function SettingsCard() {
               mutate({
                 id: user.id,
                 filePreferences: { ...user.filePreferences, format: value as ModelFileFormat },
-              })
-            }
-            disabled={isLoading}
-          />
-          <Select
-            label="Preferred Size"
-            name="size"
-            data={constants.modelFileSizes.map((size) => ({
-              value: size,
-              label: titleCase(size),
-            }))}
-            value={user.filePreferences?.size ?? 'pruned'}
-            onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, size: value as ModelFileSize },
               })
             }
             disabled={isLoading}

@@ -33,6 +33,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
+import { baseModelHasFileSize } from '~/shared/constants/basemodel.constants';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -554,6 +555,7 @@ export default function MergeVersions({ modelId }: { modelId: number }) {
                           mapping={fileTypeMappings.find((m) => m.fileId === file.id)}
                           onUpdate={(updates) => updateFileMapping(file.id, updates)}
                           modelType={model?.type}
+                          baseModel={targetVersion.baseModel}
                         />
                       ))}
                     </Stack>
@@ -599,6 +601,7 @@ export default function MergeVersions({ modelId }: { modelId: number }) {
                             onUpdate={(updates) => updateFileMapping(file.id, updates)}
                             showRequiredToggle
                             modelType={model?.type}
+                            baseModel={version.baseModel}
                           />
                         ))}
                       </Stack>
@@ -906,6 +909,7 @@ function MergeFileCard({
   onUpdate,
   showRequiredToggle,
   modelType,
+  baseModel,
 }: {
   file: {
     id: number;
@@ -918,6 +922,7 @@ function MergeFileCard({
   onUpdate: (updates: Partial<Omit<FileTypeMapping, 'fileId'>>) => void;
   showRequiredToggle?: boolean;
   modelType?: string;
+  baseModel?: string | null;
 }) {
   const effectiveType = (mapping?.type ?? file.type) as ModelFileType;
   // Key presence, not `??`: the quant select writes an explicit `fp: null` to clear a stale
@@ -949,13 +954,14 @@ function MergeFileCard({
   const isComponentFile =
     effectiveType && (componentFileTypes as readonly string[]).includes(effectiveType);
   const showMetadataSelects = isCheckpoint || isComponentFile;
+  const showSize = baseModelHasFileSize(baseModel);
   const isGguf = file.name.endsWith('.gguf');
   const isZip = file.name.endsWith('.zip');
 
   const tc = useThemeColors();
 
   const fileTypeOptions = constants.modelFileTypes
-    .filter((t) => filterFileTypeByExtension(t, file.name))
+    .filter((t) => t === effectiveType || filterFileTypeByExtension(t, file.name))
     .map((x) => ({
       label: comfyFileTypeLabels[x] ?? (x === 'Model' && modelType ? modelType : x),
       value: x,
@@ -1015,7 +1021,6 @@ function MergeFileCard({
                 onUpdate({
                   type: newType ?? undefined,
                   metadata: {
-                    size: null,
                     fp: null,
                     isRequired: newType
                       ? (componentFileTypes as readonly string[]).includes(newType)
@@ -1094,7 +1099,7 @@ function MergeFileCard({
                 </div>
               )}
 
-              {isCheckpoint && (
+              {isCheckpoint && showSize && (
                 <div>
                   <SelectLabel>Size</SelectLabel>
                   <Select

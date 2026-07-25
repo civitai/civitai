@@ -43,6 +43,7 @@ import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
+import { baseModelHasFileSize } from '~/shared/constants/basemodel.constants';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
@@ -548,19 +549,17 @@ function LinkedComponentCard({
 
 /**
  * Whether a file still needs required metadata before it's publishable — mirrors
- * the server metadata refinements: a type for everything, quant type for GGUF,
- * and size + precision for Checkpoint model weights. Drives the "Needs info" badge
- * so auto-uploaded files that couldn't be auto-detected get flagged instead of
+ * the client validation refinements: a type for everything, quant type for GGUF,
+ * precision for Checkpoint model weights. Drives the "Needs info" badge so
+ * auto-uploaded files that couldn't be auto-detected get flagged instead of
  * silently persisting incomplete.
  */
 function isMissingRequiredInfo(file: FileFromContextProps): boolean {
   if (!file.type) return true;
   const isGguf = file.name.toLowerCase().endsWith('.gguf');
   const isCheckpointModel = file.type === 'Model' && file.modelType === 'Checkpoint';
-  // GGUF always needs a quant type; Checkpoint weights additionally need a size
-  // regardless of extension (precision is the only field GGUF Checkpoints skip).
-  if (isGguf) return !file.quantType || (isCheckpointModel && !file.size);
-  if (isCheckpointModel) return !file.size || !file.fp;
+  if (isGguf) return !file.quantType;
+  if (isCheckpointModel) return !file.fp;
   return false;
 }
 
@@ -945,9 +944,10 @@ function FileEditForm({
   fileTypes: ModelFileType[];
 }) {
   const [initialFile, setInitialFile] = useState({ ...versionFile });
-  const { errors, updateFile, validationCheck } = useFilesContext();
+  const { errors, updateFile, validationCheck, baseModel } = useFilesContext();
   const error = errors?.[index];
   const { precisions, quantTypes } = useModelFileOptions();
+  const showSize = baseModelHasFileSize(baseModel);
 
   const { mutate, isPending: isLoading } = trpc.modelFile.update.useMutation({
     onSuccess: () => {
@@ -980,8 +980,10 @@ function FileEditForm({
     }
   };
 
+  // Keep the file's own type selectable even when it's no longer offered, so a
+  // legacy type doesn't render as a blank Select.
   const filterByFileExtension = (value: ModelFileType) =>
-    filterFileTypeByExtension(value, versionFile.name);
+    value === versionFile.type || filterFileTypeByExtension(value, versionFile.name);
 
   const handleReset = () => {
     updateFile(versionFile.uuid, {
@@ -1098,7 +1100,7 @@ function FileEditForm({
             </div>
           )}
 
-          {isCheckpoint && (
+          {isCheckpoint && showSize && (
             <div>
               <SelectLabel>Size</SelectLabel>
               <Select
@@ -1106,7 +1108,6 @@ function FileEditForm({
                 size="xs"
                 w={80}
                 placeholder="Size"
-                error={error?.size?._errors[0]}
                 data={constants.modelFileSizes.map((size) => ({
                   label: startCase(size),
                   value: size,

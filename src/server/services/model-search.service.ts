@@ -219,10 +219,7 @@ export async function runModelSearch(
       ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
       : items;
 
-  const preferredFormat = {
-    type: user?.filePreferences?.size === 'pruned' ? 'Pruned Model' : undefined,
-    metadata: user?.filePreferences,
-  };
+  const preferredFormat = { metadata: user?.filePreferences };
 
   const shaped = orderedItems.map(({ modelVersions, tagsOnModels, user: modelUser, ...model }) => ({
     ...model,

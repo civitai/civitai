@@ -117,10 +117,18 @@ export function getFileIconConfig(
 }
 
 /**
+ * File types that are still honored on existing files but are no longer offered
+ * when picking a type. 'Pruned Model' encodes the SD1-era full/pruned split,
+ * which SD 1.x expresses through the file's `size` metadata instead.
+ */
+const retiredFileTypes: readonly ModelFileType[] = ['Pruned Model'];
+
+/**
  * Filter which ModelFileType options are valid for a given file extension.
  * Used by file upload UI and merge versions modal.
  */
 export function filterFileTypeByExtension(value: ModelFileType, fileName: string) {
+  if (retiredFileTypes.includes(value)) return false;
   const extension = getFileExtension(fileName);
   switch (extension) {
     case 'ckpt':

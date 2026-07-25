@@ -3343,6 +3343,19 @@ export function getEcosystem(baseModel: string) {
   if (model) return ecosystemById.get(model.ecosystemId);
 }
 
+const fileSizeEcosystemKeys: readonly string[] = ['SD1'];
+
+/**
+ * Whether a base model still distinguishes full vs pruned checkpoint weights.
+ * Retired everywhere except SD 1.x, which is where nearly every real
+ * full/pruned file pair lives — SD 2.x and later are a negligible long tail.
+ */
+export function baseModelHasFileSize(baseModel?: string | null): boolean {
+  if (!baseModel) return false;
+  const ecosystem = getEcosystem(baseModel);
+  return !!ecosystem && fileSizeEcosystemKeys.includes(ecosystem.key);
+}
+
 /**
  * Check if any base model in an ecosystem is marked as experimental
  * @param ecosystemKey - The ecosystem key (e.g., 'SD3', 'Qwen')
