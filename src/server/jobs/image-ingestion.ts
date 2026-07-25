@@ -33,6 +33,13 @@ type IngestImageRow = IngestImageInput & {
    * orchestrator lane so they don't starve live user uploads.
    */
   isBackfill: boolean;
+  /**
+   * First-upload timestamp. Used ONLY as the age-out clock for never-returning
+   * Pending scans: unlike `scanRequestedAt` (reset to `now` on every re-send by
+   * `ingestImage`), `createdAt` is immutable, so it's the one signal a re-drive
+   * loop can't keep pushing into the future. See the Pending age-out below.
+   */
+  createdAt: Date;
 };
 
 export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () => {
@@ -78,7 +85,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
   const images =
     (await dbWrite.$queryRaw<IngestImageRow[]>`
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
-           i."scanRequestedAt", i.ingestion,
+           i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
            i."scanJobs"->'error'->>'failureClass' as "failureClass",
            EXISTS (
@@ -101,12 +108,57 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
       img.ingestion === 'Pending' && (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
   );
 
+  // Age-out safety net for never-returning Pending scans.
+  //
+  // A scan verdict arrives via the fire-and-forget /image-scan-result webhook,
+  // which flips ingestion Pending -> Scanned/Blocked/Error. A fraction of scans
+  // never call back — a dropped callback (workflow succeeded, POST lost) or a
+  // stuck/unassigned workflow that never finishes — and NEITHER civitai nor the
+  // orchestrator has any timeout on that path. Those images stay ingestion
+  // 'Pending' forever and this cron re-drives them every cooldown with no ceiling.
+  //
+  // The age-out clock MUST be `createdAt`, NOT `scanRequestedAt`: `ingestImage`
+  // stamps `scanRequestedAt = now` on every (re-)send, so a "Pending too long by
+  // scanRequestedAt" test resets each run and can never fire. `createdAt` is the
+  // first-upload time (~first scan request, since user uploads scan directly via
+  // ingestImage on creation) and is never rewritten, so it's the one signal the
+  // re-drive loop can't push forward.
+  //
+  // Scope: user uploads only (`!isBackfill`). Article-content backfill images are
+  // legitimately old (createdAt months back) and drain slowly through the
+  // low-priority lane — an age-out keyed on createdAt would wrongly terminalize
+  // the entire backfill on its first pass, so it is excluded outright.
+  //
+  // Threshold is env-tuned and conservative: it must exceed the wall-time of any
+  // legitimately in-flight scan so a healthy scan is never cut off. A too-long
+  // Pending image is flipped to Error (below, in the prod block), which routes it
+  // into the EXISTING capped Error-retry machinery — it gets a bounded number of
+  // real retries and then terminalizes, instead of being Pending forever.
+  const pendingTimeoutDate = decreaseDate(
+    now,
+    env.IMAGE_SCANNING_PENDING_TIMEOUT,
+    'minutes'
+  );
+  const agedOutPendingIds = images
+    .filter(
+      (img) =>
+        img.ingestion === 'Pending' && !img.isBackfill && img.createdAt <= pendingTimeoutDate
+    )
+    .map((img) => img.id);
+  const agedOutPendingSet = new Set(agedOutPendingIds);
+
   // Split pending into backfill (article-connected, low-priority) and user
   // uploads (default high-priority). Backfill work shouldn't starve live
   // uploads. Published-article connection is determined by the isBackfill
-  // flag populated in the image SELECT above.
+  // flag populated in the image SELECT above. Aged-out user uploads are excluded
+  // from the send fan-out: they are terminalized to Error this run, so re-sending
+  // them as Pending would be wasted work (and re-stamp scanRequestedAt). They
+  // still stay in the JobQueue via `processedIds` below (they remain in
+  // `pendingImages`), so next run they are picked up through the Error path.
   const pendingBackfill = pendingImages.filter((img) => img.isBackfill);
-  const pendingUserUploads = pendingImages.filter((img) => !img.isBackfill);
+  const pendingUserUploads = pendingImages.filter(
+    (img) => !img.isBackfill && !agedOutPendingSet.has(img.id)
+  );
 
   // Rescan mirrors Pending/Error: only re-send once the retry delay has elapsed
   // (cooldown via scanRequestedAt) and while still under the retry cap. Without
@@ -191,6 +243,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     pendingImages: pendingImages.length,
     pendingUserUploads: pendingUserUploads.length,
     pendingBackfill: pendingBackfill.length,
+    agedOutPending: agedOutPendingIds.length,
     rescanImages: rescanImages.length,
     errorImages: errorImages.length,
     waitingForRetry: waitingForRetryIds.size,
@@ -234,6 +287,25 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     `;
   }
 
+  // Terminalize never-returning Pending scans (see the age-out rationale above).
+  // Flip the too-long-Pending user uploads to Error so they leave the Pending
+  // bucket and enter the capped Error-retry path. The id set is derived purely
+  // from the already-loaded rows and this runs before the send fan-out (mirrors
+  // the prune-before-send and exhaustedRescan ordering). The `AND ingestion =
+  // 'Pending'` guard makes the flip a no-op if a real verdict landed between the
+  // SELECT and here — a concurrent callback always wins, we never clobber a
+  // Scanned/Blocked result. These ids stay in the JobQueue (they're in
+  // `pendingImages` -> `processedIds`, so not pruned), so next run they are
+  // re-pulled and handled as Error.
+  if (agedOutPendingIds.length > 0) {
+    await dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET ingestion = 'Error'::"ImageIngestionStatus"
+      WHERE id = ANY(${agedOutPendingIds})
+        AND ingestion = 'Pending'::"ImageIngestionStatus"
+    `;
+  }
+
   const sentUserPendingIds = await sendImagesForScanBulk(pendingUserUploads);
   const sentBackfillIds = await sendImagesForScanBulk(pendingBackfill, { lowPriority: true });
   const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });
@@ -248,6 +320,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
   imageIngestCronCounter.inc({ bucket: 'sentError' }, sentErrorIds.length);
   imageIngestCronCounter.inc({ bucket: 'waitingForRetry' }, waitingForRetryIds.size);
   imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
+  imageIngestCronCounter.inc({ bucket: 'agedOutPending' }, agedOutPendingIds.length);
 
   // Failed sends = attempted minus successfully-dispatched, across every lane.
   // sendImagesForScanBulk returns only the ids it managed to send, so the
@@ -271,6 +344,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
       pending: pendingImages.length,
       rescan: rescanImages.length,
       error: errorImages.length,
+      agedOutPending: agedOutPendingIds.length,
       waitingForRetry: waitingForRetryIds.size,
       staleRemoved: staleIds.length,
       failedSends,
@@ -297,6 +371,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     sentBackfill: sentBackfillIds.length,
     sentRescan: sentRescanIds.length,
     sentError: sentErrorIds.length,
+    agedOutPending: agedOutPendingIds.length,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
     failedSends,
