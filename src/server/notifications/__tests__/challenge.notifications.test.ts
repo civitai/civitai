@@ -139,7 +139,8 @@ describe('new-challenge-from-following — SQL gates', () => {
 });
 
 describe('challenge-ending-soon — SQL gates', () => {
-  const sql = () => defs['challenge-ending-soon'].prepareQuery!({ lastSent: '2026-01-01 00:00:00' });
+  const sql = () =>
+    defs['challenge-ending-soon'].prepareQuery!({ lastSent: '2026-01-01 00:00:00' });
 
   it('fires on the crossing into the 8 hour window, not on every run inside it', () => {
     const q = sql();

@@ -94,5 +94,18 @@ module.exports = {
         // '@typescript-eslint/no-misused-promises': 'error',
       },
     },
+    {
+      // tsconfig.json excludes src/**/__tests__/**, so the type-aware parser above throws a fatal
+      // "TSConfig does not include this file" error on every test file. A fatal parse error means
+      // NO rule runs — including prettier/prettier, which is what the editor's fix-on-save relies
+      // on to format (editor.formatOnSave is off). Result: test files silently never get formatted
+      // and only fail in CI. Nothing here needs type info, so drop the project reference.
+      files: ['**/__tests__/**/*.ts', '**/__tests__/**/*.tsx', '**/*.test.ts', '**/*.test.tsx'],
+      parserOptions: { project: null },
+      rules: {
+        // The only type-aware rule in the shared set; it errors at load time without a project.
+        '@typescript-eslint/restrict-template-expressions': 'off',
+      },
+    },
   ],
 };

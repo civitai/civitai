@@ -54,9 +54,7 @@ describe('ChallengeContextMenu', () => {
       />
     );
     await page.getByRole('button', { name: 'More options' }).click();
-    await expect
-      .element(page.getByRole('menuitem', { name: 'Notify me' }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Notify me' })).toBeInTheDocument();
     expect(page.getByRole('menuitem', { name: 'Delete' }).query()).toBeNull();
   });
 

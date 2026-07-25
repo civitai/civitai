@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   createNotification: vi.fn(async (..._a: unknown[]) => undefined),
   mockDb: {
-    challenge: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ collectionId: 5 })) },
+    challenge: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ collectionId: 5 })),
+    },
     challengeEngagement: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => []) },
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
   },
