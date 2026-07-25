@@ -238,17 +238,10 @@ export function ArticleProblematicImages({
 
   const leadText =
     hasImageProblems && hasTextProblem
-      ? 'The following content issues must be resolved before your article can be published:'
+      ? 'These content issues must be resolved before your article can be published'
       : hasTextProblem
-      ? 'A text moderation issue is preventing your article from being published:'
-      : 'The following images must be removed or replaced before your article can be published:';
-
-  const guidance =
-    hasImageProblems && hasTextProblem
-      ? 'Remove or replace the flagged images and edit the flagged text, then rescan or save to re-check.'
-      : hasTextProblem
-      ? 'Edit the flagged title or body, then rescan or save to re-check.'
-      : 'Remove or replace the flagged images, then rescan or save to re-check.';
+      ? 'A text moderation issue is preventing your article from being published'
+      : 'These images must be removed or replaced before your article can be published';
 
   return (
     <Alert title={title} color="red">
@@ -270,33 +263,37 @@ export function ArticleProblematicImages({
             <Stack gap="sm">
               {blockedImages.map((image) => (
                 <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-red-6">
-                  <Group gap="sm" wrap="nowrap">
-                    <div className="relative size-16 shrink-0 overflow-hidden rounded border border-red-6">
-                      <EdgeMedia
-                        src={image.url}
-                        width={64}
-                        className="size-full object-cover"
-                        alt="Blocked image (removed for policy violation)"
-                      />
-                    </div>
-                    <Stack gap={4} className="flex-1">
-                      <Text size="xs" fw={500} c="red.7">
-                        Blocked: {image.blockedFor || 'Policy violation'}
-                      </Text>
-                      {canOverride && (
-                        <Text size="xs" c="dimmed">
-                          ID: {image.id}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <div className="relative size-16 shrink-0 overflow-hidden rounded border border-red-6">
+                        <EdgeMedia
+                          src={image.url}
+                          width={64}
+                          className="size-full object-cover"
+                          alt="Blocked image (removed for policy violation)"
+                        />
+                      </div>
+                      <Stack gap={4} className="min-w-0 flex-1">
+                        <Text size="xs" fw={500} c="red.7">
+                          Blocked: {image.blockedFor || 'Policy violation'}
                         </Text>
-                      )}
-                    </Stack>
+                        {canOverride && (
+                          <Text size="xs" c="dimmed">
+                            ID: {image.id}
+                          </Text>
+                        )}
+                      </Stack>
+                    </div>
                     {canOverride && (
-                      <ImageOverrideControl
-                        articleId={articleId}
-                        imageId={image.id}
-                        locked={image.nsfwLevelLocked}
-                      />
+                      <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                        <ImageOverrideControl
+                          articleId={articleId}
+                          imageId={image.id}
+                          locked={image.nsfwLevelLocked}
+                        />
+                      </div>
                     )}
-                  </Group>
+                  </div>
                 </Paper>
               ))}
             </Stack>
@@ -315,27 +312,29 @@ export function ArticleProblematicImages({
             <Stack gap="sm">
               {errorImages.map((image) => (
                 <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-yellow-6">
-                  <Group gap="sm" wrap="nowrap">
-                    <div className="relative size-16 shrink-0 overflow-hidden rounded border border-yellow-6 bg-gray-1 dark:bg-gray-8">
-                      <EdgeMedia
-                        src={image.url}
-                        width={64}
-                        className="size-full object-cover"
-                        alt="Error image (may be broken)"
-                      />
-                    </div>
-                    <Stack gap={4} className="flex-1">
-                      <Text size="xs" fw={500} c="yellow.7">
-                        {errorImageCause(image)}
-                      </Text>
-                      {canOverride && (
-                        <Text size="xs" c="dimmed">
-                          ID: {image.id}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <div className="relative size-16 shrink-0 overflow-hidden rounded border border-yellow-6 bg-gray-1 dark:bg-gray-8">
+                        <EdgeMedia
+                          src={image.url}
+                          width={64}
+                          className="size-full object-cover"
+                          alt="Error image (may be broken)"
+                        />
+                      </div>
+                      <Stack gap={4} className="min-w-0 flex-1">
+                        <Text size="xs" fw={500} c="yellow.7">
+                          {errorImageCause(image)}
                         </Text>
-                      )}
-                    </Stack>
+                        {canOverride && (
+                          <Text size="xs" c="dimmed">
+                            ID: {image.id}
+                          </Text>
+                        )}
+                      </Stack>
+                    </div>
                     {(canRetry || canOverride) && (
-                      <Group gap="xs" wrap="nowrap">
+                      <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
                         {canRetry && !image.nsfwLevelLocked && (
                           <ImageRetryButton articleId={articleId} imageId={image.id} />
                         )}
@@ -346,21 +345,17 @@ export function ArticleProblematicImages({
                             locked={image.nsfwLevelLocked}
                           />
                         )}
-                      </Group>
+                      </div>
                     )}
-                  </Group>
+                  </div>
                 </Paper>
               ))}
             </Stack>
           </Stack>
         )}
 
-        {/* Footer: guidance + rescan CTA */}
-        <Group justify="space-between" wrap="wrap" gap="sm" align="center">
-          <Text size="xs" c="dimmed" className="flex-1">
-            {guidance}
-          </Text>
-          {canRescan && (
+        {canRescan && (
+          <Group justify="flex-end">
             <Button
               leftSection={<IconRadar2 size={16} />}
               variant="default"
@@ -370,8 +365,8 @@ export function ArticleProblematicImages({
             >
               Rescan Article
             </Button>
-          )}
-        </Group>
+          </Group>
+        )}
       </Stack>
     </Alert>
   );
