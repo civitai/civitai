@@ -59,6 +59,31 @@ export const listAppListingsSchema = z.object({
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
 
 /**
+ * REST-query variant of {@link listAppListingsSchema} for the public
+ * `GET /api/v1/apps` endpoint. Identical filter axes + bounds, but `limit`
+ * arrives as a STRING query param, so it is coerced (empty/absent → the default)
+ * and the parse output is exactly a {@link ListAppListingsInput} — the same
+ * object the listing service consumes. A factory (not a const) so the endpoint
+ * gets a fresh schema without pulling the whole read-schema module's eval graph
+ * at import time. NOTE: the store service supports no free-text search or slot
+ * filter, so neither is accepted here (they would be inert).
+ */
+export function getAppListingsListQuery() {
+  return z.object({
+    kind: listingKindFilterSchema.default('all'),
+    category: z.enum(MARKETPLACE_CATEGORIES).optional(),
+    sort: listingSortSchema.default('top-rated'),
+    cursor: z.string().max(128).optional(),
+    limit: z
+      .preprocess(
+        (v) => (v === undefined || v === null || v === '' ? undefined : Number(v)),
+        z.number().int().min(1).max(50)
+      )
+      .default(20),
+  });
+}
+
+/**
  * W13 POST-APPROVAL MOD MANAGEMENT — the moderator all-status listings read.
  *
  * Backs `appListings.listAllListingsForModeration` (moderatorProcedure): unlike
