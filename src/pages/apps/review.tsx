@@ -128,16 +128,22 @@ export default function ReviewQueuePage() {
     );
   };
 
-  // On-site review modal selection (page-owned; unchanged behaviour).
-  const [selected, setSelected] = useState<{ request: AnyRequest; mode: OnsiteReviewMode } | null>(
-    null
-  );
+  // On-site review modal selection (page-owned). `onActioned` lets the opening tab
+  // refresh its own paginated query after an approve/reject (symmetric with off-site).
+  const [selected, setSelected] = useState<{
+    request: AnyRequest;
+    mode: OnsiteReviewMode;
+    onActioned?: () => void | Promise<void>;
+  } | null>(null);
   // Off-site review modal — LIFTED to the page so one instance is shared by the
   // unified Pending list and the management table. `onActioned` lets whichever
-  // surface opened it refresh its own paginated query after an approve/reject.
+  // surface opened it refresh its own paginated query after an approve/reject;
+  // `readOnly` makes a history-tab (Approved/Rejected) open a read-only detail view
+  // (no Approve/Reject buttons) — matching the on-site history posture.
   const [offsiteReview, setOffsiteReview] = useState<{
     row: OffsitePendingRow;
     onActioned?: () => void | Promise<void>;
+    readOnly?: boolean;
   } | null>(null);
 
   // DUAL-PATH on-site row selection: under the `appReviewPage` flag a row NAVIGATES
@@ -146,19 +152,19 @@ export default function ReviewQueuePage() {
   const linkToPage = !!features?.appReviewPage;
 
   const openOnsiteReview = useCallback(
-    (request: AnyRequest, mode: OnsiteReviewMode) => {
+    (request: AnyRequest, mode: OnsiteReviewMode, onActioned?: () => void | Promise<void>) => {
       if (linkToPage) {
         void router.push(`/apps/review/${request.id}`);
         return;
       }
-      setSelected({ request, mode });
+      setSelected({ request, mode, onActioned });
     },
     [linkToPage, router]
   );
 
   const openOffsiteReview = useCallback(
-    (row: OffsitePendingRow, onActioned?: () => void | Promise<void>) => {
-      setOffsiteReview({ row, onActioned });
+    (row: OffsitePendingRow, onActioned?: () => void | Promise<void>, readOnly = false) => {
+      setOffsiteReview({ row, onActioned, readOnly });
     },
     []
   );
@@ -238,11 +244,16 @@ export default function ReviewQueuePage() {
         </Tabs>
       </AppsPageLayout>
 
-      <OnsiteReviewModal selection={selected} onClose={() => setSelected(null)} />
+      <OnsiteReviewModal
+        selection={selected}
+        onClose={() => setSelected(null)}
+        onActioned={selected?.onActioned}
+      />
       <OffsiteReviewModal
         request={offsiteReview?.row ?? null}
         onClose={() => setOffsiteReview(null)}
         onActioned={offsiteReview?.onActioned}
+        readOnly={offsiteReview?.readOnly}
       />
     </>
   );
@@ -261,8 +272,16 @@ function UnifiedPendingTab({
   openOnsiteReview,
   openOffsiteReview,
 }: {
-  openOnsiteReview: (req: AnyRequest, mode: OnsiteReviewMode) => void;
-  openOffsiteReview: (row: OffsitePendingRow, onActioned?: () => void | Promise<void>) => void;
+  openOnsiteReview: (
+    req: AnyRequest,
+    mode: OnsiteReviewMode,
+    onActioned?: () => void | Promise<void>
+  ) => void;
+  openOffsiteReview: (
+    row: OffsitePendingRow,
+    onActioned?: () => void | Promise<void>,
+    readOnly?: boolean
+  ) => void;
 }) {
   const features = useFeatureFlags();
   const enabled = !!features?.appBlocks;
@@ -304,8 +323,11 @@ function UnifiedPendingTab({
   }, []);
 
   const boundOnsite = useCallback(
-    (req: OnsiteReviewRequest) => openOnsiteReview(req, 'pending'),
-    [openOnsiteReview]
+    // Register the tab's paging reset as the onsite modal's post-success callback so
+    // approving/rejecting an onsite item clears the accumulators + refetches page 1
+    // (mirrors the offsite path — kills the stale ghost-row after a decision).
+    (req: OnsiteReviewRequest) => openOnsiteReview(req, 'pending', resetPaging),
+    [openOnsiteReview, resetPaging]
   );
   const boundOffsite = useCallback(
     (row: OffsitePendingRow) => openOffsiteReview(row, resetPaging),
@@ -355,8 +377,16 @@ function UnifiedHistoryTab({
   openOffsiteReview,
 }: {
   kind: 'approved' | 'rejected';
-  openOnsiteReview: (req: AnyRequest, mode: OnsiteReviewMode) => void;
-  openOffsiteReview: (row: OffsitePendingRow, onActioned?: () => void | Promise<void>) => void;
+  openOnsiteReview: (
+    req: AnyRequest,
+    mode: OnsiteReviewMode,
+    onActioned?: () => void | Promise<void>
+  ) => void;
+  openOffsiteReview: (
+    row: OffsitePendingRow,
+    onActioned?: () => void | Promise<void>,
+    readOnly?: boolean
+  ) => void;
 }) {
   const features = useFeatureFlags();
   const enabled = !!features?.appBlocks;
@@ -410,11 +440,15 @@ function UnifiedHistoryTab({
   }, []);
 
   const boundOnsite = useCallback(
-    (req: OnsiteReviewRequest) => openOnsiteReview(req, kind),
-    [openOnsiteReview, kind]
+    // History rows open in read-only mode ('approved'/'rejected'), so the action bar
+    // self-suppresses and onActioned never fires — but wire resetPaging for symmetry.
+    (req: OnsiteReviewRequest) => openOnsiteReview(req, kind, resetPaging),
+    [openOnsiteReview, kind, resetPaging]
   );
   const boundOffsite = useCallback(
-    (row: OffsitePendingRow) => openOffsiteReview(row, resetPaging),
+    // Off-site history opens the modal READ-ONLY (no Approve/Reject buttons) — an
+    // already-decided request would only error NOT_PENDING; this matches on-site.
+    (row: OffsitePendingRow) => openOffsiteReview(row, resetPaging, true),
     [openOffsiteReview, resetPaging]
   );
 
