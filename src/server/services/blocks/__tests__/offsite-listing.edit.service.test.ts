@@ -846,19 +846,30 @@ describe('listMySubmissions (shadow handling)', () => {
       string,
       unknown
     >;
-    expect(where).toMatchObject({ submittedByUserId: OWNER, kind: 'offsite' });
-    // Shadow-targeting requests are excluded (OR: appListingId null OR parent listing).
-    expect(where.OR).toEqual([{ appListingId: null }, { appListing: { revisionOfId: null } }]);
+    // Widened to include onsite media revisions (kind IN onsite|offsite).
+    expect(where).toMatchObject({
+      submittedByUserId: OWNER,
+      kind: { in: ['onsite', 'offsite'] },
+    });
+    // OFFSITE shadow-targeting requests are STILL excluded (surfaced as a parent
+    // badge): OR keeps `appListingId null` OR `parent listing`. ONSITE requests (which
+    // are always shadow revisions, and whose auto-created parent has no own request)
+    // are included directly via the `{ kind: 'onsite' }` branch.
+    expect(where.OR).toEqual([
+      { appListingId: null },
+      { appListing: { revisionOfId: null } },
+      { kind: 'onsite' },
+    ]);
 
     // The detection query filters on a PENDING request targeting a shadow — NOT on
-    // shadow existence (an abandoned shadow has no such request).
+    // shadow existence (an abandoned shadow has no such request). Widened to both kinds.
     const revWhere = mockRead.appListingPublishRequest.findMany.mock.calls[1][0].where as Record<
       string,
       unknown
     >;
     expect(revWhere).toMatchObject({
       status: 'pending',
-      kind: 'offsite',
+      kind: { in: ['onsite', 'offsite'] },
       appListing: { revisionOfId: { in: ['apl_parent'] } },
     });
 
