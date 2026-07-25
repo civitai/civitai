@@ -955,7 +955,6 @@ export function ModelVersionUpsertForm({
                 name="baseModelType"
                 label="Base Model Type"
                 placeholder="Base Model Type"
-                description="No longer set on new versions. Choose Standard to clear it."
                 data={baseModelTypeOptions}
                 allowDeselect={false}
               />
