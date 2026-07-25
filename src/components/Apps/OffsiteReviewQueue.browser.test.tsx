@@ -261,6 +261,61 @@ describe('OffsiteReviewModal — readOnly (history) posture hides the action but
   });
 });
 
+// On-site listing-MEDIA revision (kind: 'onsite') — the same listing modal reviews
+// it, but it renders kind-aware: a "listing media" header (NOT "external app"), NO
+// external URL, NO connect panel, the shadow-asset content checklist, and a
+// cap-at-app-rating review (media must not exceed the app's rating). Report-only.
+describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)', () => {
+  const ONSITE_MEDIA_ROW = {
+    id: 'lmr-1',
+    kind: 'onsite' as const,
+    appListingId: 'listing-1',
+    slug: 'onsite-media-app',
+    status: 'pending',
+    submittedAt: new Date('2026-02-01T00:00:00Z'),
+    changelog: 'refreshed the screenshots',
+    appListing: {
+      name: 'On-site Media App',
+      // An on-site listing-media revision has NO external URL and NO connect client.
+      externalUrl: null,
+      category: 'utility',
+      contentRating: 'g',
+      connectClientId: null,
+    },
+    submittedBy: { id: 42, username: 'author-dev', image: null },
+  };
+
+  test('renders the listing-media header, the asset checklist, and NO URL / connect panel', async () => {
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
+    // Kind-aware header — the "listing media" badge, not "external".
+    await expect.element(page.getByTestId('apps-offsite-kind-badge')).toHaveTextContent(
+      'listing media'
+    );
+    expect(page.getByText('external', { exact: true }).elements()).toHaveLength(0);
+    // The on-site explainer note renders.
+    await expect.element(page.getByTestId('apps-offsite-onsite-note')).toBeInTheDocument();
+    // The shadow-asset content checklist is present (asset-presence items).
+    await expect.element(page.getByText('Icon present')).toBeInTheDocument();
+    await expect.element(page.getByText('Cover present')).toBeInTheDocument();
+    // No external URL row is rendered (null externalUrl degrades gracefully).
+    expect(page.getByText('URL is https and opens externally').elements()).toHaveLength(0);
+    // No code-review items and no connect scopes panel.
+    expect(page.getByText('Code diff reviewed').elements()).toHaveLength(0);
+    expect(page.getByTestId('connect-scopes-panel').elements()).toHaveLength(0);
+    // The app-rating cap label surfaces (vs "declared" for offsite).
+    await expect.element(page.getByText('app rating (cap)', { exact: true })).toBeInTheDocument();
+  });
+
+  test('flags media rated higher than the app rating as a cap violation (reject reason)', async () => {
+    // Assets derive 'r' (screenshot @ level 4) vs the app rating 'g' → cap exceeded.
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
+    await expect.element(page.getByTestId('apps-offsite-rating-mismatch')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('must not exceed the app’s rating', { exact: false }))
+      .toBeInTheDocument();
+  });
+});
+
 describe('OffsiteReviewModal — content-rating derive + mod override', () => {
   test('surfaces the DERIVED rating and FLAGS it as higher than the declared rating', async () => {
     renderWithProviders(<OffsiteReviewQueue />);

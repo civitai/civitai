@@ -74,6 +74,8 @@ describe('onsiteRequestToUnifiedRow', () => {
     const row = onsiteRequestToUnifiedRow(req, vi.fn());
     expect(row.key).toBe('onsite:r1');
     expect(row.kind).toBe('onsite');
+    expect(row.badge).toBe('App');
+    expect(row.badgeColor).toBe('blue');
     expect(row.title).toBe('My Block');
     expect(row.slug).toBe('my-block');
     expect(row.submitter).toEqual({ id: 7, username: 'onsite-dev', image: null });
@@ -128,6 +130,8 @@ describe('offsiteRequestToUnifiedRow', () => {
     const row = offsiteRequestToUnifiedRow(req, vi.fn());
     expect(row.key).toBe('offsite:o1');
     expect(row.kind).toBe('offsite');
+    expect(row.badge).toBe('External');
+    expect(row.badgeColor).toBe('grape');
     expect(row.title).toBe('External App');
     expect(row.slug).toBe('ext-app');
     expect(row.submitter).toEqual({ id: 9, username: 'offsite-dev', image: null });
@@ -212,6 +216,52 @@ describe('offsiteRequestToUnifiedRow', () => {
 });
 
 // ---------------------------------------------------------------------------
+// On-site listing-MEDIA revision (`kind: 'onsite'`) — reviewed by the SAME listing
+// adapter/modal as an external listing, but with a distinct badge + key namespace.
+// This is the review-surface half of onsite listing-media revisions: the queue proc
+// (widened separately) tags such a row `kind: 'onsite'`; the adapter must badge it
+// "Listing media", route it to the LISTING opener (NOT the code modal), and namespace
+// its key so it can never collide/dedup with an external listing or a code request.
+// ---------------------------------------------------------------------------
+
+describe('offsiteRequestToUnifiedRow — on-site listing-media revision (kind: onsite)', () => {
+  it('badges it "Listing media", namespaces the key, and keeps the LISTING routing kind', () => {
+    const req = offsite({ id: 'lm1', slug: 'onsite-app', kind: 'onsite' });
+    const row = offsiteRequestToUnifiedRow(req, vi.fn());
+    expect(row.key).toBe('onsite-listing:lm1');
+    // Routing kind stays `offsite` (opens the listing modal, NOT the code modal).
+    expect(row.kind).toBe('offsite');
+    expect(row.badge).toBe('Listing media');
+    expect(row.badgeColor).toBe('teal');
+    expect(row.title).toBe('External App');
+  });
+
+  it('opens the LISTING (off-site) opener with an OffsitePendingRow carrying kind=onsite', () => {
+    const open = vi.fn();
+    const req = offsite({
+      id: 'lm2',
+      appListingId: 'apl_onsite',
+      slug: 'onsite-app',
+      kind: 'onsite',
+    });
+    offsiteRequestToUnifiedRow(req, open).onReview();
+    expect(open).toHaveBeenCalledTimes(1);
+    const passed = open.mock.calls[0][0];
+    expect(passed.id).toBe('lm2');
+    expect(passed.appListingId).toBe('apl_onsite');
+    // The row the modal receives must carry the onsite kind so it renders the
+    // "listing media" header + cap-at-app-rating review.
+    expect(passed.kind).toBe('onsite');
+  });
+
+  it('an absent kind (older payload) still behaves as an external listing', () => {
+    const row = offsiteRequestToUnifiedRow(offsite({ id: 'o9', slug: 's' }), vi.fn());
+    expect(row.key).toBe('offsite:o9');
+    expect(row.badge).toBe('External');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-kind key uniqueness
 // ---------------------------------------------------------------------------
 
@@ -223,6 +273,15 @@ describe('key namespacing', () => {
     expect(offsiteRow.key).toBe('offsite:shared');
     expect(onsiteRow.key).not.toBe(offsiteRow.key);
   });
+
+  it('a code request, an external listing, and an on-site listing-media row sharing a raw id get 3 DISTINCT keys', () => {
+    const code = onsiteRequestToUnifiedRow(onsite({ id: 'dup' }), vi.fn());
+    const external = offsiteRequestToUnifiedRow(offsite({ id: 'dup' }), vi.fn());
+    const listingMedia = offsiteRequestToUnifiedRow(offsite({ id: 'dup', kind: 'onsite' }), vi.fn());
+    const keys = [code.key, external.key, listingMedia.key];
+    expect(keys).toEqual(['onsite:dup', 'offsite:dup', 'onsite-listing:dup']);
+    expect(new Set(keys).size).toBe(3);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -230,9 +289,13 @@ describe('key namespacing', () => {
 // ---------------------------------------------------------------------------
 
 function row(key: string, iso: string): UnifiedReviewRow {
+  const isOnsiteCode = key.startsWith('onsite:');
   return {
     key,
-    kind: key.startsWith('onsite') ? 'onsite' : 'offsite',
+    // `onsite:` = code review; everything else routes to the listing modal.
+    kind: isOnsiteCode ? 'onsite' : 'offsite',
+    badge: isOnsiteCode ? 'App' : key.startsWith('onsite-listing:') ? 'Listing media' : 'External',
+    badgeColor: isOnsiteCode ? 'blue' : key.startsWith('onsite-listing:') ? 'teal' : 'grape',
     title: key,
     submitter: null,
     submittedAt: new Date(iso),
@@ -301,6 +364,20 @@ describe('mergeReviewRows', () => {
       'onsite:b',
       'onsite:c',
     ]);
+  });
+
+  it('interleaves all three row kinds (code + external + on-site listing-media) by date with no drop/dedup collision', () => {
+    // Code rows arrive via the on-site arg; BOTH listing sub-kinds (external +
+    // on-site listing-media) arrive via the off-site arg (the appListings query).
+    const code = [row('onsite:c', '2026-01-01T00:00:00Z')];
+    const listing = [
+      row('offsite:e', '2026-01-02T00:00:00Z'),
+      row('onsite-listing:m', '2026-01-03T00:00:00Z'),
+    ];
+    const merged = mergeReviewRows(code, listing, 'asc');
+    expect(merged.map((r) => r.key)).toEqual(['onsite:c', 'offsite:e', 'onsite-listing:m']);
+    // The on-site listing-media row carries its own badge through the merge.
+    expect(merged.find((r) => r.key === 'onsite-listing:m')?.badge).toBe('Listing media');
   });
 
   it('does not mutate the input arrays', () => {

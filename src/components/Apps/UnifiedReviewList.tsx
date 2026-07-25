@@ -127,7 +127,6 @@ export function UnifiedReviewList({
 }
 
 function UnifiedReviewRowView({ row, actionLabel }: { row: UnifiedReviewRow; actionLabel: string }) {
-  const isOnsite = row.kind === 'onsite';
   const submitter = row.submitter;
   return (
     <Table.Tr style={{ cursor: 'pointer' }} data-testid={`apps-unified-review-row-${row.key}`}>
@@ -135,10 +134,10 @@ function UnifiedReviewRowView({ row, actionLabel }: { row: UnifiedReviewRow; act
         <Badge
           size="sm"
           variant="light"
-          color={isOnsite ? 'blue' : 'grape'}
+          color={row.badgeColor}
           data-testid={`apps-unified-review-kind-${row.key}`}
         >
-          {isOnsite ? 'App' : 'External'}
+          {row.badge}
         </Badge>
       </Table.Td>
       <Table.Td onClick={row.onReview}>

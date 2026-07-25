@@ -28,11 +28,22 @@ export type ReviewSubmitterChip = {
 } | null;
 
 export type UnifiedReviewRow = {
-  /** GLOBALLY-unique dedup key across kinds — `onsite:<id>` / `offsite:<id>`.
-   *  The kind prefix guarantees an on-site and an off-site request that happen to
+  /** GLOBALLY-unique dedup key, namespaced by SOURCE — `onsite:<id>` (App Block
+   *  code review), `offsite:<id>` (external listing review), `onsite-listing:<id>`
+   *  (on-site listing-MEDIA revision). The prefix guarantees rows that happen to
    *  share a raw id can never collide (and so can never dedup each other away). */
   key: string;
+  /** ROUTING kind: which review modal the row opens — `onsite` → the App Block
+   *  CODE-review modal (`OnsiteReviewModal`); `offsite` → the LISTING-review modal
+   *  (`OffsiteReviewModal`). An on-site listing-media revision is reviewed like the
+   *  offsite listing (shadow assets + content), so it ALSO routes `offsite` — its
+   *  distinct display badge is carried separately in `badge`/`badgeColor` below. */
   kind: UnifiedReviewKind;
+  /** Kind-column display badge — DECOUPLED from the routing `kind` so an on-site
+   *  listing-media revision (routing `offsite`) can show a "Listing media" badge
+   *  distinct from an external listing's "External" badge. Adapter-controlled. */
+  badge: string;
+  badgeColor: string;
   /** App / listing display name (falls back to the slug). */
   title: string;
   slug?: string;
@@ -72,6 +83,8 @@ export function onsiteRequestToUnifiedRow(
   return {
     key: `onsite:${req.id}`,
     kind: 'onsite',
+    badge: 'App',
+    badgeColor: 'blue',
     title,
     slug: req.slug,
     submitter: req.submittedBy,
@@ -85,6 +98,13 @@ export function onsiteRequestToUnifiedRow(
  *  A superset of `OffsitePendingRow`: history rows also carry `reviewedAt`. */
 export type OffsiteReviewRequest = {
   id: string;
+  /** The listing-revision SOURCE kind carried by each row (widened in the
+   *  server queue procs): `'offsite'` = an external-link/connect listing revision;
+   *  `'onsite'` = an on-site listing-MEDIA revision (shadow assets changed on a
+   *  first-class on-site app). BOTH are reviewed by the same listing modal, but an
+   *  on-site row gets a distinct "Listing media" badge + a cap-at-app-rating review.
+   *  Absent (older payloads / pre-widening) → treated as `'offsite'`. */
+  kind?: 'onsite' | 'offsite';
   appListingId: string | null;
   slug: string;
   status: string;
@@ -107,17 +127,26 @@ export type OffsiteReviewRequest = {
 };
 
 /**
- * Map an off-site request → a unified row whose `onReview` opens the OFF-SITE
- * modal. Builds the exact `OffsitePendingRow` the modal expects so the modal's
- * internals stay untouched. `title` prefers the listing name, else the slug.
+ * Map a LISTING-review request → a unified row whose `onReview` opens the LISTING
+ * modal (`OffsiteReviewModal`). Handles BOTH listing sub-kinds — an external-link/
+ * connect listing (`kind: 'offsite'`) and an on-site listing-MEDIA revision
+ * (`kind: 'onsite'`) — because both are reviewed by the same shadow-asset + content
+ * modal. Only the DISPLAY badge and the dedup KEY namespace differ by sub-kind
+ * (routing is identical); the modal itself renders kind-aware from `row.kind`.
+ * Builds the exact `OffsitePendingRow` the modal expects so its internals stay
+ * untouched. `title` prefers the listing name, else the slug.
  */
 export function offsiteRequestToUnifiedRow(
   req: OffsiteReviewRequest,
   openOffsiteReview: (row: OffsitePendingRow) => void
 ): UnifiedReviewRow {
   const reviewedAt = req.reviewedAt != null ? req.reviewedAt : null;
+  // Row is an on-site listing-media revision when the proc tags it `kind: 'onsite'`;
+  // absent/`'offsite'` is the external-link/connect listing (backward-compatible).
+  const isOnsiteListing = req.kind === 'onsite';
   const row: OffsitePendingRow = {
     id: req.id,
+    kind: req.kind ?? 'offsite',
     appListingId: req.appListingId,
     slug: req.slug,
     status: req.status,
@@ -138,8 +167,13 @@ export function offsiteRequestToUnifiedRow(
     submittedBy: req.submittedBy,
   };
   return {
-    key: `offsite:${req.id}`,
+    // Distinct key namespace per sub-kind so an on-site listing-media row and an
+    // external listing row can never dedup each other away.
+    key: isOnsiteListing ? `onsite-listing:${req.id}` : `offsite:${req.id}`,
+    // Routing kind is `offsite` for BOTH (they open the same listing modal).
     kind: 'offsite',
+    badge: isOnsiteListing ? 'Listing media' : 'External',
+    badgeColor: isOnsiteListing ? 'teal' : 'grape',
     title: req.appListing?.name ?? req.slug,
     slug: req.slug,
     submitter: req.submittedBy,

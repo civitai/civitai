@@ -78,6 +78,12 @@ type OffsiteUser = { id: number; username: string | null; image: string | null }
 
 export type OffsitePendingRow = {
   id: string;
+  /** Listing-revision SOURCE kind. `'offsite'` (default) = an external-link/connect
+   *  listing revision; `'onsite'` = an on-site listing-MEDIA revision (shadow assets
+   *  changed on a first-class on-site app). The modal renders kind-aware: an on-site
+   *  row shows a "listing media" header + a cap-at-app-rating content review (media
+   *  must NOT exceed the app's rating) instead of the offsite auto-derive floor. */
+  kind?: 'onsite' | 'offsite';
   appListingId: string | null;
   slug: string;
   status: string;
@@ -336,11 +342,31 @@ export function OffsiteReviewModal({
   const derivedRating = deriveContentRatingFromAssets(
     assetLevels.map((nsfwLevel) => ({ nsfwLevel: nsfwLevel ?? null }))
   );
+  // On-site listing-MEDIA revision: reviewed by this same shadow-asset + content
+  // modal, but the rating discipline INVERTS. For an offsite listing the declared
+  // rating is a FLOOR the assets must meet (rate UP; the server floors an under-
+  // rating to the derived value). For an on-site revision the app's rating is a CAP
+  // the media must NOT EXCEED — assets more mature than the app's rating are a
+  // mod-REJECT reason, not an auto-derive. Both surface the same `ratingExceeds`
+  // comparison; only the copy + the approve default differ.
+  const isOnsite = request.kind === 'onsite';
   const declaredRating = request.appListing?.contentRating ?? null;
-  const ratingMismatch =
+  // The app's rating (the CAP for an on-site media revision), narrowed to a valid
+  // enum value; null when unknown/invalid.
+  const appRating: OffsiteContentRating | null =
+    declaredRating != null &&
+    (OFFSITE_CONTENT_RATINGS as readonly string[]).includes(declaredRating)
+      ? (declaredRating as OffsiteContentRating)
+      : null;
+  const ratingExceeds =
     !assetsQuery.isLoading &&
     nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(declaredRating);
-  const selectedRating: OffsiteContentRating = ratingOverride ?? derivedRating;
+  // Keep the offsite name for the unchanged offsite paths below.
+  const ratingMismatch = ratingExceeds;
+  // Onsite approve defaults to the app's rating (the cap — media inherits it); the
+  // offsite approve defaults to the derived floor. Either way the mod may override.
+  const defaultRating: OffsiteContentRating = isOnsite ? appRating ?? derivedRating : derivedRating;
+  const selectedRating: OffsiteContentRating = ratingOverride ?? defaultRating;
 
   // OAuth-CONNECT sub-kind (PR3): render the requested-scope panel + the sensitive-
   // justification checklist item only when the listing is a connect listing.
@@ -372,8 +398,13 @@ export function OffsiteReviewModal({
       title={
         <Group gap={6}>
           <Text fw={600}>{request.slug}</Text>
-          <Badge color="grape" size="sm" variant="light">
-            external
+          <Badge
+            color={isOnsite ? 'teal' : 'grape'}
+            size="sm"
+            variant="light"
+            data-testid="apps-offsite-kind-badge"
+          >
+            {isOnsite ? 'listing media' : 'external'}
           </Badge>
         </Group>
       }
@@ -381,6 +412,12 @@ export function OffsiteReviewModal({
       centered
     >
       <Stack gap="md">
+        {isOnsite && (
+          <Text size="xs" c="dimmed" data-testid="apps-offsite-onsite-note">
+            Listing media update — the on-site app’s media (icon / cover / screenshots)
+            changed. Content-only review; the media must not exceed the app’s rating.
+          </Text>
+        )}
         <Group gap="xs">
           <Text size="xs" c="dimmed">
             Submitter:
@@ -444,7 +481,7 @@ export function OffsiteReviewModal({
                     {request.appListing.contentRating}
                   </Badge>
                   <Text size="xs" c="dimmed">
-                    declared
+                    {isOnsite ? 'app rating (cap)' : 'declared'}
                   </Text>
                 </Group>
               )}
@@ -535,11 +572,19 @@ export function OffsiteReviewModal({
             icon={<IconAlertTriangle size={16} />}
             data-testid="apps-offsite-rating-mismatch"
           >
-            <Text size="sm">
-              Assets contain higher-maturity content ({derivedRating}) than the declared rating (
-              {declaredRating ?? '—'}). The final rating defaults to the detected value; rate it at
-              least that high.
-            </Text>
+            {isOnsite ? (
+              <Text size="sm">
+                Media assets are rated higher ({derivedRating}) than the app’s rating (
+                {declaredRating ?? '—'}). Listing media must not exceed the app’s rating — reject
+                this revision or ask the author to trim the over-rated assets.
+              </Text>
+            ) : (
+              <Text size="sm">
+                Assets contain higher-maturity content ({derivedRating}) than the declared rating (
+                {declaredRating ?? '—'}). The final rating defaults to the detected value; rate it at
+                least that high.
+              </Text>
+            )}
           </Alert>
         )}
 
@@ -580,7 +625,11 @@ export function OffsiteReviewModal({
           <Stack gap="xs">
             <Select
               label="Final content rating"
-              description="Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save."
+              description={
+                isOnsite
+                  ? 'Defaults to the app’s rating (the cap). Listing media must not exceed the app’s rating; assets rated higher are a reject reason.'
+                  : 'Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save.'
+              }
               data={OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r }))}
               value={selectedRating}
               onChange={(v) => setRatingOverride((v as OffsiteContentRating) ?? null)}
