@@ -1,6 +1,10 @@
-// Bound every send so a hung/slow signals endpoint can never stall the
+// Bound every send so a truly hung signals endpoint can never stall the
 // (best-effort) caller — this also caps the awaited hot-path `sendDelta`.
-const REQUEST_TIMEOUT_MS = 2000;
+// NOTE: set generously (10s) — the signals endpoint's normal response time
+// routinely exceeds 2s, and those sends succeed. A tighter timeout aborts
+// normal-but-slow sends and turns them into failures (a 2s value regressed
+// the failure rate 0.13% -> ~1%); 10s only catches a genuine hang.
+const REQUEST_TIMEOUT_MS = 10000;
 
 // Connection-level failure codes we retry once (on a fresh connection). The
 // dominant one here is the undici keep-alive race: a pooled idle socket the
