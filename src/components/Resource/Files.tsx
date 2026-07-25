@@ -734,11 +734,7 @@ function FileCard({
               withinPortal
             >
               <Popover.Target>
-                <LegacyActionIcon
-                  onClick={handleRenameOpen}
-                  style={{ marginTop: 18 }}
-                  title="Rename download file"
-                >
+                <LegacyActionIcon onClick={handleRenameOpen} title="Rename download file">
                   <IconPencil size={16} />
                 </LegacyActionIcon>
               </Popover.Target>
@@ -773,7 +769,6 @@ function FileCard({
               color="red"
               onClick={() => handleRemoveFile(versionFile.uuid)}
               loading={deleteFileMutation.isPending}
-              style={{ marginTop: 18 }}
             >
               <IconTrash size={16} />
             </LegacyActionIcon>
