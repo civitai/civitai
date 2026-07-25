@@ -19,6 +19,10 @@ import {
 import Link from 'next/link';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
+import {
+  ListingProblemsIndicator,
+  type ListingProblem,
+} from '~/components/Apps/ListingProblemsIndicator';
 import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
 import { isStaleDeploy } from '~/components/Apps/deploy-status';
 import {
@@ -104,6 +108,9 @@ export type Submission = {
   /** Whether the backing block's manifest declares a launchable page — drives the
    *  Open-live → `/apps/run/<slug>` vs standalone-origin vs model-slot branching. */
   hasPage?: boolean | null;
+  /** Advisory listing-completeness problems (missing assets + empty key fields),
+   *  from the server's `computeListingProblems`. Empty ⇒ no warning icon. */
+  problems?: ListingProblem[];
 };
 
 /** Owner-control handlers threaded from the list down to each latest row. */
@@ -286,7 +293,10 @@ function StatusCell({
   );
   return (
     <Stack gap={6} align="flex-start">
-      {chip}
+      <Group gap={6} wrap="nowrap">
+        {chip}
+        <ListingProblemsIndicator problems={submission.problems ?? []} />
+      </Group>
       {notes && <ReviewerNotesButton notes={notes} variant={variant} />}
     </Stack>
   );

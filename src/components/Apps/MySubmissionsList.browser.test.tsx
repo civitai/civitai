@@ -952,6 +952,43 @@ describe('MySubmissionsList — P4 surfaced manage links', () => {
   });
 });
 
+describe('MySubmissionsList — advisory listing-problems warning', () => {
+  test('a row WITH problems renders the warning icon; hovering lists each problem label', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({
+            problems: [
+              { code: 'missing-icon', label: 'Missing icon' },
+              { code: 'empty-tagline', label: 'Missing tagline' },
+            ],
+          }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    const warn = page.getByTestId('apps-submission-problems');
+    await expect.element(warn).toBeInTheDocument();
+    // The HoverCard dropdown mounts on hover and enumerates each problem label.
+    await warn.hover();
+    await expect.element(page.getByText('Missing icon', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('Missing tagline', { exact: false })).toBeInTheDocument();
+  });
+
+  test('a clean row (no problems) shows NO warning icon', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[makeSubmission({ problems: [] })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('my-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByTestId('apps-submission-problems').elements()).toHaveLength(0);
+  });
+});
+
 describe('MySubmissionsList — P4 Open-live run-page branching (graceful, no dead link)', () => {
   test('a page app the viewer CAN open → /apps/run/<slug> (internal)', async () => {
     renderWithProviders(

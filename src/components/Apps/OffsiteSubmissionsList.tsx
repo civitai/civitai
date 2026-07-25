@@ -38,6 +38,10 @@ import {
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 import {
+  ListingProblemsIndicator,
+  type ListingProblem,
+} from '~/components/Apps/ListingProblemsIndicator';
+import {
   bucketGroupsByStatus,
   filterGroups,
   groupSubmissionsByApp,
@@ -107,6 +111,9 @@ export type OffsiteSubmission = {
    *  listing) — `owner-unpublish` ⇒ owner-hidden (republish-eligible), anything else
    *  (a moderator `delist`) ⇒ mod-removed (republish forbidden). */
   lastModerationAction?: string | null;
+  /** Advisory listing-completeness problems (missing assets + empty key fields),
+   *  from the server's `computeListingProblems`. Empty ⇒ no warning icon. */
+  problems?: ListingProblem[];
 };
 
 /** Field adapters for the shared filter/sort/group helpers. Collapse identity =
@@ -155,7 +162,10 @@ function StatusCell({
       : null;
   return (
     <Stack gap={6} align="flex-start">
-      <Badge color={chip.color}>{chip.label}</Badge>
+      <Group gap={6} wrap="nowrap">
+        <Badge color={chip.color}>{chip.label}</Badge>
+        <ListingProblemsIndicator problems={submission.problems ?? []} />
+      </Group>
       {notes && (
         <ReviewerNotesButton
           notes={notes}
