@@ -642,6 +642,7 @@ function FileCard({
     renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
   };
 
+  const displayName = versionFile.overrideName ?? versionFile.name;
   const iconConfig = getFileIconConfig(versionFile.name, {
     format: versionFile.format,
   });
@@ -664,14 +665,19 @@ function FileCard({
       withBorder
       p="sm"
     >
-      <Group gap="md" wrap="nowrap">
+      <Group gap="md">
         <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
           <FileIcon size={20} />
         </ThemeIcon>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Group gap={6} wrap="nowrap">
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <Tooltip label={displayName} openDelay={300}>
             <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
-              {versionFile.overrideName ?? versionFile.name}
+              {displayName}
+            </Text>
+          </Tooltip>
+          <Group gap={6} wrap="nowrap">
+            <Text size="xs" c="dimmed">
+              {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
             </Text>
             {isMissingRequiredInfo(versionFile) && (
               <Badge color="yellow" variant="light" size="xs">
@@ -679,9 +685,6 @@ function FileCard({
               </Badge>
             )}
           </Group>
-          <Text size="xs" c="dimmed">
-            {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
-          </Text>
           {versionFile.isCheckingOfficial && (
             <Group gap={6} wrap="nowrap" mt={4}>
               <Loader size="xs" />
@@ -705,7 +708,7 @@ function FileCard({
         {/* Selects render during upload too, so the user can set type/precision/
             size/quant while the bytes upload — the save reads the latest via
             filesRef. */}
-        <Group gap="xs" wrap="nowrap" align="flex-end">
+        <Group gap="xs" align="flex-end">
           <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
           {!versionFile.isUploading && showRename && versionFile.id && !trackedFile && (
             <Popover
@@ -1014,7 +1017,7 @@ function FileEditForm({
   const showMetadataSelects = isCheckpoint || isComponentFile;
 
   return (
-    <Group gap="xs" align="flex-end" wrap="nowrap">
+    <Group gap="xs" align="flex-end">
       <div>
         <SelectLabel>Type</SelectLabel>
         <Select
