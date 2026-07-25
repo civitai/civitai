@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canOwnerEditListing,
   getListingBadge,
   getListingCta,
   getListingDetailHref,
+  getOwnerEditHref,
   getRecommendLabel,
+  isEditableListingStatus,
   safeExternalHref,
 } from '~/components/Apps/appListingCardView';
 import type {
@@ -193,5 +196,63 @@ describe('getListingCta — off-site (P2c: View details → unified detail)', ()
       href: '/apps/store-preview/ext-app',
       external: false,
     });
+  });
+});
+
+describe('getOwnerEditHref (owner Edit deep-link)', () => {
+  it('on-site → the manifest editor keyed on appBlockId', () => {
+    expect(getOwnerEditHref({ kind: 'onsite', appBlockId: 'blk-1' }, 'l1')).toBe(
+      '/apps/blk-1/edit-manifest'
+    );
+  });
+  it('on-site with no backing appBlockId → null (no editable target → hide)', () => {
+    expect(getOwnerEditHref({ kind: 'onsite', appBlockId: null }, 'l1')).toBeNull();
+  });
+  it('off-site → the submit editor keyed on the listing id', () => {
+    expect(getOwnerEditHref({ kind: 'offsite' }, 'l2')).toBe('/apps/submit?edit=l2');
+  });
+  it('accepts the full card kindData (extra fields are ignored)', () => {
+    expect(getOwnerEditHref(onsiteCard({ hasPage: true, appBlockId: 'blk-9' }).kindData, 'l1')).toBe(
+      '/apps/blk-9/edit-manifest'
+    );
+    expect(getOwnerEditHref(offsiteCard('connect', null).kindData, 'l2')).toBe(
+      '/apps/submit?edit=l2'
+    );
+  });
+  it('encodes odd ids (defense in depth)', () => {
+    expect(getOwnerEditHref({ kind: 'onsite', appBlockId: 'a b/c' }, 'l1')).toBe(
+      '/apps/a%20b%2Fc/edit-manifest'
+    );
+    expect(getOwnerEditHref({ kind: 'offsite' }, 'a b/c')).toBe('/apps/submit?edit=a%20b%2Fc');
+  });
+});
+
+describe('isEditableListingStatus / canOwnerEditListing (owner Edit gating)', () => {
+  it('no status (approved-only store DTO) → editable', () => {
+    expect(isEditableListingStatus(null)).toBe(true);
+    expect(isEditableListingStatus(undefined)).toBe(true);
+  });
+  it('editable lifecycle statuses → editable', () => {
+    expect(isEditableListingStatus('draft')).toBe(true);
+    expect(isEditableListingStatus('pending')).toBe(true);
+    expect(isEditableListingStatus('approved')).toBe(true);
+  });
+  it('mod-removed / rejected → NOT editable', () => {
+    expect(isEditableListingStatus('removed')).toBe(false);
+    expect(isEditableListingStatus('rejected')).toBe(false);
+  });
+
+  it('owner + editable → show', () => {
+    expect(canOwnerEditListing({ isOwner: true })).toBe(true);
+    expect(canOwnerEditListing({ isOwner: true, status: 'approved' })).toBe(true);
+    expect(canOwnerEditListing({ isOwner: true, status: 'pending' })).toBe(true);
+  });
+  it('non-owner → hide (even for an editable status)', () => {
+    expect(canOwnerEditListing({ isOwner: false })).toBe(false);
+    expect(canOwnerEditListing({ isOwner: false, status: 'approved' })).toBe(false);
+  });
+  it('owner but mod-removed / rejected → hide', () => {
+    expect(canOwnerEditListing({ isOwner: true, status: 'removed' })).toBe(false);
+    expect(canOwnerEditListing({ isOwner: true, status: 'rejected' })).toBe(false);
   });
 });

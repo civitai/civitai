@@ -1,16 +1,31 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { AppListingCard } from '~/components/Apps/AppListingCard';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
  * P2b AppListingCard component tests (REPORT-ONLY — the browser project is
  * non-blocking; the blocking gate is appListingCardView.test.ts). These pin the
  * rendered kind badge, recommend label, and kind-aware CTA affordance for a few
- * representative cards.
+ * representative cards, PLUS the owner "Edit" deep-link gating (Item 2) and the
+ * long-username tooltip fallback (Item 1).
  */
+
+const mocks = vi.hoisted(() => ({
+  currentUser: null as null | { id: number; username: string },
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => mocks.currentUser,
+}));
+
+// Import AFTER the mock is declared (vi.mock is hoisted, imports are not).
+const { AppListingCard } = await import('./AppListingCard');
+
+beforeEach(() => {
+  mocks.currentUser = null;
+});
 
 function base(over: Partial<ListingCard>): ListingCard {
   return {
@@ -103,5 +118,51 @@ describe('AppListingCard', () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage={false} />);
     const details = page.getByRole('link', { name: 'View details' });
     await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
+  });
+
+  test('owner sees the Edit deep-link → on-site manifest editor', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' }; // matches base().creator.id
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    const edit = page.getByTestId('apps-listing-owner-edit');
+    await expect.element(edit).toBeInTheDocument();
+    await expect.element(edit).toHaveAttribute('href', '/apps/blk-1/edit-manifest');
+  });
+
+  test('owner of an off-site listing → Edit routes to the submit editor by listing id', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' };
+    renderWithProviders(
+      <AppListingCard
+        card={base({
+          kind: 'offsite',
+          kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.app' },
+        })}
+      />
+    );
+    const edit = page.getByTestId('apps-listing-owner-edit');
+    await expect.element(edit).toHaveAttribute('href', '/apps/submit?edit=l1');
+  });
+
+  test('non-owner does NOT see the Edit deep-link', async () => {
+    mocks.currentUser = { id: 999, username: 'bob' };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+  });
+
+  test('signed-out viewer does NOT see the Edit deep-link', async () => {
+    mocks.currentUser = null;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+  });
+
+  test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
+    const longName = 'a-really-long-creator-username-that-will-definitely-overflow-the-card-column';
+    renderWithProviders(
+      <AppListingCard card={base({ creator: { id: 5, username: longName, image: null } })} canOpenPage />
+    );
+    const label = page.getByText(`by ${longName}`);
+    await expect.element(label).toBeInTheDocument();
+    await label.hover();
+    // The Tooltip renders the full username (portal) once the label overflows.
+    await expect.element(page.getByText(longName, { exact: true })).toBeInTheDocument();
   });
 });
