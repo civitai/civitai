@@ -87,7 +87,7 @@ function InlineDropzone({
       maxFiles={maxFiles}
       onReject={onReject}
       useFsAccessApi={!isAndroidDevice()}
-      className="cursor-pointer rounded-lg border-2 border-dashed border-dark-4 bg-transparent hover:border-blue-5 hover:bg-blue-5/5"
+      className={classes.dropzone}
       p="md"
     >
       <Stack gap={4} align="center" style={{ pointerEvents: 'none' }}>
@@ -331,16 +331,8 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
               }}
               maxFiles={primary.maxFiles}
               onReject={handleRejectPrimary}
-              className={classes.dropzoneReject}
+              className={classes.dropzone}
               useFsAccessApi={!isAndroidDevice()}
-              styles={{
-                root: {
-                  border: '2px dashed var(--mantine-color-dark-4)',
-                  borderRadius: 'var(--mantine-radius-md)',
-                  backgroundColor: 'transparent',
-                  cursor: 'pointer',
-                },
-              }}
             >
               <Stack gap="xs" align="center" py="lg" style={{ pointerEvents: 'none' }}>
                 <ThemeIcon size={48} radius="xl" variant="light" color="blue">
