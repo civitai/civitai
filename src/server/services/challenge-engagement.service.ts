@@ -1,0 +1,189 @@
+import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { NotificationCategory } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { getChallengeExcludedUserIds } from '~/server/services/challenge-block.service';
+import { createNotification } from '~/server/services/notification.service';
+import {
+  ChallengeIngestionStatus,
+  ChallengeSource,
+  ChallengeStatus,
+  CollectionItemStatus,
+} from '~/shared/utils/prisma/enums';
+
+const NOTIFY = 'Notify' as const;
+
+// Tracking is only meaningful while a challenge still has something ahead of it. Untracking stays
+// open at any status so a user can always clear a stale subscription.
+const TRACKABLE_STATUSES: ChallengeStatus[] = [ChallengeStatus.Scheduled, ChallengeStatus.Active];
+
+function isUniqueViolation(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+export async function toggleChallengeNotify({
+  challengeId,
+  userId,
+  setTo,
+}: {
+  challengeId: number;
+  userId: number;
+  setTo?: boolean;
+}): Promise<boolean> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: {
+      id: true,
+      status: true,
+      createdById: true,
+      source: true,
+      ingestion: true,
+      visibleAt: true,
+      coverImage: { select: { nsfwLevel: true } },
+    },
+  });
+  if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+
+  const existing = await dbRead.challengeEngagement.findUnique({
+    where: { type_challengeId_userId: { type: NOTIFY, challengeId, userId } },
+    select: { type: true },
+  });
+
+  const next = setTo ?? !existing;
+
+  if (next) {
+    const notFound = () => new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+    // Mirrors getChallengeDetail's canPreviewUnpublished: a creator may track their own challenge
+    // before it clears the scan/visibility gates.
+    const isCreator = challenge.createdById != null && challenge.createdById === userId;
+
+    // System challenges share a bot/judge account as createdById — a block on that account must
+    // not lock users out of every System challenge (see challengeCreatorBlockSql for the same guard).
+    if (challenge.source === ChallengeSource.User && challenge.createdById) {
+      const excluded = await getChallengeExcludedUserIds(userId);
+      if (excluded.includes(challenge.createdById)) throw notFound();
+    }
+
+    // Challenge ids are sequential, so without these the endpoint confirms the existence of — and
+    // subscribes a user to — a challenge the feed and detail page both hide from them.
+    if (!isCreator) {
+      if (challenge.coverImage) {
+        const viewer = await dbRead.user.findUnique({
+          where: { id: userId },
+          select: { browsingLevel: true },
+        });
+        if ((challenge.coverImage.nsfwLevel & (viewer?.browsingLevel ?? 0)) === 0) throw notFound();
+      }
+
+      if (
+        challenge.source === ChallengeSource.User &&
+        (challenge.ingestion !== ChallengeIngestionStatus.Scanned ||
+          challenge.visibleAt > new Date())
+      )
+        throw notFound();
+    }
+
+    if (!TRACKABLE_STATUSES.includes(challenge.status))
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'This challenge is no longer open' });
+
+    if (existing) return true;
+    try {
+      await dbWrite.challengeEngagement.create({
+        data: { type: NOTIFY, challengeId, userId },
+      });
+    } catch (error) {
+      // Two concurrent toggles both read "absent" and both create; the loser's row already exists,
+      // so the intended end state holds — resolve to success instead of a 500.
+      if (!isUniqueViolation(error)) throw error;
+    }
+    return true;
+  }
+
+  if (existing) {
+    await dbWrite.challengeEngagement.delete({
+      where: { type_challengeId_userId: { type: NOTIFY, challengeId, userId } },
+    });
+  }
+  return false;
+}
+
+export async function getChallengeNotifyRecipients(challengeId: number): Promise<number[]> {
+  const rows = await dbRead.challengeEngagement.findMany({
+    where: { challengeId, type: NOTIFY },
+    select: { userId: true },
+  });
+  return rows.map((r) => r.userId);
+}
+
+export async function getChallengeReminderRecipients(challengeId: number): Promise<number[]> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { collectionId: true },
+  });
+
+  const trackers = await getChallengeNotifyRecipients(challengeId);
+  if (!challenge?.collectionId) return trackers;
+
+  const entrants = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT ci."addedById" AS "userId"
+    FROM "CollectionItem" ci
+    WHERE ci."collectionId" = ${challenge.collectionId}
+      AND ci."addedById" IS NOT NULL
+      -- Matches the feed's Entered filter: a user whose only entry was rejected already got
+      -- challenge-rejection and is not competing.
+      AND ci.status IN (${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus", ${CollectionItemStatus.REVIEW}::"CollectionItemStatus")
+  `;
+
+  return [...new Set([...trackers, ...entrants.map((e) => e.userId)])];
+}
+
+/**
+ * Winners and participation-prize earners already receive their own notification for this outcome;
+ * pass their ids as `excludeUserIds` so nobody is told twice about the same result.
+ */
+export async function sendChallengeResultsNotification({
+  challengeId,
+  challengeTitle,
+  excludeUserIds,
+}: {
+  challengeId: number;
+  challengeTitle: string;
+  excludeUserIds: number[];
+}): Promise<void> {
+  try {
+    const exclude = new Set(excludeUserIds);
+    const recipients = (await getChallengeReminderRecipients(challengeId)).filter(
+      (id) => !exclude.has(id)
+    );
+    if (!recipients.length) return;
+
+    await createNotification({
+      type: 'challenge-results',
+      category: NotificationCategory.Update,
+      key: `challenge-results:${challengeId}`,
+      userIds: recipients,
+      details: { challengeId, challengeTitle },
+    });
+  } catch (error) {
+    const err = error as Error;
+    await logToAxiom({
+      type: 'warning',
+      name: 'challenge-results-notification',
+      message: err.message,
+      challengeId,
+    });
+  }
+}
+
+export async function getTrackedChallengeIds(userId: number): Promise<number[]> {
+  const rows = await dbRead.challengeEngagement.findMany({
+    where: {
+      userId,
+      type: NOTIFY,
+      challenge: { status: { in: TRACKABLE_STATUSES } },
+    },
+    select: { challengeId: true },
+  });
+  return rows.map((r) => r.challengeId);
+}

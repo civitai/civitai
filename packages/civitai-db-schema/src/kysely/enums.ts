@@ -771,6 +771,11 @@ export const ChallengeIngestionStatus = {
 } as const;
 export type ChallengeIngestionStatus =
   (typeof ChallengeIngestionStatus)[keyof typeof ChallengeIngestionStatus];
+export const ChallengeEngagementType = {
+  Notify: 'Notify',
+} as const;
+export type ChallengeEngagementType =
+  (typeof ChallengeEngagementType)[keyof typeof ChallengeEngagementType];
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;
