@@ -20,7 +20,7 @@ import {
 } from '@tabler/icons-react';
 import { useHotkeys } from '@mantine/hooks';
 import clsx from 'clsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 
@@ -28,6 +28,10 @@ export type TrainingSampleEpoch = {
   epochNumber: number;
   sampleImages: string[];
 };
+
+// Unzoomed rendering is `object-contain` capped at natural size, so 2x the intrinsic pixels is
+// always a visible magnification — and never interpolates a sample beyond double its real detail.
+const ZOOM_FACTOR = 2;
 
 export type TrainingSampleViewerProps = {
   epochs: TrainingSampleEpoch[];
@@ -54,6 +58,8 @@ export default function TrainingSampleViewer({
   const [sampleIndex, setSampleIndex] = useState(initialSampleIndex);
   const [zoomed, setZoomed] = useState(false);
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+  const paneRef = useRef<HTMLDivElement>(null);
 
   const epoch = epochs[epochIndex];
   const samples = epoch?.sampleImages ?? [];
@@ -87,7 +93,19 @@ export default function TrainingSampleViewer({
   useEffect(() => {
     setStatus('loading');
     setZoomed(false);
+    setNatural(null);
   }, [url]);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    if (!zoomed) {
+      pane.scrollTo(0, 0);
+      return;
+    }
+    pane.scrollLeft = (pane.scrollWidth - pane.clientWidth) / 2;
+    pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;
+  }, [zoomed, url]);
 
   const missing = !epoch || !url;
   useEffect(() => {
@@ -124,11 +142,21 @@ export default function TrainingSampleViewer({
 
   if (missing) return null;
 
+  const canZoom = status === 'loaded' && !!natural;
+  const zoomActive = zoomed && !!natural;
+
   const mediaClassName = clsx(
     'transition-opacity',
     status === 'loaded' ? 'opacity-100' : 'opacity-0',
-    zoomed ? 'm-auto max-w-none' : 'max-h-full max-w-full object-contain'
+    zoomActive ? 'm-auto max-w-none shrink-0' : 'max-h-full max-w-full object-contain'
   );
+
+  const zoomStyle = zoomActive
+    ? { width: natural.width * ZOOM_FACTOR, height: natural.height * ZOOM_FACTOR }
+    : undefined;
+
+  const zoomLabel = zoomed ? 'Fit to screen' : `Magnify ${ZOOM_FACTOR}x`;
+  const toggleZoom = () => canZoom && setZoomed((z) => !z);
 
   return (
     <Modal
@@ -154,14 +182,9 @@ export default function TrainingSampleViewer({
             {navigableCount}
           </Text>
         </Group>
-        {!isVideo && (
-          <Tooltip label={zoomed ? 'Fit to screen' : 'View at full size'} withArrow>
-            <ActionIcon
-              size="lg"
-              variant="light"
-              aria-label={zoomed ? 'Fit to screen' : 'View at full size'}
-              onClick={() => setZoomed((z) => !z)}
-            >
+        {canZoom && (
+          <Tooltip label={zoomLabel} withArrow>
+            <ActionIcon size="lg" variant="light" aria-label={zoomLabel} onClick={toggleZoom}>
               {zoomed ? <IconZoomOut size={20} /> : <IconZoomIn size={20} />}
             </ActionIcon>
           </Tooltip>
@@ -170,11 +193,12 @@ export default function TrainingSampleViewer({
 
       <div className="relative flex min-h-0 flex-1">
         <div
+          ref={paneRef}
           className={clsx(
             'flex flex-1',
             // `m-auto` on the media rather than flex centering — a centered flex item clamps
             // scrollLeft/Top at 0, making the start edge of a zoomed sample unreachable.
-            zoomed ? 'overflow-auto' : 'items-center justify-center overflow-hidden'
+            zoomActive ? 'overflow-auto' : 'items-center justify-center overflow-hidden'
           )}
         >
           {status === 'loading' && (
@@ -206,7 +230,13 @@ export default function TrainingSampleViewer({
               autoPlay
               controls
               className={mediaClassName}
-              onLoadedData={() => setStatus('loaded')}
+              style={zoomStyle}
+              onLoadedData={(e) => {
+                const el = e.currentTarget;
+                setStatus('loaded');
+                if (el.videoWidth && el.videoHeight)
+                  setNatural({ width: el.videoWidth, height: el.videoHeight });
+              }}
               onError={() => setStatus('error')}
             />
           ) : (
@@ -215,9 +245,18 @@ export default function TrainingSampleViewer({
               key={url}
               src={url}
               alt={`Epoch ${epoch.epochNumber} sample ${navigablePosition}`}
-              className={clsx(mediaClassName, 'cursor-zoom-in', zoomed && 'cursor-zoom-out')}
-              onClick={() => setZoomed((z) => !z)}
-              onLoad={() => setStatus('loaded')}
+              className={clsx(
+                mediaClassName,
+                canZoom && (zoomed ? 'cursor-zoom-out' : 'cursor-zoom-in')
+              )}
+              style={zoomStyle}
+              onClick={toggleZoom}
+              onLoad={(e) => {
+                const el = e.currentTarget;
+                setStatus('loaded');
+                if (el.naturalWidth && el.naturalHeight)
+                  setNatural({ width: el.naturalWidth, height: el.naturalHeight });
+              }}
               onError={() => setStatus('error')}
             />
           )}
