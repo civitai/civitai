@@ -95,10 +95,25 @@ falsy-sentinel (`earlyAccessTimeFrame > 0`) that permanent (duration 0) fails.
 - `src/server/services/model.service.ts:238, 3414, 3437`
 - `src/server/redis/caches.ts:473, 511`
 
-## C. `Availability.EarlyAccess` — payment conflated with visibility (11 sites, stage 6)
+## C. `Availability.EarlyAccess` used as the gate — **convert the reads in Part 1** (11 sites, 5 files)
 
-The largest ripple and the last stage. Mostly in `comics.router.ts` + `resource-data.redis.ts`. Do **not**
-touch as part of the sweep — retiring this is its own project.
+`availability = 'EarlyAccess'` doubles as a paid-gate signal. Every one of these sits **next to** an
+`earlyAccessEndsAt` read you're already migrating — `availability = 'EarlyAccess' AND earlyAccessEndsAt > NOW()`
+— so you can't rewrite the right side without the left. **Convert them in the same Part 1 sweep** (drop the
+`availability` condition, route through the helper); deferring just forces re-deriving this map later, and
+leaving `availability` as a second "is this gated" answer is the three-concepts trap.
+
+- `src/server/services/common.service.ts:138`
+- `src/server/services/model.service.ts:1009`
+- `src/server/redis/resource-data.redis.ts:35`
+- `src/pages/api/v1/model-versions/mini/[id].ts:135`
+- `src/server/routers/comics.router.ts` — 7 sites
+
+**Not** in this PR: dropping the `EarlyAccess` **enum value** — a Postgres type recreate that crosses into
+event-engine (`models.feed.ts`, `model-feed-types.ts`) and the Meilisearch doc shape (coordinated deploy +
+reindex). Part 2 stops *writing* the value; the drop is a separate **dated** ticket. (The "~213 refs" figure is
+inflated — component names, the deprecated `isEarlyAccess()` helper, the unrelated `PaidEarlyAccess` enum. The
+real gate-reads are these 11.)
 
 ## D. `earlyAccessConfig` readers (203 sites)
 
@@ -133,7 +148,7 @@ Kysely lacks the column), so it breaks on the `earlyAccessConfig` drop specifica
 | --- | --- | --- |
 | `lib/server/models.ts:10` | `accessFilter` "sold in any form" | **P** → `PaidAccess` `EXISTS` |
 | `lib/server/models.ts:208,258` | select + `hasEarlyAccess` | D → `getPaidAccess` |
-| `lib/server/monetization/early-access.ts:98` | permanent **cap count** | count `PaidAccess WHERE kind='Permanent'` |
+| `lib/server/monetization/early-access.ts:98` | permanent **cap count** | count `PaidAccess WHERE "endsAt" IS NULL` |
 | `lib/server/monetization/early-access.ts:114` | timed-window **cap count** | count active `Timed` `PaidAccess` |
 
 Spoke **writes** go through the main app's REST early-access endpoint (`early-access.ts:62-68`) → covered by the
