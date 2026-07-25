@@ -23,6 +23,7 @@ import {
 import {
   approveExternalRequestSchema,
   beginListingRevisionSchema,
+  getMyListingForAppSchema,
   getMyListingForEditSchema,
   listMySubmissionsSchema,
   listOffsiteRequestsSchema,
@@ -442,6 +443,28 @@ export const appListingsRouter = router({
           patch: input.patch,
           userId: ctx.user.id,
         });
+      } catch (err) {
+        throw mapOffsiteError(err);
+      }
+    }),
+
+  /**
+   * OWNER: resolve the caller's OWN listing by its backing `appBlockId` — the entry
+   * read for the owner-facing on-site listing-media page (`/apps/<appBlockId>/listing`).
+   * Returns the `AppListing.id` the page passes to `beginListingRevision` + the asset
+   * procs, plus the listing status / content rating / whether a revision is already
+   * under review. Owner-bound in the service; typed failures map via `mapOffsiteError`
+   * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
+   */
+  getMyListingForApp: appDeveloperProcedure
+    .input(getMyListingForAppSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { getMyListingForApp } = await import(
+        '~/server/services/blocks/offsite-listing.service'
+      );
+      try {
+        return await getMyListingForApp({ appBlockId: input.appBlockId, userId: ctx.user.id });
       } catch (err) {
         throw mapOffsiteError(err);
       }
