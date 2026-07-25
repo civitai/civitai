@@ -306,3 +306,93 @@ describe('ExternalSubmitForm — edit mode', () => {
     await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
   });
 });
+
+/**
+ * "Autofill from website" button (edit-only). Closes the gap where the edit-mode OG
+ * pull fired ONLY on a URL change, so a listing whose icon/cover ended up empty could
+ * never re-surface suggestions without editing the URL. Clicking the button re-runs
+ * the existing fetch → fill-if-empty effect → ListingAssetStep suggestions, WITHOUT
+ * changing the URL. Non-destructive by construction (typed text + attached assets are
+ * never clobbered — proven by the "empty" note when nothing is fillable).
+ */
+function makeEmptyAssetsCtx(overrides: Partial<ListingEditContext> = {}): ListingEditContext {
+  return makeCtx({
+    assets: {
+      icon: { imageId: null, url: null },
+      cover: { imageId: null, url: null },
+      screenshots: [],
+    },
+    ...overrides,
+  });
+}
+
+describe('ExternalSubmitForm — edit mode "Autofill from website" button', () => {
+  test('clicking it (URL unchanged) pulls meta and surfaces "Use this" icon/cover suggestions for EMPTY slots', async () => {
+    mocks.meta = {
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    // Assets start EMPTY (the gap this fixes) — the URL is already prefilled, unchanged.
+    renderWithProviders(<ExternalSubmitForm edit={makeEmptyAssetsCtx()} />);
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    // The URL step shows the "applied" note; then navigate URL → Details → Assets.
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-applied')).toBeInTheDocument();
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+    // The empty icon + cover slots now offer the OG suggestion via "Use this".
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-accept-cover')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-offsite-suggested-icon-preview'))
+      .toBeInTheDocument();
+  });
+
+  test('is DISABLED when the App URL is blank (no wasted fetch)', async () => {
+    const ctx = makeCtx({
+      scalars: {
+        name: 'Vitrine',
+        tagline: null,
+        description: null,
+        category: null,
+        contentRating: 'g',
+        externalUrl: '', // pre-existing blank URL
+      },
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill')).toBeDisabled();
+  });
+
+  test('is DISABLED when the App URL is invalid (non-https)', async () => {
+    const ctx = makeCtx({
+      scalars: {
+        name: 'Vitrine',
+        tagline: null,
+        description: null,
+        category: null,
+        contentRating: 'g',
+        externalUrl: 'http://insecure.example.com',
+      },
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill')).toBeDisabled();
+  });
+
+  test('shows a "Nothing to autofill" note when the pull yields nothing fillable', async () => {
+    // Fully-populated listing (name/tagline/description + attached icon/cover) and a
+    // meta pull with no suggestions and nothing to fill → the empty note, NOT a clobber.
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-empty')).toBeInTheDocument();
+    // The prefilled name is untouched.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
+  });
+});

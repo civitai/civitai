@@ -16,6 +16,7 @@ import {
   IconExternalLink,
   IconInfoCircle,
   IconLock,
+  IconSparkles,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -79,6 +80,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
 
   const [active, setActive] = useState<number>(STEP_URL);
   const [values, setValues] = useState<OffsiteSubmitFormValues>(() => editContextToForm(edit));
+  // Latest `values` for the OG-apply effect's emptiness check (the effect must read
+  // current emptiness WITHOUT depending on `values`, and the async `setValues` updater
+  // hasn't run yet when we compute the button's feedback — same reason the create
+  // wizard computes off `data`).
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
   const [errors, setErrors] = useState<OffsiteSubmitFormErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [assetsDirty, setAssetsDirty] = useState(false);
@@ -102,6 +109,15 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const [metaUrl, setMetaUrl] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<MetaSuggestions>({});
   const appliedMetaRef = useRef<string | null>(null);
+  // On-demand "Autofill from website" (edit-only): the OG pull otherwise fires only on
+  // a URL CHANGE, so a listing whose icon/cover ended up empty could never re-surface
+  // suggestions without editing the URL. `autofillActive` tracks a button-triggered
+  // pull (drives the loading/error/note feedback); `autofillTick` forces the apply
+  // effect to re-run on a re-click of the SAME url (unchanged `metaUrl` + a cached
+  // `metaQuery.data` reference otherwise skip it).
+  const [autofillActive, setAutofillActive] = useState(false);
+  const [autofillTick, setAutofillTick] = useState(0);
+  const [autofillNote, setAutofillNote] = useState<'applied' | 'empty' | null>(null);
   const metaQuery = trpc.appListings.fetchListingMetaFromUrl.useQuery(
     { url: metaUrl ?? '' },
     { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
@@ -122,7 +138,24 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           : v.description,
     }));
     setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
-  }, [metaQuery.data, metaUrl]);
+    // When THIS apply was triggered by the button, report whether the pull surfaced
+    // anything actionable: a cover/icon suggestion, or copy for a still-empty field.
+    // Emptiness is read from the ref snapshot — NOT the async `setValues` updater above,
+    // whose side effects haven't committed yet.
+    if (autofillActive) {
+      const v = valuesRef.current;
+      const filledAny =
+        (v.name.trim().length === 0 && !!data.name) ||
+        (v.tagline.trim().length === 0 && !!data.tagline) ||
+        (v.description.trim().length === 0 && !!data.description);
+      const hasSuggestions = !!(data.coverImageUrl || data.iconImageUrl);
+      setAutofillNote(filledAny || hasSuggestions ? 'applied' : 'empty');
+      setAutofillActive(false);
+    }
+    // `autofillTick` is a dep so a same-url re-click (which leaves `metaUrl` + the cached
+    // `metaQuery.data` reference unchanged) still re-runs this effect and re-applies from
+    // cache — the click also resets `appliedMetaRef`, so the guard above passes.
+  }, [metaQuery.data, metaUrl, autofillTick, autofillActive]);
 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();
@@ -183,6 +216,25 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
     e.preventDefault();
     handleAdvanceFromUrl();
+  }
+
+  // "Autofill from website" — on-demand OG re-pull without changing the URL. Reuses the
+  // existing `metaQuery` + fill-if-empty effect + ListingAssetStep suggestions, so it's
+  // non-destructive by construction (typed text and attached assets are never clobbered).
+  function handleAutofillFromWebsite() {
+    const result = normalizeLinkUrl(values.externalUrl);
+    if (result.error) {
+      // A bad/blank URL never fires a fetch (the button is also disabled in this state).
+      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
+      return;
+    }
+    setField('externalUrl', result.url);
+    setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+    setAutofillNote(null);
+    setAutofillActive(true);
+    appliedMetaRef.current = null; // force the idempotent apply effect to re-run
+    setMetaUrl(result.url); // (re)trigger the OG pull — a no-op value if unchanged…
+    setAutofillTick((t) => t + 1); // …so bump a tick to make the effect re-apply from cache
   }
 
   async function finishSave() {
@@ -255,6 +307,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     }
   }
 
+  // Gate the Autofill button on a valid, normalizable URL (empty/invalid → disabled, no
+  // wasted fetch). Cheap enough to derive per render.
+  const autofillUrl = normalizeLinkUrl(values.externalUrl);
+
   return (
     <Stack gap="md" data-testid="apps-offsite-edit-form">
       <Alert
@@ -323,7 +379,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 description="Your app’s public https link — users open it from the listing."
                 placeholder="example.com/app"
                 value={values.externalUrl}
-                onChange={(e) => setField('externalUrl', e.currentTarget.value)}
+                onChange={(e) => {
+                  setField('externalUrl', e.currentTarget.value);
+                  setAutofillNote(null);
+                }}
                 onBlur={handleUrlBlur}
                 onKeyDown={handleUrlKeyDown}
                 error={errors.externalUrl}
@@ -341,6 +400,48 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                   <Text size="sm">
                     This listing has no App URL. Adding one lets users open your app (and lets us
                     suggest a name, description and images) — but it’s optional here.
+                  </Text>
+                </Alert>
+              )}
+              {/* On-demand OG re-pull: fills only-empty name/tagline/description and re-surfaces
+                  icon/cover suggestions for empty slots on the Assets step. Non-destructive. */}
+              <Group gap="xs" align="center">
+                <Button
+                  variant="light"
+                  color="grape"
+                  leftSection={<IconSparkles size={16} />}
+                  onClick={handleAutofillFromWebsite}
+                  disabled={!!autofillUrl.error}
+                  loading={autofillActive && metaQuery.isFetching}
+                  data-testid="apps-offsite-edit-autofill"
+                >
+                  Autofill from website
+                </Button>
+                <Text size="xs" c="dimmed">
+                  Re-scan your link for a name, description, icon and cover — only empty fields and
+                  slots are filled.
+                </Text>
+              </Group>
+              {autofillActive && metaQuery.isError && !metaQuery.isFetching && (
+                <Text size="xs" c="red" data-testid="apps-offsite-edit-autofill-error">
+                  Couldn’t read that site’s details.
+                </Text>
+              )}
+              {autofillNote === 'empty' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-edit-autofill-empty">
+                  Nothing to autofill — your details and assets are already set.
+                </Text>
+              )}
+              {autofillNote === 'applied' && (
+                <Alert
+                  color="grape"
+                  variant="light"
+                  icon={<IconSparkles size={16} />}
+                  data-testid="apps-offsite-edit-autofill-applied"
+                >
+                  <Text size="sm">
+                    Pulled the latest details from your link — check the Details and Assets steps to
+                    review the name, description and the suggested icon/cover.
                   </Text>
                 </Alert>
               )}
