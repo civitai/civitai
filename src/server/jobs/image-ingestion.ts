@@ -217,6 +217,23 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     `;
   }
 
+  // A still-`Rescan` image that's now stale has exhausted its retry cap without
+  // the scan ever returning. Terminalize it to `Error` so it stops reading as
+  // in-flight system-wide — otherwise article scan-status keeps it in the
+  // pending bucket and the panel polls a never-settling row forever.
+  const staleIdSet = new Set(staleIds);
+  const exhaustedRescanIds = images
+    .filter((img) => img.ingestion === 'Rescan' && staleIdSet.has(img.id))
+    .map((img) => img.id);
+  if (exhaustedRescanIds.length > 0) {
+    await dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET ingestion = 'Error'::"ImageIngestionStatus"
+      WHERE id = ANY(${exhaustedRescanIds})
+        AND ingestion = 'Rescan'::"ImageIngestionStatus"
+    `;
+  }
+
   const sentUserPendingIds = await sendImagesForScanBulk(pendingUserUploads);
   const sentBackfillIds = await sendImagesForScanBulk(pendingBackfill, { lowPriority: true });
   const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });

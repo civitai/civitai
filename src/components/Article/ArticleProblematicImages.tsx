@@ -5,10 +5,24 @@
  * that are blocking an article from being published.
  */
 
-import { Alert, Text, Stack, Group, Paper } from '@mantine/core';
-import { IconAlertTriangle, IconX, IconExclamationCircle, IconFileText } from '@tabler/icons-react';
+import { Alert, Text, Stack, Group, Paper, Select, Button, Badge } from '@mantine/core';
+import {
+  IconX,
+  IconExclamationCircle,
+  IconFileText,
+  IconShieldCheck,
+  IconRefresh,
+  IconRadar2,
+} from '@tabler/icons-react';
+import clsx from 'clsx';
+import { useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import type { EntityModerationStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { useRescanArticle } from '~/hooks/useRescanArticle';
+import { trpc } from '~/utils/trpc';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 export type TextModerationIssue = {
   // Terminal-state reason the text pipeline produced an article-blocking result.
@@ -18,15 +32,132 @@ export type TextModerationIssue = {
   updatedAt: Date | null;
 };
 
+type BlockedImage = {
+  id: number;
+  url: string;
+  ingestion: ImageIngestionStatus;
+  blockedFor: string | null;
+  nsfwLevelLocked: boolean;
+};
+
+type ErrorImage = {
+  id: number;
+  url: string;
+  ingestion: ImageIngestionStatus;
+  nsfwLevelLocked: boolean;
+  failureClass: string | null;
+  reason: string | null;
+};
+
 interface ArticleProblematicImagesProps {
-  blockedImages: Array<{
-    id: number;
-    url: string;
-    ingestion: ImageIngestionStatus;
-    blockedFor: string | null;
-  }>;
-  errorImages: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+  articleId: number;
+  blockedImages: BlockedImage[];
+  errorImages: ErrorImage[];
   textIssue?: TextModerationIssue | null;
+  canOverride?: boolean;
+  canRetry?: boolean;
+  canRescan?: boolean;
+}
+
+// Human, class-aware cause for an image the scanner couldn't clear.
+function errorImageCause(image: ErrorImage): string {
+  if (image.ingestion === ImageIngestionStatus.NotFound)
+    return 'Image couldn’t be loaded during scanning. Try Retry scan; if it keeps failing, re-upload the image.';
+  switch (image.failureClass) {
+    case 'transient':
+      return 'Scanning failed, retrying automatically.';
+    case 'permanent':
+      return 'This image can’t be scanned (unsupported or corrupt) — replace it.';
+    default:
+      return image.reason || 'This image failed to scan.';
+  }
+}
+
+function ImageOverrideControl({
+  articleId,
+  imageId,
+  locked,
+}: {
+  articleId: number;
+  imageId: number;
+  locked: boolean;
+}) {
+  const queryUtils = trpc.useUtils();
+  const [level, setLevel] = useState<string | null>(null);
+
+  const { mutate, isPending } = trpc.article.resolveImageScan.useMutation({
+    async onSuccess() {
+      showSuccessNotification({ message: 'Image override applied' });
+      await queryUtils.article.getScanStatus.invalidate({ id: articleId });
+      await queryUtils.article.getById.invalidate({ id: articleId });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not override image',
+      });
+    },
+  });
+
+  if (locked)
+    return (
+      <Badge color="green" variant="light" leftSection={<IconShieldCheck size={12} />}>
+        Overridden
+      </Badge>
+    );
+
+  return (
+    <Group gap="xs" wrap="nowrap">
+      <Select
+        size="xs"
+        placeholder="Set rating"
+        value={level}
+        onChange={setLevel}
+        data={browsingLevels.map((l) => ({ value: String(l), label: browsingLevelLabels[l] }))}
+        w={110}
+      />
+      <Button
+        size="xs"
+        variant="light"
+        color="green"
+        loading={isPending}
+        disabled={!level}
+        onClick={() => level && mutate({ articleId, imageId, nsfwLevel: Number(level) })}
+      >
+        Override
+      </Button>
+    </Group>
+  );
+}
+
+function ImageRetryButton({ articleId, imageId }: { articleId: number; imageId: number }) {
+  const queryUtils = trpc.useUtils();
+  const { mutate, isPending } = trpc.article.rescanImage.useMutation({
+    async onSuccess() {
+      showSuccessNotification({ message: 'Image sent for rescan' });
+      await queryUtils.article.getScanStatus.invalidate({ id: articleId });
+      await queryUtils.article.getById.invalidate({ id: articleId });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Could not rescan image',
+      });
+    },
+  });
+
+  return (
+    <Button
+      size="xs"
+      variant="light"
+      color="blue"
+      leftSection={<IconRefresh size={14} />}
+      loading={isPending}
+      onClick={() => mutate({ articleId, imageId })}
+    >
+      Retry scan
+    </Button>
+  );
 }
 
 function TextModerationSection({ issue }: { issue: TextModerationIssue }) {
@@ -57,7 +188,7 @@ function TextModerationSection({ issue }: { issue: TextModerationIssue }) {
       <Paper
         p="xs"
         withBorder
-        className={isBlocked ? 'bg-red-1 dark:bg-red-9/20' : 'bg-yellow-1 dark:bg-yellow-9/20'}
+        className={clsx('border-l-2', isBlocked ? 'border-l-red-6' : 'border-l-yellow-6')}
       >
         <Group gap="sm" wrap="nowrap" align="flex-start">
           <div
@@ -85,10 +216,15 @@ function TextModerationSection({ issue }: { issue: TextModerationIssue }) {
 }
 
 export function ArticleProblematicImages({
+  articleId,
   blockedImages,
   errorImages,
   textIssue,
+  canOverride,
+  canRetry,
+  canRescan,
 }: ArticleProblematicImagesProps) {
+  const { rescan, isLoading: isRescanning } = useRescanArticle();
   const hasImageProblems = blockedImages.length > 0 || errorImages.length > 0;
   const hasTextProblem = !!textIssue;
   if (!hasImageProblems && !hasTextProblem) return null;
@@ -102,18 +238,13 @@ export function ArticleProblematicImages({
 
   const leadText =
     hasImageProblems && hasTextProblem
-      ? 'The following content issues must be resolved before your article can be published:'
+      ? 'These content issues must be resolved before your article can be published'
       : hasTextProblem
-      ? 'A text moderation issue is preventing your article from being published:'
-      : 'The following images must be removed or replaced before your article can be published:';
+      ? 'A text moderation issue is preventing your article from being published'
+      : 'These images must be removed or replaced before your article can be published';
 
   return (
-    <Alert
-      icon={<IconAlertTriangle size={16} />}
-      title={title}
-      color="red"
-      className="border-l-4 border-red-6"
-    >
+    <Alert title={title} color="red">
       <Stack gap="md">
         <Text size="sm">{leadText}</Text>
 
@@ -131,25 +262,38 @@ export function ArticleProblematicImages({
             </Group>
             <Stack gap="sm">
               {blockedImages.map((image) => (
-                <Paper key={image.id} p="xs" withBorder className="bg-red-1 dark:bg-red-9/20">
-                  <Group gap="sm" wrap="nowrap">
-                    <div className="relative size-16 shrink-0 overflow-hidden rounded border border-red-6">
-                      <EdgeMedia
-                        src={image.url}
-                        width={64}
-                        className="size-full object-cover"
-                        alt="Blocked image (removed for policy violation)"
-                      />
+                <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-red-6">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <div className="relative size-16 shrink-0 overflow-hidden rounded border border-red-6">
+                        <EdgeMedia
+                          src={image.url}
+                          width={64}
+                          className="size-full object-cover"
+                          alt="Blocked image (removed for policy violation)"
+                        />
+                      </div>
+                      <Stack gap={4} className="min-w-0 flex-1">
+                        <Text size="xs" fw={500} c="red.7">
+                          Blocked: {image.blockedFor || 'Policy violation'}
+                        </Text>
+                        {canOverride && (
+                          <Text size="xs" c="dimmed">
+                            ID: {image.id}
+                          </Text>
+                        )}
+                      </Stack>
                     </div>
-                    <Stack gap={4} className="flex-1">
-                      <Text size="xs" fw={500} c="red.7">
-                        Blocked: {image.blockedFor || 'Policy violation'}
-                      </Text>
-                      <Text size="xs" c="dimmed">
-                        Image ID: {image.id}
-                      </Text>
-                    </Stack>
-                  </Group>
+                    {canOverride && (
+                      <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                        <ImageOverrideControl
+                          articleId={articleId}
+                          imageId={image.id}
+                          locked={image.nsfwLevelLocked}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </Paper>
               ))}
             </Stack>
@@ -165,65 +309,64 @@ export function ArticleProblematicImages({
                 Failed Images ({errorImages.length}) - Scan Error
               </Text>
             </Group>
-            <Text size="xs" c="dimmed">
-              These images failed to scan or were not found
-            </Text>
             <Stack gap="sm">
               {errorImages.map((image) => (
-                <Paper key={image.id} p="xs" className="bg-yellow-1 dark:bg-yellow-9/20" withBorder>
-                  <Group gap="sm" wrap="nowrap">
-                    <div className="relative size-16 shrink-0 overflow-hidden rounded border border-yellow-6 bg-gray-1 dark:bg-gray-8">
-                      <EdgeMedia
-                        src={image.url}
-                        width={64}
-                        className="size-full object-cover"
-                        alt="Error image (may be broken)"
-                      />
+                <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-yellow-6">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      <div className="relative size-16 shrink-0 overflow-hidden rounded border border-yellow-6 bg-gray-1 dark:bg-gray-8">
+                        <EdgeMedia
+                          src={image.url}
+                          width={64}
+                          className="size-full object-cover"
+                          alt="Error image (may be broken)"
+                        />
+                      </div>
+                      <Stack gap={4} className="min-w-0 flex-1">
+                        <Text size="xs" fw={500} c="yellow.7">
+                          {errorImageCause(image)}
+                        </Text>
+                        {canOverride && (
+                          <Text size="xs" c="dimmed">
+                            ID: {image.id}
+                          </Text>
+                        )}
+                      </Stack>
                     </div>
-                    <Text size="xs" c="dimmed">
-                      Image ID: {image.id} • Status: {image.ingestion}
-                    </Text>
-                  </Group>
+                    {(canRetry || canOverride) && (
+                      <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                        {canRetry && !image.nsfwLevelLocked && (
+                          <ImageRetryButton articleId={articleId} imageId={image.id} />
+                        )}
+                        {canOverride && (
+                          <ImageOverrideControl
+                            articleId={articleId}
+                            imageId={image.id}
+                            locked={image.nsfwLevelLocked}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </Paper>
               ))}
             </Stack>
           </Stack>
         )}
 
-        {/* Action Instructions */}
-        <Alert color="blue" variant="light" styles={{ root: { padding: '8px 12px' } }}>
-          <Text size="xs" fw={500}>
-            How to fix:
-          </Text>
-          <Text size="xs" mt={4}>
-            {hasImageProblems && (
-              <>
-                1. Locate problematic images in your article content
-                <br />
-                2. Remove or replace them with appropriate content
-                <br />
-              </>
-            )}
-            {hasTextProblem && !hasImageProblems && (
-              <>
-                1. Edit the article title and body if the content was flagged
-                <br />
-              </>
-            )}
-            {hasImageProblems && hasTextProblem && (
-              <>
-                3. Edit the article text if it was flagged for policy violation
-                <br />
-              </>
-            )}
-            {(hasImageProblems || hasTextProblem) && (
-              <>
-                {hasImageProblems && hasTextProblem ? '4. ' : hasImageProblems ? '3. ' : '2. '}
-                Save your article or click Rescan Article below to trigger a new scan
-              </>
-            )}
-          </Text>
-        </Alert>
+        {canRescan && (
+          <Group justify="flex-end">
+            <Button
+              leftSection={<IconRadar2 size={16} />}
+              variant="default"
+              size="sm"
+              loading={isRescanning}
+              onClick={() => rescan(articleId)}
+            >
+              Rescan Article
+            </Button>
+          </Group>
+        )}
       </Stack>
     </Alert>
   );
