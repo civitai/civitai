@@ -123,6 +123,16 @@ describe('new-challenge-from-following — SQL gates', () => {
     expect(sql()).toContain(`(cover."nsfwLevel" & ru."browsingLevel") <> 0`);
   });
 
+  // Challenge.nsfwLevel is the MAX level the challenge admits, so an X-rated challenge with a PG
+  // cover passes the cover gate alone — the feed requires BOTH to intersect and so must this.
+  it('gates on the challenge level too, not just the cover', () => {
+    expect(sql()).toContain(`(c."nsfwLevel" & ru."browsingLevel") <> 0`);
+  });
+
+  it('drops challenges whose cover depicts a real person', () => {
+    expect(sql()).toContain(`cover.poi IS NOT TRUE`);
+  });
+
   it('respects the per-type opt-out', () => {
     expect(sql()).toContain(`type = 'new-challenge-from-following'`);
   });
@@ -141,10 +151,20 @@ describe('challenge-ending-soon — SQL gates', () => {
     expect(sql()).toContain(`c.status = 'Active'`);
   });
 
+  // A 24h challenge (every daily) crosses "24 hours left" at go-live, which challenge-starting
+  // already announces — and the hourly activation cron makes status=Active a race at that instant.
+  it('skips challenges no longer than the 24 hour reminder window', () => {
+    expect(sql()).toContain(`c."startsAt" < c."endsAt" - interval '24 hours'`);
+  });
+
   it('targets trackers and entrants', () => {
     const q = sql();
     expect(q).toContain('"ChallengeEngagement"');
     expect(q).toContain('"CollectionItem"');
+  });
+
+  it('counts only accepted/in-review entries as entrants', () => {
+    expect(sql()).toContain(`ci.status IN ('ACCEPTED', 'REVIEW')`);
   });
 
   it('respects the per-type opt-out', () => {

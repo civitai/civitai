@@ -5,7 +5,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getChallengeExcludedUserIds } from '~/server/services/challenge-block.service';
 import { createNotification } from '~/server/services/notification.service';
-import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeIngestionStatus,
+  ChallengeSource,
+  ChallengeStatus,
+  CollectionItemStatus,
+} from '~/shared/utils/prisma/enums';
 
 const NOTIFY = 'Notify' as const;
 
@@ -28,7 +33,15 @@ export async function toggleChallengeNotify({
 }): Promise<boolean> {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
-    select: { id: true, status: true, createdById: true, source: true },
+    select: {
+      id: true,
+      status: true,
+      createdById: true,
+      source: true,
+      ingestion: true,
+      visibleAt: true,
+      coverImage: { select: { nsfwLevel: true } },
+    },
   });
   if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
 
@@ -40,12 +53,35 @@ export async function toggleChallengeNotify({
   const next = setTo ?? !existing;
 
   if (next) {
+    const notFound = () => new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+    // Mirrors getChallengeDetail's canPreviewUnpublished: a creator may track their own challenge
+    // before it clears the scan/visibility gates.
+    const isCreator = challenge.createdById != null && challenge.createdById === userId;
+
     // System challenges share a bot/judge account as createdById — a block on that account must
     // not lock users out of every System challenge (see challengeCreatorBlockSql for the same guard).
     if (challenge.source === ChallengeSource.User && challenge.createdById) {
       const excluded = await getChallengeExcludedUserIds(userId);
-      if (excluded.includes(challenge.createdById))
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+      if (excluded.includes(challenge.createdById)) throw notFound();
+    }
+
+    // Challenge ids are sequential, so without these the endpoint confirms the existence of — and
+    // subscribes a user to — a challenge the feed and detail page both hide from them.
+    if (!isCreator) {
+      if (challenge.coverImage) {
+        const viewer = await dbRead.user.findUnique({
+          where: { id: userId },
+          select: { browsingLevel: true },
+        });
+        if ((challenge.coverImage.nsfwLevel & (viewer?.browsingLevel ?? 0)) === 0) throw notFound();
+      }
+
+      if (
+        challenge.source === ChallengeSource.User &&
+        (challenge.ingestion !== ChallengeIngestionStatus.Scanned ||
+          challenge.visibleAt > new Date())
+      )
+        throw notFound();
     }
 
     if (!TRACKABLE_STATUSES.includes(challenge.status))
@@ -94,6 +130,9 @@ export async function getChallengeReminderRecipients(challengeId: number): Promi
     FROM "CollectionItem" ci
     WHERE ci."collectionId" = ${challenge.collectionId}
       AND ci."addedById" IS NOT NULL
+      -- Matches the feed's Entered filter: a user whose only entry was rejected already got
+      -- challenge-rejection and is not competing.
+      AND ci.status IN (${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus", ${CollectionItemStatus.REVIEW}::"CollectionItemStatus")
   `;
 
   return [...new Set([...trackers, ...entrants.map((e) => e.userId)])];

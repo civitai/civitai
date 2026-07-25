@@ -103,7 +103,14 @@ export const challengeNotifications = createNotificationProcessor({
           -- Wall-clock floor: bounds the Challenge x UserEngagement scan no matter how far behind
           -- the cursor is. Do not replace with an incrementally-advancing row cap.
           AND c."visibleAt" > NOW() - INTERVAL '30 minutes'
+          -- Both levels must intersect, matching the feed: Challenge.nsfwLevel is the MAX level the
+          -- challenge admits, so an X-rated challenge with a PG cover would otherwise be announced
+          -- to a PG-only follower who can never open it.
           AND (cover."nsfwLevel" & ru."browsingLevel") <> 0
+          AND (c."nsfwLevel" & ru."browsingLevel") <> 0
+          -- A POI cover hides the challenge from both the feed and the detail page, so announcing
+          -- it would land the follower on a 404.
+          AND cover.poi IS NOT TRUE
           AND NOT EXISTS (
             SELECT 1 FROM "UserEngagement" blk
             WHERE (
@@ -144,6 +151,10 @@ export const challengeNotifications = createNotificationProcessor({
           AND now() BETWEEN c."endsAt" - interval '24 hours' AND c."endsAt"
           -- ...and the last scan was before it, so this fires once on the crossing.
           AND '${lastSent}'::timestamptz < c."endsAt" - interval '24 hours'
+          -- A challenge <= 24h long crosses its own "24 hours left" mark at go-live, which
+          -- challenge-starting already announces. Excluding those also removes the race against
+          -- the hourly activation cron, which would otherwise never set status=Active in time.
+          AND c."startsAt" < c."endsAt" - interval '24 hours'
       ), target_users AS (
         SELECT DISTINCT "challengeId", "userId" FROM (
           SELECT a.id "challengeId", ce."userId"
@@ -154,6 +165,9 @@ export const challengeNotifications = createNotificationProcessor({
           FROM affected a
           JOIN "CollectionItem" ci ON ci."collectionId" = a."collectionId"
           WHERE ci."addedById" IS NOT NULL
+            -- Matches the feed's Entered filter: a user whose only entry was rejected already got
+            -- challenge-rejection and is not competing.
+            AND ci.status IN ('ACCEPTED', 'REVIEW')
         ) u
       )
       SELECT

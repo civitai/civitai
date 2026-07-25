@@ -60,6 +60,23 @@ describe('ChallengeContextMenu', () => {
     expect(page.getByRole('menuitem', { name: 'Delete' }).query()).toBeNull();
   });
 
+  // Tracking requires an account, so for a logged-out visitor the dropdown would render empty —
+  // a dots button that opens nothing on every Scheduled/Active card.
+  test('a logged-out visitor gets no menu at all', async () => {
+    mocks.currentUser.current = null;
+    await renderWithProviders(
+      <ChallengeContextMenu
+        challenge={{
+          id: 10,
+          createdById: 1,
+          source: ChallengeSource.User,
+          status: ChallengeStatus.Scheduled,
+        }}
+      />
+    );
+    expect(page.getByRole('button', { name: 'More options' }).query()).toBeNull();
+  });
+
   test('the owner still sees Delete', async () => {
     mocks.currentUser.current = { id: 1 };
     await renderWithProviders(

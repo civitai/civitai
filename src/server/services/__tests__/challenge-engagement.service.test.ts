@@ -12,6 +12,9 @@ const { mockDb, getExcluded } = vi.hoisted(() => ({
       delete: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     },
+    user: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+    },
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
   },
   getExcluded: vi.fn(async (..._a: unknown[]): Promise<number[]> => []),
@@ -35,11 +38,32 @@ const p2002 = () =>
     meta: { target: ['type', 'challengeId', 'userId'] },
   });
 
-const openChallenge = { id: 7, status: 'Scheduled', source: 'User', createdById: 99 };
+const PAST = new Date('2020-01-01T00:00:00Z');
+const FUTURE = new Date('2999-01-01T00:00:00Z');
 
+const openChallenge = {
+  id: 7,
+  status: 'Scheduled',
+  source: 'User',
+  createdById: 99,
+  ingestion: 'Scanned',
+  visibleAt: PAST,
+  coverImage: { nsfwLevel: 1 },
+};
+
+// resetAllMocks (not clearAllMocks) because several cases queue a `...Once` on a mock the
+// code path then short-circuits past — clearAllMocks leaves that queued value armed for the
+// next test, which silently mis-targets whichever gate runs first.
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mockDb.challenge.findUnique.mockResolvedValue(openChallenge);
+  mockDb.challengeEngagement.findUnique.mockResolvedValue(null);
+  mockDb.challengeEngagement.create.mockResolvedValue({});
+  mockDb.challengeEngagement.delete.mockResolvedValue({});
+  mockDb.challengeEngagement.findMany.mockResolvedValue([]);
+  mockDb.user.findUnique.mockResolvedValue({ browsingLevel: 1 });
+  mockDb.$queryRaw.mockResolvedValue([]);
+  getExcluded.mockResolvedValue([]);
 });
 
 describe('toggleChallengeNotify', () => {
@@ -151,6 +175,100 @@ describe('toggleChallengeNotify', () => {
     expect(mockDb.challengeEngagement.create).toHaveBeenCalledTimes(1);
   });
 
+  // Challenge ids are sequential, so the toggle endpoint must apply the same visibility gates the
+  // feed and detail page do — otherwise it both confirms a hidden challenge exists and subscribes
+  // the caller to notifications naming it.
+  it('rejects tracking a challenge whose cover level the viewer cannot see', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      coverImage: { nsfwLevel: 8 },
+    });
+    mockDb.user.findUnique.mockResolvedValueOnce({ browsingLevel: 1 });
+
+    await expect(toggleChallengeNotify({ challengeId: 7, userId: 42 })).rejects.toThrow(
+      'Challenge not found'
+    );
+    expect(mockDb.challengeEngagement.create).not.toHaveBeenCalled();
+  });
+
+  it('allows tracking when the cover level intersects the viewer browsing level', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      coverImage: { nsfwLevel: 4 },
+    });
+    mockDb.user.findUnique.mockResolvedValueOnce({ browsingLevel: 5 });
+    mockDb.challengeEngagement.findUnique.mockResolvedValueOnce(null);
+
+    expect(await toggleChallengeNotify({ challengeId: 7, userId: 42 })).toBe(true);
+    expect(mockDb.challengeEngagement.create).toHaveBeenCalledWith({
+      data: { type: 'Notify', challengeId: 7, userId: 42 },
+    });
+  });
+
+  it('rejects tracking a user challenge that has not passed the moderation scan', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      ingestion: 'Pending',
+    });
+
+    await expect(toggleChallengeNotify({ challengeId: 7, userId: 42 })).rejects.toThrow(
+      'Challenge not found'
+    );
+    expect(mockDb.challengeEngagement.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects tracking a user challenge that is not yet visible', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      visibleAt: FUTURE,
+    });
+
+    await expect(toggleChallengeNotify({ challengeId: 7, userId: 42 })).rejects.toThrow(
+      'Challenge not found'
+    );
+    expect(mockDb.challengeEngagement.create).not.toHaveBeenCalled();
+  });
+
+  it('lets the creator track their own unscanned, not-yet-visible challenge', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      createdById: 42,
+      ingestion: 'Pending',
+      visibleAt: FUTURE,
+      coverImage: { nsfwLevel: 8 },
+    });
+    mockDb.challengeEngagement.findUnique.mockResolvedValueOnce(null);
+
+    expect(await toggleChallengeNotify({ challengeId: 7, userId: 42 })).toBe(true);
+    expect(mockDb.challengeEngagement.create).toHaveBeenCalledWith({
+      data: { type: 'Notify', challengeId: 7, userId: 42 },
+    });
+  });
+
+  it('does not apply the scan/visibility gate to System challenges', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      source: 'System',
+      ingestion: 'Pending',
+      visibleAt: FUTURE,
+    });
+    mockDb.challengeEngagement.findUnique.mockResolvedValueOnce(null);
+
+    expect(await toggleChallengeNotify({ challengeId: 7, userId: 42 })).toBe(true);
+  });
+
+  it('does not run the visibility gates when untracking', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({
+      ...openChallenge,
+      ingestion: 'Pending',
+      coverImage: { nsfwLevel: 8 },
+    });
+    mockDb.challengeEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+
+    expect(await toggleChallengeNotify({ challengeId: 7, userId: 42, setTo: false })).toBe(false);
+    expect(mockDb.challengeEngagement.delete).toHaveBeenCalledTimes(1);
+  });
+
   it('allows untracking even when the creator is in the excluded set', async () => {
     getExcluded.mockResolvedValueOnce([99]);
     mockDb.challengeEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
@@ -179,6 +297,21 @@ describe('recipient resolution', () => {
     const result = await getChallengeReminderRecipients(7);
 
     expect([...result].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+  });
+
+  // A user whose only entry was rejected already got challenge-rejection and is out of the running,
+  // so they must not be swept in as an entrant — same statuses the feed's Entered filter uses.
+  it('getChallengeReminderRecipients counts only accepted/in-review entries as entrants', async () => {
+    mockDb.challenge.findUnique.mockResolvedValueOnce({ collectionId: 5 });
+    mockDb.challengeEngagement.findMany.mockResolvedValueOnce([]);
+    mockDb.$queryRaw.mockResolvedValueOnce([]);
+
+    await getChallengeReminderRecipients(7);
+
+    const [strings, ...values] = mockDb.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    expect(strings.join('')).toContain('ci.status IN (');
+    expect(values).toContain('ACCEPTED');
+    expect(values).toContain('REVIEW');
   });
 
   it('getChallengeReminderRecipients skips the entrant query when the challenge has no collection', async () => {

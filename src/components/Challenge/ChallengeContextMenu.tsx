@@ -42,7 +42,8 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
     (challenge.status === ChallengeStatus.Scheduled ||
       challenge.status === ChallengeStatus.Cancelled);
   const canTrack =
-    challenge.status === ChallengeStatus.Scheduled || challenge.status === ChallengeStatus.Active;
+    !!currentUser &&
+    (challenge.status === ChallengeStatus.Scheduled || challenge.status === ChallengeStatus.Active);
   const tracking = trackedIds.has(challenge.id);
 
   if (!canDelete && !canTrack) return null;
@@ -65,7 +66,7 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
         />
       </Menu.Target>
       <Menu.Dropdown>
-        {canTrack && !!currentUser && (
+        {canTrack && (
           <Menu.Item
             leftSection={<IconBell size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => {

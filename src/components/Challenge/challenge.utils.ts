@@ -205,11 +205,16 @@ export function useToggleChallengeNotify() {
     },
     onSettled() {
       void utils.challenge.getTrackedIds.invalidate();
+      // The Tracking filter is server-resolved, so an untracked challenge stays on screen until
+      // the feed refetches.
+      void utils.challenge.getInfinite.invalidate();
     },
   });
 
+  // onError already surfaces the failure to the user; swallow the rejection so every `void
+  // toggleNotify(...)` call site doesn't become an unhandled rejection.
   const toggleNotify = async (challengeId: number, setTo: boolean) => {
-    await toggleMutation.mutateAsync({ challengeId, setTo });
+    await toggleMutation.mutateAsync({ challengeId, setTo }).catch(() => undefined);
   };
 
   return { toggleNotify, toggling: toggleMutation.isPending };
