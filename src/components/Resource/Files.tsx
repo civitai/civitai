@@ -51,7 +51,11 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { comfyFileTypeLabels, filterFileTypeByExtension } from '~/utils/file-display-helpers';
+import {
+  comfyFileTypeLabels,
+  filterFileTypeByExtension,
+  UNQUANTIZED_QUANT_TYPE,
+} from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -84,7 +88,7 @@ function InlineDropzone({
       maxFiles={maxFiles}
       onReject={onReject}
       useFsAccessApi={!isAndroidDevice()}
-      className="cursor-pointer rounded-lg border-2 border-dashed border-dark-4 bg-transparent hover:border-blue-5 hover:bg-blue-5/5"
+      className={classes.dropzone}
       p="md"
     >
       <Stack gap={4} align="center" style={{ pointerEvents: 'none' }}>
@@ -328,16 +332,8 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
               }}
               maxFiles={primary.maxFiles}
               onReject={handleRejectPrimary}
-              className={classes.dropzoneReject}
+              className={classes.dropzone}
               useFsAccessApi={!isAndroidDevice()}
-              styles={{
-                root: {
-                  border: '2px dashed var(--mantine-color-dark-4)',
-                  borderRadius: 'var(--mantine-radius-md)',
-                  backgroundColor: 'transparent',
-                  cursor: 'pointer',
-                },
-              }}
             >
               <Stack gap="xs" align="center" py="lg" style={{ pointerEvents: 'none' }}>
                 <ThemeIcon size={48} radius="xl" variant="light" color="blue">
@@ -1063,7 +1059,7 @@ function FileEditForm({
             </div>
           )}
 
-          {isGguf ? (
+          {isGguf && (
             <div>
               <SelectLabel>Quant</SelectLabel>
               <Select
@@ -1078,11 +1074,15 @@ function FileEditForm({
                 onChange={(value) => {
                   updateFile(versionFile.uuid, {
                     quantType: value as ModelFileQuantType | null,
+                    // Precision is only editable while unquantized; don't strand a hidden value.
+                    ...(value !== UNQUANTIZED_QUANT_TYPE && { fp: null }),
                   });
                 }}
               />
             </div>
-          ) : (
+          )}
+
+          {(!isGguf || versionFile.quantType === UNQUANTIZED_QUANT_TYPE) && (
             <div>
               <SelectLabel>Precision</SelectLabel>
               <Select

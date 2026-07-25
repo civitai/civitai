@@ -387,6 +387,22 @@ describe('OnsiteReviewModal — onsite approve fires the mutation', () => {
     await page.getByRole('button', { name: 'Approve + build' }).click();
     expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Approve failed' }));
   });
+
+  // The page threads the tab's `resetPaging` in as `onActioned` so a decided item
+  // leaves the accumulated Load-more list (ghost-row fix) — assert the modal forwards
+  // it to the action bar and it fires on a successful approve.
+  test('a successful approve invokes the optional onActioned callback', async () => {
+    const onActioned = vi.fn();
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+        onActioned={onActioned}
+      />
+    );
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(onActioned).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('OnsiteReviewModal — onsite reject: reason gate + fired mutation', () => {

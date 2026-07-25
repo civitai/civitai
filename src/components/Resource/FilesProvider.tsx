@@ -13,7 +13,11 @@ import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { getPrimaryFileTypes, primaryFileTypesByModelType } from '~/utils/file-display-helpers';
+import {
+  getPrimaryFileTypes,
+  primaryFileTypesByModelType,
+  UNQUANTIZED_QUANT_TYPE,
+} from '~/utils/file-display-helpers';
 import {
   getModelFileFormat,
   inferGgufQuantType,
@@ -789,6 +793,10 @@ const metadataSchema = modelFileMetadataSchema
   .refine((data) => (data.name.endsWith('.gguf') ? !!data.quantType : true), {
     error: 'Quant type is required for GGUF files',
     path: ['quantType'],
+  })
+  .refine((data) => (data.quantType === UNQUANTIZED_QUANT_TYPE ? !!data.fp : true), {
+    error: 'Floating point is required for unquantized files',
+    path: ['fp'],
   })
   .array();
 

@@ -42,6 +42,7 @@ import {
   comfyFileTypeLabels,
   filterFileTypeByExtension,
   getFileIconConfig,
+  UNQUANTIZED_QUANT_TYPE,
 } from '~/utils/file-display-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -924,7 +925,11 @@ function MergeFileCard({
   baseModel?: string | null;
 }) {
   const effectiveType = (mapping?.type ?? file.type) as ModelFileType;
-  const effectiveFp = (mapping?.metadata?.fp ?? file.metadata?.fp ?? null) as string | null;
+  // Key presence, not `??`: the quant select writes an explicit `fp: null` to clear a stale
+  // precision, and `??` would fall through to the source file's value and re-show it.
+  const effectiveFp = (
+    mapping?.metadata && 'fp' in mapping.metadata ? mapping.metadata.fp : file.metadata?.fp ?? null
+  ) as string | null;
   const effectiveSize = (mapping?.metadata?.size ?? file.metadata?.size ?? null) as string | null;
   const effectiveFormat = (mapping?.metadata?.format ?? file.metadata?.format ?? null) as
     | string
@@ -1049,7 +1054,7 @@ function MergeFileCard({
                 </div>
               )}
 
-              {isGguf ? (
+              {isGguf && (
                 <div>
                   <SelectLabel>Quant</SelectLabel>
                   <Select
@@ -1061,13 +1066,21 @@ function MergeFileCard({
                     data={quantTypes}
                     value={effectiveQuantType}
                     onChange={(value) => {
-                      onUpdate({ metadata: { quantType: value as ModelFileQuantType | null } });
+                      onUpdate({
+                        metadata: {
+                          quantType: value as ModelFileQuantType | null,
+                          // Precision is only editable while unquantized; don't strand a hidden value.
+                          ...(value !== UNQUANTIZED_QUANT_TYPE && { fp: null }),
+                        },
+                      });
                     }}
                     comboboxProps={{ withinPortal: true }}
                     styles={selectInputStyles}
                   />
                 </div>
-              ) : (
+              )}
+
+              {(!isGguf || effectiveQuantType === UNQUANTIZED_QUANT_TYPE) && (
                 <div>
                   <SelectLabel>Precision</SelectLabel>
                   <Select

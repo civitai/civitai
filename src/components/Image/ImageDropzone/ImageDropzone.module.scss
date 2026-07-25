@@ -1,0 +1,18 @@
+// Error border is gated on [data-idle] so Mantine's accept/reject colors still
+// show through a drag over an errored dropzone: `*.module.scss` lands in
+// @layer modules, which outranks Mantine's @layer mantine drag rules.
+.dropzone {
+  &[data-idle].error {
+    border-color: var(--mantine-color-red-6);
+  }
+
+  &[data-disabled] {
+    cursor: not-allowed;
+    background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+    border-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+
+    * {
+      color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-3));
+    }
+  }
+}

@@ -4,14 +4,13 @@
  * Displays real-time scanning progress for article content images with modern UI
  */
 
-import { Alert, Button, Text, Group, Stack, Badge, Loader, Paper } from '@mantine/core';
-import { IconAlertCircle, IconCheck, IconRadar2, IconShield } from '@tabler/icons-react';
+import { Alert, Text, Group, Stack, Badge, Loader, Paper } from '@mantine/core';
+import { IconAlertCircle, IconCheck, IconShield } from '@tabler/icons-react';
 import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import clsx from 'clsx';
 import { ArticleProblematicImages, type TextModerationIssue } from './ArticleProblematicImages';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useRescanArticle } from '~/hooks/useRescanArticle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -23,17 +22,25 @@ interface ArticleScanStatusProps {
 export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusProps) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { rescan: handleRescan, isLoading: isRescanning } = useRescanArticle();
   const { status, isLoading, error, isComplete, hasImages, progress } = useArticleScanStatus({
     articleId,
   });
 
-  // Call onComplete callback when scanning finishes
+  // Fire onComplete only on an actual in-progress → complete TRANSITION, never
+  // when the article is already terminal on first load. Otherwise the parent's
+  // getById invalidation refetches on mount and flashes the page LoadingOverlay.
+  const wasIncompleteRef = useRef(false);
   useEffect(() => {
-    if (isComplete && onComplete) {
-      onComplete();
+    if (!status) return;
+    if (!isComplete) {
+      wasIncompleteRef.current = true;
+      return;
     }
-  }, [isComplete]);
+    if (wasIncompleteRef.current) {
+      wasIncompleteRef.current = false;
+      onComplete?.();
+    }
+  }, [status, isComplete]);
 
   // Derive a terminal text-moderation issue (if any) from the scan status.
   // Blocked takes precedence over failed/expired/canceled because it's a
@@ -115,25 +122,15 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
     // Action required state - blocked/error images or text moderation failure
     if (hasIssues) {
       return (
-        <Stack gap="md">
-          <ArticleProblematicImages
-            blockedImages={status.images?.blocked || []}
-            errorImages={status.images?.error || []}
-            textIssue={textIssue}
-          />
-          {currentUser && (
-            <Button
-              leftSection={<IconRadar2 size={16} />}
-              variant="light"
-              color="blue"
-              size="sm"
-              loading={isRescanning}
-              onClick={() => handleRescan(articleId)}
-            >
-              Rescan Article
-            </Button>
-          )}
-        </Stack>
+        <ArticleProblematicImages
+          articleId={articleId}
+          blockedImages={status.images?.blocked || []}
+          errorImages={status.images?.error || []}
+          textIssue={textIssue}
+          canOverride={!!currentUser?.isModerator}
+          canRetry={!!currentUser}
+          canRescan={!!currentUser}
+        />
       );
     }
 

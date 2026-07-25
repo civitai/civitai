@@ -209,6 +209,12 @@ vi.mock('~/server/prom/client', () => ({
   // sysRedis sentinel observability counters (PR #2331 round-3).
   sysredisSentinelTopologyChangesCounter: promMetricStub(),
   sysredisSentinelClientErrorsCounter: promMetricStub(),
+  // Cron runner + image-ingestion cron metrics (job.ts / image-ingestion.ts).
+  jobDurationHistogram: promMetricStub(),
+  jobErrorsCounter: promMetricStub(),
+  imageIngestCronCounter: promMetricStub(),
+  imageIngestCronQueueDepth: promMetricStub(),
+  imageScanWebhookCounter: promMetricStub(),
 }));
 
 // Mock logging

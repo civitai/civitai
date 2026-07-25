@@ -64,6 +64,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { recordImageScan } from '~/server/services/scanner-audit.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
+import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
 export async function isExemptFromAiVerification(
@@ -304,6 +305,12 @@ export async function processImageScanWorkflow({
     prompt,
     negativePrompt,
   });
+
+  // Terminal outcome reached (resolveScanOutcome only ever returns Scanned or
+  // Blocked) — drop the ImageScan JobQueue row so it doesn't linger as a stale
+  // entry until the ingest-images cron happens to prune it. Error scans take the
+  // early-return branch above and stay queued for retry.
+  await removeImageScanJobQueue([image.id]);
 
   // --- side effects (run after the image row reflects the resolved outcome) ---
 
