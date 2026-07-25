@@ -1,14 +1,26 @@
-import { Anchor, Center, Container, Group, Loader, Stack } from '@mantine/core';
-import { IconArrowLeft } from '@tabler/icons-react';
+import { Alert, Anchor, Center, Container, Divider, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { IconArrowLeft, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
 import { ManifestEditForm } from '~/components/Apps/ManifestEditForm';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  OFFSITE_CONTENT_RATINGS,
+  type OffsiteContentRating,
+} from '~/server/schema/blocks/offsite-listing.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
+
+/** Coerce a stored rating string to a valid OffsiteContentRating (fallback 'g'). */
+function toOffsiteContentRating(rating: string | null | undefined): OffsiteContentRating {
+  return (OFFSITE_CONTENT_RATINGS as readonly string[]).includes(rating ?? '')
+    ? (rating as OffsiteContentRating)
+    : 'g';
+}
 
 /**
  * App management (Phase 1) — owner-only web manifest editor at
@@ -65,12 +77,37 @@ export default function EditManifestPage() {
               <Loader />
             </Center>
           ) : (
-            <ManifestEditForm
-              appBlockId={data.appBlockId}
-              slug={data.slug}
-              currentVersion={data.version}
-              manifest={data.manifest}
-            />
+            <>
+              <ManifestEditForm
+                appBlockId={data.appBlockId}
+                slug={data.slug}
+                currentVersion={data.version}
+                manifest={data.manifest}
+              />
+
+              <Divider />
+
+              <Stack gap="sm" data-testid="listing-images-section">
+                <Title order={3}>Listing images</Title>
+                <Alert icon={<IconInfoCircle size={16} />} color="green" variant="light">
+                  These images are your marketplace listing&apos;s icon, cover and screenshots.
+                  They save <strong>immediately</strong> and do <strong>not</strong> re-enter
+                  moderator review — this is separate from the manifest edit above.
+                </Alert>
+                {data.appListingId ? (
+                  <ListingAssetStep
+                    listingId={data.appListingId}
+                    contentRating={toOffsiteContentRating(data.listingContentRating)}
+                    suggestions={{}}
+                    allowRemove
+                  />
+                ) : (
+                  <Text size="sm" c="dimmed">
+                    Listing images become available once your app has an approved store listing.
+                  </Text>
+                )}
+              </Stack>
+            </>
           )}
         </Stack>
       </Container>

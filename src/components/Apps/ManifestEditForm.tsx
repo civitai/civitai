@@ -1,7 +1,6 @@
 import {
   Alert,
   Button,
-  Checkbox,
   Group,
   Select,
   Stack,
@@ -12,9 +11,13 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle, IconDeviceFloppy, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import { BlockScopeSelector } from '~/components/Apps/BlockScopeSelector';
+import {
+  buildScopeJustifications,
+  preserveTargets,
+} from '~/components/Apps/blockScopeSelection';
 import { ALLOWED_CONTENT_RATINGS } from '~/server/services/block-manifest-validator.service';
-import { MODEL_SLOT_IDS } from '~/shared/constants/slot-registry';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -62,28 +65,19 @@ export function ManifestEditForm({
   const [description, setDescription] = useState<string>(manifest.description ?? '');
   const [contentRating, setContentRating] = useState<string>(manifest.contentRating ?? 'g');
   const [version, setVersion] = useState<string>(bumpPatch(currentVersion));
-  const [scopesText, setScopesText] = useState<string>((manifest.scopes ?? []).join('\n'));
+  // Declared scopes, seeded from the stored manifest. Driven by the
+  // BlockScopeSelector checklist; a legacy/unknown scope in the stored set is
+  // preserved (shown selected + removable) rather than dropped.
+  const [scopes, setScopes] = useState<string[]>((manifest.scopes ?? []).filter(Boolean));
   // Per-scope justification the dev supplies for the moderator (scope-id →
   // rationale). Kept as a superset map keyed by scope; only justifications for
-  // currently-declared scopes are submitted (see handleSave). Editing a scope out
-  // of the textarea therefore hides its input but preserves any text if it's added
-  // back before saving.
+  // currently-SELECTED scopes are submitted (see handleSave). Deselecting a scope
+  // therefore hides its input and drops its justification from the payload, but
+  // preserves any typed text if the scope is re-selected before saving.
   const [justifications, setJustifications] = useState<Record<string, string>>(
     manifest.scopeJustifications && typeof manifest.scopeJustifications === 'object'
       ? { ...manifest.scopeJustifications }
       : {}
-  );
-  const [selectedSlots, setSelectedSlots] = useState<string[]>(
-    (manifest.targets ?? []).map((t) => t?.slotId).filter((s): s is string => !!s)
-  );
-
-  const scopes = useMemo(
-    () =>
-      scopesText
-        .split(/[\n,]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    [scopesText]
   );
 
   const versionValid = SEMVER_RE.test(version);
@@ -103,14 +97,10 @@ export function ManifestEditForm({
   });
 
   function handleSave() {
-    // Only submit justifications for currently-declared scopes, trimmed and
+    // Only submit justifications for currently-selected scopes, trimmed and
     // non-empty (the server rejects a justification for an undeclared scope, so
     // filtering here also avoids a needless validation error).
-    const scopeJustifications: Record<string, string> = {};
-    for (const scope of scopes) {
-      const j = (justifications[scope] ?? '').trim();
-      if (j.length > 0) scopeJustifications[scope] = j;
-    }
+    const scopeJustifications = buildScopeJustifications(scopes, justifications);
     // Decide whether to SEND the map. Send an explicit (possibly EMPTY) object
     // whenever there is something to write OR something to clear — i.e. the
     // stored manifest already had justifications. If we sent `undefined` for the
@@ -135,7 +125,12 @@ export function ManifestEditForm({
         contentRating,
         scopes,
         scopeJustifications: shouldSend ? scopeJustifications : undefined,
-        targets: selectedSlots.map((slotId) => ({ slotId })),
+        // Target slots are a DEFERRED feature — the editor no longer edits them.
+        // Pass the manifest's EXISTING targets through unchanged so an edit here
+        // never clobbers a slot app the manifest already declared.
+        targets: preserveTargets(manifest.targets) as
+          | Array<{ slotId: string }>
+          | undefined,
       },
     });
   }
@@ -193,15 +188,16 @@ export function ManifestEditForm({
         }
       />
 
-      <Textarea
-        label="Scopes"
-        description="One scope per line (or comma-separated). Must be a subset of your app's granted scopes — the server enforces this."
-        autosize
-        minRows={2}
-        maxRows={8}
-        value={scopesText}
-        onChange={(e) => setScopesText(e.currentTarget.value)}
-      />
+      <Stack gap={4}>
+        <Text size="sm" fw={500}>
+          Scopes
+        </Text>
+        <Text size="xs" c="dimmed">
+          The permissions your app requests. Must be a subset of your app&apos;s granted
+          scopes — the server enforces this. Sensitive scopes are flagged.
+        </Text>
+        <BlockScopeSelector value={scopes} onChange={setScopes} />
+      </Stack>
 
       {scopes.length > 0 && (
         <Stack gap={4}>
@@ -233,22 +229,6 @@ export function ManifestEditForm({
           </Stack>
         </Stack>
       )}
-
-      <Stack gap={4}>
-        <Text size="sm" fw={500}>
-          Target slots
-        </Text>
-        <Text size="xs" c="dimmed">
-          Where the block mounts on a model page.
-        </Text>
-        <Checkbox.Group value={selectedSlots} onChange={setSelectedSlots}>
-          <Stack gap={4} mt={4}>
-            {MODEL_SLOT_IDS.map((slotId) => (
-              <Checkbox key={slotId} value={slotId} label={slotId} />
-            ))}
-          </Stack>
-        </Checkbox.Group>
-      </Stack>
 
       {mutation.error && (
         <Alert icon={<IconAlertTriangle size={16} />} color="red" variant="light">

@@ -111,6 +111,56 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
     });
   });
 
+  test('renders the scope selector (checkboxes) instead of a raw scopes textarea', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    // The declared scopes render as CHECKBOXES (selector), seeded checked.
+    await expect
+      .element(page.getByRole('checkbox', { name: 'models:read:self' }))
+      .toBeChecked();
+    await expect
+      .element(page.getByRole('checkbox', { name: 'user:read:self' }))
+      .toBeChecked();
+  });
+
+  test('the deferred "Target slots" editor is GONE from the form', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    // The "Target slots" heading and its slot checkboxes were removed (slots deferred).
+    expect(page.getByText('Target slots').elements()).toHaveLength(0);
+    expect(page.getByRole('checkbox', { name: 'model.sidebar_top' }).elements()).toHaveLength(0);
+  });
+
+  test('preserves the manifest existing targets on submit (does not clobber deferred slot apps)', async () => {
+    const withTargets = { ...BASE_MANIFEST, targets: [{ slotId: 'model.sidebar_top' }] };
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={withTargets}
+      />
+    );
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+    const arg = mocks.mutate.mock.calls[0][0] as {
+      patch: { targets?: Array<{ slotId: string }> };
+    };
+    // The loaded targets are passed through unchanged (not wiped, not re-derived).
+    expect(arg.patch.targets).toEqual([{ slotId: 'model.sidebar_top' }]);
+  });
+
   test('clearing all justification inputs submits an explicit empty object (not undefined) so stored rationale is overwritten', async () => {
     renderWithProviders(
       <ManifestEditForm
