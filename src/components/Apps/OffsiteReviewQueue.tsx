@@ -375,6 +375,9 @@ export function OffsiteReviewModal({
 
   const checklist = getOffsiteReviewChecklist({
     name: request.appListing?.name,
+    // On-site listing-media revisions have no external URL by design — thread the
+    // row's kind so the checklist omits the `url-https` item (no false warn).
+    kind: request.kind,
     externalUrl: request.appListing?.externalUrl,
     hasIcon,
     hasCover,
