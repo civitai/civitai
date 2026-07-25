@@ -21,7 +21,15 @@ import type { ListingEditContext } from './offsiteEditConfig';
  */
 
 const mocks = vi.hoisted(() => ({
-  meta: { data: undefined as unknown, isFetching: false, isSuccess: false },
+  meta: { data: undefined, isFetching: false, isError: false, isSuccess: false } as {
+    data?: unknown;
+    isFetching?: boolean;
+    isError?: boolean;
+    isSuccess?: boolean;
+  },
+  // The query's `refetch` — a same-url Autofill re-click calls it (staleTime:Infinity +
+  // retry:false makes `setMetaUrl(sameUrl)` a no-op), so we assert it fired on re-click.
+  refetch: vi.fn(),
   updateListing: vi.fn(),
   updateRevision: vi.fn(),
   submitRevision: vi.fn(),
@@ -49,7 +57,7 @@ vi.mock('~/utils/trpc', () => {
         },
       }),
       appListings: {
-        fetchListingMetaFromUrl: { useQuery: () => mocks.meta },
+        fetchListingMetaFromUrl: { useQuery: () => ({ ...mocks.meta, refetch: mocks.refetch }) },
         updateListing: { useMutation: recording(mocks.updateListing) },
         updateRevisionDraft: { useMutation: recording(mocks.updateRevision) },
         submitListingRevision: { useMutation: recording(mocks.submitRevision) },
@@ -121,7 +129,8 @@ function makeApprovedCtx(overrides: Partial<ListingEditContext> = {}): ListingEd
 }
 
 beforeEach(() => {
-  mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
+  mocks.meta = { data: undefined, isFetching: false, isError: false, isSuccess: false };
+  mocks.refetch.mockClear();
   mocks.updateListing.mockClear();
   mocks.updateRevision.mockClear();
   mocks.submitRevision.mockClear();
@@ -394,5 +403,80 @@ describe('ExternalSubmitForm — edit mode "Autofill from website" button', () =
     // The prefilled name is untouched.
     await page.getByRole('button', { name: 'Next' }).click();
     await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
+  });
+
+  test('does NOT claim "applied" when a suggestion targets an already-FILLED slot', async () => {
+    // A fully-populated listing (icon+cover attached in the prefill) + a meta pull that
+    // carries icon/cover URLs but nothing fillable. ListingAssetStep renders NO "Use this"
+    // for a filled slot, so the note must be the honest "Nothing to autofill", not "applied".
+    mocks.meta = {
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-empty')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-autofill-applied').elements()).toHaveLength(0);
+  });
+
+  test('re-clicking with the SAME url re-surfaces the icon/cover suggestions (tick + refetch, from cache)', async () => {
+    // The PR's headline mechanism: the OG pull fires only on a URL CHANGE, so re-pulling
+    // the SAME url must go through the button's `autofillTick` + `appliedMetaRef` reset (and,
+    // once `metaUrl` is already set, a `metaQuery.refetch()`). Assets start EMPTY.
+    mocks.meta = {
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm edit={makeEmptyAssetsCtx()} />);
+
+    // FIRST click: `metaUrl` was null, so this SETS it (not a refetch) and applies.
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-applied')).toBeInTheDocument();
+    expect(mocks.refetch).not.toHaveBeenCalled();
+
+    // SECOND click, url UNCHANGED: `setMetaUrl(sameUrl)` is a no-op, so the retry MUST go
+    // through `refetch()` + the tick-driven re-apply — proving the same-url path works.
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await vi.waitFor(() => expect(mocks.refetch).toHaveBeenCalledTimes(1));
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-applied')).toBeInTheDocument();
+
+    // The re-applied suggestions still surface "Use this" on the empty icon + cover slots.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-accept-cover')).toBeInTheDocument();
+  });
+
+  test('an ERRORED OG fetch shows the error note, sets NO applied/empty note, and a re-click refetches', async () => {
+    // The 🟡 fix: on a failed fetch the effect must SETTLE (via isError), reset the active
+    // flag, and surface the error via the settled note (tied to this url) — never a spurious
+    // "applied"/"empty". And because staleTime:Infinity + retry:false pins the cached error,
+    // a re-click must `refetch()` so a transient failure is retryable without editing the URL.
+    mocks.meta = { data: undefined, isFetching: false, isError: true };
+    renderWithProviders(<ExternalSubmitForm edit={makeEmptyAssetsCtx()} />);
+
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-error')).toBeInTheDocument();
+    // No spurious success/empty note co-renders with the error.
+    expect(page.getByTestId('apps-offsite-edit-autofill-applied').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-edit-autofill-empty').elements()).toHaveLength(0);
+
+    // Re-click the SAME (errored) url → a refetch fires so the user can retry.
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await vi.waitFor(() => expect(mocks.refetch).toHaveBeenCalledTimes(1));
   });
 });

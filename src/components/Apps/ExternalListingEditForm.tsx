@@ -117,15 +117,39 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   // `metaQuery.data` reference otherwise skip it).
   const [autofillActive, setAutofillActive] = useState(false);
   const [autofillTick, setAutofillTick] = useState(0);
-  const [autofillNote, setAutofillNote] = useState<'applied' | 'empty' | null>(null);
+  const [autofillNote, setAutofillNote] = useState<'applied' | 'empty' | 'error' | null>(null);
   const metaQuery = trpc.appListings.fetchListingMetaFromUrl.useQuery(
     { url: metaUrl ?? '' },
     { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
   );
   useEffect(() => {
-    if (!metaQuery.data || appliedMetaRef.current === metaUrl) return;
-    appliedMetaRef.current = metaUrl;
+    // Apply at most once per settled url. The `appliedMetaRef` short-circuit also covers
+    // the initial `metaUrl === null` state (null === null).
+    if (!metaUrl || appliedMetaRef.current === metaUrl) return;
+    // Settle on SUCCESS or ERROR for the CURRENT metaUrl (mirrors the create form). With a
+    // per-url cache key + retry:false, `metaQuery.data`/`isError` belong to `metaUrl`; wait
+    // out an in-flight (re)fetch so a stale cached error can't be applied before a button
+    // `refetch()` resolves — that guard is also what keeps the same-url refetch from looping.
+    if (metaQuery.isFetching) return;
     const data = metaQuery.data;
+    const settled = !!data || metaQuery.isError;
+    if (!settled) return;
+    appliedMetaRef.current = metaUrl;
+
+    if (!data) {
+      // ERROR-settled: don't surface stale suggestions, and don't co-render an
+      // "applied"/"empty" note. The inline "Couldn't read that site's details." message
+      // renders from the `'error'` note (tied to THIS url) below. Resetting the active
+      // flag stops a later non-button URL advance from rendering a spurious note, and the
+      // same url stays retryable via `metaQuery.refetch()` in the button handler.
+      setSuggestions({});
+      if (autofillActive) {
+        setAutofillNote('error');
+        setAutofillActive(false);
+      }
+      return;
+    }
+
     setValues((v) => ({
       ...v,
       name: v.name.trim().length === 0 && data.name ? data.name : v.name,
@@ -138,24 +162,38 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           : v.description,
     }));
     setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
-    // When THIS apply was triggered by the button, report whether the pull surfaced
-    // anything actionable: a cover/icon suggestion, or copy for a still-empty field.
-    // Emptiness is read from the ref snapshot — NOT the async `setValues` updater above,
-    // whose side effects haven't committed yet.
+    // When THIS apply was button-triggered, report whether the pull surfaced anything
+    // ACTIONABLE: copy for a still-empty text field, or an icon/cover suggestion for a
+    // slot that is currently EMPTY (imageId == null in the edit prefill — the only case
+    // where ListingAssetStep renders a "Use this"). A suggestion URL for an already-filled
+    // slot is NOT actionable, so it must not claim "applied". Emptiness is read from the
+    // ref snapshot — NOT the async `setValues` updater above, whose side effects haven't
+    // committed yet. (Slot-filled state is the edit prefill; if the author added/removed an
+    // asset THIS session ListingAssetStep owns that state, so the note is best-effort.)
     if (autofillActive) {
       const v = valuesRef.current;
       const filledAny =
         (v.name.trim().length === 0 && !!data.name) ||
         (v.tagline.trim().length === 0 && !!data.tagline) ||
         (v.description.trim().length === 0 && !!data.description);
-      const hasSuggestions = !!(data.coverImageUrl || data.iconImageUrl);
-      setAutofillNote(filledAny || hasSuggestions ? 'applied' : 'empty');
+      const hasActionableSuggestion =
+        (!!data.iconImageUrl && edit.assets.icon.imageId == null) ||
+        (!!data.coverImageUrl && edit.assets.cover.imageId == null);
+      setAutofillNote(filledAny || hasActionableSuggestion ? 'applied' : 'empty');
       setAutofillActive(false);
     }
     // `autofillTick` is a dep so a same-url re-click (which leaves `metaUrl` + the cached
     // `metaQuery.data` reference unchanged) still re-runs this effect and re-applies from
     // cache — the click also resets `appliedMetaRef`, so the guard above passes.
-  }, [metaQuery.data, metaUrl, autofillTick, autofillActive]);
+  }, [
+    metaQuery.data,
+    metaQuery.isError,
+    metaQuery.isFetching,
+    metaUrl,
+    autofillTick,
+    autofillActive,
+    edit,
+  ]);
 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();
@@ -233,8 +271,18 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     setAutofillNote(null);
     setAutofillActive(true);
     appliedMetaRef.current = null; // force the idempotent apply effect to re-run
-    setMetaUrl(result.url); // (re)trigger the OG pull — a no-op value if unchanged…
-    setAutofillTick((t) => t + 1); // …so bump a tick to make the effect re-apply from cache
+    if (result.url === metaUrl) {
+      // SAME url: `setMetaUrl` is a no-op and (staleTime:Infinity + retry:false) the cached
+      // success/error won't re-fetch on its own — so a previously-ERRORED url could never be
+      // retried via the button. `refetch()` re-attempts the fetch; on a cached success it
+      // re-applies from data and the tick below re-runs the effect. No loop: `refetch()`
+      // synchronously flips `isFetching` true, so the tick-driven effect run bails on the
+      // isFetching guard and only applies once the (re)fetch settles.
+      void metaQuery.refetch();
+    } else {
+      setMetaUrl(result.url); // NEW url → the query fires for it
+    }
+    setAutofillTick((t) => t + 1); // bump a tick so the effect re-applies even when metaUrl is unchanged
   }
 
   async function finishSave() {
@@ -422,7 +470,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                   slots are filled.
                 </Text>
               </Group>
-              {autofillActive && metaQuery.isError && !metaQuery.isFetching && (
+              {autofillNote === 'error' && (
                 <Text size="xs" c="red" data-testid="apps-offsite-edit-autofill-error">
                   Couldn’t read that site’s details.
                 </Text>
