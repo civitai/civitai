@@ -54,6 +54,24 @@ describe('sendChallengeResultsNotification', () => {
     expect(mocks.createNotification).not.toHaveBeenCalled();
   });
 
+  it('excludes a participation-prize earner passed in excludeUserIds, even though they are not a winner', async () => {
+    // Pool: tracker 1, entrants 2 and 9. excludeUserIds carries winner 5 (not in the pool at all)
+    // plus 9 — standing in for a participation-prize earner, who is neither a winner nor a
+    // tracker-only user, but must still be excluded since callers merge both into excludeUserIds.
+    mocks.mockDb.challengeEngagement.findMany.mockResolvedValueOnce([{ userId: 1 }]);
+    mocks.mockDb.$queryRaw.mockResolvedValueOnce([{ userId: 2 }, { userId: 9 }]);
+
+    await sendChallengeResultsNotification({
+      challengeId: 7,
+      challengeTitle: 'Neon Dreams',
+      excludeUserIds: [5, 9],
+    });
+
+    expect(mocks.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ userIds: [1, 2] })
+    );
+  });
+
   it('swallows a failure so completion is never blocked by a notification', async () => {
     mocks.mockDb.challengeEngagement.findMany.mockRejectedValueOnce(new Error('db down'));
 

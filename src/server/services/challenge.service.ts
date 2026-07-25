@@ -2606,6 +2606,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
 
     // Send entry participation prizes to all eligible users
+    // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
+    // even though it's only populated inside the conditional (participation prizes are optional).
+    const participationUserIds: number[] = [];
     if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
       const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
         SELECT DISTINCT i."userId"
@@ -2621,6 +2624,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         const winnerUserIds = winningEntries.map((e) => e.userId);
         // Exclude winners from entry prizes (they get winner prizes instead)
         const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
+        participationUserIds.push(...entryPrizeUsers.map((e) => e.userId));
 
         if (entryPrizeUsers.length > 0) {
           // Note: externalTransactionId uses challengeId-userId pattern for idempotency
@@ -2713,7 +2717,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     await sendChallengeResultsNotification({
       challengeId,
       challengeTitle: challenge.title,
-      excludeUserIds: winningEntries.map((e) => e.userId),
+      excludeUserIds: [
+        ...new Set([...winningEntries.map((e) => e.userId), ...participationUserIds]),
+      ],
     });
     log('Winners notified');
 

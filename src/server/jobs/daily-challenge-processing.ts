@@ -1537,7 +1537,9 @@ export async function pickWinnersForChallenge(
       await sendChallengeResultsNotification({
         challengeId: currentChallenge.challengeId,
         challengeTitle: currentChallenge.title,
-        excludeUserIds: winningEntries.map((entry) => entry.userId),
+        excludeUserIds: [
+          ...new Set([...winningEntries.map((entry) => entry.userId), ...paidParticipants]),
+        ],
       });
     }
     log('Winners notified');

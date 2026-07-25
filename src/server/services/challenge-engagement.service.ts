@@ -128,7 +128,7 @@ export async function sendChallengeResultsNotification({
     });
   } catch (error) {
     const err = error as Error;
-    logToAxiom({
+    await logToAxiom({
       type: 'warning',
       name: 'challenge-results-notification',
       message: err.message,
