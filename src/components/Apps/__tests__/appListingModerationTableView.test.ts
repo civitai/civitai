@@ -2,11 +2,19 @@ import { describe, expect, it } from 'vitest';
 
 import {
   actionRequiresReason,
+  effectiveModerationStatus,
   isDestructiveListingModAction,
   listingKindChip,
   listingModActionLabel,
   listingModActions,
 } from '~/components/Apps/appListingModerationTableView';
+
+const pendingReq = {
+  id: 'alpr_1',
+  submittedAt: new Date('2026-07-24T00:00:00Z'),
+  changelog: null,
+  submittedBy: null,
+};
 
 /**
  * W13 post-approval mgmt (P2) — the mod management-table action view model. The
@@ -98,5 +106,33 @@ describe('action metadata', () => {
   it('kind chip distinguishes external vs on-site', () => {
     expect(listingKindChip('offsite')).toEqual({ label: 'external', color: 'grape' });
     expect(listingKindChip('onsite')).toEqual({ label: 'on-site', color: 'blue' });
+  });
+});
+
+describe('effectiveModerationStatus', () => {
+  it('draft WITH a live pending request → pending (awaiting first review)', () => {
+    expect(effectiveModerationStatus({ status: 'draft', pendingRequest: pendingReq })).toBe(
+      'pending'
+    );
+  });
+
+  it('draft WITHOUT a pending request → draft (true orphan)', () => {
+    expect(effectiveModerationStatus({ status: 'draft', pendingRequest: null })).toBe('draft');
+  });
+
+  it('approved → approved (unchanged)', () => {
+    expect(effectiveModerationStatus({ status: 'approved', pendingRequest: null })).toBe('approved');
+  });
+
+  it('pending → pending (unchanged)', () => {
+    expect(effectiveModerationStatus({ status: 'pending', pendingRequest: pendingReq })).toBe(
+      'pending'
+    );
+  });
+
+  it('removed → removed (unchanged, even if a lingering pending request exists)', () => {
+    expect(effectiveModerationStatus({ status: 'removed', pendingRequest: pendingReq })).toBe(
+      'removed'
+    );
   });
 });

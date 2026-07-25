@@ -199,15 +199,14 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 
   if (!isProd) return;
 
-  const sentUserPendingIds = await sendImagesForScanBulk(pendingUserUploads);
-  const sentBackfillIds = await sendImagesForScanBulk(pendingBackfill, { lowPriority: true });
-  const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });
-  const sentErrorIds = await sendImagesForScanBulk(errorImages, { lowPriority: true });
-
-  // Only remove stale items from queue (status changed to non-scannable or retry limit exceeded)
-  // Processed items stay in queue - if scan succeeds, they become stale next run
-  // This handles both immediate failures (ingestImage returns false) AND silent failures
-  // (scan sent but never completes) - items are retried after the delay passes
+  // Prune stale rows (status changed to non-scannable or retry limit exceeded)
+  // BEFORE the send loop, not after: the sends fan out hundreds–thousands of
+  // orchestrator calls and can be slow or error out, and gating the prune behind
+  // them lets stale rows accumulate faster than they clear — the queue bloats,
+  // runs get heavier, and the prune keeps not happening. The stale set is derived
+  // purely from the rows already loaded above, so it's safe to delete first.
+  // Processed items intentionally stay in the queue and become stale next run only
+  // if their scan never completes, which preserves retry-on-silent-failure.
   const idsToRemove = [...staleIds];
   if (idsToRemove.length > 0) {
     await dbWrite.$executeRaw`
@@ -234,6 +233,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
         AND ingestion = 'Rescan'::"ImageIngestionStatus"
     `;
   }
+
+  const sentUserPendingIds = await sendImagesForScanBulk(pendingUserUploads);
+  const sentBackfillIds = await sendImagesForScanBulk(pendingBackfill, { lowPriority: true });
+  const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });
+  const sentErrorIds = await sendImagesForScanBulk(errorImages, { lowPriority: true });
 
   const totalSent =
     sentUserPendingIds.length + sentBackfillIds.length + sentRescanIds.length + sentErrorIds.length;
@@ -345,96 +349,103 @@ async function sendImagesForScanBulk(
 
 const BLOCKED_IMAGE_RETENTION_DAYS = 7;
 
-export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
-  // Pull from JobQueue instead of scanning Image table
-  const jobQueue = await dbRead.jobQueue.findMany({
-    where: { type: JobQueueType.BlockedImageDelete, entityType: EntityType.Image },
-    take: 10000,
-    orderBy: { createdAt: 'asc' },
-  });
+export const removeBlockedImages = createJob(
+  'remove-blocked-images',
+  '0 * * * *',
+  async () => {
+    // Pull from JobQueue instead of scanning Image table
+    const jobQueue = await dbRead.jobQueue.findMany({
+      where: { type: JobQueueType.BlockedImageDelete, entityType: EntityType.Image },
+      take: 15000,
+      orderBy: { createdAt: 'asc' },
+    });
 
-  if (!jobQueue.length) {
-    console.log('No blocked images in queue');
-    return { processed: 0 };
-  }
+    if (!jobQueue.length) {
+      console.log('No blocked images in queue');
+      return { processed: 0 };
+    }
 
-  const imageIds = jobQueue.map((j) => j.entityId);
-  console.log(`Found ${imageIds.length} blocked images in queue`);
+    const imageIds = jobQueue.map((j) => j.entityId);
+    console.log(`Found ${imageIds.length} blocked images in queue`);
 
-  // Fetch image data to check retention period and blockedFor status
-  const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
-  const images = await dbRead.$queryRaw<
-    { id: number; blockedFor: string | null; createdAt: Date; updatedAt: Date }[]
-  >`
+    // Fetch image data to check retention period and blockedFor status
+    const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
+    const images = await dbRead.$queryRaw<
+      { id: number; blockedFor: string | null; createdAt: Date; updatedAt: Date }[]
+    >`
     SELECT id, "blockedFor", "createdAt", "updatedAt"
     FROM "Image"
     WHERE id = ANY(${imageIds})
       AND ingestion = 'Blocked'::"ImageIngestionStatus"
   `;
 
-  // Filter images ready for deletion based on retention period
-  const imagesToDelete = images.filter((img) => {
-    // Skip AiNotVerified - these are handled differently
-    if (img.blockedFor === 'AiNotVerified') return false;
+    // Filter images ready for deletion based on retention period
+    const imagesToDelete = images.filter((img) => {
+      // Skip AiNotVerified - these are handled differently
+      if (img.blockedFor === 'AiNotVerified') return false;
 
-    // Moderated images use updatedAt for retention
-    if (img.blockedFor === 'moderated') {
-      return img.updatedAt <= cutoff;
+      // Moderated images use updatedAt for retention
+      if (img.blockedFor === 'moderated') {
+        return img.updatedAt <= cutoff;
+      }
+
+      // All other blocked images use createdAt for retention
+      return img.createdAt <= cutoff;
+    });
+
+    // Find stale queue entries (image deleted, status changed, or AiNotVerified)
+    const imageIdSet = new Set(images.map((img) => img.id));
+    const deleteReadyIds = new Set(imagesToDelete.map((img) => img.id));
+    const staleIds = imageIds.filter((id) => {
+      // Image was deleted or status changed from Blocked
+      if (!imageIdSet.has(id)) return true;
+      // AiNotVerified images should be removed from queue
+      const img = images.find((i) => i.id === id);
+      if (img?.blockedFor === 'AiNotVerified') return true;
+      return false;
+    });
+
+    // Find images still waiting for retention period
+    const waitingIds = imageIds.filter((id) => {
+      if (!imageIdSet.has(id)) return false;
+      if (deleteReadyIds.has(id)) return false;
+      if (staleIds.includes(id)) return false;
+      return true;
+    });
+
+    console.log({
+      imagesToDelete: imagesToDelete.length,
+      waitingForRetention: waitingIds.length,
+      staleIds: staleIds.length,
+    });
+
+    if (!isProd) return { imagesToDelete: imagesToDelete.length };
+
+    if (!env.DATABASE_IS_PROD) return { imagesToDelete: 0 };
+
+    // Delete images that are past retention period
+    if (imagesToDelete.length > 0) {
+      await deleteImages(imagesToDelete.map((x) => x.id));
     }
 
-    // All other blocked images use createdAt for retention
-    return img.createdAt <= cutoff;
-  });
-
-  // Find stale queue entries (image deleted, status changed, or AiNotVerified)
-  const imageIdSet = new Set(images.map((img) => img.id));
-  const deleteReadyIds = new Set(imagesToDelete.map((img) => img.id));
-  const staleIds = imageIds.filter((id) => {
-    // Image was deleted or status changed from Blocked
-    if (!imageIdSet.has(id)) return true;
-    // AiNotVerified images should be removed from queue
-    const img = images.find((i) => i.id === id);
-    if (img?.blockedFor === 'AiNotVerified') return true;
-    return false;
-  });
-
-  // Find images still waiting for retention period
-  const waitingIds = imageIds.filter((id) => {
-    if (!imageIdSet.has(id)) return false;
-    if (deleteReadyIds.has(id)) return false;
-    if (staleIds.includes(id)) return false;
-    return true;
-  });
-
-  console.log({
-    imagesToDelete: imagesToDelete.length,
-    waitingForRetention: waitingIds.length,
-    staleIds: staleIds.length,
-  });
-
-  if (!isProd) return { imagesToDelete: imagesToDelete.length };
-
-  if (!env.DATABASE_IS_PROD) return { imagesToDelete: 0 };
-
-  // Delete images that are past retention period
-  if (imagesToDelete.length > 0) {
-    await deleteImages(imagesToDelete.map((x) => x.id));
-  }
-
-  // Remove processed and stale entries from queue
-  const idsToRemove = [...imagesToDelete.map((x) => x.id), ...staleIds];
-  if (idsToRemove.length > 0) {
-    await dbWrite.$executeRaw`
+    // Remove processed and stale entries from queue
+    const idsToRemove = [...imagesToDelete.map((x) => x.id), ...staleIds];
+    if (idsToRemove.length > 0) {
+      await dbWrite.$executeRaw`
       DELETE FROM "JobQueue"
       WHERE type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
         AND "entityType" = ${EntityType.Image}::"EntityType"
         AND "entityId" = ANY(${idsToRemove})
     `;
-  }
+    }
 
-  return {
-    deleted: imagesToDelete.length,
-    staleRemoved: staleIds.length,
-    waitingForRetention: waitingIds.length,
-  };
-});
+    return {
+      deleted: imagesToDelete.length,
+      staleRemoved: staleIds.length,
+      waitingForRetention: waitingIds.length,
+    };
+  },
+  // Deleting 15k images per run can exceed the 5-min default lock; a second pod
+  // grabbing the lock mid-run would double-delete and hit S3/DB twice.
+  { lockExpiration: 20 * 60 }
+);

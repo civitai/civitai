@@ -6,6 +6,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 import { isMatureContentRating } from '~/server/utils/server-domain';
+import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import type {
   GetAppListingDetailInput,
   ListAllListingsForModerationInput,
@@ -398,6 +399,26 @@ export function listingMatureFilter(redCapable: boolean): Prisma.Sql {
   return Prisma.sql`COALESCE(LOWER(al.content_rating), '') NOT IN ('r', 'x')`;
 }
 
+/**
+ * The STORE-SCOPE kind predicate — the load-bearing security boundary for the
+ * public external App-store GA. Mirrors `listingMatureFilter`'s pure-`Prisma.Sql`
+ * shape (uses the `al` alias, safe to AND into the keyset WHERE):
+ *   - `full`            → `TRUE` (no kind restriction — byte-identical to today).
+ *   - `public-external` → `al.kind = 'offsite'` — the offsite subset ONLY, for BOTH
+ *     sub-kinds (`connect` AND `external-link`). Onsite App Blocks are excluded.
+ *     🔴 The kind gate is `kind='offsite'`, NOT `connect_client_id IS NULL` — an
+ *     offsite listing is public whether or not it links an OAuth connect client.
+ *   - `none`            → `FALSE` — fail-closed. (The router short-circuits `none`
+ *     before reaching SQL, so this is defense-in-depth, never the live path.)
+ *
+ * Exported so the drift-guard unit test can assert the exact SQL each scope emits.
+ */
+export function listingPublicVisibilityFilter(scope: StoreVisibilityScope): Prisma.Sql {
+  if (scope === 'full') return Prisma.sql`TRUE`;
+  if (scope === 'public-external') return Prisma.sql`al.kind = 'offsite'`;
+  return Prisma.sql`FALSE`;
+}
+
 // ---------------------------------------------------------------------------
 // Global recommend mean (the Bayesian prior mean `m`, 1h-cached scalar).
 // ---------------------------------------------------------------------------
@@ -439,10 +460,14 @@ export async function getGlobalRecommendMean(): Promise<number> {
  */
 export async function listAvailableListings(
   input: ListAppListingsInput,
-  opts: { redCapable?: boolean } = {}
+  opts: { redCapable?: boolean; scope?: StoreVisibilityScope } = {}
 ): Promise<{ items: ListingCard[]; nextCursor?: string }> {
   const { kind, category, sort, cursor, limit } = input;
   const redCapable = opts.redCapable ?? false;
+  // Default `full` for callers that don't pass a scope (the router ALWAYS passes
+  // an explicit scope and NEVER calls this with `none` — it short-circuits an
+  // empty page at the proc). `full` → `TRUE` predicate → byte-identical WHERE.
+  const scope = opts.scope ?? 'full';
 
   const { cursorSortKey, cursorId, cursorMean } = decodeListingCursor(cursor);
 
@@ -479,6 +504,9 @@ export async function listAvailableListings(
       AND (${kindParam}::text IS NULL OR al.kind = ${kindParam}::text)
       AND (${categoryParam}::text IS NULL OR al.category = ${categoryParam}::text)
       AND ${listingMatureFilter(redCapable)}
+      -- STORE-SCOPE kind gate: full scope emits TRUE (unchanged); public-external
+      -- emits offsite-only (onsite excluded) -- the whole public/onsite boundary.
+      AND ${listingPublicVisibilityFilter(scope)}
       AND (
         ${cursorSortKey}::text IS NULL
         OR (${sortKeyExpr}, al.id) ${keysetCmp} (${cursorSortKey}::text, ${cursorId}::text)
@@ -499,14 +527,16 @@ export async function listAvailableListings(
 
   // Hydrate the public projection for the page, then re-apply the keyset order
   // (findMany does not preserve the `IN (...)` order).
-  const pageIds = trimmed.map((r) => r.id);
+  const pageIds = trimmed.map((r: { id: string; sort_key: string }) => r.id);
   const hydrated = await dbRead.appListing.findMany({
     where: { id: { in: pageIds } },
     select: listingHydrateSelect,
   });
-  const byId = new Map(hydrated.map((r) => [r.id, r]));
+  const byId = new Map(
+    hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r])
+  );
   const items = pageIds
-    .map((id) => byId.get(id))
+    .map((id: string) => byId.get(id))
     .filter((r): r is HydratedListing => r != null)
     .map(projectListingCard);
 
@@ -521,9 +551,11 @@ export async function listAvailableListings(
  */
 export async function getListingDetail(
   input: GetAppListingDetailInput,
-  opts: { redCapable?: boolean } = {}
+  opts: { redCapable?: boolean; scope?: StoreVisibilityScope } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
+  // Default `full` for callers that don't pass a scope (see listAvailableListings).
+  const scope = opts.scope ?? 'full';
   // Assert exactly-one selector in the SERVICE (the zod `.refine` only guards the
   // tRPC boundary, but this fn is exported). Neither → `findFirst({ slug:
   // undefined })` would return an ARBITRARY approved row (enumeration footgun);
@@ -544,6 +576,12 @@ export async function getListingDetail(
   // can't reuse this for a non-public path: a non-approved row returns null
   // exactly like a missing one — never its data.
   if (!row || row.status !== 'approved') return null;
+  // STORE-SCOPE kind gate (the public/onsite security boundary): under
+  // `public-external` an ONSITE listing is indistinguishable from a missing one —
+  // return null so no crafted id/slug can reach an onsite listing's detail. Both
+  // offsite sub-kinds (connect + external-link) remain visible (gate on `kind`,
+  // never `connectClientId`). `full` imposes no kind restriction (unchanged).
+  if (scope === 'public-external' && row.kind !== 'offsite') return null;
   // DEPLOY-GATE (generic, all app-blocks): an ONSITE listing whose backing
   // AppBlock has NEVER successfully deployed is indistinguishable from a missing
   // one — its `<slug>.<APPS_DOMAIN>` origin would 404. `currentVersionDeployedAt`
@@ -664,6 +702,40 @@ export function projectModerationListing(row: HydratedModerationRow): Moderation
 }
 
 /**
+ * The Prisma `where` fragment for the mod table's status filter, made
+ * EFFECTIVE-STATUS-AWARE so display and filter agree on "awaiting first review".
+ *
+ * An external listing awaiting its FIRST review is stored as `status='draft'`
+ * with a live pending publish request (see {@link effectiveModerationStatus}).
+ *
+ *   - undefined (all) → `{}` (no status constraint)
+ *   - 'pending'       → real-pending OR a draft WITH a live pending request
+ *   - 'draft'         → only TRUE orphan drafts (a draft with NO pending request,
+ *                        so a draft-with-pending isn't double-listed under Draft)
+ *   - anything else   → an exact `{ status }` match
+ *
+ * Pure, total. Returned as its own fragment so the caller composes it under `AND`
+ * (this clause may itself be an `OR`, which would collide with the `search` `OR`).
+ */
+export function moderationStatusWhere(
+  status: string | undefined
+): Prisma.AppListingWhereInput {
+  if (!status) return {};
+  if (status === 'pending') {
+    return {
+      OR: [
+        { status: 'pending' },
+        { status: 'draft', publishRequests: { some: { status: 'pending' } } },
+      ],
+    };
+  }
+  if (status === 'draft') {
+    return { status: 'draft', publishRequests: { none: { status: 'pending' } } };
+  }
+  return { status };
+}
+
+/**
  * List listings across ALL lifecycle statuses for the mod management table.
  * Filters (all optional): `status`, `kind`, and a server-side `search` over
  * name/slug (case-insensitive). Keyset-paginated by the ULID `id` DESC (newest
@@ -676,19 +748,24 @@ export async function listAllListingsForModeration(
   const limit = Math.min(input.limit ?? 25, 50);
   const search = input.search?.trim();
 
+  // Both the status filter and the search may each be an `OR` clause — composing
+  // them via `AND` (dropping the empty ones) keeps both `OR`s alive instead of one
+  // overwriting the other's `OR` key on the object.
+  const statusClause = moderationStatusWhere(input.status);
+  const searchClause: Prisma.AppListingWhereInput = search
+    ? {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { slug: { contains: search, mode: 'insensitive' } },
+        ],
+      }
+    : {};
+
   const where: Prisma.AppListingWhereInput = {
     // Never surface a SHADOW revision draft as its own row (mirrors the read path).
     revisionOfId: null,
-    ...(input.status ? { status: input.status } : {}),
     ...(input.kind ? { kind: input.kind } : {}),
-    ...(search
-      ? {
-          OR: [
-            { name: { contains: search, mode: 'insensitive' } },
-            { slug: { contains: search, mode: 'insensitive' } },
-          ],
-        }
-      : {}),
+    AND: [statusClause, searchClause].filter((c) => Object.keys(c).length > 0),
   };
 
   const rows = await dbRead.appListing.findMany({

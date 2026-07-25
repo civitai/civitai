@@ -4,6 +4,8 @@
 import client from 'prom-client';
 import {
   PROM_PREFIX,
+  instrumentationRegistry,
+  registerInstrumentationMetric,
   redisCommandsInflight,
   redisCommandDuration,
   sysredisSentinelTopologyChangesCounter,
@@ -44,8 +46,6 @@ declare global {
   var pgGaugeInitialized: boolean;
   // eslint-disable-next-line no-var
   var heavyBulkheadGaugeInitialized: boolean;
-  // eslint-disable-next-line no-var
-  var imageIngestionGaugeInitialized: boolean;
 }
 
 // Image-ingestion working-state backlog + oldest-age gauges. These are DB-derived,
@@ -126,30 +126,37 @@ function maybeRefreshIngestionBacklog() {
     void refreshIngestionBacklog();
 }
 
-if (!global.imageIngestionGaugeInitialized) {
-  new client.Gauge({
-    name: PROM_PREFIX + 'image_ingestion_backlog',
-    help: 'Images in a non-terminal working ingestion state (Pending/Error/Rescan/PendingManualAssignment)',
-    labelNames: ['status'],
-    collect() {
-      maybeRefreshIngestionBacklog();
-      this.reset();
-      for (const row of ingestionBacklogCache) this.set({ status: row.status }, row.backlog);
-    },
-  });
-  new client.Gauge({
-    name: PROM_PREFIX + 'image_ingestion_oldest_age_seconds',
-    help: 'Age in seconds of the oldest image (now - min(createdAt)) per non-terminal ingestion state',
-    labelNames: ['status'],
-    collect() {
-      maybeRefreshIngestionBacklog();
-      this.reset();
-      for (const row of ingestionBacklogCache)
-        this.set({ status: row.status }, row.oldestAgeSeconds);
-    },
-  });
-  global.imageIngestionGaugeInitialized = true;
-}
+registerInstrumentationMetric(
+  PROM_PREFIX + 'image_ingestion_backlog',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'image_ingestion_backlog',
+      help: 'Images in a non-terminal working ingestion state (Pending/Error/Rescan/PendingManualAssignment)',
+      labelNames: ['status'],
+      registers: [instrumentationRegistry],
+      collect() {
+        maybeRefreshIngestionBacklog();
+        this.reset();
+        for (const row of ingestionBacklogCache) this.set({ status: row.status }, row.backlog);
+      },
+    })
+);
+registerInstrumentationMetric(
+  PROM_PREFIX + 'image_ingestion_oldest_age_seconds',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'image_ingestion_oldest_age_seconds',
+      help: 'Age in seconds of the oldest image (now - min(createdAt)) per non-terminal ingestion state',
+      labelNames: ['status'],
+      registers: [instrumentationRegistry],
+      collect() {
+        maybeRefreshIngestionBacklog();
+        this.reset();
+        for (const row of ingestionBacklogCache)
+          this.set({ status: row.status }, row.oldestAgeSeconds);
+      },
+    })
+);
 
 // Heavy-route bulkhead observability (per pod). collect()-based so it reflects the
 // live in-process state on each scrape with no per-request work. This is the signal

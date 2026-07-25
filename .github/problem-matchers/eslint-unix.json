@@ -1,0 +1,19 @@
+{
+  "__comment": "Turns `eslint --format unix` output into GitHub file annotations. Paths must be relative to GITHUB_WORKSPACE, so lint.yml pipes eslint through sed to strip the workspace prefix. Line shape: src/foo.ts:12:5: message [Error/rule-name]",
+  "problemMatcher": [
+    {
+      "owner": "eslint-unix",
+      "pattern": [
+        {
+          "regexp": "^(.+):(\\d+):(\\d+):\\s(.+)\\s\\[(Error|Warning)/(.+)\\]$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4,
+          "severity": 5,
+          "code": 6
+        }
+      ]
+    }
+  ]
+}

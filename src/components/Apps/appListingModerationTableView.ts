@@ -18,6 +18,30 @@
  *     request) → off-site only, and only when a pending request exists.
  */
 
+import type { ModerationListingRow } from '~/server/services/blocks/app-listing.service';
+
+/**
+ * The DISPLAY status for the mod management table.
+ *
+ * An EXTERNAL listing awaiting its FIRST review is stored (atomically, by the
+ * submit path) as an AppListing with `status='draft'` PLUS a live pending
+ * AppListingPublishRequest. Its raw `status` reads 'draft', yet the submitter's
+ * own my-submissions surface shows 'pending' (the request status) — so the two
+ * surfaces disagree, and a mod filtering the mgmt table by "Pending" does NOT
+ * see the item that most needs reviewing. Treat such a draft-with-a-live-pending
+ * -request as EFFECTIVELY pending for the mod table's DISPLAY (bucket + badge)
+ * and its status filter, so both agree on "awaiting first review".
+ *
+ * DISPLAY-ONLY: action availability still keys off the REAL `row.status` (the
+ * caller passes `hasPendingRequest` to {@link listingModActions} separately).
+ * Total — never throws.
+ */
+export function effectiveModerationStatus(
+  row: Pick<ModerationListingRow, 'status' | 'pendingRequest'>
+): string {
+  return row.status === 'draft' && row.pendingRequest != null ? 'pending' : row.status;
+}
+
 /** The lifecycle actions a mod row can offer (a subset renders per row). */
 export type ListingModAction =
   | 'review'

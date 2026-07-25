@@ -50,7 +50,11 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { comfyFileTypeLabels, filterFileTypeByExtension } from '~/utils/file-display-helpers';
+import {
+  comfyFileTypeLabels,
+  filterFileTypeByExtension,
+  UNQUANTIZED_QUANT_TYPE,
+} from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -460,7 +464,7 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
                 <li>Users&apos; preferences will auto-select the best match for their setup</li>
                 <li>Link to existing models when the component already exists on Civitai</li>
                 <li>
-                  Only create a new <strong>version</strong>{' '}when you&apos;ve actually
+                  Only create a new <strong>version</strong> when you&apos;ve actually
                   trained/updated the model
                 </li>
               </ul>
@@ -968,7 +972,7 @@ function FileEditForm({
   }, [versionFile.id]);
 
   const handleSave = () => {
-    const valid = validationCheck();
+    const valid = validationCheck(versionFile.uuid);
     if (valid && versionFile.id) {
       mutate({
         id: versionFile.id,
@@ -1061,7 +1065,7 @@ function FileEditForm({
             </div>
           )}
 
-          {isGguf ? (
+          {isGguf && (
             <div>
               <SelectLabel>Quant</SelectLabel>
               <Select
@@ -1076,11 +1080,15 @@ function FileEditForm({
                 onChange={(value) => {
                   updateFile(versionFile.uuid, {
                     quantType: value as ModelFileQuantType | null,
+                    // Precision is only editable while unquantized; don't strand a hidden value.
+                    ...(value !== UNQUANTIZED_QUANT_TYPE && { fp: null }),
                   });
                 }}
               />
             </div>
-          ) : (
+          )}
+
+          {(!isGguf || versionFile.quantType === UNQUANTIZED_QUANT_TYPE) && (
             <div>
               <SelectLabel>Precision</SelectLabel>
               <Select
