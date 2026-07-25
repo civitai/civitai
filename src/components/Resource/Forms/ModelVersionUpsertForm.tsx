@@ -45,6 +45,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Flags } from '~/shared/utils/flags';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 import {
+  constants,
   EARLY_ACCESS_CONFIG,
   isNonCommercialBaseModel,
   nsfwRestrictedBaseModels,
@@ -147,6 +148,9 @@ const schema = modelVersionUpsertSchema2
   );
 type Schema = z.infer<typeof schema>;
 
+// Unfiltered on purpose: a legacy value must always be present in the options or
+// the Select renders blank.
+const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
 const capitalizeFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const licensingOptionLabel = (versionName: string, fee: number | null) =>
   `${capitalizeFirst(versionName)}${fee != null ? ` (${fee} Buzz)` : ''}`;
@@ -191,6 +195,11 @@ export function ModelVersionUpsertForm({
     'Wildcards',
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
+  // Retired field: only surfaced for legacy versions already carrying a non-default
+  // value, so they stay editable/clearable without letting anyone newly opt in.
+  // Read from the saved version, not form state, so picking 'Standard' doesn't rip
+  // the control out mid-edit.
+  const showBaseModelType = !!version?.baseModelType && version.baseModelType !== 'Standard';
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
   const isEarlyAccessOver =
     version?.status === 'Published' &&
@@ -941,6 +950,16 @@ export function ModelVersionUpsertForm({
               // type to filter (e.g. "wan") instead of clearing the field first.
               onFocus={(e) => e.currentTarget.select()}
             />
+            {showBaseModelType && (
+              <InputSelect
+                name="baseModelType"
+                label="Base Model Type"
+                placeholder="Base Model Type"
+                description="No longer set on new versions. Choose Standard to clear it."
+                data={baseModelTypeOptions}
+                allowDeselect={false}
+              />
+            )}
           </Group>
           {showLicensingPicker && (
             <Stack gap="xs">
