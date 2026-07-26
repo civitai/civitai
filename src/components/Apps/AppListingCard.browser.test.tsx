@@ -41,7 +41,7 @@ function base(over: Partial<ListingCard>): ListingCard {
     creator: { id: 5, username: 'alice', image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
-    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true },
+    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
     ...over,
   };
 }
