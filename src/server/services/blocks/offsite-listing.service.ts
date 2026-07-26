@@ -25,6 +25,7 @@ import {
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
 import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
+import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
@@ -2389,6 +2390,33 @@ const submissionSelect = {
   },
 } as const;
 
+/**
+ * `submissionSelect` PLUS the advisory listing-completeness projection used ONLY
+ * by the author-facing `listMySubmissions` (NOT the mod queues — they don't render
+ * the warning). Adds the asset ids + key text fields + a screenshot COUNT (via
+ * `_count`, not the rows) so the pure `computeListingProblems` helper can flag a
+ * row. Purely additive; `category` is already in `submissionSelect`.
+ */
+const mySubmissionSelect = {
+  ...submissionSelect,
+  appListing: {
+    select: {
+      ...submissionSelect.appListing.select,
+      iconId: true,
+      coverId: true,
+      description: true,
+      tagline: true,
+      // Filtered COUNT — only screenshots whose Image is still live. A row whose
+      // Image was deleted (imageId → null via onDelete: SetNull) has no
+      // displayable asset, so it must not inflate the count, else the
+      // `no-screenshots` warning is a false-negative. Matches the authoritative
+      // asset gate: `appListingScreenshot.count({ where: { imageId: { not: null } } })`
+      // (see assertListingAssetsComplete callsite ~L1103 in this file).
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+    },
+  },
+} as const;
+
 const submitterChip = { select: { id: true, username: true, image: true } } as const;
 
 export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
@@ -2431,7 +2459,7 @@ export async function listMySubmissions(
     orderBy: { submittedAt: 'desc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    select: submissionSelect,
+    select: mySubmissionSelect,
   });
   const hasNext = rows.length > limit;
   const page = hasNext ? rows.slice(0, limit) : rows;
@@ -2503,6 +2531,19 @@ export async function listMySubmissions(
     // when `appListing.status === 'removed'` to gate the Republish affordance.
     lastModerationAction:
       r.appListingId != null ? lastActionByListing.get(r.appListingId) ?? null : null,
+    // Advisory listing-completeness problems (missing assets + empty key fields).
+    // Empty when there's no backing listing (a rejected/withdrawn row whose listing
+    // was deleted) — nothing to flag.
+    problems: r.appListing
+      ? computeListingProblems({
+          iconId: r.appListing.iconId,
+          coverId: r.appListing.coverId,
+          screenshotCount: r.appListing._count.screenshots,
+          description: r.appListing.description,
+          tagline: r.appListing.tagline,
+          category: r.appListing.category,
+        }).problems
+      : [],
   }));
 
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };

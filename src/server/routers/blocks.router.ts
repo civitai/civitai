@@ -97,6 +97,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
+import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
@@ -1883,14 +1884,56 @@ export const blocksRouter = router({
       // live/removed listing state. A publish request stays `approved` after an owner
       // unpublish, so the request status alone can't tell live from owner-hidden. One
       // batched findMany (NOT per-row) keyed by appBlockId.
-      const listingByBlockId = new Map<string, { id: string; status: string }>();
+      // Additive projection (advisory listing-completeness warning on
+      // /apps/my-submissions): the asset ids + key text fields + a screenshot
+      // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
+      // helper below. Purely additive — the owner-controls fields are unchanged.
+      const listingByBlockId = new Map<
+        string,
+        {
+          id: string;
+          status: string;
+          iconId: number | null;
+          coverId: number | null;
+          description: string | null;
+          tagline: string | null;
+          category: string | null;
+          screenshotCount: number;
+        }
+      >();
       if (appBlockIds.length) {
         const listings = await dbRead.appListing.findMany({
           where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
-          select: { id: true, appBlockId: true, status: true },
+          select: {
+            id: true,
+            appBlockId: true,
+            status: true,
+            iconId: true,
+            coverId: true,
+            description: true,
+            tagline: true,
+            category: true,
+            // Filtered COUNT — only screenshots whose Image is still live. A row
+            // whose Image was deleted (imageId → null via onDelete: SetNull) has
+            // no displayable asset, so it must not inflate the count, else the
+            // `no-screenshots` warning is a false-negative. Matches the
+            // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
+            // in app-listing-assets.service.ts (buildAssetStatus).
+            _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+          },
         });
         for (const l of listings) {
-          if (l.appBlockId) listingByBlockId.set(l.appBlockId, { id: l.id, status: l.status });
+          if (l.appBlockId)
+            listingByBlockId.set(l.appBlockId, {
+              id: l.id,
+              status: l.status,
+              iconId: l.iconId,
+              coverId: l.coverId,
+              description: l.description,
+              tagline: l.tagline,
+              category: l.category,
+              screenshotCount: l._count.screenshots,
+            });
         }
       }
 
@@ -1941,6 +1984,19 @@ export const blocksRouter = router({
           appListingId: listing?.id ?? null,
           listingStatus: listing?.status ?? null,
           lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
+          // Advisory listing-completeness problems (missing assets + empty key
+          // fields). Empty when there's no backing listing yet (a pending first
+          // version) — nothing to flag until a listing row exists.
+          problems: listing
+            ? computeListingProblems({
+                iconId: listing.iconId,
+                coverId: listing.coverId,
+                screenshotCount: listing.screenshotCount,
+                description: listing.description,
+                tagline: listing.tagline,
+                category: listing.category,
+              }).problems
+            : [],
           // Whether the manifest declares a launchable page (drives the Open-live →
           // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
           // subset only.
