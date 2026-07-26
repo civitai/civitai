@@ -11,6 +11,7 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
 import {
   getValidCreatorMembershipMap,
@@ -1210,8 +1211,9 @@ export const getMyDraftModelsHandler = async ({
       // against a subquery that GROUPs the ENTIRE ModelVersion table (Postgres
       // does not push the `Model.id IN (...)` filter into the grouped derived
       // table) — ~1.17M rows -> ~909k groups -> ~1344ms just to attach a version
-      // count to the ~20 requested models. We instead attach the count below via
-      // one batched, index-only groupBy whose `IN` filter DOES push down.
+      // count to the ~20 requested models. We instead derive the count below from
+      // the length of the FULL `modelVersions` array already selected here (no
+      // `where`/`take`), so it equals the total version count at zero DB cost.
       select: {
         id: true,
         name: true,
@@ -1229,18 +1231,16 @@ export const getMyDraftModelsHandler = async ({
       },
     });
 
-    // Batched, pushed-down replacement for the per-row `_count.modelVersions`.
-    // Attaches a byte-identical `_count: { modelVersions }` number to each model
-    // (0 for models with no versions).
-    const versionCountByModelId = await getModelVersionCountsByModelId(
-      results.items.map((model) => model.id)
-    );
-
     return {
       ...results,
       items: results.items.map((model) => ({
         ...model,
-        _count: { modelVersions: versionCountByModelId.get(model.id) ?? 0 },
+        // The FULL (unfiltered, no `where`/`take`) `modelVersions` array is
+        // already selected above for the frontend's `.some(...)` checks, so its
+        // length IS the total version count — no extra DB round-trip. (The
+        // training handler DOES need the helper: its versions array is
+        // status-filtered, so `.length` there would undercount.)
+        _count: { modelVersions: model.modelVersions.length },
       })),
     };
   } catch (error) {
@@ -1297,8 +1297,19 @@ export const getMyTrainingModelsHandler = async ({
 
     // Batched, pushed-down replacement for the per-row `model._count.modelVersions`.
     // Multiple returned training versions can share a model — the helper dedupes.
+    //
+    // Route the count through the SAME db handle the list read used:
+    // getTrainingModelsByUserId reads its list via getDbWithoutLag(
+    // 'userTrainingModels', userId), which returns the PRIMARY during the
+    // post-write no-lag window. Calling it here with identical args yields that
+    // same handle in-request, so the count and the list are read from one source.
+    // A lagged-replica count that disagreed with a primary list read would
+    // mislead UserTrainingModels.tsx, which gates a DESTRUCTIVE delete (whole
+    // model vs. a single version) on `_count.modelVersions > 1`.
+    const db = await getDbWithoutLag('userTrainingModels', userId);
     const versionCountByModelId = await getModelVersionCountsByModelId(
-      results.items.map((item) => item.model.id)
+      results.items.map((item) => item.model.id),
+      db
     );
 
     return {

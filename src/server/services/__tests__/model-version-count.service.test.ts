@@ -8,13 +8,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * The include compiled to a LEFT JOIN over a subquery grouping the ENTIRE
  * ModelVersion table (~1.17M rows, ~1344ms) because Postgres did not push the
  * `Model.id IN (...)` filter into the grouped derived table. This helper issues
- * the pushed-down equivalent (`WHERE modelId IN (<ids>) GROUP BY modelId`),
- * index-only on `ModelVersion_modelId_baseModel_idx` (~1.5ms). These tests pin
- * the two behaviours the handlers rely on for a byte-identical response:
+ * the pushed-down equivalent (`WHERE modelId IN (<ids>) GROUP BY modelId`), which
+ * probes only the handful of requested ids in the small `IN` list instead of
+ * scanning/grouping the whole table (~1.5ms). These tests pin the behaviours the
+ * handlers rely on for a byte-identical response:
  *   1. the QUERY SHAPE is the pushed-down groupBy (id filter IN the aggregate),
- *      NOT a relation `_count` include; and
+ *      NOT a relation `_count` include;
  *   2. every REQUESTED model id gets a number back, including 0 for a model with
- *      no versions (which the GROUP BY omits entirely).
+ *      no versions (which the GROUP BY omits entirely); and
+ *   3. the query runs on the caller-supplied `db` handle (defaulting to the read
+ *      replica) — the training handler passes its no-lag primary handle so the
+ *      count agrees with the list it just read.
  */
 
 const { groupBy } = vi.hoisted(() => ({ groupBy: vi.fn() }));
@@ -88,5 +92,33 @@ describe('getModelVersionCountsByModelId', () => {
 
     expect(groupBy).not.toHaveBeenCalled();
     expect(counts.size).toBe(0);
+  });
+
+  it('defaults to the read-replica handle (dbRead) when no db is passed', async () => {
+    groupBy.mockResolvedValue([{ modelId: 1, _count: { _all: 2 } }]);
+
+    await getModelVersionCountsByModelId([1]);
+
+    // The mocked dbRead.modelVersion.groupBy is the one that ran.
+    expect(groupBy).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs on the caller-supplied db handle (no-lag primary) when one is passed', async () => {
+    // A distinct handle standing in for the post-write primary the training
+    // handler routes both its list read AND count through.
+    const primaryGroupBy = vi.fn().mockResolvedValue([{ modelId: 7, _count: { _all: 5 } }]);
+    const primaryDb = { modelVersion: { groupBy: primaryGroupBy } } as never;
+
+    const counts = await getModelVersionCountsByModelId([7], primaryDb);
+
+    // The passed handle ran; the default replica handle did NOT.
+    expect(primaryGroupBy).toHaveBeenCalledTimes(1);
+    expect(primaryGroupBy).toHaveBeenCalledWith({
+      by: ['modelId'],
+      where: { modelId: { in: [7] } },
+      _count: { _all: true },
+    });
+    expect(groupBy).not.toHaveBeenCalled();
+    expect(counts.get(7)).toBe(5);
   });
 });

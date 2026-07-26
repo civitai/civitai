@@ -1,8 +1,7 @@
 import { dbRead } from '~/server/db/client';
 
 /**
- * Batched, index-only replacement for a per-row Prisma `_count.modelVersions`
- * include.
+ * Batched replacement for a per-row Prisma `_count.modelVersions` include.
  *
  * Prisma compiles `_count: { select: { modelVersions: true } }` into a LEFT JOIN
  * against a subquery that GROUPs the ENTIRE `ModelVersion` table — Postgres does
@@ -12,17 +11,25 @@ import { dbRead } from '~/server/db/client';
  *
  * The pushed-down equivalent — `SELECT "modelId", COUNT(*) FROM "ModelVersion"
  * WHERE "modelId" IN (<ids>) GROUP BY "modelId"` — DOES push the filter into the
- * aggregate and is index-only on the existing `ModelVersion_modelId_baseModel_idx`
- * (no new index), ~1.5ms EXPLAIN-verified against the read replica (~900x faster).
+ * aggregate, so Postgres probes only the handful of requested ids in the small
+ * `IN` list (a bounded number of `modelId` index lookups) instead of scanning and
+ * grouping the whole table (~1.5ms EXPLAIN-verified against the read replica,
+ * ~900x faster than the full-table aggregate above).
  *
  * Semantics match the unfiltered `_count` it replaces: it counts ALL
  * modelVersions for each model. The returned map is DENSE over the requested ids
  * — models with zero versions (absent from the GROUP BY result) are still keyed
  * with a count of 0, so callers can attach a byte-identical
  * `_count.modelVersions` number without a separate coalesce.
+ *
+ * `db` defaults to the read replica (`dbRead`). Callers that just wrote and read
+ * their list off the no-lag primary handle should pass that SAME handle, so the
+ * count agrees with the list within the post-write replication window (otherwise
+ * a lagged replica count can disagree with a primary list read).
  */
 export const getModelVersionCountsByModelId = async (
-  modelIds: number[]
+  modelIds: number[],
+  db: typeof dbRead = dbRead
 ): Promise<Map<number, number>> => {
   const ids = [...new Set(modelIds)];
   // Zero-fill so every requested model gets a number, including those with no
@@ -30,7 +37,7 @@ export const getModelVersionCountsByModelId = async (
   const counts = new Map<number, number>(ids.map((id) => [id, 0]));
   if (ids.length === 0) return counts;
 
-  const grouped = await dbRead.modelVersion.groupBy({
+  const grouped = await db.modelVersion.groupBy({
     by: ['modelId'],
     where: { modelId: { in: ids } },
     _count: { _all: true },
