@@ -11,6 +11,7 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
 import {
   getValidCreatorMembershipMap,
@@ -78,6 +79,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
+import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
   deleteModelById,
@@ -1204,6 +1206,14 @@ export const getMyDraftModelsHandler = async ({
     const results = await getDraftModelsByUserId({
       ...input,
       userId,
+      // NOTE: `_count: { select: { modelVersions: true } }` is intentionally NOT
+      // selected here. Prisma compiles that per-row aggregate into a LEFT JOIN
+      // against a subquery that GROUPs the ENTIRE ModelVersion table (Postgres
+      // does not push the `Model.id IN (...)` filter into the grouped derived
+      // table) — ~1.17M rows -> ~909k groups -> ~1344ms just to attach a version
+      // count to the ~20 requested models. We instead derive the count below from
+      // the length of the FULL `modelVersions` array already selected here (no
+      // `where`/`take`), so it equals the total version count at zero DB cost.
       select: {
         id: true,
         name: true,
@@ -1218,11 +1228,21 @@ export const getMyDraftModelsHandler = async ({
             },
           },
         },
-        _count: { select: { modelVersions: true } },
       },
     });
 
-    return results;
+    return {
+      ...results,
+      items: results.items.map((model) => ({
+        ...model,
+        // The FULL (unfiltered, no `where`/`take`) `modelVersions` array is
+        // already selected above for the frontend's `.some(...)` checks, so its
+        // length IS the total version count — no extra DB round-trip. (The
+        // training handler DOES need the helper: its versions array is
+        // status-filtered, so `.length` there would undercount.)
+        _count: { modelVersions: model.modelVersions.length },
+      })),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1237,7 +1257,7 @@ export const getMyTrainingModelsHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    return await getTrainingModelsByUserId({
+    const results = await getTrainingModelsByUserId({
       ...input,
       userId,
       select: {
@@ -1254,11 +1274,10 @@ export const getMyTrainingModelsHandler = async ({
             id: true,
             name: true,
             status: true,
-            _count: {
-              select: {
-                modelVersions: true,
-              },
-            },
+            // `_count: { select: { modelVersions: true } }` intentionally
+            // omitted — see getMyDraftModelsHandler: Prisma compiles it to a
+            // full-table grouped subquery (~1344ms) instead of pushing the id
+            // filter down. Attached below via a batched, index-only groupBy.
           },
         },
 
@@ -1275,6 +1294,34 @@ export const getMyTrainingModelsHandler = async ({
         },
       },
     });
+
+    // Batched, pushed-down replacement for the per-row `model._count.modelVersions`.
+    // Multiple returned training versions can share a model — the helper dedupes.
+    //
+    // Route the count through the SAME db handle the list read used:
+    // getTrainingModelsByUserId reads its list via getDbWithoutLag(
+    // 'userTrainingModels', userId), which returns the PRIMARY during the
+    // post-write no-lag window. Calling it here with identical args yields that
+    // same handle in-request, so the count and the list are read from one source.
+    // A lagged-replica count that disagreed with a primary list read would
+    // mislead UserTrainingModels.tsx, which gates a DESTRUCTIVE delete (whole
+    // model vs. a single version) on `_count.modelVersions > 1`.
+    const db = await getDbWithoutLag('userTrainingModels', userId);
+    const versionCountByModelId = await getModelVersionCountsByModelId(
+      results.items.map((item) => item.model.id),
+      db
+    );
+
+    return {
+      ...results,
+      items: results.items.map((item) => ({
+        ...item,
+        model: {
+          ...item.model,
+          _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
+        },
+      })),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
