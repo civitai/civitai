@@ -50,13 +50,21 @@ describe('AppListingCard', () => {
   test('on-site page app + canOpenPage → Open link to the run route', async () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
-    // exact: the "App" kind badge, else the substring also matches the title
-    // ("My App") and description ("A handy app") — strict-mode violation.
-    await expect.element(page.getByText('App', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('by alice')).toBeInTheDocument();
     const open = page.getByRole('link', { name: 'Open' });
     await expect.element(open).toBeInTheDocument();
     await expect.element(open).toHaveAttribute('href', '/apps/run/my-app');
+  });
+
+  test('kind + category badges are NOT rendered on the card (round-2 truncation fix)', async () => {
+    // "App" was formerly the on-site kind badge's exact-match text; "utility" is
+    // base()'s category. Neither should render now that the badge column is gone
+    // — the kind signal instead lives in the CTA (Open/View details vs Visit ↗)
+    // and, for off-site, the detail-page disclosure Alert.
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    await expect.element(page.getByText('App', { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByText('Utility', { exact: true })).not.toBeInTheDocument();
   });
 
   test('no reviews → "No reviews yet"', async () => {
@@ -87,17 +95,21 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    await expect.element(page.getByText('Off-site')).toBeInTheDocument();
+    // The kind signal ("Off-site") is no longer a badge — it's conveyed by the
+    // CTA below (an external "Visit" anchor vs. an internal Open/View details
+    // link) plus the off-site disclosure Alert on the detail page.
+    await expect.element(page.getByText('Off-site', { exact: true })).not.toBeInTheDocument();
     const visit = page.getByRole('link', { name: 'Visit' });
     await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
     await expect.element(visit).toHaveAttribute('target', '_blank');
     await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  test('off-site connect → Connect badge + View details → unified detail (P2c)', async () => {
+  test('off-site connect → View details → unified detail (P2c)', async () => {
     // P2c: cards route to the unified detail; the Connect action itself lives on
     // the detail page (the connect flow needs a P2a authorize-URL DTO addition),
-    // so the card's CTA is "View details", not an inert Connect button.
+    // so the card's CTA is "View details", not an inert Connect button. The
+    // former "Connect app" kind badge is gone — no longer asserted here.
     renderWithProviders(
       <AppListingCard
         card={base({
@@ -107,9 +119,6 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    // exact: the "Connect app" badge, else the substring also matches the title
-    // ("Connect App", case-insensitive) — strict-mode violation.
-    await expect.element(page.getByText('Connect app', { exact: true })).toBeInTheDocument();
     const details = page.getByRole('link', { name: 'View details' });
     await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
   });

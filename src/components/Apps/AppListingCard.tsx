@@ -1,11 +1,5 @@
-import { Anchor, Avatar, Badge, Box, Button, Card, Group, Image, Stack, Text, Title } from '@mantine/core';
-import {
-  IconApps,
-  IconExternalLink,
-  IconPencil,
-  IconPlugConnected,
-  IconThumbUp,
-} from '@tabler/icons-react';
+import { Anchor, Avatar, Box, Button, Card, Group, Image, Stack, Text, Title } from '@mantine/core';
+import { IconApps, IconExternalLink, IconPencil, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { type MouseEvent, useState } from 'react';
@@ -16,19 +10,14 @@ import {
 } from '~/components/Apps/marketplaceCategoryIcons';
 import {
   canOwnerEditListing,
-  getListingBadge,
   getListingCta,
   getListingDetailHref,
   getOwnerEditHref,
   getRecommendLabel,
-  type ListingBadgeKind,
 } from '~/components/Apps/appListingCardView';
-import { TruncatedBadge, TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  isMarketplaceCategory,
-  MARKETPLACE_CATEGORY_LABELS,
-} from '~/server/services/blocks/marketplace-categories.constants';
+import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -56,22 +45,6 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * AspectRatioImageCard (cosmetic frames) would need the DTO to carry the Image
  * object — a P2a schema addition, out of scope for P2b (flagged in the PR).
  */
-
-const KIND_BADGE_ICON: Record<ListingBadgeKind, Icon> = {
-  onsite: IconApps,
-  connect: IconPlugConnected,
-  'external-link': IconExternalLink,
-};
-
-const KIND_BADGE_COLOR: Record<ListingBadgeKind, string> = {
-  onsite: 'blue',
-  connect: 'teal',
-  'external-link': 'blue',
-};
-
-function categoryLabel(category: string): string {
-  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
-}
 
 function categoryIcon(category: string): Icon {
   return isMarketplaceCategory(category) ? CATEGORY_ICONS[category] : FALLBACK_CATEGORY_ICON;
@@ -178,11 +151,9 @@ export interface AppListingCardProps {
 
 export function AppListingCard({ card, canOpenPage = false }: AppListingCardProps) {
   const currentUser = useCurrentUser();
-  const badge = getListingBadge(card);
   const cta = getListingCta(card, { canOpenPage });
   const detailHref = getListingDetailHref(card.slug);
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
-  const BadgeIcon = KIND_BADGE_ICON[badge.kind];
 
   // Owner "Edit" deep-link (Item 2). The public store DTO is approved-only + has
   // no status field, so gating is owner + editable-status (status omitted →
@@ -196,67 +167,35 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
       <ListingCover coverUrl={card.coverUrl} category={card.category} name={card.name} />
       <Stack gap="sm" h="100%" pt="sm">
-        <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
-          {/* flex:1 + minWidth:0 lets the text column take the row's slack and
-              shrink gracefully instead of being over-squeezed by the badges. */}
-          <Group gap="xs" wrap="nowrap" align="flex-start" style={{ minWidth: 0, flex: 1 }}>
-            {/* App icon (square, publisher-supplied). Decorative — the title
-                carries the accessible name; a missing icon falls back to the
-                app's initial. */}
-            <Avatar
-              src={card.iconUrl ?? undefined}
-              alt=""
-              radius="md"
-              size={40}
-              style={{ flexShrink: 0 }}
+        <Group gap="xs" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
+          {/* App icon (square, publisher-supplied). Decorative — the title
+              carries the accessible name; a missing icon falls back to the
+              app's initial. */}
+          <Avatar
+            src={card.iconUrl ?? undefined}
+            alt=""
+            radius="md"
+            size={40}
+            style={{ flexShrink: 0 }}
+          >
+            {card.name.charAt(0).toUpperCase()}
+          </Avatar>
+          <Stack gap={2} style={{ minWidth: 0 }}>
+            {/* Title links to the unified detail so the detail is reachable
+                from every card even when the primary CTA is a direct Open /
+                Visit. underline:hover keeps it visibly a link. */}
+            <Anchor
+              component={Link}
+              href={detailHref}
+              underline="hover"
+              c="inherit"
+              style={{ minWidth: 0 }}
             >
-              {card.name.charAt(0).toUpperCase()}
-            </Avatar>
-            <Stack gap={2} style={{ minWidth: 0 }}>
-              {/* Title links to the unified detail so the detail is reachable
-                  from every card even when the primary CTA is a direct Open /
-                  Visit. underline:hover keeps it visibly a link. */}
-              <Anchor
-                component={Link}
-                href={detailHref}
-                underline="hover"
-                c="inherit"
-                style={{ minWidth: 0 }}
-              >
-                <Title order={4} className="line-clamp-2">
-                  {card.name}
-                </Title>
-              </Anchor>
-              <CreatorChip creator={card.creator} />
-            </Stack>
-          </Group>
-          {/* Badge column — capped width + flex-shrink:0 so it never over-squeezes
-              the text column; a long category label ellipsizes with a Tooltip
-              fallback instead of pushing the title/creator out. */}
-          <Stack gap={4} align="flex-end" style={{ flexShrink: 0, maxWidth: 150 }}>
-            {/* Kind badge — App (on-site) vs Connect app / Off-site (off-site).
-                Kind labels are short + fixed, so no truncation needed. */}
-            <Badge
-              variant="light"
-              color={KIND_BADGE_COLOR[badge.kind]}
-              size="sm"
-              leftSection={<BadgeIcon size={12} />}
-            >
-              {badge.label}
-            </Badge>
-            {card.category && (() => {
-              const CategoryIcon = categoryIcon(card.category);
-              return (
-                <TruncatedBadge
-                  variant="light"
-                  color="grape"
-                  size="sm"
-                  maw={150}
-                  leftSection={<CategoryIcon size={12} />}
-                  label={categoryLabel(card.category)}
-                />
-              );
-            })()}
+              <Title order={4} className="line-clamp-2">
+                {card.name}
+              </Title>
+            </Anchor>
+            <CreatorChip creator={card.creator} />
           </Stack>
         </Group>
 
