@@ -829,7 +829,7 @@ describe('listMySubmissions (shadow handling)', () => {
     appListingId: 'apl_parent',
     slug: 'cool-app',
     status: 'approved',
-    appListing: { name: 'Cool App', revisionOfId: null },
+    appListing: { name: 'Cool App', revisionOfId: null, _count: { screenshots: 3 } },
   };
 
   it('excludes shadow-targeting requests from the main query and flags a parent with a PENDING revision request', async () => {
@@ -908,14 +908,14 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     appListingId: 'apl_removed',
     slug: 'gone-app',
     status: 'approved',
-    appListing: { name: 'Gone App', revisionOfId: null, status: 'removed' },
+    appListing: { name: 'Gone App', revisionOfId: null, status: 'removed', _count: { screenshots: 3 } },
   };
   const liveRequestRow = {
     id: 'alpr_live',
     appListingId: 'apl_live',
     slug: 'live-app',
     status: 'approved',
-    appListing: { name: 'Live App', revisionOfId: null, status: 'approved' },
+    appListing: { name: 'Live App', revisionOfId: null, status: 'approved', _count: { screenshots: 3 } },
   };
 
   it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
