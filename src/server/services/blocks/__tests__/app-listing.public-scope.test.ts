@@ -221,4 +221,13 @@ describe('getListingDetail — STORE-SCOPE kind gate (app-layer)', () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
     expect(await getListingDetail({ slug: 'cool-app' })).not.toBeNull();
   });
+
+  it('none → HIDES (null) even an approved listing, and never touches the DB (default-closed guard)', async () => {
+    // Defense-in-depth symmetric with listingPublicVisibilityFilter('none') → FALSE:
+    // a caller with no store visibility gets nothing. The guard short-circuits before
+    // the hydration read, so an approved row mocked here must NOT leak.
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'none' })).toBeNull();
+    expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
+  });
 });

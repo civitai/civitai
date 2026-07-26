@@ -556,6 +556,12 @@ export async function getListingDetail(
   const redCapable = opts.redCapable ?? false;
   // Default `full` for callers that don't pass a scope (see listAvailableListings).
   const scope = opts.scope ?? 'full';
+  // STORE-SCOPE `none` (default-closed): a caller with no store visibility gets
+  // nothing — symmetric with the list path's `listingPublicVisibilityFilter('none')`
+  // → FALSE. The v1 endpoints short-circuit `none` before calling this, but honor
+  // the gate here too so a future non-endpoint caller passing `none` can't reach a
+  // listing's detail.
+  if (scope === 'none') return null;
   // Assert exactly-one selector in the SERVICE (the zod `.refine` only guards the
   // tRPC boundary, but this fn is exported). Neither → `findFirst({ slug:
   // undefined })` would return an ARBITRARY approved row (enumeration footgun);
