@@ -1388,7 +1388,9 @@ export async function getMyListingForEdit(opts: {
     const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
       where: {
         status: 'pending',
-        kind: 'offsite',
+        // Onsite media revisions are kind:'onsite'; widen so the onsite "revision in
+        // review" badge resolves (the probe is already scoped to this parent's shadows).
+        kind: { in: [...REVIEWABLE_LISTING_KINDS] },
         appListing: { revisionOfId: listingId },
       },
       select: { id: true },
@@ -1521,6 +1523,18 @@ export async function updateRevisionDraft(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// Listing-request kinds surfaced by the CONSOLIDATION half of the flow
+// (approve/reject + the mod review queue + my-submissions).
+//
+// 🔴 INVARIANT: the ONLY producer of a `kind='onsite'` `AppListingPublishRequest`
+// is `submitListingRevision` on an onsite SHADOW (i.e. an onsite media revision) —
+// the onsite CODE review runs over a DIFFERENT table (`AppBlockPublishRequest`).
+// So widening these gates from `'offsite'` to this set surfaces EXACTLY onsite
+// media revisions, nothing else. (Asserted in the service tests.)
+// ---------------------------------------------------------------------------
+const REVIEWABLE_LISTING_KINDS = ['onsite', 'offsite'] as const;
+
+// ---------------------------------------------------------------------------
 // approveExternalRequest / rejectExternalRequest (moderator) — PR-b.
 //
 // Mirror the on-site `publish-request.service` approve/reject state machine over
@@ -1529,6 +1543,14 @@ export async function updateRevisionDraft(opts: {
 // surfaces it in the store); reject DELETES the draft (releases the slug). Both
 // writes are status-guarded `updateMany`/`deleteMany` so a concurrent
 // approve/reject/withdraw can never double-act (TOCTOU).
+//
+// ONSITE (assets-only media revision): an onsite app's `AppListing` is auto-created
+// `approved`; its media (icon/cover/screenshots) is edited via the SAME shadow-draft
+// revision flow, so an onsite request is always a revision (its listing's
+// `revisionOfId != null`) and routes to `applyApprovedRevision`, which — for an
+// onsite parent — copies ONLY the asset columns and leaves the manifest-governed
+// scalars (name/tagline/description/category/contentRating) untouched. The offsite
+// path is unchanged.
 // ---------------------------------------------------------------------------
 
 export type ApproveExternalRequestResult = {
@@ -1670,10 +1692,11 @@ export async function approveExternalRequest(opts: {
   if (!request) {
     throw new OffsiteRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
   }
-  if (request.kind !== 'offsite') {
+  // Accept onsite media revisions too (assets-only apply; see REVIEWABLE_LISTING_KINDS).
+  if (!(REVIEWABLE_LISTING_KINDS as readonly string[]).includes(request.kind)) {
     throw new OffsiteRequestError(
       'NOT_FOUND',
-      `publish request ${publishRequestId} is not an off-site request`
+      `publish request ${publishRequestId} is not a reviewable listing request`
     );
   }
   if (request.status !== 'pending') {
@@ -1907,7 +1930,11 @@ export async function approveExternalRequest(opts: {
       where: {
         appListingId,
         status: 'pending',
-        kind: 'offsite',
+        // Match THIS request's kind (a listing has exactly one kind, so all its
+        // requests share it) rather than hard-coding 'offsite' — otherwise an onsite
+        // sibling pending request on the same appListingId would be stranded. Byte-
+        // identical for offsite (request.kind === 'offsite' here).
+        kind: request.kind,
         NOT: { id: publishRequestId },
       },
       data: { status: 'withdrawn' },
@@ -1966,9 +1993,12 @@ async function applyApprovedRevision(opts: {
   const { request, shadowId, parentId, reviewerUserId, approvalNotes } = opts;
 
   // Parent must still exist (defense — its delete would CASCADE the shadow away).
+  // `kind` drives the assets-only branch below: an ONSITE parent's scalars mirror the
+  // manifest/AppBlock (single source), so an onsite media revision copies ONLY the
+  // asset columns and leaves name/tagline/description/category/contentRating untouched.
   const parent = await dbRead.appListing.findUnique({
     where: { id: parentId },
-    select: { id: true, slug: true, status: true },
+    select: { id: true, slug: true, status: true, kind: true },
   });
   if (!parent) {
     throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
@@ -2077,37 +2107,58 @@ async function applyApprovedRevision(opts: {
       );
     }
 
-    // (3) Copy scalars onto the parent (id / slug / appBlockId / status untouched).
-    // The content rating is DERIVED from the shadow's assets' max nsfwLevel (+ the
-    // mod override, floored) rather than trusting the shadow's declared value — same
-    // never-under-rate safety as the first-time approve path.
-    const finalRating = await resolveApprovalContentRating(tx, {
-      appListingId: shadowId,
-      iconId: shadow.iconId,
-      coverId: shadow.coverId,
-      override: opts.contentRating,
-    });
-    await tx.appListing.update({
-      where: { id: parentId },
-      data: {
-        name: shadow.name,
-        tagline: shadow.tagline,
-        description: shadow.description,
-        category: shadow.category,
-        contentRating: finalRating,
-        externalUrl: shadow.externalUrl,
-        connectClientId: shadow.connectClientId,
-        // Apply the revision's disclosed OAuth scopes + justifications onto the live
-        // parent (a scope change is material, so the shadow carries the reviewed set).
-        connectRequestedScopes: shadow.connectRequestedScopes,
-        connectScopeJustifications:
-          shadow.connectScopeJustifications === null
-            ? Prisma.DbNull
-            : (shadow.connectScopeJustifications as Prisma.InputJsonValue),
+    // (3) Copy the shadow's contents onto the parent (id / slug / appBlockId / status
+    // untouched). KIND-AWARE:
+    if (parent.kind === 'onsite') {
+      // 🔴 ONSITE = ASSETS-ONLY. An onsite listing's name/tagline/description/category/
+      // contentRating MIRROR the manifest/AppBlock (single source — the listing must
+      // never override the runtime serving gate). An onsite media revision therefore
+      // copies ONLY the asset columns (icon/cover; screenshots are reparented in step 4)
+      // and leaves ALL manifest-governed scalars untouched. CAP-AT-APP-RATING:
+      // `resolveApprovalContentRating`'s asset-floor is deliberately NOT applied here —
+      // the listing rating stays the app's manifest rating; over-rated media is a
+      // mod-reject at review, never an auto-raise. The connect fields are also left
+      // untouched (an onsite listing has no OAuth-connect client — always null).
+      await tx.appListing.update({
+        where: { id: parentId },
+        data: {
+          iconId: shadow.iconId,
+          coverId: shadow.coverId,
+        },
+      });
+    } else {
+      // OFFSITE (byte-identical to the prior behavior). Copy the FULL scalar set. The
+      // content rating is DERIVED from the shadow's assets' max nsfwLevel (+ the mod
+      // override, floored) rather than trusting the shadow's declared value — same
+      // never-under-rate safety as the first-time approve path.
+      const finalRating = await resolveApprovalContentRating(tx, {
+        appListingId: shadowId,
         iconId: shadow.iconId,
         coverId: shadow.coverId,
-      },
-    });
+        override: opts.contentRating,
+      });
+      await tx.appListing.update({
+        where: { id: parentId },
+        data: {
+          name: shadow.name,
+          tagline: shadow.tagline,
+          description: shadow.description,
+          category: shadow.category,
+          contentRating: finalRating,
+          externalUrl: shadow.externalUrl,
+          connectClientId: shadow.connectClientId,
+          // Apply the revision's disclosed OAuth scopes + justifications onto the live
+          // parent (a scope change is material, so the shadow carries the reviewed set).
+          connectRequestedScopes: shadow.connectRequestedScopes,
+          connectScopeJustifications:
+            shadow.connectScopeJustifications === null
+              ? Prisma.DbNull
+              : (shadow.connectScopeJustifications as Prisma.InputJsonValue),
+          iconId: shadow.iconId,
+          coverId: shadow.coverId,
+        },
+      });
+    }
 
     // (4) Reparent screenshots BEFORE deleting the shadow (cascade-safe): drop the
     // parent's current rows, then move the shadow's rows onto the parent.
@@ -2175,10 +2226,13 @@ export async function rejectExternalRequest(opts: {
   if (!request) {
     throw new OffsiteRequestError('NOT_FOUND', `publish request ${publishRequestId} not found`);
   }
-  if (request.kind !== 'offsite') {
+  // Accept onsite media revisions too. The reject path (`closeTerminalListing`) is
+  // already kind-agnostic — an onsite revision points at a `draft` shadow, so only the
+  // shadow is deleted; the live onsite parent is untouched (see REVIEWABLE_LISTING_KINDS).
+  if (!(REVIEWABLE_LISTING_KINDS as readonly string[]).includes(request.kind)) {
     throw new OffsiteRequestError(
       'NOT_FOUND',
-      `publish request ${publishRequestId} is not an off-site request`
+      `publish request ${publishRequestId} is not a reviewable listing request`
     );
   }
   if (request.status !== 'pending') {
@@ -2293,6 +2347,10 @@ export async function persistListingAssetImage(opts: {
 const submissionSelect = {
   id: true,
   appListingId: true,
+  // The request KIND ('onsite' | 'offsite') — surfaced so the unified /apps/review
+  // queue (PR-2) can badge onsite media revisions vs offsite submissions. Additive:
+  // pre-existing consumers ignore it.
+  kind: true,
   slug: true,
   status: true,
   submittedAt: true,
@@ -2354,10 +2412,21 @@ export async function listMySubmissions(
   const rows = await dbRead.appListingPublishRequest.findMany({
     where: {
       submittedByUserId: opts.userId,
-      kind: 'offsite',
-      // Exclude requests targeting a SHADOW (revision) listing — surfaced as a
-      // flag on the parent, not as their own row. Keep requests with no listing.
-      OR: [{ appListingId: null }, { appListing: { revisionOfId: null } }],
+      kind: { in: [...REVIEWABLE_LISTING_KINDS] },
+      // OFFSITE: exclude requests targeting a SHADOW (revision) listing — those are
+      // surfaced as a `hasPendingRevision` flag on the PARENT's own submission row.
+      // Keep requests with no listing.
+      //
+      // ONSITE: an onsite listing is auto-created and has NO own publish request, so
+      // there is no parent row to badge — its ONLY representation IS the revision
+      // request (all onsite requests are shadow revisions, per the invariant). Include
+      // them directly via the `{ kind: 'onsite' }` OR branch so onsite media revisions
+      // appear on my-submissions (decision: yes).
+      OR: [
+        { appListingId: null },
+        { appListing: { revisionOfId: null } },
+        { kind: 'onsite' },
+      ],
     },
     orderBy: { submittedAt: 'desc' },
     take: limit + 1,
@@ -2381,7 +2450,7 @@ export async function listMySubmissions(
       ? await dbRead.appListingPublishRequest.findMany({
           where: {
             status: 'pending',
-            kind: 'offsite',
+            kind: { in: [...REVIEWABLE_LISTING_KINDS] },
             appListing: { revisionOfId: { in: parentIds } },
           },
           select: { appListing: { select: { revisionOfId: true } } },
@@ -2439,11 +2508,15 @@ export async function listMySubmissions(
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
-/** Mod queue: pending off-site requests, oldest-first (FIFO), keyset-paginated. */
+/**
+ * Mod queue: pending listing requests (offsite submissions + onsite media revisions),
+ * oldest-first (FIFO), keyset-paginated. Each row carries `kind` so the unified
+ * /apps/review queue (PR-2) can badge an onsite media revision vs an offsite submission.
+ */
 export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOptions = {}) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { status: 'pending', kind: 'offsite' },
+    where: { status: 'pending', kind: { in: [...REVIEWABLE_LISTING_KINDS] } },
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -2454,11 +2527,11 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
-/** Mod history: approved off-site requests, most-recently-reviewed first. */
+/** Mod history: approved listing requests (offsite + onsite media revisions), most-recently-reviewed first. */
 export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptions = {}) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { status: 'approved', kind: 'offsite' },
+    where: { status: 'approved', kind: { in: [...REVIEWABLE_LISTING_KINDS] } },
     orderBy: { reviewedAt: 'desc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
@@ -2473,11 +2546,11 @@ export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptio
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
-/** Mod history: rejected off-site requests, most-recently-reviewed first. */
+/** Mod history: rejected listing requests (offsite + onsite media revisions), most-recently-reviewed first. */
 export async function listRejectedOffsiteRequests(opts: ListOffsiteRequestsOptions = {}) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
-    where: { status: 'rejected', kind: 'offsite' },
+    where: { status: 'rejected', kind: { in: [...REVIEWABLE_LISTING_KINDS] } },
     orderBy: { reviewedAt: 'desc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
