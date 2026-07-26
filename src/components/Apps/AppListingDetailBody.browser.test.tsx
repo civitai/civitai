@@ -57,6 +57,22 @@ function base(over: Partial<ListingDetail>): ListingDetail {
 }
 
 describe('AppListingDetailBody', () => {
+  test('kind + category badges are NOT rendered on the detail header (round-2 truncation fix)', async () => {
+    // "App" was formerly the on-site kind badge's exact-match text; "utility" is
+    // base()'s category → labeled "Utility". Neither should render now — the
+    // kind signal instead lives in the primary-action CTA + the off-site
+    // disclosure Alert.
+    renderWithProviders(<AppListingDetailBody detail={base({})} />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    await expect.element(page.getByText('App', { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByText('Utility', { exact: true })).not.toBeInTheDocument();
+  });
+
+  test('contentRating badge STILL renders (not removed — it is not a kind/category badge)', async () => {
+    renderWithProviders(<AppListingDetailBody detail={base({ contentRating: 'PG' })} />);
+    await expect.element(page.getByText('PG', { exact: true })).toBeInTheDocument();
+  });
+
   test('owner sees the Edit deep-link → on-site manifest editor', async () => {
     mocks.currentUser = { id: 5, username: 'alice' }; // matches base().creator.id
     renderWithProviders(<AppListingDetailBody detail={base({})} />);

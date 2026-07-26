@@ -211,7 +211,7 @@ export function AppListingsMarketplaceBody() {
         <>
           <Grid gutter="md">
             {filteredItems.map((card) => (
-              <Grid.Col key={card.id} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
+              <Grid.Col key={card.id} span={{ base: 12, sm: 6, md: 4, lg: 3, xl: 2.4 }}>
                 <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
               </Grid.Col>
             ))}
