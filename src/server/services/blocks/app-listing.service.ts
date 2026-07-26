@@ -190,6 +190,17 @@ function manifestHasPage(manifest: unknown): boolean {
 }
 
 /**
+ * The already-public standalone origin for an ONSITE listing (no token/scope) —
+ * the same `<slug>.<APPS_DOMAIN>` host the webhook validates the bundle's iframe
+ * against. Shared by the card AND detail projections so their `liveUrl` for a
+ * given slug can never drift. Both projections only compose this once the row
+ * has passed the deploy-gate (list SQL + detail read), so the origin is live.
+ */
+function onsiteLiveUrl(slug: string): string {
+  return `https://${slug}.${env.APPS_DOMAIN}`;
+}
+
+/**
  * The Prisma `select` for a hydrated listing row (shared by card + detail). Only
  * fields the public projection uses — the internal columns (status, ownership
  * beyond the chip, raw manifest internals) are never selected into a public DTO.
@@ -249,6 +260,9 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
     kind: 'onsite',
     appBlockId: row.appBlockId ?? null,
     hasPage: manifestHasPage(row.appBlock?.manifest),
+    // Surfaced on the card so a client can link the onsite app without an N+1
+    // detail fetch. Same derivation as the detail projection (shared helper).
+    liveUrl: onsiteLiveUrl(row.slug),
   };
 }
 
@@ -289,8 +303,9 @@ function detailKindData(row: HydratedListing): ListingDetailKindData {
     appBlockId: row.appBlockId ?? null,
     hasPage: manifestHasPage(row.appBlock?.manifest),
     // Already-public standalone origin (no token/scope) — same host the webhook
-    // validates the bundle's iframe against. Built from slug + APPS_DOMAIN.
-    liveUrl: `https://${row.slug}.${env.APPS_DOMAIN}`,
+    // validates the bundle's iframe against. Shared derivation with the card
+    // projection (onsiteLiveUrl) so list + detail can never drift.
+    liveUrl: onsiteLiveUrl(row.slug),
   };
 }
 

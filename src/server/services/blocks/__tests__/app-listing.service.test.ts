@@ -235,15 +235,43 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     expect(card.reviewCount).toBe(10);
   });
 
-  it('onsite kindData carries appBlockId + hasPage (Open) when the manifest declares a page', () => {
+  it('onsite kindData carries appBlockId + hasPage (Open) + the computed liveUrl when the manifest declares a page', () => {
     const card = projectListingCard(hydratedRow() as never);
-    expect(card.kindData).toEqual({ kind: 'onsite', appBlockId: 'ab_1', hasPage: true });
+    expect(card.kindData).toEqual({
+      kind: 'onsite',
+      appBlockId: 'ab_1',
+      hasPage: true,
+      liveUrl: 'https://cool-app.civit.ai',
+    });
   });
 
-  it('onsite hasPage=false (Install) when the manifest declares no page', () => {
+  it('onsite hasPage=false (Install) when the manifest declares no page (liveUrl still present)', () => {
     const row = hydratedRow({ appBlock: { manifest: { name: 'X', targets: [] } } });
     const card = projectListingCard(row as never);
-    expect(card.kindData).toEqual({ kind: 'onsite', appBlockId: 'ab_1', hasPage: false });
+    expect(card.kindData).toEqual({
+      kind: 'onsite',
+      appBlockId: 'ab_1',
+      hasPage: false,
+      liveUrl: 'https://cool-app.civit.ai',
+    });
+  });
+
+  it('onsite card liveUrl is `https://<slug>.<APPS_DOMAIN>` for the seeded slug', () => {
+    const row = hydratedRow({ slug: 'my-neat-app' });
+    const card = projectListingCard(row as never);
+    expect(card.kindData).toMatchObject({ kind: 'onsite', liveUrl: 'https://my-neat-app.civit.ai' });
+  });
+
+  it('PARITY GUARD: onsite card liveUrl === detail liveUrl for the same listing (anti-drift)', () => {
+    // Both projections must compose liveUrl the SAME way (shared helper). If a
+    // future change alters one derivation and not the other, this fails.
+    const row = hydratedRow({ slug: 'parity-app' });
+    const card = projectListingCard(row as never);
+    const detail = projectListingDetail(row as never);
+    const cardKind = card.kindData as { kind: 'onsite'; liveUrl: string };
+    const detailKind = detail.kindData as { kind: 'onsite'; liveUrl: string };
+    expect(cardKind.liveUrl).toBe('https://parity-app.civit.ai');
+    expect(cardKind.liveUrl).toBe(detailKind.liveUrl);
   });
 
   it('coverUrl falls back to the first screenshot when there is no cover', () => {

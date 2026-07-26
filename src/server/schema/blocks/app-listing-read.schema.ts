@@ -158,6 +158,14 @@ export type ListingCardKindData =
       appBlockId: string | null;
       /** True when the app declares a launch page (Open CTA) vs a model-slot install (Install CTA). */
       hasPage: boolean;
+      /**
+       * Already-public standalone block origin (no token/scope) — IDENTICAL in
+       * name + type to the detail projection's `liveUrl`, so a client can link an
+       * onsite app straight from the list card without an N+1 detail fetch. An
+       * onsite card only appears once its backing block has deployed (the same
+       * deploy-gate the detail read applies), so this origin is always live.
+       */
+      liveUrl: string;
     }
   | {
       kind: 'offsite';
