@@ -128,6 +128,19 @@ export const redisEnvSchema = z
     // in-flight, single-flighted slot-map refresh a beat to land before the retry. 50ms then 150ms.
     REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MS: z.coerce.number().default(50),
     REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS: z.coerce.number().default(150),
+    // REDISCOVERY-NUDGE DEBOUNCE (the api-heavy #rediscover churn cut). Time-gates ONLY how often the
+    // routing-retry path SCHEDULES a topology rediscovery — it does NOT touch the retry itself (the
+    // retry stays load-bearing: it converts routing throws that would 500 into `recovered`). On the
+    // redis-heaviest pool a sustained routing-throw stream fires the fire-and-forget rediscover NUDGE
+    // on EVERY throw, keeping a `_slots.rediscover()` perpetually re-scheduled; node-redis already
+    // single-flights the actual rediscover, so the cost is the SCHEDULING/nudge churn (`#rediscover`
+    // ~3.9% active-JS-CPU on the busiest pod) which re-widens the empty-slot window → more throws.
+    // With a debounce a throw storm triggers AT MOST ONE rediscover per window instead of one per
+    // throw. DEFAULT 0 = DISABLED = byte-identical to today's behavior (nudge fires every throw): the
+    // gate is inert until explicitly enabled per-pool via the deployment env (api-heavy first), and
+    // rollback is setting it back to 0 (no code revert). A value on the order of the rediscover settle
+    // window (e.g. 500–1000ms) collapses the storm to ~1 nudge/window; tune per-pool from the canary.
+    REDIS_CLUSTER_REDISCOVER_NUDGE_DEBOUNCE_MS: z.coerce.number().default(0),
     // Used only to derive a hostname for the failover feature-flag context
     NEXTAUTH_URL: z.string().optional(),
     FLIPT_DEPLOYMENT_ID: z.string().optional(),
@@ -206,6 +219,7 @@ function buildEnv() {
     clusterRoutingRetryMax: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_MAX,
     clusterRoutingRetryBackoffMs: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MS,
     clusterRoutingRetryBackoffMaxMs: parsed.data.REDIS_CLUSTER_ROUTING_RETRY_BACKOFF_MAX_MS,
+    clusterRediscoverNudgeDebounceMs: parsed.data.REDIS_CLUSTER_REDISCOVER_NUDGE_DEBOUNCE_MS,
     nextAuthUrl: parsed.data.NEXTAUTH_URL,
     fliptDeploymentId: parsed.data.FLIPT_DEPLOYMENT_ID,
   };

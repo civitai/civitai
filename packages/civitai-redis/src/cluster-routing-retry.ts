@@ -276,3 +276,62 @@ export async function withClusterRoutingRetry<T>(
     }
   }
 }
+
+/**
+ * DEBOUNCE the routing-retry REDISCOVERY NUDGE — a time-gate on how often the routing-retry path
+ * *schedules* a topology rediscovery. This gates the NUDGE, NOT the retry: `withClusterRoutingRetry`
+ * still retries + recovers on every transient throw (that path is load-bearing — it converts throws
+ * that would become HTTP 500s into `recovered`), unchanged. All this changes is whether the
+ * fire-and-forget `triggerTopologyRediscovery(self, 'routing-retry')` nudge (client.ts) actually
+ * fires on a given throw.
+ *
+ * WHY (measured, civitai-dp-prod-api-heavy — the redis-heaviest pool, ~48k cluster-cmd/s): under a
+ * sustained routing-throw stream the client.ts nudge is fired UNCONDITIONALLY on EVERY throw, keeping
+ * a `_slots.rediscover()` perpetually re-scheduled. node-redis already single-flights the actual
+ * rediscover, so the cost is the SCHEDULING / nudge churn (`#rediscover`, ~3.9% of active-JS-CPU on
+ * the busiest pod) — and that churn re-opens the momentary empty-slot window, feeding MORE throws
+ * (a self-feeding loop). Debouncing the nudge means a throw storm triggers AT MOST ONE rediscover
+ * per window instead of one per throw, while every command still retries + recovers exactly as today.
+ *
+ * NO-OP WHEN DISABLED: `debounceMs <= 0` (the DEFAULT — see env.ts REDIS_CLUSTER_REDISCOVER_NUDGE_
+ * DEBOUNCE_MS default 0) returns a pass-through that fires the nudge EVERY time — byte-identical to
+ * the behavior before this gate existed. So it is inert until explicitly enabled per-pool via the
+ * deployment env (api-heavy first), and rollback is simply setting the env back to 0 (no code revert).
+ *
+ * PURE: the clock is injectable (`now`, defaults to Date.now) so it is unit-testable with a fake
+ * clock — mirroring the caller-supplied-config style of the rest of this module. Stateful across
+ * calls by design: the returned function closes over a single `lastNudgeAt` so ONE debouncer
+ * instance (created once per cluster client in instrumentCommands) shares the window across ALL
+ * concurrent routing-retry calls — which is exactly the scope that must be de-duplicated (many
+ * concurrent commands each firing their own nudge is the churn we're cutting).
+ *
+ * @param debounceMs minimum ms between two nudges that actually fire (<=0 disables the gate).
+ * @param now injectable monotonic-ish clock (ms); defaults to Date.now.
+ * @returns `(fire) => void` — calls `fire()` iff at least `debounceMs` have elapsed since the last
+ *   fired nudge; otherwise skips it. The FIRST nudge always fires (seeded to -Infinity).
+ */
+export function createNudgeDebouncer(
+  debounceMs: number,
+  now: () => number = Date.now
+): (fire: () => void) => void {
+  // Disabled / default: byte-identical pass-through. No state, no clock reads — fire every time,
+  // exactly as before this gate existed.
+  if (!(debounceMs > 0)) {
+    return (fire: () => void) => fire();
+  }
+  // Seeded so the FIRST nudge in a storm always fires; subsequent nudges inside the window are
+  // suppressed (at most one rediscover scheduled per window). Shared across all callers of THIS
+  // debouncer instance.
+  let lastNudgeAt = Number.NEGATIVE_INFINITY;
+  return (fire: () => void) => {
+    const t = now();
+    if (t - lastNudgeAt >= debounceMs) {
+      // Record BEFORE firing so even a throwing nudge can't be hammered (the wired
+      // triggerTopologyRediscovery swallows its own errors, but stay robust).
+      lastNudgeAt = t;
+      fire();
+    }
+    // else: a rediscover was already nudged within the last debounceMs → skip. node-redis is
+    // single-flighting the actual rediscover regardless; this cuts the scheduling/nudge churn.
+  };
+}

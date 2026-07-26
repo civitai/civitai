@@ -6,7 +6,7 @@ import { RESP_TYPES } from 'redis';
 import slugify from 'slugify';
 import { loadRedisEnv, type RedisConfig } from './env';
 import { withCommandDeadline } from './deadline';
-import { withClusterRoutingRetry } from './cluster-routing-retry';
+import { withClusterRoutingRetry, createNudgeDebouncer } from './cluster-routing-retry';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
 import {
@@ -755,6 +755,7 @@ export interface InstrumentCommandsOptions {
   routingRetryMax?: number;
   routingRetryBackoffMs?: number;
   routingRetryBackoffMaxMs?: number;
+  rediscoverNudgeDebounceMs?: number;
 }
 
 /**
@@ -798,6 +799,16 @@ export function instrumentCommands(
     opts.routingRetryBackoffMs ?? config?.clusterRoutingRetryBackoffMs ?? 0;
   const routingRetryBackoffMaxMs =
     opts.routingRetryBackoffMaxMs ?? config?.clusterRoutingRetryBackoffMaxMs ?? 0;
+  // Rediscovery-nudge debounce (the api-heavy #rediscover churn cut). Resolved ONCE here (like the
+  // other knobs) so instrumentCommands stays testable with injected opts. Default 0 = disabled =
+  // byte-identical (nudge fires every throw). ONE debouncer per cluster client — instrumentCommands
+  // wraps `_execute` exactly once, so this single instance is SHARED across every concurrent command
+  // routed through the wrapped chokepoint. That shared scope is the point: many concurrent commands
+  // each firing their own routing-retry nudge is the churn we're collapsing to ≤1 rediscover/window.
+  // Gates ONLY the nudge — the retry/recovery path (withClusterRoutingRetry) is untouched.
+  const rediscoverNudgeDebounceMs =
+    opts.rediscoverNudgeDebounceMs ?? config?.clusterRediscoverNudgeDebounceMs ?? 0;
+  const nudgeDebouncer = createNudgeDebouncer(rediscoverNudgeDebounceMs);
   self[methodName] = function (this: any, ...args: any[]) {
     // Capture the metric handles ONCE per command so inc/dec stay balanced even if the app's
     // prom module loads mid-flight (a dec without its inc would drive the gauge negative).
@@ -866,7 +877,11 @@ export function instrumentCommands(
           enabled: routingRetryEnabled,
           maxRetries: routingRetryMax,
           backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
-          rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
+          // Debounced nudge: under a sustained routing-throw storm this schedules AT MOST ONE
+          // rediscover per REDIS_CLUSTER_REDISCOVER_NUDGE_DEBOUNCE_MS window instead of one per throw.
+          // debounceMs<=0 (default) => pass-through, byte-identical to firing every throw. The retry
+          // itself is unchanged — only whether this fire-and-forget nudge lands is gated.
+          rediscover: () => nudgeDebouncer(() => triggerTopologyRediscovery(self, 'routing-retry')),
           onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
         })
       : runOnce();

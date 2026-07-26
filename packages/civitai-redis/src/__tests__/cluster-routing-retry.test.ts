@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   isTransientClusterRoutingError,
   withClusterRoutingRetry,
+  createNudgeDebouncer,
 } from '../cluster-routing-retry';
 
 // The exact fleet-wide throw measured during a live rolling update (getSlotRandomNode reads
@@ -428,5 +429,149 @@ describe('withClusterRoutingRetry', () => {
     const result = await withClusterRoutingRetry(exec, { sleep: noSleep });
     expect(result).toBe('ok');
     expect(exec).toHaveBeenCalledTimes(2);
+  });
+});
+
+// createNudgeDebouncer time-gates the routing-retry REDISCOVERY NUDGE — NOT the retry. On
+// civitai-dp-prod-api-heavy (~48k cluster-cmd/s) a sustained routing-throw stream fired the
+// fire-and-forget triggerTopologyRediscovery nudge on EVERY throw, keeping a `_slots.rediscover()`
+// perpetually re-scheduled → `#rediscover` scheduling churn (~3.9% active-JS-CPU on the busiest pod)
+// that re-widens the empty-slot window → more throws. The debouncer collapses a throw storm to AT
+// MOST ONE nudge per window. These pin: (a) debounce OFF/0 => byte-identical pass-through (fires
+// EVERY call, exactly as before the gate), (b) debounce N ms => at most one fire per window under a
+// burst with the FIRST always firing, and (c) — combined with withClusterRoutingRetry below — that
+// gating the nudge does NOT weaken the retry: every command still retries + recovers.
+describe('createNudgeDebouncer', () => {
+  it('(a) disabled (debounceMs = 0) → byte-identical pass-through: fires EVERY call (unchanged)', () => {
+    const fire = vi.fn();
+    // Clock is irrelevant when disabled; supply a throwing clock to PROVE the disabled path never
+    // reads it (no state, no time gate — exactly the pre-gate behavior).
+    const debounce = createNudgeDebouncer(0, () => {
+      throw new Error('disabled debouncer must not read the clock');
+    });
+    for (let i = 0; i < 25; i++) debounce(fire);
+    expect(fire).toHaveBeenCalledTimes(25); // every throw nudges, as before the gate existed
+  });
+
+  it('(a) negative debounceMs also disables the gate (fires every call)', () => {
+    const fire = vi.fn();
+    const debounce = createNudgeDebouncer(-1);
+    for (let i = 0; i < 5; i++) debounce(fire);
+    expect(fire).toHaveBeenCalledTimes(5);
+  });
+
+  it('(b) debounce N ms → the FIRST nudge fires, subsequent nudges inside the window are suppressed', () => {
+    let clock = 0;
+    const now = () => clock;
+    const fire = vi.fn();
+    const debounce = createNudgeDebouncer(1000, now);
+
+    // A throw BURST at t=0: 100 concurrent routing-retry calls all nudge, but only ONE rediscover
+    // is actually scheduled (the churn we're cutting) — the rest are suppressed.
+    for (let i = 0; i < 100; i++) debounce(fire);
+    expect(fire).toHaveBeenCalledTimes(1);
+
+    clock = 100; debounce(fire); // still inside the 1000ms window → suppressed
+    clock = 999; debounce(fire); // boundary-1 → suppressed
+    expect(fire).toHaveBeenCalledTimes(1);
+
+    clock = 1000; debounce(fire); // window elapsed (>= debounceMs) → fires (2nd)
+    expect(fire).toHaveBeenCalledTimes(2);
+
+    clock = 1500; debounce(fire); // inside the new window → suppressed
+    expect(fire).toHaveBeenCalledTimes(2);
+
+    clock = 2001; debounce(fire); // next window → fires (3rd)
+    expect(fire).toHaveBeenCalledTimes(3);
+  });
+
+  it('(b) a SUSTAINED throw stream over one window schedules exactly one rediscover, not one-per-throw', () => {
+    let clock = 0;
+    const now = () => clock;
+    const fire = vi.fn();
+    const debounce = createNudgeDebouncer(500, now);
+    // 50 throws spread across 0..499ms — one per ~10ms, the self-feeding-loop shape.
+    for (let i = 0; i < 50; i++) {
+      clock = i * 10; // 0,10,...,490 — all inside the first 500ms window
+      debounce(fire);
+    }
+    expect(fire).toHaveBeenCalledTimes(1); // 50 throws → 1 rediscover scheduled (was 50)
+  });
+
+  it('two independent debouncer instances keep separate windows (no shared module state)', () => {
+    let clock = 0;
+    const now = () => clock;
+    const a = vi.fn();
+    const b = vi.fn();
+    const dA = createNudgeDebouncer(1000, now);
+    const dB = createNudgeDebouncer(1000, now);
+    dA(a); dB(b); // both fire (each first)
+    clock = 100;
+    dA(a); dB(b); // both suppressed
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+  });
+});
+
+// (c) INTEGRATION — the nudge-vs-retry distinction under a shared debouncer. This is the core
+// safety property: debouncing the NUDGE must NOT weaken the RETRY. We run many withClusterRoutingRetry
+// calls (a throw storm) sharing ONE debouncer at a frozen clock — the exact production wiring, where
+// instrumentCommands creates one debouncer shared across every concurrent _execute — and assert every
+// command still retries + recovers while the actual rediscover fires only once per window.
+describe('routing-retry with a shared nudge debouncer (nudge gated, retry NOT weakened)', () => {
+  it('(c) storm of N commands sharing one debouncer: ALL recover, but rediscover fires ONCE per window', async () => {
+    let clock = 0;
+    const now = () => clock;
+    const debounce = createNudgeDebouncer(1000, now);
+    // The real rediscover side-effect (triggerTopologyRediscovery) that we want to fire at most once.
+    const nudge = vi.fn();
+    // The wired hook: a fire-and-forget debounced nudge, exactly as client.ts passes at :869.
+    const rediscover = () => debounce(nudge);
+
+    const recovered: string[] = [];
+    // 20 concurrent commands, each throws the pre-dispatch routing error once then succeeds.
+    const runOne = () => {
+      const exec = vi
+        .fn()
+        .mockRejectedValueOnce(getSlotRandomNodeThrow())
+        .mockResolvedValueOnce('ok');
+      return withClusterRoutingRetry(exec, {
+        rediscover,
+        onResult: (r) => recovered.push(r),
+        sleep: noSleep,
+      });
+    };
+
+    const results = await Promise.all(Array.from({ length: 20 }, runOne));
+
+    // RETRY path UNWEAKENED: every one of the 20 commands retried and recovered.
+    expect(results).toEqual(Array(20).fill('ok'));
+    expect(recovered).toEqual(Array(20).fill('recovered'));
+    // NUDGE gated: the 20-command storm scheduled exactly ONE actual rediscover (was 20).
+    expect(nudge).toHaveBeenCalledTimes(1);
+
+    // Next window: a fresh storm schedules one more rediscover, and still recovers.
+    clock = 2000;
+    recovered.length = 0;
+    const more = await Promise.all(Array.from({ length: 5 }, runOne));
+    expect(more).toEqual(Array(5).fill('ok'));
+    expect(recovered).toEqual(Array(5).fill('recovered'));
+    expect(nudge).toHaveBeenCalledTimes(2); // one per window, not per throw
+  });
+
+  it('(c) with debounce DISABLED (0) the nudge fires on every retry — identical to today', async () => {
+    const debounce = createNudgeDebouncer(0); // disabled
+    const nudge = vi.fn();
+    const rediscover = () => debounce(nudge);
+
+    // A single command that exhausts (max 2 retries) → today it nudges once per retry = 2 nudges.
+    const original = getSlotRandomNodeThrow();
+    const exec = vi.fn().mockRejectedValue(original);
+    await expect(
+      withClusterRoutingRetry(exec, { rediscover, sleep: noSleep })
+    ).rejects.toBe(original);
+
+    expect(exec).toHaveBeenCalledTimes(3); // 1 + 2 retries
+    expect(nudge).toHaveBeenCalledTimes(2); // one per retry — unchanged from pre-gate behavior
   });
 });
