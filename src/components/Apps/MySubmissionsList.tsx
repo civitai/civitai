@@ -13,6 +13,7 @@ import {
   IconHistory,
   IconMessage,
   IconPencil,
+  IconPhoto,
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
@@ -807,6 +808,18 @@ function SubmissionActions({
             data-testid={`apps-onsite-edit-${s.slug}`}
           >
             Edit
+          </Button>
+        )}
+        {showEdit && s.appBlockId && (
+          <Button
+            size="xs"
+            variant="default"
+            component={Link}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/listing`}
+            leftSection={<IconPhoto size={12} />}
+            data-testid={`apps-onsite-listing-media-${s.slug}`}
+          >
+            Listing images
           </Button>
         )}
         {canManage && s.appBlockId && (

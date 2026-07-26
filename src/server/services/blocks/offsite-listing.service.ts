@@ -1426,6 +1426,59 @@ export async function getMyListingForEdit(opts: {
   };
 }
 
+export type GetMyListingForAppResult = {
+  /** The backing `AppListing.id` — the target for `beginListingRevision` + the owner asset procs. */
+  appListingId: string;
+  /** The listing's TRUE lifecycle status (`draft|pending|approved|rejected|removed`). */
+  status: string;
+  /** The listing's stored content rating (drives the asset NSFW-scan threshold). */
+  contentRating: string;
+  /** Whether a shadow-revision publish request is already under review for this listing. */
+  hasPendingRevision: boolean;
+};
+
+/**
+ * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
+ * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
+ * on-site listing-media page. Returns the `AppListing.id` (the target the page
+ * then passes to `beginListingRevision` + the owner-gated asset procs), the
+ * listing's lifecycle status + content rating, and whether a revision is already
+ * under review. Owner-bound: a listing owned by another user → NOT_OWNED
+ * (→FORBIDDEN); no listing row for the app → NOT_FOUND. Kind-agnostic (works for
+ * both on-site and off-site listings — the on-site owner UI is the first caller).
+ */
+export async function getMyListingForApp(opts: {
+  appBlockId: string;
+  userId: number;
+}): Promise<GetMyListingForAppResult> {
+  const { appBlockId, userId } = opts;
+  const listing = await dbRead.appListing.findUnique({
+    where: { appBlockId },
+    select: { id: true, userId: true, status: true, contentRating: true },
+  });
+  if (!listing) {
+    throw new OffsiteRequestError('NOT_FOUND', `no listing found for app ${appBlockId}`);
+  }
+  if (listing.userId !== userId) {
+    throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
+  }
+  // A pending revision REQUEST (not mere shadow existence) drives the "already
+  // under review" notice — mirrors `getMyListingForEdit`. Kind-agnostic: a revision
+  // request carries the parent listing's kind, so match on the shadow relation only.
+  const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
+    where: { status: 'pending', appListing: { revisionOfId: listing.id } },
+    select: { id: true },
+  });
+  return {
+    appListingId: listing.id,
+    status: listing.status,
+    // Nullable column; fall back to the safest rating so the asset step's scan
+    // threshold is always defined.
+    contentRating: listing.contentRating ?? 'g',
+    hasPendingRevision: !!pendingRevisionReq,
+  };
+}
+
 /**
  * AUTHOR: write a scalar patch to an owned DRAFT shadow revision (the "direct once
  * shadow exists" scalar write for the approved edit flow). Symmetric with the
