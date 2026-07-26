@@ -69,6 +69,15 @@ vi.mock('~/server/services/cosmetic.service', () => ({
 vi.mock('~/server/services/creator-membership.service', () => ({
   bustCreatorMembershipValidCache: vi.fn().mockResolvedValue(undefined),
 }));
+// redeemTokens now routes cache invalidation through the shared
+// `invalidateSubscriptionCaches` helper (#3324) — which itself busts the
+// creator-membership-validity cache alongside session/multiplier/vault/cap/civitai
+// caches, matching how stripe/paddle activation invalidates them. Mock it at that
+// seam (the function redeemTokens actually calls) so the assertion isn't coupled to
+// its transitive internals (and doesn't drag in its heavy real dep graph).
+vi.mock('~/server/utils/subscription.utils', () => ({
+  invalidateSubscriptionCaches: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { Prisma } from '@prisma/client';
 import {
@@ -82,6 +91,7 @@ import {
 } from '../referral.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { bustCreatorMembershipValidCache } from '~/server/services/creator-membership.service';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/enums';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
@@ -118,6 +128,8 @@ const resetAllMocks = () => {
   (createBuzzTransaction as any).mockResolvedValue({ transactionId: 't1' });
   (bustCreatorMembershipValidCache as any).mockClear();
   (bustCreatorMembershipValidCache as any).mockResolvedValue(undefined);
+  (invalidateSubscriptionCaches as any).mockClear();
+  (invalidateSubscriptionCaches as any).mockResolvedValue(undefined);
 };
 
 beforeEach(resetAllMocks);
@@ -1030,11 +1042,12 @@ describe('redeemTokens — creator-membership cache invalidation', () => {
     const result = await redeemTokens({ userId: 42, offerIndex: 0 });
 
     expect(result.id).toBe(99);
-    // The grant committed (create ran); the cache was busted for exactly the
-    // granted user, exactly once.
+    // The grant committed (create ran); subscription caches (incl. the
+    // membership-validity cache) were invalidated for exactly the granted user,
+    // exactly once, after the tx commit.
     expect(mockDbWrite.customerSubscription.create).toHaveBeenCalledTimes(1);
-    expect(bustCreatorMembershipValidCache).toHaveBeenCalledTimes(1);
-    expect(bustCreatorMembershipValidCache).toHaveBeenCalledWith(42);
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledTimes(1);
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(42);
   });
 
   it('does not bust the cache when the redemption transaction fails', async () => {
@@ -1047,6 +1060,6 @@ describe('redeemTokens — creator-membership cache invalidation', () => {
     await expect(redeemTokens({ userId: 42, offerIndex: 0 })).rejects.toThrow(
       /Insufficient tokens/
     );
-    expect(bustCreatorMembershipValidCache).not.toHaveBeenCalled();
+    expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
   });
 });

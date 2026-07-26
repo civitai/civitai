@@ -78,9 +78,12 @@ describe('fetchListingMeta', () => {
       ),
     });
     const r = await fetchListingMeta({ url: 'https://vendor.example.com/app' });
+    // og:description now feeds BOTH the short tagline AND the longer description
+    // field (richer autofill, #3332) — same source, two clamps.
     expect(r).toEqual({
       name: 'Cool App',
       tagline: 'Neat',
+      description: 'Neat',
       coverImageUrl: 'https://cdn.example.com/og.png',
     });
   });
