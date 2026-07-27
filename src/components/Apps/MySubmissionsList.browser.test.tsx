@@ -929,13 +929,16 @@ describe('MySubmissionsList — P4 onsite unpublish / republish / history', () =
 });
 
 describe('MySubmissionsList — P4 surfaced manage links', () => {
-  test('a live app links Edit → edit-manifest and Revenue → revenue for the app block', async () => {
+  test('a live app links Edit → /edit, Listing images → /edit?tab=media, Revenue → revenue', async () => {
     renderWithProviders(
       <MySubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
     const edit = page.getByTestId('apps-onsite-edit-live-app');
     await expect.element(edit).toBeInTheDocument();
-    expect(edit.element().getAttribute('href')).toBe('/apps/block-a/edit-manifest');
+    expect(edit.element().getAttribute('href')).toBe('/apps/block-a/edit');
+    const media = page.getByTestId('apps-onsite-listing-media-live-app');
+    await expect.element(media).toBeInTheDocument();
+    expect(media.element().getAttribute('href')).toBe('/apps/block-a/edit?tab=media');
     const revenue = page.getByTestId('apps-onsite-revenue-live-app');
     await expect.element(revenue).toBeInTheDocument();
     expect(revenue.element().getAttribute('href')).toBe('/apps/block-a/revenue');

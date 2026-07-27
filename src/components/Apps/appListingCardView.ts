@@ -179,11 +179,12 @@ export function canOwnerEditListing(opts: {
 
 /**
  * The owner "Edit" deep-link target, by kind:
- *   - on-site  → `/apps/<appBlockId>/edit-manifest` (the manifest editor). Null
- *     when the on-site listing has no backing `appBlockId` (nothing to edit) —
- *     the caller then hides the button rather than routing to a dead link.
+ *   - on-site  → `/apps/<appBlockId>/edit` (the UNIFIED tabbed editor — App/Manifest
+ *     + Listing media; defaults to the manifest tab). Null when the on-site listing
+ *     has no backing `appBlockId` (nothing to edit) — the caller then hides the
+ *     button rather than routing to a dead link.
  *   - off-site → `/apps/submit?edit=<listingId>` (the off-site submit editor,
- *     keyed on the AppListing id).
+ *     keyed on the AppListing id — LEFT UNCHANGED; offsite is already unified).
  * Structurally accepts both the card + detail `kindData` (only `kind` +
  * `appBlockId` are read). `null` = no editable target → don't render Edit.
  */
@@ -193,7 +194,7 @@ export function getOwnerEditHref(
 ): string | null {
   if (kindData.kind === 'onsite') {
     return kindData.appBlockId
-      ? `/apps/${encodeURIComponent(kindData.appBlockId)}/edit-manifest`
+      ? `/apps/${encodeURIComponent(kindData.appBlockId)}/edit`
       : null;
   }
   return `/apps/submit?edit=${encodeURIComponent(listingId)}`;

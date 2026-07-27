@@ -134,7 +134,7 @@ describe('AppListingCard', () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     const edit = page.getByTestId('apps-listing-owner-edit');
     await expect.element(edit).toBeInTheDocument();
-    await expect.element(edit).toHaveAttribute('href', '/apps/blk-1/edit-manifest');
+    await expect.element(edit).toHaveAttribute('href', '/apps/blk-1/edit');
   });
 
   test('owner of an off-site listing → Edit routes to the submit editor by listing id', async () => {
