@@ -2999,18 +2999,6 @@ export async function resolveArticleRatingReview({
     );
   }
 
-  // Resolution returns:
-  //   articleId  - for downstream notify / tracker
-  //   ownerUserId - the owner who filed the review (for notify)
-  //   articleTitle - pulled from the transactional update
-  //   previousLevel - content-derived snapshot at submission time, for notify copy
-  // The derived status (granted vs overrode-differently) is computed inside the
-  // transaction from the review's `suggestedLevel` vs `appliedLevel`.
-  let articleId: number;
-  let ownerUserId: number;
-  let articleTitle: string;
-  let previousLevel: number;
-
   // All reads + writes go through one transaction so two mods clicking Resolve
   // simultaneously can't both pass the Pending check. The review row is updated
   // with a status guard (updateMany + count === 1) so the loser of the race
@@ -3097,10 +3085,17 @@ export async function resolveArticleRatingReview({
     };
   });
 
-  articleId = result.articleId;
-  ownerUserId = result.ownerUserId;
-  previousLevel = result.previousLevel;
-  articleTitle = result.title ?? 'your article';
+  // Resolution returns:
+  //   articleId  - for downstream notify / tracker
+  //   ownerUserId - the owner who filed the review (for notify)
+  //   articleTitle - pulled from the transactional update
+  //   previousLevel - content-derived snapshot at submission time, for notify copy
+  // The derived status (granted vs overrode-differently) is computed inside the
+  // transaction from the review's `suggestedLevel` vs `appliedLevel`.
+  const articleId = result.articleId;
+  const ownerUserId = result.ownerUserId;
+  const previousLevel = result.previousLevel;
+  const articleTitle = result.title ?? 'your article';
   const status = result.derivedStatus;
 
   // Defense-in-depth: keep the search index in sync. Cheap and idempotent.
