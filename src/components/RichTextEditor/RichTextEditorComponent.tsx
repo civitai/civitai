@@ -32,6 +32,8 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { InsertMarkdownControl } from '~/components/RichTextEditor/InsertMarkdownControl';
+import { looksLikeMarkdown, markdownToEditorHtml } from '~/utils/markdown-to-editor-html';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -138,6 +140,7 @@ export function RichTextEditor({
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
   const addTimestamp = includeControls.includes('timestamp');
+  const addMarkdown = includeControls.includes('markdown');
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -230,6 +233,8 @@ export function RichTextEditor({
     accepts,
   ]);
 
+  const editorRef = useRef<Editor>();
+
   const editor = useEditor({
     extensions,
     content: value?.startsWith('{') ? JSON.parse(value) : value,
@@ -238,9 +243,37 @@ export function RichTextEditor({
     immediatelyRender: false,
     // onDelete: (props) => console.log(props), // TODO - handle image/video delete from s3 bucket
     shouldRerenderOnTransaction: true,
-  });
+    // Must be `{}` and never `undefined` when disabled: tiptap reads
+    // `options.editorProps.dispatchTransaction` unguarded, and an explicit
+    // `undefined` overrides its `editorProps: {}` default in the options spread,
+    // crashing every editor that doesn't enable markdown.
+    editorProps: addMarkdown
+      ? {
+          handlePaste: (_view, event) => {
+            const clipboard = event.clipboardData;
+            const activeEditor = editorRef.current;
+            if (!clipboard || !activeEditor) return false;
 
-  const editorRef = useRef<Editor>();
+            // Decided on the plain-text flavour alone, ignoring any text/html
+            // sibling: editors put syntax-highlighted HTML next to the source,
+            // so gating on text/html would skip the commonest case (copying a
+            // .md out of an editor) and paste coloured spans instead. Sources
+            // that only offer rendered HTML serialize to plain text without
+            // markdown structure, so they fall through to ProseMirror's own
+            // parser. Image pastes carry no text/plain and fall through too.
+            const text = clipboard.getData('text/plain');
+            if (!text || !looksLikeMarkdown(text)) return false;
+
+            const html = markdownToEditorHtml(text);
+            if (!html.trim()) return false;
+
+            event.preventDefault();
+            activeEditor.commands.insertContent(html);
+            return true;
+          },
+        }
+      : {},
+  });
 
   // Sync `value` -> editor content on prop changes. Three cases:
   //   1. `value` cleared (e.g. after a form submission) -> wipe editor.
@@ -393,6 +426,11 @@ export function RichTextEditor({
                 <InsertTimestampControl />
               </RTE.ControlsGroup>
             )}
+            {addMarkdown && (
+              <RTE.ControlsGroup>
+                <InsertMarkdownControl />
+              </RTE.ControlsGroup>
+            )}
           </RTE.Toolbar>
         )}
 
@@ -444,7 +482,8 @@ type ControlType =
   | 'mentions'
   | 'polls'
   | 'colors'
-  | 'timestamp';
+  | 'timestamp'
+  | 'markdown';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
