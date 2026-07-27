@@ -80,8 +80,10 @@ export async function checkMinorHashOnScan({
       {
         type: 'warning',
         name: 'minor-hash-scan-check',
-        message: (error as Error).message,
+        message: error instanceof Error ? error.message : String(error),
         modelId,
+        userId,
+        sha256,
       },
       'webhooks'
     ).catch(() => null);

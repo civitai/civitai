@@ -13,6 +13,7 @@ const {
   mockLimitConcurrency,
   mockUnpublishModelById,
   mockSetNxKeepTtlWithEx,
+  mockCheckMinorHashOnScan,
 } = vi.hoisted(() => {
   // Test-local copy of the real error class so rescanModel's instanceof
   // check resolves without importing the real orchestrator module.
@@ -65,6 +66,7 @@ const {
     }),
     mockUnpublishModelById: vi.fn().mockResolvedValue({}),
     mockSetNxKeepTtlWithEx: vi.fn().mockResolvedValue(true),
+    mockCheckMinorHashOnScan: vi.fn().mockResolvedValue('skipped'),
   };
 });
 
@@ -130,6 +132,10 @@ vi.mock('~/server/redis/client', () => ({
 }));
 
 vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: vi.fn() }));
+
+vi.mock('~/server/services/minor-hash.service', () => ({
+  checkMinorHashOnScan: mockCheckMinorHashOnScan,
+}));
 
 import {
   applyScanOutcome,
@@ -1290,6 +1296,50 @@ describe('model-file-scan.service', () => {
       ).resolves.toBeUndefined();
       // prove the error path was actually entered (not skipped) before it was swallowed
       expect(findOfficialFileByHash).toHaveBeenCalled();
+    });
+  });
+
+  // ==========================================================================
+  // applyScanOutcome — minor-hash-detection wiring
+  // ==========================================================================
+  describe('applyScanOutcome — minor-hash wiring', () => {
+    it('calls checkMinorHashOnScan with the modelId/userId/sha256 derived from the scanned file', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 700,
+        type: 'Model',
+        modelVersionId: 30,
+        modelVersion: { modelId: 55, model: { userId: 777 } },
+      });
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 700,
+        hashes: { SHA256: 'deadbeef' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckMinorHashOnScan).toHaveBeenCalledWith({
+        modelId: 55,
+        userId: 777,
+        sha256: 'deadbeef',
+      });
+    });
+
+    it('does not call checkMinorHashOnScan when the outcome carries no hashes', async () => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 701,
+        type: 'Model',
+        modelVersionId: 31,
+        modelVersion: { modelId: 56, model: { userId: 778 } },
+      });
+
+      await applyScanOutcome({
+        fileId: 701,
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
     });
   });
 });

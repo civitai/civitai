@@ -142,4 +142,28 @@ describe('checkMinorHashOnScan', () => {
     expect(result).toBe('skipped');
     expect(mockLogToAxiom).toHaveBeenCalled();
   });
+
+  it('swallows a non-Error throw (a rejected string) and logs a readable message', async () => {
+    mockDbRead.$queryRaw.mockRejectedValue('db exploded');
+
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+
+    expect(result).toBe('skipped');
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'db exploded', modelId: 100, userId: 5, sha256: 'ABC' }),
+      'webhooks'
+    );
+  });
+
+  it('does not throw when the rejection value is null (property access on a non-Error cast)', async () => {
+    mockDbRead.$queryRaw.mockRejectedValue(null);
+
+    await expect(
+      checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' })
+    ).resolves.toBe('skipped');
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'null', modelId: 100, userId: 5, sha256: 'ABC' }),
+      'webhooks'
+    );
+  });
 });
