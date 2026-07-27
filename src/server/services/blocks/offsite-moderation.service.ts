@@ -20,7 +20,7 @@ import {
   type UnpublishOwnListingInput,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
-import { assertAssetsScanClean } from '~/server/services/blocks/app-listing-assets.service';
+import { assertListingAssetsScanCleanInTx } from '~/server/services/blocks/app-listing-assets.service';
 import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
@@ -474,43 +474,6 @@ export async function delistListing(opts: {
   }
 
   return { appListingId: input.appListingId, status: 'removed' };
-}
-
-/**
- * Re-read a listing's attached assets from the PRIMARY (`tx`) and assert every one is
- * terminally `Scanned` BEFORE a `removed`/`pending` → `approved` go-live flip.
- *
- * 🔴 Closes the go-live bypass introduced by the allow-pending attach: a `removed` or
- * `pending` listing is still DIRECTLY asset-editable ({@link assertOwnerAssetEditable}
- * only blocks direct edits on `approved` non-shadow rows), so without this an owner
- * could attach a still-scanning / later-`Blocked` image to a removed listing and
- * `republishOwnListing`/`relistListing` (or a reset re-approve) would put it LIVE — the
- * public read path selects icon/cover/screenshot urls with NO ingestion filter. For a
- * normally-scanned listing this is a no-op (its assets are already `Scanned`); it only
- * rejects the exact scan-dirty hole. Uphholds the same invariant + TOCTOU discipline as
- * the approve/apply go-live gates (in-tx, primary read).
- */
-async function assertListingAssetsScanCleanInTx(
-  tx: Prisma.TransactionClient,
-  appListingId: string
-): Promise<void> {
-  const listing = await tx.appListing.findUnique({
-    where: { id: appListingId },
-    select: { iconId: true, coverId: true },
-  });
-  if (!listing) return;
-  const shots = await tx.appListingScreenshot.findMany({
-    where: { appListingId, imageId: { not: null } },
-    select: { imageId: true },
-  });
-  await assertAssetsScanClean(
-    {
-      iconId: listing.iconId,
-      coverId: listing.coverId,
-      screenshotImageIds: shots.map((s) => s.imageId).filter((v): v is number => v != null),
-    },
-    tx
-  );
 }
 
 export type RelistListingResult = { appListingId: string; status: 'approved' };

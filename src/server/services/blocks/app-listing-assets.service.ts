@@ -543,6 +543,42 @@ export async function assertAssetsScanClean(
   });
 }
 
+/**
+ * Convenience wrapper around {@link assertAssetsScanClean} that LOADS a listing's
+ * attached assets (icon / cover / imageId-bearing screenshots) by id from the given
+ * client and then runs the scan-clean gate. Shared by every `removed`/`pending` →
+ * `approved` go-live flip that republishes EXISTING assets (relist / owner-republish /
+ * onsite reset re-approve) — a `removed`/`pending` listing is still directly
+ * asset-editable, so it may reference a still-scanning / `Blocked` image.
+ *
+ * `db` is typed `Prisma.TransactionClient` so the in-tx callers pass their `tx` (the
+ * authoritative primary read); a non-transactional caller may pass `dbWrite` (a
+ * `PrismaClient` is structurally a `TransactionClient` for these reads). No-op for a
+ * listing with no attached assets / all-`Scanned` assets.
+ */
+export async function assertListingAssetsScanCleanInTx(
+  db: Prisma.TransactionClient,
+  appListingId: string
+): Promise<void> {
+  const listing = await db.appListing.findUnique({
+    where: { id: appListingId },
+    select: { iconId: true, coverId: true },
+  });
+  if (!listing) return;
+  const shots = await db.appListingScreenshot.findMany({
+    where: { appListingId, imageId: { not: null } },
+    select: { imageId: true },
+  });
+  await assertAssetsScanClean(
+    {
+      iconId: listing.iconId,
+      coverId: listing.coverId,
+      screenshotImageIds: shots.map((s) => s.imageId).filter((v): v is number => v != null),
+    },
+    db
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Per-asset scan-status poll (owner/mod-gated). The client attaches an in-flight
 // image IMMEDIATELY (the server stores the pending id), then polls THIS to flip a

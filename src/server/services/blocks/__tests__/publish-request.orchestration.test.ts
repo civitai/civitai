@@ -114,6 +114,9 @@ const {
         create: vi.fn(),
         updateMany: vi.fn(async () => ({ count: 0 })),
         findFirst: vi.fn(async () => null),
+        // The shared assertListingAssetsScanCleanInTx wrapper re-reads the reset
+        // listing's icon/cover by id from the PRIMARY.
+        findUnique: vi.fn(async () => null),
       },
       appListingScreenshot: { findMany: vi.fn(async () => []) },
       image: {
@@ -333,6 +336,7 @@ beforeEach(() => {
   // to gate (findFirst → null → gate skipped, the existing restore updateMany still
   // runs), no screenshots, every queried image `Scanned`. A scan-gate test overrides.
   mockDbWrite.appListing.findFirst.mockResolvedValue(null);
+  mockDbWrite.appListing.findUnique.mockResolvedValue(null);
   mockDbWrite.appListingScreenshot.findMany.mockResolvedValue([]);
   mockDbWrite.image.findMany.mockImplementation(
     async (args: { where?: { id?: { in?: number[] } } }) =>
@@ -1421,12 +1425,10 @@ describe('approveRequest', () => {
       app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
-    // The reset listing exists + is pending, but its icon is still scanning.
-    mockDbWrite.appListing.findFirst.mockResolvedValue({
-      id: 'apl_reset',
-      iconId: 1,
-      coverId: 2,
-    });
+    // The reset listing exists + is pending (found by id), but its icon is still
+    // scanning (the shared wrapper re-reads icon/cover by id, then the scan gate).
+    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset' });
+    mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
     mockDbWrite.image.findMany.mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
       (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: id === 1 ? 'Pending' : 'Scanned' }))
     );
@@ -1450,6 +1452,48 @@ describe('approveRequest', () => {
       (c: any[]) => c[0]?.data?.status === 'approved' && c[0]?.where?.status === 'suspended'
     );
     expect(unsuspend).toBeUndefined();
+  });
+
+  it('🔴 Item 1 audit fix: reset re-approve PROCEEDS (restore + un-suspend) when the reset listing is all-Scanned — the inline scan gate PASSES', async () => {
+    // The other side of the inline scan gate: a reset (`pending`) onsite listing whose
+    // icon + cover are all-`Scanned` passes the gate, so the store-visibility restore
+    // proceeds end-to-end (listing pending→approved AND block suspended→approved). This
+    // exercises the gate-PASSES branch of the inline copy (the default-null test above
+    // only exercises the gate-SKIPPED branch).
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    // The reset listing exists (found by id) with all-Scanned icon+cover → gate passes.
+    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset' });
+    mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
+    // Re-stage the clean image impl (clearAllMocks doesn't reset a prior test's impl).
+    mockDbWrite.image.findMany.mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+    );
+    // The reset listing flip matches one row (listing WAS pending) → reset re-approve.
+    mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    expect(result.isFirstVersion).toBe(false);
+
+    // (a) The store-visibility restore (pending → approved) PROCEEDED (gate passed).
+    expect(mockDbWrite.appListing.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ appBlockId: 'apb_existing', kind: 'onsite', status: 'pending' }),
+        data: { status: 'approved' },
+      })
+    );
+    // (b) …and because the restore matched, the block was un-suspended too.
+    expect(mockDbWrite.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: 'apb_existing', status: 'suspended' },
+      data: { status: 'approved' },
+    });
   });
 
   it('normal subsequent-version approve (listing NOT pending) does NOT un-suspend the block', async () => {
