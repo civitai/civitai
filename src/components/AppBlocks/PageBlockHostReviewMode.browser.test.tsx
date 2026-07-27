@@ -52,6 +52,11 @@ vi.mock('~/utils/trpc', () => ({
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // PageBlockHost also wires these at render (image-scan republish path);
+      // stub so the mount succeeds. Missing → `trpc.blocks.<x>` is undefined →
+      // `.useMutation()` throws at render, crashing the whole file's setup.
+      publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {
