@@ -93,10 +93,7 @@ import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
-import {
-  HIDDEN_METRIC_MESSAGE,
-  HiddenMetricNotice,
-} from '~/components/Model/HiddenMetricNotice';
+import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -249,6 +246,8 @@ export const getServerSideProps = createServerSideProps({
     //   }
     // }
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
       // Fetch the model first so we can short-circuit on slug mismatch before
       // doing any other prefetch work. Stale links from search results /
@@ -256,6 +255,12 @@ export const getServerSideProps = createServerSideProps({
       const model = await ssg.model.getById
         .fetch({ id, excludeTrainingData: true })
         .catch(() => null);
+
+      if (model)
+        gating = {
+          contentNsfwLevel: model.nsfwLevel,
+          nsfw: model.nsfw,
+        };
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (model) {
@@ -374,6 +379,7 @@ export const getServerSideProps = createServerSideProps({
 
     return {
       props: { id },
+      gating,
     };
   },
 });

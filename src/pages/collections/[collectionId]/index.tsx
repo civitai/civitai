@@ -23,9 +23,11 @@ export const getServerSideProps = createServerSideProps({
 
     if (!features?.collections) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
-      await Promise.all([
-        ssg.collection.getById.prefetch({ id: collectionId }),
+      const [data] = await Promise.all([
+        ssg.collection.getById.fetch({ id: collectionId }).catch(() => null),
         ...(session
           ? [
               ssg.collection.getAllUser.prefetch({
@@ -35,12 +37,20 @@ export const getServerSideProps = createServerSideProps({
             ]
           : []),
       ]);
+
+      const collection = data?.collection;
+      if (collection)
+        gating = {
+          contentNsfwLevel: collection.metadata?.forcedBrowsingLevel || collection.nsfwLevel,
+          nsfw: collection.nsfw ?? undefined,
+        };
     }
 
     return {
       props: {
         collectionId: Number(ctx.query.collectionId),
       },
+      gating,
     };
   },
 });
