@@ -5,8 +5,14 @@ import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorCompon
 
 // `.ladle/components.tsx` only loads @mantine/core styles, so the editor's own
 // stylesheets have to come in here or the toolbar renders unstyled.
-import '@mantine/tiptap/styles.css';
-import '@mantine/notifications/styles.css';
+//
+// The `.layer.css` variants specifically, matching _app.tsx: the plain builds are
+// unlayered, and unlayered CSS outranks every layered rule — including CSS
+// modules, which Next wraps in `@layer modules`. Importing those here would let
+// Mantine override module styles it doesn't override in the real app, so the
+// preview would misreport the styling.
+import '@mantine/tiptap/styles.layer.css';
+import '@mantine/notifications/styles.layer.css';
 
 /**
  * Manual harness for the article editor. Runs the real component with the same
