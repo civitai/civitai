@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -134,21 +135,51 @@ async function getAnnouncementsCached(domain?: DomainColor) {
   return getAnnouncementsCachedMemo(domain ?? '');
 }
 
+/**
+ * The "currently live" predicate: enabled, and now is inside the (open-ended)
+ * start/end window. Shared with the announcement media health check so a monitor
+ * can never disagree with the read path about which announcements are live.
+ */
+export function activeAnnouncementWhere(now: Date): Prisma.AnnouncementWhereInput {
+  return {
+    disabled: false,
+    AND: [
+      {
+        OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
+      },
+      {
+        OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
+      },
+    ],
+  };
+}
+
+/**
+ * Every currently-active announcement that carries a banner image key, across all
+ * domains. Used by the media health check — deliberately NOT domain-filtered, since
+ * a broken banner on a single-domain announcement is just as broken.
+ */
+export async function getActiveAnnouncementImageRefs() {
+  const announcements = await dbRead.announcement.findMany({
+    where: activeAnnouncementWhere(new Date()),
+    select: { id: true, metadata: true },
+  });
+
+  return announcements
+    .map(({ id, metadata }) => ({
+      id,
+      key: ((metadata ?? {}) as AnnouncementMetaSchema).image,
+    }))
+    .filter((x): x is { id: number; key: string } => !!x.key);
+}
+
 export type AnnouncementDTO = Awaited<ReturnType<typeof getAnnouncements>>[number];
 async function getAnnouncements(domain?: DomainColor) {
   const now = new Date();
   const announcements = await dbWrite.announcement.findMany({
     where: {
-      disabled: false,
+      ...activeAnnouncementWhere(now),
       domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
-      AND: [
-        {
-          OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
-        },
-        {
-          OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
-        },
-      ],
     },
     select: {
       createdAt: true,
