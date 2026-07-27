@@ -1498,6 +1498,83 @@ describe('blocks.submitWorkflow', () => {
     expect(mockSysRedis.decrBy).not.toHaveBeenCalled();
   });
 
+  // ---- MOD REVIEW SANDBOX "run for real" AGGREGATE cap (#2831) -------------
+  // A run-for-real review token (signed reviewRunForReal:true) reserves against a
+  // TIGHT per-(mod, publishRequestId) session ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP
+  // = 5000) INSTEAD OF the ordinary 50k/day cap. This is invariant #6: a low
+  // per-call budget alone cannot bound a hostile app looping sub-budget calls.
+  describe('run-for-real aggregate Buzz cap (#2831)', () => {
+    // Run-for-real tokens are dev:true (signDevScopedPageToken) + carry the pubreq
+    // id as appBlockId. dev:true also skips the G8 per-app reserve (synthetic id).
+    const runForRealClaims = () =>
+      validClaims({
+        reviewRunForReal: true,
+        dev: true,
+        buzzBudget: 1000,
+        appBlockId: 'pubreq_ABC',
+      });
+
+    it('reserves against the per-(mod, publishRequestId) session key, NOT the daily key', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runForRealClaims());
+      happyVersionLookup();
+      happyUser();
+      mockSysRedis.incrBy.mockResolvedValue(125); // under the 5000 session cap
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      const incrKey = String(mockSysRedis.incrBy.mock.calls[0][0]);
+      // The review-session key (auto-vivified REDIS_SYS_KEYS placeholder) — bound to
+      // the pubreq id and NOT the ordinary daily buzz-cap key.
+      expect(incrKey).toContain('REVIEW_RUN_FOR_REAL_BUZZ_CAP');
+      expect(incrKey).toContain('pubreq_ABC');
+      expect(incrKey).not.toContain('system:blocks:buzz-cap');
+    });
+
+    it('REJECTS a run-for-real submit that tops the 5000 session cap even FAR under the 50k daily cap', async () => {
+      mockVerifyBlockToken.mockResolvedValue(runForRealClaims());
+      happyVersionLookup();
+      happyUser();
+      // 5001 > REVIEW_RUN_FOR_REAL_BUZZ_CAP(5000) but ~10× under the 50k daily cap:
+      // the tighter aggregate ceiling MUST bind (looping-app defense, invariant #6).
+      mockSysRedis.incrBy.mockResolvedValue(5001);
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 1 },
+        steps: [],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/review run-for-real Buzz cap/i);
+      // Real submit never fired; the over-cap reservation was refunded.
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+      expect(mockSysRedis.decrBy).toHaveBeenCalledTimes(1);
+      // Refund targets the EXACT reserved session key.
+      expect(String(mockSysRedis.decrBy.mock.calls[0][0])).toBe(
+        String(mockSysRedis.incrBy.mock.calls[0][0])
+      );
+    });
+
+    it('a NON-run-for-real token with the SAME total stays on the 50k daily cap (proves the tight cap is run-for-real ONLY)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+      happyVersionLookup();
+      happyUser();
+      // 5001 is UNDER the 50k daily cap → a normal token proceeds.
+      mockSysRedis.incrBy.mockResolvedValue(5001);
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+        .mockResolvedValueOnce({ id: 'wf_real', status: 'unassigned', cost: { total: 25 }, steps: [] });
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(result.snapshot.workflowId).toBe('wf_real');
+      expect(String(mockSysRedis.incrBy.mock.calls[0][0])).toContain('system:blocks:buzz-cap');
+    });
+  });
+
   it('rejects when the token has no buzzBudget claim', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: undefined }));
     const caller = blocksRouter.createCaller(fakeCtx() as never);

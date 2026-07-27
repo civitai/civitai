@@ -39,6 +39,7 @@ import {
   parseManifestBuzzBudget,
   resolveDevBuzzBudget,
   REVIEW_MINT_SCOPE_ALLOWLIST,
+  REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
   signDevScopedPageToken,
   TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
 } from '~/server/services/blocks/dev-scoped-mint.service';
@@ -270,6 +271,112 @@ describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #28
       allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).toEqual(['user:read:self']);
+  });
+});
+
+describe('clampDevScopes — REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST (mod opt-in #2831)', () => {
+  // The SAME malicious manifest — now clamped through the WIDER run-for-real belt.
+  const MALICIOUS_MANIFEST_SCOPES = [
+    'models:read:self',
+    'media:read:owned', // removed decorative scope — unknown → stripped
+    'collections:read:self',
+    'ai:write:budgeted',
+    'apps:storage:read',
+    'apps:storage:write',
+    'apps:storage:shared:read',
+    'apps:storage:shared:write',
+    'collections:read:private',
+    'collections:write:self',
+    'social:tip:self',
+    'buzz:read:self',
+  ];
+
+  it('grants ONLY declared ∩ allowlist — spend + own storage + own buzz survive, cross-user/private/money-out do NOT', () => {
+    const granted = clampDevScopes({
+      scopeSource: MALICIOUS_MANIFEST_SCOPES,
+      oauthAllowed: null, // pending app — no OauthClient
+      keyCanSpend: true, // run-for-real spends the mod's OWN Buzz
+      allowlist: REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).toEqual([
+      'ai:write:budgeted',
+      'apps:storage:read',
+      'apps:storage:write',
+      'buzz:read:self',
+      'collections:read:self',
+      'models:read:self',
+      'user:read:self',
+    ]);
+    // Clamp holds against a malicious manifest — none of these can EVER survive.
+    for (const withheld of [
+      'apps:storage:shared:read', // cross-user
+      'apps:storage:shared:write', // cross-user write
+      'collections:read:private', // private
+      'collections:write:self', // write surface
+      'social:tip:self', // money OUT (also PAGE_FORBIDDEN)
+      'media:read:owned', // unknown
+    ]) {
+      expect(granted).not.toContain(withheld);
+    }
+  });
+
+  it('NEVER grants social:tip:self even with keyCanSpend:true (money-OUT excluded by allowlist AND PAGE_FORBIDDEN)', () => {
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has('social:tip:self')).toBe(false);
+    const granted = clampDevScopes({
+      scopeSource: ['social:tip:self', 'ai:write:budgeted'],
+      oauthAllowed: null,
+      keyCanSpend: true,
+      allowlist: REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).not.toContain('social:tip:self');
+    expect(granted).toContain('ai:write:budgeted');
+  });
+
+  it('keyCanSpend:false STILL strips the spend scope (belt-and-suspenders) even under the wider allowlist', () => {
+    const granted = clampDevScopes({
+      scopeSource: ['ai:write:budgeted', 'models:read:self'],
+      oauthAllowed: null,
+      keyCanSpend: false,
+      allowlist: REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
+    });
+    expect(granted).not.toContain('ai:write:budgeted');
+  });
+
+  it('withholds cross-user shared storage the run-for-real allowlist never lists', () => {
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has('apps:storage:shared:read')).toBe(false);
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has('apps:storage:shared:write')).toBe(false);
+    expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has('collections:read:private')).toBe(false);
+  });
+});
+
+describe('signDevScopedPageToken — reviewRunForReal claim (#2831)', () => {
+  it('stamps reviewRunForReal:true ONLY when the flag is set (absent otherwise)', async () => {
+    const withFlag = (await signDevScopedPageToken({
+      userId: 7,
+      signBlockId: 'b',
+      signAppId: 'pending-x',
+      signAppBlockId: 'pubreq_x',
+      blockInstanceId: 'page_x',
+      granted: ['ai:write:budgeted', 'user:read:self'],
+      buzzBudget: 50,
+      reviewRunForReal: true,
+    })) as unknown as { _input: Record<string, unknown> };
+    expect(withFlag._input.reviewRunForReal).toBe(true);
+    // Still self-bound, forced-SFW, dev lifetime.
+    expect(withFlag._input.userId).toBe(7);
+    expect(withFlag._input.maxBrowsingLevel).toBe(FORCED_SFW_CEILING);
+    expect(withFlag._input.dev).toBe(true);
+
+    const withoutFlag = (await signDevScopedPageToken({
+      userId: 7,
+      signBlockId: 'b',
+      signAppId: 'pending-x',
+      signAppBlockId: 'pubreq_x',
+      blockInstanceId: 'page_x',
+      granted: ['user:read:self'],
+      buzzBudget: undefined,
+    })) as unknown as { _input: Record<string, unknown> };
+    expect(withoutFlag._input.reviewRunForReal).toBeUndefined();
   });
 });
 

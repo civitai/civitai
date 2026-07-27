@@ -283,6 +283,72 @@ describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, n
   });
 });
 
+describe('PageBlockHost reviewMode + reviewRunForReal — side-effects run the REAL mutation', () => {
+  // The mod opted in (consent-gated) to run the unapproved app for real against
+  // their OWN account. The self-bound / money-in / own-Buzz / per-user-storage
+  // handlers now reach the mutation (the token carries the scopes + budget) —
+  // proving reviewRunForReal flips the NACK. CROSS-USER writes stay NACKed below.
+  test('SUBMIT_WORKFLOW reaches submitWorkflow (no NACK)', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+
+    postFromBlock('SUBMIT_WORKFLOW', { requestId: 'rfr1', body: { ok: true } });
+
+    await vi.waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));
+  });
+
+  test('GET_BUZZ_BALANCE reaches getMyBuzzBalance (own, self-bound)', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+
+    postFromBlock('GET_BUZZ_BALANCE', { requestId: 'rfrb1' });
+
+    await vi.waitFor(() => expect(mocks.buzzBalance).toHaveBeenCalledTimes(1));
+  });
+
+  test('APP_STORAGE_SET reaches storage.set (per-user, own)', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+
+    postFromBlock('APP_STORAGE_SET', { requestId: 'rfrs1', key: 'k', value: 'v' });
+
+    await vi.waitFor(() => expect(mocks.storageSet).toHaveBeenCalledTimes(1));
+  });
+
+  test('SHARED_APPEND (cross-user write) STILL NACKs even in run-for-real, shared.append NOT called', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    const l = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rfrsa1', value: { title: 'x' } });
+
+    await vi.waitFor(() => expect(l.last('SHARED_APPEND_RESULT')).toBeTruthy());
+    const reply = l.last('SHARED_APPEND_RESULT')!.payload as { requestId: string; error: string };
+    expect(reply.error).toBe('not available in review preview');
+    expect(mocks.sharedAppend).not.toHaveBeenCalled();
+    l.stop();
+  });
+
+  test('render-safe GET_VIEWER still works in run-for-real (read stays live in BOTH sub-modes)', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+
+    postFromBlock('GET_VIEWER', { requestId: 'rfrv1' });
+
+    await vi.waitFor(() => expect(mocks.viewer).toHaveBeenCalledTimes(1));
+  });
+});
+
 describe('PageBlockHost reviewMode — the NON-reviewMode (prod) path is unchanged', () => {
   test('without reviewMode, SUBMIT_WORKFLOW reaches submitWorkflow', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
