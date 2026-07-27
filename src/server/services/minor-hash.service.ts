@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import { setModelMinor } from '~/server/services/model.service';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -30,4 +31,33 @@ export async function findMinorHashMatches(sha256: string): Promise<MinorHashMat
   `;
 
   return rows.map(({ id, userId }) => ({ modelId: id, userId }));
+}
+
+const SYSTEM_USER_ID = -1;
+
+export type MinorHashOutcome = 'flagged' | 'queued' | 'skipped';
+
+export async function applyMinorHashMatch({
+  modelId,
+  userId,
+  matches,
+}: {
+  modelId: number;
+  userId: number;
+  matches: MinorHashMatch[];
+}): Promise<MinorHashOutcome> {
+  if (matches.some((match) => match.modelId === modelId)) return 'skipped';
+
+  const others = matches.filter((match) => match.modelId !== modelId);
+  if (!others.length) return 'skipped';
+  if (!others.some((match) => match.userId === userId)) return 'queued';
+
+  await setModelMinor({
+    id: modelId,
+    minor: true,
+    userId: SYSTEM_USER_ID,
+    activity: 'setMinorAutoHash',
+  });
+
+  return 'flagged';
 }

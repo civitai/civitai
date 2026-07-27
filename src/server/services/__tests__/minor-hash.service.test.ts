@@ -16,7 +16,7 @@ vi.mock('~/server/services/model.service', () => ({ setModelMinor: mockSetModelM
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: mockTrackModActivity }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
-import { findMinorHashMatches } from '~/server/services/minor-hash.service';
+import { findMinorHashMatches, applyMinorHashMatch } from '~/server/services/minor-hash.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -56,5 +56,55 @@ describe('findMinorHashMatches', () => {
     expect(text).toContain(`'minor' = ANY(m."lockedProperties")`);
     expect(text).toContain(`mf.type = 'Model'`);
     expect(values).toContain('ABC123');
+  });
+});
+
+describe('applyMinorHashMatch', () => {
+  it('flags when a match shares the uploader', async () => {
+    const result = await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      matches: [{ modelId: 50, userId: 5 }],
+    });
+
+    expect(result).toBe('flagged');
+    expect(mockSetModelMinor).toHaveBeenCalledWith({
+      id: 100,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+    });
+  });
+
+  it('queues without writing when every match is a different uploader', async () => {
+    const result = await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      matches: [{ modelId: 50, userId: 9 }],
+    });
+
+    expect(result).toBe('queued');
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+
+  it('skips when there are no matches', async () => {
+    const result = await applyMinorHashMatch({ modelId: 100, userId: 5, matches: [] });
+
+    expect(result).toBe('skipped');
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+
+  it('skips when the candidate is itself in the seed set', async () => {
+    const result = await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      matches: [
+        { modelId: 100, userId: 5 },
+        { modelId: 50, userId: 5 },
+      ],
+    });
+
+    expect(result).toBe('skipped');
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
   });
 });
