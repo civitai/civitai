@@ -209,6 +209,7 @@ export const ECO = {
 
   // Microsoft
   MAI: 71,
+  MageFlow: 78,
 
   // Ideogram
   Ideogram: 72,
@@ -627,6 +628,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 21,
     sortOrder: 160,
   },
+  {
+    id: ECO.MageFlow,
+    key: 'MageFlow',
+    displayName: 'Mage Flow',
+    familyId: 21,
+    sortOrder: 161,
+  },
 
   // Ideogram Family (familyId: 22)
   {
@@ -1035,6 +1043,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
   { ecosystemId: ECO.Reve, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // MageFlow - checkpoint only (Microsoft Mage Flow, six official builds, no community LoRAs yet)
+  { ecosystemId: ECO.MageFlow, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1535,6 +1546,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
       modelLocked: true,
     },
   },
+  {
+    ecosystemId: ECO.MageFlow,
+    defaults: {
+      model: { id: 3172038 },
+      modelLocked: true,
+    },
+  },
 ];
 
 // =============================================================================
@@ -2001,6 +2019,7 @@ export const BM = {
   Tripo: 94,
   Hunyuan3D: 95,
   Reve: 96,
+  MageFlow: 97,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2377,7 +2396,7 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
   {
     id: 21,
     name: 'Microsoft',
-    description: "Microsoft AI's MAI family of image generation and editing models",
+    description: "Microsoft's image generation and editing models",
   },
   {
     id: 22,
@@ -2690,6 +2709,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Lumina,
     licenseId: 13,
+  },
+
+  // MageFlow
+  {
+    id: BM.MageFlow,
+    name: 'MageFlow',
+    description: "Microsoft's native-resolution image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MageFlow,
+    licenseId: 19,
   },
 
   // MAI

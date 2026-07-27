@@ -169,6 +169,7 @@ const TURBO_VARIANT_ECOSYSTEMS = new Set<string>([
   'Boogu',
   'Krea2',
   'Anima',
+  'MageFlow',
 ]);
 
 const storageAdapter = createLocalStorageAdapter({
