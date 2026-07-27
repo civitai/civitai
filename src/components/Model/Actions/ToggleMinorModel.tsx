@@ -13,7 +13,9 @@ export function ToggleMinorModel({
   const { mutate, isPending: isLoading } = trpc.model.setMinor.useMutation(
     useModeratorModelToggle<{ id: number; minor: boolean }>({
       modelId,
-      getSuccessMessage: (request) => (request.minor ? 'Model set as minor' : 'Model unset as minor'),
+      getSuccessMessage: (request) => {
+        return request.minor ? 'Model set as minor' : 'Model unset as minor';
+      },
       errorTitle: 'Failed to update model',
     })
   );
