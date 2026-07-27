@@ -2,11 +2,8 @@ import { generateJSON } from '@tiptap/html/server';
 import { describe, expect, it } from 'vitest';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
-import {
-  convertMarkdownForEditor,
-  looksLikeMarkdown,
-  markdownToEditorHtml,
-} from '~/utils/markdown-to-editor-html';
+import { looksLikeMarkdown } from '~/utils/markdown-detect';
+import { convertMarkdownForEditor, markdownToEditorHtml } from '~/utils/markdown-to-editor-html';
 
 const tagsIn = (html: string) =>
   new Set(Array.from(html.matchAll(/<([a-z][a-z0-9-]*)/gi), (m) => m[1].toLowerCase()));
@@ -190,11 +187,33 @@ describe('convertMarkdownForEditor', () => {
     expect(html).toContain('Body text.');
   });
 
-  it('drops embedded raw html instead of leaving it for the sanitizer', () => {
+  it('escapes embedded raw html rather than executing it', () => {
     const html = markdownToEditorHtml('<script>alert(1)</script>\n\n# Safe');
 
     expect(html).not.toContain('<script');
     expect(html).toContain('<h1>Safe</h1>');
+  });
+
+  // Prompts are the most common thing in an article here, and both of these were
+  // silently losing characters: remark deletes html nodes wholesale, and an
+  // autolink with a non-web scheme gets demoted to a bare span by the sanitizer.
+  it('keeps angle-bracket placeholders in prose', () => {
+    const html = markdownToEditorHtml('replace <your-token> with your key');
+
+    expect(sanitizeHtml(html)).toContain('&lt;your-token&gt;');
+  });
+
+  it('keeps a lora tag usable instead of demoting it to a span', () => {
+    const html = markdownToEditorHtml('use <lora:add_detail:0.8> in the prompt');
+
+    expect(sanitizeHtml(html)).toContain('&lt;lora:add_detail:0.8&gt;');
+    expect(sanitizeHtml(html)).not.toContain('<span>');
+  });
+
+  it('still linkifies a real autolink', () => {
+    const html = markdownToEditorHtml('see <https://example.com/docs>');
+
+    expect(html).toContain('href="https://example.com/docs"');
   });
 
   // The reason this module exists: the sanitizer runs as a zod preprocess on

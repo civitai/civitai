@@ -2,10 +2,6 @@ import type { RichTextEditorControlProps } from '@mantine/tiptap';
 import { RichTextEditor, useRichTextEditorContext } from '@mantine/tiptap';
 import { IconMarkdown } from '@tabler/icons-react';
 import { useRef } from 'react';
-import {
-  convertMarkdownForEditor,
-  describeMarkdownConversion,
-} from '~/utils/markdown-to-editor-html';
 import { formatBytes } from '~/utils/number-helpers';
 import {
   showErrorNotification,
@@ -13,28 +9,31 @@ import {
   showWarningNotification,
 } from '~/utils/notifications';
 
-const DEFAULT_MAX_FILE_SIZE = 1024 * 1024 * 2;
+const MAX_FILE_SIZE = 1024 * 1024 * 2;
 const ACCEPTED_EXTENSIONS = ['.md', '.markdown', '.mdown', '.mkd'];
 
-type Props = Omit<RichTextEditorControlProps, 'icon' | 'onClick'> & {
-  maxFileSize?: number;
-};
+type Props = Omit<RichTextEditorControlProps, 'icon' | 'onClick'>;
 
-export function InsertMarkdownControl({ maxFileSize = DEFAULT_MAX_FILE_SIZE, ...props }: Props) {
+export function InsertMarkdownControl(props: Props) {
   const { editor } = useRichTextEditorContext();
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFile = async (file: File) => {
     if (!editor) return;
 
-    if (file.size > maxFileSize) {
+    if (file.size > MAX_FILE_SIZE) {
       showWarningNotification({
-        message: `File is too big. Max file size is ${formatBytes(maxFileSize)}`,
+        message: `File is too big. Max file size is ${formatBytes(MAX_FILE_SIZE)}`,
       });
       return;
     }
 
     try {
+      // Loaded on demand: the markdown stack is ~41 kB brotli and every other
+      // editor surface shares this chunk.
+      const { convertMarkdownForEditor, describeMarkdownConversion } = await import(
+        '~/utils/markdown-to-editor-html'
+      );
       const { html, ...stats } = convertMarkdownForEditor(await file.text());
 
       if (!html.trim()) {

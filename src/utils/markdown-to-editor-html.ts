@@ -21,6 +21,9 @@ import { extractCloudflareUuid } from '~/utils/article-helpers';
 const MAX_HEADING_DEPTH = 3;
 const MIN_TABLE_COLUMN_WIDTH = 3;
 
+/** Schemes the sanitizer will keep on an `<a href>`. */
+const WEB_URL = /^(https?:|mailto:|\/|#)/i;
+
 /**
  * Leading YAML frontmatter. Deliberately not `gray-matter` (which
  * markdown-helpers.ts uses): that reaches for Node's `Buffer`, and this module
@@ -112,6 +115,26 @@ function fitToEditorSchema(node: MdNode, stats: ConversionStats) {
       continue;
     }
 
+    // `remarkRehype` without `allowDangerousHtml` deletes html nodes *and their
+    // text*, so `replace <your-token> with your key` silently lost the token.
+    // Keep the characters; they get escaped on output, so nothing executes.
+    if (child.type === 'html') {
+      children[i] = { type: 'text', value: child.value ?? '' };
+      continue;
+    }
+
+    // `<lora:add_detail:0.8>` parses as an autolink, and the sanitizer then
+    // can't validate the scheme and demotes it to a bare span — dropping the
+    // angle brackets that make it a usable prompt token. Prompts are the most
+    // common thing in an article here, so restore the literal text.
+    if (child.type === 'link' && !WEB_URL.test(child.url ?? '')) {
+      const label = (child.children ?? []).map(toPlainText).join('');
+      if (label === child.url) {
+        children[i] = { type: 'text', value: `<${child.url}>` };
+        continue;
+      }
+    }
+
     // An off-site `<img>` survives the sanitizer but is invisible to image
     // scanning: `extractImagesFromArticle` and `getContentMedia` both go through
     // `extractCloudflareUuid`, which only accepts Civitai-hosted URLs. A foreign
@@ -145,30 +168,6 @@ function fitToEditorSchema(node: MdNode, stats: ConversionStats) {
 
     fitToEditorSchema(child, stats);
   }
-}
-
-/** Near-unambiguous: these appear in almost nothing except markdown. */
-const STRONG_MARKDOWN = [
-  /^```/m, // fenced code block
-  /^\|[-: |]+\|[ \t]*$/m, // GFM table delimiter row
-];
-
-/**
- * Shared with things people paste constantly: `# ` starts a comment in Python,
- * YAML, shell and TOML, and `> ` starts a quoted email line. One of these alone
- * is not evidence — converting on it turned a pasted Python snippet into an
- * invented `<h1>` with its imports reflowed into a paragraph and `__init__`
- * eaten as bold. Wrecking a code paste is far worse than leaving markdown
- * unconverted, since the Import Markdown button handles whole documents.
- */
-const WEAK_MARKDOWN = [
-  /^#{1,6} \S/m, // ATX heading, or a comment
-  /^> \S/m, // blockquote, or a quoted reply
-];
-
-export function looksLikeMarkdown(text: string) {
-  if (STRONG_MARKDOWN.some((pattern) => pattern.test(text))) return true;
-  return WEAK_MARKDOWN.every((pattern) => pattern.test(text));
 }
 
 export function convertMarkdownForEditor(markdown: string): MarkdownConversionResult {
