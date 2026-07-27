@@ -29,6 +29,14 @@ export const announcementMetaSchema = z
     targetAudience: z.enum(['all', 'unauthenticated', 'authenticated']).default('all'),
     dismissible: z.boolean().default(true),
     colSpan: z.number().default(6),
+    // A bare media object key — NOT an `Image` row id and NOT a URL.
+    //
+    // 🔴 These keys are intentionally not registered as `Image` rows. `deleteImageFromS3`
+    // is row-scoped (every call site passes an `Image` row's id + url), so a key with no
+    // row cannot be deleted by any app path — which is the whole point, after a deleted
+    // `Image` row took a live sitewide banner's object with it. Do not "normalise" this
+    // into an `Image` FK, and any future orphan sweeper over the uploads bucket must
+    // exclude the keys held here. Monitored by `~/server/jobs/announcement-media-check`.
     image: z.string().optional(),
     index: z.number().optional(),
   })
