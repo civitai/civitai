@@ -1,10 +1,10 @@
 import { Anchor, Center, Container, Group, Loader, Stack, Tabs } from '@mantine/core';
 import { IconArrowLeft, IconPhoto, IconSettings } from '@tabler/icons-react';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ListingMediaEditor } from '~/components/Apps/ListingMediaEditor';
 import { ManifestEditForm } from '~/components/Apps/ManifestEditForm';
+import { goBackOrFallback } from '~/components/Apps/listingEditNav';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -74,10 +74,19 @@ export default function AppEditPage() {
       <Meta title="Edit app — Civitai Apps" deIndex />
       <Container size="sm" py="md">
         <Stack gap="lg">
-          <Anchor component={Link} href={`/apps/${appBlockId}`} size="sm" data-testid="apps-edit-back">
+          {/* Item 3: history-aware back — pop history when there's any, else fall
+              back to the app details page (the media editor is now a TAB here, so
+              backing out of /edit goes to app details, not another edit view). */}
+          <Anchor
+            component="button"
+            type="button"
+            size="sm"
+            onClick={() => goBackOrFallback(router, `/apps/${appBlockId}`)}
+            data-testid="apps-edit-back"
+          >
             <Group gap={4}>
               <IconArrowLeft size={14} />
-              Back to app
+              Back
             </Group>
           </Anchor>
 
