@@ -1369,8 +1369,9 @@ export function PageBlockHost({
       'APP_STORAGE_GET',
       async (raw) => {
         if (reviewNack) {
-          // Per-user App Storage — NACK (the synthetic review appId has no storage
-          // namespace, and the token carries no apps:storage scope). Error-shape.
+          // Per-user App Storage — NACK in render-only review. Under run-for-real
+          // this runs the REAL op (the token carries apps:storage:* and the server
+          // resolves a disposable per-preview namespace). Error-shape.
           if (raw && typeof raw.requestId === 'string') {
             send('APP_STORAGE_GET_RESULT', {
               requestId: raw.requestId,

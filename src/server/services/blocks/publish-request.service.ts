@@ -3577,6 +3577,24 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
       sha: detail.sha ?? '',
       publishRequestId,
     });
+    // MOD REVIEW SANDBOX "run for real" (#2831) — drop the DISPOSABLE preview
+    // storage schema (`apprev_<pubreq>`) a mod may have created by running the app
+    // for real. Best-effort + idempotent (IF EXISTS): a request that never used
+    // preview storage has no schema to drop, and this NEVER touches the approved
+    // app's `app_<slug>` schema. Runs on the same approve/reject teardown path.
+    try {
+      const { AppStorageProvisioner } = await import(
+        '~/server/services/apps/storage-provision.service'
+      );
+      await AppStorageProvisioner.deprovisionReviewPreview({ publishRequestId });
+    } catch (previewErr) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[teardownReviewForRequest] preview-storage teardown failed (id=${publishRequestId}): ${
+          previewErr instanceof Error ? previewErr.message : String(previewErr)
+        }`
+      );
+    }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(

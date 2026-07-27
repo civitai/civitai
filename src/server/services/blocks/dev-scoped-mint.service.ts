@@ -184,15 +184,14 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  *   - `collections:read:private`      third-party-reachable private data
  *   - `collections:write:self`        write surface not needed to evaluate a page app
  *
- * (*) CAVEAT — App Storage may still fail CLOSED downstream: `resolveStorageContext`
- * (apps.router) requires an APPROVED `AppBlock` row keyed on the token's appId, but
- * a review token's appId is the synthetic non-resolving `pending-<id>` and the app
- * is un-approved. So even with the scope granted, a storage op returns NOT_FOUND /
- * FORBIDDEN until the app is approved. Granting the scope here is faithful to the
- * declared∩allowlist contract and lets the host surface the REAL server response to
- * the mod (rather than a synthetic NACK); it is NOT a claim that storage is fully
- * exercisable pre-approval. Generation + own-Buzz-read DO work (self-bound; they do
- * not require an approved AppBlock row).
+ * (*) App Storage WORKS under run-for-real via a dedicated preview namespace:
+ * `resolveStorageContext` (apps.router), when the token carries the signed
+ * `reviewRunForReal` claim, resolves a DISPOSABLE, per-publishRequest, ISOLATED
+ * `apprev_<pubreq>` schema (provisioned on demand) instead of the un-approved
+ * `app_<slug>` schema. Reads/writes are self-bound to the mod, cannot reach another
+ * pending app's namespace, and never pollute the eventual approved app's schema; the
+ * preview schema is dropped on the approve/reject teardown. Generation + own-Buzz-read
+ * likewise work (self-bound; no approved AppBlock row required).
  *
  * Money-OUT (`social:tip:self`) is additionally excluded by PAGE_FORBIDDEN_SCOPES
  * inside the clamp, so it can NEVER survive on ANY page token regardless of allowlist.

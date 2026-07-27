@@ -15,6 +15,7 @@ const {
   mockPool,
   mockClient,
   mockGetQuota,
+  mockProvisionReviewPreview,
   mockLogToAxiom,
   mockGetUserById,
   mockGetSessionUser,
@@ -39,6 +40,12 @@ const {
     mockPool,
     mockClient,
     mockGetQuota: vi.fn(),
+    // Mirrors the real AppStorageProvisioner.provisionReviewPreview: derives the
+    // disposable `apprev_<norm>` schema from the publishRequestId (so isolation
+    // tests can assert distinct schemas) without touching a real DB.
+    mockProvisionReviewPreview: vi.fn(async ({ publishRequestId }: { publishRequestId: string }) => ({
+      schema: `"apprev_${publishRequestId.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 48)}"`,
+    })),
     mockLogToAxiom: vi.fn(async () => undefined),
     mockGetUserById: vi.fn(),
     mockGetSessionUser: vi.fn(),
@@ -75,6 +82,7 @@ vi.mock('~/server/db/appsDb', () => ({
 vi.mock('~/server/services/apps/storage-provision.service', () => ({
   AppStorageProvisioner: {
     getQuota: (...args: unknown[]) => mockGetQuota(...args),
+    provisionReviewPreview: (...args: unknown[]) => mockProvisionReviewPreview(...args),
   },
 }));
 vi.mock('~/server/logging/client', () => ({
@@ -137,6 +145,9 @@ beforeEach(() => {
   mockIsAppBlocksAuthorEnabled.mockReset();
   mockRecordScopeInvocation.mockReset();
   mockRecordScopeInvocation.mockResolvedValue(undefined);
+  // mockClear (NOT mockReset) — preserve the derive-schema implementation set in
+  // the hoisted factory while clearing call history between tests.
+  mockProvisionReviewPreview.mockClear();
 
   // Sane defaults the happy-path tests inherit.
   mockIsAppBlocksEnabled.mockImplementation(async () => true);
@@ -551,5 +562,122 @@ describe('apps.storage.getQuota', () => {
     const out = await caller.storage.getQuota({ blockToken: 't' });
     expect(out.usedBytes).toBe(0);
     expect(out.rowCount).toBe(0);
+  });
+});
+
+// ── MOD REVIEW SANDBOX "run for real" preview storage (#2831) ────────────────
+// A run-for-real review token (signed `reviewRunForReal`) makes per-user storage
+// WORK for a PENDING app via a disposable, per-publishRequest, ISOLATED preview
+// schema — self-bound to the mod, never touching the approved app's namespace.
+describe('apps.storage — run-for-real preview namespace', () => {
+  // A review run-for-real token: synthetic pending ids + the signed claim.
+  function reviewClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      reviewRunForReal: true,
+      appId: 'pending-pubreq_aaa',
+      appBlockId: 'pubreq_aaa',
+      blockInstanceId: 'page_pubreq_aaa',
+      blockId: 'generate-from-model',
+      ...over,
+    });
+  }
+
+  it('GET succeeds for a PENDING app: resolves the apprev_ preview schema, never the AppBlock lookup', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [{ value: { hello: 'world' } }], rowCount: 1 });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    const out = await caller.storage.get({ blockToken: 't', key: 'k' });
+    expect(out.value).toEqual({ hello: 'world' });
+    // The preview schema was provisioned on demand for THIS publish request.
+    expect(mockProvisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: 'pubreq_aaa' });
+    // The read hit the DISPOSABLE preview schema — NOT the approved app schema.
+    const sql = String(mockPool.query.mock.calls.at(-1)?.[0]);
+    expect(sql).toContain('"apprev_pubreqaaa".kv');
+    expect(sql).not.toContain('app_generate_from_model');
+    // The run-for-real path NEVER consults the AppBlock row (the app is unapproved).
+    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('SET succeeds for a PENDING app: writes to the preview schema, self-bound to the mod', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+    // quota pre-read + existing-size read → both empty (fresh key, under quota).
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    const res = await caller.storage.set({ blockToken: 't', key: 'note', value: { a: 1 } });
+    expect(res.ok).toBe(true);
+    expect(mockProvisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: 'pubreq_aaa' });
+    // The INSERT (client.query) targeted the preview schema, self-bound to user 42.
+    const insertCall = mockClient.query.mock.calls.find((c) =>
+      String(c[0]).includes('INSERT INTO')
+    );
+    expect(insertCall).toBeTruthy();
+    expect(String(insertCall?.[0])).toContain('"apprev_pubreqaaa".kv');
+    expect(String(insertCall?.[0])).not.toContain('app_generate_from_model');
+    // The quota GUC is set to the publishRequestId (preview quota row key).
+    const setLocalCall = mockClient.query.mock.calls.find((c) =>
+      String(c[0]).includes('SET LOCAL app.current_app_block_id')
+    );
+    expect(String(setLocalCall?.[0])).toContain('pubreq_aaa');
+    expect(insertCall?.[1]).toEqual(['page_pubreq_aaa', 42, 'note', JSON.stringify({ a: 1 })]);
+  });
+
+  it('ISOLATION: two pending apps resolve DISTINCT preview schemas; neither aliases the approved app schema', async () => {
+    // App A.
+    mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims({ appBlockId: 'pubreq_aaa' }));
+    mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
+    let caller = appsRouter.createCaller(fakeCtx() as never);
+    await caller.storage.get({ blockToken: 't', key: 'k' });
+    const sqlA = String(mockPool.query.mock.calls.at(-1)?.[0]);
+
+    // App B — different publish request, SAME slug.
+    mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims({ appBlockId: 'pubreq_bbb' }));
+    mockPool.query.mockResolvedValueOnce({ rows: [{ value: 2 }], rowCount: 1 });
+    caller = appsRouter.createCaller(fakeCtx() as never);
+    await caller.storage.get({ blockToken: 't', key: 'k' });
+    const sqlB = String(mockPool.query.mock.calls.at(-1)?.[0]);
+
+    expect(sqlA).toContain('"apprev_pubreqaaa".kv');
+    expect(sqlB).toContain('"apprev_pubreqbbb".kv');
+    // A cannot resolve B's namespace, and neither is the approved app schema —
+    // preview writes never pollute the eventual approved `app_<slug>` store.
+    expect(sqlA).not.toContain('apprev_pubreqbbb');
+    expect(sqlB).not.toContain('apprev_pubreqaaa');
+    expect(sqlA).not.toContain('app_generate_from_model');
+    expect(sqlB).not.toContain('app_generate_from_model');
+  });
+
+  it('REGRESSION: WITHOUT the run-for-real claim, a pending app still FAILS CLOSED (no preview schema)', async () => {
+    // Same synthetic pending token but NO reviewRunForReal → the approved-status
+    // gate runs and rejects; the preview namespace is never provisioned.
+    mockVerifyBlockToken.mockResolvedValueOnce(
+      validClaims({ appId: 'pending-pubreq_aaa', appBlockId: 'pubreq_aaa', blockId: 'generate-from-model' })
+    );
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', status: 'pending' });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('the storage SCOPE gate still applies under run-for-real (write needs apps:storage:write)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(
+      reviewClaims({ scopes: ['apps:storage:read'] }) // read-only → set must reject
+    );
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Rejected at the scope gate BEFORE provisioning any preview schema.
+    expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
+  });
+
+  it('run-for-real is SELF-BOUND: an anon subject cannot write preview storage', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims({ sub: 'anon' }));
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 });
