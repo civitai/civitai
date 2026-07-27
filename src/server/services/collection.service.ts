@@ -1934,31 +1934,21 @@ export const updateCollectionItemsStatus = async ({
         // Skip missing submitter, self-review, and no-op status changes.
         if (!item.addedById || item.addedById === userId || item.status === status) return;
 
-        try {
-          await createNotification({
-            type: notificationType,
-            userId: item.addedById,
-            category: NotificationCategory.Update,
-            key: `${notificationType}:${item.id}:${uuid()}`,
-            details: {
-              status,
-              collectionId: collection.id,
-              collectionName: collection.name,
-              imageId: item.imageId,
-              articleId: item.articleId,
-              modelId: item.modelId,
-              postId: item.postId,
-            },
-          });
-        } catch (error) {
-          await logToAxiom({
-            type: 'error',
-            name: 'collection-item-review-notification-failed',
-            message: error instanceof Error ? error.message : String(error),
+        await createNotification({
+          type: notificationType,
+          userId: item.addedById,
+          category: NotificationCategory.Update,
+          key: `${notificationType}:${item.id}:${uuid()}`,
+          details: {
+            status,
             collectionId: collection.id,
-            collectionItemId: item.id,
-          }).catch(() => undefined);
-        }
+            collectionName: collection.name,
+            imageId: item.imageId,
+            articleId: item.articleId,
+            modelId: item.modelId,
+            postId: item.postId,
+          },
+        });
       })
     );
   }
