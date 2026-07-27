@@ -1892,6 +1892,26 @@ export const updateCollectionItemsStatus = async ({
     }
   }
 
+  const isReviewOutcome =
+    status === CollectionItemStatus.ACCEPTED || status === CollectionItemStatus.REJECTED;
+
+  // Capture prior state before the status write so we only notify on real transitions.
+  const priorItems =
+    collection.mode === CollectionMode.Contest && isReviewOutcome && collectionItemIds.length > 0
+      ? await dbWrite.collectionItem.findMany({
+          where: { id: { in: collectionItemIds }, collectionId },
+          select: {
+            id: true,
+            addedById: true,
+            status: true,
+            imageId: true,
+            articleId: true,
+            modelId: true,
+            postId: true,
+          },
+        })
+      : [];
+
   if (collectionItemIds.length > 0) {
     await dbWrite.$executeRaw`
       UPDATE "CollectionItem"
@@ -1903,32 +1923,42 @@ export const updateCollectionItemsStatus = async ({
     `;
   }
 
-  if (collection.mode === CollectionMode.Contest) {
-    const updatedItems = await dbWrite.collectionItem.findMany({
-      where: { id: { in: collectionItemIds }, collectionId },
-    });
+  if (priorItems.length > 0) {
+    const notificationType =
+      status === CollectionItemStatus.ACCEPTED
+        ? 'collection-item-accepted'
+        : 'collection-item-rejected';
 
     await Promise.all(
-      updatedItems.map(async (item) => {
-        if (!item.addedById) {
-          return;
-        }
+      priorItems.map(async (item) => {
+        // Skip missing submitter, self-review, and no-op status changes.
+        if (!item.addedById || item.addedById === userId || item.status === status) return;
 
-        await createNotification({
-          type: 'contest-collection-item-status-change',
-          userId: item.addedById,
-          category: NotificationCategory.Update,
-          key: `contest-collection-item-status-change:${uuid()}`,
-          details: {
-            status,
+        try {
+          await createNotification({
+            type: notificationType,
+            userId: item.addedById,
+            category: NotificationCategory.Update,
+            key: `${notificationType}:${item.id}:${uuid()}`,
+            details: {
+              status,
+              collectionId: collection.id,
+              collectionName: collection.name,
+              imageId: item.imageId,
+              articleId: item.articleId,
+              modelId: item.modelId,
+              postId: item.postId,
+            },
+          });
+        } catch (error) {
+          await logToAxiom({
+            type: 'error',
+            name: 'collection-item-review-notification-failed',
+            message: error instanceof Error ? error.message : String(error),
             collectionId: collection.id,
-            collectionName: collection.name,
-            imageId: item.imageId,
-            articleId: item.articleId,
-            modelId: item.modelId,
-            postId: item.postId,
-          },
-        });
+            collectionItemId: item.id,
+          }).catch(() => undefined);
+        }
       })
     );
   }
