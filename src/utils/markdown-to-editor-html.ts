@@ -147,20 +147,28 @@ function fitToEditorSchema(node: MdNode, stats: ConversionStats) {
   }
 }
 
-/**
- * Structural signals only. A paste carrying nothing but `**bold**` or backticks
- * is far more likely to be prose than a document, and mangling an ordinary
- * paste is worse than leaving markdown unconverted.
- */
-const STRUCTURAL_MARKDOWN = [
-  /^#{1,6} \S/m, // ATX heading
+/** Near-unambiguous: these appear in almost nothing except markdown. */
+const STRONG_MARKDOWN = [
   /^```/m, // fenced code block
   /^\|[-: |]+\|[ \t]*$/m, // GFM table delimiter row
-  /^> \S/m, // blockquote
+];
+
+/**
+ * Shared with things people paste constantly: `# ` starts a comment in Python,
+ * YAML, shell and TOML, and `> ` starts a quoted email line. One of these alone
+ * is not evidence — converting on it turned a pasted Python snippet into an
+ * invented `<h1>` with its imports reflowed into a paragraph and `__init__`
+ * eaten as bold. Wrecking a code paste is far worse than leaving markdown
+ * unconverted, since the Import Markdown button handles whole documents.
+ */
+const WEAK_MARKDOWN = [
+  /^#{1,6} \S/m, // ATX heading, or a comment
+  /^> \S/m, // blockquote, or a quoted reply
 ];
 
 export function looksLikeMarkdown(text: string) {
-  return STRUCTURAL_MARKDOWN.some((pattern) => pattern.test(text));
+  if (STRONG_MARKDOWN.some((pattern) => pattern.test(text))) return true;
+  return WEAK_MARKDOWN.every((pattern) => pattern.test(text));
 }
 
 export function convertMarkdownForEditor(markdown: string): MarkdownConversionResult {

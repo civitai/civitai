@@ -30,4 +30,8 @@ popup tells you to press Cmd/Ctrl+V.
 
 Conversion is bounded by `DEFAULT_ALLOWED_TAGS` in `src/utils/html-sanitize-helpers.ts`, which
 the server applies on save. An extension cannot widen it. Today that means tables become code
-blocks and blockquotes become italic text — see the converter for the full list.
+blocks and off-site images become links — see the converter for the full list.
+
+Pasting only converts when the text is unambiguously markdown (a fenced code block or a table
+row). A lone `#` or `>` line is left alone, because those are comments and quoted replies far
+more often than markdown. Use this importer for whole documents.
