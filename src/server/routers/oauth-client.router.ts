@@ -112,10 +112,15 @@ export const oauthClientRouter = router({
         // Global search: app name OR author username (both case-insensitive ILIKE) OR,
         // when the query is an integer, the author's exact user id.
         const numeric = Number(query);
+        // Only treat the query as an author id when it's a valid positive
+        // Postgres int4 — an all-digits query beyond int32 (e.g. a pasted long
+        // number) passes Number.isInteger but would 500 on int4 overflow.
+        const numericIsUserId =
+          Number.isInteger(numeric) && numeric >= 1 && numeric <= 2147483647;
         const or: Prisma.OauthClientWhereInput[] = [
           { name: { contains: query, mode: 'insensitive' } },
           { user: { username: { contains: query, mode: 'insensitive' } } },
-          ...(Number.isInteger(numeric) ? [{ userId: numeric }] : []),
+          ...(numericIsUserId ? [{ userId: numeric }] : []),
         ];
         where = { AND: [{ OR: or }, excludeAppBlocks] };
       }

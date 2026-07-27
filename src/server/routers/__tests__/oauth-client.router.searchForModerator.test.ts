@@ -144,6 +144,15 @@ describe('oauthClient.searchForModerator — where construction', () => {
     expect(or.some((c) => 'userId' in c)).toBe(false);
   });
 
+  it('all-digits query beyond int32 → NO owner-id clause (avoids Postgres int4 overflow 500)', async () => {
+    const caller = oauthClientRouter.createCaller(fakeCtx(mod) as never);
+    await caller.searchForModerator({ query: '9999999999' });
+    const or: any[] = mocks.findMany.mock.calls[0][0].where.AND[0].OR;
+    // out-of-range int → only the ILIKE name/username clauses, no `userId` (which would overflow int4)
+    expect(or.some((c) => 'userId' in c)).toBe(false);
+    expect(or).toContainEqual({ name: { contains: '9999999999', mode: 'insensitive' } });
+  });
+
   it('ALWAYS excludes App-Block (appblk-*) clients at the DB level, even with a query', async () => {
     const caller = oauthClientRouter.createCaller(fakeCtx(mod) as never);
     await caller.searchForModerator({ query: 'appblk' });
