@@ -135,6 +135,8 @@ function getNewBucket(key: string) {
   return `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${key}:${Date.now()}` as RedisKeyTemplateSys;
 }
 
+const QUEUE_ADD_CHUNK_SIZE = 10000;
+
 export async function addToQueue(key: string, ids: number | number[] | Set<number>) {
   if (!Array.isArray(ids)) {
     if (ids instanceof Set) ids = Array.from(ids);
@@ -165,9 +167,15 @@ export async function addToQueue(key: string, ids: number | number[] | Set<numbe
     );
   }
   const content = ids.map((id) => id.toString());
-  await safeSysWrite(() => sysRedis.sAdd(targetBucket, content), 'queues.addToQueue sAdd', {
-    key,
-  });
+  // Chunked because callers can enqueue very large id sets in one go — propagating a model
+  // flag to its gallery reaches ~211K images on the largest model — and a single sAdd that
+  // size is a multi-MB command that stalls everything else on the connection.
+  for (let i = 0; i < content.length; i += QUEUE_ADD_CHUNK_SIZE) {
+    const chunk = content.slice(i, i + QUEUE_ADD_CHUNK_SIZE);
+    await safeSysWrite(() => sysRedis.sAdd(targetBucket, chunk), 'queues.addToQueue sAdd', {
+      key,
+    });
+  }
 }
 
 export async function checkoutQueue(key: string, isMerge = false, readOnly = false) {

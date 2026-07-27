@@ -60,6 +60,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import {
@@ -769,17 +770,9 @@ export const upsertArticle = async ({
 }) => {
   try {
     await throwOnBlockedLinkDomain(data.content);
-    if (!isModerator) {
-      // don't allow updating of locked properties
-      for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
-      // moderatorNsfwLevel is a mod-only field. Silently strip it from
-      // non-moderator payloads rather than throwing: the form never exposes
-      // this control to owners, so a client sending it indicates either a
-      // stale client or an attempt to forge the override — either way, drop.
-      delete data.moderatorNsfwLevel;
-    }
 
-    // For updates, fetch article early so we can check cover image ownership and NSFW level
+    // For updates, fetch article early so we can enforce its stored locks and check cover
+    // image ownership and NSFW level
     let article: {
       id: number;
       title: string;
@@ -817,6 +810,19 @@ export const upsertArticle = async ({
       if (!article) throw throwNotFoundError();
       const isOwner = article.userId === userId || isModerator;
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+    }
+
+    enforceLockedProperties({
+      data,
+      storedLockedProperties: article?.lockedProperties,
+      isModerator,
+    });
+    if (!isModerator) {
+      // moderatorNsfwLevel is a mod-only field. Silently strip it from
+      // non-moderator payloads rather than throwing: the form never exposes
+      // this control to owners, so a client sending it indicates either a
+      // stale client or an attempt to forge the override — either way, drop.
+      delete data.moderatorNsfwLevel;
     }
 
     // TODO make coverImage required here and in db
@@ -2993,18 +2999,6 @@ export async function resolveArticleRatingReview({
     );
   }
 
-  // Resolution returns:
-  //   articleId  - for downstream notify / tracker
-  //   ownerUserId - the owner who filed the review (for notify)
-  //   articleTitle - pulled from the transactional update
-  //   previousLevel - content-derived snapshot at submission time, for notify copy
-  // The derived status (granted vs overrode-differently) is computed inside the
-  // transaction from the review's `suggestedLevel` vs `appliedLevel`.
-  let articleId: number;
-  let ownerUserId: number;
-  let articleTitle: string;
-  let previousLevel: number;
-
   // All reads + writes go through one transaction so two mods clicking Resolve
   // simultaneously can't both pass the Pending check. The review row is updated
   // with a status guard (updateMany + count === 1) so the loser of the race
@@ -3091,10 +3085,17 @@ export async function resolveArticleRatingReview({
     };
   });
 
-  articleId = result.articleId;
-  ownerUserId = result.ownerUserId;
-  previousLevel = result.previousLevel;
-  articleTitle = result.title ?? 'your article';
+  // Resolution returns:
+  //   articleId  - for downstream notify / tracker
+  //   ownerUserId - the owner who filed the review (for notify)
+  //   articleTitle - pulled from the transactional update
+  //   previousLevel - content-derived snapshot at submission time, for notify copy
+  // The derived status (granted vs overrode-differently) is computed inside the
+  // transaction from the review's `suggestedLevel` vs `appliedLevel`.
+  const articleId = result.articleId;
+  const ownerUserId = result.ownerUserId;
+  const previousLevel = result.previousLevel;
+  const articleTitle = result.title ?? 'your article';
   const status = result.derivedStatus;
 
   // Defense-in-depth: keep the search index in sync. Cheap and idempotent.

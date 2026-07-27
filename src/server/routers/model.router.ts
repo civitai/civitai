@@ -32,6 +32,7 @@ import {
   requestReviewHandler,
   restoreModelHandler,
   setModelCollectionShowcaseHandler,
+  setModelMinorHandler,
   toggleCheckpointCoverageHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
@@ -67,6 +68,7 @@ import {
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
   setModelCollectionShowcaseSchema,
+  setModelMinorSchema,
   setModelOfficialSchema,
   setModelsCategorySchema,
   toggleCheckpointCoverageSchema,
@@ -354,4 +356,5 @@ export const modelRouter = router({
     .mutation(({ input, ctx }) =>
       setModelOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
+  setMinor: moderatorProcedure.input(setModelMinorSchema).mutation(setModelMinorHandler),
 });

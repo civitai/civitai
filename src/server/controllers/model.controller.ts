@@ -59,6 +59,7 @@ import type {
   PublishPrivateModelInput,
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
+  SetModelMinorInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
@@ -98,6 +99,7 @@ import {
   publishModelById,
   publishPrivateModel,
   restoreModelById,
+  setModelMinor,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
   toggleLockModel,
@@ -1403,6 +1405,21 @@ export const toggleModelLockHandler = async ({ input }: { input: ToggleModelLock
   }
 };
 
+export const setModelMinorHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetModelMinorInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await setModelMinor({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const model = await dbRead.model.findUnique({
@@ -1424,9 +1441,12 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
       );
 
     const meta = (model.meta as ModelMeta | null) || {};
-    const updatedModel = await upsertModel({
-      ...model,
-      meta: { ...meta, needsReview: true },
+    // Deliberately not upsertModel: this only sets meta, and routing it through the full
+    // upsert ran the non-moderator profanity filter over the model name and re-triggered
+    // ingestModel (the select omits `description`, so descriptionChanged was always true).
+    const updatedModel = await updateModelById({
+      id: model.id,
+      data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },
     });
 
     return updatedModel;
@@ -1466,13 +1486,15 @@ export const declineReviewHandler = async ({
         'Cannot decline a review for this model because it is not in the correct status'
       );
 
-    const updatedModel = await upsertModel({
-      ...model,
-      meta: {
-        ...meta,
-        declinedReason: input.reason,
-        declinedAt: new Date().toISOString(),
-        needsReview: false,
+    const updatedModel = await updateModelById({
+      id: model.id,
+      data: {
+        meta: {
+          ...meta,
+          declinedReason: input.reason,
+          declinedAt: new Date().toISOString(),
+          needsReview: false,
+        } as Prisma.JsonObject,
       },
     });
     await trackModActivity(ctx.user.id, {
@@ -1970,16 +1992,23 @@ export const updateGallerySettingsHandler = async ({
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
 
-    const model = await getModel({ id, select: { id: true, userId: true } });
+    const model = await getModel({
+      id,
+      select: { id: true, userId: true, minor: true, sfwOnly: true },
+    });
     if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
       throw throwNotFoundError(`No model with id ${id}`);
+
+    // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
+    // gallery back above SFW from here. Moderators keep full control.
+    const sfwLocked = !sessionUser.isModerator && (model.minor || model.sfwOnly);
 
     const updatedSettings = gallerySettings
       ? {
           hiddenImages: gallerySettings.hiddenImages,
           users: gallerySettings.hiddenUsers.map(({ id }) => id),
           tags: gallerySettings.hiddenTags.map(({ id }) => id),
-          level: gallerySettings.level,
+          level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
           pinnedPosts: gallerySettings.pinnedPosts,
         }
       : null;

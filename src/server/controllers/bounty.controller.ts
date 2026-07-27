@@ -367,6 +367,7 @@ export const updateBountyHandler = async ({
     const updated = await updateBountyById({
       ...input,
       userId: ctx.user.id,
+      isModerator: ctx.user.isModerator ?? false,
     });
     if (!updated) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
