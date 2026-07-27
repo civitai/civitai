@@ -20,6 +20,7 @@ import {
   type UnpublishOwnListingInput,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
+import { assertAssetsScanClean } from '~/server/services/blocks/app-listing-assets.service';
 import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
@@ -475,6 +476,43 @@ export async function delistListing(opts: {
   return { appListingId: input.appListingId, status: 'removed' };
 }
 
+/**
+ * Re-read a listing's attached assets from the PRIMARY (`tx`) and assert every one is
+ * terminally `Scanned` BEFORE a `removed`/`pending` → `approved` go-live flip.
+ *
+ * 🔴 Closes the go-live bypass introduced by the allow-pending attach: a `removed` or
+ * `pending` listing is still DIRECTLY asset-editable ({@link assertOwnerAssetEditable}
+ * only blocks direct edits on `approved` non-shadow rows), so without this an owner
+ * could attach a still-scanning / later-`Blocked` image to a removed listing and
+ * `republishOwnListing`/`relistListing` (or a reset re-approve) would put it LIVE — the
+ * public read path selects icon/cover/screenshot urls with NO ingestion filter. For a
+ * normally-scanned listing this is a no-op (its assets are already `Scanned`); it only
+ * rejects the exact scan-dirty hole. Uphholds the same invariant + TOCTOU discipline as
+ * the approve/apply go-live gates (in-tx, primary read).
+ */
+async function assertListingAssetsScanCleanInTx(
+  tx: Prisma.TransactionClient,
+  appListingId: string
+): Promise<void> {
+  const listing = await tx.appListing.findUnique({
+    where: { id: appListingId },
+    select: { iconId: true, coverId: true },
+  });
+  if (!listing) return;
+  const shots = await tx.appListingScreenshot.findMany({
+    where: { appListingId, imageId: { not: null } },
+    select: { imageId: true },
+  });
+  await assertAssetsScanClean(
+    {
+      iconId: listing.iconId,
+      coverId: listing.coverId,
+      screenshotImageIds: shots.map((s) => s.imageId).filter((v): v is number => v != null),
+    },
+    tx
+  );
+}
+
 export type RelistListingResult = { appListingId: string; status: 'approved' };
 
 /**
@@ -501,6 +539,11 @@ export async function relistListing(opts: {
   let onsiteBlockRestoreDrift = false;
 
   await dbWrite.$transaction(async (tx) => {
+    // 🔴 Scan-clean go-live gate — a relist (removed → approved) republishes the
+    // listing's EXISTING assets; refuse if any is still scanning or was `Blocked`
+    // (the removed listing was directly asset-editable). No-op for a normally-scanned
+    // listing. Runs BEFORE the flip so a scan-dirty listing is never made live.
+    await assertListingAssetsScanCleanInTx(tx, input.appListingId);
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
       data: { status: 'approved' },
@@ -1384,6 +1427,13 @@ export async function republishOwnListing(opts: {
         'This listing was removed by a moderator and cannot be restored by its owner.'
       );
     }
+    // 🔴 Scan-clean go-live gate — republish (removed → approved) puts the listing's
+    // EXISTING assets back on the store; refuse if any is still scanning or was
+    // `Blocked`. This is the primary hole the audit found: owner-unpublish leaves
+    // iconId/coverId set, the removed listing stays directly asset-editable, so an
+    // owner could attach a Pending/later-Blocked image then self-restore. No-op for a
+    // normally-scanned listing; runs BEFORE the flip.
+    await assertListingAssetsScanCleanInTx(tx, input.appListingId);
     const isOnsite = listing.kind === 'onsite';
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },

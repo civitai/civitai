@@ -2434,6 +2434,36 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // flip touches only `status`. Same log-and-continue posture: the store listing +
   // block restore are a convenience and must NEVER gate the approve/deploy.
   try {
+    // 🔴 Scan-clean go-live gate (same invariant as the mod/owner republish/relist
+    // paths): a reset onsite listing was directly asset-editable while `pending`, so
+    // before restoring store visibility (pending → approved) re-read its assets on the
+    // PRIMARY and refuse the restore if any is still scanning or was `Blocked`. Throwing
+    // here is caught by THIS try (log-and-continue): the app code still deploys — only
+    // the store-listing restore is skipped, so the listing stays `pending` (re-review)
+    // instead of going live with unscanned/Blocked media. No-op for scan-clean assets.
+    const resetListing = await dbWrite.appListing.findFirst({
+      where: { appBlockId, kind: 'onsite', status: 'pending' },
+      select: { id: true, iconId: true, coverId: true },
+    });
+    if (resetListing) {
+      const { assertAssetsScanClean } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      const shots = await dbWrite.appListingScreenshot.findMany({
+        where: { appListingId: resetListing.id, imageId: { not: null } },
+        select: { imageId: true },
+      });
+      await assertAssetsScanClean(
+        {
+          iconId: resetListing.iconId,
+          coverId: resetListing.coverId,
+          screenshotImageIds: shots
+            .map((s) => s.imageId)
+            .filter((v): v is number => v != null),
+        },
+        dbWrite
+      );
+    }
     const restored = await dbWrite.appListing.updateMany({
       where: { appBlockId, kind: 'onsite', status: 'pending' },
       data: { status: 'approved' },

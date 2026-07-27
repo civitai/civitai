@@ -106,7 +106,21 @@ const {
       // exists so the app appears on the /apps grid without a manual backfill.
       // `updateMany` (W13 onsite reset re-approve): approveRequest restores a reset
       // (`pending`) onsite listing back to `approved`; default 0-count no-op.
-      appListing: { create: vi.fn(), updateMany: vi.fn(async () => ({ count: 0 })) },
+      // `findFirst` + appListingScreenshot/image (Item 1 audit fix): the reset
+      // re-approve now re-reads the reset listing's assets on the PRIMARY for the
+      // go-live scan-clean gate before restoring visibility. Default findFirst → null
+      // (gate skipped; the existing updateMany still runs), image → every id Scanned.
+      appListing: {
+        create: vi.fn(),
+        updateMany: vi.fn(async () => ({ count: 0 })),
+        findFirst: vi.fn(async () => null),
+      },
+      appListingScreenshot: { findMany: vi.fn(async () => []) },
+      image: {
+        findMany: vi.fn(async (args: { where?: { id?: { in?: number[] } } }) =>
+          (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+        ),
+      },
       // Fix #1 (onsite) withdraw close: the reset-withdraw path flips the listing
       // pending→removed + writes a delist event inside a tx. `$transaction` is wired
       // post-hoist (below) to run its callback against this same write mock.
@@ -315,6 +329,15 @@ beforeEach(() => {
   // W13 category-on-approve default: the no-clobber category `updateMany` is a
   // no-op unless a test opts in (the default manifest declares no category).
   mockDbWrite.appBlock.updateMany.mockResolvedValue({ count: 0 });
+  // Item 1 audit fix (onsite reset re-approve scan gate) defaults: no reset listing
+  // to gate (findFirst → null → gate skipped, the existing restore updateMany still
+  // runs), no screenshots, every queried image `Scanned`. A scan-gate test overrides.
+  mockDbWrite.appListing.findFirst.mockResolvedValue(null);
+  mockDbWrite.appListingScreenshot.findMany.mockResolvedValue([]);
+  mockDbWrite.image.findMany.mockImplementation(
+    async (args: { where?: { id?: { in?: number[] } } }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+  );
 
   // Default: no pending conflict, no existing app block, user lookup OK.
   mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
@@ -1381,6 +1404,52 @@ describe('approveRequest', () => {
       where: { id: 'apb_existing', status: 'suspended' },
       data: { status: 'approved' },
     });
+  });
+
+  it('🔴 Item 1 audit fix: reset re-approve SKIPS the store-visibility restore when the reset listing has scan-dirty media (deploy still continues)', async () => {
+    // A reset (`pending`) onsite listing was directly asset-editable, so its owner could
+    // attach a still-scanning / Blocked image. The re-approve must NOT flip it back to
+    // `approved` (store-visible) while its media is scan-dirty. This is a log-and-continue
+    // path: the app CODE still deploys — only the store-listing restore is skipped, leaving
+    // the listing `pending` (re-review).
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    // The reset listing exists + is pending, but its icon is still scanning.
+    mockDbWrite.appListing.findFirst.mockResolvedValue({
+      id: 'apl_reset',
+      iconId: 1,
+      coverId: 2,
+    });
+    mockDbWrite.image.findMany.mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: id === 1 ? 'Pending' : 'Scanned' }))
+    );
+    mockDbWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    // The deploy still completes (the restore is best-effort / log-and-continue).
+    const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    expect(result.isFirstVersion).toBe(false);
+
+    // 🔴 The store-visibility restore (pending → approved) was NOT performed — the
+    // scan gate threw before the flip and the catch swallowed it.
+    const restoreFlip = mockDbWrite.appListing.updateMany.mock.calls.find(
+      (c: any[]) =>
+        c[0]?.where?.status === 'pending' &&
+        c[0]?.data?.status === 'approved' &&
+        c[0]?.where?.kind === 'onsite'
+    );
+    expect(restoreFlip).toBeUndefined();
+    // …and the block was not un-suspended (that only fires when the restore matched).
+    const unsuspend = mockDbWrite.appBlock.updateMany.mock.calls.find(
+      (c: any[]) => c[0]?.data?.status === 'approved' && c[0]?.where?.status === 'suspended'
+    );
+    expect(unsuspend).toBeUndefined();
   });
 
   it('normal subsequent-version approve (listing NOT pending) does NOT un-suspend the block', async () => {

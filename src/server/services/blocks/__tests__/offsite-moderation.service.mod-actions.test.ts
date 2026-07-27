@@ -48,6 +48,10 @@ type WriteMock = {
     updateMany: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
   };
+  // relist/republish now re-read attached assets on the primary for the go-live
+  // scan-clean gate (assertAssetsScanClean).
+  appListingScreenshot: { findMany: ReturnType<typeof vi.fn> };
+  image: { findMany: ReturnType<typeof vi.fn> };
 };
 type ReadMock = {
   appListing: { findUnique: ReturnType<typeof vi.fn> };
@@ -73,6 +77,14 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
     appListingPublishRequest: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       create: vi.fn(async (a: { data: unknown }) => a.data),
+    },
+    // Default: no screenshots + every queried image `Scanned` → the go-live scan-clean
+    // gate is a no-op for a normally-scanned listing. A scan-gate test overrides these.
+    appListingScreenshot: { findMany: vi.fn(async () => []) },
+    image: {
+      findMany: vi.fn(async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+      ),
     },
   };
   // The tx client is the write mock itself, so tx.* calls land on the same spies.
@@ -369,6 +381,62 @@ describe('relistListing', () => {
       reviewerUserId: REVIEWER,
     });
     expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 Item 1 audit fix — the go-live scan-clean gate on relist / republish. A
+// `removed` listing is still directly asset-editable (allow-pending attach), so
+// relist/republish must refuse to make it live while any asset is pending/Blocked.
+// The gate re-reads assets on the PRIMARY (tx) BEFORE the removed → approved flip.
+// ---------------------------------------------------------------------------
+
+const withAssets = <T extends object>(listing: T): T & { iconId: number; coverId: number } => ({
+  ...listing,
+  iconId: 1,
+  coverId: 2,
+});
+const injectIngestion = (byId: Record<number, string>) =>
+  (async (args: { where?: { id?: { in?: number[] } } }) =>
+    (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: byId[id] ?? 'Scanned' }))) as never;
+
+describe('relistListing — go-live scan-clean gate', () => {
+  it('REFUSES a listing whose icon is still scanning (no flip, no event)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(offsiteListing('removed')));
+    mockWrite.image.findMany.mockImplementation(injectIngestion({ 1: 'Pending' }));
+    await expect(
+      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('still scanning') });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES a Blocked asset (no flip)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(offsiteListing('removed')));
+    mockWrite.image.findMany.mockImplementation(injectIngestion({ 2: 'Blocked' }));
+    await expect(
+      relistListing({ input: { appListingId: APP_ID, reason: 'appeal upheld' }, reviewerUserId: REVIEWER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('blocked') });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('SUCCEEDS when every asset is Scanned (the normal relist path is unaffected)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed'));
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(offsiteListing('removed')));
+    // Explicitly stage all-Scanned (clearAllMocks doesn't reset a prior test's
+    // mockImplementation, so an empty injectIngestion map = every id Scanned).
+    mockWrite.image.findMany.mockImplementation(injectIngestion({}));
+    const res = await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: APP_ID, kind: 'offsite', status: 'removed' },
+      data: { status: 'approved' },
+    });
   });
 });
 
@@ -1046,6 +1114,45 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
     ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
     expect(mockWrite.appListingModerationEvent.findFirst).not.toHaveBeenCalled();
+  });
+
+  // 🔴 Item 1 audit fix — the go-live scan-clean gate on the OWNER republish path
+  // (the primary exploit: owner-unpublish leaves iconId/coverId set + the removed
+  // listing stays directly asset-editable, so an owner could attach a still-scanning
+  // / later-Blocked image then self-restore). Runs AFTER the last-event guard, BEFORE
+  // the flip.
+  it('go-live scan gate: REFUSES republish when an asset is still scanning (no flip)', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerPrimary('removed')));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    mockWrite.image.findMany.mockImplementation(injectIngestion({ 1: 'Pending' }));
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('still scanning') });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('go-live scan gate: REFUSES republish when an asset was Blocked (no flip)', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerPrimary('removed')));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    mockWrite.image.findMany.mockImplementation(injectIngestion({ 2: 'Blocked' }));
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('blocked') });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('go-live scan gate: SUCCEEDS when every asset is Scanned (normal republish unaffected)', async () => {
+    mockWrite.appListing.findUnique.mockResolvedValue(withAssets(ownerPrimary('removed')));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce({ action: 'owner-unpublish' });
+    // Explicitly stage all-Scanned (clearAllMocks doesn't reset a prior test's impl).
+    mockWrite.image.findMany.mockImplementation(injectIngestion({}));
+    const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
+    expect(res).toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appListing.updateMany).toHaveBeenCalledWith({
+      where: { id: APP_ID, kind: 'offsite', status: 'removed' },
+      data: { status: 'approved' },
+    });
   });
 });
 

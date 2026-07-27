@@ -18,6 +18,7 @@ import {
   Text,
   Textarea,
   ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -775,15 +776,28 @@ export function OffsiteReviewModal({
             >
               Reject…
             </Button>
-            <Button
-              color="green"
-              leftSection={<IconCheck size={14} />}
-              onClick={() => setActionMode('approve')}
-              disabled={busy}
-              data-testid="apps-offsite-approve-open"
+            <Tooltip
+              label={
+                hasBlockedAsset
+                  ? 'Blocked media must be replaced before this can be approved.'
+                  : 'Media is still scanning — approve once every asset finishes scanning.'
+              }
+              disabled={!hasBlockedAsset && !hasPendingScan}
+              withArrow
             >
-              Approve…
-            </Button>
+              {/* Disable Approve when the go-live scan-clean gate would reject it, so a
+                  mod click doesn't just eat a server BAD_REQUEST. The server gate stays
+                  authoritative — this is UX only. */}
+              <Button
+                color="green"
+                leftSection={<IconCheck size={14} />}
+                onClick={() => setActionMode('approve')}
+                disabled={busy || hasBlockedAsset || hasPendingScan}
+                data-testid="apps-offsite-approve-open"
+              >
+                Approve…
+              </Button>
+            </Tooltip>
           </Group>
           ))}
       </Stack>

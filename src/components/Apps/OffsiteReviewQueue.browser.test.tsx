@@ -173,6 +173,42 @@ describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
     expect(page.getByTestId('apps-offsite-assets-scan-blocked').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-offsite-assets-scan-pending').elements()).toHaveLength(0);
   });
+
+  // Audit 🟡 — the Approve entry button is DISABLED when the scan-clean gate would
+  // reject it (blocked/pending), so a mod click doesn't just eat a server BAD_REQUEST.
+  test('the Approve button is DISABLED when an asset is blocked', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      iconScanStatus: 'blocked',
+      hasBlockedAsset: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-approve-open'))
+      .toBeDisabled();
+  });
+
+  test('the Approve button is DISABLED while an asset is still scanning', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      coverScanStatus: 'pending',
+      hasPendingScan: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-approve-open'))
+      .toBeDisabled();
+  });
+
+  test('the Approve button is ENABLED when every asset is scan-clean', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-approve-open'))
+      .not.toBeDisabled();
+  });
 });
 
 describe('OffsiteReviewModal — approve-notes gating, friendly date, field labels', () => {
