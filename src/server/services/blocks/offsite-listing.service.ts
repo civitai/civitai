@@ -24,7 +24,10 @@ import {
   SENSITIVE_TOKEN_SCOPES,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
-import { assertListingMeetsFloor } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  assertAssetsScanClean,
+  assertListingMeetsFloor,
+} from '~/server/services/blocks/app-listing-assets.service';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
@@ -1764,9 +1767,14 @@ export async function approveExternalRequest(opts: {
     });
   }
 
-  const screenshotCount = await dbRead.appListingScreenshot.count({
+  const screenshotRows = await dbRead.appListingScreenshot.findMany({
     where: { appListingId, imageId: { not: null } },
+    select: { imageId: true },
   });
+  const screenshotImageIds = screenshotRows
+    .map((s) => s.imageId)
+    .filter((id): id is number => id != null);
+  const screenshotCount = screenshotImageIds.length;
 
   // (3) Publish FLOOR gate — icon+cover required, screenshots optional (throws
   // BAD_REQUEST { missing }). Fail-fast copy on the replica; re-asserted
@@ -1776,6 +1784,16 @@ export async function approveExternalRequest(opts: {
     coverId: listing.coverId,
     screenshotCount,
   });
+
+  // (3b) Scan-clean gate — every attached asset must be terminally `Scanned` (none
+  // still pending, none `Blocked`) before it goes live. Fail-fast copy on the
+  // replica; re-asserted AUTHORITATIVELY on the primary/tx in (5) (TOCTOU: a scan
+  // can flip between these reads — the in-tx one is the authority). This is the
+  // QUALITY gate that lets attach + submit stay permissive with an in-flight scan.
+  await assertAssetsScanClean(
+    { iconId: listing.iconId, coverId: listing.coverId, screenshotImageIds },
+    dbRead
+  );
 
   // (4) Defense-in-depth: re-validate the STORED externalUrl before it can reach
   // the store (mirrors submit + the read-path `safeExternalUrl`). Also re-checked
@@ -1827,14 +1845,31 @@ export async function approveExternalRequest(opts: {
     if (!primaryListing) {
       throw new OffsiteRequestError('NOT_FOUND', `draft listing ${appListingId} not found`);
     }
-    const primaryScreenshotCount = await tx.appListingScreenshot.count({
+    const primaryScreenshotRows = await tx.appListingScreenshot.findMany({
       where: { appListingId, imageId: { not: null } },
+      select: { imageId: true },
     });
+    const primaryScreenshotImageIds = primaryScreenshotRows
+      .map((s) => s.imageId)
+      .filter((id): id is number => id != null);
     assertListingMeetsFloor({
       iconId: primaryListing.iconId,
       coverId: primaryListing.coverId,
-      screenshotCount: primaryScreenshotCount,
+      screenshotCount: primaryScreenshotImageIds.length,
     });
+    // AUTHORITATIVE scan-clean gate on the PRIMARY (`tx`) — row-consistent with the
+    // flip. A scan that read `Scanned` on the replica in (3b) but flipped to
+    // Pending/Blocked on the primary is caught HERE and rolls the whole tx back
+    // before anything is approved. Upholds the invariant: no approved listing may
+    // ever reference a non-`Scanned` / `Blocked` image.
+    await assertAssetsScanClean(
+      {
+        iconId: primaryListing.iconId,
+        coverId: primaryListing.coverId,
+        screenshotImageIds: primaryScreenshotImageIds,
+      },
+      tx
+    );
     // Validate the stored externalUrl ONLY WHEN present (it's optional in the merged
     // model); a null URL approves fine. See step (4).
     if (primaryListing.externalUrl != null) {
@@ -2052,14 +2087,29 @@ async function applyApprovedRevision(opts: {
         'cannot approve — the revision draft is no longer available'
       );
     }
-    const screenshotCount = await tx.appListingScreenshot.count({
+    const shadowScreenshotRows = await tx.appListingScreenshot.findMany({
       where: { appListingId: shadowId, imageId: { not: null } },
+      select: { imageId: true },
     });
+    const shadowScreenshotImageIds = shadowScreenshotRows
+      .map((s) => s.imageId)
+      .filter((id): id is number => id != null);
     assertListingMeetsFloor({
       iconId: shadow.iconId,
       coverId: shadow.coverId,
-      screenshotCount,
+      screenshotCount: shadowScreenshotImageIds.length,
     });
+    // AUTHORITATIVE scan-clean gate on the PRIMARY (`tx`) — a revision cannot go
+    // live while any of its media is still scanning or was `Blocked`. Rolls the
+    // whole apply back (parent stays exactly as it was) on any non-`Scanned` asset.
+    await assertAssetsScanClean(
+      {
+        iconId: shadow.iconId,
+        coverId: shadow.coverId,
+        screenshotImageIds: shadowScreenshotImageIds,
+      },
+      tx
+    );
     // Validate the stored externalUrl ONLY WHEN present (optional in the merged
     // model); a null URL is fine. See the first-time approve path (step 4).
     if (shadow.externalUrl != null) {
@@ -2417,6 +2467,14 @@ const mySubmissionSelect = {
       // screenshot count query used elsewhere:
       // `appListingScreenshot.count({ where: { imageId: { not: null } } })`.
       _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+      // Screenshot Image ids (imageId-bearing only) so the scan dimension of
+      // `computeListingProblems` can look up each asset's ingestion (Item 1). Ordered
+      // for a stable per-row problem list.
+      screenshots: {
+        where: { imageId: { not: null } },
+        select: { imageId: true },
+        orderBy: { order: 'asc' },
+      },
     },
   },
 } as const;
@@ -2528,6 +2586,52 @@ export async function listMySubmissions(
       .map((e) => [e.appListingId, e.action])
   );
 
+  // Scan dimension (Item 1): batch-read the ingestion of every attached asset image
+  // on the page so `computeListingProblems` can flag a still-scanning (advisory) or
+  // `Blocked` (blocking) asset. One findMany over the union of icon/cover/screenshot
+  // image ids — NOT per row.
+  const assetImageIds = [
+    ...new Set(
+      page.flatMap((r) => [
+        r.appListing?.iconId,
+        r.appListing?.coverId,
+        ...(r.appListing?.screenshots ?? []).map((s) => s.imageId),
+      ])
+    ),
+  ].filter((id): id is number => id != null);
+  const ingestionRows = assetImageIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: assetImageIds } },
+        select: { id: true, ingestion: true },
+      })
+    : [];
+  const ingestionByImageId = new Map(ingestionRows.map((i) => [i.id, i.ingestion ?? null]));
+  const scanStatusOf = (
+    ingestion: string | null | undefined
+  ): 'scanned' | 'pending' | 'blocked' =>
+    ingestion === 'Scanned' ? 'scanned' : ingestion === 'Blocked' ? 'blocked' : 'pending';
+  const assetScansFor = (listing: {
+    iconId: number | null;
+    coverId: number | null;
+    screenshots?: { imageId: number | null }[] | null;
+  }): { kind: 'icon' | 'cover' | 'screenshot'; status: 'scanned' | 'pending' | 'blocked' }[] => {
+    const scans: {
+      kind: 'icon' | 'cover' | 'screenshot';
+      status: 'scanned' | 'pending' | 'blocked';
+    }[] = [];
+    if (listing.iconId != null)
+      scans.push({ kind: 'icon', status: scanStatusOf(ingestionByImageId.get(listing.iconId)) });
+    if (listing.coverId != null)
+      scans.push({ kind: 'cover', status: scanStatusOf(ingestionByImageId.get(listing.coverId)) });
+    for (const s of listing.screenshots ?? [])
+      if (s.imageId != null)
+        scans.push({
+          kind: 'screenshot',
+          status: scanStatusOf(ingestionByImageId.get(s.imageId)),
+        });
+    return scans;
+  };
+
   const items = page.map((r) => ({
     ...r,
     hasPendingRevision: r.appListingId != null && parentsWithRevision.has(r.appListingId),
@@ -2546,6 +2650,7 @@ export async function listMySubmissions(
           description: r.appListing.description,
           tagline: r.appListing.tagline,
           category: r.appListing.category,
+          assetScans: assetScansFor(r.appListing),
         }).problems
       : [],
   }));

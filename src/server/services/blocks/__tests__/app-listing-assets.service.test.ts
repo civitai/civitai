@@ -574,28 +574,36 @@ describe('screenshot CRUD', () => {
     }
   }
 
-  it('setIcon on a not-yet-scanned Image → NON-ERROR { status: "pending" }, NO write (client re-polls)', async () => {
+  // Item 1: the LISTING-MEDIA attach procs pass `allowPending: true`, so a still-
+  // scanning image is STORED IMMEDIATELY (the wait moves to the go-live scan gate) —
+  // it resolves `{ status: 'attached', …, scanPending: true }` and WRITES.
+  it('setIcon on a not-yet-scanned (Pending) Image → STORES it { status: "attached", scanPending: true }', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
       metadata: {}, ingestion: 'Pending', nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
-    // The scanning state no longer throws (the old CONFLICT is gone) — it RESOLVES.
     const res = await setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner);
-    expect(res).toEqual({ status: 'pending' });
-    expect(mockDb.appListing.update).not.toHaveBeenCalled();
+    expect(res).toEqual({ status: 'attached', iconId: 9, scanPending: true });
+    // The id IS written now (previously this was a no-write pending).
+    expect(mockDb.appListing.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { iconId: 9 } })
+    );
   });
 
-  it('addScreenshot on a not-yet-scanned Image → { status: "pending" }, no row created', async () => {
+  it('addScreenshot on a not-yet-scanned (PendingManualAssignment) Image → STORES the row, scanPending:true', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
       ...validScreenshotImage, ingestion: 'PendingManualAssignment',
     });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDb.appListingScreenshot.count.mockResolvedValue(0);
     const { addListingScreenshot } = await import('../app-listing-assets.service');
     const res = await addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner);
-    expect(res).toEqual({ status: 'pending' });
-    expect(mockDb.appListingScreenshot.create).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ status: 'attached', order: 0, scanPending: true });
+    // The row IS created now (previously a no-write pending).
+    expect(mockDb.appListingScreenshot.create).toHaveBeenCalledTimes(1);
   });
 
   it('setIcon on a Scanned Image → { status: "attached", iconId } and writes', async () => {
@@ -1094,5 +1102,119 @@ describe('backfillListingAssets', () => {
     const arg = mockDb.appListing.findMany.mock.calls[0][0] as { take?: number; where: unknown };
     expect(arg.take).toBe(5);
     expect(arg.where).toEqual({ status: 'approved' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Item 1 — go-live scan-clean gate (`assertAssetsScanClean`) + the per-asset scan
+// poll (`getAssetScanStatuses`). The gate re-reads each attached asset's
+// `ingestion` and throws unless EVERY asset is terminally `Scanned`.
+// ---------------------------------------------------------------------------
+
+describe('assertAssetsScanClean', () => {
+  beforeEach(resetDb);
+
+  it('passes when every attached asset is Scanned', async () => {
+    mockDb.image.findMany.mockResolvedValue([
+      { id: 1, ingestion: 'Scanned' },
+      { id: 2, ingestion: 'Scanned' },
+      { id: 10, ingestion: 'Scanned' },
+    ]);
+    const { assertAssetsScanClean } = await import('../app-listing-assets.service');
+    await expect(
+      assertAssetsScanClean({ iconId: 1, coverId: 2, screenshotImageIds: [10] })
+    ).resolves.toBeUndefined();
+  });
+
+  it('is a no-op (no query) when there are no assets', async () => {
+    const { assertAssetsScanClean } = await import('../app-listing-assets.service');
+    await assertAssetsScanClean({ iconId: null, coverId: null, screenshotImageIds: [] });
+    expect(mockDb.image.findMany).not.toHaveBeenCalled();
+  });
+
+  it('throws naming the still-scanning (pending) asset', async () => {
+    mockDb.image.findMany.mockResolvedValue([
+      { id: 1, ingestion: 'Pending' },
+      { id: 2, ingestion: 'Scanned' },
+    ]);
+    const { assertAssetsScanClean } = await import('../app-listing-assets.service');
+    await expect(
+      assertAssetsScanClean({ iconId: 1, coverId: 2, screenshotImageIds: [] })
+    ).rejects.toThrow(/still scanning: icon/);
+  });
+
+  it('throws naming the blocked asset (prohibited content)', async () => {
+    mockDb.image.findMany.mockResolvedValue([
+      { id: 1, ingestion: 'Scanned' },
+      { id: 2, ingestion: 'Scanned' },
+      { id: 10, ingestion: 'Blocked' },
+    ]);
+    const { assertAssetsScanClean } = await import('../app-listing-assets.service');
+    const { TRPCError } = await import('@trpc/server');
+    let thrown: unknown;
+    try {
+      await assertAssetsScanClean({ iconId: 1, coverId: 2, screenshotImageIds: [10] });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(TRPCError);
+    expect((thrown as InstanceType<typeof TRPCError>).code).toBe('BAD_REQUEST');
+    expect((thrown as Error).message).toMatch(/blocked: screenshot/);
+  });
+
+  it('treats a missing/deleted image row as still pending', async () => {
+    // icon 1 is Scanned but cover 2 has no row (deleted / not found) → pending.
+    mockDb.image.findMany.mockResolvedValue([{ id: 1, ingestion: 'Scanned' }]);
+    const { assertAssetsScanClean } = await import('../app-listing-assets.service');
+    await expect(
+      assertAssetsScanClean({ iconId: 1, coverId: 2, screenshotImageIds: [] })
+    ).rejects.toThrow(/still scanning: cover/);
+  });
+
+  it('reads through the db client passed in (e.g. the in-tx `tx`)', async () => {
+    const txFindMany = vi.fn(async () => [{ id: 1, ingestion: 'Scanned' }]);
+    const tx = { image: { findMany: txFindMany } };
+    const { assertAssetsScanClean } = await import('../app-listing-assets.service');
+    await assertAssetsScanClean({ iconId: 1, coverId: null, screenshotImageIds: [] }, tx as never);
+    // Used the passed-in reader, not the default dbWrite mock.
+    expect(txFindMany).toHaveBeenCalledTimes(1);
+    expect(mockDb.image.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('getAssetScanStatuses', () => {
+  beforeEach(resetDb);
+
+  it('maps ingestion → scanned / pending / blocked (owner)', async () => {
+    mockDb.image.findMany.mockResolvedValue([
+      { id: 1, ingestion: 'Scanned' },
+      { id: 2, ingestion: 'Pending' },
+      { id: 3, ingestion: 'Blocked' },
+    ]);
+    const { getAssetScanStatuses } = await import('../app-listing-assets.service');
+    const res = await getAssetScanStatuses([1, 2, 3], owner);
+    expect(res.statuses).toEqual([
+      { imageId: 1, status: 'scanned' },
+      { imageId: 2, status: 'pending' },
+      { imageId: 3, status: 'blocked' },
+    ]);
+    // Non-mod → scoped to the caller's own images.
+    const where = (mockDb.image.findMany.mock.calls[0][0] as { where: { userId?: number } }).where;
+    expect(where.userId).toBe(42);
+  });
+
+  it('a moderator is NOT scoped by userId (reads any image)', async () => {
+    mockDb.image.findMany.mockResolvedValue([{ id: 1, ingestion: 'Scanned' }]);
+    const { getAssetScanStatuses } = await import('../app-listing-assets.service');
+    await getAssetScanStatuses([1], mod);
+    const where = (mockDb.image.findMany.mock.calls[0][0] as { where: { userId?: number } }).where;
+    expect(where.userId).toBeUndefined();
+  });
+
+  it('returns empty for an empty id list without querying', async () => {
+    const { getAssetScanStatuses } = await import('../app-listing-assets.service');
+    const res = await getAssetScanStatuses([], owner);
+    expect(res.statuses).toEqual([]);
+    expect(mockDb.image.findMany).not.toHaveBeenCalled();
   });
 });

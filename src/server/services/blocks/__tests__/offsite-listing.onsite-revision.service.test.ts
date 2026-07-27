@@ -107,7 +107,15 @@ beforeEach(() => {
     c.appListingScreenshot.deleteMany.mockReset().mockResolvedValue({ count: 0 });
     c.appListingScreenshot.updateMany.mockReset().mockResolvedValue({ count: 0 });
     c.appListingModerationEvent.create.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
-    c.image.findMany.mockReset().mockResolvedValue([]);
+    // Default: the go-live scan-clean gate re-reads each asset's `ingestion` — echo
+    // every queried id as `Scanned` so a normal approve passes. (The scan gate selects
+    // `{ id, ingestion }`; the rating derive selects `{ nsfwLevel }` — tests that need a
+    // specific level override this and add `ingestion: 'Scanned'`.)
+    c.image.findMany
+      .mockReset()
+      .mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+      );
     c.appListingPublishRequest.findUnique.mockReset().mockResolvedValue(null);
     c.appListingPublishRequest.findFirst.mockReset().mockResolvedValue(null);
     c.appListingPublishRequest.findMany.mockReset().mockResolvedValue([]);
@@ -205,12 +213,17 @@ describe('approveExternalRequest — ONSITE media revision is ASSETS-ONLY (cap-a
     expect(copy.data).not.toHaveProperty('contentRating');
   });
 
-  it('does NOT derive/raise contentRating from the shadow assets (resolveApprovalContentRating skipped → no Image level read)', async () => {
+  it('does NOT derive/raise contentRating from the shadow assets (resolveApprovalContentRating skipped → no nsfwLevel read)', async () => {
     stageRevisionApprove('onsite');
     await approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD });
-    // resolveApprovalContentRating (the asset-floor) is the ONLY reader of Image
-    // nsfwLevel here; the onsite branch must skip it entirely.
-    expect(mockWrite.image.findMany).not.toHaveBeenCalled();
+    // The go-live scan-clean gate DOES read image.findMany now (select {id,ingestion}),
+    // but resolveApprovalContentRating (the asset-floor rating derive) — the ONLY reader
+    // of Image nsfwLevel — must be skipped on the onsite branch. Assert NO call selected
+    // nsfwLevel (which only the derive does).
+    const derivedRead = mockWrite.image.findMany.mock.calls.find(
+      (c) => (c[0] as { select?: { nsfwLevel?: unknown } })?.select?.nsfwLevel
+    );
+    expect(derivedRead).toBeUndefined();
     // A mod contentRating override is also ignored for the onsite branch.
   });
 

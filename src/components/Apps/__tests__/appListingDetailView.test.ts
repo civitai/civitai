@@ -148,10 +148,10 @@ describe('getDetailPrimaryAction — off-site', () => {
 });
 
 describe('owner Edit deep-link + gating (on the detail view-model)', () => {
-  it('on-site detail kindData → the manifest editor (extra fields ignored)', () => {
+  it('on-site detail kindData → the unified /edit editor (extra fields ignored)', () => {
     expect(
       getOwnerEditHref(onsiteDetail({ hasPage: true, appBlockId: 'blk-7' }).kindData, 'l1')
-    ).toBe('/apps/blk-7/edit-manifest');
+    ).toBe('/apps/blk-7/edit');
   });
   it('on-site with no appBlockId → null (no editable target → hide)', () => {
     expect(getOwnerEditHref(onsiteDetail({ hasPage: false, appBlockId: null }).kindData, 'l1')).toBeNull();

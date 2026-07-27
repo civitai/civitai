@@ -19,15 +19,35 @@
 
 /** The classification of a single attach() outcome, independent of React state. */
 export type AttachOutcome =
-  /** The attach succeeded — the asset is scan-complete and attached. Terminal. */
-  | { kind: 'attached' }
-  /** The attach resolved `pending` because the scan isn't complete yet — keep polling. */
+  /** The attach succeeded — the id is STORED. `scanPending` is true when it was
+   *  stored while its scan is still in-flight (the wait moved to the go-live gate);
+   *  the caller keeps a "Scanning…" badge and polls the scan status. Terminal for
+   *  the ATTACH; the scan poll is separate. */
+  | { kind: 'attached'; scanPending: boolean }
+  /** Legacy `allowPending:false` path — the attach resolved `pending` (no write); keep
+   *  re-attaching. The live listing-media procs pass `allowPending:true` so they never
+   *  return this, but the poller still handles it defensively. */
   | { kind: 'scanning' }
   /** The attach THREW a terminal failure (blocked / not-found / bad-format). Terminal. */
   | { kind: 'error'; message: string };
 
-/** The resolved (success) shape of an attach mutation — the discriminant is `status`. */
-export type AttachResult = { status: 'pending' | 'attached' };
+/** The resolved (success) shape of an attach mutation. `scanPending` (default false)
+ *  rides on the `attached` result to say the stored image is still scanning. */
+export type AttachResult = { status: 'pending' | 'attached'; scanPending?: boolean };
+
+/** A per-asset scan badge state driven by the {@link classifyScanStatus} poll:
+ *  `scanning` (still in-flight) → `scanned` (clean) / `blocked` (replace it). */
+export type AssetScanBadge = 'scanning' | 'scanned' | 'blocked';
+
+/** Map a `getAssetScanStatuses` status → the per-asset badge. A missing entry (not
+ *  yet visible / not owned) is treated as still `scanning`. */
+export function classifyScanStatus(
+  status: 'scanned' | 'pending' | 'blocked' | undefined
+): AssetScanBadge {
+  if (status === 'scanned') return 'scanned';
+  if (status === 'blocked') return 'blocked';
+  return 'scanning';
+}
 
 /**
  * The input to {@link classifyAttachResult}: EITHER the RESOLVED mutation result
@@ -97,7 +117,8 @@ export function nextPollDelay(
  */
 export function classifyAttachResult(input: AttachInput): AttachOutcome {
   if ('error' in input) return { kind: 'error', message: input.error.message };
-  return input.result.status === 'pending' ? { kind: 'scanning' } : { kind: 'attached' };
+  if (input.result.status === 'pending') return { kind: 'scanning' };
+  return { kind: 'attached', scanPending: !!input.result.scanPending };
 }
 
 /**

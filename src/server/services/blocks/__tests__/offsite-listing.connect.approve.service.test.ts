@@ -74,7 +74,13 @@ beforeEach(() => {
     c.appListingScreenshot.findMany.mockReset().mockResolvedValue([]);
     c.appListingScreenshot.deleteMany.mockReset().mockResolvedValue({ count: 0 });
     c.appListingScreenshot.updateMany.mockReset().mockResolvedValue({ count: 0 });
-    c.image.findMany.mockReset().mockResolvedValue([]);
+    // Default: the go-live scan-clean gate re-reads each asset's `ingestion` — echo
+    // every queried id as `Scanned` so a normal approve passes.
+    c.image.findMany
+      .mockReset()
+      .mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+      );
     c.appListingPublishRequest.findUnique.mockReset().mockResolvedValue(null);
     c.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
   }

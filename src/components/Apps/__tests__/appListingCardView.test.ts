@@ -200,20 +200,18 @@ describe('getListingCta — off-site (P2c: View details → unified detail)', ()
 });
 
 describe('getOwnerEditHref (owner Edit deep-link)', () => {
-  it('on-site → the manifest editor keyed on appBlockId', () => {
-    expect(getOwnerEditHref({ kind: 'onsite', appBlockId: 'blk-1' }, 'l1')).toBe(
-      '/apps/blk-1/edit-manifest'
-    );
+  it('on-site → the UNIFIED /edit editor keyed on appBlockId (Item 2)', () => {
+    expect(getOwnerEditHref({ kind: 'onsite', appBlockId: 'blk-1' }, 'l1')).toBe('/apps/blk-1/edit');
   });
   it('on-site with no backing appBlockId → null (no editable target → hide)', () => {
     expect(getOwnerEditHref({ kind: 'onsite', appBlockId: null }, 'l1')).toBeNull();
   });
-  it('off-site → the submit editor keyed on the listing id', () => {
+  it('off-site → the submit editor keyed on the listing id (UNCHANGED)', () => {
     expect(getOwnerEditHref({ kind: 'offsite' }, 'l2')).toBe('/apps/submit?edit=l2');
   });
   it('accepts the full card kindData (extra fields are ignored)', () => {
     expect(getOwnerEditHref(onsiteCard({ hasPage: true, appBlockId: 'blk-9' }).kindData, 'l1')).toBe(
-      '/apps/blk-9/edit-manifest'
+      '/apps/blk-9/edit'
     );
     expect(getOwnerEditHref(offsiteCard('connect', null).kindData, 'l2')).toBe(
       '/apps/submit?edit=l2'
@@ -221,7 +219,7 @@ describe('getOwnerEditHref (owner Edit deep-link)', () => {
   });
   it('encodes odd ids (defense in depth)', () => {
     expect(getOwnerEditHref({ kind: 'onsite', appBlockId: 'a b/c' }, 'l1')).toBe(
-      '/apps/a%20b%2Fc/edit-manifest'
+      '/apps/a%20b%2Fc/edit'
     );
     expect(getOwnerEditHref({ kind: 'offsite' }, 'a b/c')).toBe('/apps/submit?edit=a%20b%2Fc');
   });

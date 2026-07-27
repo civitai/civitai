@@ -18,6 +18,7 @@ import {
   Text,
   Textarea,
   ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -401,6 +402,33 @@ export function OffsiteReviewModal({
   const missingScreenshotsOnly =
     !assetsQuery.isLoading && !belowFloor && screenshotCount < 1;
 
+  // Scan-clean dimension (Item 1): the go-live `assertAssetsScanClean` gate refuses
+  // to approve until EVERY attached asset is terminally `Scanned` (none pending, none
+  // `Blocked`). Surface per-asset scan status + WHY approve is blocked so the mod
+  // isn't left guessing when the server rejects an approve. Read from the extended
+  // getAssets projection.
+  const assetsData = assetsQuery.data as
+    | {
+        iconScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
+        coverScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
+        screenshots?: { scanStatus?: 'scanned' | 'pending' | 'blocked' | null }[];
+        hasBlockedAsset?: boolean;
+        hasPendingScan?: boolean;
+      }
+    | undefined;
+  const blockedScanKinds = [
+    assetsData?.iconScanStatus === 'blocked' ? 'icon' : null,
+    assetsData?.coverScanStatus === 'blocked' ? 'cover' : null,
+    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'blocked') ? 'screenshots' : null,
+  ].filter((v): v is string => v != null);
+  const pendingScanKinds = [
+    assetsData?.iconScanStatus === 'pending' ? 'icon' : null,
+    assetsData?.coverScanStatus === 'pending' ? 'cover' : null,
+    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'pending') ? 'screenshots' : null,
+  ].filter((v): v is string => v != null);
+  const hasBlockedAsset = !assetsQuery.isLoading && (assetsData?.hasBlockedAsset ?? false);
+  const hasPendingScan = !assetsQuery.isLoading && (assetsData?.hasPendingScan ?? false);
+
   return (
     <Modal
       opened={!!request}
@@ -597,6 +625,38 @@ export function OffsiteReviewModal({
           </Alert>
         )}
 
+        {hasBlockedAsset && (
+          <Alert
+            color="red"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            data-testid="apps-offsite-assets-scan-blocked"
+          >
+            <Text size="sm">
+              Blocked media: {blockedScanKinds.join(', ')}. This media was rejected during scanning
+              (prohibited content). Approve will be rejected by the server until the author replaces
+              it — reject this submission and ask them to swap the blocked {blockedScanKinds.join(
+                ', '
+              )}
+              .
+            </Text>
+          </Alert>
+        )}
+
+        {!hasBlockedAsset && hasPendingScan && (
+          <Alert
+            color="yellow"
+            variant="light"
+            icon={<IconInfoCircle size={16} />}
+            data-testid="apps-offsite-assets-scan-pending"
+          >
+            <Text size="sm">
+              Still scanning: {pendingScanKinds.join(', ')}. Approve will be rejected by the server
+              until every asset finishes scanning cleanly — wait a moment and retry.
+            </Text>
+          </Alert>
+        )}
+
         {ratingMismatch && (
           <Alert
             color="red"
@@ -716,15 +776,28 @@ export function OffsiteReviewModal({
             >
               Reject…
             </Button>
-            <Button
-              color="green"
-              leftSection={<IconCheck size={14} />}
-              onClick={() => setActionMode('approve')}
-              disabled={busy}
-              data-testid="apps-offsite-approve-open"
+            <Tooltip
+              label={
+                hasBlockedAsset
+                  ? 'Blocked media must be replaced before this can be approved.'
+                  : 'Media is still scanning — approve once every asset finishes scanning.'
+              }
+              disabled={!hasBlockedAsset && !hasPendingScan}
+              withArrow
             >
-              Approve…
-            </Button>
+              {/* Disable Approve when the go-live scan-clean gate would reject it, so a
+                  mod click doesn't just eat a server BAD_REQUEST. The server gate stays
+                  authoritative — this is UX only. */}
+              <Button
+                color="green"
+                leftSection={<IconCheck size={14} />}
+                onClick={() => setActionMode('approve')}
+                disabled={busy || hasBlockedAsset || hasPendingScan}
+                data-testid="apps-offsite-approve-open"
+              >
+                Approve…
+              </Button>
+            </Tooltip>
           </Group>
           ))}
       </Stack>

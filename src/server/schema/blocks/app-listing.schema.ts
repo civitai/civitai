@@ -150,6 +150,13 @@ const caption = z.string().max(LISTING_SCREENSHOT_CAPTION_MAX).nullish();
 export const listingAssetsQuerySchema = z.object({ listingId });
 export type ListingAssetsQueryInput = z.infer<typeof listingAssetsQuerySchema>;
 
+/** Poll the scan status of freshly-attached asset images (icon/cover/screenshots).
+ *  Bounded to the icon + cover + the ≤8 screenshot cap. */
+export const assetScanStatusesSchema = z.object({
+  imageIds: z.array(imageId).min(1).max(MAX_LISTING_SCREENSHOTS + 2),
+});
+export type AssetScanStatusesInput = z.infer<typeof assetScanStatusesSchema>;
+
 export const setListingIconSchema = z.object({ listingId, imageId });
 export type SetListingIconInput = z.infer<typeof setListingIconSchema>;
 

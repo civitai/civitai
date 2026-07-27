@@ -813,7 +813,7 @@ function SubmissionActions({
             size="xs"
             variant="default"
             component={Link}
-            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit-manifest`}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit`}
             leftSection={<IconPencil size={12} />}
             data-testid={`apps-onsite-edit-${s.slug}`}
           >
@@ -825,7 +825,7 @@ function SubmissionActions({
             size="xs"
             variant="default"
             component={Link}
-            href={`/apps/${encodeURIComponent(s.appBlockId)}/listing`}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit?tab=media`}
             leftSection={<IconPhoto size={12} />}
             data-testid={`apps-onsite-listing-media-${s.slug}`}
           >

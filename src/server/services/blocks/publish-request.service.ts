@@ -2434,6 +2434,26 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // flip touches only `status`. Same log-and-continue posture: the store listing +
   // block restore are a convenience and must NEVER gate the approve/deploy.
   try {
+    // 🔴 Scan-clean go-live gate (same invariant + shared helper as the mod/owner
+    // republish/relist paths): a reset onsite listing was directly asset-editable while
+    // `pending`, so before restoring store visibility (pending → approved) re-read its
+    // assets on the PRIMARY and refuse the restore if any is still scanning or was
+    // `Blocked`. Throwing here is caught by THIS try (log-and-continue): the app code
+    // still deploys — only the store-listing restore is skipped, so the listing stays
+    // `pending` (re-review) instead of going live with unscanned/Blocked media. No-op
+    // for scan-clean assets. `dbWrite` is passed where the helper expects a tx client
+    // (approveRequest is deliberately non-transactional — see the :2326 comment; a
+    // PrismaClient is structurally a TransactionClient for these reads).
+    const resetListing = await dbWrite.appListing.findFirst({
+      where: { appBlockId, kind: 'onsite', status: 'pending' },
+      select: { id: true },
+    });
+    if (resetListing) {
+      const { assertListingAssetsScanCleanInTx } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      await assertListingAssetsScanCleanInTx(dbWrite, resetListing.id);
+    }
     const restored = await dbWrite.appListing.updateMany({
       where: { appBlockId, kind: 'onsite', status: 'pending' },
       data: { status: 'approved' },
