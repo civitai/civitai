@@ -1391,9 +1391,12 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
       );
 
     const meta = (model.meta as ModelMeta | null) || {};
-    const updatedModel = await upsertModel({
-      ...model,
-      meta: { ...meta, needsReview: true },
+    // Deliberately not upsertModel: this only sets meta, and routing it through the full
+    // upsert ran the non-moderator profanity filter over the model name and re-triggered
+    // ingestModel (the select omits `description`, so descriptionChanged was always true).
+    const updatedModel = await updateModelById({
+      id: model.id,
+      data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },
     });
 
     return updatedModel;
@@ -1433,13 +1436,15 @@ export const declineReviewHandler = async ({
         'Cannot decline a review for this model because it is not in the correct status'
       );
 
-    const updatedModel = await upsertModel({
-      ...model,
-      meta: {
-        ...meta,
-        declinedReason: input.reason,
-        declinedAt: new Date().toISOString(),
-        needsReview: false,
+    const updatedModel = await updateModelById({
+      id: model.id,
+      data: {
+        meta: {
+          ...meta,
+          declinedReason: input.reason,
+          declinedAt: new Date().toISOString(),
+          needsReview: false,
+        } as Prisma.JsonObject,
       },
     });
     await trackModActivity(ctx.user.id, {
