@@ -370,6 +370,31 @@ export const serverSchema = z
     TEXT_MODERATION_CALLBACK: z.string().optional(),
     IMAGE_SCANNING_MODEL: z.string().optional(),
     IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
+    // Age-out threshold (minutes) for never-returning image scans. A scan verdict
+    // arrives via the fire-and-forget /image-scan-result webhook; a fraction never
+    // call back (dropped callback, or a stuck/unassigned workflow), and neither
+    // civitai nor the orchestrator times that out — so those images stay
+    // ingestion='Pending' forever and the retry cron re-drives them with no
+    // ceiling. The `ingest-images` cron flips a NON-backfill image whose
+    // `createdAt` (immutable first-upload time ~= first scan request; NOT
+    // `scanRequestedAt`, which every re-send resets) is older than this to Error,
+    // routing it into the existing capped Error-retry path. Conservative default:
+    // must exceed the wall-time of any legitimately in-flight scan so a healthy
+    // scan is never terminalized — well beyond a normal scan (seconds–minutes),
+    // while the never-returning cases are hours-to-days old. Positive to avoid a
+    // zero/negative threshold aging out every fresh Pending image. Tune via env
+    // without a redeploy; takes effect on the next pod restart (read at boot).
+    IMAGE_SCANNING_PENDING_TIMEOUT: z.coerce.number().int().positive().default(60),
+    // Upper bound on how many queued images the `ingest-images` retry/backfill cron
+    // pulls (and therefore can submit) per run. Sized to the scanner's sustainable
+    // throughput so a large backlog drains gradually across runs instead of in one
+    // dump. New user uploads scan directly via ingestImage on creation and are NOT
+    // gated by this. Conservative default; tune via env without a redeploy.
+    // Positive integer guard: an empty/0 value would make findMany take:0 (all
+    // retries silently wedged) and a negative value would flip Prisma's take to
+    // newest-first (starving the oldest backlog) — a bad hand-tune must fail
+    // loudly at boot instead.
+    IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
     IMAGE_SCANNER_NEW: zc.booleanString.default(false),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),

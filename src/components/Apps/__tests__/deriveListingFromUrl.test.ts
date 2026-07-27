@@ -23,11 +23,21 @@ describe('deriveListingFromUrl — happy paths', () => {
     });
   });
 
-  it('strips a leading www. and keeps the first label (hyphenated)', () => {
+  it('strips a leading www. and keeps the first label (name de-hyphenated to spaces)', () => {
     // hostname is lower-cased by the URL parser, so the title-case is deterministic.
+    // The human-readable NAME joins words with a space; the SLUG keeps its hyphens.
     expect(deriveListingFromUrl('https://www.My-App.io/path?q=1')).toEqual({
-      name: 'My-App',
+      name: 'My App',
       slug: 'my-app',
+    });
+  });
+
+  it('cosmetic-studio.civitai.com → "Cosmetic Studio" (space, not hyphen) / cosmetic-studio', () => {
+    // Regression: the host-fallback name must read naturally ("Cosmetic Studio"),
+    // never the hyphenated "Cosmetic-Studio"; the slug stays hyphenated.
+    expect(deriveListingFromUrl('https://cosmetic-studio.civitai.com')).toEqual({
+      name: 'Cosmetic Studio',
+      slug: 'cosmetic-studio',
     });
   });
 
@@ -40,14 +50,14 @@ describe('deriveListingFromUrl — happy paths', () => {
 
   it('uses only the FIRST dot-label (subdomain wins over apex)', () => {
     expect(deriveListingFromUrl('https://cool-tool.example.co.uk')).toEqual({
-      name: 'Cool-Tool',
+      name: 'Cool Tool',
       slug: 'cool-tool',
     });
   });
 
-  it('lower-cases the remainder of each hyphen word', () => {
+  it('lower-cases the remainder of each hyphen word (name space-joined)', () => {
     expect(deriveListingFromUrl('https://SUPER-APP.com')).toEqual({
-      name: 'Super-App',
+      name: 'Super App',
       slug: 'super-app',
     });
   });
@@ -133,7 +143,7 @@ describe('deriveListingFromUrl — hostile / edge hosts never throw', () => {
   it('IDN host is punycode-derived (no throw, regex-safe slug)', () => {
     // The URL parser converts `münchen.de` → `xn--mnchen-3ya.de` before we see it.
     const result = deriveListingFromUrl('https://münchen.de');
-    expect(result).toEqual({ name: 'Xn-Mnchen-3ya', slug: 'xn-mnchen-3ya' });
+    expect(result).toEqual({ name: 'Xn Mnchen 3ya', slug: 'xn-mnchen-3ya' });
     expect(SLUG_REGEX.test(result.slug)).toBe(true);
   });
 

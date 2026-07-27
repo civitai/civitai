@@ -67,7 +67,12 @@ vi.mock('~/env/server', () => ({
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newUlid: () => 'ULID000' }));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
-  BlockManifestValidator: { validate: () => ({ valid: true, errors: [] }) },
+  BlockManifestValidator: {
+    validate: () => ({ valid: true, errors: [] }),
+    // approveRequest now calls the async submission gate (validate + settings-
+    // pattern ReDoS check); this suite exercises the always-valid path.
+    validateSubmission: async () => ({ valid: true, errors: [] }),
+  },
 }));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   commitFiles: vi.fn(async () => ({ sha: 'deadbeefsha' })),

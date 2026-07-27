@@ -39,8 +39,12 @@ export function AppsPageLayout({
   subtitle?: ReactNode;
   /** Right-aligned header controls (e.g. a "Submit a new app" button). */
   actions?: ReactNode;
-  /** Container width — pages keep their prior size (`sm` for Submit, etc.). */
-  size?: MantineSize;
+  /**
+   * Container width — pages keep their prior size (`sm` for Submit, etc.).
+   * Also accepts a raw number (px) — Mantine's `Container` supports it, used by
+   * the store index to widen past the `xl` (1320px) token.
+   */
+  size?: MantineSize | number;
   children: ReactNode;
 }) {
   const hasHeader = Boolean(title || subtitle || actions);

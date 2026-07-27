@@ -278,6 +278,8 @@ export const getHomeBlockData = async ({
         return null;
       }
 
+      // No feature flags in this context — creator-listed items stay excluded
+      // from homepage shop blocks until the creatorShop flag goes GA.
       const data = await getShopSectionsWithItems({
         sectionId: metadata.cosmeticShopSection.id,
       });
@@ -769,11 +771,7 @@ export async function deleteHomeBlockAdmin({ id }: { id: number }) {
   return { deleted: true };
 }
 
-export async function reorderHomeBlocksAdmin({
-  orderedIds,
-}: {
-  orderedIds: number[];
-}) {
+export async function reorderHomeBlocksAdmin({ orderedIds }: { orderedIds: number[] }) {
   const unique = new Set(orderedIds);
   if (unique.size !== orderedIds.length) {
     throw throwBadRequestError('orderedIds must not contain duplicates');
@@ -796,9 +794,7 @@ export async function reorderHomeBlocksAdmin({
   }
 
   await dbWrite.$transaction(
-    orderedIds.map((id, index) =>
-      dbWrite.homeBlock.update({ where: { id }, data: { index } })
-    )
+    orderedIds.map((id, index) => dbWrite.homeBlock.update({ where: { id }, data: { index } }))
   );
   return { count: orderedIds.length };
 }

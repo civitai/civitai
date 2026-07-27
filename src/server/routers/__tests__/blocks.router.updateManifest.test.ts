@@ -50,7 +50,9 @@ vi.mock('~/server/services/blocks/publish-request.service', () => ({
   recordPendingFromPush: mockRecordPending,
 }));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
-  BlockManifestValidator: { validate: mockValidate },
+  // The router now calls the async submission gate (validate + settings-pattern
+  // ReDoS check); point it at the same mock so mockValidate drives the outcome.
+  BlockManifestValidator: { validate: mockValidate, validateSubmission: mockValidate },
 }));
 vi.mock('~/server/services/blocks/manifest-normalize', () => ({
   stampCanonicalIframeSrc: mockStamp,

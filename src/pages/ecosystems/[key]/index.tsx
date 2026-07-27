@@ -1,5 +1,5 @@
-import { Badge, Button, Card, Group, SimpleGrid, Stack, Text } from '@mantine/core';
-import { IconBolt, IconDownload } from '@tabler/icons-react';
+import { Alert, Badge, Button, Card, Group, SimpleGrid, Stack, Text } from '@mantine/core';
+import { IconAlertTriangle, IconBolt, IconDownload } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
@@ -19,6 +19,8 @@ import {
   getEcosystemSeoConfigBySlug,
   getEcosystemSeoSlug,
   isEcosystemSeoPageLive,
+  isEcosystemSunset,
+  LORA_COUNT_TOKEN,
   type EcosystemSeoConfig,
 } from '~/shared/constants/ecosystem-seo.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -45,7 +47,9 @@ export const getServerSideProps = createServerSideProps({
     // Strip the moderator-only fact-check flags from the config sent to the client (the review
     // sidebar reads them itself, gated to moderators).
     const { factCheck: _factCheck, ...clientConfig } = config;
-    return { props: { config: clientConfig, data, browseBaseModels } };
+    // Evaluated server-side so the banner and noindex don't flip between render and hydration.
+    const sunset = isEcosystemSunset(config);
+    return { props: { config: clientConfig, data, browseBaseModels, sunset } };
   },
 });
 
@@ -57,6 +61,14 @@ function formatCount(n: number): string {
   return `${n}`;
 }
 
+const formatSunsetDate = (date: string) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+
 const generateUrl = (versionId: number) => `/generate?modelVersionId=${versionId}`;
 const modelUrl = (modelId: number, versionId: number) =>
   `/models/${modelId}?modelVersionId=${versionId}`;
@@ -65,14 +77,17 @@ export default function EcosystemPage({
   config,
   data,
   browseBaseModels,
+  sunset,
 }: {
   config: EcosystemSeoConfig;
   data: EcosystemSeoData;
   browseBaseModels: string[];
+  sunset: boolean;
 }) {
   const { name } = config;
-  // Index these pages on civitai.com (green) only; noindex on red/blue.
-  const deIndex = useDomainColor() !== 'green';
+  // Index these pages on civitai.com (green) only; noindex on red/blue — and never once the
+  // ecosystem's endpoints are gone.
+  const deIndex = useDomainColor() !== 'green' || sunset;
   const mediaType = config.modality === 'video' ? 'video' : 'image';
   const isVideo = mediaType === 'video';
   // Dual-modality (e.g. Grok does image + video): neutral labels, and the example gallery
@@ -89,6 +104,25 @@ export default function EcosystemPage({
   const browseHref = browseBaseModels.length
     ? `/models?${browseBaseModels.map((b) => `baseModels=${encodeURIComponent(b)}`).join('&')}`
     : '/models';
+
+  // `{loras:Key}` in a comparison cell → that ecosystem's live LoRA count, formatted like the
+  // hero stat. An unresolved key renders as an em dash rather than leaking the raw token.
+  const resolveComparisonValue = (value: string) =>
+    value.replace(LORA_COUNT_TOKEN, (_, key: string) => {
+      const count = data.loraCounts[key];
+      return count ? `${formatCount(count)}+` : '—';
+    });
+
+  // A row of live counts can't carry a hand-set winner — highlight whichever column actually
+  // has the most. Rows without tokens keep their curated `winner`.
+  const comparisonWinner = (row: EcosystemSeoConfig['comparison']['rows'][number]) => {
+    const counts = row.values.map((value) => {
+      const match = [...value.matchAll(LORA_COUNT_TOKEN)][0];
+      return match ? data.loraCounts[match[1]] ?? 0 : -1;
+    });
+    const best = Math.max(...counts);
+    return best > 0 ? counts.indexOf(best) : row.winner;
+  };
 
   // OG/social card: the first curated (SFW) featured cover, else an example. Meta builds a
   // 1200-wide edge URL and handles video posters; falls back to the site default if absent.
@@ -151,6 +185,21 @@ export default function EcosystemPage({
                 </span>
               ))}
             </div>
+
+            {config.sunset && (
+              <Alert
+                color={sunset ? 'red' : 'yellow'}
+                icon={<IconAlertTriangle size={18} />}
+                my="md"
+              >
+                <strong>
+                  {sunset
+                    ? `${name} has been retired.`
+                    : `${name} is being retired on ${formatSunsetDate(config.sunset.date)}.`}
+                </strong>{' '}
+                {config.sunset.note}
+              </Alert>
+            )}
 
             <p className={styles.heroIntro}>{config.hero.intro}</p>
 
@@ -263,6 +312,7 @@ export default function EcosystemPage({
                   downloadCount={m.downloadCount}
                   generationCount={m.generationCount}
                   mediaType={mediaType}
+                  generatable={m.generatable}
                   alt={`${m.name} — ${name} ${m.type.toLowerCase()} preview`}
                 />
               ))}
@@ -289,7 +339,7 @@ export default function EcosystemPage({
                     imageUrl={l.imageUrl}
                     downloadCount={l.downloadCount}
                     generationCount={l.generationCount}
-                    mediaType={mediaType}
+                    mediaType={l.imageType ?? mediaType}
                     alt={`${l.name} — ${name} LoRA preview`}
                   />
                 ))}
@@ -437,20 +487,26 @@ export default function EcosystemPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {config.comparison.rows.map((row) => (
-                    <tr key={row.label}>
-                      <td className={styles.rowHeader}>{row.label}</td>
-                      {row.values.map((v, i) => (
-                        <td key={i} className={i === 0 ? styles.colFlux : undefined}>
-                          {row.winner === i ? (
-                            <span className={styles.comparisonCheck}>{v}</span>
-                          ) : (
-                            v
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {config.comparison.rows.map((row) => {
+                    const winner = comparisonWinner(row);
+                    return (
+                      <tr key={row.label}>
+                        <td className={styles.rowHeader}>{row.label}</td>
+                        {row.values.map((v, i) => {
+                          const value = resolveComparisonValue(v);
+                          return (
+                            <td key={i} className={i === 0 ? styles.colFlux : undefined}>
+                              {winner === i ? (
+                                <span className={styles.comparisonCheck}>{value}</span>
+                              ) : (
+                                value
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -558,6 +614,7 @@ function ResourceCard({
   alt,
   downloadCount = 0,
   generationCount = 0,
+  generatable = true,
 }: {
   modelId: number;
   versionId: number;
@@ -569,6 +626,8 @@ function ResourceCard({
   alt: string;
   downloadCount?: number;
   generationCount?: number;
+  /** False for a checkpoint that isn't always hosted — the card links out instead of generating. */
+  generatable?: boolean;
 }) {
   return (
     <Card withBorder padding="sm" radius="md" className="flex h-full flex-col">
@@ -621,16 +680,29 @@ function ResourceCard({
           </Text>
         )}
       </Stack>
-      <Button
-        onClick={() => generationGraphPanel.open({ type: 'modelVersion', id: versionId })}
-        color="yellow"
-        size="xs"
-        fullWidth
-        mt="sm"
-        leftSection={<IconBolt size={14} />}
-      >
-        Generate
-      </Button>
+      {generatable ? (
+        <Button
+          onClick={() => generationGraphPanel.open({ type: 'modelVersion', id: versionId })}
+          color="yellow"
+          size="xs"
+          fullWidth
+          mt="sm"
+          leftSection={<IconBolt size={14} />}
+        >
+          Generate
+        </Button>
+      ) : (
+        <Button
+          component={NextLink}
+          href={modelUrl(modelId, versionId)}
+          variant="default"
+          size="xs"
+          fullWidth
+          mt="sm"
+        >
+          View model
+        </Button>
+      )}
     </Card>
   );
 }

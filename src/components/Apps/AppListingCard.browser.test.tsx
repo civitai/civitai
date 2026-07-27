@@ -1,16 +1,31 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { AppListingCard } from '~/components/Apps/AppListingCard';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
  * P2b AppListingCard component tests (REPORT-ONLY — the browser project is
  * non-blocking; the blocking gate is appListingCardView.test.ts). These pin the
  * rendered kind badge, recommend label, and kind-aware CTA affordance for a few
- * representative cards.
+ * representative cards, PLUS the owner "Edit" deep-link gating (Item 2) and the
+ * long-username tooltip fallback (Item 1).
  */
+
+const mocks = vi.hoisted(() => ({
+  currentUser: null as null | { id: number; username: string },
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => mocks.currentUser,
+}));
+
+// Import AFTER the mock is declared (vi.mock is hoisted, imports are not).
+const { AppListingCard } = await import('./AppListingCard');
+
+beforeEach(() => {
+  mocks.currentUser = null;
+});
 
 function base(over: Partial<ListingCard>): ListingCard {
   return {
@@ -26,7 +41,7 @@ function base(over: Partial<ListingCard>): ListingCard {
     creator: { id: 5, username: 'alice', image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
-    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true },
+    kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
     ...over,
   };
 }
@@ -35,13 +50,21 @@ describe('AppListingCard', () => {
   test('on-site page app + canOpenPage → Open link to the run route', async () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await expect.element(page.getByText('My App')).toBeInTheDocument();
-    // exact: the "App" kind badge, else the substring also matches the title
-    // ("My App") and description ("A handy app") — strict-mode violation.
-    await expect.element(page.getByText('App', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('by alice')).toBeInTheDocument();
     const open = page.getByRole('link', { name: 'Open' });
     await expect.element(open).toBeInTheDocument();
     await expect.element(open).toHaveAttribute('href', '/apps/run/my-app');
+  });
+
+  test('kind + category badges are NOT rendered on the card (round-2 truncation fix)', async () => {
+    // "App" was formerly the on-site kind badge's exact-match text; "utility" is
+    // base()'s category. Neither should render now that the badge column is gone
+    // — the kind signal instead lives in the CTA (Open/View details vs Visit ↗)
+    // and, for off-site, the detail-page disclosure Alert.
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    await expect.element(page.getByText('App', { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByText('Utility', { exact: true })).not.toBeInTheDocument();
   });
 
   test('no reviews → "No reviews yet"', async () => {
@@ -72,17 +95,21 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    await expect.element(page.getByText('Off-site')).toBeInTheDocument();
+    // The kind signal ("Off-site") is no longer a badge — it's conveyed by the
+    // CTA below (an external "Visit" anchor vs. an internal Open/View details
+    // link) plus the off-site disclosure Alert on the detail page.
+    await expect.element(page.getByText('Off-site', { exact: true })).not.toBeInTheDocument();
     const visit = page.getByRole('link', { name: 'Visit' });
     await expect.element(visit).toHaveAttribute('href', 'https://ext.app');
     await expect.element(visit).toHaveAttribute('target', '_blank');
     await expect.element(visit).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
-  test('off-site connect → Connect badge + View details → unified detail (P2c)', async () => {
+  test('off-site connect → View details → unified detail (P2c)', async () => {
     // P2c: cards route to the unified detail; the Connect action itself lives on
     // the detail page (the connect flow needs a P2a authorize-URL DTO addition),
-    // so the card's CTA is "View details", not an inert Connect button.
+    // so the card's CTA is "View details", not an inert Connect button. The
+    // former "Connect app" kind badge is gone — no longer asserted here.
     renderWithProviders(
       <AppListingCard
         card={base({
@@ -92,9 +119,6 @@ describe('AppListingCard', () => {
         })}
       />
     );
-    // exact: the "Connect app" badge, else the substring also matches the title
-    // ("Connect App", case-insensitive) — strict-mode violation.
-    await expect.element(page.getByText('Connect app', { exact: true })).toBeInTheDocument();
     const details = page.getByRole('link', { name: 'View details' });
     await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
   });
@@ -103,5 +127,86 @@ describe('AppListingCard', () => {
     renderWithProviders(<AppListingCard card={base({})} canOpenPage={false} />);
     const details = page.getByRole('link', { name: 'View details' });
     await expect.element(details).toHaveAttribute('href', '/apps/store-preview/my-app');
+  });
+
+  test('owner sees the Edit deep-link → on-site manifest editor', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' }; // matches base().creator.id
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    const edit = page.getByTestId('apps-listing-owner-edit');
+    await expect.element(edit).toBeInTheDocument();
+    await expect.element(edit).toHaveAttribute('href', '/apps/blk-1/edit');
+  });
+
+  test('owner of an off-site listing → Edit routes to the submit editor by listing id', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' };
+    renderWithProviders(
+      <AppListingCard
+        card={base({
+          kind: 'offsite',
+          kindData: { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://ext.app' },
+        })}
+      />
+    );
+    const edit = page.getByTestId('apps-listing-owner-edit');
+    await expect.element(edit).toHaveAttribute('href', '/apps/submit?edit=l1');
+  });
+
+  test('non-owner does NOT see the Edit deep-link', async () => {
+    mocks.currentUser = { id: 999, username: 'bob' };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+  });
+
+  test('signed-out viewer does NOT see the Edit deep-link', async () => {
+    mocks.currentUser = null;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+  });
+
+  test('OWNER sees an "Incomplete" indicator when the card is below the floor (missing icon/cover)', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' }; // owner
+    // base() has iconUrl: null + coverUrl: null → below floor.
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect
+      .element(page.getByTestId('apps-listing-owner-incomplete'))
+      .toBeInTheDocument();
+  });
+
+  test('OWNER does NOT see the "Incomplete" indicator when icon+cover are present', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' };
+    renderWithProviders(
+      <AppListingCard
+        card={base({ iconUrl: 'https://edge/icon.png', coverUrl: 'https://edge/cover.png' })}
+        canOpenPage
+      />
+    );
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-incomplete').elements()).toHaveLength(0);
+  });
+
+  test('NON-owner (public shopper) never sees the "Incomplete" indicator even below the floor', async () => {
+    mocks.currentUser = { id: 999, username: 'bob' }; // not the creator
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-incomplete').elements()).toHaveLength(0);
+  });
+
+  test('signed-out viewer never sees the "Incomplete" indicator', async () => {
+    mocks.currentUser = null;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-incomplete').elements()).toHaveLength(0);
+  });
+
+  test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
+    const longName = 'a-really-long-creator-username-that-will-definitely-overflow-the-card-column';
+    renderWithProviders(
+      <AppListingCard card={base({ creator: { id: 5, username: longName, image: null } })} canOpenPage />
+    );
+    const label = page.getByText(`by ${longName}`);
+    await expect.element(label).toBeInTheDocument();
+    await label.hover();
+    // The Tooltip renders the full username (portal) once the label overflows.
+    await expect.element(page.getByText(longName, { exact: true })).toBeInTheDocument();
   });
 });

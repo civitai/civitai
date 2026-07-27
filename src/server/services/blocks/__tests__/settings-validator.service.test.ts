@@ -275,6 +275,112 @@ describe('validateBlockSettings — type + range errors', () => {
   });
 });
 
+describe('validateBlockSettings — patterned-input length cap (ReDoS defense-in-depth)', () => {
+  // Simulate a pattern that was STORED before the submission gate existed and
+  // therefore has NO max_length (the runtime type is derived from the meta
+  // schema, but a legacy JSONB row could omit it — the cast models that).
+  const legacyPatternManifest = {
+    legacy_code: {
+      scope: 'publisher',
+      type: 'string',
+      widget: 'text',
+      label: 'Legacy code',
+      description: 'A patterned field stored before max_length was required.',
+      // deliberately a *polynomial* pattern with NO max_length declared
+      pattern: '^(a+)+b$',
+      // note: no max_length
+    },
+  } as unknown as ManifestSettings;
+
+  it('rejects an over-cap input before running the regex (no max_length declared)', () => {
+    const huge = 'a'.repeat(5000); // > MAX_PATTERNED_INPUT_LEN (1000)
+    expect(() =>
+      validateBlockSettings({
+        manifestSettings: legacyPatternManifest,
+        inputSettings: { legacy_code: huge },
+        declaredScopes,
+        forScope: 'publisher',
+      })
+    ).toThrowError(/legacy_code.*exceeds max length 1000/);
+  });
+
+  it('does NOT freeze the event loop on a crafted pattern + long input (bounded time)', () => {
+    // Without the length cap, `(a+)+b` on 5000 non-matching chars would hang
+    // for many seconds. The cap rejects it in O(1). Assert it returns fast.
+    const evil = 'a'.repeat(5000);
+    const start = Date.now();
+    expect(() =>
+      validateBlockSettings({
+        manifestSettings: legacyPatternManifest,
+        inputSettings: { legacy_code: evil },
+        declaredScopes,
+        forScope: 'publisher',
+      })
+    ).toThrow();
+    const elapsedMs = Date.now() - start;
+    // Generous bound — a real ReDoS here is measured in seconds; the cap makes
+    // this constant-time. 500ms leaves huge headroom for a loaded CI worker.
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
+  it('still validates a normal patterned value at/under the cap', () => {
+    const result = validateBlockSettings({
+      manifestSettings: publisherManifest,
+      inputSettings: { greeting: 'hello!' }, // ^[a-z !]+$, max_length 20
+      declaredScopes,
+      forScope: 'publisher',
+    });
+    expect(result.greeting).toBe('hello!');
+  });
+});
+
+describe('validateBlockSettings — no fail-open on the slug pattern (F3 regression)', () => {
+  // The removed `safe-regex` gate false-positived on the canonical slug pattern
+  // `^[a-z0-9]+(-[a-z0-9]+)*$` and made `manifestSettingsSchema.safeParse` FAIL,
+  // which on the install/save paths fell through to `input.settings` — skipping
+  // ALL field validation (the fail-open). The meta-schema now accepts the slug
+  // pattern (compile-check only), so field validation actually runs against it.
+  const slugManifest: ManifestSettings = {
+    handle: {
+      scope: 'publisher',
+      type: 'string',
+      widget: 'text',
+      label: 'Handle',
+      description: 'A slug the app uses as an identifier.',
+      pattern: '^[a-z0-9]+(-[a-z0-9]+)*$',
+      max_length: 40,
+    },
+  };
+
+  it('parses the slug-pattern manifest via manifestSettingsSchema (no fail-open)', async () => {
+    const { manifestSettingsSchema } = await import(
+      '../../../schema/blocks/manifest-settings.meta.schema'
+    );
+    expect(manifestSettingsSchema.safeParse(slugManifest).success).toBe(true);
+  });
+
+  it('ENFORCES the slug pattern (rejects a value that violates it)', () => {
+    expect(() =>
+      validateBlockSettings({
+        manifestSettings: slugManifest,
+        inputSettings: { handle: 'Bad Handle!' }, // spaces + caps fail the slug pattern
+        declaredScopes,
+        forScope: 'publisher',
+      })
+    ).toThrowError(/handle.*invalid/);
+  });
+
+  it('accepts a value that satisfies the slug pattern', () => {
+    const result = validateBlockSettings({
+      manifestSettings: slugManifest,
+      inputSettings: { handle: 'my-cool-app' },
+      declaredScopes,
+      forScope: 'publisher',
+    });
+    expect(result.handle).toBe('my-cool-app');
+  });
+});
+
 describe('validateBlockSettings — empty manifest', () => {
   it('returns an empty object regardless of input', () => {
     const result = validateBlockSettings({

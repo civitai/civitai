@@ -5,6 +5,7 @@ import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import { baseModelRecords, ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
+  getComparisonLoraCountKeys,
   getConfigEcosystemKeys,
   getEcosystemSeoConfig,
   type EcosystemSeoConfig,
@@ -13,7 +14,7 @@ import {
 const TTL = CacheTTL.day; // 24h — see docs/features/ecosystem-seo-pages.md
 // Bump when the cached EcosystemSeoData shape changes, so stale entries are ignored instead of
 // deserialized into the new shape (e.g. examples gained `type`; stats gained the media fallback).
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 /** PG-only. Model.nsfw flag alone isn't enough; nsfwLevel catches SFW-flagged models with R+ imagery. */
 const SFW_MAX_NSFW_LEVEL = 1;
 const LORA_TYPES = ['LORA', 'LoCon', 'DoRA'];
@@ -30,8 +31,10 @@ export type EcosystemSeoLora = {
   name: string;
   downloadCount: number;
   generationCount: number;
-  /** SFW cover image url. Undefined if the LoRA has no PG-rated showcase image. */
+  /** SFW cover url. Undefined if the LoRA has no PG-rated showcase media at all. */
   imageUrl?: string;
+  /** Media type of `imageUrl` — a video LoRA's showcase is often a still, so it can differ from the page. */
+  imageType?: 'image' | 'video';
 };
 
 export type EcosystemSeoFeaturedModel = {
@@ -45,6 +48,11 @@ export type EcosystemSeoFeaturedModel = {
   /** All-time metrics (0 for hosted/engine models with no ModelMetric usage). */
   downloadCount: number;
   generationCount: number;
+  /**
+   * False for a curated Checkpoint that isn't in `EcosystemCheckpoints` (only generatable if it
+   * wins an auction slot). The card links to the model page instead of offering a dead Generate.
+   */
+  generatable: boolean;
 };
 
 export type EcosystemSeoExample = {
@@ -62,6 +70,12 @@ export type EcosystemSeoData = {
   topLoras: EcosystemSeoLora[];
   featuredModels: EcosystemSeoFeaturedModel[];
   featuredExamples: EcosystemSeoExample[];
+  /**
+   * Live LoRA counts keyed by ecosystem SEO key, for the `{loras:Key}` tokens in the comparison
+   * table. Same query as the hero stat, so a peer's number reads the same on every page that
+   * mentions it.
+   */
+  loraCounts: Record<string, number>;
 };
 
 /**
@@ -95,14 +109,54 @@ async function computeEcosystemSeoData(config: EcosystemSeoConfig): Promise<Ecos
 
   const mediaType = mediaTypeForConfig(config);
   const featuredModelIds = config.featuredModels.map((m) => m.modelId);
-  const [stats, topLoras, featuredModels, featuredExamples] = await Promise.all([
+  const [stats, topLoras, featuredModels, featuredExamples, peerLoraCounts] = await Promise.all([
     getStats(baseModelIn),
     getTopLoras(baseModelIn, featuredModelIds, mediaType),
     resolveFeaturedModels(config, mediaType),
     resolveFeaturedExamples(config),
+    getPeerLoraCounts(config),
   ]);
 
-  return { stats, topLoras, featuredModels, featuredExamples };
+  return {
+    stats,
+    topLoras,
+    featuredModels,
+    featuredExamples,
+    loraCounts: { ...peerLoraCounts, [config.key]: stats.loraCount },
+  };
+}
+
+/**
+ * LoRA counts for the other ecosystems this page's comparison table cites (`{loras:Key}` tokens),
+ * using the same definition as the hero stat. Hand-written numbers drifted apart across pages —
+ * Illustrious read 187K/290K/294K depending on which page you were on.
+ */
+async function getPeerLoraCounts(config: EcosystemSeoConfig): Promise<Record<string, number>> {
+  const keys = getComparisonLoraCountKeys(config).filter((key) => key !== config.key);
+  const counts = await Promise.all(
+    keys.map(async (key) => {
+      const peer = getEcosystemSeoConfig(key);
+      if (!peer) return [key, 0] as const;
+      const baseModels = [
+        ...new Set(getConfigEcosystemKeys(peer).flatMap((k) => getEcosystemOwnBaseModels(k))),
+      ];
+      if (baseModels.length === 0) return [key, 0] as const;
+      return [key, await getLoraCount(Prisma.join(baseModels))] as const;
+    })
+  );
+  return Object.fromEntries(counts);
+}
+
+async function getLoraCount(baseModelIn: Prisma.Sql): Promise<number> {
+  const rows = await dbRead.$queryRaw<{ lora_count: bigint }[]>(Prisma.sql`
+    SELECT count(DISTINCT m.id)::bigint AS lora_count
+    FROM "Model" m
+    JOIN "ModelVersion" mv ON mv."modelId" = m.id
+    WHERE mv."baseModel" IN (${baseModelIn})
+      AND m.status = 'Published' AND m.nsfw = false
+      AND m.type::text IN (${Prisma.join(LORA_TYPES)})
+  `);
+  return Number(rows[0]?.lora_count ?? 0);
 }
 
 async function getStats(baseModelIn: Prisma.Sql): Promise<EcosystemSeoStats> {
@@ -181,7 +235,7 @@ async function getTopLoras(
     JOIN "ModelMetric" mm ON mm."modelId" = el.id
     WHERE mm."nsfwLevel" <= ${SFW_MAX_NSFW_LEVEL}
     ORDER BY mm."downloadCount" DESC NULLS LAST
-    LIMIT 6
+    LIMIT 12
   `);
 
   const loras = rows.map((r) => ({
@@ -193,14 +247,21 @@ async function getTopLoras(
   }));
 
   // Cover media via the shared per-version cache (day TTL) — no per-model scan.
-  // Pick the first PG-rated item of the page's media type; undefined if the version has none.
+  // Prefer the page's media type, but fall back to any PG-rated showcase item: a video LoRA
+  // whose showcase is a still would otherwise render as a coverless card. Over-fetch and drop
+  // the ones with no usable cover so the row is always full.
   const imagesByVersion = await imagesForModelVersionsCache.fetch(loras.map((l) => l.versionId));
-  return loras.map((l) => {
-    const sfw = imagesByVersion[l.versionId]?.images.find(
-      (img) => img.type === mediaType && img.nsfwLevel > 0 && img.nsfwLevel <= SFW_MAX_NSFW_LEVEL
-    );
-    return { ...l, imageUrl: sfw?.url };
-  });
+  return loras
+    .map((l): EcosystemSeoLora | null => {
+      const candidates = (imagesByVersion[l.versionId]?.images ?? []).filter(
+        (img) => img.nsfwLevel > 0 && img.nsfwLevel <= SFW_MAX_NSFW_LEVEL
+      );
+      const cover = candidates.find((img) => img.type === mediaType) ?? candidates[0];
+      if (!cover) return null;
+      return { ...l, imageUrl: cover.url, imageType: cover.type as 'image' | 'video' };
+    })
+    .filter((l): l is EcosystemSeoLora => l !== null)
+    .slice(0, 6);
 }
 
 /** Fetch SFW (PG-only) media of a given type by id, keyed by id. NSFW/under-review is simply absent. */
@@ -273,8 +334,10 @@ async function resolveFeaturedModels(
     .map((fm): EcosystemSeoFeaturedModel | null => {
       const model = byId.get(fm.modelId);
       if (!model) return null;
-      // A featured checkpoint must be always-available for generation, not auction-gated.
-      if (model.type === 'Checkpoint' && !availableVersionIds.has(fm.versionId)) return null;
+      // Checkpoints outside EcosystemCheckpoints are only generatable when they hold an auction
+      // slot, so the card drops its Generate CTA rather than the whole entry — a canonical
+      // release (e.g. Illustrious XL 1.0) still belongs in the curated list.
+      const generatable = model.type !== 'Checkpoint' || availableVersionIds.has(fm.versionId);
       const metric = metricByModel.get(fm.modelId);
       return {
         modelId: fm.modelId,
@@ -286,6 +349,7 @@ async function resolveFeaturedModels(
         downloadCount: Number(metric?.downloadCount ?? 0),
         generationCount:
           Number(metric?.generationCount ?? 0) || (versionGenFallback.get(fm.versionId) ?? 0),
+        generatable,
       };
     })
     .filter((x): x is EcosystemSeoFeaturedModel => x !== null);

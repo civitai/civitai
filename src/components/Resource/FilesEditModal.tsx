@@ -52,10 +52,9 @@ export default function FilesEditModal({ modelVersionId }: { modelVersionId: num
 
   const isTrained = modelVersion?.model?.uploadType === ModelUploadType.Trained;
 
-
   return (
     <Modal {...dialog} withCloseButton={false} closeOnEscape={false} fullScreen>
-      <Container size="md">
+      <Container size="xl">
         {isLoading ? (
           <Center>
             <Loader size="lg" />

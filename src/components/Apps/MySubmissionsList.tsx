@@ -13,17 +13,23 @@ import {
   IconHistory,
   IconMessage,
   IconPencil,
+  IconPhoto,
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
+import {
+  ListingProblemsIndicator,
+  type ListingProblem,
+} from '~/components/Apps/ListingProblemsIndicator';
 import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
 import { isStaleDeploy } from '~/components/Apps/deploy-status';
 import {
   canOwnerRepublish,
   canOwnerUnpublish,
+  isModRemovedListing,
   ownerListingState,
   ownerStateChip,
   type OwnerListingState,
@@ -37,6 +43,7 @@ import {
   currentlyPublishedVersionId,
   filterGroups,
   groupSubmissionsByApp,
+  OWNER_STATUS_BUCKETS,
   sortGroups,
   toDate,
   type SubmissionAccessors,
@@ -102,6 +109,9 @@ export type Submission = {
   /** Whether the backing block's manifest declares a launchable page — drives the
    *  Open-live → `/apps/run/<slug>` vs standalone-origin vs model-slot branching. */
   hasPage?: boolean | null;
+  /** Advisory listing-completeness problems (missing assets + empty key fields),
+   *  from the server's `computeListingProblems`. Empty ⇒ no warning icon. */
+  problems?: ListingProblem[];
 };
 
 /** Owner-control handlers threaded from the list down to each latest row. */
@@ -284,7 +294,10 @@ function StatusCell({
   );
   return (
     <Stack gap={6} align="flex-start">
-      {chip}
+      <Group gap={6} wrap="nowrap">
+        {chip}
+        <ListingProblemsIndicator problems={submission.problems ?? []} />
+      </Group>
       {notes && <ReviewerNotesButton notes={notes} variant={variant} />}
     </Stack>
   );
@@ -458,9 +471,12 @@ export function MySubmissionsList({
   };
 
   // Group by app, apply the text filter, sort newest-first, then partition into
-  // status SECTIONS (Live / Pending / Rejected / Withdrawn). Status is now the
-  // section, so the column header is no longer sortable — a plain submittedAt-desc
-  // sort within each section keeps the newest request on top.
+  // status SECTIONS (Live / Pending / Rejected / Withdrawn / Removed-by-a-moderator).
+  // Status is now the section, so the column header is no longer sortable — a plain
+  // submittedAt-desc sort within each section keeps the newest request on top. The
+  // `overrideBucketOf` routes a moderator-removed listing into its own collapsed
+  // section, taking precedence over the any-approved→Live rule (a once-live app a mod
+  // took down would otherwise misfile under Live).
   const buckets = useMemo(() => {
     const grouped = groupSubmissionsByApp(
       submissions,
@@ -473,14 +489,26 @@ export function MySubmissionsList({
       { column: 'submitted', direction: 'desc' },
       ONSITE_ACCESSORS
     );
-    return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status);
+    return bucketGroupsByStatus(sorted, ONSITE_ACCESSORS.status, OWNER_STATUS_BUCKETS, (g) =>
+      // INVARIANT: the backing-listing fields (`listingStatus` + `lastModerationAction`)
+      // are keyed per APP (the single `AppListing`), not per version — the server
+      // projects the same values onto every publish-request row in the group — so
+      // reading them off `g.latest` is equivalent to reading them off any version.
+      isModRemovedListing({
+        listingStatus: g.latest.listingStatus,
+        lastModerationAction: g.latest.lastModerationAction,
+      })
+        ? 'mod-removed'
+        : null
+    );
   }, [submissions, query]);
 
   const totalGroups =
     buckets.live.length +
     buckets.pending.length +
     buckets.rejected.length +
-    buckets.withdrawn.length;
+    buckets.withdrawn.length +
+    buckets['mod-removed'].length;
 
   const toggle = (identity: string) =>
     setExpanded((prev) => {
@@ -785,11 +813,23 @@ function SubmissionActions({
             size="xs"
             variant="default"
             component={Link}
-            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit-manifest`}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit`}
             leftSection={<IconPencil size={12} />}
             data-testid={`apps-onsite-edit-${s.slug}`}
           >
             Edit
+          </Button>
+        )}
+        {showEdit && s.appBlockId && (
+          <Button
+            size="xs"
+            variant="default"
+            component={Link}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit?tab=media`}
+            leftSection={<IconPhoto size={12} />}
+            data-testid={`apps-onsite-listing-media-${s.slug}`}
+          >
+            Listing images
           </Button>
         )}
         {canManage && s.appBlockId && (

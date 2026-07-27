@@ -40,9 +40,17 @@ No NSFW content renders on these pages — they're indexable and ad-safe.
 - **Featured images** are curated by ID, and **re-checked against `Image.nsfwLevel` at fetch time** — a later re-rating can't leak a now-explicit image onto a live page. An image that fails the check is dropped, not rendered.
 - Featured model IDs are likewise re-validated (`nsfw = false`) on fetch.
 
-## Featured checkpoints must be always-available
+## Featured checkpoints and the Generate CTA
 
-A featured **checkpoint** must be in the `EcosystemCheckpoints` table — those versions are always generatable. Every other checkpoint is only available _sometimes_, depending on auction results, so featuring one would give visitors a "Generate" button that may not work. The service enforces this: `resolveFeaturedModels` drops any `Checkpoint`-type featured model whose `versionId` isn't in `EcosystemCheckpoints`. LoRAs aren't gated (they layer on top of an available checkpoint). This is why the curated list uses Flux.1 Dev / Krea / Kontext (all hosted) rather than community fine-tunes like Sigma Vision.
+A featured **checkpoint** only gets a "Generate" button if it's in the `EcosystemCheckpoints` table — those versions are always generatable, while every other checkpoint depends on auction results. `resolveFeaturedModels` marks the rest `generatable: false` and the card renders "View model" (a link to the model page) instead of a CTA that may not work. LoRAs aren't gated (they layer on top of an available checkpoint). That's how a canonical-but-unhosted release like Illustrious XL 1.0 can still be featured.
+
+## Comparison-table LoRA counts are live
+
+A comparison cell may hold a `{loras:Key}` token (`Key` = an `ECOSYSTEM_SEO` key), resolved at render time from `data.loraCounts` — the same query that feeds the hero stat, cached in the same 24h blob. **Always use the token for LoRA counts.** They were hand-written per page and drifted badly: Illustrious read 187K, 290K, or 294K depending on which page you were on, none of them matching its own hero stat. A token row also ignores the curated `winner` — the page highlights whichever column actually has the most.
+
+## Sunsetting an ecosystem
+
+When a hosted model gets an announced end-of-life, add `sunset: { date, note }` to its config. Before `date` the page shows a warning banner; from `date` on the banner switches to past tense, the page goes `noindex`, and it drops out of the sitemap — an SEO page that ranks for a model nobody can run is worse than no page. The `/ecosystems` index card shows a "Retiring" badge as soon as the field is set.
 
 ## The funnel — and the one real blocker
 

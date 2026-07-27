@@ -166,3 +166,56 @@ export function useDeleteUserChallenge() {
 
   return { deleteChallenge, deleting: deleteUserChallengeMutation.isPending };
 }
+
+// The viewer's tracked challenge ids, for rendering the bell state on cards and the detail page.
+// Bounded server-side to open challenges, so this stays a single small query per page.
+export function useTrackedChallengeIds() {
+  const currentUser = useCurrentUser();
+  const { data, isLoading } = trpc.challenge.getTrackedIds.useQuery(undefined, {
+    enabled: !!currentUser,
+    staleTime: 60_000,
+  });
+
+  const trackedIds = useMemo(() => new Set(data ?? []), [data]);
+
+  return { trackedIds, isLoading: !!currentUser && isLoading };
+}
+
+export function useToggleChallengeNotify() {
+  const utils = trpc.useUtils();
+
+  const toggleMutation = trpc.challenge.toggleNotify.useMutation({
+    async onMutate({ challengeId, setTo }) {
+      await utils.challenge.getTrackedIds.cancel();
+      const previous = utils.challenge.getTrackedIds.getData();
+      utils.challenge.getTrackedIds.setData(undefined, (old) => {
+        const next = new Set(old ?? []);
+        if (setTo) next.add(challengeId);
+        else next.delete(challengeId);
+        return [...next];
+      });
+      return { previous };
+    },
+    onError(error, _input, context) {
+      utils.challenge.getTrackedIds.setData(undefined, context?.previous);
+      showErrorNotification({
+        title: 'Failed to update notifications',
+        error: new Error(error.message),
+      });
+    },
+    onSettled() {
+      void utils.challenge.getTrackedIds.invalidate();
+      // The Tracking filter is server-resolved, so an untracked challenge stays on screen until
+      // the feed refetches.
+      void utils.challenge.getInfinite.invalidate();
+    },
+  });
+
+  // onError already surfaces the failure to the user; swallow the rejection so every `void
+  // toggleNotify(...)` call site doesn't become an unhandled rejection.
+  const toggleNotify = async (challengeId: number, setTo: boolean) => {
+    await toggleMutation.mutateAsync({ challengeId, setTo }).catch(() => undefined);
+  };
+
+  return { toggleNotify, toggling: toggleMutation.isPending };
+}

@@ -48,6 +48,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useIsOverflown } from '~/hooks/useIsOverflown';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type {
   GetAuctionBySlugReturn,
@@ -228,22 +229,12 @@ const OverflowTooltip = ({
   searchText,
   ...highlightProps
 }: { label: string; searchText: string } & Omit<HighlightProps, 'highlight' | 'children'>) => {
-  const textElementRef = useRef<HTMLDivElement>(null);
-  const [isOverflown, setIsOverflown] = useState(false);
-
-  // TODO this doesnt appear to listen for changes when resizing
-  useEffect(() => {
-    const element = textElementRef.current;
-    const compare = element
-      ? element.offsetWidth < element.scrollWidth || element.offsetHeight < element.scrollHeight
-      : false;
-    setIsOverflown(compare);
-  }, []);
+  const { ref, overflown } = useIsOverflown<HTMLDivElement>([label]);
 
   return (
-    <Tooltip label={label} disabled={!isOverflown} withinPortal multiline>
+    <Tooltip label={label} disabled={!overflown} withinPortal multiline>
       <Highlight
-        ref={textElementRef}
+        ref={ref}
         className="min-w-0 max-w-[min(400px,80vw)] truncate"
         highlight={searchText}
         {...highlightProps}

@@ -22,6 +22,8 @@ import {
   appRoleIdent,
   appSchemaIdent,
   isValidAppSlug,
+  normalizeReviewPreviewId,
+  reviewPreviewSchemaIdent,
 } from '~/server/utils/apps-slug';
 
 export type ProvisionOpts = {
@@ -247,6 +249,154 @@ export const AppStorageProvisioner = {
     } finally {
       client.release();
     }
+  },
+
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831) — provision the DISPOSABLE,
+   * per-publishRequest PREVIEW storage schema so a moderator can exercise a
+   * PENDING app's per-user storage for real without an approved AppBlock row.
+   *
+   * ISOLATION (the whole point):
+   *   - keyed on the publishRequestId → per-pending-app isolated (app A's
+   *     `apprev_<A>` schema is unreachable from app B's `apprev_<B>`);
+   *   - the `apprev_` prefix can NEVER alias a production `app_<slug>` schema, so
+   *     preview writes NEVER pollute the eventual approved app's namespace;
+   *   - DISPOSABLE — dropped by `deprovisionReviewPreview` on approve/reject teardown.
+   *
+   * Deliberately a MINIMAL subset of `provision()`: only the PER-USER `kv` path
+   * (schema + kv + indexes + quota + trigger + seed). It creates NO shared_kv /
+   * votes / counters (cross-user surfaces are never granted in run-for-real) and
+   * NO per-app role (kv ops run via the pool user, same as the approved path).
+   * Fast-paths on an already-existing schema so repeated ops in one review
+   * session skip the DDL. The quota row is keyed on the publishRequestId (matches
+   * the token's `appBlockId` claim, which the storage ops use as the GUC).
+   */
+  async provisionReviewPreview({
+    publishRequestId,
+  }: {
+    publishRequestId: string;
+  }): Promise<{ schema: string }> {
+    const norm = normalizeReviewPreviewId(publishRequestId);
+    if (norm === null) {
+      throw new Error(
+        `AppStorageProvisioner.provisionReviewPreview: invalid publishRequestId ${JSON.stringify(
+          publishRequestId
+        )}`
+      );
+    }
+    const schema = reviewPreviewSchemaIdent(publishRequestId); // "apprev_<norm>"
+    const pool = requireAppsDb();
+
+    // Fast path — skip the DDL transaction entirely once the preview schema
+    // exists (a review session issues many storage ops against the same schema).
+    const existing = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS exists`,
+      [`apprev_${norm}`]
+    );
+    if (existing.rows[0]?.exists) return { schema };
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
+      // Mirrors ${schema}.kv in provision() (per-user store only).
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.kv (
+          block_instance_id text NOT NULL,
+          user_id integer NOT NULL,
+          key text NOT NULL,
+          value jsonb NOT NULL,
+          size_bytes integer GENERATED ALWAYS AS (octet_length(value::text)) STORED,
+          created_at timestamptz DEFAULT now() NOT NULL,
+          updated_at timestamptz DEFAULT now() NOT NULL,
+          PRIMARY KEY (block_instance_id, user_id, key)
+        )
+      `);
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS kv_user_idx ON ${schema}.kv (user_id, block_instance_id)`
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS kv_updated_idx ON ${schema}.kv (updated_at)`
+      );
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.quota (
+          app_block_id text PRIMARY KEY,
+          used_bytes bigint NOT NULL DEFAULT 0,
+          row_count bigint NOT NULL DEFAULT 0,
+          updated_at timestamptz DEFAULT now() NOT NULL
+        )
+      `);
+      // Same quota trigger as provision() — folds preview bytes/rows into the
+      // preview schema's own quota row (keyed on the publishRequestId GUC).
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${schema}.kv_quota_trigger() RETURNS trigger AS $fn$
+        DECLARE
+          v_app_block_id text := current_setting('app.current_app_block_id', true);
+        BEGIN
+          IF v_app_block_id IS NULL OR v_app_block_id = '' THEN
+            RETURN NULL;
+          END IF;
+          IF TG_OP = 'INSERT' THEN
+            UPDATE ${schema}.quota
+               SET used_bytes = used_bytes + NEW.size_bytes,
+                   row_count  = row_count + 1,
+                   updated_at = now()
+             WHERE app_block_id = v_app_block_id;
+          ELSIF TG_OP = 'UPDATE' THEN
+            UPDATE ${schema}.quota
+               SET used_bytes = used_bytes + (NEW.size_bytes - OLD.size_bytes),
+                   updated_at = now()
+             WHERE app_block_id = v_app_block_id;
+          ELSIF TG_OP = 'DELETE' THEN
+            UPDATE ${schema}.quota
+               SET used_bytes = used_bytes - OLD.size_bytes,
+                   row_count  = row_count - 1,
+                   updated_at = now()
+             WHERE app_block_id = v_app_block_id;
+          END IF;
+          RETURN NULL;
+        END $fn$ LANGUAGE plpgsql
+      `);
+      await client.query(`DROP TRIGGER IF EXISTS kv_quota_trg ON ${schema}.kv`);
+      await client.query(`
+        CREATE TRIGGER kv_quota_trg
+        AFTER INSERT OR UPDATE OR DELETE ON ${schema}.kv
+        FOR EACH ROW EXECUTE FUNCTION ${schema}.kv_quota_trigger()
+      `);
+      await client.query(
+        `INSERT INTO ${schema}.quota (app_block_id) VALUES ($1) ON CONFLICT (app_block_id) DO NOTHING`,
+        [publishRequestId]
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    return { schema };
+  },
+
+  /**
+   * Drop a DISPOSABLE preview schema (run-for-real teardown, #2831). Best-effort;
+   * safe to call for a request that never used preview storage (IF EXISTS). No
+   * role is created for a preview schema, so there is nothing else to reclaim.
+   */
+  async deprovisionReviewPreview({
+    publishRequestId,
+  }: {
+    publishRequestId: string;
+  }): Promise<void> {
+    if (normalizeReviewPreviewId(publishRequestId) === null) {
+      throw new Error(
+        `AppStorageProvisioner.deprovisionReviewPreview: invalid publishRequestId ${JSON.stringify(
+          publishRequestId
+        )}`
+      );
+    }
+    const schema = reviewPreviewSchemaIdent(publishRequestId);
+    const pool = requireAppsDb();
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
   },
 
   /**

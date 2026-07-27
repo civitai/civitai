@@ -12,8 +12,16 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
     minPrice: z.number().optional(),
     maxPrice: z.number().optional(),
     archived: z.boolean().optional(),
+    // Only published creator-listed items marked sellable-by-others — lets mods
+    // pick up resellable creator cosmetics for official shop sections.
+    resellable: z.boolean().optional(),
+    ids: z.array(z.number()).optional(),
   })
 );
+
+// Shop context for purchases: the official Civitai shop attributes as the
+// system user (-1); creator storefronts attribute as their owner's user id.
+export const CIVITAI_SHOP_ATTRIBUTION = -1;
 
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
 export const cosmeticShopItemMeta = z.object({

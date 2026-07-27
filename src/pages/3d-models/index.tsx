@@ -14,8 +14,11 @@ import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtu
 import { Meta } from '~/components/Meta/Meta';
 import { Model3DCategories } from '~/components/Model3D/Feed/Model3DCategories';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import { Model3DSort } from '~/server/schema/model3d.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { parseNumericStringArray } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -38,6 +41,8 @@ import { trpc } from '~/utils/trpc';
  *     required when animation is enabled), so we now expose a single
  *     "Animate" affordance and `toMeshyPolyGenInput` pins
  *     `enableRigging = enableAnimation`.
+ *   - Include PG-13 toggle — green-domain, logged-in viewers only; opts the
+ *     feed out of the PG-only cap the domain otherwise forces.
  *
  * State lives on the URL (sort / period / tags / animated) so deep links +
  * back/forward retain filter context. Switching any filter resets the
@@ -72,11 +77,15 @@ function Model3DsPage() {
   // Category-tag selection now rides on the canonical `?tags=` array (the
   // `Model3DCategories` scroller emits + reads it, mirroring how the other
   // feed pages do it). The bespoke single `?tagId=` query param is gone.
-  const tagIds = useMemo(() => parseNumericStringArray(router.query.tags) ?? [], [router.query.tags]);
+  const tagIds = useMemo(
+    () => parseNumericStringArray(router.query.tags) ?? [],
+    [router.query.tags]
+  );
 
   const animated = query.animated === 'true';
   // Mod/owner-only "unrated" filter — the server ignores it for other viewers.
   const unrated = query.unrated === 'true';
+  const includePG13 = query.includePG13 === 'true';
 
   // ---- Feed -------------------------------------------------------------------
   // The server-side `getModel3DsInfinite` SQL filter clamps Model3D.nsfwLevel
@@ -84,7 +93,15 @@ function Model3DsPage() {
   // current browsing level here gives us paging-correct counts. The client-
   // side `useApplyHiddenPreferences` below applies the per-user hidden-image /
   // hidden-user / hidden-tag overlay that lives only in the browser session.
-  const browsingLevel = useBrowsingLevelDebounced();
+  const rawBrowsingLevel = useBrowsingLevelDebounced();
+  const domainColor = useDomainColor();
+  // On the green (SFW) domain we default to PG only; users opt in to PG-13 via
+  // the feed filter, which narrows the forced domain cap
+  // (sfwBrowsingLevelsFlag = PG | PG-13) down to PG. Mirrors `ImagesInfinite`.
+  const browsingLevel =
+    domainColor === 'green' && !includePG13
+      ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
+      : rawBrowsingLevel;
   const { data, isLoading, isFetching, isRefetching, hasNextPage, fetchNextPage } =
     trpc.model3d.getInfinite.useInfiniteQuery(
       {

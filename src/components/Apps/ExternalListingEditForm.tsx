@@ -16,6 +16,7 @@ import {
   IconExternalLink,
   IconInfoCircle,
   IconLock,
+  IconSparkles,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -26,11 +27,13 @@ import {
   OFFSITE_SUBMIT_LIMITS,
   isUrlStepComplete,
   normalizeLinkUrl,
+  scopeJustificationError,
   validateOffsiteSubmitForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
+import { FadeIn } from '~/components/Apps/wizardMotion';
 import { ListingAssetStep, type MetaSuggestions } from '~/components/Apps/ListingAssetStep';
 import {
   buildScalarPatch,
@@ -77,9 +80,18 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
 
   const [active, setActive] = useState<number>(STEP_URL);
   const [values, setValues] = useState<OffsiteSubmitFormValues>(() => editContextToForm(edit));
+  // Latest `values` for the OG-apply effect's emptiness check (the effect must read
+  // current emptiness WITHOUT depending on `values`, and the async `setValues` updater
+  // hasn't run yet when we compute the button's feedback — same reason the create
+  // wizard computes off `data`).
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
   const [errors, setErrors] = useState<OffsiteSubmitFormErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [assetsDirty, setAssetsDirty] = useState(false);
+  // Reveal the required error on every empty SENSITIVE justification after a blocked
+  // save (mirrors the create wizard's sensitive-only justification model).
+  const [showScopeErrors, setShowScopeErrors] = useState(false);
 
   // Effective asset/detail target. draft/pending → the listing itself; approved →
   // the SHADOW revision. 🔴 The shadow is resolved SERVER-SIDE by `getMyListingForEdit`
@@ -97,21 +109,91 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const [metaUrl, setMetaUrl] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<MetaSuggestions>({});
   const appliedMetaRef = useRef<string | null>(null);
+  // On-demand "Autofill from website" (edit-only): the OG pull otherwise fires only on
+  // a URL CHANGE, so a listing whose icon/cover ended up empty could never re-surface
+  // suggestions without editing the URL. `autofillActive` tracks a button-triggered
+  // pull (drives the loading/error/note feedback); `autofillTick` forces the apply
+  // effect to re-run on a re-click of the SAME url (unchanged `metaUrl` + a cached
+  // `metaQuery.data` reference otherwise skip it).
+  const [autofillActive, setAutofillActive] = useState(false);
+  const [autofillTick, setAutofillTick] = useState(0);
+  const [autofillNote, setAutofillNote] = useState<'applied' | 'empty' | 'error' | null>(null);
   const metaQuery = trpc.appListings.fetchListingMetaFromUrl.useQuery(
     { url: metaUrl ?? '' },
     { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
   );
   useEffect(() => {
-    if (!metaQuery.data || appliedMetaRef.current === metaUrl) return;
-    appliedMetaRef.current = metaUrl;
+    // Apply at most once per settled url. The `appliedMetaRef` short-circuit also covers
+    // the initial `metaUrl === null` state (null === null).
+    if (!metaUrl || appliedMetaRef.current === metaUrl) return;
+    // Settle on SUCCESS or ERROR for the CURRENT metaUrl (mirrors the create form). With a
+    // per-url cache key + retry:false, `metaQuery.data`/`isError` belong to `metaUrl`; wait
+    // out an in-flight (re)fetch so a stale cached error can't be applied before a button
+    // `refetch()` resolves — that guard is also what keeps the same-url refetch from looping.
+    if (metaQuery.isFetching) return;
     const data = metaQuery.data;
+    const settled = !!data || metaQuery.isError;
+    if (!settled) return;
+    appliedMetaRef.current = metaUrl;
+
+    if (!data) {
+      // ERROR-settled: don't surface stale suggestions, and don't co-render an
+      // "applied"/"empty" note. The inline "Couldn't read that site's details." message
+      // renders from the `'error'` note (tied to THIS url) below. Resetting the active
+      // flag stops a later non-button URL advance from rendering a spurious note, and the
+      // same url stays retryable via `metaQuery.refetch()` in the button handler.
+      setSuggestions({});
+      if (autofillActive) {
+        setAutofillNote('error');
+        setAutofillActive(false);
+      }
+      return;
+    }
+
     setValues((v) => ({
       ...v,
       name: v.name.trim().length === 0 && data.name ? data.name : v.name,
       tagline: v.tagline.trim().length === 0 && data.tagline ? data.tagline : v.tagline,
+      // Description autofill: fill ONLY when empty, truncated to the field bound —
+      // never clobbers existing copy (non-destructive OG re-pull on a URL change).
+      description:
+        v.description.trim().length === 0 && data.description
+          ? data.description.slice(0, OFFSITE_SUBMIT_LIMITS.descriptionMax)
+          : v.description,
     }));
     setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
-  }, [metaQuery.data, metaUrl]);
+    // When THIS apply was button-triggered, report whether the pull surfaced anything
+    // ACTIONABLE: copy for a still-empty text field, or an icon/cover suggestion for a
+    // slot that is currently EMPTY (imageId == null in the edit prefill — the only case
+    // where ListingAssetStep renders a "Use this"). A suggestion URL for an already-filled
+    // slot is NOT actionable, so it must not claim "applied". Emptiness is read from the
+    // ref snapshot — NOT the async `setValues` updater above, whose side effects haven't
+    // committed yet. (Slot-filled state is the edit prefill; if the author added/removed an
+    // asset THIS session ListingAssetStep owns that state, so the note is best-effort.)
+    if (autofillActive) {
+      const v = valuesRef.current;
+      const filledAny =
+        (v.name.trim().length === 0 && !!data.name) ||
+        (v.tagline.trim().length === 0 && !!data.tagline) ||
+        (v.description.trim().length === 0 && !!data.description);
+      const hasActionableSuggestion =
+        (!!data.iconImageUrl && edit.assets.icon.imageId == null) ||
+        (!!data.coverImageUrl && edit.assets.cover.imageId == null);
+      setAutofillNote(filledAny || hasActionableSuggestion ? 'applied' : 'empty');
+      setAutofillActive(false);
+    }
+    // `autofillTick` is a dep so a same-url re-click (which leaves `metaUrl` + the cached
+    // `metaQuery.data` reference unchanged) still re-runs this effect and re-applies from
+    // cache — the click also resets `appliedMetaRef`, so the guard above passes.
+  }, [
+    metaQuery.data,
+    metaQuery.isError,
+    metaQuery.isFetching,
+    metaUrl,
+    autofillTick,
+    autofillActive,
+    edit,
+  ]);
 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();
@@ -137,6 +219,11 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   }
 
   function handleUrlBlur() {
+    // A blank URL is GRANDFATHERED on an existing listing — leave it be (no error).
+    if (values.externalUrl.trim().length === 0) {
+      setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+      return;
+    }
     const result = normalizeLinkUrl(values.externalUrl);
     if (result.error) return;
     setField('externalUrl', result.url);
@@ -144,6 +231,14 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   }
 
   function handleAdvanceFromUrl() {
+    // GRANDFATHER: a pre-existing listing may have no App URL. Don't force-fill or
+    // block — advance and let the inline prompt nudge the author to add one. (Create
+    // requires it; an existing blank does not hard-block an edit.)
+    if (values.externalUrl.trim().length === 0) {
+      setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+      setActive(STEP_DETAILS);
+      return;
+    }
     const result = normalizeLinkUrl(values.externalUrl);
     if (result.error) {
       setErrors((prev) => ({ ...prev, externalUrl: result.error }));
@@ -159,6 +254,35 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
     e.preventDefault();
     handleAdvanceFromUrl();
+  }
+
+  // "Autofill from website" — on-demand OG re-pull without changing the URL. Reuses the
+  // existing `metaQuery` + fill-if-empty effect + ListingAssetStep suggestions, so it's
+  // non-destructive by construction (typed text and attached assets are never clobbered).
+  function handleAutofillFromWebsite() {
+    const result = normalizeLinkUrl(values.externalUrl);
+    if (result.error) {
+      // A bad/blank URL never fires a fetch (the button is also disabled in this state).
+      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
+      return;
+    }
+    setField('externalUrl', result.url);
+    setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+    setAutofillNote(null);
+    setAutofillActive(true);
+    appliedMetaRef.current = null; // force the idempotent apply effect to re-run
+    if (result.url === metaUrl) {
+      // SAME url: `setMetaUrl` is a no-op and (staleTime:Infinity + retry:false) the cached
+      // success/error won't re-fetch on its own — so a previously-ERRORED url could never be
+      // retried via the button. `refetch()` re-attempts the fetch; on a cached success it
+      // re-applies from data and the tick below re-runs the effect. No loop: `refetch()`
+      // synchronously flips `isFetching` true, so the tick-driven effect run bails on the
+      // isFetching guard and only applies once the (re)fetch settles.
+      void metaQuery.refetch();
+    } else {
+      setMetaUrl(result.url); // NEW url → the query fires for it
+    }
+    setAutofillTick((t) => t + 1); // bump a tick so the effect re-applies even when metaUrl is unchanged
   }
 
   async function finishSave() {
@@ -180,13 +304,24 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     // Client mirror of the server validation (URL/name/slug/bounds) before the
     // round-trip; the server stays the source of truth.
     const nextErrors = validateOffsiteSubmitForm(values);
+    // SENSITIVE-only justification model (parity with create): every sensitive scope
+    // needs a bounded, non-empty rationale before save. Non-sensitive scopes are
+    // read-only + never required. No connect client → no scopes → nothing to check.
+    if (edit.connectClientId != null) {
+      const scopeError = scopeJustificationError(values);
+      if (scopeError) nextErrors.scopeJustifications = scopeError;
+    }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       // Steer the author to the step that carries the first error.
       if (nextErrors.externalUrl) setActive(STEP_URL);
-      else setActive(STEP_DETAILS);
+      else {
+        if (nextErrors.scopeJustifications) setShowScopeErrors(true);
+        setActive(STEP_DETAILS);
+      }
       return;
     }
+    setShowScopeErrors(false);
 
     const patch = buildScalarPatch(edit, values);
     const scalarChanged = hasScalarChanges(patch);
@@ -219,6 +354,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       showErrorNotification({ title: 'Could not save', error: new Error(message) });
     }
   }
+
+  // Gate the Autofill button on a valid, normalizable URL (empty/invalid → disabled, no
+  // wasted fetch). Cheap enough to derive per render.
+  const autofillUrl = normalizeLinkUrl(values.externalUrl);
 
   return (
     <Stack gap="md" data-testid="apps-offsite-edit-form">
@@ -281,30 +420,86 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           description="The link"
           data-testid="apps-offsite-wizard-step-url"
         >
-          <Stack gap="md" mt="md">
-            <TextInput
-              label="Link URL"
-              description="Where users land when they open your app."
-              placeholder="example.com/app"
-              value={values.externalUrl}
-              onChange={(e) => setField('externalUrl', e.currentTarget.value)}
-              onBlur={handleUrlBlur}
-              onKeyDown={handleUrlKeyDown}
-              error={errors.externalUrl}
-              maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
-              required
-              data-autofocus
-              data-testid="apps-offsite-edit-url"
-            />
-            <Group justify="flex-end">
-              <Button
-                onClick={handleAdvanceFromUrl}
-                data-testid="apps-offsite-wizard-next-url"
-              >
-                Next
-              </Button>
-            </Group>
-          </Stack>
+          <FadeIn>
+            <Stack gap="md" mt="md">
+              <TextInput
+                label="App URL"
+                description="Your app’s public https link — users open it from the listing."
+                placeholder="example.com/app"
+                value={values.externalUrl}
+                onChange={(e) => {
+                  setField('externalUrl', e.currentTarget.value);
+                  setAutofillNote(null);
+                }}
+                onBlur={handleUrlBlur}
+                onKeyDown={handleUrlKeyDown}
+                error={errors.externalUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.urlMax}
+                data-autofocus
+                data-testid="apps-offsite-edit-url"
+              />
+              {values.externalUrl.trim().length === 0 && (
+                <Alert
+                  color="yellow"
+                  variant="light"
+                  icon={<IconInfoCircle size={16} />}
+                  data-testid="apps-offsite-edit-url-prompt"
+                >
+                  <Text size="sm">
+                    This listing has no App URL. Adding one lets users open your app (and lets us
+                    suggest a name, description and images) — but it’s optional here.
+                  </Text>
+                </Alert>
+              )}
+              {/* On-demand OG re-pull: fills only-empty name/tagline/description and re-surfaces
+                  icon/cover suggestions for empty slots on the Assets step. Non-destructive. */}
+              <Group gap="xs" align="center">
+                <Button
+                  variant="light"
+                  color="grape"
+                  leftSection={<IconSparkles size={16} />}
+                  onClick={handleAutofillFromWebsite}
+                  disabled={!!autofillUrl.error}
+                  loading={autofillActive && metaQuery.isFetching}
+                  data-testid="apps-offsite-edit-autofill"
+                >
+                  Autofill from website
+                </Button>
+                <Text size="xs" c="dimmed">
+                  Re-scan your link for a name, description, icon and cover — only empty fields and
+                  slots are filled.
+                </Text>
+              </Group>
+              {autofillNote === 'error' && (
+                <Text size="xs" c="red" data-testid="apps-offsite-edit-autofill-error">
+                  Couldn’t read that site’s details.
+                </Text>
+              )}
+              {autofillNote === 'empty' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-edit-autofill-empty">
+                  Nothing to autofill — your details and assets are already set.
+                </Text>
+              )}
+              {autofillNote === 'applied' && (
+                <Alert
+                  color="grape"
+                  variant="light"
+                  icon={<IconSparkles size={16} />}
+                  data-testid="apps-offsite-edit-autofill-applied"
+                >
+                  <Text size="sm">
+                    Pulled the latest details from your link — check the Details and Assets steps to
+                    review the name, description and the suggested icon/cover.
+                  </Text>
+                </Alert>
+              )}
+              <Group justify="flex-end">
+                <Button onClick={handleAdvanceFromUrl} data-testid="apps-offsite-wizard-next-url">
+                  Next
+                </Button>
+              </Group>
+            </Stack>
+          </FadeIn>
         </Stepper.Step>
 
         <Stepper.Step
@@ -313,6 +508,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
           allowStepClick={isUrlStepComplete(values)}
           data-testid="apps-offsite-wizard-step-details"
         >
+          <FadeIn>
           <Stack gap="md" mt="md">
             <TextInput
               label="Name"
@@ -387,6 +583,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 justifications={values.scopeJustifications}
                 onJustificationChange={handleJustificationChange}
                 disabled={saving}
+                forceShowErrors={showScopeErrors}
                 intro="These are your OAuth app's allowed scopes — they're derived from the app and can't be changed here. Editing a justification (or a change to your app's scopes) is sent for review on a live listing."
               />
             )}
@@ -398,6 +595,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               <Button onClick={() => setActive(STEP_ASSETS)}>Next</Button>
             </Group>
           </Stack>
+          </FadeIn>
         </Stepper.Step>
 
         <Stepper.Step

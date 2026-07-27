@@ -6,6 +6,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import {
   getEcosystemSeoConfigBySlug,
   getLiveEcosystemSeoPages,
+  isEcosystemSunset,
 } from '~/shared/constants/ecosystem-seo.constants';
 
 const greenPaths: string[] = [
@@ -85,7 +86,8 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
   if (color === 'green') {
     const liveEcosystems = getLiveEcosystemSeoPages().flatMap((page) => {
       const config = getEcosystemSeoConfigBySlug(page.slug);
-      return config ? [{ slug: page.slug, updatedAt: config.updatedAt }] : [];
+      if (!config || isEcosystemSunset(config)) return [];
+      return [{ slug: page.slug, updatedAt: config.updatedAt }];
     });
     const indexLastmod = liveEcosystems.reduce(
       (latest, e) => (e.updatedAt > latest ? e.updatedAt : latest),

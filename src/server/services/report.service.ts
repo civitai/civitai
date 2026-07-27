@@ -26,7 +26,11 @@ import {
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
-import { queueImageSearchIndexUpdate, updateNsfwLevel } from '~/server/services/image.service';
+import {
+  bulkRemoveBlockedImages,
+  queueImageSearchIndexUpdate,
+  resetBlockedNsfwLevel,
+} from '~/server/services/image.service';
 import {
   queueComicsForPanelImage,
   updateArticleNsfwLevels,
@@ -630,20 +634,23 @@ export async function resolveEntityAppeal({
     switch (appeal.entityType) {
       case EntityType.Image:
         try {
-          // Update entity with needsReview = null
           const updated = await dbWrite.image.update({
             where: { id: appeal.entityId },
             data: approved
-              ? {
-                  needsReview: null,
-                  blockedFor: null,
-                  ingestion: ImageIngestionStatus.Scanned,
-                }
+              ? { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Scanned }
               : { needsReview: null },
-            select: { postId: true },
+            select: { postId: true, pHash: true },
           });
 
-          if (approved) await updateNsfwLevel(appeal.entityId);
+          if (approved) {
+            // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a
+            // no-op, then recompute. Same helper handleUnblockImages uses. (ClickUp 868kfwdzq)
+            await resetBlockedNsfwLevel(appeal.entityId);
+            // An approved appeal means the block was wrong — drop the pHash from the
+            // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
+            // with handleUnblockImages).
+            if (updated.pHash != null) await bulkRemoveBlockedImages([updated.pHash]);
+          }
 
           await queueImageSearchIndexUpdate({
             ids: [appeal.entityId],
@@ -652,12 +659,10 @@ export async function resolveEntityAppeal({
               : SearchIndexUpdateQueueAction.Delete,
           });
 
-          // Either direction (approve/deny) flips `needsReview`/`ingestion`,
-          // both of which the comic search index gates on. Re-queue the
-          // parent comic project so it doesn't keep its old visibility.
+          // Either direction (approve/deny) flips `needsReview`/`ingestion`, both of which
+          // the comic search index gates on — re-queue the parent comic project.
           await queueComicsForPanelImage(appeal.entityId);
 
-          // Either direction (approve/deny) changes needsReview; bust so the showcase reflects it.
           if (updated.postId) await bustCachesForPosts(updated.postId);
         } catch (e) {
           // Image may have been deleted — log but continue resolving the appeal

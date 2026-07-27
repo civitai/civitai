@@ -140,7 +140,7 @@ export const submitCreatorShopItemSchema = z.object({
   animated: z.boolean().optional(),
   price: z.number().int().min(COSMETIC_PRICE_FLOOR),
   availableQuantity: z.number().int().positive().nullish(),
-  buzzType: z.enum(['green', 'yellow']).default('yellow'),
+  buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
   // Allow other creators to list this cosmetic, giving the seller this % of the
   // price (0-70, out of the creator's 70% pool).
   sellableByOthers: z.boolean().default(false),

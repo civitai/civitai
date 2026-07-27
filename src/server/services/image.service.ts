@@ -64,6 +64,7 @@ import {
 import { postMetrics } from '~/server/metrics';
 import {
   clickhouseFailSoftCounter,
+  imageScanSubmittedCounter,
   leakingContentCounter,
   registerCounter,
   registerCounterWithLabels,
@@ -221,13 +222,7 @@ import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import {
-  FLIPT_FEATURE_FLAGS,
-  getFliptBoolean,
-  getFliptVariant,
-  imageMetricAggSource,
-  isFlipt,
-} from '../flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import { queryBitdex } from '~/server/bitdex/client';
 import type { FilterClause, SortClause, Value } from '~/server/bitdex/client';
@@ -431,8 +426,17 @@ export const deleteImageById = async ({
     ]);
 
     return image;
-  } catch {
-    // Ignore errors
+  } catch (error) {
+    // The row may already be gone from the DB while cleanup (search-index delete,
+    // cache busts, S3) failed — swallowing that silently leaves the image visible
+    // in search/feeds forever, which then 500s anything that FKs to it (reports).
+    await logToAxiom({
+      type: 'error',
+      name: 'delete-image-cleanup-failed',
+      message: 'deleteImageById failed; image may remain indexed',
+      imageId: id,
+      error: safeError(error),
+    }).catch(() => undefined);
   }
 };
 
@@ -452,7 +456,7 @@ export async function deleteImages(ids: number[], updatePosts = true) {
     const imageIds = results.map((x) => x.id);
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
-    const invalidateExistence = invalidateManyImageExistence(idsForPostUpdate);
+    const invalidateExistence = invalidateManyImageExistence(imageIds);
 
     await Promise.all([
       queueImageSearchIndexUpdate({
@@ -575,7 +579,7 @@ export async function handleUnblockImages({
 
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
-      updateNsfwLevel(ids),
+      resetBlockedNsfwLevel(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
@@ -734,6 +738,24 @@ export async function updateNsfwLevel(ids: number | number[]) {
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
   await thumbnailCache.refresh(ids);
+}
+
+// Single source of truth for restoring an image's rating after it's unblocked.
+// Blocking force-sets nsfwLevel=Blocked and may leave the rating lock on; the recompute
+// (update_nsfw_levels_new) skips locked rows, so a Blocked-locked row can never be restored
+// by updateNsfwLevel alone. Reset+unlock only the Blocked rows (never-corrupted locks are
+// preserved), then recompute — untagged rows fall to Unrated and re-derive on rescan.
+// Used by both unblock paths (handleUnblockImages and report.service resolveEntityAppeal).
+export async function resetBlockedNsfwLevel(ids: number | number[]) {
+  if (!Array.isArray(ids)) ids = [ids];
+  ids = [...new Set(ids)];
+  if (!ids.length) return;
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "nsfwLevel" = 0, "nsfwLevelLocked" = FALSE
+    WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked};
+  `;
+  await updateNsfwLevel(ids);
 }
 
 export const updateImageReportStatusByReason = ({
@@ -896,7 +918,22 @@ export const ingestImage = async ({
       callbackUrl,
       priority: lowPriority ? 'low' : undefined,
     });
-    if (!workflowResponse) return false;
+    if (!workflowResponse) {
+      imageScanSubmittedCounter.inc({ lane: 'new', result: 'failed' });
+      // The orchestrator submit already logs the transient failure in
+      // createImageIngestionRequest, but from here it's otherwise a silent
+      // `return false` — surface it at the dispatch layer so the failure is
+      // attributable to a specific image + media type.
+      logToAxiom({
+        name: 'image-ingestion',
+        type: 'error',
+        reason: 'no-workflow-response',
+        failureType: 'send-fail',
+        imageId: id,
+        mediaType: type,
+      }).catch(() => null);
+      return false;
+    }
     const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
     await dbClient.$executeRaw`
         UPDATE "Image"
@@ -910,6 +947,7 @@ export const ingestImage = async ({
           END
         WHERE id = ${id}
       `;
+    imageScanSubmittedCounter.inc({ lane: 'new', result: 'success' });
     return true;
   }
 
@@ -962,6 +1000,7 @@ export const ingestImage = async ({
       `;
     }
 
+    imageScanSubmittedCounter.inc({ lane: 'legacy', result: 'success' });
     return true;
   } else {
     await logToAxiom({
@@ -972,6 +1011,7 @@ export const ingestImage = async ({
       responseStatus: response.status,
     });
 
+    imageScanSubmittedCounter.inc({ lane: 'legacy', result: 'failed' });
     return false;
   }
 };
@@ -2920,11 +2960,7 @@ export async function getImagesFromFeedSearch(
       },
       clickhouse as IClickhouseClient,
       pgDbWrite as IDbClient,
-      new MetricService(
-        clickhouse as IClickhouseClient,
-        redis as unknown as IRedisClient,
-        imageMetricAggSource
-      ),
+      new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
       new CacheService(
         redis as unknown as IRedisClient,
         pgDbWrite as IDbClient,
@@ -4762,8 +4798,7 @@ let _imageMetricService: MetricService | null = null;
 const getImageMetricService = () =>
   (_imageMetricService ??= new MetricService(
     clickhouse as IClickhouseClient,
-    redis as unknown as IRedisClient,
-    imageMetricAggSource
+    redis as unknown as IRedisClient
   ));
 
 type ImageMetricsObject = Record<
@@ -4909,6 +4944,11 @@ export const getImage = async ({
     if (!withoutPost) {
       AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
     }
+
+    // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
+    // mod review) — never serve it by direct id to anyone but the owner. Feeds already
+    // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
+    AND.push(Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`);
   }
 
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`

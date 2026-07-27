@@ -1,9 +1,10 @@
 import {
   emptyOffsiteSubmitForm,
   pruneJustificationsToMask,
-  shapeScopeJustifications,
+  shapeSensitiveJustifications,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
+import { SENSITIVE_TOKEN_SCOPES } from '~/shared/constants/token-scope.constants';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
@@ -101,9 +102,12 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     changelog: '',
     connectClientId: ctx.connectClientId ?? null,
     requestedScopes: derivedScopes,
+    // SENSITIVE-only justification model: only sensitive scopes get an author
+    // input, so the prefill keeps justifications for sensitive-derived scopes and
+    // drops any non-sensitive (or no-longer-allowed) key — no dangling rationale.
     scopeJustifications: pruneJustificationsToMask(
       ctx.connectScopeJustifications ?? {},
-      derivedScopes
+      derivedScopes & SENSITIVE_TOKEN_SCOPES
     ),
   };
 }
@@ -164,11 +168,13 @@ export function buildScalarPatch(
   if (ctx.connectClientId != null) {
     const derived = ctx.connectAllowedScopes ?? 0;
     const storedSnapshot = ctx.connectRequestedScopes ?? 0;
-    const storedJust = shapeScopeJustifications(
+    // Both sides shaped SENSITIVE-only so a legacy non-sensitive stored rationale
+    // (which the form no longer surfaces) never registers as a spurious diff.
+    const storedJust = shapeSensitiveJustifications(
       ctx.connectScopeJustifications ?? {},
       storedSnapshot
     );
-    const currentJust = shapeScopeJustifications(current.scopeJustifications, derived);
+    const currentJust = shapeSensitiveJustifications(current.scopeJustifications, derived);
     const drifted = derived !== storedSnapshot;
     if (drifted || !shallowEqualStringMap(currentJust, storedJust)) {
       patch.requestedScopes = derived;

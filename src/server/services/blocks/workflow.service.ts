@@ -42,7 +42,9 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
     // its own extraction, otherwise its rendered panorama is silently dropped.
     if (step.$type === 'customComfy') {
       const blobs = (
-        step as unknown as { output?: { blobs?: Array<{ url?: string | null; available?: boolean }> } }
+        step as unknown as {
+          output?: { blobs?: Array<{ url?: string | null; available?: boolean }> };
+        }
       ).output?.blobs;
       for (const blob of blobs ?? []) {
         if (blob.available && typeof blob.url === 'string' && blob.url.length > 0) {
@@ -268,6 +270,7 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
       // its behaviour is byte-identical to before this select grew.
       availability: true,
       usageControl: true,
+      flags: true,
       meta: true,
       generationCoverage: { select: { covered: true } },
       model: { select: { id: true, type: true, userId: true } },
@@ -304,6 +307,7 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
       covered: version.generationCoverage?.covered ?? false,
       modelUserId: version.model.userId,
       modelType: version.model.type,
+      flags: version.flags,
       modelVersionAlias:
         (version.meta as { generationAlias?: unknown } | null)?.generationAlias ?? null,
     },
@@ -353,6 +357,7 @@ export async function resolvePageResourceContext(modelVersionId: number) {
       status: true,
       availability: true,
       usageControl: true,
+      flags: true,
       meta: true,
       generationCoverage: { select: { covered: true } },
       model: { select: { id: true, type: true, userId: true } },
@@ -375,6 +380,7 @@ export async function resolvePageResourceContext(modelVersionId: number) {
       covered: version.generationCoverage?.covered ?? false,
       modelUserId: version.model.userId,
       modelType: version.model.type,
+      flags: version.flags,
       modelVersionAlias:
         (version.meta as { generationAlias?: unknown } | null)?.generationAlias ?? null,
     },
@@ -441,7 +447,8 @@ export function resolveBlockImageWorkflowType(
 ): BlockImageWorkflowType {
   if (!body.sourceImage) return 'txt2img';
   if (ecosystemId != null && isWorkflowAvailable('img2img', ecosystemId)) return 'img2img';
-  if (ecosystemId != null && isWorkflowAvailable('img2img:edit', ecosystemId)) return 'img2img:edit';
+  if (ecosystemId != null && isWorkflowAvailable('img2img:edit', ecosystemId))
+    return 'img2img:edit';
   throw new TRPCError({
     code: 'BAD_REQUEST',
     message:

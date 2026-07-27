@@ -145,6 +145,121 @@ export async function hasValidCreatorMembershipCached(userId: number): Promise<b
 }
 
 /**
+ * The three model-metric-privacy DEFAULT flags a user sets on their `User.settings`
+ * JSON. This is the ONLY slice of `settings` the read-time resolvers
+ * (`getUserMetricPrivacyDefaults` -> `resolveModel/VersionHiddenMetrics`) read, so it
+ * is byte-identical to feed them this tiny object instead of the full settings blob.
+ */
+export type UserMetricPrivacyDefaults = {
+  hideModelBuzz?: boolean;
+  hideModelDownloads?: boolean;
+  hideModelGenerations?: boolean;
+};
+
+const getUserMetricPrivacyDefaultsCacheKey = (userId: number) =>
+  `${REDIS_KEYS.CACHES.USER_METRIC_PRIVACY_DEFAULTS}:${userId}` as `${typeof REDIS_KEYS.CACHES.USER_METRIC_PRIVACY_DEFAULTS}:${string}`;
+
+/**
+ * Origin computation: ONE `dbRead.user.findMany` over `userIds`, reducing each user's
+ * `settings` to the three `hideModel*` booleans. Returns a TOTAL map — every input id
+ * gets a definite triple (a user with no settings / no flags resolves to all-false).
+ */
+async function queryUserMetricPrivacyDefaults(
+  userIds: number[]
+): Promise<Map<number, UserMetricPrivacyDefaults>> {
+  const result = new Map<number, UserMetricPrivacyDefaults>();
+  if (userIds.length === 0) return result;
+
+  const rows = await dbRead.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, settings: true },
+  });
+  const settingsById = new Map<number, unknown>(rows.map((r) => [r.id, r.settings]));
+
+  for (const id of userIds) {
+    const s = (settingsById.get(id) ?? {}) as UserMetricPrivacyDefaults;
+    result.set(id, {
+      hideModelBuzz: !!s.hideModelBuzz,
+      hideModelDownloads: !!s.hideModelDownloads,
+      hideModelGenerations: !!s.hideModelGenerations,
+    });
+  }
+  return result;
+}
+
+/**
+ * Batched, cache-backed read of the per-user model-metric-privacy DEFAULT flags for the
+ * read-time gate (feed / v1 list / associated-models). Replaces the per-request
+ * `dbRead.user.findMany({ select: { settings } })` those paths used to run over EVERY
+ * owner — which fetched + synchronously deserialized the full (large, accumulating)
+ * `settings` JSON blob per owner just to read three booleans (the measured api-primary
+ * longtask). Read-through Redis cache of the tiny derived triple; DB-query only the
+ * misses; fail-open to the uncached DB path on any Redis error (a Redis stall must not
+ * 500 a hot read). Byte-identical to reading the flags straight off `settings`.
+ */
+export async function getUserMetricPrivacyDefaultsMap(userIds: number[]) {
+  const unique = [...new Set(userIds.filter((id) => !!id))];
+  const result = new Map<number, UserMetricPrivacyDefaults>();
+  if (unique.length === 0) return result;
+
+  let cached: (UserMetricPrivacyDefaults | null)[];
+  try {
+    cached = await redis.packed.mGet<UserMetricPrivacyDefaults>(
+      unique.map(getUserMetricPrivacyDefaultsCacheKey)
+    );
+  } catch {
+    cached = unique.map(() => null);
+  }
+
+  const misses: number[] = [];
+  unique.forEach((id, i) => {
+    const hit = cached[i];
+    // A stored triple round-trips as a (non-null) object; a cache miss is `null`.
+    if (hit && typeof hit === 'object') result.set(id, hit);
+    else misses.push(id);
+  });
+
+  if (misses.length === 0) return result;
+
+  const fresh = await queryUserMetricPrivacyDefaults(misses);
+
+  await Promise.all(
+    misses.map(async (id) => {
+      const value = fresh.get(id) ?? {
+        hideModelBuzz: false,
+        hideModelDownloads: false,
+        hideModelGenerations: false,
+      };
+      result.set(id, value);
+      try {
+        await redis.packed.set(getUserMetricPrivacyDefaultsCacheKey(id), value, {
+          EX: MEMBERSHIP_CACHE_TTL,
+        });
+      } catch {
+        // Best-effort cache write; the TTL bounds any residual staleness.
+      }
+    })
+  );
+
+  return result;
+}
+
+/**
+ * Bust the cached metric-privacy defaults for one or more users. Wired into
+ * `setUserSetting` so any change to a user's `hideModel*` defaults takes effect on the
+ * next read; the TTL backstops any writer that bypasses `setUserSetting`.
+ */
+export async function bustUserMetricPrivacyDefaultsCache(userId: number | number[]) {
+  const ids = (Array.isArray(userId) ? userId : [userId]).filter((id) => !!id);
+  if (ids.length === 0) return;
+  try {
+    await Promise.all(ids.map((id) => redis.del(getUserMetricPrivacyDefaultsCacheKey(id))));
+  } catch {
+    // Best-effort bust; the TTL bounds any residual staleness.
+  }
+}
+
+/**
  * Bust the cached membership validity for one or more users. Hard delete (not a
  * staleness reset): the next read re-queries and re-populates the fresh boolean.
  * Wired into `invalidateSubscriptionCaches`, so every app-driven subscription change

@@ -272,6 +272,7 @@ export async function hasValidCreatorMembership(userId: number) {
 export {
   getValidCreatorMembershipMap,
   hasValidCreatorMembershipCached,
+  getUserMetricPrivacyDefaultsMap,
 } from '~/server/services/creator-membership.service';
 
 export async function joinCreatorsProgram(userId: number) {

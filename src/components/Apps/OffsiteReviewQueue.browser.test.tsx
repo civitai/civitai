@@ -27,10 +27,26 @@ const OFFSITE_ROW = {
   submittedBy: { id: 42, username: 'author-dev', image: null },
 };
 
+const DEFAULT_ASSETS = {
+  listingId: 'listing-1',
+  iconId: 10,
+  coverId: 11,
+  iconNsfwLevel: 1,
+  coverNsfwLevel: 1,
+  // Icon/cover PG (1); a screenshot at R (4) → derived rating 'r' > declared 'g'.
+  screenshots: [{ imageId: 12, nsfwLevel: 4, scanStatus: 'scanned' as const }],
+  iconScanStatus: 'scanned' as const,
+  coverScanStatus: 'scanned' as const,
+  hasBlockedAsset: false,
+  hasPendingScan: false,
+};
+
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   approveMutate: vi.fn(),
   rejectMutate: vi.fn(),
+  // Mutable so a test can inject a blocked / pending scan state (Item 1).
+  assetsData: { current: null as unknown },
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -64,15 +80,9 @@ vi.mock('~/utils/trpc', () => {
         getAssets: {
           useQuery: () => ({
             // Icon/cover PG (1); a screenshot at R (4) → derived rating 'r', which is
-            // HIGHER than the declared 'g' (mismatch case).
-            data: {
-              listingId: 'listing-1',
-              iconId: 10,
-              coverId: 11,
-              iconNsfwLevel: 1,
-              coverNsfwLevel: 1,
-              screenshots: [{ imageId: 12, nsfwLevel: 4 }],
-            },
+            // HIGHER than the declared 'g' (mismatch case). Scan state is configurable
+            // per test via mocks.assetsData.current.
+            data: mocks.assetsData.current,
             isLoading: false,
             error: null,
           }),
@@ -96,12 +106,13 @@ vi.mock('~/utils/trpc', () => {
   };
 });
 
-const { OffsiteReviewQueue } = await import('./OffsiteReviewQueue');
+const { OffsiteReviewQueue, OffsiteReviewModal } = await import('./OffsiteReviewQueue');
 
 beforeEach(() => {
   mocks.invalidate.mockClear();
   mocks.approveMutate.mockClear();
   mocks.rejectMutate.mockClear();
+  mocks.assetsData.current = { ...DEFAULT_ASSETS };
 });
 
 describe('OffsiteReviewQueue — kind-aware review row', () => {
@@ -125,6 +136,78 @@ describe('OffsiteReviewQueue — kind-aware review row', () => {
     // The two ENTRY actions present (approve is now gated behind its own click).
     await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-offsite-reject-open')).toBeInTheDocument();
+  });
+});
+
+describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
+  test('a BLOCKED asset shows the "blocked media" alert explaining approve will be rejected', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      iconScanStatus: 'blocked',
+      hasBlockedAsset: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const alert = page.getByTestId('apps-offsite-assets-scan-blocked');
+    await expect.element(alert).toBeInTheDocument();
+    await expect.element(alert).toHaveTextContent(/Blocked media: icon/i);
+  });
+
+  test('a still-PENDING scan shows the "still scanning" advisory (no blocked alert)', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      coverScanStatus: 'pending',
+      hasPendingScan: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-assets-scan-pending'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-assets-scan-blocked').elements()).toHaveLength(0);
+  });
+
+  test('all-scanned assets show NEITHER the blocked nor the pending scan alert', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    expect(page.getByTestId('apps-offsite-assets-scan-blocked').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-assets-scan-pending').elements()).toHaveLength(0);
+  });
+
+  // Audit 🟡 — the Approve entry button is DISABLED when the scan-clean gate would
+  // reject it (blocked/pending), so a mod click doesn't just eat a server BAD_REQUEST.
+  test('the Approve button is DISABLED when an asset is blocked', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      iconScanStatus: 'blocked',
+      hasBlockedAsset: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-approve-open'))
+      .toBeDisabled();
+  });
+
+  test('the Approve button is DISABLED while an asset is still scanning', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      coverScanStatus: 'pending',
+      hasPendingScan: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-approve-open'))
+      .toBeDisabled();
+  });
+
+  test('the Approve button is ENABLED when every asset is scan-clean', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-approve-open'))
+      .not.toBeDisabled();
   });
 });
 
@@ -234,6 +317,85 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
     // The badge values they label are still rendered.
     await expect.element(page.getByText('utility', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('g', { exact: true })).toBeInTheDocument();
+  });
+});
+
+// History-tab parity: opening an offsite row from Approved/Rejected passes readOnly,
+// which HIDES the Approve.../Reject... action buttons (an already-decided request would
+// only error NOT_PENDING server-side) while keeping the detail view — matching the
+// on-site history read-only posture. Purely presentational (no handler change).
+describe('OffsiteReviewModal — readOnly (history) posture hides the action buttons', () => {
+  test('readOnly HIDES both entry action buttons but keeps the content detail view', async () => {
+    renderWithProviders(<OffsiteReviewModal request={OFFSITE_ROW} onClose={vi.fn()} readOnly />);
+    // Detail still renders — the external URL + the content checklist.
+    await expect
+      .element(page.getByText('URL is https and opens externally'))
+      .toBeInTheDocument();
+    await expect.element(page.getByText('Icon present')).toBeInTheDocument();
+    // But NEITHER Approve… nor Reject… action button renders in read-only mode.
+    expect(page.getByTestId('apps-offsite-approve-open').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-reject-open').elements()).toHaveLength(0);
+  });
+
+  test('default (readOnly omitted) still renders the Approve…/Reject… buttons', async () => {
+    renderWithProviders(<OffsiteReviewModal request={OFFSITE_ROW} onClose={vi.fn()} />);
+    await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-reject-open')).toBeInTheDocument();
+  });
+});
+
+// On-site listing-MEDIA revision (kind: 'onsite') — the same listing modal reviews
+// it, but it renders kind-aware: a "listing media" header (NOT "external app"), NO
+// external URL, NO connect panel, the shadow-asset content checklist, and a
+// cap-at-app-rating review (media must not exceed the app's rating). Report-only.
+describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)', () => {
+  const ONSITE_MEDIA_ROW = {
+    id: 'lmr-1',
+    kind: 'onsite' as const,
+    appListingId: 'listing-1',
+    slug: 'onsite-media-app',
+    status: 'pending',
+    submittedAt: new Date('2026-02-01T00:00:00Z'),
+    changelog: 'refreshed the screenshots',
+    appListing: {
+      name: 'On-site Media App',
+      // An on-site listing-media revision has NO external URL and NO connect client.
+      externalUrl: null,
+      category: 'utility',
+      contentRating: 'g',
+      connectClientId: null,
+    },
+    submittedBy: { id: 42, username: 'author-dev', image: null },
+  };
+
+  test('renders the listing-media header, the asset checklist, and NO URL / connect panel', async () => {
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
+    // Kind-aware header — the "listing media" badge, not "external".
+    await expect.element(page.getByTestId('apps-offsite-kind-badge')).toHaveTextContent(
+      'listing media'
+    );
+    expect(page.getByText('external', { exact: true }).elements()).toHaveLength(0);
+    // The on-site explainer note renders.
+    await expect.element(page.getByTestId('apps-offsite-onsite-note')).toBeInTheDocument();
+    // The shadow-asset content checklist is present (asset-presence items).
+    await expect.element(page.getByText('Icon present')).toBeInTheDocument();
+    await expect.element(page.getByText('Cover present')).toBeInTheDocument();
+    // No external URL row is rendered (null externalUrl degrades gracefully).
+    expect(page.getByText('URL is https and opens externally').elements()).toHaveLength(0);
+    // No code-review items and no connect scopes panel.
+    expect(page.getByText('Code diff reviewed').elements()).toHaveLength(0);
+    expect(page.getByTestId('connect-scopes-panel').elements()).toHaveLength(0);
+    // The app-rating cap label surfaces (vs "declared" for offsite).
+    await expect.element(page.getByText('app rating (cap)', { exact: true })).toBeInTheDocument();
+  });
+
+  test('flags media rated higher than the app rating as a cap violation (reject reason)', async () => {
+    // Assets derive 'r' (screenshot @ level 4) vs the app rating 'g' → cap exceeded.
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
+    await expect.element(page.getByTestId('apps-offsite-rating-mismatch')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('must not exceed the app’s rating', { exact: false }))
+      .toBeInTheDocument();
   });
 });
 

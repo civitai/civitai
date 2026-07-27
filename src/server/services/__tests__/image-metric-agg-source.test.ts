@@ -1,37 +1,48 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// Guards the fix for the 2026-06-24 incident: PR #2666 deleted civitai's
-// `getEntityMetricAggSource()` provider and dropped the provider arg from every
-// `new MetricService(...)`, silently falling MetricService back to the submodule
-// DEFAULT_AGG_SOURCE = `entityMetricDailyAgg_new`. That table was later dropped
-// from ClickHouse → UNKNOWN_TABLE → 500s on /api/v1/images + on-site image feeds.
-// `imageMetricAggSource` is the restored single source of truth: it MUST resolve
-// to the FINAL `entityMetricDailyAgg_v2` view with no argMax dedup, and MUST NOT
-// resolve to the dropped legacy `_new` table.
+// Guards the 2026-06-24 incident: the legacy ReplacingMergeTree
+// `entityMetricDailyAgg_new` was dropped from ClickHouse, and a reader still
+// pointed at it threw UNKNOWN_TABLE (~100k/hr) → 500s on /api/v1/images and
+// on-site image feeds.
+//
+// There are two entity-metric readers and they MUST agree on the table:
+//   - `MetricService` (watcher-fed `metrics:*` cache populate) — now hardcodes
+//     `entityMetricDailyAgg_v2` in event-engine-common, so it can no longer be
+//     pointed anywhere else from this repo.
+//   - the direct CH subquery sites — via `buildEntityMetricPerDaySource`, which
+//     is what this test pins.
+//
+// (This previously asserted on `imageMetricAggSource`, a civitai-side provider
+// passed into MetricService. That provider is gone: the submodule hardcodes v2,
+// so the provider arg was dropped from every `new MetricService(...)`.)
 
 // client.ts's transitive import graph reads `~/env/server` at module load (which
 // validates all prod env in test and throws), and pulls the flipt SDK + axiom
 // logger. Stub the smallest seams so importing it is side-effect-free; the
-// provider under test reads NONE of these — it's a plain hardcoded constant.
+// function under test reads NONE of these — it's plain string building.
 vi.mock('~/env/server', () => ({ env: new Proxy({}, { get: () => undefined }) }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('@flipt-io/flipt-client-js', () => ({ FliptClient: class {} }));
 
-import { imageMetricAggSource } from '~/server/flipt/client';
+import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
 
-describe('imageMetricAggSource', () => {
-  it('resolves to the FINAL entityMetricDailyAgg_v2 view with no argMax dedup', () => {
-    expect(imageMetricAggSource()).toEqual({
-      table: 'entityMetricDailyAgg_v2',
-      needsArgMaxDedup: false,
-    });
+describe('buildEntityMetricPerDaySource', () => {
+  const sql = buildEntityMetricPerDaySource(`WHERE entityType = 'Image'`);
+
+  it('reads the FINAL entityMetricDailyAgg_v2 view', () => {
+    expect(sql).toContain('entityMetricDailyAgg_v2');
   });
 
-  it('does NOT resolve to the dropped legacy entityMetricDailyAgg_new table (the #2666 regression)', () => {
-    const source = imageMetricAggSource();
-    expect(source.table).not.toBe('entityMetricDailyAgg_new');
-    // v2 is already FINAL — dedup must be off (argMax on the legacy table is the
-    // marker of the old ReplacingMergeTree read path).
-    expect(source.needsArgMaxDedup).toBe(false);
+  it('does NOT read the dropped legacy entityMetricDailyAgg_new table', () => {
+    expect(sql).not.toContain('entityMetricDailyAgg_new');
+  });
+
+  it('selects total directly — v2 is already FINAL, so no argMax dedup', () => {
+    expect(sql).not.toContain('argMax');
+    expect(sql).toContain('SELECT entityId, metricType, day, total');
+  });
+
+  it('carries the caller WHERE clause through', () => {
+    expect(sql).toContain(`WHERE entityType = 'Image'`);
   });
 });

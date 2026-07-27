@@ -12,6 +12,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { applyChallengeNsfwEscalation } from '~/server/games/daily-challenge/challenge-nsfw-escalation';
 import { ChallengeIngestionStatus } from '~/shared/utils/prisma/enums';
+import { recordChallengeScanResult } from '~/server/prom/challenge.metrics';
 
 // Challenge-side hooks for the EntityModeration pipeline, mirroring the Article adapter. The
 // webhook and the retry cron route all `Challenge` entityType work through here via the central
@@ -55,7 +56,7 @@ export const challengeModerationAdapter: ModerationAdapter = {
     if (blocked) {
       const challenge = await dbRead.challenge.findUnique({
         where: { id: entityId },
-        select: { createdById: true },
+        select: { createdById: true, source: true },
       });
       // Deleted between submit and this webhook — nothing to hide or notify (a bare update would
       // throw P2025 and fail the moderation callback).
@@ -64,6 +65,7 @@ export const challengeModerationAdapter: ModerationAdapter = {
         where: { id: entityId },
         data: { ingestion: ChallengeIngestionStatus.Blocked, scannedAt: new Date() },
       });
+      recordChallengeScanResult({ source: challenge.source, result: 'blocked' });
       if (challenge?.createdById) {
         await createNotification({
           userId: challenge.createdById,
@@ -97,6 +99,18 @@ export const challengeModerationAdapter: ModerationAdapter = {
       })),
     });
 
+    // Scan verdict telemetry: a not-blocked callback is a 'scanned' outcome (the dominant terminal
+    // state). A green-user-challenge NSFW escalation may still hide/void it inside
+    // applyChallengeNsfwEscalation, but that void is captured separately by challenge_voided_total —
+    // this metric reflects the moderation CALLBACK verdict, not the final ingestion column.
+    // Guarded with `.catch(() => null)` (mirrors the applyFailure sibling) so a transient DB hiccup
+    // on this TELEMETRY-only read can never throw out of applyResult and skip the real safety step
+    // (applyChallengeNsfwEscalation) below. null → source 'unknown' via the normalizer.
+    const scanned = await dbRead.challenge
+      .findUnique({ where: { id: entityId }, select: { source: true } })
+      .catch(() => null);
+    recordChallengeScanResult({ source: scanned?.source, result: 'scanned' });
+
     await applyChallengeNsfwEscalation({ entityId, isNsfw });
   },
 
@@ -108,11 +122,18 @@ export const challengeModerationAdapter: ModerationAdapter = {
   // Scanned challenge — that would hide a live one from feeds and 404 its detail page on a
   // transient orchestrator failure, rather than just leaving the prior verdict in place.
   applyFailure: async ({ entityId }) => {
-    await dbWrite.challenge
+    const res = await dbWrite.challenge
       .updateMany({
         where: { id: entityId, ingestion: ChallengeIngestionStatus.Pending },
         data: { ingestion: ChallengeIngestionStatus.Error },
       })
       .catch(() => undefined);
+    // Only count a real Pending→Error terminal transition (not a no-op on an already-Scanned row).
+    if (res?.count) {
+      const challenge = await dbRead.challenge
+        .findUnique({ where: { id: entityId }, select: { source: true } })
+        .catch(() => null);
+      recordChallengeScanResult({ source: challenge?.source, result: 'error' });
+    }
   },
 };

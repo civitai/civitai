@@ -5,7 +5,6 @@ import {
   generationEcosystemConfigSchema,
   generationStatusModeSchema,
   getGenerationDataSchema,
-  getGenerationResourcesSchema,
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
   resolveWildcardPackSchema,
@@ -15,12 +14,10 @@ import {
   checkResourcesCoverage,
   getGenerationData,
   getGenerationEcosystemConfig,
-  getGenerationResources,
   getGenerationStatus,
   getGateRules,
   getGenerationConfig,
   getResourceData,
-  getUnavailableResources,
   resolveImageMeta,
   setGateRules,
   setGenerationEcosystemConfig,
@@ -28,7 +25,7 @@ import {
   setSelfHostedGenerationStatus,
   // textToImage,
   // textToImageTestRun,
-  toggleUnavailableResource,
+  toggleGenerationDisabled,
 } from '~/server/services/generation/generation.service';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
@@ -58,10 +55,6 @@ export const generationRouter = router({
   setWorkflowDefinition: moderatorProcedure
     .input(z.any())
     .mutation(({ input }) => setWorkflowDefinition(input.key, input)),
-  getResources: publicProcedure
-    .meta({ requiredScope: TokenScope.AIServicesRead })
-    .input(getGenerationResourcesSchema)
-    .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getGenerationDataSchema)
@@ -136,13 +129,10 @@ export const generationRouter = router({
   setGateRules: moderatorProcedure
     .input(z.array(gateRuleSchema))
     .mutation(({ input }) => setGateRules(input)),
-  getUnavailableResources: publicProcedure
-    .meta({ requiredScope: TokenScope.AIServicesRead })
-    .query(() => getUnavailableResources()),
-  toggleUnavailableResource: moderatorProcedure
+  toggleGenerationDisabled: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
-      toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
+      toggleGenerationDisabled({ ...input, isModerator: ctx.user.isModerator })
     ),
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

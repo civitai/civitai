@@ -67,6 +67,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     canSubmit,
     yellowBalance,
     greenBalance,
+    blueBalance,
     feeAccountBalance,
     earn,
     notice,
@@ -318,6 +319,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             onBuzzTypeChange={form.setBuzzType}
             yellowBalance={yellowBalance}
             greenBalance={greenBalance}
+            blueBalance={blueBalance}
             feeAccountBalance={feeAccountBalance}
             canAffordFee={canAffordFee}
           />

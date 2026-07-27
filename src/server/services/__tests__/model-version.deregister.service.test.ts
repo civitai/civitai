@@ -95,7 +95,10 @@ function wireTransaction() {
 const VERSION_ID = 4242;
 
 function stubVersionRows(fileUrls: string[]) {
-  mockDbWrite.modelFile.findMany.mockResolvedValue(fileUrls.map((url) => ({ url })));
+  // The tx snapshot selects `{ url, hashes: { hash } }` (hashes added by #3323 for
+  // by-hash edge-cache purge) — mock rows must carry `hashes` or `files.flatMap`
+  // dereferences undefined.
+  mockDbWrite.modelFile.findMany.mockResolvedValue(fileUrls.map((url) => ({ url, hashes: [] })));
   mockDbWrite.modelVersion.findFirstOrThrow.mockResolvedValue({
     id: VERSION_ID,
     modelId: 7,

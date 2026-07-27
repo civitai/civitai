@@ -88,7 +88,7 @@ describe('applyChallengeNsfwEscalation', () => {
     await applyChallengeNsfwEscalation({ entityId: 42, isNsfw: true });
 
     expect(order).toEqual(['void', 'update']);
-    expect(mockVoidChallenge).toHaveBeenCalledWith(42);
+    expect(mockVoidChallenge).toHaveBeenCalledWith(42, 'nsfw');
     const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
     expect(data.ingestion).toBe('Scanned');
     expect(data.nsfwLevel).toBeUndefined(); // cancel path does not raise the level
@@ -128,7 +128,7 @@ describe('applyChallengeNsfwEscalation', () => {
 
     // voidChallenge owns the Active -> Cancelled claim that keeps the completion cron from paying
     // winners out of the pool being refunded, plus the entrant refund + cancellation notices.
-    expect(mockVoidChallenge).toHaveBeenCalledWith(77);
+    expect(mockVoidChallenge).toHaveBeenCalledWith(77, 'nsfw');
     const data = mockDbWrite.challenge.update.mock.calls[0][0].data;
     expect(data.ingestion).toBe('Blocked');
     expect(mockCreateNotification).toHaveBeenCalledWith(

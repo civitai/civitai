@@ -95,7 +95,6 @@ import {
   saveItemInCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
@@ -128,7 +127,10 @@ import {
   resolveVersionHiddenMetrics,
   type HiddenModelMetrics,
 } from '~/server/utils/model-metric-privacy';
-import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
+import {
+  getValidCreatorMembershipMap,
+  getUserMetricPrivacyDefaultsMap,
+} from '~/server/services/creator-program.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
@@ -177,6 +179,7 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { isDev } from '~/env/other';
 import { userUpdateCounter } from '~/server/prom/client';
 import { pgDbRead } from '~/server/db/pgDb';
@@ -249,6 +252,7 @@ type ModelRaw = {
     publishedAt: Date | null;
     status: ModelStatus;
     covered: boolean;
+    flags: number;
   }[];
   userId: number;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
@@ -1417,8 +1421,6 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
-  const unavailableGenResources = await getUnavailableResources();
-
   // Creator Controls metric privacy for the card feed. Fetch owner defaults once,
   // then only resolve CP membership for owners who actually have a hide flag set
   // (keeps the common no-flags case free of membership lookups).
@@ -1426,19 +1428,16 @@ export const getModelsWithImagesAndModelVersions = async ({
   // owner-settings + `getValidCreatorMembershipMap` block is skipped and raw metrics
   // are emitted (pre-#3266 visibility).
   const isMod = !!user?.isModerator;
+  // Cache-backed per-owner metric-privacy DEFAULT flags (the three `hideModel*`
+  // booleans). Replaces a per-request `dbRead.user.findMany({ settings })` that
+  // deserialized every owner's full `settings` blob just to read three booleans — the
+  // measured api-primary read-time longtask (#3266). Values are the tiny derived slice,
+  // fed unchanged into the resolvers below (byte-identical).
   let feedOwnerSettingsMap = new Map<number, unknown>();
   let feedMembershipMap = new Map<number, boolean>();
   if (metricPrivacyEnabled) {
     const feedOwnerIds = [...new Set(items.map((m) => m.user.id))];
-    const feedOwnerSettings = feedOwnerIds.length
-      ? await dbRead.user.findMany({
-          where: { id: { in: feedOwnerIds } },
-          select: { id: true, settings: true },
-        })
-      : [];
-    feedOwnerSettingsMap = new Map<number, unknown>(
-      feedOwnerSettings.map((o) => [o.id, o.settings])
-    );
+    feedOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(feedOwnerIds);
     const membershipCandidates = new Set<number>();
     for (const it of items) {
       const ownerId = it.user.id;
@@ -1478,7 +1477,7 @@ export const getModelsWithImagesAndModelVersions = async ({
 
         const canGenerate =
           !!version?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1 &&
+          !isGenerationDisabled(version.flags) &&
           isBaseModelGenerationSupported(version.baseModel, model.type);
 
         const isOwner = isMod || model.user.id === user?.id;
@@ -3468,15 +3467,9 @@ export async function getModelsWithVersions({
   const isMod = !!user?.isModerator;
   const viewerId = user?.id;
   const apiOwnerIds = [...new Set(items.map((m) => m.user.id))];
-  const apiOwnerSettings = apiOwnerIds.length
-    ? await dbRead.user.findMany({
-        where: { id: { in: apiOwnerIds } },
-        select: { id: true, settings: true },
-      })
-    : [];
-  const apiOwnerSettingsMap = new Map<number, unknown>(
-    apiOwnerSettings.map((o) => [o.id, o.settings])
-  );
+  // Cache-backed per-owner metric-privacy DEFAULT flags — see the feed path above;
+  // avoids deserializing every owner's full `settings` blob per request.
+  const apiOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(apiOwnerIds);
   const apiMembershipCandidates = new Set<number>();
   for (const it of items) {
     const ownerId = it.user.id;

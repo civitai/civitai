@@ -94,7 +94,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const validation = BlockManifestValidator.validate(body.manifest, {
+  const validation = await BlockManifestValidator.validateSubmission(body.manifest, {
     allowedScopes: oauth.allowedScopes,
     allowedOrigins: oauth.allowedOrigins ?? [],
   });

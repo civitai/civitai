@@ -157,11 +157,19 @@ export async function createImageIngestionRequest({
       ? [
           {
             url: `${callbackUrl}`,
+            // Job-level failure events (job:failed/expired/canceled) carry the
+            // human `reason` (e.g. "Failed to create container…", "…500 (Internal
+            // Server Error)") that workflow-level events + getWorkflow don't expose.
+            // The webhook stashes it so the terminal workflow event can classify
+            // the failure. Success path is unaffected — no job:succeeded here.
             type: [
               'workflow:succeeded',
               'workflow:failed',
               'workflow:expired',
               'workflow:canceled',
+              'job:failed',
+              'job:expired',
+              'job:canceled',
             ],
           },
         ]

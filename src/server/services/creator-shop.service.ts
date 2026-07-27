@@ -8,6 +8,8 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
 import { createNotification } from '~/server/services/notification.service';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -631,8 +633,23 @@ export const getCreatorShop = async ({
   )
     throw throwNotFoundError('Shop not found');
 
+  // A block between viewer and shop owner (either direction) hides the whole
+  // shop — same NotFound as a private shop so the block isn't revealed.
+  if (
+    !preview &&
+    !isModerator &&
+    viewerId &&
+    viewerId !== userId &&
+    (await getBlockedPairIds(viewerId)).includes(userId)
+  )
+    throw throwNotFoundError('Shop not found');
+
   const now = new Date();
   const resoldIds = settings.resoldItemIds ?? [];
+  // A block between the shop owner and an item's creator (either direction,
+  // possibly after the listing was added) removes it from the storefront; the
+  // owner still sees it in their manage list so they can remove it.
+  const blockedPairIds = preview ? [] : await getBlockedPairIds(userId);
   const [items, resoldItems, earlyAccessModelCount] = await Promise.all([
     dbRead.cosmeticShopItem.findMany({
       where: {
@@ -661,6 +678,7 @@ export const getCreatorShop = async ({
         meta: { path: ['sellableByOthers'], equals: true },
         // Hide resold items whose owner has since made their shop private.
         addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+        ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
       },
       select: creatorStorefrontItemSelect,
       ...(preview ? { take: 6, orderBy: { id: 'desc' } } : {}),
@@ -754,11 +772,16 @@ export const getPublicShopItemsForResale = async ({
 }: GetPublicShopItemsInput & { userId: number }) => {
   const settings = await getCreatorShopSettings({ userId });
   const alreadyResold = settings.resoldItemIds ?? [];
+  // A block in either direction removes the pairing from the resale gallery.
+  const blockedPairIds = await getBlockedPairIds(userId);
   const raw = await dbRead.cosmeticShopItem.findMany({
     where: {
       status: CosmeticShopItemStatus.Published,
       meta: { path: ['sellableByOthers'], equals: true },
-      addedById: { not: userId },
+      addedById: {
+        not: userId,
+        ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
+      },
       // Only surface items from creators whose shop is public (enabled).
       addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
       ...(query
@@ -794,6 +817,20 @@ export const getPublicShopItemsForResale = async ({
   return { items, nextCursor };
 };
 
+// User ids the given user has a block relationship with, in either direction —
+// a block forbids resale pairings between the two users.
+const getBlockedPairIds = async (userId: number) => {
+  const [blockedBy, blocked] = await Promise.all([
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  return boundExcludedUserIds(
+    [],
+    blockedBy.map((u) => u.id),
+    blocked.map((u) => u.id)
+  );
+};
+
 // Load + validate a sellable shop item the caller may resell.
 const getResellableItemOrThrow = async (shopItemId: number, userId: number) => {
   const item = await dbRead.cosmeticShopItem.findUnique({
@@ -807,6 +844,10 @@ const getResellableItemOrThrow = async (shopItemId: number, userId: number) => {
   if (item.status !== CosmeticShopItemStatus.Published)
     throw throwBadRequestError('Only published items can be resold');
   if (item.addedById === userId) throw throwBadRequestError('This is already your own item');
+  // NotFound (not authorization) so the block itself isn't revealed, mirroring
+  // the read-side block enforcement.
+  if (item.addedById && (await getBlockedPairIds(userId)).includes(item.addedById))
+    throw throwNotFoundError('Shop item not found');
   return item;
 };
 

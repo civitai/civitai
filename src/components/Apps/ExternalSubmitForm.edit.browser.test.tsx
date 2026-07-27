@@ -21,7 +21,15 @@ import type { ListingEditContext } from './offsiteEditConfig';
  */
 
 const mocks = vi.hoisted(() => ({
-  meta: { data: undefined as unknown, isFetching: false, isSuccess: false },
+  meta: { data: undefined, isFetching: false, isError: false, isSuccess: false } as {
+    data?: unknown;
+    isFetching?: boolean;
+    isError?: boolean;
+    isSuccess?: boolean;
+  },
+  // The query's `refetch` — a same-url Autofill re-click calls it (staleTime:Infinity +
+  // retry:false makes `setMetaUrl(sameUrl)` a no-op), so we assert it fired on re-click.
+  refetch: vi.fn(),
   updateListing: vi.fn(),
   updateRevision: vi.fn(),
   submitRevision: vi.fn(),
@@ -49,7 +57,7 @@ vi.mock('~/utils/trpc', () => {
         },
       }),
       appListings: {
-        fetchListingMetaFromUrl: { useQuery: () => mocks.meta },
+        fetchListingMetaFromUrl: { useQuery: () => ({ ...mocks.meta, refetch: mocks.refetch }) },
         updateListing: { useMutation: recording(mocks.updateListing) },
         updateRevisionDraft: { useMutation: recording(mocks.updateRevision) },
         submitListingRevision: { useMutation: recording(mocks.submitRevision) },
@@ -121,7 +129,8 @@ function makeApprovedCtx(overrides: Partial<ListingEditContext> = {}): ListingEd
 }
 
 beforeEach(() => {
-  mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
+  mocks.meta = { data: undefined, isFetching: false, isError: false, isSuccess: false };
+  mocks.refetch.mockClear();
   mocks.updateListing.mockClear();
   mocks.updateRevision.mockClear();
   mocks.submitRevision.mockClear();
@@ -200,23 +209,26 @@ describe('ExternalSubmitForm — edit mode', () => {
     expect(mocks.removeScreenshot).toHaveBeenCalledWith({ screenshotId: 'shadow-ss-1' });
   });
 
-  test('shows the derived scopes READ-ONLY + editable justifications and saves the scope patch', async () => {
-    // A connect listing: the client currently allows UserRead(1)|ModelsRead(4)|ModelsWrite(8) = 13.
+  test('shows the derived scopes READ-ONLY + editable SENSITIVE justifications and saves the scope patch', async () => {
+    // A connect listing: the client allows ModelsRead(4)|ModelsWrite(8) = 12.
+    // ModelsWrite is SENSITIVE (gets a required input); ModelsRead is not (collapsed).
     const ctx = makeCtx({
       status: 'draft',
       connectClientId: 'oauth-1',
-      connectAllowedScopes: 13,
-      connectRequestedScopes: 13,
-      connectScopeJustifications: { ModelsRead: 'original reason' },
+      connectAllowedScopes: 12,
+      connectRequestedScopes: 12,
+      connectScopeJustifications: { ModelsWrite: 'original reason' },
     });
     renderWithProviders(<ExternalSubmitForm edit={ctx} />);
     // URL → Details (the scope disclosure lives on Details).
     await page.getByRole('button', { name: 'Next' }).click();
     await expect.element(page.getByTestId('apps-offsite-scope-readonly')).toBeInTheDocument();
     expect(page.getByTestId('sensitive-scope-badge').elements().length).toBeGreaterThan(0);
+    // The non-sensitive ModelsRead(4) has NO justification input (it's collapsed).
+    expect(page.getByTestId('apps-offsite-justification-4').elements()).toHaveLength(0);
 
-    // Edit the ModelsRead (bit 4) justification, then save.
-    await page.getByTestId('apps-offsite-justification-4').fill('updated reason');
+    // Edit the ModelsWrite (bit 8) SENSITIVE justification, then save.
+    await page.getByTestId('apps-offsite-justification-8').fill('updated reason');
     await page.getByTestId('apps-offsite-edit-save').click();
 
     await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
@@ -224,13 +236,63 @@ describe('ExternalSubmitForm — edit mode', () => {
       expect.objectContaining({
         listingId: 'apl_parent',
         patch: expect.objectContaining({
-          requestedScopes: 13,
-          scopeJustifications: { ModelsRead: 'updated reason' },
+          requestedScopes: 12,
+          scopeJustifications: { ModelsWrite: 'updated reason' },
         }),
       })
     );
     // A justification-only edit on a DRAFT is in-place — no revision.
     expect(mocks.submitRevision).not.toHaveBeenCalled();
+  });
+
+  test('a SENSITIVE justification is REQUIRED on save — an empty one blocks the save', async () => {
+    // UserRead(1) is sensitive; the prefill has no justification for it.
+    const ctx = makeCtx({
+      status: 'draft',
+      connectClientId: 'oauth-1',
+      connectAllowedScopes: 1,
+      connectRequestedScopes: 1,
+      connectScopeJustifications: {},
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    await page.getByRole('button', { name: 'Next' }).click();
+    // Change the name so there IS a scalar change to save.
+    await page.getByRole('textbox', { name: /^Name/ }).fill('Renamed');
+    await page.getByTestId('apps-offsite-edit-save').click();
+    // Save is blocked — no mutation fires — and the required error is surfaced.
+    await expect
+      .element(page.getByText('A justification is required for this permission.'))
+      .toBeInTheDocument();
+    expect(mocks.updateListing).not.toHaveBeenCalled();
+    // Filling the justification unblocks the save.
+    await page.getByTestId('apps-offsite-justification-1').fill('needed to greet the user');
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+  });
+
+  test('an existing listing with a BLANK App URL is grandfathered — prompts but does not block', async () => {
+    const ctx = makeCtx({
+      status: 'draft',
+      scalars: {
+        name: 'Vitrine',
+        tagline: null,
+        description: null,
+        category: null,
+        contentRating: 'g',
+        externalUrl: '', // pre-existing blank URL
+      },
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    // The URL step prompts to add one (does NOT hard-block).
+    await expect.element(page.getByTestId('apps-offsite-edit-url-prompt')).toBeInTheDocument();
+    // Advancing is allowed despite the blank URL.
+    await page.getByTestId('apps-offsite-wizard-next-url').click();
+    await page.getByRole('textbox', { name: /^Name/ }).fill('Vitrine Renamed');
+    await page.getByTestId('apps-offsite-edit-save').click();
+    await vi.waitFor(() => expect(mocks.updateListing).toHaveBeenCalledTimes(1));
+    expect(mocks.updateListing).toHaveBeenCalledWith(
+      expect.objectContaining({ listingId: 'apl_parent', patch: { name: 'Vitrine Renamed' } })
+    );
   });
 
   test('a listing with no connect client shows no scope section', async () => {
@@ -251,5 +313,170 @@ describe('ExternalSubmitForm — edit mode', () => {
     await page.getByRole('button', { name: 'Next' }).click();
     // Name stays the prefilled value — the OG suggestion only fills a BLANK name.
     await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
+  });
+});
+
+/**
+ * "Autofill from website" button (edit-only). Closes the gap where the edit-mode OG
+ * pull fired ONLY on a URL change, so a listing whose icon/cover ended up empty could
+ * never re-surface suggestions without editing the URL. Clicking the button re-runs
+ * the existing fetch → fill-if-empty effect → ListingAssetStep suggestions, WITHOUT
+ * changing the URL. Non-destructive by construction (typed text + attached assets are
+ * never clobbered — proven by the "empty" note when nothing is fillable).
+ */
+function makeEmptyAssetsCtx(overrides: Partial<ListingEditContext> = {}): ListingEditContext {
+  return makeCtx({
+    assets: {
+      icon: { imageId: null, url: null },
+      cover: { imageId: null, url: null },
+      screenshots: [],
+    },
+    ...overrides,
+  });
+}
+
+describe('ExternalSubmitForm — edit mode "Autofill from website" button', () => {
+  test('clicking it (URL unchanged) pulls meta and surfaces "Use this" icon/cover suggestions for EMPTY slots', async () => {
+    mocks.meta = {
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    // Assets start EMPTY (the gap this fixes) — the URL is already prefilled, unchanged.
+    renderWithProviders(<ExternalSubmitForm edit={makeEmptyAssetsCtx()} />);
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    // The URL step shows the "applied" note; then navigate URL → Details → Assets.
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-applied')).toBeInTheDocument();
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+    // The empty icon + cover slots now offer the OG suggestion via "Use this".
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-accept-cover')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-offsite-suggested-icon-preview'))
+      .toBeInTheDocument();
+  });
+
+  test('is DISABLED when the App URL is blank (no wasted fetch)', async () => {
+    const ctx = makeCtx({
+      scalars: {
+        name: 'Vitrine',
+        tagline: null,
+        description: null,
+        category: null,
+        contentRating: 'g',
+        externalUrl: '', // pre-existing blank URL
+      },
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill')).toBeDisabled();
+  });
+
+  test('is DISABLED when the App URL is invalid (non-https)', async () => {
+    const ctx = makeCtx({
+      scalars: {
+        name: 'Vitrine',
+        tagline: null,
+        description: null,
+        category: null,
+        contentRating: 'g',
+        externalUrl: 'http://insecure.example.com',
+      },
+    });
+    renderWithProviders(<ExternalSubmitForm edit={ctx} />);
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill')).toBeDisabled();
+  });
+
+  test('shows a "Nothing to autofill" note when the pull yields nothing fillable', async () => {
+    // Fully-populated listing (name/tagline/description + attached icon/cover) and a
+    // meta pull with no suggestions and nothing to fill → the empty note, NOT a clobber.
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-empty')).toBeInTheDocument();
+    // The prefilled name is untouched.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByRole('textbox', { name: /^Name/ })).toHaveValue('Vitrine');
+  });
+
+  test('does NOT claim "applied" when a suggestion targets an already-FILLED slot', async () => {
+    // A fully-populated listing (icon+cover attached in the prefill) + a meta pull that
+    // carries icon/cover URLs but nothing fillable. ListingAssetStep renders NO "Use this"
+    // for a filled slot, so the note must be the honest "Nothing to autofill", not "applied".
+    mocks.meta = {
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm edit={makeCtx()} />);
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-empty')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-edit-autofill-applied').elements()).toHaveLength(0);
+  });
+
+  test('re-clicking with the SAME url re-surfaces the icon/cover suggestions (tick + refetch, from cache)', async () => {
+    // The PR's headline mechanism: the OG pull fires only on a URL CHANGE, so re-pulling
+    // the SAME url must go through the button's `autofillTick` + `appliedMetaRef` reset (and,
+    // once `metaUrl` is already set, a `metaQuery.refetch()`). Assets start EMPTY.
+    mocks.meta = {
+      data: {
+        name: undefined,
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm edit={makeEmptyAssetsCtx()} />);
+
+    // FIRST click: `metaUrl` was null, so this SETS it (not a refetch) and applies.
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-applied')).toBeInTheDocument();
+    expect(mocks.refetch).not.toHaveBeenCalled();
+
+    // SECOND click, url UNCHANGED: `setMetaUrl(sameUrl)` is a no-op, so the retry MUST go
+    // through `refetch()` + the tick-driven re-apply — proving the same-url path works.
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await vi.waitFor(() => expect(mocks.refetch).toHaveBeenCalledTimes(1));
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-applied')).toBeInTheDocument();
+
+    // The re-applied suggestions still surface "Use this" on the empty icon + cover slots.
+    await page.getByRole('button', { name: 'Next' }).click();
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-accept-cover')).toBeInTheDocument();
+  });
+
+  test('an ERRORED OG fetch shows the error note, sets NO applied/empty note, and a re-click refetches', async () => {
+    // The 🟡 fix: on a failed fetch the effect must SETTLE (via isError), reset the active
+    // flag, and surface the error via the settled note (tied to this url) — never a spurious
+    // "applied"/"empty". And because staleTime:Infinity + retry:false pins the cached error,
+    // a re-click must `refetch()` so a transient failure is retryable without editing the URL.
+    mocks.meta = { data: undefined, isFetching: false, isError: true };
+    renderWithProviders(<ExternalSubmitForm edit={makeEmptyAssetsCtx()} />);
+
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await expect.element(page.getByTestId('apps-offsite-edit-autofill-error')).toBeInTheDocument();
+    // No spurious success/empty note co-renders with the error.
+    expect(page.getByTestId('apps-offsite-edit-autofill-applied').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-edit-autofill-empty').elements()).toHaveLength(0);
+
+    // Re-click the SAME (errored) url → a refetch fires so the user can retry.
+    await page.getByTestId('apps-offsite-edit-autofill').click();
+    await vi.waitFor(() => expect(mocks.refetch).toHaveBeenCalledTimes(1));
   });
 });

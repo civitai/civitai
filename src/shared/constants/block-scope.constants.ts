@@ -117,6 +117,22 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
 
+/**
+ * MOD REVIEW SANDBOX "run for real" (#2831) — the AGGREGATE (session) Buzz
+ * ceiling a moderator's OWN account can spend across ALL run-for-real
+ * generations of ONE pending publish request. This is the number surfaced in
+ * the loud consent copy ("…spends YOUR Buzz, capped at N…") AND the number the
+ * server enforces as a per-(mod, publishRequestId) cumulative Redis reservation
+ * in `blocks.router.ts` (see `reserveReviewRunForRealBuzzSpend`).
+ *
+ * SINGLE SOURCE OF TRUTH: defined HERE (a client-safe shared constants module)
+ * so the server enforcement, the mint service, and the client consent dialog all
+ * read the identical value — a low per-call `buzzBudget` alone is NOT sufficient
+ * (a hostile app loops sub-budget calls; see `blocks.router.ts:594`), so this
+ * cumulative ceiling is what actually bounds a run-for-real session.
+ */
+export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
+
 export function isKnownBlockScope(scope: string): scope is BlockScopeString {
   return scope in BLOCK_SCOPE_TO_OAUTH_BIT;
 }

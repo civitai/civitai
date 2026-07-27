@@ -301,10 +301,10 @@ export default function UserTrainingModels() {
   });
 
   const goToModel = (e: React.MouseEvent, href: string) => {
-    if (opened) return false;
-    if ((e.ctrlKey && e.button === 0) || e.button === 1) {
+    if (opened) return;
+    if (e.button === 1 || (e.button === 0 && (e.ctrlKey || e.metaKey))) {
       e.preventDefault();
-      window.open(href, '_blank');
+      window.open(href, '_blank', 'noopener');
     } else if (e.button === 0) {
       router.push(href).then();
     }
@@ -376,14 +376,22 @@ export default function UserTrainingModels() {
         id: 'name',
         enableSorting: false,
         Cell: ({ row }) => (
-          <Group gap={4} wrap="nowrap">
-            <Text lineClamp={1}>{row.original.model.name}</Text>
-            {row.original.name !== row.original.model.name && (
-              <Text c="dimmed" size="sm">
-                ({row.original.name})
-              </Text>
-            )}
-          </Group>
+          <Anchor
+            component={Link}
+            href={getModelTrainingWizardUrl(row.original)}
+            onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}
+            underline="hover"
+            c="inherit"
+          >
+            <Group gap={4} wrap="nowrap">
+              <Text lineClamp={1}>{row.original.model.name}</Text>
+              {row.original.name !== row.original.model.name && (
+                <Text c="dimmed" size="sm">
+                  ({row.original.name})
+                </Text>
+              )}
+            </Group>
+          </Anchor>
         ),
       },
       {
@@ -948,6 +956,14 @@ export default function UserTrainingModels() {
           }}
           mantineTableBodyRowProps={({ row }) => ({
             onClick: (e) => goToModel(e, getModelTrainingWizardUrl(row.original)),
+            onAuxClick: (e) => {
+              if (e.button !== 1) return;
+              if ((e.target as HTMLElement).closest('a,button')) return;
+              goToModel(e, getModelTrainingWizardUrl(row.original));
+            },
+            onMouseDown: (e) => {
+              if (e.button === 1 && !(e.target as HTMLElement).closest('a')) e.preventDefault();
+            },
             style: { cursor: 'pointer' },
           })}
           mantineTableHeadCellProps={{

@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { jobDurationHistogram, jobErrorsCounter } from '~/server/prom/client';
 import { applySourceMaps } from '~/server/utils/errorHandling';
 
 export type Job = {
@@ -79,8 +80,10 @@ export function createJob(
         jobContext.status = 'canceled';
         await Promise.all(onCancel.map((x) => x()));
       };
+      const endTimer = jobDurationHistogram.startTimer({ job: name });
       const result = fn(jobContext)
         .catch(async (e) => {
+          jobErrorsCounter.inc({ job: name });
           const error = e instanceof Error ? e : undefined;
           const message = typeof e === 'string' ? e : error?.message;
           const stack = error?.stack ? await applySourceMaps(error.stack) : undefined;
@@ -93,6 +96,7 @@ export function createJob(
           throw e; // Re-throw to ensure webhook endpoint can handle errors
         })
         .finally(() => {
+          endTimer();
           if (jobContext.status === 'canceled') return;
           jobContext.status = 'finished';
         });

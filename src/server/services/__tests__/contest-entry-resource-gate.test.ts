@@ -119,9 +119,10 @@ function wireChallengeFindFirst(opts: { hasResourceChallenge: boolean; hasFeeCha
     }
     if ('maxParticipants' in where) return null; // no participant cap configured
     if (where.source === 'User') {
-      // The fee-challenge lookup (collection.service.ts) is distinguished by `entryFee`
-      // in its where clause; select: { id, entryFee, buzzType }.
-      if ('entryFee' in where) {
+      // The fee-challenge lookup (collection.service.ts chargeContestEntryFeesForCollection) is the
+      // only source=User lookup that also filters `status: 'Active'` in its where;
+      // select: { id, entryFee, buzzType }.
+      if ('status' in where) {
         return opts.hasFeeChallenge ? { id: 1, entryFee: 100, buzzType: 'yellow' } : null;
       }
       // Otherwise this is the assertUserChallengeAcceptingEntries timing gate

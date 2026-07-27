@@ -40,6 +40,7 @@ import {
   encodeListingCursor,
   getListingDetail,
   listAvailableListings,
+  moderationStatusWhere,
   projectListingCard,
   projectListingDetail,
   recommendRollup,
@@ -234,15 +235,43 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     expect(card.reviewCount).toBe(10);
   });
 
-  it('onsite kindData carries appBlockId + hasPage (Open) when the manifest declares a page', () => {
+  it('onsite kindData carries appBlockId + hasPage (Open) + the computed liveUrl when the manifest declares a page', () => {
     const card = projectListingCard(hydratedRow() as never);
-    expect(card.kindData).toEqual({ kind: 'onsite', appBlockId: 'ab_1', hasPage: true });
+    expect(card.kindData).toEqual({
+      kind: 'onsite',
+      appBlockId: 'ab_1',
+      hasPage: true,
+      liveUrl: 'https://cool-app.civit.ai',
+    });
   });
 
-  it('onsite hasPage=false (Install) when the manifest declares no page', () => {
+  it('onsite hasPage=false (Install) when the manifest declares no page (liveUrl still present)', () => {
     const row = hydratedRow({ appBlock: { manifest: { name: 'X', targets: [] } } });
     const card = projectListingCard(row as never);
-    expect(card.kindData).toEqual({ kind: 'onsite', appBlockId: 'ab_1', hasPage: false });
+    expect(card.kindData).toEqual({
+      kind: 'onsite',
+      appBlockId: 'ab_1',
+      hasPage: false,
+      liveUrl: 'https://cool-app.civit.ai',
+    });
+  });
+
+  it('onsite card liveUrl is `https://<slug>.<APPS_DOMAIN>` for the seeded slug', () => {
+    const row = hydratedRow({ slug: 'my-neat-app' });
+    const card = projectListingCard(row as never);
+    expect(card.kindData).toMatchObject({ kind: 'onsite', liveUrl: 'https://my-neat-app.civit.ai' });
+  });
+
+  it('PARITY GUARD: onsite card liveUrl === detail liveUrl for the same listing (anti-drift)', () => {
+    // Both projections must compose liveUrl the SAME way (shared helper). If a
+    // future change alters one derivation and not the other, this fails.
+    const row = hydratedRow({ slug: 'parity-app' });
+    const card = projectListingCard(row as never);
+    const detail = projectListingDetail(row as never);
+    const cardKind = card.kindData as { kind: 'onsite'; liveUrl: string };
+    const detailKind = detail.kindData as { kind: 'onsite'; liveUrl: string };
+    expect(cardKind.liveUrl).toBe('https://parity-app.civit.ai');
+    expect(cardKind.liveUrl).toBe(detailKind.liveUrl);
   });
 
   it('coverUrl falls back to the first screenshot when there is no cover', () => {
@@ -730,5 +759,40 @@ describe('getListingDetail — approved-only + maturity gate', () => {
     });
     const detail = await getListingDetail({ slug: 'cool-app' }, { redCapable: true });
     expect(detail?.contentRating).toBe('x');
+  });
+});
+
+/**
+ * The mod-table status filter, made EFFECTIVE-STATUS-AWARE: a draft external
+ * listing that has a live pending publish request is "awaiting first review", so
+ * the "Pending" filter must surface it and the "Draft" filter must exclude it.
+ */
+describe('moderationStatusWhere', () => {
+  it('undefined (all) → no status constraint', () => {
+    expect(moderationStatusWhere(undefined)).toEqual({});
+  });
+
+  it('pending → real-pending OR draft-with-a-live-pending-request', () => {
+    expect(moderationStatusWhere('pending')).toEqual({
+      OR: [
+        { status: 'pending' },
+        { status: 'draft', publishRequests: { some: { status: 'pending' } } },
+      ],
+    });
+  });
+
+  it('draft → only TRUE orphan drafts (no live pending request)', () => {
+    expect(moderationStatusWhere('draft')).toEqual({
+      status: 'draft',
+      publishRequests: { none: { status: 'pending' } },
+    });
+  });
+
+  it('approved → an exact status match', () => {
+    expect(moderationStatusWhere('approved')).toEqual({ status: 'approved' });
+  });
+
+  it('removed → an exact status match', () => {
+    expect(moderationStatusWhere('removed')).toEqual({ status: 'removed' });
   });
 });

@@ -96,6 +96,12 @@ export const getAllUserCollectionsInputSchema = z
     permission: z.enum(CollectionContributorPermission),
     permissions: z.array(z.enum(CollectionContributorPermission)),
     type: z.enum(CollectionType).optional(),
+    // When true, also surface active-window Contest collections (Review-write, Public-read) the
+    // user hasn't followed, so they can submit an entry from the picker without joining first.
+    includeActiveContests: z.boolean(),
+    // The model the picker is targeting. Active contests only surface when the user owns it —
+    // you can only submit your own models — so this gates the includeActiveContests branch.
+    contestModelId: z.number(),
   })
   .partial();
 

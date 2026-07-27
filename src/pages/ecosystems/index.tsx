@@ -115,7 +115,7 @@ function EcosystemSection({ title, entries }: { title: string; entries: IndexEnt
                   )}
                 </span>
                 <span className={styles.badge}>
-                  {config.modality === 'video' ? 'Video' : 'Image'}
+                  {config.sunset ? 'Retiring' : config.modality === 'video' ? 'Video' : 'Image'}
                 </span>
               </div>
               <span className={styles.indexCardDesc}>{firstSentence(config.hero.intro)}</span>

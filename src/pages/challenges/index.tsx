@@ -41,13 +41,24 @@ const statusMap: Record<string, ChallengeStatus> = {
 };
 
 type MyChallengeStatus = 'Scheduled' | 'Active' | 'Completed' | 'Cancelled';
-type Engagement = 'participated' | 'created';
+type Engagement = 'participated' | 'created' | 'tracking';
 
 const engagementStatuses: Record<Engagement, MyChallengeStatus[]> = {
   // You can't enter a challenge that hasn't started, and a cancelled one you entered is a refund,
   // not a thing to browse — so Participated gets a narrower set than Created.
   participated: ['Active', 'Completed'],
   created: ['Scheduled', 'Active', 'Completed', 'Cancelled'],
+  // Tracking exists to watch what hasn't started yet, so it opens there. A cancelled challenge you
+  // were watching is a dead link, so it's omitted for the same reason as Participated.
+  tracking: ['Scheduled', 'Active', 'Completed'],
+};
+
+// Creators arrive from the header menu to check on what they've queued up, so Created opens on
+// Scheduled; entrants care about what's running.
+const defaultStatus: Record<Engagement, MyChallengeStatus> = {
+  participated: 'Active',
+  created: 'Scheduled',
+  tracking: 'Scheduled',
 };
 
 const myStatusFilters: Record<MyChallengeStatus, Partial<GetInfiniteChallengesInput>> = {
@@ -91,12 +102,12 @@ function ChallengesPage() {
   const participation = parseParticipationQuery(router.query.participation);
 
   const rawEngagement = router.query.engagement;
-  const isPersonalView = rawEngagement === 'created' || rawEngagement === 'participated';
-  const engagement: Engagement = rawEngagement === 'created' ? 'created' : 'participated';
-  // Creators arrive from the header menu to check on what they've queued up, so Created opens on
-  // Scheduled; entrants care about what's running.
+  const isPersonalView =
+    rawEngagement === 'created' || rawEngagement === 'participated' || rawEngagement === 'tracking';
+  const engagement: Engagement =
+    rawEngagement === 'created' || rawEngagement === 'tracking' ? rawEngagement : 'participated';
   const [statusSelection, setStatusSelection] = useState<MyChallengeStatus>(
-    rawEngagement === 'created' ? 'Scheduled' : 'Active'
+    defaultStatus[engagement]
   );
   // /challenges and /challenges?engagement=* are the same page with no route key, so switching
   // engagement via a link (header menu, the in-page control) doesn't remount — reset the status
@@ -106,7 +117,7 @@ function ChallengesPage() {
   const [prevEngagement, setPrevEngagement] = useState(rawEngagement);
   if (prevEngagement !== rawEngagement) {
     setPrevEngagement(rawEngagement);
-    setStatusSelection(rawEngagement === 'created' ? 'Scheduled' : 'Active');
+    setStatusSelection(defaultStatus[engagement]);
   }
   const allowedStatuses = engagementStatuses[engagement];
   const myStatus = allowedStatuses.includes(statusSelection)
@@ -127,12 +138,15 @@ function ChallengesPage() {
 
     const engagementOptions = [
       { label: 'Participated', value: 'participated' },
+      { label: 'Tracking', value: 'tracking' },
       ...(features.userChallenges ? [{ label: 'Created', value: 'created' }] : []),
     ];
 
     const personalFilters: Partial<GetInfiniteChallengesInput> =
       engagement === 'created'
         ? { userId: currentUser.id, source: [ChallengeSource.User], excludeEventChallenges: true }
+        : engagement === 'tracking'
+        ? { participation: ChallengeParticipation.Tracking }
         : { participation: ChallengeParticipation.Entered };
 
     return (

@@ -27,7 +27,7 @@ export type FeaturedModel = {
    * and dropped if it fails — a card only ever shows a safe image (or none).
    */
   imageId: number;
-  /** Overrides the fetched model name if the canonical name is cryptic (e.g. "FLUX" → "Flux.1 Dev"). */
+  /** Overrides the fetched model name if the canonical name is cryptic (e.g. "FLUX" → "FLUX.1 [dev]"). */
   displayName?: string;
   /** Short curated tag under the name, e.g. "Civitai-hosted · default". */
   note?: string;
@@ -37,7 +37,7 @@ export type FeaturedExample = {
   imageId: number;
   /** Curated (SFW) caption — the prompt shown on the card. */
   prompt: string;
-  /** e.g. "Steps 20 · Guidance 3.5 · Flux.1 Dev". For video: include fps. */
+  /** e.g. "Steps 20 · Guidance 3.5 · FLUX.1 [dev]". For video: include fps. */
   settings: string;
   /**
    * Media type of THIS example. Defaults to the config's `modality`. Set it on a dual-modality
@@ -49,7 +49,13 @@ export type FeaturedExample = {
 
 export type ComparisonRow = {
   label: string;
-  /** [thisEcosystem, peer1, peer2, peer3] — must align with `comparison.peers`. */
+  /**
+   * [thisEcosystem, peer1, peer2, peer3] — must align with `comparison.peers`.
+   *
+   * A value may embed a `{loras:Key}` token (Key = an ECOSYSTEM_SEO key), replaced at render
+   * time with that ecosystem's live LoRA count. Always use the token for LoRA counts: the
+   * hand-written numbers drifted, so the same ecosystem read differently on every page.
+   */
   values: [string, string, string, string];
   /** Index into `values` to highlight as the winner, if any. */
   winner?: 0 | 1 | 2 | 3;
@@ -116,6 +122,17 @@ export type EcosystemSeoConfig = {
     rows: ComparisonRow[];
   };
   faq: EcosystemSeoFaq[];
+  /**
+   * Announced end-of-life for a hosted model. Before `date` the page carries a warning banner;
+   * from `date` on it delists itself — noindex, and dropped from the sitemap — rather than
+   * ranking for a model nobody can generate with any more.
+   */
+  sunset?: {
+    /** `YYYY-MM-DD` the endpoints shut down. */
+    date: string;
+    /** One line shown in the banner, e.g. who is shutting it down and what to use instead. */
+    note: string;
+  };
   /** Local-run honesty box. Omit for API-only ecosystems (renders an "API only" note instead). */
   localRun?: { vram: string; weightsSize: string; tool: string };
   /** Attribution line in the footer. */
@@ -147,50 +164,50 @@ export type EcosystemSeoFactCheckFlag = {
 export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   Flux1: {
     key: 'Flux1',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-07-23',
     additionalEcosystemKeys: ['FluxKrea', 'Flux1Kontext'],
-    name: 'Flux',
+    name: 'FLUX.1',
     metaDescription:
-      "Generate with FLUX.1 on Civitai — Black Forest Labs' open model with strong prompt adherence and legible in-image text. Browse top Flux checkpoints, LoRAs & prompts.",
+      "Generate with FLUX.1 on Civitai — Black Forest Labs' open model with strong prompt adherence and legible in-image text. Browse top FLUX.1 checkpoints, LoRAs & prompts.",
     modality: 'image',
     hero: {
       intro:
-        'Flux is a new generation of open-weight text-to-image models with class-leading prompt adherence, legible in-image text, and striking photorealism. Generate detailed images from a description in seconds — no GPU, no install. Run every Flux model right here on Civitai.',
+        'FLUX.1 is Black Forest Labs’ family of open-weight text-to-image models, with class-leading prompt adherence, legible in-image text, and striking photorealism. Generate detailed images from a description in seconds — no GPU, no install. Run every FLUX.1 model right here on Civitai.',
       badges: ['Text-to-Image', 'By Black Forest Labs', 'Open weights + API'],
     },
     overview: [
-      'Flux comes from Black Forest Labs, a team founded by several of the original Stable Diffusion researchers. Its models are 12-billion-parameter rectified-flow transformers, and when Flux.1 launched in 2024 it reset expectations for open image generation — sharper prompt adherence, coherent hands and anatomy, and readable in-image text that earlier open models struggled with. Unlike the SD and SDXL lineage, Flux pairs a large transformer with the T5 text encoder, so it reads long, natural-language descriptions instead of relying on comma-separated Danbooru tags.',
-      'The family is really a set of specialized tools rather than one model. Flux.1 Dev is the quality-first workhorse; Schnell is a few-step distillation for near-instant drafts; Krea is tuned for photographic realism and believable skin; and Kontext performs in-context editing, changing an existing image from a text instruction. On Civitai all of them are hosted, so you can jump between Dev, Schnell, Krea, and Kontext without downloading tens of gigabytes of weights for each.',
-      'Choose Flux when prompt fidelity, photorealism, typography, or complex multi-subject scenes matter — it is a top open choice for product shots, posters, and text-in-image work. For anime and character art, the SDXL-based Pony and Illustrious ecosystems still lead on style range and sheer LoRA depth. Flux’s own LoRA library is smaller but growing quickly, and because each image runs a 12B model it costs more Buzz per generation than lighter checkpoints — a worthwhile trade when you need the prompt followed exactly.',
+      'FLUX.1 comes from Black Forest Labs, a team founded by several of the original Stable Diffusion researchers. Its models are 12-billion-parameter rectified-flow transformers, and when FLUX.1 launched in 2024 it reset expectations for open image generation — sharper prompt adherence, coherent hands and anatomy, and readable in-image text that earlier open models struggled with. Unlike the SD and SDXL lineage, FLUX.1 pairs a large transformer with the T5 text encoder, so it reads long, natural-language descriptions instead of relying on comma-separated Danbooru tags.',
+      'The family is really a set of specialized tools rather than one model. FLUX.1 [dev] is the quality-first workhorse; FLUX.1 [schnell] is a few-step distillation for near-instant drafts; FLUX.1 Krea is tuned for photographic realism and believable skin; and FLUX.1 Kontext performs in-context editing, changing an existing image from a text instruction. On Civitai all of them are hosted, so you can jump between [dev], [schnell], Krea, and Kontext without downloading tens of gigabytes of weights for each.',
+      'Choose FLUX.1 when prompt fidelity, photorealism, typography, or complex multi-subject scenes matter — it is a top open choice for product shots, posters, and text-in-image work. For anime and character art, the SDXL-based Pony and Illustrious ecosystems still lead on style range and sheer LoRA depth. FLUX.1’s own LoRA library is smaller but growing quickly, and because each image runs a 12B model it costs more Buzz per generation than lighter checkpoints — a worthwhile trade when you need the prompt followed exactly.',
     ],
     promptTips: [
-      'Write in natural language — complete sentences, not comma-separated tags. Flux’s T5-XXL text encoder actually parses grammar, so describe the scene as you would to a person. Aim for roughly 30–80 words (Dev handles up to 512 tokens, Schnell 256).',
-      'Put the most important element first — Flux weights earlier words more heavily.',
+      'Write in natural language — complete sentences, not comma-separated tags. FLUX.1’s T5-XXL text encoder actually parses grammar, so describe the scene as you would to a person. Aim for roughly 30–80 words ([dev] handles up to 512 tokens, [schnell] 256).',
+      'Put the most important element first — FLUX.1 weights earlier words more heavily.',
       'Skip weight syntax and negative prompts: (word:1.5) and ((word)) are ignored, and there is no negative prompt. Describe what you want instead — "sharp, crisp focus" rather than "no blur."',
       'Lighting drives quality more than anything else, so be specific — "warm golden light from a window on the left" beats "warm lighting." Camera and film references work too, e.g. "shot on Hasselblad, 80mm, f/2.8" or "Kodak Portra 400."',
       'For text in the image, wrap the words in quotation marks. On Dev, avoid the phrase "white background" (it can blur) — say "clean bright backdrop" instead.',
     ],
-    generatorVersionId: 691639, // FLUX (model 618692) — Civitai-hosted Flux.1 Dev standard
+    generatorVersionId: 691639, // FLUX (model 618692) — Civitai-hosted FLUX.1 [dev] standard
     featuredModels: [
       {
         modelId: 618692,
         versionId: 691639,
         imageId: 137412471,
-        displayName: 'Flux.1 Dev',
+        displayName: 'FLUX.1 [dev]',
         note: 'Civitai-hosted · default',
       },
       {
         modelId: 618692,
         versionId: 2068000,
         imageId: 137387022,
-        displayName: 'Flux.1 Krea',
+        displayName: 'FLUX.1 Krea',
         note: 'Civitai-hosted · photoreal',
       },
       {
         modelId: 1672021,
         versionId: 1892509,
         imageId: 137414152,
-        displayName: 'Flux.1 Kontext',
+        displayName: 'FLUX.1 Kontext',
         note: 'Civitai-hosted · in-context editing',
       },
       {
@@ -217,35 +234,35 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         imageId: 137412471,
         prompt:
           'A picturesque Mediterranean hillside estate near Capri, overlooking crystal-clear sea',
-        settings: 'Flux.1 Dev · 832×1216',
+        settings: 'FLUX.1 [dev] · 832×1216',
       },
       {
         imageId: 137412193,
         prompt: 'A woman on a wooden boardwalk extending into a shimmering, star-speckled expanse',
-        settings: 'Flux.1 Dev · 832×1216',
+        settings: 'FLUX.1 [dev] · 832×1216',
       },
       {
         imageId: 137412759,
         prompt: 'Dynamic anime-style vector illustration, bold linework, flat color',
-        settings: 'Flux.1 Dev',
+        settings: 'FLUX.1 [dev]',
       },
       {
         imageId: 137403710,
         prompt:
           'A towering herald in orange-and-black ceremonial armor above a floating stone platform',
-        settings: 'Flux.1 Dev · 832×1216',
+        settings: 'FLUX.1 [dev] · 832×1216',
       },
       {
         imageId: 137403240,
         prompt:
           'A neat row of weathered coastal rocks under dramatic sky, wide cinematic landscape',
-        settings: 'Flux.1 Dev · 2400×1800',
+        settings: 'FLUX.1 [dev] · 2400×1800',
       },
       {
         imageId: 137403087,
         prompt:
           'An epic fantasy landscape: an imposing pyramidal mountain of white rock, frozen light',
-        settings: 'Flux.1 Dev · 832×1216',
+        settings: 'FLUX.1 [dev] · 832×1216',
       },
     ],
     comparison: {
@@ -273,32 +290,31 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['40,000+', '38,000+', '101,000+', '187,000+'],
-          winner: 3,
+          values: ['{loras:Flux1}', '{loras:SDXL}', '{loras:Pony}', '{loras:Illustrious}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
     },
     faq: [
       {
-        q: 'How much does it cost to generate with Flux?',
-        a: 'Generation on Civitai runs on Buzz, and Flux sits toward the higher end of the cost range because it runs a 12-billion-parameter model — a Flux image costs more Buzz than a lighter SD 1.5 or Illustrious render. Every account still earns free Blue Buzz daily by reacting to images and other on-site activity, so you can generate with Flux without spending real money; you will just work through your daily Blue Buzz faster than on cheaper models, or add a membership for higher limits. Schnell is the most Buzz-efficient way to iterate on Flux before committing to a Dev render.',
+        q: 'How much does it cost to generate with FLUX.1?',
+        a: 'Generation on Civitai runs on Buzz, and FLUX.1 sits toward the higher end of the cost range because it runs a 12-billion-parameter model — a FLUX.1 image costs more Buzz than a lighter SD 1.5 or Illustrious render. Every account still earns free Blue Buzz daily by reacting to images and other on-site activity, so you can generate with FLUX.1 without spending real money; you will just work through your daily Blue Buzz faster than on cheaper models, or add a membership for higher limits. FLUX.1 [schnell] is the most Buzz-efficient way to iterate before committing to a [dev] render.',
       },
       {
-        q: "What's the difference between Flux Dev and Schnell?",
-        a: 'Dev prioritizes quality and prompt adherence; Schnell is tuned for speed, producing images in far fewer steps. Both run in the Civitai generator — pick either one.',
+        q: "What's the difference between FLUX.1 [dev] and [schnell]?",
+        a: '[dev] prioritizes quality and prompt adherence; [schnell] is tuned for speed, producing images in far fewer steps. Both run in the Civitai generator — pick either one.',
       },
       {
-        q: 'Can I train my own Flux LoRA?',
-        a: 'Yes. Flux supports LoRA fine-tuning, and you can train one directly on Civitai — no local GPU needed. Publish it to earn Buzz when others generate with it.',
+        q: 'Can I train my own FLUX.1 LoRA?',
+        a: 'Yes. FLUX.1 supports LoRA fine-tuning, and you can train one directly on Civitai — no local GPU needed. Publish it to earn Buzz when others generate with it.',
       },
       {
-        q: 'Do I need a GPU to run Flux?',
-        a: 'Not on Civitai — we run the compute for you. Locally, Flux wants a 16GB+ VRAM GPU.',
+        q: 'Do I need a GPU to run FLUX.1?',
+        a: 'Not on Civitai — we run the compute for you. Locally, FLUX.1 wants a 16GB+ VRAM GPU.',
       },
       {
         q: 'How do I combine a checkpoint with LoRAs?',
-        a: 'Pick a Flux checkpoint, then stack up to 5 LoRAs in the generator to blend styles. Remix an example to see how the settings carry over.',
+        a: 'Pick a FLUX.1 checkpoint, then stack up to 5 LoRAs in the generator to blend styles. Remix an example to see how the settings carry over.',
       },
     ],
     localRun: { vram: '16GB+ VRAM', weightsSize: '~24GB', tool: 'ComfyUI' },
@@ -306,7 +322,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   SDXL: {
     key: 'SDXL',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     name: 'SDXL',
     metaDescription:
       "Generate with SDXL on Civitai — Stability AI's high-res open model behind the largest LoRA ecosystem in open image generation. Browse checkpoints, LoRAs & prompts.",
@@ -319,7 +335,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     overview: [
       "SDXL (Stable Diffusion XL) is Stability AI's open-weight, latent-diffusion text-to-image model and the direct successor to Stable Diffusion 1.5 and 2.1. It renders natively at 1024px and pairs two fixed, pretrained text encoders — OpenCLIP-ViT/bigG and CLIP-ViT/L — which give it noticeably better composition and prompt understanding than the single-encoder SD 1.x line. Its open weights and modest hardware needs turned it into the backbone of the largest fine-tune and LoRA ecosystem in open image generation.",
       "Architecturally, SDXL ships as a two-step pipeline: a base model generates latents at the target size, and an optional specialized refiner then applies an img2img (SDEdit) pass over those latents using the same prompt to sharpen high-frequency detail. Stability's own evaluations put the base model well ahead of SD 1.5 and 2.1 on user preference, with the refiner adding a further bump. It is not without limits — the original card notes it cannot render legible text, struggles with strict compositional prompts (for example, 'a red cube on top of a blue sphere'), and can be inconsistent with faces — gaps that the community's enormous library of fine-tunes largely papers over.",
-      'Choose SDXL when you want broad style range, deep LoRA coverage, and fast, inexpensive iteration on a proven architecture. Because it is a comparatively light model, it is a strong default for versatile realism and for stacking community LoRAs. For anime and illustration specifically, the SDXL-based Pony and Illustrious offshoots push style and tag-driven character control further, while Flux leads on strict prompt adherence and in-image text — but all of them build on or sit alongside the SDXL foundation, and switching between them on Civitai takes no downloads.',
+      'Choose SDXL when you want broad style range, deep LoRA coverage, and fast, inexpensive iteration on a proven architecture. Because it is a comparatively light model, it is a strong default for versatile realism and for stacking community LoRAs. For anime and illustration specifically, the SDXL-based Pony and Illustrious offshoots push style and tag-driven character control further, while FLUX.1 leads on strict prompt adherence and in-image text — but all of them build on or sit alongside the SDXL foundation, and switching between them on Civitai takes no downloads.',
     ],
     promptTips: [
       'Prompt in tags, not sentences: comma-separated keywords, same style as SD 1.5. SDXL reads tag-style input through its dual CLIP encoders — natural-language paragraphs work less well than a clean tag list.',
@@ -401,7 +417,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Flux', 'Pony', 'Illustrious'],
+      peers: ['FLUX.1', 'Pony', 'Illustrious'],
       rows: [
         {
           label: 'Best for',
@@ -425,8 +441,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['47,000+', '40,000+', '101,000+', '187,000+'],
-          winner: 3,
+          values: ['{loras:SDXL}', '{loras:Flux1}', '{loras:Pony}', '{loras:Illustrious}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -434,7 +449,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     faq: [
       {
         q: 'How much does it cost to generate with SDXL?',
-        a: 'Generation on Civitai runs on Buzz, and SDXL sits at the affordable end of the range — it is a lighter model than Flux or the big video checkpoints, so each image costs relatively little Buzz. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, and because SDXL renders are cheap, that daily Blue Buzz stretches a long way — you can iterate on prompts and stack LoRAs without spending real money. Heavier use, higher resolutions, or premium models simply draw down Buzz faster, so you can let it accumulate or add a membership for higher limits.',
+        a: 'Generation on Civitai runs on Buzz, and SDXL sits at the affordable end of the range — it is a lighter model than FLUX.1 or the big video checkpoints, so each image costs relatively little Buzz. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, and because SDXL renders are cheap, that daily Blue Buzz stretches a long way — you can iterate on prompts and stack LoRAs without spending real money. Heavier use, higher resolutions, or premium models simply draw down Buzz faster, so you can let it accumulate or add a membership for higher limits.',
       },
       {
         q: 'What makes SDXL different from SD 1.5?',
@@ -450,16 +465,16 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Do I need a GPU to run SDXL?',
-        a: 'Not on Civitai — we run the compute for you. Locally, SDXL runs on an 8GB+ VRAM GPU in ComfyUI or Automatic1111.',
+        a: 'Not on Civitai — we run the compute for you. Locally, SDXL runs on an 8GB+ VRAM GPU in ComfyUI.',
       },
     ],
-    localRun: { vram: '8GB+ VRAM', weightsSize: '~6.9GB', tool: 'ComfyUI / Automatic1111' },
+    localRun: { vram: '8GB+ VRAM', weightsSize: '~6.9GB', tool: 'ComfyUI' },
     attribution: 'an open model by Stability AI',
   },
 
   Illustrious: {
     key: 'Illustrious',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     name: 'Illustrious',
     metaDescription:
       'Generate with Illustrious on Civitai — the SDXL-based anime model built for booru-tag prompting, character consistency, and clean linework. Browse LoRAs & prompts.',
@@ -470,9 +485,9 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       badges: ['Text-to-Image', 'By OnomaAI', 'SDXL-based · Open weights'],
     },
     overview: [
-      'Illustrious (Illustrious-XL) is an open-source, SDXL-based text-to-image model developed by OnomaAI Research and optimized specifically for illustration and animation. Rather than training from scratch, it was built on the Kohaku XL-Beta (Revision 5) checkpoint, inheriting a strong anime-oriented SDXL foundation and then refining it for cleaner linework and tag adherence. Because it keeps the SDXL architecture and CLIP-based text encoding, it reads comma-separated Danbooru-style tags rather than the long natural-language prompts that transformer models like Flux expect. The technical details are published in the team’s arXiv paper (2409.19946).',
+      'Illustrious (Illustrious-XL) is an open-source, SDXL-based text-to-image model developed by OnomaAI Research and optimized specifically for illustration and animation. Rather than training from scratch, it was built on the Kohaku XL-Beta (Revision 5) checkpoint, inheriting a strong anime-oriented SDXL foundation and then refining it for cleaner linework and tag adherence. Because it keeps the SDXL architecture and CLIP-based text encoding, it reads comma-separated Danbooru-style tags rather than the long natural-language prompts that transformer models like FLUX.1 expect. The technical details are published in the team’s arXiv paper (2409.19946).',
       'The model is deliberately positioned as an open-collaboration project: OnomaAI released the weights openly and asks the community to keep improvements in the open rather than folding them into closed, proprietary products. That openness is a big reason the Illustrious lineage became a foundation others build on — most notably NoobAI-XL, which starts from Illustrious and extends its training on a broader Danbooru/e621 dataset. On Civitai the base Illustrious-XL checkpoint is hosted and ready to run, so you can generate from a tag prompt without downloading the ~6.5GB of weights.',
-      'Choose Illustrious when you want clean, tag-driven anime and illustration with strong character consistency and precise control over pose, outfit, and composition through booru tags. It anchors one of the largest anime LoRA ecosystems anywhere, so styles and characters are easy to layer on. If you want the same booru-native approach with even deeper character coverage, its descendant NoobAI is worth comparing; if you want photorealism, legible in-image text, or long natural-language prompts, a Flux-class model is the better fit. For general-purpose versatility outside anime, the parent SDXL ecosystem covers more ground.',
+      'Choose Illustrious when you want clean, tag-driven anime and illustration with strong character consistency and precise control over pose, outfit, and composition through booru tags. It anchors one of the largest anime LoRA ecosystems anywhere, so styles and characters are easy to layer on. If you want the same booru-native approach with even deeper character coverage, its descendant NoobAI is worth comparing; if you want photorealism, legible in-image text, or long natural-language prompts, a FLUX-class model is the better fit. For general-purpose versatility outside anime, the parent SDXL ecosystem covers more ground.',
     ],
     promptTips: [
       'Prompt in Danbooru-style tags, not sentences: short comma-separated descriptors (e.g. "1girl, green hair, low ponytail, school uniform, outdoors") read far better than natural-language phrasing on this SDXL-based model.',
@@ -491,6 +506,13 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         note: 'Civitai-hosted · default',
       },
       {
+        modelId: 1232765,
+        versionId: 1389133,
+        imageId: 57120893,
+        displayName: 'Illustrious XL 1.0',
+        note: 'Official 1.0 release · download',
+      },
+      {
         modelId: 966483,
         versionId: 1082928,
         imageId: 137428155,
@@ -501,12 +523,6 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         versionId: 1191626,
         imageId: 137354346,
         displayName: 'Detailer (Tool / Concept)',
-      },
-      {
-        modelId: 1093089,
-        versionId: 1227713,
-        imageId: 137384611,
-        displayName: 'Color Temp / Saturation Slider',
       },
       {
         modelId: 1105790,
@@ -574,8 +590,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['290,000+', '9,000+', '149,000+', '46,000+'],
-          winner: 0,
+          values: ['{loras:Illustrious}', '{loras:NoobAI}', '{loras:Pony}', '{loras:SDXL}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -602,7 +617,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         a: 'Not on Civitai — we run the compute for you. Locally, being SDXL-based, it fits comfortably on an 8GB+ VRAM GPU.',
       },
     ],
-    localRun: { vram: '8GB+ VRAM', weightsSize: '~6.5GB', tool: 'ComfyUI / Automatic1111' },
+    localRun: { vram: '8GB+ VRAM', weightsSize: '~6.5GB', tool: 'ComfyUI' },
     attribution: 'an SDXL-based anime model by OnomaAI',
     factCheck: [
       {
@@ -615,7 +630,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   NoobAI: {
     key: 'NoobAI',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     name: 'NoobAI',
     metaDescription:
       'Generate with NoobAI-XL on Civitai — an Illustrious-based anime checkpoint with deep character knowledge and strong booru-tag prompting. Browse LoRAs & prompts.',
@@ -732,8 +747,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['Growing', '187,000+', '101,000+', '38,000+'],
-          winner: 1,
+          values: ['{loras:NoobAI}', '{loras:Illustrious}', '{loras:Pony}', '{loras:SDXL}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -777,7 +791,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Qwen: {
     key: 'Qwen',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     name: 'Qwen',
     metaDescription:
       "Generate with Qwen-Image on Civitai — Alibaba's open model with sharp prompt adherence and unusually legible in-image text, including Chinese. Browse LoRAs & prompts.",
@@ -874,7 +888,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Flux', 'SDXL', 'HiDream'],
+      peers: ['FLUX.1', 'SDXL', 'HiDream'],
       rows: [
         {
           label: 'Best for',
@@ -892,7 +906,10 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
           values: ['Medium (6–12s)', 'Fast (4–8s)', 'Fastest (2–4s)', 'Medium (6–12s)'],
           winner: 2,
         },
-        { label: 'LoRA ecosystem', values: ['1,600+', '40,000+', '100,000+', 'Small'], winner: 2 },
+        {
+          label: 'LoRA ecosystem',
+          values: ['{loras:Qwen}', '{loras:Flux1}', '{loras:SDXL}', '{loras:HiDream}'],
+        },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
     },
@@ -923,18 +940,18 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   Pony: {
     key: 'Pony',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     name: 'Pony',
     metaDescription:
       'Generate with Pony Diffusion V6 XL on Civitai — the SDXL fine-tune for characters, anime, and stylized art via score_ tag prompts. Browse top LoRAs & prompts.',
     modality: 'image',
     hero: {
       intro:
-        'Pony Diffusion V6 XL is an SDXL fine-tune by AstraliteHeart built for characters, anime, and stylized art with strong control over pose and composition through its tag-based "score_" prompt system. It anchors one of the largest LoRA and community ecosystems on Civitai. Generate with it right here — no GPU, no install.',
-      badges: ['Text-to-Image', 'By AstraliteHeart', 'SDXL fine-tune'],
+        'Pony Diffusion V6 XL is an SDXL fine-tune by PurpleSmartAI built for characters, anime, and stylized art with strong control over pose and composition through its tag-based "score_" prompt system. It anchors one of the largest LoRA and community ecosystems on Civitai. Generate with it right here — no GPU, no install.',
+      badges: ['Text-to-Image', 'By PurpleSmartAI', 'SDXL fine-tune'],
     },
     overview: [
-      'Pony Diffusion V6 XL is an SDXL fine-tune by AstraliteHeart, built as a versatile character and stylized-art model that handles SFW and NSFW output across anthro, feral, and humanoid subjects. Its defining feature is an opinionated "score_" prompt template: prefixing a prompt with a quality chain steers the model toward higher-fidelity results with no negative prompt and otherwise default settings. Because it was trained on a mix of natural-language captions and booru-style tags, it reads plain descriptions and comma-separated tags equally well, and it recognizes a wide range of popular and obscure characters and series.',
+      'Pony Diffusion V6 XL is an SDXL fine-tune from PurpleSmartAI, the studio founded by its creator AstraliteHeart, built as a versatile character and stylized-art model that handles SFW and NSFW output across anthro, feral, and humanoid subjects. Its defining feature is an opinionated "score_" prompt template: prefixing a prompt with a quality chain steers the model toward higher-fidelity results with no negative prompt and otherwise default settings. Because it was trained on a mix of natural-language captions and booru-style tags, it reads plain descriptions and comma-separated tags equally well, and it recognizes a wide range of popular and obscure characters and series.',
       'The score system is the model\'s signature lever. V6 XL expects the full chain — "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up" — which the author notes was itself a training quirk that arrived too late to correct; the shorter "score_9" from earlier Pony versions still works but has a much weaker effect. Beyond quality, it exposes special data-selection tags: "source_pony", "source_furry", "source_cartoon", and "source_anime" to bias overall style, plus "rating_safe", "rating_questionable", and "rating_explicit" to control content. It must be loaded with clip skip 2, or generations degrade into low-quality blobs.',
       'As an SDXL fine-tune, Pony inherits SDXL\'s native resolutions and is compatible with the enormous SDXL-family LoRA library, and it anchors one of the largest community and LoRA ecosystems on Civitai. Choose it when you want deep character knowledge, the tag-driven "score_" workflow, and that vast LoRA depth. For cleaner anime linework and newer concepts, the sibling SDXL fine-tunes Illustrious and NoobAI are strong alternatives; reach for base SDXL when you want a neutral, general-purpose starting point instead of Pony\'s opinionated defaults.',
     ],
@@ -1040,8 +1057,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['149,000+', '294,000+', '9,800+', '47,000+'],
-          winner: 1,
+          values: ['{loras:Pony}', '{loras:Illustrious}', '{loras:NoobAI}', '{loras:SDXL}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -1065,11 +1081,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Do I need a GPU to run Pony?',
-        a: 'Not on Civitai — we run the compute for you. Locally, Pony needs about 8GB of VRAM and runs in ComfyUI or Automatic1111.',
+        a: 'Not on Civitai — we run the compute for you. Locally, Pony needs about 8GB of VRAM and runs in ComfyUI.',
       },
     ],
-    localRun: { vram: '8GB+ VRAM', weightsSize: '~6.5GB', tool: 'ComfyUI or Automatic1111' },
-    attribution: 'a fine-tune of SDXL by AstraliteHeart (Pony Diffusion)',
+    localRun: { vram: '8GB+ VRAM', weightsSize: '~6.5GB', tool: 'ComfyUI' },
+    attribution: 'a fine-tune of SDXL by PurpleSmartAI (AstraliteHeart)',
     factCheck: [
       {
         field: 'promptTips',
@@ -1081,7 +1097,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   SD1: {
     key: 'SD1',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-07-23',
     slug: 'stable-diffusion',
     name: 'Stable Diffusion',
     metaDescription:
@@ -1095,7 +1111,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     overview: [
       'SD 1.5 is the original open-weights Stable Diffusion release from Runway and Stability AI, and it is the model that started the community. It is a latent diffusion model built on the CLIP text encoder with a native resolution of 512×512, which is why it is tiny to run and lightning-fast — it fits comfortably on GPUs with well under 10GB of VRAM, or none at all when you run it here. Rather than reading long natural-language descriptions, it works from short, comma-separated tag prompts, the same style that shaped years of community workflows.',
       'Almost nobody runs the raw base checkpoint today — the ecosystem lives in its fine-tunes. The default hosted here is DreamShaper, a long-running community model whose author set out to build "a better Stable Diffusion," a versatile "swiss-knife" checkpoint aimed first at art and illustration. Around SD 1.5 sits the deepest support stack of any open model: textual inversions, LoRAs, ControlNet, negative embeddings like the DreamShaper author’s "Bad Dream," and img2img / highres-fix upscaling pipelines that push its 512-native output to higher resolutions.',
-      'Choose SD 1.5 when speed, low hardware cost, and sheer breadth of styles matter more than raw prompt fidelity — it renders in a second or two and has the largest LoRA and fine-tune library anywhere. For higher native resolution and cleaner anatomy, the SDXL-based ecosystems (SDXL, Pony, Illustrious) are the natural step up, and Flux leads on prompt adherence and in-image text. But for fast iteration, stylized art, and reusing a decade of community resources, SD 1.5 remains the lightest and most flexible starting point.',
+      'Choose SD 1.5 when speed, low hardware cost, and sheer breadth of styles matter more than raw prompt fidelity — it renders in a second or two and has the largest LoRA and fine-tune library anywhere. For higher native resolution and cleaner anatomy, the SDXL-based ecosystems (SDXL, Pony, Illustrious) are the natural step up, and FLUX.1 leads on prompt adherence and in-image text. But for fast iteration, stylized art, and reusing a decade of community resources, SD 1.5 remains the lightest and most flexible starting point.',
     ],
     promptTips: [
       'Prompt in tags, not sentences — short, comma-separated keywords following the pattern [quality tags], [subject], [scene], [lighting], [camera/lens], [style]. Front-load the most important concepts, since SD 1.5 weights early tokens more heavily.',
@@ -1177,7 +1193,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['SDXL', 'Flux', 'Pony'],
+      peers: ['SDXL', 'FLUX.1', 'Pony'],
       rows: [
         {
           label: 'Best for',
@@ -1197,8 +1213,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['115,000+', '38,000+', '40,000+', '101,000+'],
-          winner: 0,
+          values: ['{loras:SD1}', '{loras:SDXL}', '{loras:Flux1}', '{loras:Pony}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -1206,7 +1221,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     faq: [
       {
         q: 'How much does it cost to generate with SD 1.5?',
-        a: 'Generation on Civitai runs on Buzz, and SD 1.5 is the cheapest ecosystem to run — it is a small, 512-native model, so each image costs only a little Buzz. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, and because SD 1.5 renders are so light, that daily Blue Buzz stretches a long way: you can iterate through many images without spending real money. Heavier models cost more per render, so reserve a membership for when you move up to SDXL or Flux — for SD 1.5, free Blue Buzz alone goes far.',
+        a: 'Generation on Civitai runs on Buzz, and SD 1.5 is the cheapest ecosystem to run — it is a small, 512-native model, so each image costs only a little Buzz. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, and because SD 1.5 renders are so light, that daily Blue Buzz stretches a long way: you can iterate through many images without spending real money. Heavier models cost more per render, so reserve a membership for when you move up to SDXL or FLUX.1 — for SD 1.5, free Blue Buzz alone goes far.',
       },
       {
         q: 'Why use SD 1.5 when newer models exist?',
@@ -1225,13 +1240,13 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         a: 'Pick an SD 1.5 checkpoint, then stack up to 5 LoRAs in the generator to blend styles. Remix an example to see how the settings carry over.',
       },
     ],
-    localRun: { vram: '4GB+ VRAM', weightsSize: '~2–4GB', tool: 'ComfyUI / Automatic1111' },
+    localRun: { vram: '4GB+ VRAM', weightsSize: '~2–4GB', tool: 'ComfyUI' },
     attribution: 'the original open Stable Diffusion 1.5 by Runway / Stability AI',
   },
 
   HiDream: {
     key: 'HiDream',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     name: 'HiDream',
     metaDescription:
       'Generate with HiDream I1 on Civitai — an open 17B mixture-of-experts model with strong prompt adherence and legible in-image text. Browse HiDream models & prompts.',
@@ -1244,7 +1259,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     overview: [
       'HiDream I1 is an open-weight text-to-image foundation model from HiDream.ai, released with 17 billion parameters and positioned as a state-of-the-art open model for high-quality generation in seconds. It is widely documented as a sparse mixture-of-experts transformer that pairs strong prompt adherence with unusually legible in-image text — the kind of typography earlier open models struggled with. The weights and reference implementation are public (github.com/HiDream-ai/HiDream-I1), and on Civitai the checkpoint is hosted so you can generate without downloading the roughly 17GB of weights or owning a GPU.',
       'HiDream I1 ships in a few variants that trade speed for control. The Full variant runs the long 50-step sampling path and supports classifier-free guidance, which is what makes true negative prompts work; the distilled Dev and Fast variants run at CFG 1 for far quicker drafts, but negative prompts stop helping there and can actually hurt. The model reads natural-language descriptions rather than tag lists, responds strongly to explicit style cues, and handles complex multi-subject scenes and detailed backgrounds well. Around it, the community has built practical LoRAs — skin and face detailers, photorealism and color-correction packs, and stylistic sets like coloring-book, comic, and vector looks — that stack on top of the base checkpoint in the generator.',
-      'Choose HiDream when prompt fidelity and clean rendered text are the priority — layered scenes, posters, signage, and prompts where every described element needs to land. It sits alongside Flux and Qwen as a natural-language, adherence-first model; Flux carries a much larger LoRA library and a photorealism reputation, and lighter SDXL-based checkpoints remain faster and deeper for anime and character styles. HiDream is the pick when you would rather the model follow a detailed description exactly than reach for a specialized style ecosystem, and its 17B size means each image costs more Buzz than a lighter checkpoint.',
+      'Choose HiDream when prompt fidelity and clean rendered text are the priority — layered scenes, posters, signage, and prompts where every described element needs to land. It sits alongside FLUX.1 and Qwen as a natural-language, adherence-first model; FLUX.1 carries a much larger LoRA library and a photorealism reputation, and lighter SDXL-based checkpoints remain faster and deeper for anime and character styles. HiDream is the pick when you would rather the model follow a detailed description exactly than reach for a specialized style ecosystem, and its 17B size means each image costs more Buzz than a lighter checkpoint.',
     ],
     promptTips: [
       'Write in natural language — full descriptive sentences, not comma-separated tags. Detailed descriptions yield sharper results than tag lists. A useful template is: subject and action, then setting and environment, then style descriptors, then lighting and mood.',
@@ -1332,7 +1347,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Flux', 'SDXL', 'Qwen'],
+      peers: ['FLUX.1', 'SDXL', 'Qwen'],
       rows: [
         {
           label: 'Best for',
@@ -1350,7 +1365,10 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
           values: ['Medium (6–12s)', 'Fast (4–8s)', 'Fastest (2–4s)', 'Medium (6–12s)'],
           winner: 2,
         },
-        { label: 'LoRA ecosystem', values: ['60+', '40,000+', '38,000+', '3,000+'], winner: 1 },
+        {
+          label: 'LoRA ecosystem',
+          values: ['{loras:HiDream}', '{loras:Flux1}', '{loras:SDXL}', '{loras:Qwen}'],
+        },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
     },
@@ -1360,8 +1378,8 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         a: 'Generation on Civitai runs on Buzz. You can claim free Blue Buzz every day — through actions like reacting to images and other on-site activity — and put it straight toward generating, no real money required. HiDream I1 is a large 17B model, so it costs more Buzz per image than lighter checkpoints; for heavier use let your Blue Buzz accumulate or add a membership for higher limits.',
       },
       {
-        q: 'What makes HiDream different from Flux?',
-        a: 'HiDream I1 uses a 17B sparse mixture-of-experts architecture tuned for prompt accuracy and clean in-image text, while Flux leans into photorealism and a huge LoRA library. Try HiDream on Civitai and compare for yourself.',
+        q: 'What makes HiDream different from FLUX.1?',
+        a: 'HiDream I1 uses a 17B sparse mixture-of-experts architecture tuned for prompt accuracy and clean in-image text, while FLUX.1 leans into photorealism and a huge LoRA library. Try HiDream on Civitai and compare for yourself.',
       },
       {
         q: 'Can I train my own HiDream LoRA?',
@@ -1390,30 +1408,30 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Flux2: {
     key: 'Flux2',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-07-23',
     additionalEcosystemKeys: [
       'Flux2Klein_9B',
       'Flux2Klein_9B_base',
       'Flux2Klein_4B',
       'Flux2Klein_4B_base',
     ],
-    name: 'Flux.2',
+    name: 'FLUX.2',
     metaDescription:
-      "Generate with Flux.2 on Civitai — Black Forest Labs' latest, with sharper prompt adherence, cleaner in-image text, and stronger photorealism. Browse models & prompts.",
+      "Generate with FLUX.2 on Civitai — Black Forest Labs' latest, with sharper prompt adherence, cleaner in-image text, and stronger photorealism. Browse models & prompts.",
     modality: 'image',
     hero: {
       intro:
-        'Flux.2 is the latest generation of Black Forest Labs text-to-image models — sharper prompt adherence, cleaner in-image text, and stronger photorealism than the original Flux. The open-weight Klein variants run locally, while Pro and Flex are available through the API. Generate with every Flux.2 model right here on Civitai — no GPU, no install.',
+        'FLUX.2 is the latest generation of Black Forest Labs text-to-image models — sharper prompt adherence, cleaner in-image text, and stronger photorealism than the original FLUX.1. The open-weight FLUX.2 [klein] variants run locally, while Pro and Flex are available through the API. Generate with every FLUX.2 model right here on Civitai — no GPU, no install.',
       badges: ['Text-to-Image', 'By Black Forest Labs', 'Open weights (Klein) + API'],
     },
     overview: [
-      'Flux.2 is the current generation of open and API text-to-image models from Black Forest Labs, the team of former Stable Diffusion researchers behind the original Flux. Where the first Flux paired its transformer with a T5 text encoder, Flux.2 moves to the Mistral Small 3.2 text encoder, giving it noticeably stronger language understanding — it parses long, natural-language descriptions and handles instructions in multiple languages. The result is sharper prompt following, cleaner in-image text, and more believable photorealism than the model it replaces.',
-      'The lineup is a set of tiers rather than a single model. Flux.2 [Dev] is the open-weight, quality-first checkpoint (weights are published on Hugging Face and hosted here on Civitai); the Flux.2 [Klein] family — released in 9B and 4B sizes, plus matching "base" variants — is Black Forest Labs’ fastest line yet, folding generation and editing into one compact architecture that can finish an image in roughly a second. Above the open weights sit the API-only tiers — Pro and Flex — tuned for higher fidelity and finer control. Every one of them is generatable on Civitai, so you can move between the open Klein and Dev checkpoints and the hosted API tiers without downloading weights or standing up a local rig.',
-      'Choose Flux.2 when prompt fidelity, legible typography, precise color, or photographic realism matter most — product shots, posters, text-in-image work, and complex multi-subject scenes are where it shines. If you want the smallest, fastest footprint for local iteration, reach for a Klein variant; if you want maximum quality and are generating on Civitai anyway, Dev or the API tiers give you more headroom. For anime and character art the SDXL-based Pony and Illustrious ecosystems still hold a deeper LoRA library, but Flux.2’s own LoRA catalog is growing quickly on top of the open Klein and Dev bases.',
+      'FLUX.2 is the current generation of open and API text-to-image models from Black Forest Labs, the team of former Stable Diffusion researchers behind the original FLUX.1. Where the first FLUX.1 paired its transformer with a T5 text encoder, FLUX.2 moves to the Mistral Small 3.2 text encoder, giving it noticeably stronger language understanding — it parses long, natural-language descriptions and handles instructions in multiple languages. The result is sharper prompt following, cleaner in-image text, and more believable photorealism than the model it replaces.',
+      'The lineup is a set of tiers rather than a single model. FLUX.2 [dev] is the open-weight, quality-first checkpoint (weights are published on Hugging Face and hosted here on Civitai); the FLUX.2 [klein] family — released in 9B and 4B sizes, plus matching "base" variants — is Black Forest Labs’ fastest line yet, folding generation and editing into one compact architecture that can finish an image in roughly a second. Above the open weights sit the API-only tiers — Pro and Flex — tuned for higher fidelity and finer control. Every one of them is generatable on Civitai, so you can move between the open [klein] and [dev] checkpoints and the hosted API tiers without downloading weights or standing up a local rig.',
+      'Choose FLUX.2 when prompt fidelity, legible typography, precise color, or photographic realism matter most — product shots, posters, text-in-image work, and complex multi-subject scenes are where it shines. If you want the smallest, fastest footprint for local iteration, reach for a [klein] variant; if you want maximum quality and are generating on Civitai anyway, [dev] or the API tiers give you more headroom. For anime and character art the SDXL-based Pony and Illustrious ecosystems still hold a deeper LoRA library, but FLUX.2’s own LoRA catalog is growing quickly on top of the open [klein] and [dev] bases.',
     ],
     promptTips: [
-      'Write in natural language — full sentences, not comma-separated tags. Flux.2 uses the Mistral Small 3.2 text encoder, so describe the scene the way you would to a person. It technically accepts very long prompts, but the sweet spot is still about 30–80 words.',
-      'Front-load what matters. Word order carries weight in Flux.2, so lead with the subject and its action before layering in style, lighting, and mood.',
+      'Write in natural language — full sentences, not comma-separated tags. FLUX.2 uses the Mistral Small 3.2 text encoder, so describe the scene the way you would to a person. It technically accepts very long prompts, but the sweet spot is still about 30–80 words.',
+      'Front-load what matters. Word order carries weight in FLUX.2, so lead with the subject and its action before layering in style, lighting, and mood.',
       'Skip weight syntax and negative prompts. (word:1.5) and similar SD-style emphasis are completely ignored, and there is no negative prompt — state what you want ("sharp, crisp focus") instead of what to avoid.',
       'For precise color, name exact shades and materials — "a deep cobalt-blue ceramic vase with a glossy glaze" — rather than a vague word like "blue."',
       'Specific lighting and camera/lens references land well ("warm golden window light," "shot on 80mm, f/2.8"), and prompting in a native language can produce more culturally authentic results.',
@@ -1424,14 +1442,14 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         modelId: 2165902,
         versionId: 2439067,
         imageId: 137385357,
-        displayName: 'Flux.2 [Dev]',
+        displayName: 'FLUX.2 [dev]',
         note: 'Civitai-hosted · default',
       },
       {
         modelId: 2322332,
         versionId: 2612554,
         imageId: 137403800,
-        displayName: 'Flux.2 Klein 9B',
+        displayName: 'FLUX.2 [klein] 9B',
         note: 'Open weights · runs local',
       },
       {
@@ -1463,38 +1481,38 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       {
         imageId: 137403800,
         prompt: 'Soft-lit studio portrait of a woman with detailed features and a flowing dress',
-        settings: 'Steps 20 · Flux.2 Klein 9B · 832×1216',
+        settings: 'Steps 20 · FLUX.2 [klein] 9B · 832×1216',
       },
       {
         imageId: 137403602,
         prompt: 'Dark-fantasy oil painting of a towering monstrous figure, gritty card-art style',
-        settings: 'Steps 20 · Flux.2 · 832×1216',
+        settings: 'Steps 20 · FLUX.2 · 832×1216',
       },
       {
         imageId: 137392809,
         prompt: 'Hyperrealistic illustration of a girl against a vibrant pink-themed background',
-        settings: 'Steps 20 · Flux.2 · 832×1216',
+        settings: 'Steps 20 · FLUX.2 · 832×1216',
       },
       {
         imageId: 137391442,
         prompt:
           'A menacing hooded figure cloaked in a tattered dark robe, chains hanging in shadow',
-        settings: 'Steps 20 · Flux.2 · 832×1216',
+        settings: 'Steps 20 · FLUX.2 · 832×1216',
       },
       {
         imageId: 137384687,
         prompt:
           'A desert wraith with glowing orange eyes, wrapped in earth-toned fabric among ruins',
-        settings: 'Steps 20 · Flux.2 · 832×1216',
+        settings: 'Steps 20 · FLUX.2 · 832×1216',
       },
       {
         imageId: 137379838,
         prompt: 'Dramatic fashion portrait of a tall woman with cinematic studio lighting',
-        settings: 'Steps 20 · Flux.2 · 832×1216',
+        settings: 'Steps 20 · FLUX.2 · 832×1216',
       },
     ],
     comparison: {
-      peers: ['Flux', 'SDXL', 'Qwen'],
+      peers: ['FLUX.1', 'SDXL', 'Qwen'],
       rows: [
         {
           label: 'Best for',
@@ -1522,31 +1540,30 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['2,900+', '40,000+', '100,000+', 'Growing'],
-          winner: 2,
+          values: ['{loras:Flux2}', '{loras:Flux1}', '{loras:SDXL}', '{loras:Qwen}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
     },
     faq: [
       {
-        q: 'How much does it cost to generate with Flux.2?',
-        a: 'Generation on Civitai runs on Buzz, and how far it goes depends on which Flux.2 tier you pick. The heavier Flux.2 [Dev] and the API Pro/Max/Flex tiers cost more Buzz per image, while the compact Klein variants are the fastest and lightest way to iterate. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, so you can generate with Flux.2 without spending real money — your daily Blue Buzz stretches furthest on Klein, and you can let it accumulate or add a membership for heavier Dev and API-tier use.',
+        q: 'How much does it cost to generate with FLUX.2?',
+        a: 'Generation on Civitai runs on Buzz, and how far it goes depends on which FLUX.2 tier you pick. The heavier FLUX.2 [dev] and the API Pro/Max/Flex tiers cost more Buzz per image, while the compact [klein] variants are the fastest and lightest way to iterate. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, so you can generate with FLUX.2 without spending real money — your daily Blue Buzz stretches furthest on [klein], and you can let it accumulate or add a membership for heavier [dev] and API-tier use.',
       },
       {
-        q: "What's the difference between Flux.2 Klein, Dev, Pro and Flex?",
+        q: "What's the difference between FLUX.2 [klein], [dev], Pro and Flex?",
         a: 'Klein 9B and 4B are the open-weight variants you can download and run locally; Dev is the standard Civitai-hosted checkpoint; Pro and Flex are API-only tiers tuned for higher quality and control. All of them are generatable on Civitai.',
       },
       {
-        q: 'How is Flux.2 different from the original Flux?',
-        a: 'Flux.2 is the newer generation from Black Forest Labs, with improved prompt adherence, cleaner in-image text, and better photorealism. Try the same prompt on both and remix the result to compare.',
+        q: 'How is FLUX.2 different from the original FLUX.1?',
+        a: 'FLUX.2 is the newer generation from Black Forest Labs, with improved prompt adherence, cleaner in-image text, and better photorealism. Try the same prompt on both and remix the result to compare.',
       },
       {
-        q: 'Can I run Flux.2 locally?',
+        q: 'Can I run FLUX.2 locally?',
         a: 'The Klein variants are open weights — roughly 9GB (Klein 9B) or 4GB (Klein 4B) — and run in ComfyUI on a 16GB+ VRAM GPU. The Pro and Flex tiers are API-only. No GPU? Generate any of them on Civitai.',
       },
       {
-        q: 'Can I train a Flux.2 LoRA?',
+        q: 'Can I train a FLUX.2 LoRA?',
         a: 'Yes — the open Klein base models support LoRA fine-tuning, and the ecosystem already has thousands of community LoRAs. Publish your own to earn Buzz when others generate with it.',
       },
     ],
@@ -1555,11 +1572,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       weightsSize: '~9GB (Klein 9B) / ~4GB (Klein 4B); Pro/Max/Flex are API-only',
       tool: 'ComfyUI',
     },
-    attribution: 'the latest Flux generation by Black Forest Labs',
+    attribution: 'the latest FLUX.1 generation by Black Forest Labs',
   },
   Krea2: {
     key: 'Krea2',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     name: 'Krea 2',
     metaDescription:
       "Generate with Krea 2 on Civitai — Krea AI's model for sharp photorealism, strong aesthetics, and dependable prompt adherence. Browse checkpoints, LoRAs & prompts.",
@@ -1658,7 +1675,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Flux', 'SDXL', 'Qwen'],
+      peers: ['FLUX.1', 'SDXL', 'Qwen'],
       rows: [
         {
           label: 'Best for',
@@ -1682,8 +1699,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['Growing (500+)', '40,000+', 'Largest', 'Growing'],
-          winner: 2,
+          values: ['{loras:Krea2}', '{loras:Flux1}', '{loras:SDXL}', '{loras:Qwen}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -1716,7 +1732,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Anima: {
     key: 'Anima',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     name: 'Anima',
     metaDescription:
       "Generate with Anima on Civitai — CircleStone Labs' open anime model for clean linework, expressive characters, and vivid color. Browse top Anima LoRAs & prompts.",
@@ -1832,8 +1848,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['Growing', '294,000+', '149,000+', '9,800+'],
-          winner: 1,
+          values: ['{loras:Anima}', '{loras:Illustrious}', '{loras:Pony}', '{loras:NoobAI}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -1866,7 +1881,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   ZImageTurbo: {
     key: 'ZImageTurbo',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     additionalEcosystemKeys: ['ZImageBase'],
     slug: 'z-image',
     name: 'Z-Image',
@@ -1933,39 +1948,43 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     ],
     featuredExamples: [
       {
-        imageId: 137423781,
+        imageId: 123166451,
         prompt:
-          'Gouache-painted portrait of a man with fluffy black hair leaning against a brick wall',
+          'Close-up photo of a black cat in a bubble bath, thick white foam filling the frame',
+        settings: 'Z-Image Turbo · 896×1248',
+      },
+      {
+        imageId: 128243899,
+        prompt:
+          'Post-apocalyptic sunrise over San Francisco, the Golden Gate Bridge ruined but standing',
         settings: 'Z-Image Turbo · 832×1216',
       },
       {
-        imageId: 137421862,
-        prompt: 'Photorealistic 35mm cinematic film still, shallow f/2.8 depth of field',
-        settings: 'Z-Image Turbo · 832×1216',
+        imageId: 115610275,
+        prompt:
+          'An open antique clock box on countryside grass, a miniature village built inside it',
+        settings: 'Z-Image Turbo · 1664×2432',
       },
       {
-        imageId: 137421859,
-        prompt: 'Realistic portrait, soft natural light, masterpiece-quality detail',
-        settings: 'Z-Image Turbo · 832×1216',
+        imageId: 128033929,
+        prompt: 'Silhouetted figure under a cherry blossom tree, luminous pink petals drifting',
+        settings: 'Z-Image Turbo · 2800×4096',
       },
       {
-        imageId: 137421525,
-        prompt: 'Avant-garde full-body fashion editorial, hyper-detailed modern couture',
-        settings: 'Z-Image Turbo · 832×1216',
+        imageId: 123089267,
+        prompt:
+          'High-end food photography of a fresh sushi platter, glistening salmon and soy sheen',
+        settings: 'Z-Image Turbo · 1088×1920',
       },
       {
-        imageId: 137421524,
-        prompt: 'High-fashion editorial portrait, bold styling and dramatic studio lighting',
-        settings: 'Z-Image Turbo · 832×1216',
-      },
-      {
-        imageId: 137416301,
-        prompt: 'Gouache-and-ink cyborg woman on textured paper, half body of gears and circuitry',
-        settings: 'Z-Image Turbo · 832×1216',
+        imageId: 113237256,
+        prompt:
+          'A fluffy white creature with large expressive eyes floating on its back in an ethereal meadow',
+        settings: 'Z-Image Turbo · 720×1280',
       },
     ],
     comparison: {
-      peers: ['Flux', 'SDXL', 'Qwen'],
+      peers: ['FLUX.1', 'SDXL', 'Qwen'],
       rows: [
         {
           label: 'Best for',
@@ -1983,14 +2002,17 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
           values: ['Fastest (few-step)', 'Fast (4–8s)', 'Fast (2–4s)', 'Medium (6–12s)'],
           winner: 0,
         },
-        { label: 'LoRA ecosystem', values: ['9,000+', '40,000+', '38,000+', 'Growing'], winner: 1 },
+        {
+          label: 'LoRA ecosystem',
+          values: ['{loras:ZImageTurbo}', '{loras:Flux1}', '{loras:SDXL}', '{loras:Qwen}'],
+        },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
     },
     faq: [
       {
         q: 'How much does it cost to generate with Z-Image?',
-        a: "Generation on Civitai runs on Buzz, and Z-Image is one of the more affordable options — its compact ~6B architecture and few-step Turbo variant mean each image costs less Buzz than heavier models like Flux. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, and because Z-Image is so light that daily Blue Buzz stretches a long way, letting you generate a lot without spending real money. Lean on Turbo for high-volume, few-step drafting; switch to Base when you want full fidelity and don't mind a slightly higher per-image cost, or add a membership for higher limits.",
+        a: "Generation on Civitai runs on Buzz, and Z-Image is one of the more affordable options — its compact ~6B architecture and few-step Turbo variant mean each image costs less Buzz than heavier models like FLUX.1. Every account earns free Blue Buzz daily by reacting to images and other on-site activity, and because Z-Image is so light that daily Blue Buzz stretches a long way, letting you generate a lot without spending real money. Lean on Turbo for high-volume, few-step drafting; switch to Base when you want full fidelity and don't mind a slightly higher per-image cost, or add a membership for higher limits.",
       },
       {
         q: "What's the difference between Z-Image Turbo and Z-Image Base?",
@@ -2022,7 +2044,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   WanVideo: {
     key: 'WanVideo',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     slug: 'wan',
     additionalEcosystemKeys: [
       'WanVideo1_3B_T2V',
@@ -2157,8 +2179,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['2,500+ (largest for video)', 'Growing', 'Small', 'None (closed)'],
-          winner: 0,
+          values: ['{loras:WanVideo}', 'Growing', '{loras:LTXV}', 'None (closed)'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -2194,7 +2215,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   LTXV: {
     key: 'LTXV',
-    updatedAt: '2026-07-21',
+    updatedAt: '2026-07-23',
     additionalEcosystemKeys: ['LTXV2', 'LTXV23'],
     name: 'LTX Video',
     metaDescription:
@@ -2314,7 +2335,10 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
           values: ['Fastest (near real-time)', 'Medium', 'Medium', 'API (cloud)'],
           winner: 0,
         },
-        { label: 'LoRA ecosystem', values: ['500+', 'Large', 'Small', 'None (closed)'], winner: 1 },
+        {
+          label: 'LoRA ecosystem',
+          values: ['{loras:LTXV}', '{loras:WanVideo}', 'Small', 'None (closed)'],
+        },
         {
           label: 'Available on Civitai',
           values: ['✓ Yes', '✓ Yes', '✓ Yes', 'Paid API'],
@@ -2951,7 +2975,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   NanoBanana: {
     key: 'NanoBanana',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-07-23',
     slug: 'nano-banana',
     name: 'Nano Banana',
     metaDescription:
@@ -2965,7 +2989,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     overview: [
       "Nano Banana is Google's image generation and editing model, delivered through the Gemini app's native image editing and hosted on Civitai. Google built it around a specific problem: when you edit a photo of yourself or someone you know, a result that is \"close but not quite the same\" doesn't feel right. So the model is tuned to maintain a character's likeness from one image to the next — you hand it a photo, describe the change you want, and it keeps the person (or pet) recognizably themselves while applying the edit.",
       "Its standout is identity-preserving editing rather than raw text-to-image novelty. You can give a subject a costume or location change and keep their look consistent across every variation; blend multiple photos into one new scene (you plus your dog on a basketball court); edit in multiple turns, altering one part at a time — paint a room's walls, then add a bookshelf, then furniture — while the rest of the image is preserved; or apply the style of one image to an object in another, like mapping a butterfly's wing pattern onto a dress. It also generates images from a text prompt when you are starting from scratch.",
-      'Three versions are available on Civitai: the original Nano Banana, Nano Banana Pro, and Nano Banana 2. All are hosted (API-only) — there are no open weights to download and no local run — so you switch between versions in the generator without any setup. Choose Nano Banana when the job is editing or personalizing an existing photo with the subject kept intact; for open-weight photorealism, deep LoRA libraries, or fully local workflows, an ecosystem like Flux is the better fit.',
+      'Three versions are available on Civitai: the original Nano Banana, Nano Banana Pro, and Nano Banana 2. All are hosted (API-only) — there are no open weights to download and no local run — so you switch between versions in the generator without any setup. Choose Nano Banana when the job is editing or personalizing an existing photo with the subject kept intact; for open-weight photorealism, deep LoRA libraries, or fully local workflows, an ecosystem like FLUX.1 is the better fit.',
     ],
     promptTips: [
       'For edits, write the change as a plain instruction rather than a full scene description — "give her a 1960s beehive haircut" or "put a tutu on the dog." The model applies the change and keeps the subject looking like themselves, so you rarely need to re-describe the person.',
@@ -3034,7 +3058,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Imagen 4', 'Seedream', 'Flux'],
+      peers: ['Imagen 4', 'Seedream', 'FLUX.1'],
       rows: [
         {
           label: 'Best for',
@@ -3085,7 +3109,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Can I use LoRAs with Nano Banana?',
-        a: 'No. Nano Banana is a hosted Google model without LoRA support, so you steer it with prompts and reference images rather than stacked LoRAs. If you want a deep LoRA ecosystem, an open model like Flux or SDXL is the better choice — all are in the Civitai generator.',
+        a: 'No. Nano Banana is a hosted Google model without LoRA support, so you steer it with prompts and reference images rather than stacked LoRAs. If you want a deep LoRA ecosystem, an open model like FLUX.1 or SDXL is the better choice — all are in the Civitai generator.',
       },
       {
         q: 'Do I need a GPU to run Nano Banana?',
@@ -3104,7 +3128,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Imagen4: {
     key: 'Imagen4',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-07-23',
     slug: 'imagen-4',
     name: 'Imagen 4',
     metaDescription:
@@ -3117,8 +3141,8 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Imagen 4 is the latest iteration of Google DeepMind's Imagen text-to-image line, designed to generate ultra-high-quality, photorealistic images from natural-language prompts. Its emphasis is on visual fidelity, fine detail, and compositional accuracy — reading a plain description of a scene and rendering it with convincing lighting, materials, and structure rather than relying on tag-style keywords. It responds strongly to cinematic, descriptive prompting that specifies perspective, lighting, environment, and action.",
-      'Unlike open-weight families such as Flux or SDXL, Imagen 4 is a closed, hosted model — there are no downloadable weights and no local checkpoints or LoRAs. It is served exclusively through an API, which Civitai runs for you: you write a prompt, pick an aspect ratio, and the image comes back without any local setup. That makes it a fast way to reach Google-grade photorealism directly in the browser.',
-      'Choose Imagen 4 when photorealism, fine detail, accurate composition, or legible in-image text matter most, and when you want a polished result from a natural-language description without tuning samplers or stacking LoRAs. For deep style customization, community fine-tunes, and huge LoRA libraries — especially for anime and character art — the open SDXL-based ecosystems (Pony, Illustrious) or Flux remain the better fit, since Imagen 4 trades that openness for a hosted, ready-to-run pipeline.',
+      'Unlike open-weight families such as FLUX.1 or SDXL, Imagen 4 is a closed, hosted model — there are no downloadable weights and no local checkpoints or LoRAs. It is served exclusively through an API, which Civitai runs for you: you write a prompt, pick an aspect ratio, and the image comes back without any local setup. That makes it a fast way to reach Google-grade photorealism directly in the browser.',
+      'Choose Imagen 4 when photorealism, fine detail, accurate composition, or legible in-image text matter most, and when you want a polished result from a natural-language description without tuning samplers or stacking LoRAs. For deep style customization, community fine-tunes, and huge LoRA libraries — especially for anime and character art — the open SDXL-based ecosystems (Pony, Illustrious) or FLUX.1 remain the better fit, since Imagen 4 trades that openness for a hosted, ready-to-run pipeline.',
     ],
     promptTips: [
       'Write in natural, cinematic language and follow the template [Subject] + [Context/Background] + [Style] + [Lighting and technical details]. Descriptive full sentences beat comma-separated tags on Imagen 4.',
@@ -3173,7 +3197,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Nano Banana', 'Seedream', 'Flux'],
+      peers: ['Nano Banana', 'Seedream', 'FLUX.1'],
       rows: [
         {
           label: 'Best for',
@@ -3216,19 +3240,23 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Can I use LoRAs or custom checkpoints with Imagen 4?',
-        a: 'No — because Imagen 4 is API-only with no open weights, it does not support community LoRAs or fine-tuned checkpoints. If you want to stack LoRAs and custom styles, an open ecosystem like Flux, SDXL, Pony, or Illustrious is the better choice, and all of them run on Civitai too.',
+        a: 'No — because Imagen 4 is API-only with no open weights, it does not support community LoRAs or fine-tuned checkpoints. If you want to stack LoRAs and custom styles, an open ecosystem like FLUX.1, SDXL, Pony, or Illustrious is the better choice, and all of them run on Civitai too.',
       },
       {
         q: 'How should I prompt Imagen 4?',
         a: 'Use natural, cinematic language following [Subject] + [Context] + [Style] + [Lighting], be specific about lighting, and phrase everything positively — Imagen 4 has no negative-prompt field. Remix any example above to start from a working prompt.',
       },
     ],
+    sunset: {
+      date: '2026-08-17',
+      note: 'Google is shutting down the Imagen 4 endpoints, after which it will no longer be generatable on Civitai. Nano Banana and Seedream are the closest hosted alternatives.',
+    },
     attribution: 'a hosted text-to-image model by Google DeepMind (Imagen 4)',
   },
 
   Seedream: {
     key: 'Seedream',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-07-23',
     name: 'Seedream',
     metaDescription:
       "Generate with Seedream on Civitai — ByteDance's text-to-image model with 4K resolution, sharp typography, and strong prompt adherence. Browse models & prompts.",
@@ -3367,7 +3395,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Can I use LoRAs with Seedream?',
-        a: 'No — Seedream is an API-only hosted model with no open weights, so custom LoRAs do not apply. If you want to stack LoRAs, reach for an SDXL-based or Flux checkpoint on Civitai instead.',
+        a: 'No — Seedream is an API-only hosted model with no open weights, so custom LoRAs do not apply. If you want to stack LoRAs, reach for an SDXL-based or FLUX.1 checkpoint on Civitai instead.',
       },
       {
         q: 'Do I need a GPU to run Seedream?',
@@ -3557,7 +3585,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Sora2: {
     key: 'Sora2',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-07-23',
     slug: 'sora-2',
     name: 'Sora 2',
     metaDescription:
@@ -3687,6 +3715,10 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         a: 'No. Sora 2 is API-only, and Civitai runs the generation for you in the cloud — there are no weights to download and nothing to install. Just enter a prompt and generate in the browser.',
       },
     ],
+    sunset: {
+      date: '2026-09-24',
+      note: 'OpenAI is permanently shutting down the Sora and Sora 2 endpoints, after which they will no longer be generatable on Civitai. Veo 3, Kling, and the open Wan ecosystem are the closest alternatives.',
+    },
     attribution: 'a hosted text-to-video model by OpenAI (Sora 2)',
     factCheck: [
       {
@@ -3705,20 +3737,20 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Chroma: {
     key: 'Chroma',
-    updatedAt: '2026-07-22',
+    updatedAt: '2026-07-23',
     name: 'Chroma',
     metaDescription:
-      "Generate with Chroma on Civitai — Lodestone's open, Apache-2.0 base image model (a de-distilled Flux Schnell, ~8.9B) built for fine-tuning. Browse Chroma LoRAs & prompts.",
+      "Generate with Chroma on Civitai — Lodestone's open, Apache-2.0 base image model (a de-distilled FLUX.1 [schnell], ~8.9B) built for fine-tuning. Browse Chroma LoRAs & prompts.",
     modality: 'image',
     hero: {
       intro:
-        'Chroma is an open-weight, Apache-2.0 text-to-image model by Lodestone — a true base model with no aesthetic tuning, meant as a raw, neutral foundation for fine-tuning. Built as a de-distilled Flux.1 Schnell (~8.9B parameters) with a T5 text encoder, it reads natural-language prompts and stays deliberately un-opinionated. Generate with the Civitai-hosted Chroma checkpoint right here — no GPU, no install.',
+        'Chroma is an open-weight, Apache-2.0 text-to-image model by Lodestone — a true base model with no aesthetic tuning, meant as a raw, neutral foundation for fine-tuning. Built as a de-distilled FLUX.1 [schnell] (~8.9B parameters) with a T5 text encoder, it reads natural-language prompts and stays deliberately un-opinionated. Generate with the Civitai-hosted Chroma checkpoint right here — no GPU, no install.',
       badges: ['Text-to-Image', 'Open weights (Apache 2.0)', 'By Lodestone'],
     },
     overview: [
-      'Chroma is an open-source foundational image model from Lodestone, released fully under Apache 2.0 with no gatekeeping. It is positioned explicitly as a true base model: no aesthetic tuning and no post-training such as DPO, so it ships as a raw, neutral starting point designed for the community to fine-tune rather than a polished, ready-styled generator. Architecturally it is a de-distill of Flux.1 Schnell at roughly 8.9 billion parameters, pairing the transformer with a T5 text encoder that actually parses grammar — so it reads natural-language descriptions rather than comma-separated tags. The base-model training run consumed about 105,000 H100 hours, packing in a broad data distribution intended to make fine-tuning on top of it converge quickly.',
+      'Chroma is an open-source foundational image model from Lodestone, released fully under Apache 2.0 with no gatekeeping. It is positioned explicitly as a true base model: no aesthetic tuning and no post-training such as DPO, so it ships as a raw, neutral starting point designed for the community to fine-tune rather than a polished, ready-styled generator. Architecturally it is a de-distill of FLUX.1 [schnell] at roughly 8.9 billion parameters, pairing the transformer with a T5 text encoder that actually parses grammar — so it reads natural-language descriptions rather than comma-separated tags. The base-model training run consumed about 105,000 H100 hours, packing in a broad data distribution intended to make fine-tuning on top of it converge quickly.',
       'Chroma is really a small family rather than one file. Chroma1-Base is the core 512×512 foundation, aimed at longer fine-tunes; Chroma1-HD is the 1024×1024 high-res fine-tune of that base and the best starting point for high-res LoRAs — it is the version hosted on Civitai. On the research branch, Chroma1-Flash is an experimental speed fine-tune whose delta weights can be applied to other Chroma versions, and Chroma1-Radiance is a work-in-progress pixel-space variant meant to sidestep VAE compression artifacts. For local users there are FP8-scaled and GGUF quantized builds that lower the VRAM needed to run it.',
-      'Choose Chroma when you want a permissive, un-tuned open foundation to build on — a neutral canvas for fine-tunes and LoRAs rather than a model with a baked-in house style. Because it is a Flux-derived model with a T5 encoder, it follows natural-language prompts well, but it will not hand you the polished, aesthetic-tuned look that a post-trained model like Flux.1 Dev produces out of the box; that is by design. For maximum prompt polish and in-image text, Flux leads; for the deepest LoRA library and versatile realism, SDXL is the safer default; for legible typography, Qwen-Image is stronger. Reach for Chroma when openness, a clean license, and a raw base to fine-tune are what you actually need.',
+      'Choose Chroma when you want a permissive, un-tuned open foundation to build on — a neutral canvas for fine-tunes and LoRAs rather than a model with a baked-in house style. Because it is a FLUX-derived model with a T5 encoder, it follows natural-language prompts well, but it will not hand you the polished, aesthetic-tuned look that a post-trained model like FLUX.1 [dev] produces out of the box; that is by design. For maximum prompt polish and in-image text, FLUX.1 leads; for the deepest LoRA library and versatile realism, SDXL is the safer default; for legible typography, Qwen-Image is stronger. Reach for Chroma when openness, a clean license, and a raw base to fine-tune are what you actually need.',
     ],
     promptTips: [
       'Write in natural language — full descriptive sentences, not comma-separated tags. Chroma’s T5 text encoder parses grammar, so tag-style prompts underperform. A useful template is: [subject with detail], [setting/scene], [style and color palette], [lighting], [composition].',
@@ -3732,17 +3764,17 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       {
         modelId: 1330309,
         versionId: 2164239,
-        imageId: 137317789,
+        imageId: 103698898,
         displayName: 'Chroma',
         note: 'Civitai-hosted · open base model',
       },
     ],
     featuredExamples: [
       {
-        imageId: 137317789,
+        imageId: 136230335,
         prompt:
-          'Studio Ghibli dark fairytale, low-angle wide shot, an ethereal midnight glade, a Pegasus staring at the viewer with wings spread',
-        settings: 'Chroma v1.0-HD · 1216×832',
+          'Studio Ghibli dark fairytale, low-angle wide shot at midnight, a slender sorceress in a heavy embroidered velvet cloak',
+        settings: 'Chroma v1.0-HD · 832×1216',
       },
       {
         imageId: 137454624,
@@ -3776,7 +3808,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Flux', 'SDXL', 'Qwen'],
+      peers: ['FLUX.1', 'SDXL', 'Qwen'],
       rows: [
         {
           label: 'Best for',
@@ -3802,8 +3834,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         },
         {
           label: 'LoRA ecosystem',
-          values: ['Growing', '40,000+', '40,000+', '1,600+'],
-          winner: 1,
+          values: ['{loras:Chroma}', '{loras:Flux1}', '{loras:SDXL}', '{loras:Qwen}'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -3811,15 +3842,15 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     faq: [
       {
         q: 'How much does it cost to generate with Chroma?',
-        a: 'Generation on Civitai runs on Buzz, not real money at the point of use. Chroma is an open model — a de-distilled Flux Schnell at roughly 8.9B parameters — so it sits in the moderate range: lighter than a full 12B Flux Dev or a 20B Qwen render, heavier than a small SD checkpoint. Every account earns free Blue Buzz daily just by reacting to images and staying active on the site, and because Chroma is relatively light that daily Blue Buzz stretches a long way — you can iterate on prompts and try fine-tunes without spending. Generate heavily or at large sizes and you will draw Buzz down faster, so you can let it accumulate or add a membership for higher limits.',
+        a: 'Generation on Civitai runs on Buzz, not real money at the point of use. Chroma is an open model — a de-distilled FLUX.1 [schnell] at roughly 8.9B parameters — so it sits in the moderate range: lighter than a full 12B FLUX.1 [dev] or a 20B Qwen render, heavier than a small SD checkpoint. Every account earns free Blue Buzz daily just by reacting to images and staying active on the site, and because Chroma is relatively light that daily Blue Buzz stretches a long way — you can iterate on prompts and try fine-tunes without spending. Generate heavily or at large sizes and you will draw Buzz down faster, so you can let it accumulate or add a membership for higher limits.',
       },
       {
         q: 'What exactly is Chroma?',
-        a: 'Chroma is an open-source foundational image model by Lodestone — a true base model with no aesthetic tuning and no post-training like DPO, meant as a raw, neutral starting point for fine-tuning. It is a de-distilled Flux.1 Schnell (~8.9B parameters) released under Apache 2.0. Try the hosted checkpoint in the Civitai generator.',
+        a: 'Chroma is an open-source foundational image model by Lodestone — a true base model with no aesthetic tuning and no post-training like DPO, meant as a raw, neutral starting point for fine-tuning. It is a de-distilled FLUX.1 [schnell] (~8.9B parameters) released under Apache 2.0. Try the hosted checkpoint in the Civitai generator.',
       },
       {
-        q: 'How is Chroma different from Flux?',
-        a: 'Chroma is derived from Flux.1 Schnell but de-distilled and deliberately left un-tuned — no baked-in aesthetic — so it behaves as a neutral base to fine-tune, and it ships under a permissive Apache 2.0 license. Flux.1 Dev gives you a more polished look out of the box. Run both on Civitai and compare the raw base against the tuned model.',
+        q: 'How is Chroma different from FLUX.1?',
+        a: 'Chroma is derived from FLUX.1 [schnell] but de-distilled and deliberately left un-tuned — no baked-in aesthetic — so it behaves as a neutral base to fine-tune, and it ships under a permissive Apache 2.0 license. FLUX.1 [dev] gives you a more polished look out of the box. Run both on Civitai and compare the raw base against the tuned model.',
       },
       {
         q: 'Can I train my own Chroma LoRA?',
@@ -3864,6 +3895,18 @@ export const getEcosystemSeoConfig = (key: string): EcosystemSeoConfig | undefin
 export const getEcosystemSeoSlug = (config: EcosystemSeoConfig): string =>
   config.slug ?? config.key.toLowerCase();
 
+/** Matches a `{loras:Key}` token in a comparison value. Global — use with `.replace`/`matchAll`. */
+export const LORA_COUNT_TOKEN = /\{loras:([A-Za-z0-9_]+)\}/g;
+
+/** ECOSYSTEM_SEO keys whose live LoRA count this page's comparison table needs. */
+export const getComparisonLoraCountKeys = (config: EcosystemSeoConfig): string[] => [
+  ...new Set(
+    config.comparison.rows
+      .flatMap((row) => row.values)
+      .flatMap((value) => [...value.matchAll(LORA_COUNT_TOKEN)].map((m) => m[1]))
+  ),
+];
+
 /** Every basemodel ecosystem key this page represents (primary + combined). */
 export const getConfigEcosystemKeys = (config: EcosystemSeoConfig): string[] => [
   config.key,
@@ -3900,8 +3943,8 @@ export type EcosystemSeoPage = {
  * Adding a new ecosystem page = add its config to ECOSYSTEM_SEO + an entry here.
  */
 export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
-  { slug: 'flux1', label: 'Flux', ecosystemKeys: ['Flux1'] },
-  { slug: 'flux2', label: 'Flux.2', ecosystemKeys: ['Flux2'] },
+  { slug: 'flux1', label: 'FLUX.1', ecosystemKeys: ['Flux1'] },
+  { slug: 'flux2', label: 'FLUX.2', ecosystemKeys: ['Flux2'] },
   { slug: 'sdxl', label: 'SDXL', ecosystemKeys: ['SDXL'] },
   { slug: 'pony', label: 'Pony', ecosystemKeys: ['Pony'] },
   { slug: 'illustrious', label: 'Illustrious', ecosystemKeys: ['Illustrious'] },
@@ -3925,6 +3968,10 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'anima', label: 'Anima', ecosystemKeys: ['Anima'] },
   { slug: 'z-image', label: 'Z-Image', ecosystemKeys: ['ZImageTurbo', 'ZImageBase'] },
 ];
+
+/** True once an announced sunset date has arrived — the ecosystem's endpoints are gone. */
+export const isEcosystemSunset = (config: EcosystemSeoConfig, now = new Date()): boolean =>
+  !!config.sunset && now.toISOString().slice(0, 10) >= config.sunset.date;
 
 /** Whether an SEO page slug has a built config (renders 200) vs. is a planned target. */
 export const isEcosystemSeoPageLive = (slug: string): boolean =>
