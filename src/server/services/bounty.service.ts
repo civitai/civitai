@@ -8,7 +8,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
-import { groupBy } from 'lodash-es';
+import { groupBy, uniq } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
@@ -45,6 +45,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '../utils/errorHandling';
+import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { IngestImageInput } from '~/server/schema/image.schema';
@@ -312,8 +313,15 @@ export const updateBountyById = async ({
   images,
   userId,
   entryLimit,
+  isModerator,
+  addLockedProperties,
   ...data
-}: UpdateBountyInput & { userId: number }) => {
+}: UpdateBountyInput & {
+  userId: number;
+  isModerator?: boolean;
+  /** Locks added by the server itself (the profanity filter), not by the caller. */
+  addLockedProperties?: string[];
+}) => {
   // Convert dates to UTC for storing
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
@@ -328,9 +336,25 @@ export const updateBountyById = async ({
           id: true,
           entryLimit: true,
           complete: true,
+          lockedProperties: true,
           _count: { select: { entries: true } },
         },
       });
+
+      // Enforced here rather than only in upsertBounty: bounty.update reaches this
+      // function directly, so the upsert path is not the only way in.
+      enforceLockedProperties({
+        data,
+        storedLockedProperties: existing.lockedProperties,
+        isModerator,
+      });
+      // Applied after enforcement, which drops every caller-supplied lock — these come from
+      // the server, so they must survive it.
+      if (addLockedProperties?.length)
+        data.lockedProperties = uniq([
+          ...(existing.lockedProperties ?? []),
+          ...addLockedProperties,
+        ]);
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
 
@@ -428,10 +452,15 @@ export const upsertBounty = async ({
   ...data
 }: UpsertBountyInput & { userId: number; isModerator: boolean; buzzType?: BuzzSpendType }) => {
   await throwOnBlockedLinkDomain(data.description);
-  if (!isModerator) {
-    // don't allow updating of locked properties
-    for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
 
+  const stored = id
+    ? await dbRead.bounty.findUnique({ where: { id }, select: { lockedProperties: true } })
+    : null;
+  const storedLockedProperties = stored?.lockedProperties ?? [];
+  enforceLockedProperties({ data, storedLockedProperties, isModerator });
+
+  const addLockedProperties: string[] = [];
+  if (!isModerator) {
     // Check bounty name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
@@ -447,11 +476,12 @@ export const upsertBounty = async ({
           metrics: evaluation.metrics,
         },
       };
-      data.nsfw = true;
-      data.lockedProperties =
-        data.lockedProperties && !data.lockedProperties.includes('nsfw')
-          ? [...data.lockedProperties, 'nsfw']
-          : ['nsfw'];
+      // A stored nsfw lock is a moderator's call: keep the detection for review, but
+      // never let the filter overturn it.
+      if (!storedLockedProperties.includes('nsfw')) {
+        data.nsfw = true;
+        addLockedProperties.push('nsfw');
+      }
     }
   }
 
@@ -460,6 +490,8 @@ export const upsertBounty = async ({
     return updateBountyById({
       ...updateInput,
       userId,
+      isModerator,
+      addLockedProperties,
     });
   } else {
     if (data.poi || (data.poi && data.nsfw)) {

@@ -58,6 +58,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import {
@@ -767,17 +768,9 @@ export const upsertArticle = async ({
 }) => {
   try {
     await throwOnBlockedLinkDomain(data.content);
-    if (!isModerator) {
-      // don't allow updating of locked properties
-      for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
-      // moderatorNsfwLevel is a mod-only field. Silently strip it from
-      // non-moderator payloads rather than throwing: the form never exposes
-      // this control to owners, so a client sending it indicates either a
-      // stale client or an attempt to forge the override — either way, drop.
-      delete data.moderatorNsfwLevel;
-    }
 
-    // For updates, fetch article early so we can check cover image ownership and NSFW level
+    // For updates, fetch article early so we can enforce its stored locks and check cover
+    // image ownership and NSFW level
     let article: {
       id: number;
       title: string;
@@ -815,6 +808,19 @@ export const upsertArticle = async ({
       if (!article) throw throwNotFoundError();
       const isOwner = article.userId === userId || isModerator;
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+    }
+
+    enforceLockedProperties({
+      data,
+      storedLockedProperties: article?.lockedProperties,
+      isModerator,
+    });
+    if (!isModerator) {
+      // moderatorNsfwLevel is a mod-only field. Silently strip it from
+      // non-moderator payloads rather than throwing: the form never exposes
+      // this control to owners, so a client sending it indicates either a
+      // stale client or an attempt to forge the override — either way, drop.
+      delete data.moderatorNsfwLevel;
     }
 
     // TODO make coverImage required here and in db

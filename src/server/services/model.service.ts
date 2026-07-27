@@ -136,6 +136,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
@@ -2137,26 +2138,6 @@ export async function setModelMinor({
   await applyModelFlagSideEffects({ before, after: result });
 
   return result;
-}
-
-/**
- * Locks come from the stored row, never the payload: enforcing against a client-supplied
- * `lockedProperties` lets a creator unlock their own model, and letting that array reach
- * the write erases the stored locks outright.
- */
-function enforceLockedProperties<T extends { lockedProperties?: string[] }>({
-  data,
-  storedLockedProperties,
-  isModerator,
-}: {
-  data: T;
-  storedLockedProperties?: string[] | null;
-  isModerator?: boolean;
-}) {
-  if (isModerator) return;
-
-  for (const prop of storedLockedProperties ?? []) delete (data as Record<string, unknown>)[prop];
-  delete (data as Record<string, unknown>).lockedProperties;
 }
 
 export const upsertModel = async (
