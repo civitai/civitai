@@ -98,6 +98,35 @@ describe('convertMarkdownForEditor', () => {
     expect(sanitizeHtml(html)).toContain('<blockquote>');
   });
 
+  // Image extraction only accepts Civitai-hosted URLs, so an off-site <img> is
+  // never scanned nor counted by the publish gate, and leaks reader IPs to the
+  // host. Import must not create one.
+  it('demotes an off-site image to a link', () => {
+    const result = convertMarkdownForEditor('![a shot](https://evil.example/tracker.jpg)');
+
+    expect(result.externalImagesLinked).toBe(1);
+    expect(result.html).not.toContain('<img');
+    expect(result.html).toContain('href="https://evil.example/tracker.jpg"');
+    expect(result.html).toContain('a shot');
+    expect(sanitizeHtml(result.html)).not.toContain('<img');
+  });
+
+  it('falls back to the url as link text when there is no alt', () => {
+    const result = convertMarkdownForEditor('![](https://evil.example/x.png)');
+
+    expect(result.externalImagesLinked).toBe(1);
+    expect(result.html).toContain('https://evil.example/x.png');
+  });
+
+  it('keeps a Civitai-hosted image, which scanning can see', () => {
+    const url = 'https://image.civitai.com/abc/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/original';
+    const result = convertMarkdownForEditor(`![ok](${url})`);
+
+    expect(result.externalImagesLinked).toBe(0);
+    expect(result.html).toContain('<img');
+    expect(result.html).toContain(url);
+  });
+
   it('clamps headings deeper than h3', () => {
     const result = convertMarkdownForEditor('#### Deep\n\n##### Deeper');
 

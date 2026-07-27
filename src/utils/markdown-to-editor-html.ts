@@ -3,6 +3,7 @@ import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
 import { unified } from 'unified';
+import { extractCloudflareUuid } from '~/utils/article-helpers';
 
 /**
  * Markdown -> HTML for the Tiptap editor.
@@ -44,6 +45,8 @@ function stripFrontmatter(markdown: string) {
 type MdNode = {
   type: string;
   value?: string;
+  url?: string;
+  alt?: string;
   depth?: number;
   checked?: boolean | null;
   children?: MdNode[];
@@ -54,6 +57,7 @@ export type MarkdownConversionResult = {
   tablesConverted: number;
   headingsClamped: number;
   taskItemsConverted: number;
+  externalImagesLinked: number;
 };
 
 type ConversionStats = Omit<MarkdownConversionResult, 'html'>;
@@ -108,6 +112,24 @@ function fitToEditorSchema(node: MdNode, stats: ConversionStats) {
       continue;
     }
 
+    // An off-site `<img>` survives the sanitizer but is invisible to image
+    // scanning: `extractImagesFromArticle` and `getContentMedia` both go through
+    // `extractCloudflareUuid`, which only accepts Civitai-hosted URLs. A foreign
+    // host is therefore never extracted, never scanned and never counted by the
+    // publish gate, while still leaking every reader's IP to it. Demote to a link
+    // so the reference survives without embedding an unscanned image; the author
+    // can re-add it with the image button, which uploads through Cloudflare.
+    if (child.type === 'image' && !extractCloudflareUuid(child.url ?? '')) {
+      const url = child.url ?? '';
+      children[i] = {
+        type: 'link',
+        url,
+        children: [{ type: 'text', value: child.alt?.trim() || url }],
+      };
+      stats.externalImagesLinked++;
+      continue;
+    }
+
     if (child.type === 'heading' && (child.depth ?? 0) > MAX_HEADING_DEPTH) {
       child.depth = MAX_HEADING_DEPTH;
       stats.headingsClamped++;
@@ -147,6 +169,7 @@ export function convertMarkdownForEditor(markdown: string): MarkdownConversionRe
     tablesConverted: 0,
     headingsClamped: 0,
     taskItemsConverted: 0,
+    externalImagesLinked: 0,
   };
 
   const file = unified()
@@ -177,6 +200,7 @@ export function describeMarkdownConversion({
   tablesConverted,
   headingsClamped,
   taskItemsConverted,
+  externalImagesLinked,
 }: ConversionStats) {
   const plural = (count: number, noun: string) => `${count} ${noun}${count > 1 ? 's' : ''}`;
   const notes: string[] = [];
@@ -184,6 +208,13 @@ export function describeMarkdownConversion({
   if (tablesConverted) notes.push(`${plural(tablesConverted, 'table')} converted to code blocks`);
   if (headingsClamped) notes.push(`${plural(headingsClamped, 'heading')} lowered to H3`);
   if (taskItemsConverted) notes.push(`${plural(taskItemsConverted, 'checklist item')} flattened`);
+  if (externalImagesLinked)
+    notes.push(
+      `${plural(
+        externalImagesLinked,
+        'off-site image'
+      )} turned into links (re-add them with the image button so they get scanned)`
+    );
 
   return notes.length ? notes.join(', ') : undefined;
 }
