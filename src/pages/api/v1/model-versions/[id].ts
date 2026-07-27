@@ -71,8 +71,6 @@ export default MixedAuthEndpoint(async function handler(
         mv."trainingDetails",
         mv."baseModel",
         mv."baseModelType",
-        mv."earlyAccessEndsAt",
-        mv."earlyAccessConfig",
         mv.description,
         (SELECT rr."resourceId" FROM "RecommendedResource" rr
          WHERE rr."sourceId" = mv.id

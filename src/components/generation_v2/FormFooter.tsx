@@ -1204,7 +1204,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     const totalCost = (whatIfData?.cost?.total ?? 0) + totalTip;
 
     // Check if any resources have early access
-    const hasEarlyAccess = resourceData.some((x) => x.earlyAccessConfig);
+    const hasEarlyAccess = resourceData.some((x) => x.paidAccessTerms);
 
     // Wrap the mutation call with buzz transaction check
     const performTransaction = async () => {

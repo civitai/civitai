@@ -1,12 +1,10 @@
 import type { Availability, ModelStatus, ModelType } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import type { ModelVersionTerms } from '@civitai/buzz';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import type {
-  ModelVersionEarlyAccessConfig,
-  RecommendedSettingsSchema,
-} from '~/server/schema/model-version.schema';
+import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 
 export const resourceDataCache = createCachedArray({
@@ -32,7 +30,9 @@ export const resourceDataCache = createCachedArray({
         mv."status",
         mv."usageControl",
         mv."flags",
-        (CASE WHEN mv."availability" = 'EarlyAccess' AND (mv."earlyAccessEndsAt" >= NOW() OR mv."earlyAccessPermanent") THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        (SELECT pa."terms" FROM "PaidAccess" pa
+         WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+           AND (pa."endsAt" IS NULL OR pa."endsAt" > now())) as "paidAccessTerms",
         (mv."meta"->'generationAlias'->>'versionId')::int AS "aliasId",
         gc."covered",
         FALSE AS "hasAccess",
@@ -81,7 +81,7 @@ export type GenerationResourceDataModel = {
   baseModel: string;
   settings: RecommendedSettingsSchema | null;
   availability: Availability;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
+  paidAccessTerms?: ModelVersionTerms | null;
   aliasId: number | null;
   covered: boolean | null;
   status: ModelStatus;

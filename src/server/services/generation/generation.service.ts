@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isFreeGeneration, paidGenerationGrant } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
@@ -1188,9 +1189,9 @@ export async function getResourceData(
         (x) =>
           x.covered &&
           !x.hasAccess &&
-          x.earlyAccessConfig &&
+          x.paidAccessTerms &&
           // Free generation will technically bypass access checks, but we still want to show the early access badge
-          !x.earlyAccessConfig.freeGeneration
+          !isFreeGeneration(x.paidAccessTerms)
       )
       .map((x) => x.id);
 
@@ -1318,7 +1319,10 @@ export async function getResourceData(
             // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
             resource.hasAccess = !!(
               entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
-              !!resource.earlyAccessConfig?.generationTrialLimit
+              !!(
+                resource.paidAccessTerms &&
+                paidGenerationGrant(resource.paidAccessTerms)?.trialLimit
+              )
             );
             resource.canGenerate = resource.hasAccess && resource.canGenerate;
           }

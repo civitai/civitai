@@ -81,6 +81,7 @@ import type {
   BountyEngagementType,
   CsamReportType,
   Availability,
+  PaidAccessEntityType,
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
@@ -1739,6 +1740,7 @@ export type ComicChapter = {
   earlyAccessConfig: unknown | null;
   earlyAccessEndsAt: Timestamp | null;
   publishedAt: Timestamp | null;
+  initialPublishedAt: Timestamp | null;
   nsfwLevel: Generated<number>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
@@ -2664,6 +2666,7 @@ export type ModelVersion = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   publishedAt: Timestamp | null;
+  initialPublishedAt: Timestamp | null;
   status: Generated<ModelStatus>;
   trainingStatus: TrainingStatus | null;
   trainingDetails: unknown | null;
@@ -2804,6 +2807,16 @@ export type Outbox = {
   createdAt: Generated<Timestamp | null>;
   details: unknown | null;
   attempts: number | null;
+};
+export type PaidAccess = {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  endsAt: Timestamp | null;
+  timeframeDays: number | null;
+  terms: unknown;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type Partner = {
   id: Generated<number>;
@@ -4062,6 +4075,7 @@ export type DB = {
   OauthClient: OauthClient;
   OauthConsent: OauthConsent;
   Outbox: Outbox;
+  PaidAccess: PaidAccess;
   Partner: Partner;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;

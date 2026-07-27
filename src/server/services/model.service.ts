@@ -164,6 +164,8 @@ import {
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
+import { isPaidAccessActive } from '@civitai/buzz';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -1559,17 +1561,19 @@ export const getModelVersionsMicro = async ({
       id: true,
       name: true,
       index: true,
-      earlyAccessEndsAt: true,
-      earlyAccessPermanent: true,
       createdAt: true,
       publishedAt: true,
     },
   });
 
-  return versions.map(({ earlyAccessEndsAt, earlyAccessPermanent, ...v }) => ({
-    ...v,
-    isEarlyAccess: earlyAccessPermanent || (!!earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt)),
-  }));
+  const paidAccess = await getPaidAccess(
+    'ModelVersion',
+    versions.map((v) => v.id)
+  );
+  return versions.map((v) => {
+    const row = paidAccess[v.id];
+    return { ...v, isEarlyAccess: !!row && isPaidAccessActive(row) };
+  });
 };
 
 export const updateModelById = async ({
@@ -2889,20 +2893,27 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
       publishedAt: true,
       modelVersions: {
         where: { status: ModelStatus.Published },
-        select: { id: true, earlyAccessEndsAt: true, createdAt: true },
+        select: { id: true, createdAt: true },
       },
     },
   });
   if (!model) throw throwNotFoundError();
 
   const { modelVersions } = model;
-  const nextEarlyAccess = modelVersions.find((v) => !!v.earlyAccessEndsAt);
+  const paidAccess = await getPaidAccess(
+    'ModelVersion',
+    modelVersions.map((v) => v.id)
+  );
+  const now = new Date();
+  const nextEarlyAccess = modelVersions
+    .map((v) => paidAccess[v.id])
+    .find((row) => row && isPaidAccessActive(row, now) && row.endsAt != null);
 
   if (nextEarlyAccess) {
     await updateModelById({
       id,
       data: {
-        earlyAccessDeadline: nextEarlyAccess.earlyAccessEndsAt,
+        earlyAccessDeadline: nextEarlyAccess.endsAt,
       },
     });
   } else {

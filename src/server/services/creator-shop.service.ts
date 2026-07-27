@@ -65,7 +65,8 @@ import type {
   UpdateCreatorShopItemInput,
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
+import type { ModelVersionTerms } from '@civitai/buzz';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
@@ -728,13 +729,10 @@ export const getCreatorShop = async ({
 export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAccessPricesInput) => {
   const prices: Record<number, number> = {};
   if (!modelVersionIds.length) return prices;
-  const versions = await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: { id: true, earlyAccessConfig: true },
-  });
-  for (const v of versions) {
-    const cfg = v.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
-    if (cfg?.chargeForDownload && cfg.downloadPrice) prices[v.id] = cfg.downloadPrice;
+  const paidAccess = await getPaidAccess('ModelVersion', modelVersionIds);
+  for (const id of modelVersionIds) {
+    const terms = paidAccess[id]?.terms as ModelVersionTerms | undefined;
+    if (terms?.download?.price) prices[id] = terms.download.price;
   }
   return prices;
 };

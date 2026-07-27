@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
+import { isPaidAccessActive } from '@civitai/buzz';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-membership.service';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 
 // A single public (non-owner, non-moderator) donation goal, shaped byte-identically to
 // `modelVersionDonationGoals`' output element: the DonationGoal row fields it selects plus
@@ -40,7 +42,7 @@ export const publicDonationGoalsLookupFn = async (
   ids: number[],
   fromWrite?: boolean
 ): Promise<Record<number, ModelVersionPublicDonationGoalsCacheItem>> => {
-  const versionSelect = { id: true, earlyAccessEndsAt: true } as const;
+  const versionSelect = { id: true } as const;
 
   let versions = await dbRead.modelVersion.findMany({
     where: { id: { in: ids } },
@@ -63,7 +65,18 @@ export const publicDonationGoalsLookupFn = async (
   }
   if (versions.length === 0) return {};
 
-  const earlyAccessById = new Map(versions.map((v) => [v.id, v.earlyAccessEndsAt]));
+  // Public EA goals show only during a timed window: map version -> its live timed deadline (or
+  // null for permanent/inactive gates, which expose nothing here — matching the old column read).
+  const paidAccess = await getPaidAccess(
+    'ModelVersion',
+    versions.map((v) => v.id)
+  );
+  const earlyAccessById = new Map(
+    versions.map((v) => {
+      const row = paidAccess[v.id];
+      return [v.id, row && isPaidAccessActive(row) ? row.endsAt : null] as const;
+    })
+  );
   const db = fromWrite ? dbWrite : dbRead;
 
   // PUBLIC filter: only active goals (draft/inactive goals are owner/mod-only). This

@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { isPaidAccessActive } from '@civitai/buzz';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import { modelVersionAccessCache } from '~/server/redis/caches';
 import type { SupportedAvailabilityResources } from '../schema/base.schema';
 
@@ -124,6 +126,21 @@ export const hasEntityAccess = async ({
     data = await dbRead.$queryRaw<EntityAccessDataType[]>(query);
   }
 
+  // Gated-ness for model versions comes from PaidAccess, not `availability`, so a version stays
+  // behind the permission check once the EarlyAccess enum value is retired (Phase 2). During Phase 1
+  // a PaidAccess row exists iff availability='EarlyAccess' & active, so this is behavior-preserving.
+  const paidGatedIds = new Set<number>();
+  if (entityType === 'ModelVersion') {
+    const paid = await getPaidAccess('ModelVersion', entityIds);
+    const now = new Date();
+    for (const id of entityIds) {
+      const row = paid[id];
+      if (row && isPaidAccessActive(row, now)) paidGatedIds.add(id);
+    }
+  }
+  const isOpenAccess = (entityId: number, availability: Availability) =>
+    OPEN_ACCESS_AVAILABILITY.some((a) => a === availability) && !paidGatedIds.has(entityId);
+
   const matched = entityIds.map((entityId) => ({
     entityId,
     entityType,
@@ -133,10 +150,8 @@ export const hasEntityAccess = async ({
     ...data.find((x) => x.entityId === entityId),
   }));
 
-  const privateRecords = matched.filter((d) =>
-    // Private & EarlyAccess both require a permission check.
-    [Availability.Private, Availability.EarlyAccess].some((a) => a === d.availability)
-  );
+  // Private, EarlyAccess, and any PaidAccess-gated version require a permission check.
+  const privateRecords = matched.filter((d) => !isOpenAccess(d.entityId, d.availability));
 
   // All entities are public. Access granted to everyone.
   if (privateRecords.length === 0 || isModerator) {
@@ -168,7 +183,7 @@ export const hasEntityAccess = async ({
     return matched.map((d) => ({
       entityType,
       entityId: d.entityId,
-      hasAccess: OPEN_ACCESS_AVAILABILITY.some((a) => a === d.availability),
+      hasAccess: isOpenAccess(d.entityId, d.availability),
       availability: d.availability,
       permissions: EntityAccessPermission.All,
     }));
@@ -192,9 +207,7 @@ export const hasEntityAccess = async ({
   // Complex scenario - we have mixed entities with public/private access.
   return entityIds.map((entityId) => {
     const openAccess = data.find(
-      (entity) =>
-        entity.entityId === entityId &&
-        OPEN_ACCESS_AVAILABILITY.some((a) => a === entity.availability)
+      (entity) => entity.entityId === entityId && isOpenAccess(entity.entityId, entity.availability)
     );
     // If the entity is public, we're ok to assume the user has access.
     if (openAccess) {

@@ -1,11 +1,15 @@
 import { TRPCError } from '@trpc/server';
+import {
+  earlyAccessConfigFromPaidAccess,
+  getPaidAccess,
+} from '~/server/services/paid-access.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, modelVersionPublicDonationGoalsCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
@@ -114,8 +118,6 @@ const loadModelVersion = async ({
         description: true,
         baseModel: true,
         baseModelType: true,
-        earlyAccessConfig: true,
-        earlyAccessEndsAt: true,
         trainedWords: true,
         epochs: true,
         steps: true,
@@ -279,12 +281,23 @@ const loadModelVersion = async ({
     const canGenerate = versionState?.canGenerate ?? false;
     const wildcardSetId = versionState?.wildcardSetId;
 
+    // Backward bridge: reconstruct the legacy earlyAccessConfig + earlyAccessEndsAt from PaidAccess so
+    // the (deferred) upsert form + purchase UI keep reading the blob unchanged. Remove with the bridge.
+    const paidAccess = (await getPaidAccess('ModelVersion', [id]))[id];
+    // A model version's only donation goal is its early-access one, so take the first (if any).
+    const eaDonationGoal = paidAccess
+      ? (await modelVersionPublicDonationGoalsCache.fetch([id]))[id]?.goals[0] ?? null
+      : null;
+
     return {
       ...version,
       licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
       canGenerate,
       wildcardSetId,
-      earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
+      earlyAccessConfig: paidAccess
+        ? earlyAccessConfigFromPaidAccess(paidAccess, eaDonationGoal)
+        : null,
+      earlyAccessEndsAt: paidAccess?.endsAt ?? null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,

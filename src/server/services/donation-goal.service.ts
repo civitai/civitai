@@ -8,6 +8,7 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { bustMvCache } from '~/server/services/model-version.service';
+import { bustPaidAccessCache, getPaidAccess } from '~/server/services/paid-access.service';
 import { updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -142,31 +143,24 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
     });
     goal.active = false;
 
-    // This goal was completed, early access should be granted. Fetch the model version to confirm early access still applies and complete it.
+    // This goal was completed, early access should be granted. Confirm a TIMED gate is still active
+    // (permanent gates never end early on goal completion), then end it and republish-as-New.
     const modelVersion = await dbRead.modelVersion.findUnique({
-      where: {
-        id: goal.modelVersionId,
-      },
-      select: {
-        earlyAccessConfig: true,
-        earlyAccessEndsAt: true,
-        modelId: true,
-      },
+      where: { id: goal.modelVersionId },
+      select: { modelId: true },
     });
+    const paidAccess = (await getPaidAccess('ModelVersion', [goal.modelVersionId]))[
+      goal.modelVersionId
+    ];
+    const timedActive = !!paidAccess && paidAccess.endsAt != null && paidAccess.endsAt > new Date();
 
-    if (modelVersion?.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt > new Date()) {
+    if (modelVersion && timedActive) {
+      // End the gate now (PaidAccess.endsAt = now) — keep the row (tombstone). Access ends
+      // immediately; the expiry job republishes the version as "New" within a minute, uniformly
+      // with natural expiry.
       await dbWrite.$executeRaw`
-        UPDATE "ModelVersion"
-        SET "earlyAccessConfig" =
-          COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
-            'timeframe', 0,
-            'originalPublishedAt', "publishedAt",
-            'originalTimeframe', "earlyAccessConfig"->>'timeframe'
-          ),
-        "earlyAccessEndsAt" = NULL,
-        "availability" = 'Public',
-        "publishedAt" = NOW()
-        WHERE "id" = ${goal.modelVersionId}
+        UPDATE "PaidAccess" SET "endsAt" = NOW()
+        WHERE "entityType" = 'ModelVersion' AND "entityId" = ${goal.modelVersionId}
       `;
 
       await updateModelEarlyAccessDeadline({
@@ -186,6 +180,7 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
       // → double donation. On failure the caches just serve briefly-stale data, which is
       // acceptable; the goal-completion + EA-unlock DB writes above have already committed.
       try {
+        await bustPaidAccessCache('ModelVersion', [goal.modelVersionId]);
         await bustMvCache(goal.modelVersionId, modelVersion.modelId);
         await dataForModelsCache.refresh(modelVersion.modelId);
       } catch (error) {

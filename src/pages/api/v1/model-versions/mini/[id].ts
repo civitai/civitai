@@ -115,7 +115,7 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       m."sfwOnly",
       m."userId" as "modelUserId",
-      mv."earlyAccessEndsAt",
+      pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
       mv."licensingFee"::float8 AS "licensingFee",
@@ -131,9 +131,9 @@ export default MixedAuthEndpoint(async function handler(
       u."flags" AS "userFlags",
       (
         (
-            (mv."earlyAccessEndsAt" > NOW() OR mv."earlyAccessPermanent")
-            AND mv."availability" = 'EarlyAccess'
-            AND (mv."earlyAccessConfig"->>'freeGeneration' IS NULL OR mv."earlyAccessConfig"->>'freeGeneration' != 'true')
+            pa."entityId" IS NOT NULL
+            AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
+            AND (pa."terms"->'generation'->>'free' IS NULL OR pa."terms"->'generation'->>'free' != 'true')
         )
         OR
         (mv."availability" = 'Private')
@@ -145,10 +145,9 @@ export default MixedAuthEndpoint(async function handler(
       mv."meta"->'generationAlias' AS "generationAlias",
       (
         CASE
-          mv."earlyAccessConfig"->>'chargeForGeneration'
-        WHEN 'true'
+          WHEN pa."terms"->'generation'->>'price' IS NOT NULL
         THEN
-          COALESCE(CAST(mv."earlyAccessConfig"->>'generationTrialLimit' AS int), 10)
+          COALESCE(CAST(pa."terms"->'generation'->>'trialLimit' AS int), 10)
         ELSE
           NULL
         END
@@ -156,6 +155,7 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     JOIN "User" u ON u.id = m."userId"
+    LEFT JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
     LEFT JOIN "LicensingRoot" lr ON lr."modelVersionId" = mv.id
     LEFT JOIN "ModelVersion" lsv ON lsv.id = mv."licensingSourceVersionId"
     LEFT JOIN "Model" lsm ON lsm.id = lsv."modelId"

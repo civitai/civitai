@@ -603,6 +603,11 @@ export const Availability = {
   EarlyAccess: 'EarlyAccess',
 } as const;
 export type Availability = (typeof Availability)[keyof typeof Availability];
+export const PaidAccessEntityType = {
+  ModelVersion: 'ModelVersion',
+  ComicChapter: 'ComicChapter',
+} as const;
+export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
