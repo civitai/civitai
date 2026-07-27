@@ -2063,11 +2063,14 @@ export async function applyModelFlagSideEffects({
 // fields the "Set as Minor" quick action locks against creator edits.
 export const MINOR_LOCKED_PROPERTIES = ['minor', 'nsfw', 'sfwOnly'];
 
+export type ModelMinorActivity = 'setMinor' | 'unsetMinor' | 'setMinorAutoHash';
+
 export async function setModelMinor({
   id,
   minor,
   userId,
-}: SetModelMinorInput & { userId: number }) {
+  activity,
+}: SetModelMinorInput & { userId: number; activity?: ModelMinorActivity }) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
@@ -2125,7 +2128,7 @@ export async function setModelMinor({
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
-    activity: minor ? 'setMinor' : 'unsetMinor',
+    activity: activity ?? (minor ? 'setMinor' : 'unsetMinor'),
   }).catch((error) =>
     logToAxiom({
       type: 'error',

@@ -359,3 +359,36 @@ describe('setModelMinor — not found', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 });
+
+describe('setModelMinor — activity override', () => {
+  it('records the supplied activity instead of setMinor', async () => {
+    mockBefore({});
+    mockUpdateReturns({ minor: true });
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+    });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(-1, {
+      entityType: 'model',
+      entityId: MODEL_ID,
+      activity: 'setMinorAutoHash',
+    });
+  });
+
+  it('defaults to setMinor when no activity is supplied', async () => {
+    mockBefore({});
+    mockUpdateReturns({ minor: true });
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(MODERATOR_ID, {
+      entityType: 'model',
+      entityId: MODEL_ID,
+      activity: 'setMinor',
+    });
+  });
+});
