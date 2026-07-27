@@ -64,6 +64,19 @@ describe('deriveScopesFromClient', () => {
     expect(v.requestedScopes).toBe(0);
     expect(v.scopeJustifications).toEqual({});
   });
+
+  it('derives from a FOREIGN client’s allowedScopes (mod global-search picker) — source-agnostic', () => {
+    // The mod picker can select a client the caller does NOT own; deriveScopesFromClient
+    // is pure over the passed mask, so a foreign client's allowedScopes derive identically.
+    const foreignAllowed = TokenScope.MediaRead | TokenScope.MediaWrite;
+    const v = deriveScopesFromClient(
+      { ...emptyOffsiteSubmitForm(), scopeJustifications: { ModelsRead: 'stale-own-scope' } },
+      foreignAllowed
+    );
+    expect(v.requestedScopes).toBe(foreignAllowed);
+    // The justification for a scope the foreign client lacks (ModelsRead) is pruned.
+    expect(v.scopeJustifications).toEqual({});
+  });
 });
 
 describe('pruneJustificationsToMask / shapeScopeJustifications', () => {
