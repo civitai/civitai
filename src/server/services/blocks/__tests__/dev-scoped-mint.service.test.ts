@@ -313,14 +313,18 @@ describe('clampDevScopes — REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST (mod opt-i
       'apps:storage:shared:write', // cross-user write
       'collections:read:private', // private
       'collections:write:self', // write surface
-      'social:tip:self', // money OUT (also PAGE_FORBIDDEN)
+      'social:tip:self', // money OUT — excluded by the allowlist (NOT PAGE_FORBIDDEN)
       'media:read:owned', // unknown
     ]) {
       expect(granted).not.toContain(withheld);
     }
   });
 
-  it('NEVER grants social:tip:self even with keyCanSpend:true (money-OUT excluded by allowlist AND PAGE_FORBIDDEN)', () => {
+  it('NEVER grants social:tip:self even with keyCanSpend:true — the ALLOWLIST is the sole money-out gate (PAGE_FORBIDDEN is empty)', () => {
+    // PAGE_FORBIDDEN_SCOPES is intentionally empty (a PROD page token legitimately
+    // carries a bounded social:tip:self tip button), so the review-sandbox exclusion
+    // is the allowlist ALONE — assert both the allowlist omits it AND a manifest
+    // declaring it gets it stripped by the clamp.
     expect(REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST.has('social:tip:self')).toBe(false);
     const granted = clampDevScopes({
       scopeSource: ['social:tip:self', 'ai:write:budgeted'],

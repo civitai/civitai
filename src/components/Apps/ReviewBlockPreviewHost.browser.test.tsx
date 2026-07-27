@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { REVIEW_RUN_FOR_REAL_BUZZ_CAP } from '~/shared/constants/block-scope.constants';
+import type { MintReviewBlockTokenResult } from '~/server/services/blocks/publish-request.service';
 
 /**
  * MOD REVIEW SANDBOX "run for real" (#2831) — `ReviewBlockPreviewHost` opt-in UI.
@@ -29,7 +30,10 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, username: 'mod' }),
 }));
 
-const RENDER_ONLY_MINT = {
+// Typed to the PRODUCTION mint-result shape (`buzzCap: number | null`,
+// `runForReal: boolean`) so the run-for-real variant type-checks AND the mock
+// exercises a well-typed state — not the narrowed literal `typeof` inference.
+const RENDER_ONLY_MINT: MintReviewBlockTokenResult = {
   token: 'review.render-only.jwt',
   expiresAt: '2099-01-01T00:00:00Z',
   scopes: ['models:read:self', 'user:read:self'],
@@ -45,7 +49,7 @@ const RENDER_ONLY_MINT = {
   buzzCap: null,
 };
 
-const RUN_FOR_REAL_MINT = {
+const RUN_FOR_REAL_MINT: MintReviewBlockTokenResult = {
   ...RENDER_ONLY_MINT,
   token: 'review.run-for-real.jwt',
   scopes: ['ai:write:budgeted', 'apps:storage:read', 'apps:storage:write', 'user:read:self'],
@@ -64,7 +68,9 @@ vi.mock('~/utils/trpc', async () => {
       blocks: {
         mintReviewBlockToken: {
           useMutation: () => {
-            const [data, setData] = React.useState<typeof RENDER_ONLY_MINT | undefined>(undefined);
+            const [data, setData] = React.useState<MintReviewBlockTokenResult | undefined>(
+              undefined
+            );
             return {
               data,
               isPending: false,

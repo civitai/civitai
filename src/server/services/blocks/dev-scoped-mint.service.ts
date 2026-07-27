@@ -193,8 +193,14 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  * preview schema is dropped on the approve/reject teardown. Generation + own-Buzz-read
  * likewise work (self-bound; no approved AppBlock row required).
  *
- * Money-OUT (`social:tip:self`) is additionally excluded by PAGE_FORBIDDEN_SCOPES
- * inside the clamp, so it can NEVER survive on ANY page token regardless of allowlist.
+ * Money-OUT (`social:tip:self`) is excluded SOLELY by its ABSENCE from this
+ * allowlist: the clamp keeps only scopes in the allowlist (step b), so a manifest
+ * declaring `social:tip:self` gets it dropped for a review mint. NOTE this is NOT
+ * a page-wide rule — `PAGE_FORBIDDEN_SCOPES` is intentionally EMPTY because a
+ * PROD page token legitimately CAN carry a bounded, consent-gated `social:tip:self`
+ * (a page tip button, capped per-tip + per-day in /api/v1/blocks/tip). The
+ * review-sandbox exclusion is therefore this allowlist ALONE — verified by a
+ * regression test (a run-for-real mint never yields `social:tip:self`).
  */
 export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   'models:read:self',
@@ -216,7 +222,10 @@ export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new
  *   c) keep only scopes within the app's OAuth ceiling (approved path only —
  *      `oauthAllowed !== null`); OMITTED for a pending / no-row / ephemeral app
  *      (no OauthClient — passing 0 would WRONGLY strip every non-skip scope),
- *   d) drop the PAGE_FORBIDDEN money/spend scopes (the page hard rule),
+ *   d) drop any PAGE_FORBIDDEN scopes — currently a NO-OP (PAGE_FORBIDDEN_SCOPES
+ *      is intentionally EMPTY: every page-requestable money scope is now bounded).
+ *      Retained as the deterministic re-forbid hook; it is NOT the money-out gate
+ *      for the review sandbox — that is the allowlist (b), which omits social:tip:self,
  *   e) if the body narrowed, intersect with the requested subset,
  *   f) BEARER-credential spend ceiling — strip `ai:write:budgeted` unless
  *      `keyCanSpend` (dev-token: the bearer's AIServicesWrite bit; host-mint:

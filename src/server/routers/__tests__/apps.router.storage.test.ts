@@ -35,6 +35,9 @@ const {
     mockParseSubjectUserId: vi.fn(),
     mockDbRead: {
       appBlock: { findUnique: vi.fn() },
+      // Run-for-real storage reads the pubreq status (orphan guard) from the
+      // PRIMARY (dbWrite, mapped to this mock below).
+      appBlockPublishRequest: { findUnique: vi.fn() },
     },
     mockIsAppBlocksEnabled: vi.fn(async () => true),
     mockPool,
@@ -165,6 +168,10 @@ beforeEach(() => {
     id: 'apb_test',
     status: 'approved',
   });
+  // Default the pubreq to PENDING so run-for-real happy paths resolve; the orphan
+  // guard tests override with a non-pending / missing status.
+  mockDbRead.appBlockPublishRequest.findUnique.mockReset();
+  mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({ status: 'pending' });
   mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockLogToAxiom.mockResolvedValue(undefined);
@@ -679,5 +686,28 @@ describe('apps.storage — run-for-real preview namespace', () => {
     await expect(
       caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  it('ORPHAN GUARD: a valid run-for-real token used AFTER approve/reject does NOT re-provision', async () => {
+    // The 4h token is still valid, but the request has left pending → the preview
+    // is gone; refuse and NEVER re-provision a schema nothing would tear down.
+    mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce({ status: 'approved' });
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('ORPHAN GUARD: a run-for-real token for a VANISHED request refuses (no re-provision)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce(null);
+    const caller = appsRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.storage.get({ blockToken: 't', key: 'k' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
   });
 });

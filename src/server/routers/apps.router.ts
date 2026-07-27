@@ -13,7 +13,7 @@
 
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { sessionClient } from '~/server/auth/session-client';
@@ -151,9 +151,27 @@ async function resolveStorageContext(blockToken: string, op: StorageOp): Promise
     }
     // The preview namespace is keyed on the publishRequestId (the token's
     // `appBlockId` claim = `pubreq_<ULID>`), so it is isolated per pending app AND
-    // never aliases the eventual approved `app_<slug>` schema. Provision on demand
-    // (idempotent; fast-paths once the schema exists).
+    // never aliases the eventual approved `app_<slug>` schema.
     const publishRequestId = claims.appBlockId;
+    // ORPHAN GUARD: a run-for-real token lives 4h, but the review preview only
+    // exists while the request is PENDING (teardown drops the preview schema on
+    // approve/reject). A still-valid token used AFTER the decision must NOT
+    // re-provision a fresh `apprev_` schema that nothing would ever tear down
+    // again. Mirror the mint's pending-only gate: refuse (and do NOT provision)
+    // once the request has left the pending state. Read from the PRIMARY so a
+    // just-landed approve/reject isn't missed to replication lag.
+    const pr = await dbWrite.appBlockPublishRequest.findUnique({
+      where: { id: publishRequestId },
+      select: { status: true },
+    });
+    if (!pr || pr.status !== 'pending') {
+      appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'review preview is no longer active for this request',
+      });
+    }
+    // Provision on demand (idempotent; fast-paths once the schema exists).
     const { schema } = await AppStorageProvisioner.provisionReviewPreview({ publishRequestId });
     return {
       userId,

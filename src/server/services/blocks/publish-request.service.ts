@@ -3554,6 +3554,27 @@ export async function mintReviewBlockToken(opts: {
  * review k8s resources by label selector, swallowing every error.
  */
 export async function teardownReviewForRequest(publishRequestId: string): Promise<void> {
+  // MOD REVIEW SANDBOX "run for real" (#2831) — drop the DISPOSABLE preview
+  // storage schema (`apprev_<pubreq>`) a mod may have created by running the app
+  // for real. Runs FIRST, in its OWN try/catch, so a downstream failure (the
+  // fallible k8s `deleteReviewResources`, or a missing row) can NEVER skip the
+  // DROP and leak the mod's preview data in appsDb. Best-effort + idempotent (IF
+  // EXISTS): a request that never used preview storage has no schema to drop, and
+  // this NEVER touches the approved app's `app_<slug>` schema. Only needs the
+  // publishRequestId (not the row), so it's safe to run before the row lookup.
+  try {
+    const { AppStorageProvisioner } = await import(
+      '~/server/services/apps/storage-provision.service'
+    );
+    await AppStorageProvisioner.deprovisionReviewPreview({ publishRequestId });
+  } catch (previewErr) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[teardownReviewForRequest] preview-storage teardown failed (id=${publishRequestId}): ${
+        previewErr instanceof Error ? previewErr.message : String(previewErr)
+      }`
+    );
+  }
   try {
     const { dbRead } = await import('~/server/db/client');
     const row = await dbRead.appBlockPublishRequest.findUnique({
@@ -3577,24 +3598,6 @@ export async function teardownReviewForRequest(publishRequestId: string): Promis
       sha: detail.sha ?? '',
       publishRequestId,
     });
-    // MOD REVIEW SANDBOX "run for real" (#2831) — drop the DISPOSABLE preview
-    // storage schema (`apprev_<pubreq>`) a mod may have created by running the app
-    // for real. Best-effort + idempotent (IF EXISTS): a request that never used
-    // preview storage has no schema to drop, and this NEVER touches the approved
-    // app's `app_<slug>` schema. Runs on the same approve/reject teardown path.
-    try {
-      const { AppStorageProvisioner } = await import(
-        '~/server/services/apps/storage-provision.service'
-      );
-      await AppStorageProvisioner.deprovisionReviewPreview({ publishRequestId });
-    } catch (previewErr) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[teardownReviewForRequest] preview-storage teardown failed (id=${publishRequestId}): ${
-          previewErr instanceof Error ? previewErr.message : String(previewErr)
-        }`
-      );
-    }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(

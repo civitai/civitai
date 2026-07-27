@@ -702,9 +702,11 @@ async function refundBlockBuzzSpend(key: string, cost: number): Promise<void> {
 // choreography below keys off the returned `key`, so it works unchanged).
 //
 // The key binds to (mod, publishRequestId) — NOT the token jti — so re-minting /
-// re-confirming the consent CANNOT reset the ceiling within the window. It is
-// STRICTLY TIGHTER than the 50k/day cap, so it is the binding constraint; the
-// mod's OWN non-review block usage still counts against the daily key separately.
+// re-confirming the consent CANNOT reset the ceiling within the window. Window =
+// the key's 25h TTL (re-armed on first write): the ceiling is cumulative per
+// (mod, publishRequestId) over a rolling ~25h, NOT reset per submit or per mint.
+// It is STRICTLY TIGHTER than the 50k/day cap, so it is the binding constraint;
+// the mod's OWN non-review block usage still counts against the daily key separately.
 const REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
 
 function reviewRunForRealBuzzCapKey(
@@ -738,11 +740,12 @@ async function reserveReviewRunForRealBuzzSpend(
 /**
  * Picks the correct cumulative Buzz reservation for a submit given its verified
  * token claims: a RUN-FOR-REAL token (signed `reviewRunForReal:true`) reserves
- * against the tight per-(mod, publishRequestId) session ceiling; every other
- * token keeps the ordinary per-user daily cap — BYTE-IDENTICAL to before. Returns
- * the reserved `key` (all refund sites key off it) plus the `cap` to compare the
- * running `total` against. The run-for-real session id is the token's
- * `appBlockId` claim (the `pubreq_<ULID>` request id the mint stamps).
+ * against the tight per-(mod, publishRequestId) cumulative ceiling (rolling ~25h
+ * window); every other token keeps the ordinary per-user daily cap —
+ * BYTE-IDENTICAL to before. Returns the reserved `key` (all refund sites key off
+ * it) plus the `cap` to compare the running `total` against. The run-for-real
+ * reservation id is the token's `appBlockId` claim (the `pubreq_<ULID>` request id
+ * the mint stamps).
  */
 async function reserveBlockBuzzSpendForClaims(
   claims: BlockTokenClaims,
@@ -3822,9 +3825,9 @@ export const blocksRouter = router({
       // under-count). A Redis error on the reserve throws → fails CLOSED,
       // matching the old read path.
       // A RUN-FOR-REAL review token reserves against the tight per-(mod,
-      // publishRequestId) session ceiling instead of the per-user daily cap
-      // (reserveBlockBuzzSpendForClaims picks the right one; every refund site
-      // below keys off the returned `buzzCapKey`, so they work unchanged).
+      // publishRequestId) cumulative ceiling (rolling ~25h window) instead of the
+      // per-user daily cap (reserveBlockBuzzSpendForClaims picks the right one;
+      // every refund site below keys off the returned `buzzCapKey`, unchanged).
       const {
         total,
         key: buzzCapKey,
