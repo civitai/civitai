@@ -13,6 +13,7 @@ import {
   findOfficialFileByHash,
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
+import { checkMinorHashOnScan } from '~/server/services/minor-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   createModelFileScanRequest,
@@ -211,15 +212,16 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       ]);
     }
 
-    // D2: hash-blocking is intentionally disabled here, matching legacy
-    // scan-result.ts:126-128 which is also commented out. Re-enable as a
-    // separate decision; will need pre-existing SHA256 capture above.
-    // const newSha256 = outcome.hashes.SHA256;
-    // const existingSha256 = existingHashes.find((h) => h.type === ModelHashType.SHA256)?.hash;
-    // const hashChanged = !existingSha256 || existingSha256 !== newSha256;
-    // if (newSha256 && hashChanged && (await isModelHashBlocked(newSha256))) {
-    //   await unpublishBlockedModel(file.modelVersionId);
-    // }
+    const scannedSha256 = outcome.hashes.SHA256;
+    const scannedModelId = file.modelVersion?.modelId;
+    const scannedUserId = file.modelVersion?.model?.userId;
+    if (scannedSha256 && scannedModelId && scannedUserId) {
+      await checkMinorHashOnScan({
+        modelId: scannedModelId,
+        userId: scannedUserId,
+        sha256: scannedSha256,
+      });
+    }
   }
 
   // Safety net for uploads that slipped past the client-side check: a non-official

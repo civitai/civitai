@@ -16,11 +16,16 @@ vi.mock('~/server/services/model.service', () => ({ setModelMinor: mockSetModelM
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: mockTrackModActivity }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
-import { findMinorHashMatches, applyMinorHashMatch } from '~/server/services/minor-hash.service';
+import {
+  findMinorHashMatches,
+  applyMinorHashMatch,
+  checkMinorHashOnScan,
+} from '~/server/services/minor-hash.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockDbRead.$queryRaw.mockResolvedValue([]);
+  mockLogToAxiom.mockResolvedValue(undefined);
 });
 
 describe('findMinorHashMatches', () => {
@@ -106,5 +111,35 @@ describe('applyMinorHashMatch', () => {
 
     expect(result).toBe('skipped');
     expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+});
+
+describe('checkMinorHashOnScan', () => {
+  it('flags a same-uploader match end to end', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 5 }]);
+
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+
+    expect(result).toBe('flagged');
+    expect(mockSetModelMinor).toHaveBeenCalledTimes(1);
+  });
+
+  it('swallows and logs a lookup failure instead of throwing', async () => {
+    mockDbRead.$queryRaw.mockRejectedValue(new Error('db exploded'));
+
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+
+    expect(result).toBe('skipped');
+    expect(mockLogToAxiom).toHaveBeenCalled();
+  });
+
+  it('swallows a setModelMinor failure instead of throwing', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 5 }]);
+    mockSetModelMinor.mockRejectedValue(new Error('update failed'));
+
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+
+    expect(result).toBe('skipped');
+    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 });

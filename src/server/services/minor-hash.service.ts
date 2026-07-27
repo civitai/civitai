@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { setModelMinor } from '~/server/services/model.service';
 
 export type MinorHashMatch = { modelId: number; userId: number };
@@ -60,4 +61,30 @@ export async function applyMinorHashMatch({
   });
 
   return 'flagged';
+}
+
+export async function checkMinorHashOnScan({
+  modelId,
+  userId,
+  sha256,
+}: {
+  modelId: number;
+  userId: number;
+  sha256: string;
+}): Promise<MinorHashOutcome> {
+  try {
+    const matches = await findMinorHashMatches(sha256);
+    return await applyMinorHashMatch({ modelId, userId, matches });
+  } catch (error) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'minor-hash-scan-check',
+        message: (error as Error).message,
+        modelId,
+      },
+      'webhooks'
+    ).catch(() => null);
+    return 'skipped';
+  }
 }
