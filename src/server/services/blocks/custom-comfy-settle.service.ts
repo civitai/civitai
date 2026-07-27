@@ -214,9 +214,12 @@ export async function settleCustomComfySpend(input: {
   const refund = Math.max(0, ceiling - actual);
   if (refund <= 0) return; // nothing to give back (job spent the full ceiling)
 
-  // Per-user daily cap: DECRBY the over-reservation on the EXACT key reserved
-  // (mirrors refundBlockBuzzSpend — pin the key so a midnight-UTC settle can't
-  // decrement the next day's window).
+  // Cumulative buzz cap: DECRBY the over-reservation on the EXACT key reserved.
+  // `buzzCapKey` is whichever cumulative key the submit reserved against — the
+  // per-user daily cap for a normal token, OR the per-(mod, publishRequestId)
+  // run-for-real session key for a review run-for-real submit (#2831). Pinning the
+  // stored key (not re-deriving) settles the right window either way and avoids a
+  // midnight-UTC / re-derivation race (mirrors refundBlockBuzzSpend).
   if (record.buzzCapKey) {
     await sysRedis.decrBy(record.buzzCapKey as BuzzCapKey, refund).catch(() => {
       /* best-effort — a lost refund over-counts (stricter cap) */

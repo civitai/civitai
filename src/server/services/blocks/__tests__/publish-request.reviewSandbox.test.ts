@@ -22,6 +22,7 @@ const {
   mockDeleteReviewResources,
   mockDeleteAgentReviewResources,
   mockDeleteStagedBundle,
+  mockDeprovisionReviewPreview,
 } = vi.hoisted(() => ({
   mockDbRead: {
     appBlockPublishRequest: { findUnique: vi.fn(), findMany: vi.fn(async () => []) },
@@ -51,6 +52,9 @@ const {
   mockDeleteReviewResources: vi.fn(async () => undefined),
   mockDeleteAgentReviewResources: vi.fn(async () => undefined),
   mockDeleteStagedBundle: vi.fn(async () => undefined),
+  // #2831 — teardownReviewForRequest dynamically imports this to drop the
+  // disposable run-for-real preview storage schema.
+  mockDeprovisionReviewPreview: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
@@ -71,6 +75,11 @@ vi.mock('~/server/services/blocks/agent-review.service', () => ({
 }));
 vi.mock('~/utils/bundle-s3', () => ({
   deleteStagedBundle: mockDeleteStagedBundle,
+}));
+vi.mock('~/server/services/apps/storage-provision.service', () => ({
+  AppStorageProvisioner: {
+    deprovisionReviewPreview: mockDeprovisionReviewPreview,
+  },
 }));
 
 import {
@@ -272,6 +281,8 @@ describe('teardownReviewForRequest', () => {
   beforeEach(() => {
     mockDbRead.appBlockPublishRequest.findUnique.mockReset();
     mockDeleteReviewResources.mockClear();
+    mockDeprovisionReviewPreview.mockReset();
+    mockDeprovisionReviewPreview.mockResolvedValue(undefined);
   });
 
   it('deletes review resources by publish request (label selector is the boundary)', async () => {
@@ -286,6 +297,8 @@ describe('teardownReviewForRequest', () => {
       sha: SHA,
       publishRequestId: PUBREQ,
     });
+    // The disposable preview storage schema is dropped too (#2831).
+    expect(mockDeprovisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: PUBREQ });
   });
 
   it('never throws even if the delete fails', async () => {
@@ -296,6 +309,40 @@ describe('teardownReviewForRequest', () => {
     });
     mockDeleteReviewResources.mockRejectedValue(new Error('k8s down'));
     await expect(teardownReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+  });
+
+  it('#2831 — a k8s teardown FAILURE still DROPs the preview schema (drop runs first, independently)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: 'my-app',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ sha: SHA }),
+    });
+    // The k8s delete throws — must NOT skip the schema drop.
+    mockDeleteReviewResources.mockRejectedValue(new Error('k8s down'));
+    await expect(teardownReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+    // The DROP ran regardless of the k8s failure (it runs FIRST, in its own try).
+    expect(mockDeprovisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: PUBREQ });
+  });
+
+  it('#2831 — drops the preview schema even when the request row has VANISHED (early return path)', async () => {
+    // The row lookup returns null → the k8s teardown early-returns, but the schema
+    // drop already ran before the lookup, so it is not skipped.
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);
+    await teardownReviewForRequest(PUBREQ);
+    expect(mockDeprovisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: PUBREQ });
+    expect(mockDeleteReviewResources).not.toHaveBeenCalled();
+  });
+
+  it('#2831 — a preview-drop FAILURE never throws and does not block the k8s teardown', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: 'my-app',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ sha: SHA }),
+    });
+    mockDeprovisionReviewPreview.mockRejectedValue(new Error('appsdb down'));
+    await expect(teardownReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+    // The k8s teardown still ran despite the preview-drop failure.
+    expect(mockDeleteReviewResources).toHaveBeenCalled();
   });
 });
 

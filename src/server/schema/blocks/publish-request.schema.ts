@@ -158,6 +158,15 @@ export type GetReviewStatusInput = z.infer<typeof getReviewStatusSchema>;
  *  host handshakes with. Same shape as previewRequest (the pending request id). */
 export const mintReviewBlockTokenSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831). Default false → the render-only
+   * sandbox (byte-identical to today). When true, the mod has EXPLICITLY opted in
+   * (behind a loud client consent gate) to run the unapproved app for real against
+   * their OWN account; the server re-mints a wider, still-clamped, still-self-bound,
+   * still-forced-SFW token with a per-call budget + an aggregate session Buzz cap.
+   * The opt-in is authorized + rate-limited server-side regardless of this flag.
+   */
+  runForReal: z.boolean().optional().default(false),
 });
 
 export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;

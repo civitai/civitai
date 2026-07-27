@@ -10,7 +10,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
+import {
+  parseSubjectUserId,
+  verifyBlockToken,
+  type BlockTokenClaims,
+} from '~/server/middleware/block-scope.middleware';
+import { REVIEW_RUN_FOR_REAL_BUZZ_CAP } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
@@ -679,13 +684,103 @@ async function reserveBlockBuzzSpend(
  * value and handing the user a window of extra cap headroom. Pinning the key
  * eliminates that race.
  */
-async function refundBlockBuzzSpend(
-  key: ReturnType<typeof buzzCapRedisKey>,
-  cost: number
-): Promise<void> {
+async function refundBlockBuzzSpend(key: string, cost: number): Promise<void> {
   await sysRedis.decrBy(key, Math.ceil(cost)).catch(() => {
     /* best-effort — see note above; a lost refund over-counts (stricter cap) */
   });
+}
+
+// ---- MOD REVIEW SANDBOX "run for real" AGGREGATE Buzz cap (#2831) ----------
+//
+// When a moderator opts IN (consent-gated) to run an UNAPPROVED review app FOR
+// REAL against their OWN account, the token's per-call `buzzBudget` bounds ONE
+// submit — but a hostile app can loop many ≤budget submits (the exact hole the
+// per-user daily cap comment above describes). This is the run-for-real analog:
+// a per-(mod, publishRequestId) CUMULATIVE ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP),
+// swapped IN PLACE OF the ordinary per-user daily cap for a run-for-real token so
+// there is still exactly ONE reserve/refund path per submit (the whole refund
+// choreography below keys off the returned `key`, so it works unchanged).
+//
+// The key binds to (mod, publishRequestId) — NOT the token jti — so re-minting /
+// re-confirming the consent CANNOT reset the ceiling within the window. Window =
+// the key's 25h TTL (re-armed on first write): the ceiling is cumulative per
+// (mod, publishRequestId) over a rolling ~25h, NOT reset per submit or per mint.
+// It is STRICTLY TIGHTER than the 50k/day cap, so it is the binding constraint;
+// the mod's OWN non-review block usage still counts against the daily key separately.
+const REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
+
+function reviewRunForRealBuzzCapKey(
+  userId: number,
+  publishRequestId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP}:${userId}:${publishRequestId}`;
+}
+
+/**
+ * Atomically reserves `cost` against the (mod, publishRequestId) run-for-real
+ * cumulative counter. Identical atomic INCRBY + first-write-EX (+ ttl<0 re-arm)
+ * shape as `reserveBlockBuzzSpend`; fails CLOSED on a Redis error (throws).
+ */
+async function reserveReviewRunForRealBuzzSpend(
+  userId: number,
+  publishRequestId: string,
+  cost: number
+): Promise<{ total: number; key: ReturnType<typeof reviewRunForRealBuzzCapKey> }> {
+  const key = reviewRunForRealBuzzCapKey(userId, publishRequestId);
+  const total = await sysRedis.incrBy(key, Math.ceil(cost));
+  if (total <= Math.ceil(cost)) {
+    await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
+  } else {
+    const ttl = await sysRedis.ttl(key);
+    if (ttl < 0) await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
+  }
+  return { total, key };
+}
+
+/**
+ * Picks the correct cumulative Buzz reservation for a submit given its verified
+ * token claims: a RUN-FOR-REAL token (signed `reviewRunForReal:true`) reserves
+ * against the tight per-(mod, publishRequestId) cumulative ceiling (rolling ~25h
+ * window); every other token keeps the ordinary per-user daily cap —
+ * BYTE-IDENTICAL to before. Returns the reserved `key` (all refund sites key off
+ * it) plus the `cap` to compare the running `total` against. The run-for-real
+ * reservation id is the token's `appBlockId` claim (the `pubreq_<ULID>` request id
+ * the mint stamps).
+ */
+async function reserveBlockBuzzSpendForClaims(
+  claims: BlockTokenClaims,
+  userId: number,
+  cost: number
+): Promise<{ total: number; key: string; cap: number }> {
+  if (claims.reviewRunForReal === true) {
+    const { total, key } = await reserveReviewRunForRealBuzzSpend(userId, claims.appBlockId, cost);
+    return { total, key, cap: REVIEW_RUN_FOR_REAL_BUZZ_CAP };
+  }
+  const { total, key } = await reserveBlockBuzzSpend(userId, cost);
+  return { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };
+}
+
+// RUN-FOR-REAL mint rate limit — per-mod fixed window. A privileged,
+// money-touching opt-in (each accept re-mints a spend-capable token), so bound
+// the mint rate to blunt an account-compromise / runaway-client storm. Same
+// INCR + first-hit EX (+ ttl<0 self-heal) shape as the other BLOCKS limiters;
+// fails CLOSED (returns false) on a Redis error.
+const REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT = { max: 30, windowSeconds: 3600 } as const;
+
+async function checkReviewRunForRealMintRateLimit(userId: number): Promise<boolean> {
+  const key = `${REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP}:mint-rate:${userId}` as const;
+  try {
+    const count = await sysRedis.incrBy(key, 1);
+    if (count === 1) {
+      await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.windowSeconds);
+    } else {
+      const ttl = await sysRedis.ttl(key);
+      if (ttl < 0) await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.windowSeconds);
+    }
+    return count <= REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.max;
+  } catch {
+    return false;
+  }
 }
 
 // EPHEMERAL DEV-TUNNEL rate limit (Phase 1 pre-submit). Per-user fixed window,
@@ -1478,15 +1573,30 @@ export const blocksRouter = router({
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
+      // RUN-FOR-REAL rate limit — a privileged, money-touching opt-in. Bound how
+      // many run-for-real re-mints one mod can trigger per window (blunts an
+      // account-compromise / runaway-client mint storm). Only the run-for-real
+      // path is limited; the ordinary render-only mint is unaffected.
+      if (input.runForReal) {
+        const allowed = await checkReviewRunForRealMintRateLimit(ctx.user.id);
+        if (!allowed) {
+          throw new TRPCError({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'run-for-real mint rate limit reached — please wait a moment and retry',
+          });
+        }
+      }
       const { mintReviewBlockToken } = await import(
         '~/server/services/blocks/publish-request.service'
       );
       try {
         // The mod id is SERVER-derived (never client-supplied) so the token can
-        // only ever be self-bound to the calling moderator.
+        // only ever be self-bound to the calling moderator. `runForReal` is the
+        // mod's explicit, consent-gated opt-in (default false → render-only).
         return await mintReviewBlockToken({
           publishRequestId: input.publishRequestId,
           modUserId: ctx.user.id,
+          runForReal: input.runForReal,
         });
       } catch (err) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
@@ -3714,18 +3824,29 @@ export const blocksRouter = router({
       // record (no separate fire-and-forget incr that could silently drop and
       // under-count). A Redis error on the reserve throws → fails CLOSED,
       // matching the old read path.
-      const { total, key: buzzCapKey } = await reserveBlockBuzzSpend(userId, cost);
-      if (total > BLOCK_BUZZ_CAP_PER_DAY) {
+      // A RUN-FOR-REAL review token reserves against the tight per-(mod,
+      // publishRequestId) cumulative ceiling (rolling ~25h window) instead of the
+      // per-user daily cap (reserveBlockBuzzSpendForClaims picks the right one;
+      // every refund site below keys off the returned `buzzCapKey`, unchanged).
+      const {
+        total,
+        key: buzzCapKey,
+        cap: buzzCap,
+      } = await reserveBlockBuzzSpendForClaims(claims, userId, cost);
+      if (total > buzzCap) {
         await refundBlockBuzzSpend(buzzCapKey, cost);
         return {
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
-            error:
-              `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
-              `across your installed apps, this generation costs ${cost}, ` +
-              `daily cap is ${BLOCK_BUZZ_CAP_PER_DAY}`,
+            error: claims.reviewRunForReal === true
+              ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
+                `spent this review session, this generation costs ${cost}, ` +
+                `session cap is ${buzzCap}`
+              : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
+                `across your installed apps, this generation costs ${cost}, ` +
+                `daily cap is ${buzzCap}`,
           },
         };
       }
@@ -5505,20 +5626,29 @@ async function submitCustomComfyWorkflow(opts: {
     };
   }
 
-  // (2) Reserve the CEILING (not the 0 estimate) against the per-user daily cap so
-  // post-paid spend can't slip past the 50k/day ceiling counted at ~0.
-  const { total, key: buzzCapKey } = await reserveBlockBuzzSpend(userId, ceiling);
-  if (total > BLOCK_BUZZ_CAP_PER_DAY) {
+  // (2) Reserve the CEILING (not the 0 estimate) against the cumulative cap so
+  // post-paid spend can't slip past it counted at ~0. A RUN-FOR-REAL review token
+  // reserves against the tight per-(mod, publishRequestId) session ceiling; every
+  // other token keeps the per-user 50k/day cap (byte-identical).
+  const {
+    total,
+    key: buzzCapKey,
+    cap: buzzCap,
+  } = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+  if (total > buzzCap) {
     await refundBlockBuzzSpend(buzzCapKey, ceiling);
     return {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: ceiling },
-        error:
-          `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
-          `across your installed apps, this generation may cost up to ${ceiling}, ` +
-          `daily cap is ${BLOCK_BUZZ_CAP_PER_DAY}`,
+        error: claims.reviewRunForReal === true
+          ? `review run-for-real Buzz cap reached: ${total - Math.ceil(ceiling)} already ` +
+            `spent this review session, this generation may cost up to ${ceiling}, ` +
+            `session cap is ${buzzCap}`
+          : `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
+            `across your installed apps, this generation may cost up to ${ceiling}, ` +
+            `daily cap is ${buzzCap}`,
       },
     };
   }
