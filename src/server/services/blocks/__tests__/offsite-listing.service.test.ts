@@ -724,7 +724,7 @@ describe('approveExternalRequest', () => {
     });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('cover') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: cover') });
     // We DID open the tx (the authoritative gate runs inside it) but bailed BEFORE
     // any flip — neither the request nor the listing status changed.
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
@@ -767,7 +767,7 @@ describe('approveExternalRequest', () => {
     stageApproveScenario({ iconId: null, coverId: 2, screenshotCount: 1 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('icon') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: icon') });
     // Missing on the replica too → fail-fast before the tx even opens.
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
@@ -777,7 +777,7 @@ describe('approveExternalRequest', () => {
     stageApproveScenario({ iconId: 1, coverId: null, screenshotCount: 1 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('cover') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: cover') });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 

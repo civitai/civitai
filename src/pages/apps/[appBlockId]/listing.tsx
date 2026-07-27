@@ -2,7 +2,7 @@ import { Alert, Anchor, Button, Center, Container, Group, Loader, Stack, Text } 
 import { IconArrowLeft, IconInfoCircle, IconSend } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
 import { Meta } from '~/components/Meta/Meta';
@@ -92,6 +92,12 @@ export default function ListingMediaPage() {
   // (icon+cover required; screenshots optional). Defaults to false until the step
   // reports its state.
   const [meetsFloor, setMeetsFloor] = useState(false);
+  // Stable identity so ListingAssetStep's onCompletenessChange effect (which lists
+  // the callback in its deps) doesn't re-fire on every parent render.
+  const handleCompletenessChange = useCallback(
+    (state: { meetsFloor: boolean; complete: boolean }) => setMeetsFloor(state.meetsFloor),
+    []
+  );
 
   // 4) Submit the prepared shadow for moderator re-approval.
   const submitRevision = trpc.appListings.submitListingRevision.useMutation();
@@ -181,7 +187,7 @@ export default function ListingMediaPage() {
                   contentRating={listing.contentRating as OffsiteContentRating}
                   suggestions={{}}
                   allowRemove
-                  onCompletenessChange={({ meetsFloor: mf }) => setMeetsFloor(mf)}
+                  onCompletenessChange={handleCompletenessChange}
                 />
               </div>
               <Group justify="flex-end">
