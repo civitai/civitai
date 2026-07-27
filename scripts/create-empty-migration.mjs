@@ -1,5 +1,19 @@
-import { mkdir, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import { dirname, join, relative, resolve } from 'path';
+import { fileURLToPath } from 'url';
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Migrations live next to the schema, which moved into packages/ with the
+// monorepo. Deriving the directory from package.json's `prisma.schema` keeps it
+// correct if the schema moves again, and anchoring on the script's own location
+// means the result doesn't depend on the cwd it was invoked from.
+const migrationsDir = async () => {
+  const pkg = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8'));
+  const schema = pkg.prisma?.schema;
+  if (!schema) throw new Error('package.json is missing a `prisma.schema` path');
+  return join(repoRoot, dirname(schema), 'migrations');
+};
 
 // Get migration name from command line args
 const migrationName = process.argv[2];
@@ -35,9 +49,10 @@ const getTimestamp = () => {
 const timestamp = getTimestamp();
 const snakeCaseName = toSnakeCase(migrationName);
 const folderName = `${timestamp}_${snakeCaseName}`;
-const migrationPath = join('prisma', 'migrations', folderName);
 
 try {
+  const migrationPath = join(await migrationsDir(), folderName);
+
   // Create migration folder
   await mkdir(migrationPath, { recursive: true });
 
@@ -45,7 +60,7 @@ try {
   await writeFile(join(migrationPath, 'migration.sql'), '-- Add migration here\n');
 
   console.log(`✓ Created empty migration: ${folderName}`);
-  console.log(`  Location: ${migrationPath}/migration.sql`);
+  console.log(`  Location: ${relative(repoRoot, migrationPath)}/migration.sql`);
 } catch (error) {
   console.error('Error creating migration:', error.message);
   process.exit(1);
