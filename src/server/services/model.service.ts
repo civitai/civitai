@@ -2155,11 +2155,7 @@ function enforceLockedProperties<T extends { lockedProperties?: string[] }>({
 }) {
   if (isModerator) return;
 
-  const lockedProperties = uniq([
-    ...(storedLockedProperties ?? []),
-    ...(data.lockedProperties ?? []),
-  ]);
-  for (const prop of lockedProperties) delete (data as Record<string, unknown>)[prop];
+  for (const prop of storedLockedProperties ?? []) delete (data as Record<string, unknown>)[prop];
   delete (data as Record<string, unknown>).lockedProperties;
 }
 

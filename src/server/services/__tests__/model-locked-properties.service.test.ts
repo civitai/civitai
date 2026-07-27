@@ -266,7 +266,7 @@ describe('upsertModel — non-moderator lock enforcement', () => {
     expect(data).not.toHaveProperty('nsfw');
   });
 
-  it('still honors locks the client claims on top of the DB row', async () => {
+  it('ignores locks the client claims — only the stored row decides what is locked', async () => {
     mockStored({ lockedProperties: [] });
 
     await upsert({
@@ -276,7 +276,9 @@ describe('upsertModel — non-moderator lock enforcement', () => {
       lockedProperties: ['poi'],
     });
 
-    expect(updateData()).not.toHaveProperty('poi');
+    const data = updateData();
+    expect(data.poi).toBe(true);
+    expect(data).not.toHaveProperty('lockedProperties');
   });
 
   it('never persists a lock a non-moderator supplied', async () => {
@@ -447,12 +449,14 @@ describe('privateModelFromTraining — lock enforcement', () => {
     );
   });
 
-  it('still honors locks the client claims on top of the DB row', async () => {
+  it('ignores locks the client claims — only the stored row decides what is locked', async () => {
     mockStored({ lockedProperties: [] });
 
     await privateFromTraining({ user: owner, poi: true, lockedProperties: ['poi'] });
 
-    expect(updateData()).not.toHaveProperty('poi');
+    const data = updateData();
+    expect(data.poi).toBe(true);
+    expect(data).not.toHaveProperty('lockedProperties');
   });
 
   it('lets a moderator write lockedProperties and the locked values themselves', async () => {
