@@ -3,7 +3,7 @@ import { getAnnouncementImageUrl } from '~/components/Announcements/announcement
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { getActiveAnnouncementImageRefs } from '~/server/services/announcement.service';
+import { getMonitoredAnnouncementImageRefs } from '~/server/services/announcement.service';
 import { getB2ImageS3Client } from '~/utils/s3-utils';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
@@ -25,6 +25,13 @@ const jobName = 'announcement-media-check';
  *              deletable through ordinary product paths, and deleting it deletes the
  *              underlying object. This is the exact chain that broke a live sitewide
  *              announcement.
+ *
+ * A third outcome is reported but never alerts as a banner failure: UNKNOWN, when the
+ * bucket could not be consulted (missing credentials, a 403 from a rotated key, a
+ * network blip). Failing open there is deliberate — an infrastructure hiccup must not
+ * page — but silent fail-open is how a monitor lies, so unknowns are counted separately
+ * and a run in which EVERY key was unknown emits its own `announcement-media-check-blind`
+ * warning. "The monitor cannot see" is a different alert from "a banner is broken".
  *
  * 🔴 Deliberately NOT primarily a "fetch the rendered URL" check. That signal is both
  * lagging and maskable:
@@ -56,6 +63,50 @@ export type AnnouncementMediaDeps = {
   /** Optional secondary user-visible probe. Must be cache-busted by the implementation. */
   probeRenderedVariant?: (key: string) => Promise<number | null>;
 };
+
+export type AnnouncementMediaSummary = {
+  checked: number;
+  broken: number;
+  atRisk: number;
+  /**
+   * Keys whose existence could not be determined at all (`objectExists === null`):
+   * missing credentials, a 403 from a rotated/re-scoped key, a network blip.
+   */
+  unknown: number;
+  renderFailures: number;
+  /**
+   * True when the bucket could not be consulted for a SINGLE key it was asked about.
+   * This is the monitor reporting on itself: with `unknown` folded into `ok` (correct —
+   * an infrastructure hiccup must not page), a fully-blind run is indistinguishable
+   * from a clean one in `broken: 0`. Alert on this separately from a broken banner.
+   */
+  blind: boolean;
+};
+
+/**
+ * Roll findings up into the job's return value.
+ *
+ * 🔴 `unknown` is counted separately and never folded into `broken`. The fail-open
+ * choice is deliberate, but silent fail-open is how a monitor lies for months: if the
+ * B2 credentials are rotated, every hourly run would otherwise report `broken: 0`
+ * forever while a banner is dead.
+ */
+export function summarizeAnnouncementMediaFindings(
+  findings: AnnouncementMediaFinding[]
+): AnnouncementMediaSummary {
+  const unknown = findings.filter((f) => f.objectExists === null).length;
+  return {
+    checked: findings.length,
+    broken: findings.filter((f) => f.status === 'broken').length,
+    atRisk: findings.filter((f) => f.status === 'at-risk').length,
+    unknown,
+    // Cheap signals are clean but the variant users load isn't served.
+    renderFailures: findings.filter(
+      (f) => f.status !== 'broken' && f.renderedStatus != null && f.renderedStatus >= 400
+    ).length,
+    blind: findings.length > 0 && unknown === findings.length,
+  };
+}
 
 /**
  * Classify one key. BROKEN outranks AT RISK: a missing object is already a failure,
@@ -101,8 +152,10 @@ export async function evaluateAnnouncementMedia(
     const hasImageRow = keysWithImageRow.has(key);
     const status = classifyAnnouncementMedia({ objectExists, hasImageRow });
 
-    // Only worth the extra request when the cheap signals say we're fine — it exists to
-    // catch delivery-side failures those two can't see.
+    // Skipped only for an already-BROKEN key: the object is gone, so a failing probe
+    // adds nothing and a passing one is just a stale cached variant. AT RISK keys ARE
+    // probed — their object is present and should be serving — as are OK ones. This is
+    // the delivery-side signal the two cheap checks cannot see.
     const renderedStatus =
       status === 'broken' || !deps.probeRenderedVariant
         ? undefined
@@ -125,7 +178,9 @@ const UPLOADS_BUCKET = () => env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads';
 
 function isNotFound(e: unknown) {
   const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
-  return err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404;
+  return (
+    err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404
+  );
 }
 
 /**
@@ -138,9 +193,7 @@ async function objectExistsInUploads(key: string): Promise<boolean | null> {
     return null;
 
   try {
-    await getB2ImageS3Client().send(
-      new HeadObjectCommand({ Bucket: UPLOADS_BUCKET(), Key: key })
-    );
+    await getB2ImageS3Client().send(new HeadObjectCommand({ Bucket: UPLOADS_BUCKET(), Key: key }));
     return true;
   } catch (e) {
     if (isNotFound(e)) return false;
@@ -175,6 +228,10 @@ async function probeRenderedVariant(key: string): Promise<number | null> {
       headers: { range: 'bytes=0-0', 'cache-control': 'no-cache' },
       signal: AbortSignal.timeout(RENDER_PROBE_TIMEOUT_MS),
     });
+    // A `Range` request is a hint, not a contract — an origin is free to answer 200
+    // with the whole body. Release it rather than leaving the stream (and its socket)
+    // pinned until GC.
+    await res.body?.cancel().catch(() => undefined);
     return res.status;
   } catch {
     return null;
@@ -185,10 +242,10 @@ export const announcementMediaCheckJob = createJob(
   jobName,
   '0 * * * *',
   async () => {
-    const refs = await getActiveAnnouncementImageRefs();
+    const refs = await getMonitoredAnnouncementImageRefs();
     if (!refs.length) {
-      log('no active announcements with a banner image');
-      return { checked: 0, broken: 0, atRisk: 0 };
+      log('no monitored announcements with a banner image');
+      return { checked: 0, broken: 0, atRisk: 0, unknown: 0, renderFailures: 0, blind: false };
     }
 
     const findings = await evaluateAnnouncementMedia(refs, {
@@ -197,12 +254,35 @@ export const announcementMediaCheckJob = createJob(
       probeRenderedVariant,
     });
 
+    const summary = summarizeAnnouncementMediaFindings(findings);
     const broken = findings.filter((f) => f.status === 'broken');
     const atRisk = findings.filter((f) => f.status === 'at-risk');
-    // Cheap signals are clean but the variant users load isn't served.
     const renderFailures = findings.filter(
       (f) => f.status !== 'broken' && f.renderedStatus != null && f.renderedStatus >= 400
     );
+
+    // 🔴 "The monitor cannot see" is its own alertable condition, distinct from "a banner
+    // is broken". Unknown answers fail open into `ok` on purpose, so without this a
+    // rotated/re-scoped B2 key would leave every run reporting `broken: 0` indefinitely
+    // while a banner is dead.
+    if (summary.blind) {
+      logToAxiom({
+        type: 'warning',
+        name: 'announcement-media-check-blind',
+        message:
+          'Announcement media check could not consult the uploads bucket for any key — results are not trustworthy',
+        details: {
+          checked: summary.checked,
+          unknown: summary.unknown,
+          hasCredentials: !!(
+            env.S3_IMAGE_B2_ACCESS_KEY &&
+            env.S3_IMAGE_B2_SECRET_KEY &&
+            env.S3_IMAGE_B2_ENDPOINT
+          ),
+          bucket: UPLOADS_BUCKET(),
+        },
+      }).catch();
+    }
 
     for (const finding of broken) {
       logToAxiom({
@@ -245,15 +325,12 @@ export const announcementMediaCheckJob = createJob(
     }
 
     log(
-      `checked ${findings.length} keys: ${broken.length} broken, ${atRisk.length} at risk, ${renderFailures.length} render failures`
+      `checked ${summary.checked} keys: ${summary.broken} broken, ${summary.atRisk} at risk, ` +
+        `${summary.unknown} unknown, ${summary.renderFailures} render failures` +
+        (summary.blind ? ' — BLIND: bucket unreachable for every key' : '')
     );
 
-    return {
-      checked: findings.length,
-      broken: broken.length,
-      atRisk: atRisk.length,
-      renderFailures: renderFailures.length,
-    };
+    return summary;
   },
   { lockExpiration: 5 * 60 }
 );

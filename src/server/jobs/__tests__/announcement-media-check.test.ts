@@ -11,9 +11,11 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: { image: { findMany: vi.fn(async () => []) } },
 }));
 
+import type { AnnouncementMediaFinding } from '~/server/jobs/announcement-media-check';
 import {
   classifyAnnouncementMedia,
   evaluateAnnouncementMedia,
+  summarizeAnnouncementMediaFindings,
 } from '~/server/jobs/announcement-media-check';
 
 const KEY_A = 'aaaaaaaa-0000-0000-0000-000000000001';
@@ -40,6 +42,97 @@ describe('classifyAnnouncementMedia', () => {
     // null = couldn't consult the bucket. An infra hiccup must not page.
     expect(classifyAnnouncementMedia({ objectExists: null, hasImageRow: false })).toBe('ok');
     expect(classifyAnnouncementMedia({ objectExists: null, hasImageRow: true })).toBe('at-risk');
+  });
+
+  it('covers the full signal matrix with the intended precedence', () => {
+    // Exhaustive over (objectExists x hasImageRow). Pinned as a table so a change to the
+    // precedence rule is a deliberate edit here, not a silent behaviour change.
+    const matrix: [boolean | null, boolean, string][] = [
+      [false, false, 'broken'], // object gone -> BROKEN
+      [false, true, 'broken'], // both -> BROKEN wins (already failed beats will-fail)
+      [true, true, 'at-risk'], // Image row exists -> AT RISK
+      [true, false, 'ok'], // neither -> OK
+      [null, false, 'ok'], // can't tell -> fail open
+      [null, true, 'at-risk'], // can't tell, but the row is a real risk on its own
+    ];
+    for (const [objectExists, hasImageRow, expected] of matrix) {
+      expect(
+        classifyAnnouncementMedia({ objectExists, hasImageRow }),
+        `objectExists=${objectExists} hasImageRow=${hasImageRow}`
+      ).toBe(expected);
+    }
+  });
+});
+
+describe('summarizeAnnouncementMediaFindings', () => {
+  const finding = (over: Partial<AnnouncementMediaFinding> = {}): AnnouncementMediaFinding => ({
+    key: KEY_A,
+    announcementIds: [1],
+    status: 'ok',
+    objectExists: true,
+    hasImageRow: false,
+    ...over,
+  });
+
+  it('counts an unknown bucket answer as unknown, not as broken or ok-and-forgotten', () => {
+    // 🔴 The regression this exists for: `null` folds into `ok` by design, so without a
+    // separate count a fully fail-open run is indistinguishable from a healthy one.
+    const summary = summarizeAnnouncementMediaFindings([
+      finding({ objectExists: null, status: 'ok' }),
+      finding({ key: KEY_B, objectExists: true, status: 'ok' }),
+    ]);
+
+    expect(summary).toMatchObject({ checked: 2, broken: 0, atRisk: 0, unknown: 1, blind: false });
+  });
+
+  it('an infrastructure error never produces a BROKEN count', () => {
+    const summary = summarizeAnnouncementMediaFindings([
+      finding({ objectExists: null }),
+      finding({ key: KEY_B, objectExists: null }),
+    ]);
+    expect(summary.broken).toBe(0);
+  });
+
+  it('reports BLIND when the bucket could not be consulted for a single key', () => {
+    // Rotated / re-scoped credentials: every answer is unknown. "The monitor cannot see"
+    // must be its own alertable condition, separate from "a banner is broken".
+    const summary = summarizeAnnouncementMediaFindings([
+      finding({ objectExists: null }),
+      finding({ key: KEY_B, objectExists: null }),
+    ]);
+    expect(summary).toMatchObject({ checked: 2, unknown: 2, broken: 0, blind: true });
+  });
+
+  it('is NOT blind when even one key got a definite answer', () => {
+    const summary = summarizeAnnouncementMediaFindings([
+      finding({ objectExists: null }),
+      finding({ key: KEY_B, objectExists: false, status: 'broken' }),
+    ]);
+    expect(summary).toMatchObject({ unknown: 1, broken: 1, blind: false });
+  });
+
+  it('is NOT blind when there was nothing to check', () => {
+    // An empty active-announcement list must not masquerade as a credential failure.
+    expect(summarizeAnnouncementMediaFindings([])).toEqual({
+      checked: 0,
+      broken: 0,
+      atRisk: 0,
+      unknown: 0,
+      renderFailures: 0,
+      blind: false,
+    });
+  });
+
+  it('counts render failures only where the cheap signals were clean', () => {
+    const summary = summarizeAnnouncementMediaFindings([
+      finding({ status: 'ok', renderedStatus: 404 }),
+      finding({ key: KEY_B, status: 'at-risk', hasImageRow: true, renderedStatus: 503 }),
+      finding({ key: 'c', status: 'broken', objectExists: false, renderedStatus: 404 }),
+      finding({ key: 'd', status: 'ok', renderedStatus: 200 }),
+      finding({ key: 'e', status: 'ok', renderedStatus: null }),
+    ]);
+    // The broken one is excluded — it is already alerted on the primary signal.
+    expect(summary).toMatchObject({ checked: 5, broken: 1, atRisk: 1, renderFailures: 2 });
   });
 });
 
@@ -128,5 +221,35 @@ describe('evaluateAnnouncementMedia', () => {
     const findings = await evaluateAnnouncementMedia([{ id: 9, key: KEY_A }], d);
 
     expect(findings[0]).toMatchObject({ status: 'ok', renderedStatus: 404 });
+  });
+
+  it('still probes an AT RISK key — its object is present and should be serving', async () => {
+    const probeRenderedVariant = vi.fn(async () => 200 as number | null);
+    const d = deps({ findKeysWithImageRow: vi.fn(async () => [KEY_A]), probeRenderedVariant });
+    const findings = await evaluateAnnouncementMedia([{ id: 3, key: KEY_A }], d);
+
+    expect(probeRenderedVariant).toHaveBeenCalledWith(KEY_A);
+    expect(findings[0]).toMatchObject({ status: 'at-risk', renderedStatus: 200 });
+  });
+
+  it('carries an unknown bucket answer through to the finding', async () => {
+    const d = deps({ objectExists: vi.fn(async () => null) });
+    const findings = await evaluateAnnouncementMedia([{ id: 4, key: KEY_A }], d);
+
+    expect(findings[0]).toMatchObject({ status: 'ok', objectExists: null });
+    expect(summarizeAnnouncementMediaFindings(findings)).toMatchObject({
+      unknown: 1,
+      broken: 0,
+      blind: true,
+    });
+  });
+
+  it('ignores announcements with an empty key rather than checking ""', async () => {
+    const d = deps();
+    const findings = await evaluateAnnouncementMedia([{ id: 5, key: '' }], d);
+
+    expect(findings).toEqual([]);
+    expect(d.objectExists).not.toHaveBeenCalled();
+    expect(summarizeAnnouncementMediaFindings(findings).blind).toBe(false);
   });
 });

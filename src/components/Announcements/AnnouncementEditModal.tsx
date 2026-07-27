@@ -1,7 +1,7 @@
 import type { SelectProps } from '@mantine/core';
 import { Button, ColorSwatch, Modal, useMantineTheme } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
@@ -15,9 +15,11 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
+import type { SimpleImageUploadState } from '~/libs/form/components/SimpleImageUpload';
 import {
   ANNOUNCEMENT_IMAGE_WIDTH,
   announcementImageFormSchema,
+  toAnnouncementImageFormValue,
   toAnnouncementImageKey,
 } from '~/components/Announcements/announcement-image';
 import type { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
@@ -39,6 +41,8 @@ const schema = z.object({
   linkUrl: z.string().optional(),
 });
 
+export const UPLOAD_IN_FLIGHT_MESSAGE = 'Wait for the banner image to finish uploading.';
+
 const domainColorOptions = Object.values(DomainColor).map((domain) => ({
   value: domain,
   label: `${capitalize(domain)} ${domain === DomainColor.all ? 'Servers' : 'Server'}`,
@@ -59,6 +63,9 @@ export function AnnouncementEditModal({
   const queryUtils = trpc.useUtils();
   const startsAtRef = useRef<Date | null>(null);
   const isToday = announcement?.startsAt?.toDateString() === new Date().toDateString();
+  // A banner upload in flight has NOT yet reached form state — see the guard in
+  // `handleSubmit` and `UPLOAD_IN_FLIGHT_MESSAGE`.
+  const [imageUploading, setImageUploading] = useState(false);
 
   const form = useForm({
     schema,
@@ -71,13 +78,33 @@ export function AnnouncementEditModal({
           : startOfDay(dateWithoutTimezone(announcement.startsAt))
         : new Date(),
       endsAt: endsAt ? startOfDay(dateWithoutTimezone(endsAt)) : null,
-      image: announcement?.metadata?.image,
+      image: toAnnouncementImageFormValue(announcement?.metadata),
       linkText: action?.linkText,
       linkUrl: action?.link,
     },
   });
   const theme = useMantineTheme();
   const colors = Object.keys(theme.colors);
+
+  // Last banner key the form actually held. Replacing a banner is a two-step gesture —
+  // remove (which clears form state) then drop — so at the moment an upload fails the
+  // form no longer remembers what it is about to overwrite. Keeping the last non-empty
+  // value lets a failed replacement be undone instead of silently saved as "no banner".
+  const watchedImage = form.watch('image');
+  const lastImageRef = useRef(toAnnouncementImageFormValue(announcement?.metadata));
+  useEffect(() => {
+    if (watchedImage) lastImageRef.current = watchedImage;
+  }, [watchedImage]);
+
+  function handleUploadStateChange(state: SimpleImageUploadState) {
+    setImageUploading(state === 'uploading');
+    if (state === 'uploading') form.clearErrors('image');
+    // 🔴 A failed upload must not degrade into "the moderator removed the banner".
+    // Restore what was there so a save cannot land the empty value the failed replace
+    // left behind; the upload widget keeps its own error visible, and the restored
+    // preview can be removed again if removal really was the intent.
+    if (state === 'error' && lastImageRef.current) form.setValue('image', lastImageRef.current);
+  }
 
   const { mutate, isPending: isLoading } = trpc.announcement.upsertAnnouncement.useMutation({
     onSuccess: () => {
@@ -87,6 +114,19 @@ export function AnnouncementEditModal({
   });
 
   function handleSubmit({ image, ...data }: z.infer<typeof schema>) {
+    // 🔴 A submit must not land while a banner upload is in flight. The upload widget
+    // only writes the new key into form state once the upload reaches `success`, and
+    // replacing a banner means removing the old one first — so a save mid-upload
+    // persists the CLEARED value and the sitewide banner disappears. That is not
+    // hypothetical: a lost `metadata.image` is what this whole change exists for.
+    //
+    // The Save button is disabled meanwhile; this guard additionally covers an
+    // Enter-key submit, which a disabled button does not prevent.
+    if (imageUploading) {
+      form.setError('image', { type: 'manual', message: UPLOAD_IN_FLIGHT_MESSAGE });
+      return;
+    }
+
     const startsAtUtc = dayjs.utc(data.startsAt).toDate();
     const isToday = startsAtUtc.toDateString() === new Date().toDateString();
     const { domain } = data;
@@ -168,18 +208,17 @@ export function AnnouncementEditModal({
           description="Shown alongside the announcement. Uploads are stored as a bare object key."
           previewWidth={ANNOUNCEMENT_IMAGE_WIDTH}
           withNsfwLevel={false}
+          onUploadStateChange={handleUploadStateChange}
         />
 
-        <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
-          <InputSelect
-            name="color"
-            label="Color"
-            data={colors.map((color) => ({ value: color, label: color }))}
-            renderOption={renderSelectOption}
-            searchable
-            clearable
-          />
-        </div>
+        <InputSelect
+          name="color"
+          label="Color"
+          data={colors.map((color) => ({ value: color, label: color }))}
+          renderOption={renderSelectOption}
+          searchable
+          clearable
+        />
 
         <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
           <InputDatePicker
@@ -198,8 +237,8 @@ export function AnnouncementEditModal({
         </div>
 
         <InputCheckbox name="disabled" label="Disabled" />
-        <Button type="submit" loading={isLoading}>
-          Save
+        <Button type="submit" loading={isLoading} disabled={imageUploading}>
+          {imageUploading ? 'Uploading image…' : 'Save'}
         </Button>
       </Form>
     </Modal>
