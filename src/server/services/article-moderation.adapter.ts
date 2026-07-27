@@ -5,7 +5,7 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { htmlToModerationText } from '~/server/utils/moderation-text';
+import { removeTags } from '~/utils/string-helpers';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
 
 // Article-side hooks for the EntityModeration pipeline. The webhook and the
@@ -15,11 +15,14 @@ export const articleModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.article.findMany({
       where: { id: { in: ids } },
-      select: { id: true, content: true },
+      select: { id: true, title: true, content: true },
     });
-    // Article content is stored as HTML; send the scanner the text (with link
-    // and image targets kept) rather than the markup.
-    return new Map(rows.map((r) => [r.id, htmlToModerationText(r.content)]));
+    // Must match the string the create/update/rescan paths submit, or the
+    // `contentHash` dedup in createXGuardModerationRequest can never hit and the
+    // retry cron re-audits content that was already scanned.
+    return new Map(
+      rows.map((r) => [r.id, [r.title, removeTags(r.content)].filter(Boolean).join(' ')])
+    );
   },
 
   submit: ({ entityId, content }) =>
