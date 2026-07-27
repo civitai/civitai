@@ -1,6 +1,7 @@
 import { Alert, Code, Divider, Stack, Text, Title } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import React, { useState } from 'react';
+import type { ControlType } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorComponent';
 
 // `.ladle/components.tsx` only loads @mantine/core styles, so the editor's own
@@ -31,9 +32,9 @@ const ARTICLE_CONTROLS = [
   'colors',
   'timestamp',
   'markdown',
-] as const;
+] satisfies ControlType[];
 
-function Harness({ controls }: { controls: readonly string[] }) {
+function Harness({ controls }: { controls: ControlType[] }) {
   const [html, setHtml] = useState('');
 
   return (
@@ -58,7 +59,7 @@ function Harness({ controls }: { controls: readonly string[] }) {
         <RichTextEditor
           value={html}
           onChange={setHtml}
-          includeControls={controls as never}
+          includeControls={controls}
           editorSize="xl"
           placeholder="Paste your markdown here…"
         />

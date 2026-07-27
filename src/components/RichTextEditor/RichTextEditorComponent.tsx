@@ -444,7 +444,7 @@ export type EditorCommandsRef = {
   focus: () => void;
 };
 
-type ControlType =
+export type ControlType =
   | 'heading'
   | 'formatting'
   | 'list'

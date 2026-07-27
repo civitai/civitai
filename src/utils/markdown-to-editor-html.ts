@@ -6,16 +6,9 @@ import { unified } from 'unified';
 import { extractCloudflareUuid } from '~/utils/article-helpers';
 
 /**
- * Markdown -> HTML for the Tiptap editor.
- *
- * Distinct from `markdownToHtml` (markdown-helpers.ts) on two counts: this one
- * is synchronous, so it can run inside a ProseMirror `handlePaste`, and it
- * reshapes constructs the editor cannot round-trip into ones it can.
- *
- * The binding constraint is `DEFAULT_ALLOWED_TAGS` in html-sanitize-helpers.ts,
- * which runs as a zod preprocess on save. Anything outside it is dropped
- * silently *after* the author has already hit publish, so we lower it here
- * instead and report what changed.
+ * Markdown -> HTML for the Tiptap editor, lowered to what `DEFAULT_ALLOWED_TAGS`
+ * permits. The sanitizer runs as a zod preprocess on save, so anything it drops
+ * is lost after the author has already published.
  */
 
 const MAX_HEADING_DEPTH = 3;
@@ -25,24 +18,27 @@ const MIN_TABLE_COLUMN_WIDTH = 3;
 const WEB_URL = /^(https?:|mailto:|\/|#)/i;
 
 /**
- * Leading YAML frontmatter. Deliberately not `gray-matter` (which
- * markdown-helpers.ts uses): that reaches for Node's `Buffer`, and this module
- * runs in the browser via the paste handler and the import control, where it
- * throws `ReferenceError: Buffer is not defined`.
- *
- * Requires a `key:` line inside the fence so a document opening with a `---`
- * horizontal rule doesn't get its first section eaten.
+ * Not `gray-matter`: it needs Node's `Buffer` and this runs in the browser.
+ * Line-wise because a leading `---` is more often a horizontal rule, and
+ * frontmatter may contain blank lines.
  */
-const FRONTMATTER = /^﻿?---[ \t]*\r?\n([^]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
-
 function stripFrontmatter(markdown: string) {
-  const match = markdown.match(FRONTMATTER);
-  if (!match) return markdown;
+  const text = markdown.replace(/^\uFEFF/, '');
+  const lines = text.split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return text;
 
-  const block = match[1];
-  const looksLikeYaml = /^[ \t]*[\w.-]+[ \t]*:/m.test(block) && !/\r?\n[ \t]*\r?\n/.test(block);
+  const close = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+  if (close === -1) return text;
 
-  return looksLikeYaml ? markdown.slice(match[0].length) : markdown;
+  const block = lines.slice(1, close);
+  const opensWithKey = /^[\w.-]+[ \t]*:/.test(block[0] ?? '');
+  const hasHeading = block.some((line) => /^#{1,6} /.test(line));
+  if (!opensWithKey || hasHeading) return text;
+
+  return lines
+    .slice(close + 1)
+    .join('\n')
+    .replace(/^\n+/, '');
 }
 
 type MdNode = {
@@ -55,7 +51,7 @@ type MdNode = {
   children?: MdNode[];
 };
 
-export type MarkdownConversionResult = {
+type MarkdownConversionResult = {
   html: string;
   tablesConverted: number;
   headingsClamped: number;
@@ -63,7 +59,7 @@ export type MarkdownConversionResult = {
   externalImagesLinked: number;
 };
 
-type ConversionStats = Omit<MarkdownConversionResult, 'html'>;
+export type MarkdownConversionStats = Omit<MarkdownConversionResult, 'html'>;
 
 function toPlainText(node: MdNode): string {
   if (typeof node.value === 'string') return node.value;
@@ -71,18 +67,16 @@ function toPlainText(node: MdNode): string {
   return node.children.map(toPlainText).join('');
 }
 
-/**
- * Re-emit a GFM table as padded pipe text for a code block. Reconstructing from
- * the parsed cells rather than slicing the source keeps ragged hand-written
- * tables aligned in the output.
- */
+/** Padded pipe text for a code block; rebuilt from cells so ragged tables align. */
 function renderTableAsText(table: MdNode): string {
   const rows = (table.children ?? []).map((row) =>
     (row.children ?? []).map((cell) => toPlainText(cell).replace(/\s+/g, ' ').trim())
   );
   if (!rows.length) return '';
 
-  const columnCount = Math.max(...rows.map((row) => row.length));
+  // GFM ignores body cells beyond the header's width, so widening to the longest
+  // row would render a phantom column that appears nowhere else.
+  const columnCount = rows[0].length;
   const widths = Array.from({ length: columnCount }, (_, column) =>
     Math.max(MIN_TABLE_COLUMN_WIDTH, ...rows.map((row) => (row[column] ?? '').length))
   );
@@ -102,7 +96,7 @@ function prefixParagraph(item: MdNode, prefix: string) {
   paragraph.children = [{ type: 'text', value: prefix }, ...(paragraph.children ?? [])];
 }
 
-function fitToEditorSchema(node: MdNode, stats: ConversionStats) {
+function fitToEditorSchema(node: MdNode, stats: MarkdownConversionStats) {
   const children = node.children;
   if (!children) return;
 
@@ -115,18 +109,15 @@ function fitToEditorSchema(node: MdNode, stats: ConversionStats) {
       continue;
     }
 
-    // `remarkRehype` without `allowDangerousHtml` deletes html nodes *and their
-    // text*, so `replace <your-token> with your key` silently lost the token.
-    // Keep the characters; they get escaped on output, so nothing executes.
+    // remarkRehype drops html nodes *and their text*, losing `<your-token>`.
+    // Keeping the characters is safe: they are escaped on output.
     if (child.type === 'html') {
       children[i] = { type: 'text', value: child.value ?? '' };
       continue;
     }
 
-    // `<lora:add_detail:0.8>` parses as an autolink, and the sanitizer then
-    // can't validate the scheme and demotes it to a bare span — dropping the
-    // angle brackets that make it a usable prompt token. Prompts are the most
-    // common thing in an article here, so restore the literal text.
+    // `<lora:x:0.8>` parses as an autolink, and the sanitizer demotes an
+    // unvalidatable scheme to a span — losing the brackets the prompt needs.
     if (child.type === 'link' && !WEB_URL.test(child.url ?? '')) {
       const label = (child.children ?? []).map(toPlainText).join('');
       if (label === child.url) {
@@ -135,13 +126,8 @@ function fitToEditorSchema(node: MdNode, stats: ConversionStats) {
       }
     }
 
-    // An off-site `<img>` survives the sanitizer but is invisible to image
-    // scanning: `extractImagesFromArticle` and `getContentMedia` both go through
-    // `extractCloudflareUuid`, which only accepts Civitai-hosted URLs. A foreign
-    // host is therefore never extracted, never scanned and never counted by the
-    // publish gate, while still leaking every reader's IP to it. Demote to a link
-    // so the reference survives without embedding an unscanned image; the author
-    // can re-add it with the image button, which uploads through Cloudflare.
+    // Image scanning only sees Civitai-hosted URLs, so an off-site `<img>` would
+    // publish unscanned and leak reader IPs. Demote rather than embed.
     if (child.type === 'image' && !extractCloudflareUuid(child.url ?? '')) {
       const url = child.url ?? '';
       children[i] = {
@@ -172,7 +158,7 @@ function fitToEditorSchema(node: MdNode, stats: ConversionStats) {
 
 export function convertMarkdownForEditor(markdown: string): MarkdownConversionResult {
   const content = stripFrontmatter(markdown);
-  const stats: ConversionStats = {
+  const stats: MarkdownConversionStats = {
     tablesConverted: 0,
     headingsClamped: 0,
     taskItemsConverted: 0,
@@ -185,9 +171,6 @@ export function convertMarkdownForEditor(markdown: string): MarkdownConversionRe
     .use(() => (tree: unknown) => {
       fitToEditorSchema(tree as MdNode, stats);
     })
-    // No `allowDangerousHtml`/rehype-raw: embedded HTML in a markdown file would
-    // be stripped by the sanitizer anyway, and dropping it here keeps the
-    // editor's document matching what gets stored.
     .use(remarkRehype)
     .use(rehypeStringify)
     .processSync(content);
@@ -208,7 +191,7 @@ export function describeMarkdownConversion({
   headingsClamped,
   taskItemsConverted,
   externalImagesLinked,
-}: ConversionStats) {
+}: MarkdownConversionStats) {
   const plural = (count: number, noun: string) => `${count} ${noun}${count > 1 ? 's' : ''}`;
   const notes: string[] = [];
 

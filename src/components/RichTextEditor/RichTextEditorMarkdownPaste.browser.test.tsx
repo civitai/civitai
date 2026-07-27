@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, expect, test, vi } from 'vitest';
+import type { ControlType } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -26,7 +27,7 @@ const ARTICLE_CONTROLS = [
   'colors',
   'timestamp',
   'markdown',
-] as const;
+] satisfies ControlType[];
 
 const MARKDOWN = [
   '## Look 1',
@@ -42,14 +43,9 @@ const MARKDOWN = [
   '| Flux | NL |',
 ].join('\n');
 
-async function mountEditor(controls: readonly string[] = ARTICLE_CONTROLS, onChange = vi.fn()) {
+async function mountEditor(controls: ControlType[] = ARTICLE_CONTROLS, onChange = vi.fn()) {
   renderWithProviders(
-    <RichTextEditor
-      value=""
-      onChange={onChange}
-      includeControls={controls as never}
-      editorSize="xl"
-    />
+    <RichTextEditor value="" onChange={onChange} includeControls={controls} editorSize="xl" />
   );
 
   const editor = await vi.waitFor(() => {

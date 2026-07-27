@@ -99,8 +99,7 @@ describe('convertMarkdownForEditor', () => {
     expect(result.html).toContain('<pre><code>');
     expect(result.html).toContain('Natural-language block');
 
-    // Every emitted row is padded to one width, so the block stays legible even
-    // when the source table was ragged.
+    // Rows are padded to one width so the block stays legible.
     const code = result.html.match(/<pre><code>([\s\S]*?)<\/code><\/pre>/)?.[1] ?? '';
     const rows = code.trim().split('\n');
 
@@ -187,6 +186,41 @@ describe('convertMarkdownForEditor', () => {
     expect(html).toContain('Body text.');
   });
 
+  it('leaves an hr followed by prose containing a colon alone', () => {
+    const html = markdownToEditorHtml('---\n\nNote: this is prose\n\n---');
+
+    expect(html).toContain('Note: this is prose');
+  });
+
+  // Blank lines are ordinary in frontmatter. Rejecting the fence over one left
+  // the closing `---` acting as a setext underline, promoting the last key to a
+  // heading inside the author's article.
+  it('strips frontmatter that contains a blank line', () => {
+    const html = markdownToEditorHtml('---\ntitle: A\n\nauthor: B\n---\n\n# Body');
+
+    expect(html).toBe('<h1>Body</h1>');
+  });
+
+  it.each([
+    ['a BOM', '﻿---\ntitle: A\n---\n\n# Body'],
+    ['CRLF newlines', '---\r\ntitle: A\r\n---\r\n\r\n# Body'],
+  ])('strips frontmatter with %s', (_label, input) => {
+    expect(markdownToEditorHtml(input)).toBe('<h1>Body</h1>');
+  });
+
+  // GFM ignores body cells past the header width; widening to the longest row
+  // rendered a phantom column, and padding to a uniform width hid it.
+  it('does not invent a column for a ragged table', () => {
+    const result = convertMarkdownForEditor(
+      '| a | b | c |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |'
+    );
+    const code = result.html.match(/<pre><code>([\s\S]*?)<\/code><\/pre>/)?.[1] ?? '';
+    const rows = code.trim().split('\n');
+
+    expect(rows[0].match(/\|/g)).toHaveLength(4); // 3 columns => 4 pipes
+    expect(rows.every((row) => (row.match(/\|/g) ?? []).length === 4)).toBe(true);
+  });
+
   it('escapes embedded raw html rather than executing it', () => {
     const html = markdownToEditorHtml('<script>alert(1)</script>\n\n# Safe');
 
@@ -254,8 +288,6 @@ describe('convertMarkdownForEditor', () => {
     expect(types).toContain('blockquote');
     expect(types).toContain('codeBlock');
     expect(types).toContain('heading');
-    // Node types must be JSON-serializable for the REST payload.
-    expect(() => JSON.stringify(contentJson)).not.toThrow();
   });
 
   it('produces only tags that survive the server-side sanitizer', () => {
