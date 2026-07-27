@@ -41,15 +41,40 @@ export type ListingProblemCode =
   | 'empty-tagline'
   | 'empty-category';
 
-export type ListingProblem = { code: ListingProblemCode; label: string };
+/**
+ * A problem's severity relative to the publish FLOOR (icon + cover):
+ *   - `blocking`  — below the floor; the listing CANNOT publish until fixed
+ *                   (missing icon / cover).
+ *   - `advisory`  — recommended but optional; does NOT block publish (missing
+ *                   screenshots, empty description / tagline / category).
+ */
+export type ListingProblemSeverity = 'blocking' | 'advisory';
+
+export type ListingProblem = {
+  code: ListingProblemCode;
+  label: string;
+  severity: ListingProblemSeverity;
+};
 
 export type ListingProblemsResult = { problems: ListingProblem[] };
 
-/** Map the shared asset-gate `missing` codes → this surface's codes + labels. */
+/**
+ * Map the shared asset-gate `missing` codes → this surface's codes + labels.
+ * icon/cover are the publish FLOOR → `blocking` ("required before publishing");
+ * screenshots are optional → `advisory` ("recommended").
+ */
 const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
-  icon: { code: 'missing-icon', label: 'Missing icon' },
-  cover: { code: 'missing-cover', label: 'Missing cover image' },
-  screenshots: { code: 'no-screenshots', label: 'No screenshots' },
+  icon: { code: 'missing-icon', label: 'Missing icon (required before publishing)', severity: 'blocking' },
+  cover: {
+    code: 'missing-cover',
+    label: 'Missing cover image (required before publishing)',
+    severity: 'blocking',
+  },
+  screenshots: {
+    code: 'no-screenshots',
+    label: 'No screenshots (recommended, optional)',
+    severity: 'advisory',
+  },
 };
 
 /** A value is "empty" when it's null/undefined or trims to the empty string. */
@@ -77,11 +102,11 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
   }
 
   if (isEmpty(listing.description))
-    problems.push({ code: 'empty-description', label: 'Missing description' });
+    problems.push({ code: 'empty-description', label: 'Missing description', severity: 'advisory' });
   if (isEmpty(listing.tagline))
-    problems.push({ code: 'empty-tagline', label: 'Missing tagline' });
+    problems.push({ code: 'empty-tagline', label: 'Missing tagline', severity: 'advisory' });
   if (isEmpty(listing.category))
-    problems.push({ code: 'empty-category', label: 'Missing category' });
+    problems.push({ code: 'empty-category', label: 'Missing category', severity: 'advisory' });
 
   return { problems };
 }

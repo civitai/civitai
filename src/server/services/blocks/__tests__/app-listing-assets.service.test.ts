@@ -183,6 +183,74 @@ describe('checkListingAssetsComplete / assertListingAssetsComplete', () => {
   });
 });
 
+describe('checkListingMeetsFloor / assertListingMeetsFloor (icon+cover floor, screenshots optional)', () => {
+  it('meets the floor with icon+cover and ZERO screenshots (the whole point)', async () => {
+    const { checkListingMeetsFloor } = await import('../app-listing-assets.service');
+    expect(checkListingMeetsFloor({ iconId: 1, coverId: 2, screenshotCount: 0 })).toEqual({
+      ok: true,
+    });
+  });
+
+  it('reports only the missing FLOOR assets (ignores screenshots)', async () => {
+    const { checkListingMeetsFloor } = await import('../app-listing-assets.service');
+    // Missing icon, has cover, 0 screenshots → only icon.
+    expect(checkListingMeetsFloor({ iconId: null, coverId: 2, screenshotCount: 0 })).toEqual({
+      ok: false,
+      missing: ['icon'],
+    });
+    // Missing cover, has icon → only cover.
+    expect(checkListingMeetsFloor({ iconId: 1, coverId: null, screenshotCount: 5 })).toEqual({
+      ok: false,
+      missing: ['cover'],
+    });
+    // Missing both.
+    expect(checkListingMeetsFloor({ iconId: null, coverId: null, screenshotCount: 0 })).toEqual({
+      ok: false,
+      missing: ['icon', 'cover'],
+    });
+  });
+
+  it('assert throws BAD_REQUEST listing missing floor assets below floor', async () => {
+    const { assertListingMeetsFloor } = await import('../app-listing-assets.service');
+    const { TRPCError } = await import('@trpc/server');
+    // Missing both → message lists both, code BAD_REQUEST.
+    let thrown: unknown;
+    try {
+      assertListingMeetsFloor({ iconId: null, coverId: null, screenshotCount: 0 });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(TRPCError);
+    expect((thrown as InstanceType<typeof TRPCError>).code).toBe('BAD_REQUEST');
+    expect((thrown as Error).message).toMatch(/icon, cover/);
+    expect((thrown as Error).message).toMatch(/icon and cover/);
+    // Missing only cover → message lists cover.
+    expect(() => assertListingMeetsFloor({ iconId: 1, coverId: null, screenshotCount: 0 })).toThrow(
+      /cover/
+    );
+  });
+
+  it('assert does NOT throw with icon+cover and 0 screenshots', async () => {
+    const { assertListingMeetsFloor } = await import('../app-listing-assets.service');
+    expect(() =>
+      assertListingMeetsFloor({ iconId: 1, coverId: 2, screenshotCount: 0 })
+    ).not.toThrow();
+  });
+
+  it('REGRESSION: checkListingAssetsComplete is UNCHANGED — icon+cover, 0 screenshots is still incomplete (advisory), proving the two helpers are distinct', async () => {
+    const { checkListingAssetsComplete, checkListingMeetsFloor } = await import(
+      '../app-listing-assets.service'
+    );
+    const listing = { iconId: 1, coverId: 2, screenshotCount: 0 };
+    // Floor: passes. Full completeness: still missing screenshots.
+    expect(checkListingMeetsFloor(listing)).toEqual({ ok: true });
+    expect(checkListingAssetsComplete(listing)).toEqual({
+      complete: false,
+      missing: ['screenshots'],
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // pure helpers
 // ---------------------------------------------------------------------------

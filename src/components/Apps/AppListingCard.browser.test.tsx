@@ -163,6 +163,41 @@ describe('AppListingCard', () => {
     await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
   });
 
+  test('OWNER sees an "Incomplete" indicator when the card is below the floor (missing icon/cover)', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' }; // owner
+    // base() has iconUrl: null + coverUrl: null → below floor.
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect
+      .element(page.getByTestId('apps-listing-owner-incomplete'))
+      .toBeInTheDocument();
+  });
+
+  test('OWNER does NOT see the "Incomplete" indicator when icon+cover are present', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' };
+    renderWithProviders(
+      <AppListingCard
+        card={base({ iconUrl: 'https://edge/icon.png', coverUrl: 'https://edge/cover.png' })}
+        canOpenPage
+      />
+    );
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-incomplete').elements()).toHaveLength(0);
+  });
+
+  test('NON-owner (public shopper) never sees the "Incomplete" indicator even below the floor', async () => {
+    mocks.currentUser = { id: 999, username: 'bob' }; // not the creator
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-incomplete').elements()).toHaveLength(0);
+  });
+
+  test('signed-out viewer never sees the "Incomplete" indicator', async () => {
+    mocks.currentUser = null;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-incomplete').elements()).toHaveLength(0);
+  });
+
   test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
     const longName = 'a-really-long-creator-username-that-will-definitely-overflow-the-card-column';
     renderWithProviders(

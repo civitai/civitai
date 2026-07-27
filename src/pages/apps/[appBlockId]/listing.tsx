@@ -2,7 +2,7 @@ import { Alert, Anchor, Button, Center, Container, Group, Loader, Stack, Text } 
 import { IconArrowLeft, IconInfoCircle, IconSend } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
 import { Meta } from '~/components/Meta/Meta';
@@ -87,6 +87,17 @@ export default function ListingMediaPage() {
     // and re-adding it would loop on each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listingId]);
+
+  // Track the asset floor so the submit button matches the server floor gate
+  // (icon+cover required; screenshots optional). Defaults to false until the step
+  // reports its state.
+  const [meetsFloor, setMeetsFloor] = useState(false);
+  // Stable identity so ListingAssetStep's onCompletenessChange effect (which lists
+  // the callback in its deps) doesn't re-fire on every parent render.
+  const handleCompletenessChange = useCallback(
+    (state: { meetsFloor: boolean; complete: boolean }) => setMeetsFloor(state.meetsFloor),
+    []
+  );
 
   // 4) Submit the prepared shadow for moderator re-approval.
   const submitRevision = trpc.appListings.submitListingRevision.useMutation();
@@ -176,12 +187,14 @@ export default function ListingMediaPage() {
                   contentRating={listing.contentRating as OffsiteContentRating}
                   suggestions={{}}
                   allowRemove
+                  onCompletenessChange={handleCompletenessChange}
                 />
               </div>
               <Group justify="flex-end">
                 <Button
                   onClick={() => void handleSubmit()}
                   loading={submitRevision.isPending}
+                  disabled={!meetsFloor}
                   leftSection={<IconSend size={16} />}
                   data-testid="apps-listing-media-submit"
                 >

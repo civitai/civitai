@@ -536,12 +536,23 @@ describe('submitListingRevision', () => {
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 
-  it('asset-incomplete shadow (no screenshot) → BAD_REQUEST, no request', async () => {
+  it('FLIPPED (partial-media): a shadow with icon+cover but NO screenshot now SUBMITS (screenshots optional)', async () => {
+    // Was blocked by the full-completeness gate; the floor gate (icon+cover) lets a
+    // screenshot-less revision submit. The shadow carries iconId+coverId.
     mockRead.appListing.findUnique.mockResolvedValue(shadowRow());
     mockWrite.appListingScreenshot.count.mockResolvedValue(0); // no real screenshot
+    mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
+    const res = await submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER });
+    expect(res).toMatchObject({ shadowId: 'apl_shadow', slug: 'cool-app' });
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalled();
+  });
+
+  it('BELOW FLOOR: a shadow missing its cover → BAD_REQUEST, no request', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow({ coverId: null }));
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
     await expect(
       submitListingRevision({ shadowId: 'apl_shadow', userId: OWNER })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('screenshots') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('cover') });
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 
@@ -713,12 +724,23 @@ describe('approveExternalRequest (revision apply)', () => {
     });
   });
 
-  it('revision approve is BLOCKED if the shadow is asset-incomplete (primary re-assert)', async () => {
+  it('FLIPPED (partial-media): revision approve with icon+cover but 0 screenshots now PUBLISHES (screenshots optional)', async () => {
+    // Was blocked by the full-completeness gate; the floor gate (icon+cover) applies
+    // a screenshot-less revision onto the live parent. The shadow has iconId+coverId.
     stageRevisionApprove();
     mockWrite.appListingScreenshot.count.mockResolvedValue(0); // no real screenshot on the shadow
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_rev', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('screenshots') });
+    ).resolves.toMatchObject({ listingId: 'apl_parent' });
+    // The parent WAS copied (the apply proceeded).
+    expect(mockWrite.appListing.update).toHaveBeenCalled();
+  });
+
+  it('BELOW FLOOR: revision approve with a shadow missing its icon → BAD_REQUEST, no mutation (primary re-assert)', async () => {
+    stageRevisionApprove({ iconId: null });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_rev', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('icon') });
     // Neither the request nor the parent were mutated.
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
