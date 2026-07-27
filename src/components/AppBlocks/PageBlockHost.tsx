@@ -196,6 +196,19 @@ export interface PageBlockHostProps {
    * mis-scoped — no single layer is load-bearing.
    */
   reviewMode?: boolean;
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831). Meaningful ONLY when `reviewMode`
+   * is also true. Default false → the render-only sandbox (every side-effect
+   * NACKs, unchanged). When true, the mod has EXPLICITLY opted in (consent-gated)
+   * to run the unapproved app FOR REAL against their OWN account: the SELF-BOUND /
+   * money-IN / own-Buzz side-effect handlers (submit / estimate / poll / cancel /
+   * app-workflows / buzz balance+transactions+accounts+comp / per-user storage /
+   * buy-buzz) run the REAL mutation because the token now carries the scopes +
+   * budget. CROSS-USER shared-datastore WRITES and money-OUT stay NACKed even in
+   * run-for-real (they are never granted). The persistent banner is rendered by
+   * the preview surface, not here.
+   */
+  reviewRunForReal?: boolean;
 }
 
 export function PageBlockHost({
@@ -221,8 +234,16 @@ export function PageBlockHost({
   onConsentGranted,
   onRetryToken,
   reviewMode = false,
+  reviewRunForReal = false,
 }: PageBlockHostProps) {
   const router = useRouter();
+  // MOD REVIEW SANDBOX (#2831): the side-effect NACK gate. Side-effecting handlers
+  // NACK when in review mode UNLESS the mod opted in to run-for-real (in which case
+  // the token carries the scopes + budget and the REAL mutation runs). Handlers
+  // that must ALWAYS refuse in review (cross-user shared WRITES, money-OUT) keep
+  // gating on `reviewMode` directly, NOT this. Default (`reviewMode:false`) →
+  // reviewNack is false → prod path is byte-identical.
+  const reviewNack = reviewMode && !reviewRunForReal;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   // Mirror of `status` for the Retry handler to read the prior terminal state
@@ -705,7 +726,7 @@ export function PageBlockHost({
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
       'SUBMIT_WORKFLOW',
       async (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           // Real Buzz spend — NACK with the failure snapshot the block awaits so
           // it fails fast (never a hang) and never reaches submitWorkflowMutation.
           if (raw && typeof raw.requestId === 'string') {
@@ -731,14 +752,14 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, reviewMode]);
+  }, [onMessage, send, token, submitWorkflowMutation, reviewNack]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
       'ESTIMATE_WORKFLOW',
       async (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           if (raw && typeof raw.requestId === 'string') {
             send('ESTIMATE_RESULT', {
               requestId: raw.requestId,
@@ -761,14 +782,14 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, estimateWorkflowMutation, reviewMode]);
+  }, [onMessage, send, token, estimateWorkflowMutation, reviewNack]);
 
   // POLL_WORKFLOW → blocks.pollWorkflow → WORKFLOW_STATUS.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
       'POLL_WORKFLOW',
       async (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           if (raw && typeof raw.requestId === 'string') {
             send('WORKFLOW_STATUS', {
               requestId: raw.requestId,
@@ -799,7 +820,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, pollWorkflowMutation, reviewMode]);
+  }, [onMessage, send, token, pollWorkflowMutation, reviewNack]);
 
   // CANCEL_WORKFLOW → blocks.cancelWorkflow → WORKFLOW_CANCELED. Ownership is
   // enforced server-side by the viewer's orchestrator token.
@@ -807,7 +828,7 @@ export function PageBlockHost({
     const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
       'CANCEL_WORKFLOW',
       async (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           if (raw && typeof raw.requestId === 'string') {
             send('WORKFLOW_CANCELED', {
               requestId: raw.requestId,
@@ -838,7 +859,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, cancelWorkflowMutation, reviewMode]);
+  }, [onMessage, send, token, cancelWorkflowMutation, reviewNack]);
 
   // QUERY_APP_WORKFLOWS → blocks.queryAppWorkflows → APP_WORKFLOWS_RESULT. The
   // app's OWN tag-scoped generation subqueue (host page token + SERVER-forced
@@ -853,7 +874,7 @@ export function PageBlockHost({
       async (raw) => {
         if (!raw || typeof raw.requestId !== 'string') return;
         const requestId = raw.requestId;
-        if (reviewMode) {
+        if (reviewNack) {
           // The app's generation subqueue read — NACK (workflow family, and the
           // synthetic review appId has no queue anyway). Error-shape reply, no hang.
           send('APP_WORKFLOWS_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
@@ -880,7 +901,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, queryAppWorkflowsMutation, reviewMode]);
+  }, [onMessage, send, token, queryAppWorkflowsMutation, reviewNack]);
 
   // CANCEL_APP_WORKFLOW → blocks.cancelAppWorkflow → CANCEL_APP_WORKFLOW_RESULT.
   // FAIL-CLOSED server-side (ownership + app-tag guard — the orchestrator by-id
@@ -902,7 +923,7 @@ export function PageBlockHost({
           return;
         }
         const requestId = raw.requestId;
-        if (reviewMode) {
+        if (reviewNack) {
           send('CANCEL_APP_WORKFLOW_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
           return;
         }
@@ -925,7 +946,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, cancelAppWorkflowMutation, reviewMode]);
+  }, [onMessage, send, token, cancelAppWorkflowMutation, reviewNack]);
 
   // PUBLISH_GENERATION_OUTPUTS → blocks.publishGenerationOutputs → PUBLISH_RESULT.
   // Turn the app's OWN workflow outputs into bare, real-scanned public images.
@@ -1041,7 +1062,7 @@ export function PageBlockHost({
       async (raw) => {
         if (!raw || typeof raw.requestId !== 'string') return;
         const requestId = raw.requestId;
-        if (reviewMode) {
+        if (reviewNack) {
           // Private financial read — NACK (the review token has no buzz:read:self).
           send('BUZZ_BALANCE_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
           return;
@@ -1062,7 +1083,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewMode]);
+  }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack]);
 
   // GET_BUZZ_TRANSACTIONS → blocks.getMyBuzzTransactions → BUZZ_TRANSACTIONS_RESULT.
   // The Buzz-dashboard ledger read. Host-MEDIATED (the iframe never holds the
@@ -1076,7 +1097,7 @@ export function PageBlockHost({
       async (raw) => {
         if (!raw || typeof raw.requestId !== 'string') return;
         const requestId = raw.requestId;
-        if (reviewMode) {
+        if (reviewNack) {
           send('BUZZ_TRANSACTIONS_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
           return;
         }
@@ -1104,7 +1125,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getMyBuzzTransactionsMutation, reviewMode]);
+  }, [onMessage, send, token, getMyBuzzTransactionsMutation, reviewNack]);
 
   // GET_BUZZ_ACCOUNTS → blocks.getMyBuzzAccounts → BUZZ_ACCOUNTS_RESULT. All-pool
   // balances (spendable + creator payout pools). Same host-mediated + consent +
@@ -1115,7 +1136,7 @@ export function PageBlockHost({
       async (raw) => {
         if (!raw || typeof raw.requestId !== 'string') return;
         const requestId = raw.requestId;
-        if (reviewMode) {
+        if (reviewNack) {
           send('BUZZ_ACCOUNTS_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
           return;
         }
@@ -1135,7 +1156,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getMyBuzzAccountsMutation, reviewMode]);
+  }, [onMessage, send, token, getMyBuzzAccountsMutation, reviewNack]);
 
   // GET_DAILY_COMPENSATION → blocks.getMyDailyCompensation → DAILY_COMPENSATION_RESULT.
   // Per-modelVersion generation earnings for the month of `date`. Same contract.
@@ -1145,7 +1166,7 @@ export function PageBlockHost({
       async (raw) => {
         if (!raw || typeof raw.requestId !== 'string') return;
         const requestId = raw.requestId;
-        if (reviewMode) {
+        if (reviewNack) {
           // Private per-model earnings — NACK (buzz-read family; no scope granted).
           send('DAILY_COMPENSATION_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
           return;
@@ -1171,7 +1192,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, getMyDailyCompensationMutation, reviewMode]);
+  }, [onMessage, send, token, getMyDailyCompensationMutation, reviewNack]);
 
   // GET_VIEWER → blocks.getMyViewer → VIEWER_RESULT. The block's "who am I" read
   // that backs the SDK `useViewer()` hook — the host-mediated successor to the
@@ -1228,7 +1249,7 @@ export function PageBlockHost({
     const off = onMessage<{ requestId?: unknown; suggestedAmount?: unknown } | undefined>(
       'OPEN_BUZZ_PURCHASE',
       (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           // Real-money top-up — never summon the Buy-Buzz modal at the mod. Reply
           // the not-purchased result the block awaits (fail-fast, no hang).
           if (raw && typeof raw.requestId === 'string') {
@@ -1286,7 +1307,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, status, appId, appBlockId, blockInstanceId, reviewMode]);
+  }, [onMessage, send, status, appId, appBlockId, blockInstanceId, reviewNack]);
 
   // ── Sign-in bridge: REQUEST_SIGN_IN (anonymous conversion) ─────────────────
   //
@@ -1347,7 +1368,7 @@ export function PageBlockHost({
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'APP_STORAGE_GET',
       async (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           // Per-user App Storage — NACK (the synthetic review appId has no storage
           // namespace, and the token carries no apps:storage scope). Error-shape.
           if (raw && typeof raw.requestId === 'string') {
@@ -1378,14 +1399,14 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, reviewNack]);
 
   // APP_STORAGE_SET → apps.storage.set → APP_STORAGE_SET_RESULT.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
       'APP_STORAGE_SET',
       async (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           if (raw && typeof raw.requestId === 'string') {
             send('APP_STORAGE_SET_RESULT', {
               requestId: raw.requestId,
@@ -1419,14 +1440,14 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, storageSetMutation, reviewMode]);
+  }, [onMessage, send, token, storageSetMutation, reviewNack]);
 
   // APP_STORAGE_DELETE → apps.storage.delete → APP_STORAGE_DELETE_RESULT.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
       'APP_STORAGE_DELETE',
       async (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           if (raw && typeof raw.requestId === 'string') {
             send('APP_STORAGE_DELETE_RESULT', {
               requestId: raw.requestId,
@@ -1461,7 +1482,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, storageDeleteMutation, reviewMode]);
+  }, [onMessage, send, token, storageDeleteMutation, reviewNack]);
 
   // APP_STORAGE_LIST → apps.storage.list → APP_STORAGE_LIST_RESULT.
   useEffect(() => {
@@ -1474,7 +1495,7 @@ export function PageBlockHost({
         }
       | undefined
     >('APP_STORAGE_LIST', async (raw) => {
-      if (reviewMode) {
+      if (reviewNack) {
         if (raw && typeof raw.requestId === 'string') {
           send('APP_STORAGE_LIST_RESULT', {
             requestId: raw.requestId,
@@ -1516,14 +1537,14 @@ export function PageBlockHost({
       }
     });
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, reviewNack]);
 
   // APP_STORAGE_QUOTA → apps.storage.getQuota → APP_STORAGE_QUOTA_RESULT.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown } | undefined>(
       'APP_STORAGE_QUOTA',
       async (raw) => {
-        if (reviewMode) {
+        if (reviewNack) {
           if (raw && typeof raw.requestId === 'string') {
             send('APP_STORAGE_QUOTA_RESULT', {
               requestId: raw.requestId,
@@ -1560,7 +1581,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, trpcUtils, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, reviewNack]);
 
   // ── App Blocks SHARED (cross-user / app-global) storage bridge (Phase 2b) ──
   //
@@ -1687,7 +1708,10 @@ export function PageBlockHost({
       'SHARED_APPEND',
       async (raw) => {
         if (reviewMode) {
-          // Cross-user shared datastore WRITE — NACK (shared reads stay live below).
+          // Cross-user shared datastore WRITE — NACK even in run-for-real: cross-user
+          // writes are NEVER granted (the run-for-real allowlist withholds
+          // apps:storage:shared:write), and this host NACK is defense-in-depth on top
+          // of the server resolveSharedContext 403. Shared READS stay live below.
           if (raw && typeof raw.requestId === 'string') {
             send('SHARED_APPEND_RESULT', { requestId: raw.requestId, error: REVIEW_NACK_MESSAGE });
           }
@@ -1730,7 +1754,9 @@ export function PageBlockHost({
       'SHARED_UPDATE',
       async (raw) => {
         if (reviewMode) {
-          // Reply MUST carry ok:false or the SDK drops it (→ hang). See handler doc.
+          // Cross-user shared datastore WRITE (author-scoped edit) — NACK even in
+          // run-for-real (never a cross-user write). Reply MUST carry ok:false or the
+          // SDK drops it (→ hang). See handler doc.
           if (raw && typeof raw.requestId === 'string') {
             send('SHARED_UPDATE_RESULT', {
               requestId: raw.requestId,
@@ -1773,6 +1799,7 @@ export function PageBlockHost({
       'SHARED_VOTE',
       async (raw) => {
         if (reviewMode) {
+          // Cross-user shared datastore WRITE (vote) — NACK even in run-for-real.
           if (raw && typeof raw.requestId === 'string') {
             send('SHARED_VOTE_RESULT', { requestId: raw.requestId, error: REVIEW_NACK_MESSAGE });
           }
@@ -1798,6 +1825,7 @@ export function PageBlockHost({
       'SHARED_UNVOTE',
       async (raw) => {
         if (reviewMode) {
+          // Cross-user shared datastore WRITE (unvote) — NACK even in run-for-real.
           if (raw && typeof raw.requestId === 'string') {
             send('SHARED_UNVOTE_RESULT', { requestId: raw.requestId, error: REVIEW_NACK_MESSAGE });
           }
@@ -1823,6 +1851,7 @@ export function PageBlockHost({
       'SHARED_WITHDRAW',
       async (raw) => {
         if (reviewMode) {
+          // Cross-user shared datastore WRITE (withdraw) — NACK even in run-for-real.
           if (raw && typeof raw.requestId === 'string') {
             send('SHARED_WITHDRAW_RESULT', { requestId: raw.requestId, error: REVIEW_NACK_MESSAGE });
           }

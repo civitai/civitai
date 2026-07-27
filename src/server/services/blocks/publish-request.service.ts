@@ -3355,6 +3355,20 @@ export type MintReviewBlockTokenResult = {
   /** The pending manifest's declared iframe sandbox (render fidelity). trustTier is
    *  forced 'unverified' at the host → allow-same-origin is dropped regardless. */
   sandbox: string;
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831) — true iff this token was minted
+   * with `runForReal:true` (a mod's consent-gated opt-in to run the unapproved app
+   * for real against their OWN account). The host uses it to run the REAL
+   * side-effect handlers instead of NACKing; default false → render-only sandbox.
+   */
+  runForReal: boolean;
+  /**
+   * The AGGREGATE (session) Buzz ceiling the mod's OWN account can spend across
+   * all run-for-real generations of THIS request (`REVIEW_RUN_FOR_REAL_BUZZ_CAP`),
+   * surfaced so the consent copy + active banner show the exact enforced number.
+   * null on a render-only (runForReal:false) mint.
+   */
+  buzzCap: number | null;
 };
 
 /**
@@ -3391,7 +3405,20 @@ export async function mintReviewBlockToken(opts: {
   publishRequestId: string;
   /** The calling moderator's id — the token `sub` is bound to it (self-bound). */
   modUserId: number;
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831). Default false → the render-only
+   * sandbox, BYTE-IDENTICAL to the pre-existing behaviour (render-only allowlist,
+   * keyCanSpend:false, no budget, no run-for-real claim). When true (a mod's
+   * EXPLICIT, consent-gated opt-in), the SAME audited clamp belt runs with the
+   * wider `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST` and `keyCanSpend:true`, a
+   * per-call Buzz budget is attached, and a signed `reviewRunForReal` claim
+   * selects the tight aggregate session Buzz cap at runtime. STILL: self-bound to
+   * the mod, forced-SFW, money-OUT (`social:tip:self`) excluded, and clamped to
+   * (declared ∩ allowlist) — a malicious manifest can never exceed either.
+   */
+  runForReal?: boolean;
 }): Promise<MintReviewBlockTokenResult> {
+  const runForReal = opts.runForReal === true;
   const { dbRead } = await import('~/server/db/client');
   const row = await dbRead.appBlockPublishRequest.findUnique({
     where: { id: opts.publishRequestId },
@@ -3412,6 +3439,7 @@ export async function mintReviewBlockToken(opts: {
     scopes?: unknown;
     name?: unknown;
     iframe?: { sandbox?: unknown } | null;
+    page?: unknown;
   };
   const manifestScopes: string[] = Array.isArray(manifest.scopes)
     ? manifest.scopes.filter((s): s is string => typeof s === 'string')
@@ -3426,17 +3454,41 @@ export async function mintReviewBlockToken(opts: {
     clampDevScopes,
     signDevScopedPageToken,
     REVIEW_MINT_SCOPE_ALLOWLIST,
+    REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
+    resolveDevBuzzBudget,
+    parseManifestBuzzBudget,
     FORCED_SFW_CEILING,
   } = await import('./dev-scoped-mint.service');
+  const { REVIEW_RUN_FOR_REAL_BUZZ_CAP } = await import(
+    '~/shared/constants/block-scope.constants'
+  );
 
-  // The AUDITED clamp belt — render-only allowlist + NO OAuth ceiling (a pending
-  // app has no OauthClient) + keyCanSpend:false (belt-and-suspenders spend strip).
+  // The AUDITED clamp belt (SAME function both modes — never fork the clamp).
+  //   - render-only (default): render-only allowlist + keyCanSpend:false → the
+  //     spend scope is stripped even if the manifest declares it. BYTE-IDENTICAL
+  //     to the pre-existing sandbox.
+  //   - run-for-real (mod opt-in): the WIDER run-for-real allowlist + keyCanSpend:true.
+  //     Granted = (manifest DECLARED scopes) ∩ allowlist ∩ (page money-out forbid),
+  //     so a malicious manifest declaring extra scopes still gets ONLY declared∩allowlist.
+  // NO OAuth ceiling in either mode (a pending app has no OauthClient; passing 0
+  // would wrongly strip every non-skip scope — see clampDevScopes doc).
   const granted = clampDevScopes({
     scopeSource: manifestScopes,
     oauthAllowed: null,
-    keyCanSpend: false,
-    allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
+    keyCanSpend: runForReal,
+    allowlist: runForReal
+      ? REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST
+      : REVIEW_MINT_SCOPE_ALLOWLIST,
   });
+
+  // Per-call Buzz budget — ONLY for run-for-real AND only if the spend scope
+  // survived the clamp. Resolved from the manifest page's declared per-gen budget,
+  // hard-clamped to the dev per-call cap (DEV_BUZZ_BUDGET_CAP inside resolveDevBuzzBudget).
+  // The AGGREGATE session ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP) is enforced
+  // separately at runtime — a per-call budget alone can't bound a looping app.
+  const buzzBudget = runForReal
+    ? resolveDevBuzzBudget(granted, undefined, parseManifestBuzzBudget(manifest.page))
+    : undefined;
 
   // SIGN — self-bound to the MOD, forced-SFW, domain:null, synthetic non-resolving
   // ids (see the fn doc). `signAppBlockId` = the `pubreq_<ULID>` request id (already
@@ -3452,7 +3504,8 @@ export async function mintReviewBlockToken(opts: {
     signAppBlockId: row.id,
     blockInstanceId: `page_${row.id}`,
     granted,
-    buzzBudget: undefined,
+    buzzBudget,
+    reviewRunForReal: runForReal,
   });
 
   // MINT-TIME AUDIT (mirror the `app-blocks.dev-tunnel.mint` structured event):
@@ -3467,6 +3520,12 @@ export async function mintReviewBlockToken(opts: {
       publishRequestId: row.id,
       slug: row.slug,
       scopes: granted,
+      // Run-for-real is a PRIVILEGED, money-touching action — record the opt-in
+      // (and the enforced budgets) distinctly so the forensic trail shows WHEN a
+      // mod ran an unapproved app for real against their own account.
+      runForReal,
+      buzzBudget: buzzBudget ?? null,
+      buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
     },
     'webhooks'
   ).catch(() => null);
@@ -3483,6 +3542,8 @@ export async function mintReviewBlockToken(opts: {
     blockInstanceId: `page_${row.id}`,
     appName: manifestName,
     sandbox: manifestSandbox,
+    runForReal,
+    buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
   };
 }
 

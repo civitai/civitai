@@ -160,6 +160,54 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
 ]);
 
 /**
+ * The MOD-REVIEW-SANDBOX "RUN FOR REAL" host-mint allowlist (#2831). Used ONLY
+ * when a moderator EXPLICITLY opts in (per-preview, behind a loud consent gate)
+ * to run an UNAPPROVED review app FOR REAL against THEIR OWN account, so they can
+ * fully evaluate generation / storage / buzz before approving.
+ *
+ * It is the render-only `REVIEW_MINT_SCOPE_ALLOWLIST` PLUS the SELF-BOUND
+ * capabilities needed to exercise a page app end-to-end — and NOTHING that could
+ * move money OUT or touch another user:
+ *
+ * ADDED over render-only (all SELF-BOUND to the reviewing mod):
+ *   - `ai:write:budgeted`   real Buzz SPEND-IN for generation (also gated by the
+ *                           per-call budget AND the aggregate session cap below)
+ *   - `apps:storage:read`   the mod's OWN per-app KV (see caveat *)
+ *   - `apps:storage:write`  the mod's OWN per-app KV (see caveat *)
+ *   - `buzz:read:self`      the mod's OWN balance/ledger (self-bound read)
+ *
+ * DELIBERATELY WITHHELD (clamped out regardless of what the pending manifest
+ * declares — the clamp keeps only scopes IN this set, so a malicious manifest
+ * declaring extra scopes gets NONE of these):
+ *   - `social:tip:self`               real money OUT — NEVER granted (invariant #4)
+ *   - `apps:storage:shared:read|write` cross-user shared datastore — NEVER (invariant #2)
+ *   - `collections:read:private`      third-party-reachable private data
+ *   - `collections:write:self`        write surface not needed to evaluate a page app
+ *
+ * (*) CAVEAT — App Storage may still fail CLOSED downstream: `resolveStorageContext`
+ * (apps.router) requires an APPROVED `AppBlock` row keyed on the token's appId, but
+ * a review token's appId is the synthetic non-resolving `pending-<id>` and the app
+ * is un-approved. So even with the scope granted, a storage op returns NOT_FOUND /
+ * FORBIDDEN until the app is approved. Granting the scope here is faithful to the
+ * declared∩allowlist contract and lets the host surface the REAL server response to
+ * the mod (rather than a synthetic NACK); it is NOT a claim that storage is fully
+ * exercisable pre-approval. Generation + own-Buzz-read DO work (self-bound; they do
+ * not require an approved AppBlock row).
+ *
+ * Money-OUT (`social:tip:self`) is additionally excluded by PAGE_FORBIDDEN_SCOPES
+ * inside the clamp, so it can NEVER survive on ANY page token regardless of allowlist.
+ */
+export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
+  'models:read:self',
+  'user:read:self',
+  'collections:read:self',
+  'ai:write:budgeted',
+  'apps:storage:read',
+  'apps:storage:write',
+  'buzz:read:self',
+]);
+
+/**
  * The AUDITED scope clamp belt (dev-token.ts steps 7a–7g), extracted verbatim.
  * Start from `scopeSource` (the app's approved snapshot, an owned pending request's
  * un-reviewed `manifest.scopes`, or the caller's self-declared body scopes) and:
@@ -314,6 +362,15 @@ export async function signDevScopedPageToken(opts: {
   blockInstanceId: string;
   granted: string[];
   buzzBudget: number | undefined;
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831) marker. When true, stamps a
+   * signed `reviewRunForReal: true` claim so the runtime spend paths
+   * (submitWorkflow / customComfy) enforce the TIGHT per-(mod, publishRequestId)
+   * aggregate Buzz ceiling instead of the ordinary per-user daily cap. The flag
+   * is only trustworthy because it is inside the RS256-signed payload. Absent
+   * (default) → byte-identical to a normal dev-scoped page token.
+   */
+  reviewRunForReal?: boolean;
 }): Promise<Awaited<ReturnType<typeof BlockTokenService.sign>>> {
   const ctx: Record<string, unknown> = {
     slotId: PAGE_SLOT_ID,
@@ -334,5 +391,6 @@ export async function signDevScopedPageToken(opts: {
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     dev: true,
+    ...(opts.reviewRunForReal === true ? { reviewRunForReal: true } : {}),
   });
 }

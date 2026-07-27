@@ -188,6 +188,20 @@ export interface SignBlockTokenInput {
    * (900s, or 300s for settings scopes).
    */
   dev?: boolean;
+  /**
+   * MOD REVIEW SANDBOX "run for real" marker (#2831). Set ONLY by
+   * `mintReviewBlockToken({ runForReal: true })` — a moderator's explicit,
+   * consent-gated opt-in to run an UNAPPROVED review app FOR REAL against their
+   * OWN account. When true a `reviewRunForReal: true` claim is stamped so the
+   * runtime spend paths (submitWorkflow / customComfy) enforce the TIGHT
+   * per-(mod, publishRequestId) AGGREGATE Buzz ceiling
+   * (`REVIEW_RUN_FOR_REAL_BUZZ_CAP`) rather than the ordinary per-user daily cap.
+   * Only trustworthy because the RS256 signature is verified before the claim is
+   * read (a forged `reviewRunForReal:true` can't pass the signature gate). Does
+   * NOT change the token lifetime (run-for-real tokens are also `dev:true`).
+   * Absent/false → byte-identical to a normal token (no claim stamped).
+   */
+  reviewRunForReal?: boolean;
 }
 
 export interface SignBlockTokenResult {
@@ -265,6 +279,13 @@ export class BlockTokenService {
     // true so a non-dev token never carries the claim (absent → 15min cap).
     if (input.dev === true) {
       claims.dev = true;
+    }
+    // RUN-FOR-REAL marker — stamped ONLY for a mod's consent-gated review
+    // run-for-real token. Read (after signature validation) by the runtime spend
+    // paths to select the tight per-(mod, publishRequestId) aggregate Buzz cap.
+    // Stamped only when explicitly true so a normal token never carries it.
+    if (input.reviewRunForReal === true) {
+      claims.reviewRunForReal = true;
     }
 
     const token = await new SignJWT(claims)
