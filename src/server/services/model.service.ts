@@ -3652,10 +3652,12 @@ export async function copyGallerySettingsToAllModelsByUser({
 
     userUpdateCounter?.inc({ location: 'model.service:updateGallerySettings' });
 
+    // Flagged models keep the SFW level a moderator forced on them — otherwise one
+    // "copy to all my models" re-opens every model the user has ever had flagged.
     await tx.$executeRaw`
       UPDATE "Model"
       SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
-        'level', ${settings.level},
+        'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${settings.level} END,
         'users', ${JSON.stringify(settings.users || [])}::jsonb,
         'tags', ${JSON.stringify(settings.tags || [])}::jsonb
                                                    )

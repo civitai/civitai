@@ -1944,16 +1944,23 @@ export const updateGallerySettingsHandler = async ({
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
 
-    const model = await getModel({ id, select: { id: true, userId: true } });
+    const model = await getModel({
+      id,
+      select: { id: true, userId: true, minor: true, sfwOnly: true },
+    });
     if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
       throw throwNotFoundError(`No model with id ${id}`);
+
+    // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
+    // gallery back above SFW from here. Moderators keep full control.
+    const sfwLocked = !sessionUser.isModerator && (model.minor || model.sfwOnly);
 
     const updatedSettings = gallerySettings
       ? {
           hiddenImages: gallerySettings.hiddenImages,
           users: gallerySettings.hiddenUsers.map(({ id }) => id),
           tags: gallerySettings.hiddenTags.map(({ id }) => id),
-          level: gallerySettings.level,
+          level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
           pinnedPosts: gallerySettings.pinnedPosts,
         }
       : null;
