@@ -132,6 +132,7 @@ type CustomAppProps = {
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
+  adsGated?: boolean;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -160,6 +161,7 @@ function MyApp(props: CustomAppProps) {
       serverDomains,
       availableOAuthProviders,
       verifiedBot = null,
+      adsGated = false,
       ...pageProps
     },
   } = props;
@@ -252,7 +254,7 @@ function MyApp(props: CustomAppProps) {
                                 <ActivityReportingProvider>
                                   <ReferralsProvider {...cookies.referrals}>
                                     <FiltersProvider>
-                                      <AdsProvider>
+                                      <AdsProvider gated={adsGated}>
                                         <HiddenPreferencesProvider>
                                           <CivitaiLinkProvider>
                                             <BrowserRouterProvider>
