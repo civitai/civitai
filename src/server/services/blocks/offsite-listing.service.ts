@@ -24,7 +24,7 @@ import {
   SENSITIVE_TOKEN_SCOPES,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
-import { assertListingAssetsComplete } from '~/server/services/blocks/app-listing-assets.service';
+import { assertListingMeetsFloor } from '~/server/services/blocks/app-listing-assets.service';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
@@ -1099,12 +1099,14 @@ export async function submitListingRevision(opts: {
     );
   }
 
-  // Asset-completeness (authoritative on the primary — the asset mutators write to
-  // dbWrite, so a replica count could be stale-complete under lag) + URL re-validate.
+  // Publish FLOOR gate (icon+cover required; screenshots optional) — authoritative
+  // on the primary (the asset mutators write to dbWrite, so a replica count could be
+  // stale under lag). screenshotCount is still computed for the arg shape but the
+  // floor helper ignores it. + URL re-validate.
   const screenshotCount = await dbWrite.appListingScreenshot.count({
     where: { appListingId: shadowId, imageId: { not: null } },
   });
-  assertListingAssetsComplete({
+  assertListingMeetsFloor({
     iconId: shadow.iconId,
     coverId: shadow.coverId,
     screenshotCount,
@@ -1650,11 +1652,12 @@ function assertConnectSensitiveScopesJustified(listing: {
  * MOD approve of a pending off-site request. Loads the request + its draft
  * `AppListing`, asserts `pending`, and enforces two gates BEFORE any mutation:
  *
- *   1. {@link assertListingAssetsComplete} — **THE P3 ACTIVATION.** Approve FAILS
- *      `BAD_REQUEST { missing }` unless the draft has an icon AND a cover AND ≥1
- *      screenshot (a screenshot whose backing Image was deleted — `imageId` null
- *      — does NOT count, mirroring `getListingAssets`' completeness math). This is
- *      the intended live wiring of the dark P1 gate.
+ *   1. {@link assertListingMeetsFloor} — the publish FLOOR gate. Approve FAILS
+ *      `BAD_REQUEST { missing }` unless the draft has an icon AND a cover.
+ *      Screenshots are OPTIONAL (a listing can go live with icon+cover and add
+ *      screenshots later); still-missing screenshots surface as advisory
+ *      incompleteness, never a block. This relaxed the former full-completeness
+ *      gate (which additionally required ≥1 screenshot) down to the floor.
  *   2. `validateExternalUrl` on the STORED `externalUrl` (defense-in-depth — a
  *      somehow-bad stored value blocks approve; the card link opens in the user's
  *      browser, so a non-https stored URL must never reach the store).
@@ -1765,9 +1768,10 @@ export async function approveExternalRequest(opts: {
     where: { appListingId, imageId: { not: null } },
   });
 
-  // (3) THE P3 ACTIVATION — mandatory-asset gate (throws BAD_REQUEST { missing }).
-  // Fail-fast copy on the replica; re-asserted authoritatively on the primary in (5).
-  assertListingAssetsComplete({
+  // (3) Publish FLOOR gate — icon+cover required, screenshots optional (throws
+  // BAD_REQUEST { missing }). Fail-fast copy on the replica; re-asserted
+  // authoritatively on the primary in (5).
+  assertListingMeetsFloor({
     iconId: listing.iconId,
     coverId: listing.coverId,
     screenshotCount,
@@ -1826,7 +1830,7 @@ export async function approveExternalRequest(opts: {
     const primaryScreenshotCount = await tx.appListingScreenshot.count({
       where: { appListingId, imageId: { not: null } },
     });
-    assertListingAssetsComplete({
+    assertListingMeetsFloor({
       iconId: primaryListing.iconId,
       coverId: primaryListing.coverId,
       screenshotCount: primaryScreenshotCount,
@@ -2051,7 +2055,7 @@ async function applyApprovedRevision(opts: {
     const screenshotCount = await tx.appListingScreenshot.count({
       where: { appListingId: shadowId, imageId: { not: null } },
     });
-    assertListingAssetsComplete({
+    assertListingMeetsFloor({
       iconId: shadow.iconId,
       coverId: shadow.coverId,
       screenshotCount,
@@ -2409,9 +2413,9 @@ const mySubmissionSelect = {
       // Filtered COUNT — only screenshots whose Image is still live. A row whose
       // Image was deleted (imageId → null via onDelete: SetNull) has no
       // displayable asset, so it must not inflate the count, else the
-      // `no-screenshots` warning is a false-negative. Matches the authoritative
-      // asset gate: `appListingScreenshot.count({ where: { imageId: { not: null } } })`
-      // (see assertListingAssetsComplete callsite ~L1103 in this file).
+      // `no-screenshots` (advisory) warning is a false-negative. Matches the
+      // screenshot count query used elsewhere:
+      // `appListingScreenshot.count({ where: { imageId: { not: null } } })`.
       _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
     },
   },

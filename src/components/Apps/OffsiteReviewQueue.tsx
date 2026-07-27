@@ -26,6 +26,7 @@ import {
   IconExternalLink,
   IconFlag,
   IconHistory,
+  IconInfoCircle,
   IconQuestionMark,
   IconX,
 } from '@tabler/icons-react';
@@ -389,7 +390,16 @@ export function OffsiteReviewModal({
     connectScopeJustifications: request.appListing?.connectScopeJustifications ?? null,
   });
 
-  const assetsIncomplete = !assetsQuery.isLoading && (!hasIcon || !hasCover || screenshotCount < 1);
+  // Publish FLOOR = icon + cover (screenshots optional). Below-floor BLOCKS approve
+  // (the server floor gate rejects it); missing screenshots is only ADVISORY — the
+  // mod can approve, screenshots can be added later. Surface WHICH assets are
+  // missing so the mod approves with eyes open.
+  const missingFloor = !assetsQuery.isLoading
+    ? [!hasIcon ? 'icon' : null, !hasCover ? 'cover' : null].filter((v): v is string => v != null)
+    : [];
+  const belowFloor = missingFloor.length > 0;
+  const missingScreenshotsOnly =
+    !assetsQuery.isLoading && !belowFloor && screenshotCount < 1;
 
   return (
     <Modal
@@ -559,11 +569,30 @@ export function OffsiteReviewModal({
           </List>
         </Stack>
 
-        {assetsIncomplete && (
-          <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={16} />}>
+        {belowFloor && (
+          <Alert
+            color="red"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            data-testid="apps-offsite-assets-below-floor"
+          >
             <Text size="sm">
-              Assets are incomplete — approve will be rejected by the server until an icon, a cover
-              and ≥1 screenshot are attached.
+              Missing: {missingFloor.join(', ')}. Approve will be rejected by the server until an
+              icon and cover are attached (screenshots are optional).
+            </Text>
+          </Alert>
+        )}
+
+        {missingScreenshotsOnly && (
+          <Alert
+            color="blue"
+            variant="light"
+            icon={<IconInfoCircle size={16} />}
+            data-testid="apps-offsite-assets-missing-screenshots"
+          >
+            <Text size="sm">
+              Missing: screenshots. This is optional — you can approve now; the author can add
+              screenshots later.
             </Text>
           </Alert>
         )}

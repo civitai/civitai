@@ -732,16 +732,15 @@ describe('approveExternalRequest', () => {
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 
-  it('REPLICA-LAG: replica shows a screenshot but the PRIMARY count is 0 → approve BLOCKED', async () => {
+  it('FLIPPED (partial-media): PRIMARY screenshot count 0 with icon+cover still APPROVES (screenshots optional)', async () => {
+    // The floor gate ignores the screenshot count entirely, so a primary count of 0
+    // (icon+cover present) is no longer a block — the approve proceeds and flips.
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
     mockWrite.appListingScreenshot.count.mockResolvedValue(0); // primary: no real screenshot
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('screenshots'),
-    });
-    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ listingId: 'apl_1' });
+    expect(mockWrite.$transaction).toHaveBeenCalled();
   });
 
   it('supersedes any SIBLING pending request for the SAME LISTING (appListingId-scoped, Fix #2)', async () => {
@@ -764,7 +763,7 @@ describe('approveExternalRequest', () => {
     expect(supersede.data).toEqual({ status: 'withdrawn' });
   });
 
-  it('BLOCKED by assertListingAssetsComplete — missing ICON → BAD_REQUEST, no mutation', async () => {
+  it('BELOW FLOOR by assertListingMeetsFloor — missing ICON → BAD_REQUEST, no mutation', async () => {
     stageApproveScenario({ iconId: null, coverId: 2, screenshotCount: 1 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
@@ -774,7 +773,7 @@ describe('approveExternalRequest', () => {
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 
-  it('BLOCKED by assertListingAssetsComplete — missing COVER → BAD_REQUEST, no mutation', async () => {
+  it('BELOW FLOOR by assertListingMeetsFloor — missing COVER → BAD_REQUEST, no mutation', async () => {
     stageApproveScenario({ iconId: 1, coverId: null, screenshotCount: 1 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
@@ -782,15 +781,15 @@ describe('approveExternalRequest', () => {
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
-  it('BLOCKED by assertListingAssetsComplete — missing SCREENSHOT → BAD_REQUEST, no mutation', async () => {
+  it('FLIPPED (partial-media): missing SCREENSHOT is now OPTIONAL — icon+cover, 0 screenshots APPROVES', async () => {
+    // Was previously BLOCKED by the full-completeness gate; the floor gate
+    // (icon+cover) lets a screenshot-less listing publish. This is the whole point.
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 0 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('screenshots'),
-    });
-    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ listingId: 'apl_1' });
+    // The approve proceeded into the transaction (the flip happened).
+    expect(mockWrite.$transaction).toHaveBeenCalled();
   });
 
   it('all assets present → the gate PASSES (approve proceeds); the count query excludes imageId-null rows', async () => {

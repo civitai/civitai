@@ -2,6 +2,7 @@ import { Alert, Badge, Button, Card, FileInput, Group, Image, Loader, Stack, Tex
 import {
   IconAlertTriangle,
   IconCheck,
+  IconInfoCircle,
   IconPhoto,
   IconRefresh,
   IconTrash,
@@ -96,6 +97,7 @@ export function ListingAssetStep({
   footer,
   allowRemove = false,
   onAssetMutated,
+  onCompletenessChange,
 }: {
   listingId: string;
   contentRating: OffsiteContentRating;
@@ -111,6 +113,10 @@ export function ListingAssetStep({
   /** Called after any successful asset mutation (attach / remove) — edit mode uses
    *  it to know a revision has diverged from the live listing. */
   onAssetMutated?: () => void;
+  /** Called whenever the floor/completeness state changes so a caller can gate a
+   *  submit button. `meetsFloor` = icon+cover attached (the publish floor);
+   *  `complete` = also has ≥1 screenshot (advisory). */
+  onCompletenessChange?: (state: { meetsFloor: boolean; complete: boolean }) => void;
 }) {
   const { uploadToCF } = useCFImageUpload();
   const [icon, setIcon] = useState<AssetState>(() => assetFromInitial(initial?.icon));
@@ -426,8 +432,17 @@ export function ListingAssetStep({
   }
 
   const attachedScreenshots = screenshots.filter((s) => s.status === 'attached').length;
-  const complete =
-    icon.status === 'attached' && cover.status === 'attached' && attachedScreenshots >= 1;
+  // Publish FLOOR = icon + cover attached (screenshots OPTIONAL). A listing can be
+  // submitted + published at the floor; screenshots are advisory/recommended.
+  const meetsFloor = icon.status === 'attached' && cover.status === 'attached';
+  // FULL completeness additionally requires ≥1 screenshot — advisory only now.
+  const complete = meetsFloor && attachedScreenshots >= 1;
+
+  // Surface floor/completeness up to callers that gate a submit button (e.g. the
+  // `/apps/[appBlockId]/listing` "Submit for review" button gates on `meetsFloor`).
+  useEffect(() => {
+    onCompletenessChange?.({ meetsFloor, complete });
+  }, [meetsFloor, complete, onCompletenessChange]);
 
   return (
     <Stack gap="md" data-testid="apps-offsite-submit-success">
@@ -559,15 +574,30 @@ export function ListingAssetStep({
         </Stack>
       </Card>
 
+      {/* Tri-state completeness advisory:
+          (a) below floor (missing icon or cover) → warning, submit blocked;
+          (b) floor met but no screenshots → neutral, submit ENABLED (optional);
+          (c) fully complete → success. */}
       <Alert
-        color={complete ? 'green' : 'yellow'}
+        color={!meetsFloor ? 'red' : complete ? 'green' : 'blue'}
         variant="light"
-        icon={complete ? <IconCheck size={16} /> : <IconAlertTriangle size={16} />}
+        icon={
+          !meetsFloor ? (
+            <IconAlertTriangle size={16} />
+          ) : complete ? (
+            <IconCheck size={16} />
+          ) : (
+            <IconInfoCircle size={16} />
+          )
+        }
+        data-testid="apps-listing-assets-completeness"
       >
         <Text size="sm">
-          {complete
-            ? 'All required assets attached. Your submission is ready for moderator review.'
-            : 'A moderator can only approve once an icon, a cover and ≥1 screenshot are attached.'}
+          {!meetsFloor
+            ? 'Add an icon and cover to publish.'
+            : complete
+            ? 'All set.'
+            : 'Ready to publish. Screenshots are recommended but optional — you can add them later.'}
         </Text>
       </Alert>
 

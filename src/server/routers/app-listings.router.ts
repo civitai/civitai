@@ -641,8 +641,8 @@ export const appListingsRouter = router({
 
   /**
    * MOD: approve a pending off-site request (PR-b). Loads the request + its draft
-   * listing, enforces `assertListingAssetsComplete` (THE P3 activation — approve
-   * FAILS unless icon+cover+≥1 screenshot) + re-validates the stored externalUrl,
+   * listing, enforces `assertListingMeetsFloor` (approve FAILS unless icon+cover;
+   * screenshots are OPTIONAL — partial-media relaxation) + re-validates the stored externalUrl,
    * then flips the listing draft→approved + the request→approved (status-guarded)
    * and supersedes sibling pendings. v1 ALLOWS mod self-approve (reviewer ==
    * submitter — trusted, enables single-mod dogfood; a reviewer≠submitter

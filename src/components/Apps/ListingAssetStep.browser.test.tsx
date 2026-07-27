@@ -308,6 +308,68 @@ describe('ListingAssetStep — uploaded-asset preview + cancel mid-scan', () => 
     );
   });
 
+  test('tri-state completeness alert + onCompletenessChange (partial-media floor)', async () => {
+    // (a) BELOW FLOOR — icon prefilled, cover missing → warning copy, meetsFloor false.
+    const belowFloor = { meetsFloor: null as boolean | null, complete: null as boolean | null };
+    renderStep({
+      initial: {
+        icon: { imageId: 1, url: 'https://edge/icon.png' },
+        cover: { imageId: null, url: null },
+        screenshots: [],
+      },
+      onCompletenessChange: (s) => {
+        belowFloor.meetsFloor = s.meetsFloor;
+        belowFloor.complete = s.complete;
+      },
+    });
+    const alert = page.getByTestId('apps-listing-assets-completeness');
+    await expect.element(alert).toHaveTextContent(/Add an icon and cover to publish/i);
+    await vi.waitFor(() => expect(belowFloor.meetsFloor).toBe(false));
+    expect(belowFloor.complete).toBe(false);
+  });
+
+  test('alert: FLOOR met but no screenshots → neutral "optional" copy, meetsFloor true', async () => {
+    const state = { meetsFloor: null as boolean | null, complete: null as boolean | null };
+    renderStep({
+      initial: {
+        icon: { imageId: 1, url: 'https://edge/icon.png' },
+        cover: { imageId: 2, url: 'https://edge/cover.png' },
+        screenshots: [],
+      },
+      onCompletenessChange: (s) => {
+        state.meetsFloor = s.meetsFloor;
+        state.complete = s.complete;
+      },
+    });
+    const alert = page.getByTestId('apps-listing-assets-completeness');
+    await expect
+      .element(alert)
+      .toHaveTextContent(/Screenshots are recommended but optional/i);
+    await vi.waitFor(() => expect(state.meetsFloor).toBe(true));
+    expect(state.complete).toBe(false);
+  });
+
+  test('alert: fully complete (icon+cover+screenshot) → "All set." + complete true', async () => {
+    const state = { meetsFloor: null as boolean | null, complete: null as boolean | null };
+    renderStep({
+      initial: {
+        icon: { imageId: 1, url: 'https://edge/icon.png' },
+        cover: { imageId: 2, url: 'https://edge/cover.png' },
+        screenshots: [
+          { id: 'row-1', imageId: 3, url: 'https://edge/shot.png', caption: null, order: 0 },
+        ],
+      },
+      onCompletenessChange: (s) => {
+        state.meetsFloor = s.meetsFloor;
+        state.complete = s.complete;
+      },
+    });
+    const alert = page.getByTestId('apps-listing-assets-completeness');
+    await expect.element(alert).toHaveTextContent(/All set/i);
+    await vi.waitFor(() => expect(state.complete).toBe(true));
+    expect(state.meetsFloor).toBe(true);
+  });
+
   test('repeated upload + cancel does not crash or leak (blobs revoked each cycle)', async () => {
     const revokeSpy = vi.spyOn(URL, 'revokeObjectURL');
     mocks.addScreenshotAsync.mockResolvedValue({ status: 'pending' });

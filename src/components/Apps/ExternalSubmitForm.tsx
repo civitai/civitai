@@ -649,9 +649,9 @@ function ExternalCreateForm() {
                     title="Draft created"
                   >
                     <Text size="sm">
-                      <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon,
-                      a cover and at least one screenshot below — a moderator can only approve an
-                      asset-complete listing. Content rating:{' '}
+                      <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon
+                      and a cover below to be approved — screenshots are recommended but optional and
+                      can be added later. Content rating:{' '}
                       <Badge size="xs">{values.contentRating}</Badge>
                     </Text>
                   </Alert>

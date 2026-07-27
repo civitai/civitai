@@ -117,4 +117,32 @@ describe('computeListingProblems', () => {
       'empty-tagline',
     ]);
   });
+
+  describe('severity — floor (icon/cover) is BLOCKING, everything else is ADVISORY', () => {
+    const severityOf = (code: ListingProblemCode, input: ListingProblemInput) =>
+      computeListingProblems(input).problems.find((p) => p.code === code)?.severity;
+
+    it('missing icon/cover are BLOCKING (required before publishing)', () => {
+      expect(severityOf('missing-icon', { ...complete, iconId: null })).toBe('blocking');
+      expect(severityOf('missing-cover', { ...complete, coverId: null })).toBe('blocking');
+    });
+
+    it('missing screenshots is ADVISORY (recommended, optional)', () => {
+      expect(severityOf('no-screenshots', { ...complete, screenshotCount: 0 })).toBe('advisory');
+    });
+
+    it('empty text fields are ADVISORY', () => {
+      expect(severityOf('empty-description', { ...complete, description: null })).toBe('advisory');
+      expect(severityOf('empty-tagline', { ...complete, tagline: null })).toBe('advisory');
+      expect(severityOf('empty-category', { ...complete, category: null })).toBe('advisory');
+    });
+
+    it('icon/cover read as "required before publishing" and screenshots as "recommended"', () => {
+      const iconLabel = computeListingProblems({ ...complete, iconId: null }).problems[0].label;
+      expect(iconLabel).toMatch(/required before publishing/i);
+      const shotLabel = computeListingProblems({ ...complete, screenshotCount: 0 }).problems[0]
+        .label;
+      expect(shotLabel).toMatch(/recommended|optional/i);
+    });
+  });
 });

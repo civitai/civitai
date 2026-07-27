@@ -1,4 +1,4 @@
-import { Anchor, Avatar, Box, Button, Card, Group, Image, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Avatar, Badge, Box, Button, Card, Group, Image, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { IconApps, IconExternalLink, IconPencil, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -163,6 +163,17 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
   const editHref = getOwnerEditHref(card.kindData, card.id);
   const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
 
+  // OWNER-ONLY incompleteness hint. The public store DTO carries only nullable
+  // iconUrl/coverUrl (no screenshot count), so this is scoped to a below-floor
+  // listing (missing icon or cover). A non-owner / public shopper always sees a
+  // normal card (the cover placeholder already handles a missing cover). Small +
+  // subtle by design — a nudge to the owner, never a public "broken" signal.
+  const missingFloorAssets = [
+    card.iconUrl == null ? 'icon' : null,
+    card.coverUrl == null ? 'cover' : null,
+  ].filter((v): v is string => v != null);
+  const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
+
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
       <ListingCover coverUrl={card.coverUrl} category={card.category} name={card.name} />
@@ -196,6 +207,26 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               </Title>
             </Anchor>
             <CreatorChip creator={card.creator} />
+            {showOwnerIncomplete && (
+              <Tooltip
+                label={`Missing ${missingFloorAssets.join(' and ')} — add ${
+                  missingFloorAssets.length > 1 ? 'them' : 'it'
+                } from Edit to complete your listing.`}
+                withArrow
+                multiline
+                w={220}
+              >
+                <Badge
+                  color="yellow"
+                  variant="light"
+                  size="xs"
+                  style={{ cursor: 'help', alignSelf: 'flex-start' }}
+                  data-testid="apps-listing-owner-incomplete"
+                >
+                  Incomplete
+                </Badge>
+              </Tooltip>
+            )}
           </Stack>
         </Group>
 

@@ -31,6 +31,9 @@ const state = vi.hoisted(() => ({
   submit: { calls: [] as unknown[], pending: false },
   // Props the stubbed ListingAssetStep received.
   assetProps: { last: null as null | { listingId: string; contentRating: string } },
+  // Floor state the stubbed step reports up via onCompletenessChange (drives the
+  // submit button's disabled binding). Default meets-floor so the happy paths click.
+  floor: { meetsFloor: true, complete: false },
   invalidate: vi.fn().mockResolvedValue(undefined),
   flags: { appBlocks: true } as Record<string, boolean>,
 }));
@@ -57,8 +60,14 @@ vi.mock('~/utils/notifications', () => ({
 // Stub the reused asset step — capture the props to prove the shell threads the
 // SHADOW id + rating, without re-running its own (covered) upload behaviour.
 vi.mock('~/components/Apps/ListingAssetStep', () => ({
-  ListingAssetStep: (props: { listingId: string; contentRating: string }) => {
+  ListingAssetStep: (props: {
+    listingId: string;
+    contentRating: string;
+    onCompletenessChange?: (s: { meetsFloor: boolean; complete: boolean }) => void;
+  }) => {
     state.assetProps.last = props;
+    // Mirror the real step: report the floor state up so the page can gate submit.
+    props.onCompletenessChange?.(state.floor);
     return (
       <div data-testid="asset-step">
         assets:{props.listingId}:{props.contentRating}
@@ -114,6 +123,7 @@ beforeEach(() => {
   };
   state.begin = { shadowId: 'apl_shadow', error: null, pending: false };
   state.submit = { calls: [], pending: false };
+  state.floor = { meetsFloor: true, complete: false };
   state.assetProps.last = null;
   state.invalidate.mockClear();
   state.flags = { appBlocks: true };
@@ -145,6 +155,22 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
     await userEvent.click(page.getByTestId('apps-listing-media-submit'));
     await vi.waitFor(() => expect(state.submit.calls).toHaveLength(1));
     expect(state.submit.calls[0]).toEqual({ shadowId: 'apl_shadow' });
+  });
+
+  test('the Submit button is ENABLED when the step reports it meets the floor (icon+cover)', async () => {
+    state.floor = { meetsFloor: true, complete: false };
+    renderWithProviders(<ListingMediaPage />);
+    const submit = page.getByTestId('apps-listing-media-submit');
+    await expect.element(submit).toBeInTheDocument();
+    await expect.element(submit).not.toBeDisabled();
+  });
+
+  test('the Submit button is DISABLED when the step reports it is below the floor', async () => {
+    state.floor = { meetsFloor: false, complete: false };
+    renderWithProviders(<ListingMediaPage />);
+    const submit = page.getByTestId('apps-listing-media-submit');
+    await expect.element(submit).toBeInTheDocument();
+    await expect.element(submit).toBeDisabled();
   });
 
   test('shows the pending-revision notice when a revision is already under review', async () => {

@@ -88,6 +88,11 @@ export default function ListingMediaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listingId]);
 
+  // Track the asset floor so the submit button matches the server floor gate
+  // (icon+cover required; screenshots optional). Defaults to false until the step
+  // reports its state.
+  const [meetsFloor, setMeetsFloor] = useState(false);
+
   // 4) Submit the prepared shadow for moderator re-approval.
   const submitRevision = trpc.appListings.submitListingRevision.useMutation();
   async function handleSubmit() {
@@ -176,12 +181,14 @@ export default function ListingMediaPage() {
                   contentRating={listing.contentRating as OffsiteContentRating}
                   suggestions={{}}
                   allowRemove
+                  onCompletenessChange={({ meetsFloor: mf }) => setMeetsFloor(mf)}
                 />
               </div>
               <Group justify="flex-end">
                 <Button
                   onClick={() => void handleSubmit()}
                   loading={submitRevision.isPending}
+                  disabled={!meetsFloor}
                   leftSection={<IconSend size={16} />}
                   data-testid="apps-listing-media-submit"
                 >

@@ -82,8 +82,13 @@ export function checkListingAssetsComplete(
 }
 
 /**
- * Throwing wrapper around {@link checkListingAssetsComplete} for the future
- * approve gate. NOT called on any live path in P1.
+ * Throwing wrapper around {@link checkListingAssetsComplete}. ADVISORY-ONLY as of
+ * the partial-media relaxation: no live path calls this any more — the live
+ * submit/approve/apply gates use {@link assertListingMeetsFloor} (icon+cover floor,
+ * screenshots optional). Kept exported + unit-tested as the full-completeness
+ * assertion so the two helpers stay distinct and the completeness contract is
+ * pinned; {@link checkListingAssetsComplete} remains the "what's still missing"
+ * source for advisory surfacing (my-submissions problems / mod review).
  */
 export function assertListingAssetsComplete(listing: ListingAssetCompleteness): void {
   const result = checkListingAssetsComplete(listing);
@@ -91,6 +96,55 @@ export function assertListingAssetsComplete(listing: ListingAssetCompleteness): 
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: `Listing is missing required assets: ${result.missing.join(', ')}`,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Minimum-FLOOR gate (icon + cover REQUIRED; screenshots OPTIONAL).
+//
+// This is the LIVE gate for submit + approve/apply as of the partial-media
+// relaxation: an owner can publish icon+cover now and add screenshots later.
+// Screenshots stay surfaced as advisory incompleteness (via
+// checkListingAssetsComplete), never a hard block. This is a pure relaxation of
+// the previous full-completeness gate — nothing gets stricter.
+// ---------------------------------------------------------------------------
+
+/** The assets a listing MUST have before it can be published. Screenshots are
+ * deliberately excluded — they are advisory/optional. */
+export const FLOOR_ASSETS = ['icon', 'cover'] as const;
+
+export type FloorAsset = (typeof FLOOR_ASSETS)[number];
+
+export type ListingFloorResult = { ok: true } | { ok: false; missing: FloorAsset[] };
+
+/**
+ * Pure floor check: a listing meets the publish floor when it has an icon AND a
+ * cover. Screenshots are ignored (optional). Returns the structured set of
+ * missing FLOOR assets (never throws) so a caller can build a precise error.
+ * Distinct from {@link checkListingAssetsComplete}, which additionally requires
+ * ≥1 screenshot for FULL completeness (advisory).
+ */
+export function checkListingMeetsFloor(listing: ListingAssetCompleteness): ListingFloorResult {
+  const missing: FloorAsset[] = [];
+  if (listing.iconId == null) missing.push('icon');
+  if (listing.coverId == null) missing.push('cover');
+  return missing.length === 0 ? { ok: true } : { ok: false, missing };
+}
+
+/**
+ * Throwing wrapper around {@link checkListingMeetsFloor}. This is the LIVE gate at
+ * submit + approve/apply — throws BAD_REQUEST only when icon or cover is missing;
+ * a listing with icon+cover but ZERO screenshots passes (screenshots optional).
+ */
+export function assertListingMeetsFloor(listing: ListingAssetCompleteness): void {
+  const result = checkListingMeetsFloor(listing);
+  if (!result.ok) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Listing needs at least an icon and cover before it can be published (missing: ${result.missing.join(
+        ', '
+      )}).`,
     });
   }
 }
