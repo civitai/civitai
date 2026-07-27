@@ -16,7 +16,13 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
     updateMany: vi.fn(),
     count: vi.fn(),
   });
-  const tx = { bounty: mk(), bountyEntry: mk(), image: mk(), tagsOnBounty: mk() };
+  const tx = {
+    bounty: mk(),
+    bountyBenefactor: mk(),
+    bountyEntry: mk(),
+    image: mk(),
+    tagsOnBounty: mk(),
+  };
   return {
     mockDbRead: { bounty: mk(), $queryRaw: vi.fn() },
     mockDbWrite: {
@@ -28,10 +34,13 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
   };
 });
 
-const { mockEvaluateContent, mockThrowOnBlockedLinkDomain } = vi.hoisted(() => ({
-  mockEvaluateContent: vi.fn(),
-  mockThrowOnBlockedLinkDomain: vi.fn(),
-}));
+const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockBuzzTransaction } = vi.hoisted(
+  () => ({
+    mockEvaluateContent: vi.fn(),
+    mockThrowOnBlockedLinkDomain: vi.fn(),
+    mockBuzzTransaction: vi.fn(),
+  })
+);
 
 vi.mock('~/libs/profanity-simple', () => ({
   createProfanityFilter: () => ({ evaluateContent: mockEvaluateContent }),
@@ -45,8 +54,18 @@ vi.mock('~/server/services/image.service', () => ({
   updateEntityImages: vi.fn(async () => []),
   enqueueImageIngestion: vi.fn(),
 }));
+vi.mock('~/server/services/buzz.service', () => ({
+  createBuzzTransaction: vi.fn(),
+  createMultiAccountBuzzTransaction: mockBuzzTransaction,
+  getUserBuzzAccount: vi.fn(async () => [{ balance: 1_000_000 }]),
+  refundMultiAccountTransaction: vi.fn(),
+}));
+vi.mock('~/server/redis/caches', () => ({
+  userBountyCountCache: { refresh: vi.fn() },
+}));
 
 import { updateBountyById, upsertBounty } from '~/server/services/bounty.service';
+import { constants } from '~/server/common/constants';
 
 const BOUNTY_ID = 55;
 const OWNER_ID = 7;
@@ -70,6 +89,10 @@ function mockStored({
 
 function updateData() {
   return mockDbWrite.bounty.update.mock.calls.at(-1)?.[0]?.data ?? {};
+}
+
+function createData() {
+  return mockDbWrite.bounty.create.mock.calls.at(-1)?.[0]?.data ?? {};
 }
 
 const baseUpdate = {
@@ -210,5 +233,70 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     const data = updateData();
     expect(data.nsfw).toBe(false);
     expect(data).not.toHaveProperty('lockedProperties');
+  });
+});
+
+describe('upsertBounty — create path', () => {
+  // No `id`, so upsertBounty takes the create branch. createBountyInputSchema is stricter than
+  // the update one, hence the full payload.
+  const create = (input: Record<string, unknown> = {}) =>
+    upsertBounty({
+      isModerator: false,
+      userId: OWNER_ID,
+      name: 'A bounty',
+      description: 'Some description',
+      type: 'ModelCreation',
+      mode: 'Individual',
+      entryMode: 'BenefactorsOnly',
+      currency: 'BUZZ',
+      unitAmount: constants.bounties.minCreateAmount,
+      minBenefactorUnitAmount: 1,
+      details: {},
+      startsAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      images: [{ url: '00000000-0000-4000-8000-000000000000' }],
+      ...input,
+    } as never);
+
+  const chargedAccountTypes = () =>
+    mockBuzzTransaction.mock.calls.at(-1)?.[0]?.fromAccountTypes ?? [];
+
+  it('charges green buzz when the caller asked for green', async () => {
+    await create({ buzzType: 'green' });
+
+    expect(chargedAccountTypes()).toEqual(['green']);
+  });
+
+  it('locks nsfw on a green-buzz bounty so it can never be flipped later', async () => {
+    await create({ buzzType: 'green' });
+
+    expect(createData().lockedProperties).toEqual(['nsfw']);
+  });
+
+  it('refuses to create an nsfw bounty paid in green buzz', async () => {
+    await expect(create({ buzzType: 'green', nsfw: true })).rejects.toThrow(/Green Buzz/);
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('charges yellow buzz and leaves nsfw unlocked otherwise', async () => {
+    await create({ buzzType: 'yellow' });
+
+    expect(chargedAccountTypes()).toEqual(['yellow']);
+    expect(createData().lockedProperties).toBeUndefined();
+  });
+
+  it('carries the profanity filter nsfw lock into the new row', async () => {
+    mockEvaluateContent.mockReturnValue({
+      shouldMarkNSFW: true,
+      matchedWords: ['bad'],
+      reason: 'threshold',
+      metrics: {},
+    });
+
+    await create({ buzzType: 'yellow' });
+
+    const data = createData();
+    expect(data.nsfw).toBe(true);
+    expect(data.lockedProperties).toEqual(['nsfw']);
   });
 });
