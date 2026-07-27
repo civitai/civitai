@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — waitForReviewHostReachable.
@@ -176,30 +178,23 @@ describe('waitForReviewHostReachable — FALLBACK (public-DNS, no origin IP)', (
   });
 });
 
-// A DoH fetch that always reports the public name RESOLVES (Status 0 + an
-// Answer). Used when a test wants origin-direct to be the only gate under test.
-const dohResolves = () =>
-  vi.fn(async () => new Response(JSON.stringify({ Status: 0, Answer: [{ data: '1.2.3.4' }] }), {
-    status: 200,
-    headers: { 'content-type': 'application/dns-json' },
-  }));
-
 const ORIGIN_IP = '203.0.113.7'; // TEST-NET-3 placeholder — never a real infra IP
 
 describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', () => {
-  it('probes the origin IP with a Host header; a 401 (mod-gate) → reachable', async () => {
+  it('probes the origin IP with a Host header; a 401 (mod-gate) → reachable (DoH default-off)', async () => {
     const originProbe = vi.fn(async () => ({ status: 401 }));
     const clock = fakeClock();
     const ok = await waitForReviewHostReachable(HOST, {
       originIp: ORIGIN_IP,
       originProbe,
-      dohFetchImpl: dohResolves() as unknown as typeof fetch,
       now: clock.now,
       sleep: clock.sleep,
       signalFactory: noSignal,
     });
     expect(ok).toBe(true);
+    // Origin-direct alone is the default signal — one probe, no sleep, reachable.
     expect(originProbe).toHaveBeenCalledTimes(1);
+    expect(clock.sleep).not.toHaveBeenCalled();
     // Dialed the ORIGIN IP (not https://<host>/) with a Host: <host> header.
     const [url, init] = originProbe.mock.calls[0] as [
       string,
@@ -221,7 +216,6 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
     const ok = await waitForReviewHostReachable(HOST, {
       originIp: ORIGIN_IP,
       originProbe: originProbe as unknown as never,
-      dohFetchImpl: dohResolves() as unknown as typeof fetch,
       timeoutMs: 120_000,
       intervalMs: 4_000,
       now: clock.now,
@@ -241,7 +235,6 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
     const ok = await waitForReviewHostReachable(HOST, {
       originIp: ORIGIN_IP,
       originProbe,
-      dohFetchImpl: dohResolves() as unknown as typeof fetch,
       now: clock.now,
       sleep: clock.sleep,
       signalFactory: noSignal,
@@ -253,7 +246,6 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
     const ok2 = await waitForReviewHostReachable(HOST, {
       originIp: ORIGIN_IP,
       originProbe: originProbe2,
-      dohFetchImpl: dohResolves() as unknown as typeof fetch,
       now: clock2.now,
       sleep: clock2.sleep,
       signalFactory: noSignal,
@@ -267,7 +259,6 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
     const ok = await waitForReviewHostReachable(HOST, {
       originIp: ORIGIN_IP,
       originProbe: originProbe as unknown as never,
-      dohFetchImpl: dohResolves() as unknown as typeof fetch,
       timeoutMs: 120_000,
       intervalMs: 4_000,
       now: clock.now,
@@ -289,7 +280,6 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
       originIp: ORIGIN_IP,
       originProbe,
       fetchImpl: fetchImpl as unknown as typeof fetch,
-      dohFetchImpl: dohResolves() as unknown as typeof fetch,
       now: clock.now,
       sleep: clock.sleep,
       signalFactory: noSignal,
@@ -299,14 +289,17 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('with DoH disabled, origin-direct alone gates (no DoH fetch performed)', async () => {
+  it('DoH is DEFAULT-OFF: origin-direct alone gates, no DoH fetch even when a dohFetchImpl is supplied', async () => {
+    // Guards the flipped default. A dohFetchImpl is injected but MUST NOT run,
+    // because default-on DoH via 1.1.1.1 would relocate this PR's negative-cache
+    // bug to Cloudflare's recursive resolver.
     const originProbe = vi.fn(async () => ({ status: 401 }));
     const dohFetchImpl = vi.fn();
     const clock = fakeClock();
     const ok = await waitForReviewHostReachable(HOST, {
       originIp: ORIGIN_IP,
       originProbe,
-      dohEnabled: false,
+      // NB: no dohEnabled → relies on the default (false).
       dohFetchImpl: dohFetchImpl as unknown as typeof fetch,
       now: clock.now,
       sleep: clock.sleep,
@@ -316,9 +309,12 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
     expect(dohFetchImpl).not.toHaveBeenCalled();
   });
 
-  it('origin-direct OK but DoH NXDOMAIN → not-yet; retries; DoH Status:0 → reachable', async () => {
-    // Origin-direct passes immediately (workload healthy); the PUBLIC record is
-    // created lazily, so DoH first returns NXDOMAIN (Status 3), then resolves.
+  it('OPT-IN DoH path only: origin OK but DoH NXDOMAIN → retry; DoH Status:0 → reachable', async () => {
+    // This exercises the OPT-IN (dohEnabled:true) branch ONLY. It does NOT model
+    // production safety for a default-on DoH: the mock flips Status 3 → 0 on the
+    // 2nd call, but Cloudflare's recursive resolver would STICKILY negative-cache
+    // the NXDOMAIN for up to the civit.ai SOA minimum (1800s) — which is exactly
+    // why DoH defaults OFF. Here we only prove the retry wiring of the opt-in gate.
     const originProbe = vi.fn(async () => ({ status: 401 }));
     const dohFetchImpl = vi
       .fn()
@@ -332,6 +328,7 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
     const ok = await waitForReviewHostReachable(HOST, {
       originIp: ORIGIN_IP,
       originProbe,
+      dohEnabled: true, // explicit opt-in
       dohFetchImpl: dohFetchImpl as unknown as typeof fetch,
       timeoutMs: 120_000,
       intervalMs: 4_000,
@@ -363,12 +360,56 @@ describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', 
     const ok = await waitForReviewHostReachable(HOST, {
       originIp: ORIGIN_IP,
       originProbe,
-      dohFetchImpl: dohResolves() as unknown as typeof fetch,
       now: clock.now,
       sleep: clock.sleep,
       signalFactory: noSignal,
     });
     expect(ok).toBe(true);
     expect(originProbe).toHaveBeenCalled();
+  });
+});
+
+describe('waitForReviewHostReachable — ORIGIN-DIRECT real probe (defaultOriginProbe integration)', () => {
+  let server: http.Server | undefined;
+
+  afterEach(async () => {
+    if (server) {
+      await new Promise<void>((resolve) => server!.close(() => resolve()));
+      server = undefined;
+    }
+  });
+
+  it('the REAL defaultOriginProbe transmits the arbitrary Host header while dialing the origin IP (guards the undici Host-drop trap)', async () => {
+    // Regression guard: every OTHER origin test mocks `originProbe`, so if someone
+    // ever swapped defaultOriginProbe back to global `fetch`, those would stay
+    // green while prod silently broke (undici DROPS a custom Host header → wrong
+    // Host → Traefik default 404 → the preview never goes live). This runs the
+    // REAL Node-core probe against a throwaway loopback server and asserts the
+    // server RECEIVED the review host, not `127.0.0.1:<port>`.
+    let receivedHost: string | undefined;
+    server = http.createServer((req, res) => {
+      receivedHost = req.headers.host;
+      res.writeHead(401); // mod-gate-style deny; any non-404 = reachable
+      res.end();
+    });
+    const port = await new Promise<number>((resolve) => {
+      server!.listen(0, '127.0.0.1', () =>
+        resolve((server!.address() as AddressInfo).port)
+      );
+    });
+
+    const clock = fakeClock();
+    // No originProbe injected → the REAL defaultOriginProbe runs. originIp carries
+    // host:port so `http://127.0.0.1:<port>/` targets the throwaway server.
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: `127.0.0.1:${port}`,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    // The server saw the REVIEW host — proving the core-http path actually sends
+    // an arbitrary Host header (global fetch would have dropped it).
+    expect(receivedHost).toBe(HOST);
   });
 });

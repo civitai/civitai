@@ -242,14 +242,25 @@ function defaultOriginProbe(
   });
 }
 
-/** Confirm the PUBLIC review host resolves via Cloudflare DoH — a fresh HTTPS
- *  query to cloudflare-dns.com each call, so it can NEVER be poisoned by a local
- *  resolver's negative cache the way a plain DNS lookup can. Used, AFTER the
- *  origin-direct probe already proves the workload is healthy, to hold
- *  "preview-live" until the public A record actually exists — so the mod's
- *  BROWSER (which uses public DNS) can't click through to a fresh NXDOMAIN and
- *  poison ITS resolver for the 30-min civit.ai SOA-min window. Best-effort: any
- *  error, non-NOERROR status, or empty answer → "not yet". */
+/** OPT-IN (default OFF): confirm the PUBLIC review host resolves via Cloudflare
+ *  DoH. Intended to hold "preview-live" until the public A record exists so the
+ *  mod's BROWSER can't click through to a fresh NXDOMAIN.
+ *
+ *  🔴 WHY DEFAULT-OFF: querying the 1.1.1.1 RECURSIVE resolver RE-CREATES this
+ *  PR's negative-cache bug, just relocated to Cloudflare. external-dns creates
+ *  the A record ~40s after apply; origin-direct passes within seconds, so the
+ *  FIRST DoH query races that window, gets NXDOMAIN, and Cloudflare's recursive
+ *  resolver caches the NXDOMAIN up to the civit.ai SOA minimum (1800s / 30min) —
+ *  so DoH stays blind for the rest of the 180s budget and the healthy preview is
+ *  marked preview-failed. Same one-shot failure, different cache. (Also: DoH via
+ *  1.1.1.1 doesn't prove the target property anyway — the mod's browser uses its
+ *  OWN resolver, not Cloudflare's.) Origin-direct alone is the sufficient signal.
+ *
+ *  FUTURE (follow-up, NOT implemented): an opt-in DoH that queries the zone's
+ *  AUTHORITATIVE nameserver (e.g. jill.ns.cloudflare.com) — which never
+ *  negative-caches its own zone — would be poison-immune, unlike 1.1.1.1.
+ *
+ *  Best-effort: any error, non-NOERROR status, or empty answer → "not yet". */
 async function reviewHostResolvesViaDoH(
   host: string,
   fetchImpl: typeof fetch,
@@ -300,9 +311,10 @@ async function reviewHostResolvesViaDoH(
  *   reachable = a response whose status is NOT 404 (the Host rule matched → the
  *               mod-gate/service answered, typically 401);
  *   retry     = a 404 (route not registered yet) OR a connection error/timeout.
- * After origin-direct passes we ALSO confirm the public name resolves via DoH
- * (reviewHostResolvesViaDoH) so the mod's browser can't hit a fresh NXDOMAIN.
- * Both are retried within the same budget.
+ * Origin-direct alone is the sole DEFAULT signal. An OPT-IN DoH public-resolution
+ * check exists (dohEnabled) but defaults OFF — default-on DoH via 1.1.1.1 would
+ * relocate this very negative-cache bug to Cloudflare's recursive resolver (see
+ * reviewHostResolvesViaDoH).
  *
  * FALLBACK: when no origin IP is configured (local dev / preview envs without
  * APPS_REVIEW_INGRESS_TARGET or APPS_DEV_TUNNEL_INGRESS_TARGET) we keep the
@@ -334,9 +346,11 @@ export async function waitForReviewHostReachable(
     // Origin-direct probe impl (see OriginProbe). Injectable so tests never open
     // a socket.
     originProbe?: OriginProbe;
-    // Whether to ALSO gate on a Cloudflare-DoH public-resolution check once
-    // origin-direct passes. Defaults to true whenever an origin IP is in play
-    // (the DoH check is meaningless without it). Set false to skip.
+    // OPT-IN (default OFF): also gate on a Cloudflare-DoH public-resolution
+    // check once origin-direct passes. Default-off because DoH via 1.1.1.1
+    // RE-CREATES this PR's negative-cache bug at Cloudflare's recursive resolver
+    // (see the DoH note below) — origin-direct alone is the sufficient default
+    // signal. Set true to opt in.
     dohEnabled?: boolean;
     // fetch impl for the DoH query; defaults to fetchImpl ?? fetch.
     dohFetchImpl?: typeof fetch;
@@ -388,7 +402,10 @@ export async function waitForReviewHostReachable(
   // ---- ORIGIN-DIRECT: dial the Traefik LB IP with a Host header -------------
   const originProbe = opts.originProbe ?? defaultOriginProbe;
   const originUrl = `http://${originIp}/`;
-  const dohEnabled = opts.dohEnabled ?? true;
+  // DEFAULT OFF — see reviewHostResolvesViaDoH: default-on DoH via 1.1.1.1 would
+  // re-create this PR's exact negative-cache bug at Cloudflare's recursive
+  // resolver. Origin-direct alone is the sufficient default signal; DoH is opt-in.
+  const dohEnabled = opts.dohEnabled ?? false;
   const dohFetch = opts.dohFetchImpl ?? doFetch;
 
   for (;;) {
