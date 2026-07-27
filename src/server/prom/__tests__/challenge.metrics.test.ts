@@ -342,3 +342,87 @@ describe('state gauges — collect() emits series from injected (mocked) cache',
     ).toBe(7);
   });
 });
+
+describe('state gauges — zero-emit so a healthy 0 is distinguishable from dead instrumentation', () => {
+  // NOTE: these assert on the emitted SERIES LIST, never via valueFor() — valueFor returns
+  // `?? 0` for a missing series, so it cannot tell "emitted 0" from "emitted nothing", which is
+  // the entire bug under test.
+  const ZERO_EMIT_GAUGES = [
+    'civitai_app_challenge_ingestion_pending',
+    'civitai_app_challenge_completing_stuck',
+    'civitai_app_challenge_operation_budget_used_ratio',
+  ] as const;
+
+  async function sourcePairs(name: string): Promise<[string, number][]> {
+    const values = await readMetric(name);
+    return values
+      .map((v) => [v.labels.source, v.value] as [string, number])
+      // Codepoint sort (NOT localeCompare — that is locale-dependent and orders 'unknown'
+      // before 'User', which would make this assertion machine-dependent).
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  }
+
+  it('emits an explicit 0 for every known source when the query returns no rows', async () => {
+    // Exactly the production steady state: healthy system, every GROUP BY returns zero rows.
+    __setChallengeGaugeCacheForTest({});
+
+    for (const name of ZERO_EMIT_GAUGES) {
+      expect(await sourcePairs(name), `${name} must emit a real 0 per source, not nothing`).toEqual([
+        ['Mod', 0],
+        ['System', 0],
+        ['User', 0],
+      ]);
+    }
+  });
+
+  it('query rows overlay the zeros; sources missing from the rows still emit 0', async () => {
+    __setChallengeGaugeCacheForTest({
+      ingestionPending: [{ source: 'User', count: 3 }],
+      completingStuck: [{ source: 'System', count: 1 }],
+      budgetRatio: [{ source: 'System', ratio: 0.25 }],
+    });
+
+    expect(await sourcePairs('civitai_app_challenge_ingestion_pending')).toEqual([
+      ['Mod', 0],
+      ['System', 0],
+      ['User', 3],
+    ]);
+    expect(await sourcePairs('civitai_app_challenge_completing_stuck')).toEqual([
+      ['Mod', 0],
+      ['System', 1],
+      ['User', 0],
+    ]);
+    expect(await sourcePairs('civitai_app_challenge_operation_budget_used_ratio')).toEqual([
+      ['Mod', 0],
+      ['System', 0.25],
+      ['User', 0],
+    ]);
+  });
+
+  it('an out-of-enum source from the DB is added alongside the zeros, not instead of them', async () => {
+    __setChallengeGaugeCacheForTest({ ingestionPending: [{ source: 'GARBAGE', count: 5 }] });
+
+    expect(await sourcePairs('civitai_app_challenge_ingestion_pending')).toEqual([
+      ['Mod', 0],
+      ['System', 0],
+      ['User', 0],
+      ['unknown', 5],
+    ]);
+  });
+
+  it('challenge_by_status stays SPARSE — no source×status zero-fill (deliberate, cardinality)', async () => {
+    __setChallengeGaugeCacheForTest({
+      byStatus: [{ source: 'User', status: 'Active', count: 4 }],
+    });
+
+    // 1 series, not the 15-series 3×5 cross-product. See the ZERO-EMIT comment in the module.
+    expect(await readMetric('civitai_app_challenge_by_status')).toHaveLength(1);
+  });
+
+  it('gauge collect() never throws even if the injected cache holds junk', async () => {
+    __setChallengeGaugeCacheForTest({
+      ingestionPending: [{ source: null as unknown as string, count: NaN }],
+    });
+    await expect(readMetric('civitai_app_challenge_ingestion_pending')).resolves.toBeDefined();
+  });
+});
