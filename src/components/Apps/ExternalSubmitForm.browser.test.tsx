@@ -33,6 +33,13 @@ const mocks = vi.hoisted(() => ({
     data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 4 | 32 }] as unknown,
     isLoading: false,
   },
+  // Mod-only global-search result (App-Blocks mod picker). Empty by default; the mod
+  // tests set foreign clients here. `useCurrentUser` drives which picker renders.
+  search: { data: { items: [] as unknown[], nextCursor: undefined }, isFetching: false } as {
+    data: { items: unknown[]; nextCursor?: string };
+    isFetching: boolean;
+  },
+  currentUser: null as null | { id: number; username: string; isModerator?: boolean },
 }));
 
 vi.mock('~/utils/trpc', () => {
@@ -57,10 +64,18 @@ vi.mock('~/utils/trpc', () => {
       },
       oauthClient: {
         getAll: { useQuery: () => mocks.clients },
+        searchForModerator: { useQuery: () => mocks.search },
       },
     },
   };
 });
+
+// The OAuth picker is role-aware: mods get the async global-search control, non-mods
+// the own-clients dropdown. Drive the role via a mocked `useCurrentUser` (the harness
+// provides no session context, so this hook must be mocked here).
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => mocks.currentUser,
+}));
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
   useCFImageUpload: () => ({
@@ -86,6 +101,9 @@ beforeEach(() => {
     data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: READONLY_SCOPES }],
     isLoading: false,
   };
+  mocks.search = { data: { items: [], nextCursor: undefined }, isFetching: false };
+  // Default caller: NOT a moderator → own-clients dropdown (existing tests unchanged).
+  mocks.currentUser = null;
 });
 
 /** Fill a valid App URL on step 0 and advance to the App & scopes step. */
@@ -312,5 +330,72 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
     await page.getByTestId('apps-offsite-wizard-next-app').click();
     await page.getByRole('button', { name: 'Create draft' }).click();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ExternalSubmitForm — OAuth step: mod global-search + create deeplink', () => {
+  test('a NON-moderator sees the own-clients dropdown (unchanged), not the search control', async () => {
+    mocks.currentUser = { id: 5, username: 'dev' }; // no isModerator
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await expect.element(page.getByTestId('apps-offsite-client-select')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-client-search').elements()).toHaveLength(0);
+  });
+
+  test('a MODERATOR sees the async global-search control, not the own-clients dropdown', async () => {
+    mocks.currentUser = { id: 1, username: 'mod', isModerator: true };
+    mocks.search = {
+      data: { items: [], nextCursor: undefined },
+      isFetching: false,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await expect.element(page.getByTestId('apps-offsite-client-search')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-client-select').elements()).toHaveLength(0);
+  });
+
+  test('a mod selecting a searched FOREIGN client derives the requested scopes from THAT client', async () => {
+    // The foreign client is NOT in the caller's own list; its allowedScopes must still
+    // flow into deriveScopesFromClient. UserRead=1 is SENSITIVE → its justification
+    // input appearing proves the derived requestedScopes came from the foreign client.
+    mocks.currentUser = { id: 1, username: 'mod', isModerator: true };
+    mocks.search = {
+      data: {
+        items: [
+          { id: 'foreign-1', name: 'Bobs App', allowedScopes: 1, user: { id: 9, username: 'bob' } },
+        ],
+        nextCursor: undefined,
+      },
+      isFetching: false,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await page.getByTestId('apps-offsite-client-search').click();
+    await page.getByRole('option', { name: /Bobs App/ }).click();
+    // Derived from allowedScopes=1 (UserRead, sensitive) → required justification input.
+    await expect.element(page.getByTestId('apps-offsite-justification-1')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-scope-readonly')).toBeInTheDocument();
+  });
+
+  test('the "Create an OAuth client" deeplink renders for a NON-mod → /user/account in a new tab', async () => {
+    mocks.currentUser = { id: 5, username: 'dev' };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    const link = page.getByTestId('apps-offsite-create-client-link');
+    await expect.element(link).toBeInTheDocument();
+    await expect.element(link).toHaveAttribute('href', '/user/account');
+    await expect.element(link).toHaveAttribute('target', '_blank');
+    await expect.element(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  test('the "Create an OAuth client" deeplink renders for a MODERATOR → /user/account in a new tab', async () => {
+    mocks.currentUser = { id: 1, username: 'mod', isModerator: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    const link = page.getByTestId('apps-offsite-create-client-link');
+    await expect.element(link).toBeInTheDocument();
+    await expect.element(link).toHaveAttribute('href', '/user/account');
+    await expect.element(link).toHaveAttribute('target', '_blank');
+    await expect.element(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
   });
 });
