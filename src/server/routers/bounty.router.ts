@@ -71,7 +71,7 @@ export const bountyRouter = router({
     .use(isFlagProtected('bounties'))
     .query(getBountyBenefactorsHandler),
   upsert: guardedProcedure
-    .meta({ requiredScope: TokenScope.BountiesWrite, blockApiKeys: true })
+    .meta({ requiredScope: TokenScope.BountiesWrite })
     .input(upsertBountyInputSchema)
     .use(isFlagProtected('bounties'))
     .use(isOwnerOrModerator)
