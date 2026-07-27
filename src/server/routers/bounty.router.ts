@@ -1,10 +1,8 @@
 import {
-  createBountyHandler,
   deleteBountyHandler,
   getBountyHandler,
   getBountyEntriesHandler,
   getInfiniteBountiesHandler,
-  updateBountyHandler,
   addBenefactorUnitAmountHandler,
   getBountyBenefactorsHandler,
   refundBountyHandler,
@@ -22,10 +20,8 @@ import {
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addBenefactorUnitAmountInputSchema,
-  createBountyInputSchema,
   getBountyEntriesInputSchema,
   getInfiniteBountySchema,
-  updateBountyInputSchema,
   upsertBountyInputSchema,
 } from '~/server/schema/bounty.schema';
 import { dbWrite } from '~/server/db/client';
@@ -74,17 +70,6 @@ export const bountyRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('bounties'))
     .query(getBountyBenefactorsHandler),
-  create: guardedProcedure
-    .meta({ requiredScope: TokenScope.BountiesWrite })
-    .input(createBountyInputSchema)
-    .use(isFlagProtected('bounties'))
-    .mutation(createBountyHandler),
-  update: guardedProcedure
-    .meta({ requiredScope: TokenScope.BountiesWrite })
-    .input(updateBountyInputSchema)
-    .use(isFlagProtected('bounties'))
-    .use(isOwnerOrModerator)
-    .mutation(updateBountyHandler),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.BountiesWrite, blockApiKeys: true })
     .input(upsertBountyInputSchema)
