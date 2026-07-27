@@ -5,6 +5,7 @@ import type { ModerationAdapter } from '~/server/services/entity-moderation.serv
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { htmlToModerationText } from '~/server/utils/moderation-text';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
 
 // Article-side hooks for the EntityModeration pipeline. The webhook and the
@@ -16,7 +17,9 @@ export const articleModerationAdapter: ModerationAdapter = {
       where: { id: { in: ids } },
       select: { id: true, content: true },
     });
-    return new Map(rows.map((r) => [r.id, r.content]));
+    // Article content is stored as HTML; send the scanner the text (with link
+    // and image targets kept) rather than the markup.
+    return new Map(rows.map((r) => [r.id, htmlToModerationText(r.content)]));
   },
 
   submit: ({ entityId, content }) =>
