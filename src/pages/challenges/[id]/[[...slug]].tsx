@@ -192,9 +192,17 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
       // Fetch challenge to check slug and prefetch for client hydration
       const challenge = await ssg.challenge.getById.fetch({ id: result.data.id }).catch(() => null);
+
+      if (challenge)
+        gating = {
+          contentNsfwLevel: challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0),
+          nsfw: challenge.source === ChallengeSource.User && challenge.buzzType === 'yellow',
+        };
 
       if (challenge) {
         const destination = getCanonicalSlugDestination({
@@ -208,7 +216,7 @@ export const getServerSideProps = createServerSideProps({
       }
     }
 
-    return { props: removeEmpty(result.data) };
+    return { props: removeEmpty(result.data), gating };
   },
 });
 
@@ -438,10 +446,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   // Delete stays available after a moderator voids the challenge (Cancelled) so the owner can clear
   // a dead challenge off their list; edit remains Scheduled-only (canManageOwn).
   const canDeleteOwn =
-    features.userChallenges &&
-    isOwner &&
-    !currentUser?.isModerator &&
-    (isScheduled || isCancelled);
+    features.userChallenges && isOwner && !currentUser?.isModerator && (isScheduled || isCancelled);
 
   const handleOwnerDelete = () => {
     openConfirmModal({
@@ -928,15 +933,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const challengeDetails: DescriptionTableProps['items'] = [
     {
       label: 'Starts',
-      value: (
-        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Ends',
-      value: (
-        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Max Entries',
@@ -1328,7 +1329,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   Generate
                 </Button>
                 {challenge.collectionId && (
-                  <SubmitEntryButton isOwner={isOwner} onClick={handleOpenSubmitModal} label="Submit" fullWidth />
+                  <SubmitEntryButton
+                    isOwner={isOwner}
+                    onClick={handleOpenSubmitModal}
+                    label="Submit"
+                    fullWidth
+                  />
                 )}
               </Group>
             </div>
@@ -1351,7 +1357,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                 Generate
               </Button>
               {challenge.collectionId && (
-                <SubmitEntryButton isOwner={isOwner} onClick={handleOpenSubmitModal} label="Submit" fullWidth />
+                <SubmitEntryButton
+                  isOwner={isOwner}
+                  onClick={handleOpenSubmitModal}
+                  label="Submit"
+                  fullWidth
+                />
               )}
             </>
           ) : challenge.status === ChallengeStatus.Completed ? (
