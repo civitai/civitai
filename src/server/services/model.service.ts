@@ -2034,6 +2034,8 @@ export async function applyModelFlagSideEffects({
     if (modelVersionIds.length !== 0) {
       // Set-based on purpose: a gallery can hold hundreds of thousands of images, and
       // binding one parameter per image id blows past Postgres' 65535 parameter limit.
+      // The value guard keeps a re-toggle from rewriting every row (and re-queueing every
+      // id into the search index) when the flags already match.
       const updatedImages = await dbWrite.$queryRaw<{ id: number }[]>`
         UPDATE "Image" i
           SET minor = ${after.minor},
@@ -2041,6 +2043,7 @@ export async function applyModelFlagSideEffects({
         FROM "Post" p
         WHERE i."postId" = p.id
           AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
+          AND (i.minor IS DISTINCT FROM ${after.minor} OR i.poi IS DISTINCT FROM ${after.poi})
         RETURNING i.id
       `;
 

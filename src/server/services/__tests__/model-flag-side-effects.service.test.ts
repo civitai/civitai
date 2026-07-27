@@ -32,14 +32,14 @@ const {
   mockModelVotableBust,
   mockRedisDel,
   mockModelsQueueUpdate,
-  mockImagesQueueUpdate,
+  mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
 } = vi.hoisted(() => ({
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
   mockRedisDel: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
-  mockImagesQueueUpdate: vi.fn(),
+  mockQueueImageSearchIndexUpdate: vi.fn(),
   mockBustMvCache: vi.fn(),
 }));
 
@@ -67,7 +67,7 @@ vi.mock('~/server/redis/client', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: mockImagesQueueUpdate },
+  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -93,7 +93,7 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(),
   getImagesForModelVersionCache: {},
-  queueImageSearchIndexUpdate: vi.fn(),
+  queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
@@ -164,9 +164,10 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       select: { id: true },
     });
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(mockImagesQueueUpdate).toHaveBeenCalledWith([
-      { id: 900, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [900],
+      action: SearchIndexUpdateQueueAction.Update,
+    });
   });
 
   it('writes the new minor/poi values and never binds one parameter per image id', async () => {
@@ -178,9 +179,22 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     const { sql, values } = imageUpdateCall();
     expect(sql).toContain('UPDATE "Image"');
     expect(sql).toContain('RETURNING i.id');
-    // minor, poi, then the version-id list — the image ids are never parameters.
+    // minor, poi, the version-id list, then minor/poi again for the value guard — the
+    // image ids are never parameters.
     expect(values.slice(0, 2)).toEqual([true, true]);
-    expect(values).toHaveLength(3);
+    expect(values).toHaveLength(5);
+  });
+
+  it('skips rows whose flags already match so a re-toggle does not rewrite the gallery', async () => {
+    await applyModelFlagSideEffects({
+      before: baseBefore,
+      after: { ...baseAfter, minor: true },
+    });
+
+    const { sql, values } = imageUpdateCall();
+    expect(sql).toContain('i.minor IS DISTINCT FROM');
+    expect(sql).toContain('i.poi IS DISTINCT FROM');
+    expect(values.slice(3)).toEqual([true, false]);
   });
 
   it('writes minor: false when a model is unflagged', async () => {
@@ -221,7 +235,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
 
     expect(mockDbWrite.modelVersion.findMany).not.toHaveBeenCalled();
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
-    expect(mockImagesQueueUpdate).not.toHaveBeenCalled();
+    expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mockBustMvCache).not.toHaveBeenCalled();
   });
 
@@ -234,7 +248,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
     });
 
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
-    expect(mockImagesQueueUpdate).not.toHaveBeenCalled();
+    expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mockBustMvCache).not.toHaveBeenCalled();
   });
 
@@ -246,7 +260,7 @@ describe('applyModelFlagSideEffects — image propagation', () => {
       after: { ...baseAfter, minor: true },
     });
 
-    expect(mockImagesQueueUpdate).not.toHaveBeenCalled();
+    expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
     expect(mockBustMvCache).toHaveBeenCalledWith([100], 42);
   });
 });

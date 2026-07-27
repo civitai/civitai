@@ -31,7 +31,7 @@ const {
   mockModelVotableBust,
   mockRedisDel,
   mockModelsQueueUpdate,
-  mockImagesQueueUpdate,
+  mockQueueImageSearchIndexUpdate,
   mockTrackModActivity,
   mockPreventReplicationLag,
   mockLogToAxiom,
@@ -40,7 +40,7 @@ const {
   mockModelVotableBust: vi.fn(),
   mockRedisDel: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
-  mockImagesQueueUpdate: vi.fn(),
+  mockQueueImageSearchIndexUpdate: vi.fn(),
   mockTrackModActivity: vi.fn(),
   mockPreventReplicationLag: vi.fn(),
   mockLogToAxiom: vi.fn(),
@@ -70,7 +70,7 @@ vi.mock('~/server/redis/client', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: mockImagesQueueUpdate },
+  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -96,7 +96,7 @@ vi.mock('~/server/services/generation/generation.service', () => ({
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(),
   getImagesForModelVersionCache: {},
-  queueImageSearchIndexUpdate: vi.fn(),
+  queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
 }));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
 vi.mock('~/server/services/model-version.service', () => ({
@@ -236,7 +236,7 @@ describe('setModelMinor — set', () => {
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(mockImagesQueueUpdate).toHaveBeenCalled();
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalled();
   });
 
   it('tracks mod activity as setMinor', async () => {
@@ -291,7 +291,7 @@ describe('setModelMinor — audit ordering', () => {
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
-    expect(mockImagesQueueUpdate).toHaveBeenCalled();
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalled();
     expect(mockLogToAxiom).toHaveBeenCalled();
   });
 });
@@ -332,7 +332,7 @@ describe('setModelMinor — unset', () => {
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(mockImagesQueueUpdate).toHaveBeenCalled();
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalled();
   });
 
   it('tracks mod activity as unsetMinor', async () => {
