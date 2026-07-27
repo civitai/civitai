@@ -29,6 +29,13 @@ export type ScreenshotSlot = {
   status: ScreenshotSlotStatus;
   imageId: number | null;
   message: string | null;
+  /**
+   * Per-asset SCAN badge, independent of the attach `status`. An image is stored
+   * (`status: 'attached'`) IMMEDIATELY now, even while its scan is in-flight; this
+   * tracks the scan lifecycle for the badge: `scanning` → `scanned` / `blocked`.
+   * Undefined/null means "no scan badge" (a prefilled, already-scanned asset).
+   */
+  scan?: 'scanning' | 'scanned' | 'blocked' | null;
 };
 
 /** Deterministic stable id from a monotonic sequence number (e.g. a ref counter). */

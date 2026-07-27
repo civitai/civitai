@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 
 import {
   addListingScreenshotSchema,
+  assetScanStatusesSchema,
   backfillListingAssetsSchema,
   listingAssetsQuerySchema,
   removeListingScreenshotSchema,
@@ -222,6 +223,22 @@ export const appListingsRouter = router({
     .query(async ({ ctx, input }) => {
       const { getListingAssets } = await import('~/server/services/blocks/app-listing-assets.service');
       return getListingAssets({ listingId: input.listingId }, ctx.user);
+    }),
+
+  /**
+   * Poll the scan status of freshly-attached asset images. The listing-media step
+   * attaches an in-flight image IMMEDIATELY (the server stores the pending id), then
+   * polls THIS to flip a per-asset "Scanning…" badge to "Scanned" / "Blocked". Owner-
+   * scoped in the service (mods read any; a not-owned id is silently omitted).
+   */
+  getAssetScanStatuses: protectedProcedure
+    .use(enforceAppBlocksAuthorFlag)
+    .input(assetScanStatusesSchema)
+    .query(async ({ ctx, input }) => {
+      const { getAssetScanStatuses } = await import(
+        '~/server/services/blocks/app-listing-assets.service'
+      );
+      return getAssetScanStatuses(input.imageIds, ctx.user);
     }),
 
   setIcon: protectedProcedure

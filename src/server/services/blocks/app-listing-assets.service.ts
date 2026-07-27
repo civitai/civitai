@@ -353,27 +353,43 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
 }
 
 /**
- * The result of {@link loadValidatedImage}: a discriminated union so a still-
- * SCANNING image is a NON-ERROR outcome the caller reports (client polls on it),
- * NOT a thrown 4xx. TERMINAL problems still THROW (see below).
+ * The result of {@link loadValidatedImage}: a discriminated union.
  *
  *   - `{ pending: true }`  — the Image exists, is owned + format-valid, but its
- *     scan has not reached `Scanned` yet. NOT an error; NO db write; the caller
- *     returns `{ status: 'pending' }` and the client re-polls.
- *   - `{ pending: false, imageId }` — `Scanned` and attachable.
+ *     scan has not reached `Scanned` yet AND the caller did NOT opt into
+ *     `allowPending`. NOT an error; NO db write; the caller returns
+ *     `{ status: 'pending' }`. (Legacy path — no live caller uses it now that the
+ *     LISTING-MEDIA attach procs pass `allowPending: true`.)
+ *   - `{ pending: false, imageId, scanPending? }` — attachable NOW (a db write is
+ *     safe). `scanPending: true` means the write was allowed while the scan is
+ *     STILL in-flight (only possible under `allowPending`) — the image is stored,
+ *     but the caller must NOT let the listing go live until the scan lands
+ *     `Scanned` (the go-live `assertAssetsScanClean` gate enforces that). Absent /
+ *     false ⇒ the image is already `Scanned`.
  */
-type LoadValidatedImageResult = { pending: true } | { pending: false; imageId: number };
+type LoadValidatedImageResult =
+  | { pending: true }
+  | { pending: false; imageId: number; scanPending?: boolean };
 
 /**
  * Load an Image, assert the caller owns it (or is a mod), and validate it for the
- * given asset kind. Returns a discriminated {@link LoadValidatedImageResult}:
- * `{ pending: true }` while the scan is in-flight (a normal expected wait — no
- * throw), `{ pending: false, imageId }` once `Scanned`.
+ * given asset kind. Returns a discriminated {@link LoadValidatedImageResult}.
  *
- * TERMINAL failures still THROW (real errors the client surfaces + stops polling
- * on): missing → NOT_FOUND; not owned → FORBIDDEN; bad format → BAD_REQUEST;
- * `ImageIngestionStatus.NotFound` (scanner couldn't fetch the bytes) → BAD_REQUEST;
- * `Blocked` (prohibited content) → BAD_REQUEST.
+ * `allowPending` (default `false`) controls what happens while the scan is
+ * IN-FLIGHT (a non-terminal `Pending` / `Error`-retry / `PendingManualAssignment`
+ * / `Rescan` state):
+ *   - `false` (legacy) → `{ pending: true }` (NO write; the caller reports pending).
+ *   - `true`           → `{ pending: false, imageId, scanPending: true }` — the
+ *     image is attachable NOW so the caller WRITES it immediately (the wait moves
+ *     from attach-time to the go-live scan gate). The LISTING-MEDIA attach procs
+ *     (`setListingIcon` / `setListingCover` / `addListingScreenshot`) pass `true`.
+ *
+ * TERMINAL failures ALWAYS THROW regardless of `allowPending` (real errors the
+ * client surfaces + stops polling on): missing → NOT_FOUND; not owned → FORBIDDEN;
+ * bad format → BAD_REQUEST; `ImageIngestionStatus.NotFound` (scanner couldn't fetch
+ * the bytes) → BAD_REQUEST; `Blocked` (prohibited content) → BAD_REQUEST. A
+ * `Blocked` / `NotFound` image is terminal-bad and is NEVER written, even under
+ * `allowPending`.
  *
  * Content RATING is deliberately NOT gated here (W13): the scanner's per-image
  * level is imprecise, every off-site listing is mod-reviewed before it is visible,
@@ -384,7 +400,8 @@ type LoadValidatedImageResult = { pending: true } | { pending: false; imageId: n
 async function loadValidatedImage(
   imageId: number,
   kind: ListingAssetKind,
-  user: SessionUser
+  user: SessionUser,
+  opts: { allowPending?: boolean } = {}
 ): Promise<LoadValidatedImageResult> {
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
@@ -435,11 +452,133 @@ async function loadValidatedImage(
     });
   }
   if (image.ingestion !== ImageIngestionStatus.Scanned) {
-    // Still scanning — a NON-error pending result (supersedes the old CONFLICT
-    // throw; #3016's pending-CONFLICT is replaced by this poll-able result).
+    // Still scanning (Pending / Error-retry / PendingManualAssignment / Rescan).
+    // Under `allowPending` the caller WRITES the id immediately + flags the pending
+    // scan (the go-live `assertAssetsScanClean` gate is the safety net); otherwise
+    // it is a NON-error poll-able result (the legacy attach-time wait).
+    if (opts.allowPending) return { pending: false, imageId: image.id, scanPending: true };
     return { pending: true };
   }
   return { pending: false, imageId: image.id };
+}
+
+// ---------------------------------------------------------------------------
+// Go-live scan-clean gate (QUALITY gate — sits ALONGSIDE the icon+cover PRESENCE
+// floor `assertListingMeetsFloor`). The presence floor never inspects scan state;
+// this one re-reads each attached asset's `ingestion` from the PRIMARY (`dbWrite`,
+// or the caller's `tx`) and refuses to let a listing go live while ANY asset is
+// still scanning or was `Blocked`. This is what lets attach + submit stay
+// permissive with an in-flight scan: the wait is deferred to HERE.
+//
+// 🔴 INVARIANT: no approved/live listing may ever reference a non-`Scanned` or a
+// `Blocked` image. Every go-live path (first-time approve + revision apply) MUST
+// call this, and — because a scan can flip between the pre-tx fail-fast and the
+// authoritative in-tx read — the in-tx call is the authority (TOCTOU).
+// ---------------------------------------------------------------------------
+
+export type ListingScanAssets = {
+  iconId: number | null;
+  coverId: number | null;
+  /** The listing's screenshot Image ids (imageId-bearing rows only). */
+  screenshotImageIds: number[];
+};
+
+/** A minimal image reader — `dbRead` / `dbWrite` / an interactive `tx` all satisfy it. */
+type ImageIngestionReader = {
+  image: {
+    findMany: (args: {
+      where: { id: { in: number[] } };
+      select: { id: true; ingestion: true };
+    }) => Promise<{ id: number; ingestion: string | null }[]>;
+  };
+};
+
+/**
+ * Re-read every attached asset's `ingestion` and THROW `BAD_REQUEST` if ANY is not
+ * terminally `Scanned` — naming which asset is `blocked` vs still `pending`. Reads
+ * the PRIMARY by default (`dbWrite`); pass the interactive `tx` at the in-tx
+ * (authoritative) go-live site so the check is row-consistent with the status flip.
+ *
+ * A `Blocked` asset is reported as `blocked` (prohibited content — the owner must
+ * replace it); anything else non-`Scanned` (Pending / Error / PendingManualAssignment
+ * / Rescan / NotFound / a missing/deleted row) is reported as `pending` (still
+ * resolving). An asset with a null id (unset icon/cover) is simply absent — presence
+ * is the floor gate's job, not this one.
+ */
+export async function assertAssetsScanClean(
+  assets: ListingScanAssets,
+  db: ImageIngestionReader = dbWrite
+): Promise<void> {
+  const tagged: { kind: 'icon' | 'cover' | 'screenshot'; id: number }[] = [
+    ...(assets.iconId != null ? [{ kind: 'icon' as const, id: assets.iconId }] : []),
+    ...(assets.coverId != null ? [{ kind: 'cover' as const, id: assets.coverId }] : []),
+    ...assets.screenshotImageIds.map((id) => ({ kind: 'screenshot' as const, id })),
+  ];
+  if (tagged.length === 0) return;
+
+  const rows = await db.image.findMany({
+    where: { id: { in: tagged.map((t) => t.id) } },
+    select: { id: true, ingestion: true },
+  });
+  const ingestionById = new Map(rows.map((r) => [r.id, r.ingestion]));
+
+  const blocked = new Set<string>();
+  const pending = new Set<string>();
+  for (const { kind, id } of tagged) {
+    const ingestion = ingestionById.get(id) ?? null;
+    if (ingestion === ImageIngestionStatus.Scanned) continue;
+    if (ingestion === ImageIngestionStatus.Blocked) blocked.add(kind);
+    else pending.add(kind);
+  }
+  if (blocked.size === 0 && pending.size === 0) return;
+
+  const parts: string[] = [];
+  if (blocked.size > 0) parts.push(`blocked: ${[...blocked].join(', ')}`);
+  if (pending.size > 0) parts.push(`still scanning: ${[...pending].join(', ')}`);
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message: `Listing media has not finished scanning cleanly and cannot go live (${parts.join(
+      '; '
+    )}). Replace any blocked media and wait for scans to complete.`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Per-asset scan-status poll (owner/mod-gated). The client attaches an in-flight
+// image IMMEDIATELY (the server stores the pending id), then polls THIS to flip a
+// per-asset "Scanning…" badge to "Scanned" / "Blocked — replace". Owner-scoped:
+// only images the caller owns (mods read any) are returned.
+// ---------------------------------------------------------------------------
+
+export type AssetScanStatus = 'scanned' | 'pending' | 'blocked';
+
+/**
+ * Read the scan status of a set of Image ids the caller owns (mods: any), from the
+ * PRIMARY (`dbWrite`) so a just-completed scan is visible promptly. Maps `ingestion`
+ * → `scanned` (Scanned) / `blocked` (Blocked) / `pending` (everything else, incl. a
+ * missing/not-owned row — never leaks another user's images). Ids not owned by the
+ * caller are simply omitted.
+ */
+export async function getAssetScanStatuses(
+  imageIds: number[],
+  user: SessionUser
+): Promise<{ statuses: { imageId: number; status: AssetScanStatus }[] }> {
+  const unique = [...new Set(imageIds)].filter((id) => Number.isInteger(id) && id > 0);
+  if (unique.length === 0) return { statuses: [] };
+  const rows = await dbWrite.image.findMany({
+    where: { id: { in: unique }, ...(user.isModerator ? {} : { userId: user.id }) },
+    select: { id: true, ingestion: true },
+  });
+  const statuses = rows.map((r) => ({
+    imageId: r.id,
+    status:
+      r.ingestion === ImageIngestionStatus.Scanned
+        ? ('scanned' as const)
+        : r.ingestion === ImageIngestionStatus.Blocked
+        ? ('blocked' as const)
+        : ('pending' as const),
+  }));
+  return { statuses };
 }
 
 /**
@@ -498,20 +637,26 @@ async function reDeriveContentRatingForModLiveEdit(
 // ---------------------------------------------------------------------------
 
 /**
- * The attach procs resolve with a discriminated `status` result instead of
- * throwing for a still-scanning image: `{ status: 'pending' }` (200, NO db write —
- * the client re-polls) while the Image's scan is in-flight, `{ status: 'attached',
- * … }` once it lands and the attach is written. A TERMINAL problem (not-found /
+ * The LISTING-MEDIA attach procs (`setListingIcon` / `setListingCover` /
+ * `addListingScreenshot`) STORE a still-scanning image IMMEDIATELY (they pass
+ * `allowPending: true`) and resolve `{ status: 'attached', …, scanPending }` — the
+ * `scanPending` flag tells the client to keep a "Scanning…" badge and poll
+ * {@link getAssetScanStatuses} until the scan lands. The wait moved from attach-time
+ * to the go-live `assertAssetsScanClean` gate. A TERMINAL problem (not-found /
  * not-owned / bad-format / NotFound / Blocked) still THROWS from
- * {@link loadValidatedImage}.
+ * {@link loadValidatedImage} — a `Blocked` / `NotFound` image is never stored. The
+ * `{ status: 'pending' }` variant is retained for the type only (legacy
+ * `allowPending: false` callers); the live listing-media procs never return it.
  */
-export type SetListingIconResult = { status: 'pending' } | { status: 'attached'; iconId: number };
+export type SetListingIconResult =
+  | { status: 'pending' }
+  | { status: 'attached'; iconId: number; scanPending?: boolean };
 export type SetListingCoverResult =
   | { status: 'pending' }
-  | { status: 'attached'; coverId: number };
+  | { status: 'attached'; coverId: number; scanPending?: boolean };
 export type AddListingScreenshotResult =
   | { status: 'pending' }
-  | { status: 'attached'; id: string; order: number };
+  | { status: 'attached'; id: string; order: number; scanPending?: boolean };
 
 export async function setListingIcon(
   args: { listingId: string; imageId: number },
@@ -519,7 +664,7 @@ export async function setListingIcon(
 ): Promise<SetListingIconResult> {
   const listing = await loadOwnedListing(args.listingId, user);
   assertOwnerAssetEditable(listing, user);
-  const validated = await loadValidatedImage(args.imageId, 'icon', user);
+  const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({
@@ -528,7 +673,7 @@ export async function setListingIcon(
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
-  return { status: 'attached', iconId: validated.imageId };
+  return { status: 'attached', iconId: validated.imageId, scanPending: validated.scanPending };
 }
 
 export async function setListingCover(
@@ -537,7 +682,7 @@ export async function setListingCover(
 ): Promise<SetListingCoverResult> {
   const listing = await loadOwnedListing(args.listingId, user);
   assertOwnerAssetEditable(listing, user);
-  const validated = await loadValidatedImage(args.imageId, 'cover', user);
+  const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({
@@ -546,7 +691,7 @@ export async function setListingCover(
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
-  return { status: 'attached', coverId: validated.imageId };
+  return { status: 'attached', coverId: validated.imageId, scanPending: validated.scanPending };
 }
 
 export async function addListingScreenshot(
@@ -555,9 +700,12 @@ export async function addListingScreenshot(
 ): Promise<AddListingScreenshotResult> {
   const listing = await loadOwnedListing(args.listingId, user);
   assertOwnerAssetEditable(listing, user);
-  const validated = await loadValidatedImage(args.imageId, 'screenshot', user);
+  const validated = await loadValidatedImage(args.imageId, 'screenshot', user, {
+    allowPending: true,
+  });
   if (validated.pending) return { status: 'pending' };
   const imageId = validated.imageId;
+  const scanPending = validated.scanPending;
 
   // COUNT cap — reject the (N+1)th (mirrors E5 MAX_SCREENSHOTS "reject, not truncate").
   // Read the count + max order from dbWrite (primary), NOT the replica: under
@@ -592,7 +740,7 @@ export async function addListingScreenshot(
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
   });
-  return { status: 'attached', id, order: nextOrder };
+  return { status: 'attached', id, order: nextOrder, scanPending };
 }
 
 /**
@@ -707,6 +855,10 @@ export type ListingAssetsView = {
   /** Detected `nsfwLevel` of the icon/cover Image (null if unset/absent). */
   iconNsfwLevel: number | null;
   coverNsfwLevel: number | null;
+  /** Scan status of the icon/cover Image (null if unset/absent) — the mod-review
+   *  surface shows this + refuses to approve until every asset is `scanned`. */
+  iconScanStatus: AssetScanStatus | null;
+  coverScanStatus: AssetScanStatus | null;
   screenshots: {
     id: string;
     imageId: number | null;
@@ -714,8 +866,15 @@ export type ListingAssetsView = {
     caption: string | null;
     /** Detected `nsfwLevel` of the backing Image (null if the Image was deleted). */
     nsfwLevel: number | null;
+    /** Scan status of the backing Image (null if the Image was deleted). */
+    scanStatus: AssetScanStatus | null;
   }[];
   completeness: ListingAssetsCompleteResult;
+  /** True when at least one attached asset is `blocked` — approve MUST be refused. */
+  hasBlockedAsset: boolean;
+  /** True when at least one attached asset is still `pending` a scan — approve is
+   *  refused until it lands (surfaced so the mod knows WHY approve is blocked). */
+  hasPendingScan: boolean;
 };
 
 /**
@@ -744,14 +903,34 @@ export async function getListingAssets(
   const images = imageIds.length
     ? await dbRead.image.findMany({
         where: { id: { in: imageIds } },
-        select: { id: true, nsfwLevel: true },
+        select: { id: true, nsfwLevel: true, ingestion: true },
       })
     : [];
   const levelById = new Map<number, number | null>(
     images.map((i) => [i.id, i.nsfwLevel ?? null])
   );
+  const ingestionById = new Map<number, string | null>(
+    images.map((i) => [i.id, i.ingestion ?? null])
+  );
   const levelOf = (id: number | null): number | null =>
     id == null ? null : levelById.get(id) ?? null;
+  const scanOf = (id: number | null): AssetScanStatus | null => {
+    if (id == null) return null;
+    const ingestion = ingestionById.get(id);
+    if (ingestion == null) return null; // Image deleted / not found.
+    if (ingestion === ImageIngestionStatus.Scanned) return 'scanned';
+    if (ingestion === ImageIngestionStatus.Blocked) return 'blocked';
+    return 'pending';
+  };
+
+  const iconScanStatus = scanOf(listing.iconId);
+  const coverScanStatus = scanOf(listing.coverId);
+  const screenshotViews = screenshots.map((s) => ({
+    ...s,
+    nsfwLevel: levelOf(s.imageId),
+    scanStatus: scanOf(s.imageId),
+  }));
+  const allScans = [iconScanStatus, coverScanStatus, ...screenshotViews.map((s) => s.scanStatus)];
 
   return {
     listingId: listing.id,
@@ -759,7 +938,9 @@ export async function getListingAssets(
     coverId: listing.coverId,
     iconNsfwLevel: levelOf(listing.iconId),
     coverNsfwLevel: levelOf(listing.coverId),
-    screenshots: screenshots.map((s) => ({ ...s, nsfwLevel: levelOf(s.imageId) })),
+    iconScanStatus,
+    coverScanStatus,
+    screenshots: screenshotViews,
     completeness: checkListingAssetsComplete({
       iconId: listing.iconId,
       coverId: listing.coverId,
@@ -768,6 +949,8 @@ export async function getListingAssets(
       // renders blank.
       screenshotCount: screenshots.filter((s) => s.imageId != null).length,
     }),
+    hasBlockedAsset: allScans.some((s) => s === 'blocked'),
+    hasPendingScan: allScans.some((s) => s === 'pending'),
   };
 }
 

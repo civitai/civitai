@@ -401,6 +401,33 @@ export function OffsiteReviewModal({
   const missingScreenshotsOnly =
     !assetsQuery.isLoading && !belowFloor && screenshotCount < 1;
 
+  // Scan-clean dimension (Item 1): the go-live `assertAssetsScanClean` gate refuses
+  // to approve until EVERY attached asset is terminally `Scanned` (none pending, none
+  // `Blocked`). Surface per-asset scan status + WHY approve is blocked so the mod
+  // isn't left guessing when the server rejects an approve. Read from the extended
+  // getAssets projection.
+  const assetsData = assetsQuery.data as
+    | {
+        iconScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
+        coverScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
+        screenshots?: { scanStatus?: 'scanned' | 'pending' | 'blocked' | null }[];
+        hasBlockedAsset?: boolean;
+        hasPendingScan?: boolean;
+      }
+    | undefined;
+  const blockedScanKinds = [
+    assetsData?.iconScanStatus === 'blocked' ? 'icon' : null,
+    assetsData?.coverScanStatus === 'blocked' ? 'cover' : null,
+    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'blocked') ? 'screenshots' : null,
+  ].filter((v): v is string => v != null);
+  const pendingScanKinds = [
+    assetsData?.iconScanStatus === 'pending' ? 'icon' : null,
+    assetsData?.coverScanStatus === 'pending' ? 'cover' : null,
+    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'pending') ? 'screenshots' : null,
+  ].filter((v): v is string => v != null);
+  const hasBlockedAsset = !assetsQuery.isLoading && (assetsData?.hasBlockedAsset ?? false);
+  const hasPendingScan = !assetsQuery.isLoading && (assetsData?.hasPendingScan ?? false);
+
   return (
     <Modal
       opened={!!request}
@@ -593,6 +620,38 @@ export function OffsiteReviewModal({
             <Text size="sm">
               Missing: screenshots. This is optional — you can approve now; the author can add
               screenshots later.
+            </Text>
+          </Alert>
+        )}
+
+        {hasBlockedAsset && (
+          <Alert
+            color="red"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            data-testid="apps-offsite-assets-scan-blocked"
+          >
+            <Text size="sm">
+              Blocked media: {blockedScanKinds.join(', ')}. This media was rejected during scanning
+              (prohibited content). Approve will be rejected by the server until the author replaces
+              it — reject this submission and ask them to swap the blocked {blockedScanKinds.join(
+                ', '
+              )}
+              .
+            </Text>
+          </Alert>
+        )}
+
+        {!hasBlockedAsset && hasPendingScan && (
+          <Alert
+            color="yellow"
+            variant="light"
+            icon={<IconInfoCircle size={16} />}
+            data-testid="apps-offsite-assets-scan-pending"
+          >
+            <Text size="sm">
+              Still scanning: {pendingScanKinds.join(', ')}. Approve will be rejected by the server
+              until every asset finishes scanning cleanly — wait a moment and retry.
             </Text>
           </Alert>
         )}

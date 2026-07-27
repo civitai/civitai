@@ -27,10 +27,26 @@ const OFFSITE_ROW = {
   submittedBy: { id: 42, username: 'author-dev', image: null },
 };
 
+const DEFAULT_ASSETS = {
+  listingId: 'listing-1',
+  iconId: 10,
+  coverId: 11,
+  iconNsfwLevel: 1,
+  coverNsfwLevel: 1,
+  // Icon/cover PG (1); a screenshot at R (4) → derived rating 'r' > declared 'g'.
+  screenshots: [{ imageId: 12, nsfwLevel: 4, scanStatus: 'scanned' as const }],
+  iconScanStatus: 'scanned' as const,
+  coverScanStatus: 'scanned' as const,
+  hasBlockedAsset: false,
+  hasPendingScan: false,
+};
+
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   approveMutate: vi.fn(),
   rejectMutate: vi.fn(),
+  // Mutable so a test can inject a blocked / pending scan state (Item 1).
+  assetsData: { current: null as unknown },
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -64,15 +80,9 @@ vi.mock('~/utils/trpc', () => {
         getAssets: {
           useQuery: () => ({
             // Icon/cover PG (1); a screenshot at R (4) → derived rating 'r', which is
-            // HIGHER than the declared 'g' (mismatch case).
-            data: {
-              listingId: 'listing-1',
-              iconId: 10,
-              coverId: 11,
-              iconNsfwLevel: 1,
-              coverNsfwLevel: 1,
-              screenshots: [{ imageId: 12, nsfwLevel: 4 }],
-            },
+            // HIGHER than the declared 'g' (mismatch case). Scan state is configurable
+            // per test via mocks.assetsData.current.
+            data: mocks.assetsData.current,
             isLoading: false,
             error: null,
           }),
@@ -102,6 +112,7 @@ beforeEach(() => {
   mocks.invalidate.mockClear();
   mocks.approveMutate.mockClear();
   mocks.rejectMutate.mockClear();
+  mocks.assetsData.current = { ...DEFAULT_ASSETS };
 });
 
 describe('OffsiteReviewQueue — kind-aware review row', () => {
@@ -125,6 +136,42 @@ describe('OffsiteReviewQueue — kind-aware review row', () => {
     // The two ENTRY actions present (approve is now gated behind its own click).
     await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-offsite-reject-open')).toBeInTheDocument();
+  });
+});
+
+describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
+  test('a BLOCKED asset shows the "blocked media" alert explaining approve will be rejected', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      iconScanStatus: 'blocked',
+      hasBlockedAsset: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    const alert = page.getByTestId('apps-offsite-assets-scan-blocked');
+    await expect.element(alert).toBeInTheDocument();
+    await expect.element(alert).toHaveTextContent(/Blocked media: icon/i);
+  });
+
+  test('a still-PENDING scan shows the "still scanning" advisory (no blocked alert)', async () => {
+    mocks.assetsData.current = {
+      ...DEFAULT_ASSETS,
+      coverScanStatus: 'pending',
+      hasPendingScan: true,
+    };
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    await expect
+      .element(page.getByTestId('apps-offsite-assets-scan-pending'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-assets-scan-blocked').elements()).toHaveLength(0);
+  });
+
+  test('all-scanned assets show NEITHER the blocked nor the pending scan alert', async () => {
+    renderWithProviders(<OffsiteReviewQueue />);
+    await page.getByRole('button', { name: 'Review' }).click();
+    expect(page.getByTestId('apps-offsite-assets-scan-blocked').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-assets-scan-pending').elements()).toHaveLength(0);
   });
 });
 

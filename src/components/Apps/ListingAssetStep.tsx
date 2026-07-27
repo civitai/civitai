@@ -13,7 +13,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import {
   classifyAttachResult,
+  classifyScanStatus,
+  nextPollDelay,
   shouldKeepPolling,
+  type AssetScanBadge,
   type AttachOutcome,
 } from '~/components/Apps/assetPolling';
 import {
@@ -55,6 +58,13 @@ export type AssetState = {
   message: string | null;
   /** An edge-resolved preview URL for an already-attached (prefilled) asset. */
   previewUrl?: string | null;
+  /**
+   * Per-asset SCAN badge, independent of `status`. The image is STORED
+   * (`status: 'attached'`) immediately now — even mid-scan — so the submit floor
+   * (icon+cover attached) is met right away; this drives a separate badge:
+   * `scanning` → `scanned` / `blocked`. Undefined ⇒ no badge (prefilled asset).
+   */
+  scan?: AssetScanBadge | null;
 };
 
 export const emptyAsset: AssetState = { status: 'idle', imageId: null, message: null };
@@ -62,7 +72,8 @@ export const emptyAsset: AssetState = { status: 'idle', imageId: null, message: 
 /** Seed an icon/cover AssetState from an edit-prefill asset (attached iff it has an imageId). */
 function assetFromInitial(a: EditAsset | undefined): AssetState {
   if (!a || a.imageId == null) return emptyAsset;
-  return { status: 'attached', imageId: a.imageId, message: null, previewUrl: a.url };
+  // A prefilled asset was already scan-clean when the listing was saved — no badge.
+  return { status: 'attached', imageId: a.imageId, message: null, previewUrl: a.url, scan: null };
 }
 
 /**
@@ -140,6 +151,7 @@ export function ListingAssetStep({
     return seed;
   });
 
+  const utils = trpc.useUtils();
   const persistMutation = trpc.appListings.persistAssetImage.useMutation();
   const ingestMutation = trpc.appListings.ingestAssetFromUrl.useMutation();
   const setIconMutation = trpc.appListings.setIcon.useMutation();
@@ -148,6 +160,10 @@ export function ListingAssetStep({
   const removeScreenshotMutation = trpc.appListings.removeScreenshot.useMutation();
 
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // SEPARATE timer map for the per-asset SCAN poll (distinct from the attach timer).
+  // The attach commits in one call now (the id is stored even mid-scan), so this poll
+  // only updates the scan badge and never re-attaches.
+  const scanTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const epochsRef = useRef<Map<string, number>>(new Map());
   // Slot key → the AppListingScreenshot row id returned by addScreenshot (so a
   // freshly-added screenshot is also removable). Prefilled rows use screenshotMeta.
@@ -182,6 +198,13 @@ export function ListingAssetStep({
       clearTimeout(t);
       timersRef.current.delete(key);
     }
+    // A replace / cancel / attach-restart must also stop any in-flight SCAN poll for
+    // this key so a stale poll can't flip the badge on the new upload.
+    const st = scanTimersRef.current.get(key);
+    if (st !== undefined) {
+      clearTimeout(st);
+      scanTimersRef.current.delete(key);
+    }
   }
   function bumpEpoch(key: string): number {
     const next = (epochsRef.current.get(key) ?? 0) + 1;
@@ -194,14 +217,57 @@ export function ListingAssetStep({
 
   useEffect(() => {
     const timers = timersRef.current;
+    const scanTimers = scanTimersRef.current;
     const urls = objectUrlsRef.current;
     return () => {
       for (const t of timers.values()) clearTimeout(t);
       timers.clear();
+      for (const t of scanTimers.values()) clearTimeout(t);
+      scanTimers.clear();
       for (const u of urls.values()) URL.revokeObjectURL(u);
       urls.clear();
     };
   }, []);
+
+  // Poll `getAssetScanStatuses` until a freshly-attached (but still-scanning) asset's
+  // scan lands. Updates only the per-asset SCAN badge (`scanning` → `scanned` /
+  // `blocked`); the asset is already `status: 'attached'` so the submit floor is
+  // unaffected. Epoch-guarded so a replace/cancel mid-scan drops a resolving poll;
+  // budget-bounded (reusing the attach backoff) — on budget-out the badge simply
+  // stays `scanning` (a stuck scan is rare and the go-live gate is the real safety net).
+  async function driveScan(
+    key: string,
+    imageId: number,
+    attempt: number,
+    epoch: number,
+    applyScan: (scan: AssetScanBadge) => void
+  ) {
+    let badge: AssetScanBadge;
+    try {
+      const res = await utils.appListings.getAssetScanStatuses.fetch({ imageIds: [imageId] });
+      badge = classifyScanStatus(res.statuses.find((s) => s.imageId === imageId)?.status);
+    } catch {
+      // A transient query failure is not terminal — keep polling.
+      badge = 'scanning';
+    }
+    if (!isCurrentEpoch(key, epoch)) return;
+    if (badge === 'scanned' || badge === 'blocked') {
+      const st = scanTimersRef.current.get(key);
+      if (st !== undefined) {
+        clearTimeout(st);
+        scanTimersRef.current.delete(key);
+      }
+      applyScan(badge);
+      return;
+    }
+    applyScan('scanning');
+    const delayMs = nextPollDelay(attempt);
+    if (delayMs === null) return; // budget exhausted — leave the "scanning" badge.
+    const timer = setTimeout(() => {
+      void driveScan(key, imageId, attempt + 1, epoch, applyScan);
+    }, delayMs);
+    scanTimersRef.current.set(key, timer);
+  }
 
   async function uploadAndPersist(file: File): Promise<number> {
     const { width, height } = await readImageDimensions(file);
@@ -262,13 +328,24 @@ export function ListingAssetStep({
     if (!isCurrentEpoch(key, epoch)) return;
     if (outcome.kind === 'attached') {
       clearTimer(key);
-      apply({ status: 'attached', imageId, message: null });
+      // The id is STORED now (even mid-scan). Mark it attached (so the submit floor
+      // is met) and seed the scan badge: `scanning` while the scan is in-flight (then
+      // poll it to `scanned` / `blocked`), else `scanned` immediately.
+      const scan: AssetScanBadge = outcome.scanPending ? 'scanning' : 'scanned';
+      apply({ status: 'attached', imageId, message: null, scan });
       // Promote a captured row id into screenshotMeta so the Remove button appears.
       const rowId = rowIdRef.current.get(key);
       if (rowId) {
         setScreenshotMeta((prev) => ({ ...prev, [key]: { rowId, previewUrl: prev[key]?.previewUrl ?? null } }));
       }
       onAssetMutated?.();
+      // Kick off the scan-status poll only while the scan is still in-flight. Updates
+      // just the badge; never re-attaches. Epoch-guarded so a replace/cancel drops it.
+      if (outcome.scanPending) {
+        const applyScan = (s: AssetScanBadge) =>
+          apply({ status: 'attached', imageId, message: null, scan: s });
+        void driveScan(key, imageId, 0, epoch, applyScan);
+      }
       return;
     }
     if (outcome.kind === 'error') {
@@ -507,12 +584,17 @@ export function ListingAssetStep({
               {screenshots.map((s, i) => {
                 const previewUrl = screenshotMeta[s.id]?.previewUrl ?? null;
                 const rowId = screenshotMeta[s.id]?.rowId ?? rowIdRef.current.get(s.id) ?? null;
-                // Attached (has a server row) → server-side delete, gated by
-                // allowRemove (edit mode). Otherwise (in-progress / error / timeout,
-                // no row) → a LOCAL cancel, ALWAYS allowed — cancelling your own
-                // in-flight upload is never gated by allowRemove.
-                const attached = s.status === 'attached' && rowId != null;
-                const showControl = attached ? allowRemove : true;
+                // The id is stored immediately now (even mid-scan), so a freshly-added
+                // screenshot is `attached` WITH a rowId while its scan is still in-flight.
+                // Treat that scanning-but-committed row as still CANCELLABLE (a server
+                // remove) — cancelling your own just-added upload is never gated by
+                // allowRemove, mirroring the old mid-scan cancel. A SETTLED attached row
+                // (scan landed: scanned/blocked) → the server-delete Remove, gated by
+                // allowRemove (edit mode). An in-progress (working, no row) row → a LOCAL
+                // cancel.
+                const hasRow = rowId != null;
+                const settled = s.status === 'attached' && hasRow && s.scan !== 'scanning';
+                const showControl = settled ? allowRemove : true;
                 return (
                   <Group key={s.id} gap={8} justify="space-between">
                     <Group gap={8}>
@@ -542,7 +624,7 @@ export function ListingAssetStep({
                         </Button>
                       )}
                       {showControl &&
-                        (attached ? (
+                        (settled ? (
                           <Button
                             size="compact-xs"
                             variant="subtle"
@@ -559,7 +641,10 @@ export function ListingAssetStep({
                             variant="subtle"
                             color="red"
                             leftSection={<IconX size={12} />}
-                            onClick={() => cancelScreenshot(s.id)}
+                            // A scanning-but-committed row (has a server row) must be
+                            // removed on the server; a not-yet-committed (working) row is
+                            // a local-only cancel.
+                            onClick={() => (hasRow ? void removeScreenshot(s.id) : cancelScreenshot(s.id))}
                             data-testid={`apps-offsite-screenshot-cancel-${i}`}
                           >
                             Cancel
@@ -750,8 +835,40 @@ type BadgeState = {
   status: ScreenshotSlot['status'];
   imageId: number | null;
   message: string | null;
+  scan?: AssetScanBadge | null;
 };
 function AssetStatusBadge({ state }: { state: BadgeState }) {
+  // Once ATTACHED (the id is stored even mid-scan), the SCAN sub-state drives the
+  // badge: still scanning → yellow spinner; blocked → red "replace"; else attached.
+  if (state.status === 'attached') {
+    if (state.scan === 'scanning')
+      return (
+        <Badge
+          size="xs"
+          color="yellow"
+          leftSection={<Loader size={10} color="yellow" />}
+          data-testid="apps-asset-scan-scanning"
+        >
+          Scanning…
+        </Badge>
+      );
+    if (state.scan === 'blocked')
+      return (
+        <Badge size="xs" color="red" data-testid="apps-asset-scan-blocked">
+          Blocked — replace
+        </Badge>
+      );
+    return (
+      <Badge
+        size="xs"
+        color="green"
+        leftSection={<IconCheck size={10} />}
+        data-testid="apps-asset-scan-scanned"
+      >
+        {state.scan === 'scanned' ? 'Scanned' : 'attached'}
+      </Badge>
+    );
+  }
   switch (state.status) {
     case 'working':
       return (
@@ -764,12 +881,6 @@ function AssetStatusBadge({ state }: { state: BadgeState }) {
       return (
         <Badge size="xs" color="yellow" leftSection={<Loader size={10} color="yellow" />}>
           Scanning image…
-        </Badge>
-      );
-    case 'attached':
-      return (
-        <Badge size="xs" color="green" leftSection={<IconCheck size={10} />}>
-          attached
         </Badge>
       );
     case 'timeout':

@@ -125,7 +125,15 @@ function resetAll() {
       .mockImplementation(async (a: { data: unknown }) => a.data);
     client.appListingPublishRequest.updateMany.mockReset().mockResolvedValue({ count: 1 });
     client.appListingPublishRequest.findMany.mockReset().mockResolvedValue([]);
-    client.image.findMany.mockReset().mockResolvedValue([]);
+    // Default: the go-live scan-clean gate + the listMySubmissions scan dimension both
+    // read image.findMany for `{ id, ingestion }` — echo every queried id as `Scanned`
+    // so a normal approve passes and my-submissions shows no scan problems. (The rating
+    // derive selects `{ nsfwLevel }`; tests needing a specific level override this.)
+    client.image.findMany
+      .mockReset()
+      .mockImplementation(async (args: { where?: { id?: { in?: number[] } } }) =>
+        (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }))
+      );
     client.appListingModerationEvent.findMany.mockReset().mockResolvedValue([]);
   }
   mockWrite.$transaction
@@ -660,8 +668,14 @@ describe('approveExternalRequest (revision apply)', () => {
     mockWrite.appListingScreenshot.count.mockResolvedValue(2);
     // Backing-Image levels for the approve-time content-rating derive: an R asset →
     // the revision path stamps the DERIVED rating ('r'), not the shadow's declared value.
+    // Rows carry `id` + `ingestion: 'Scanned'` (for the scan-clean gate) alongside
+    // `nsfwLevel` (for the derive) — both reads go through this same image.findMany.
     mockWrite.appListingScreenshot.findMany.mockResolvedValue([{ imageId: 10 }]);
-    mockWrite.image.findMany.mockResolvedValue([{ nsfwLevel: 4 }]);
+    mockWrite.image.findMany.mockResolvedValue([
+      { id: 5, nsfwLevel: 1, ingestion: 'Scanned' },
+      { id: 6, nsfwLevel: 1, ingestion: 'Scanned' },
+      { id: 10, nsfwLevel: 4, ingestion: 'Scanned' },
+    ]);
   }
 
   it('copies shadow scalars onto the PARENT (id/slug preserved), deletes the shadow, approves + re-points the request', async () => {

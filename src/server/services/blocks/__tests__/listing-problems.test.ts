@@ -145,4 +145,79 @@ describe('computeListingProblems', () => {
       expect(shotLabel).toMatch(/recommended|optional/i);
     });
   });
+
+  // Item 1 — the scan dimension. `assetScans` is OPTIONAL (default: no scan
+  // problems, so every existing caller is byte-unchanged). A `pending` asset is
+  // ADVISORY (it will resolve); a `blocked` asset is BLOCKING (must be replaced).
+  describe('scan dimension (assetScans)', () => {
+    const severityOf = (code: ListingProblemCode, input: ListingProblemInput) =>
+      computeListingProblems(input).problems.find((p) => p.code === code)?.severity;
+
+    it('omitting assetScans yields NO scan problems (regression — existing callers unchanged)', () => {
+      expect(codes(complete)).toEqual([]);
+      expect(codes({ ...complete, assetScans: [] })).toEqual([]);
+      // All scanned → nothing to flag.
+      expect(
+        codes({
+          ...complete,
+          assetScans: [
+            { kind: 'icon', status: 'scanned' },
+            { kind: 'cover', status: 'scanned' },
+          ],
+        })
+      ).toEqual([]);
+    });
+
+    it('a still-pending asset → ADVISORY scanning-media problem', () => {
+      const input: ListingProblemInput = {
+        ...complete,
+        assetScans: [{ kind: 'icon', status: 'pending' }],
+      };
+      expect(codes(input)).toEqual(['scanning-media']);
+      expect(severityOf('scanning-media', input)).toBe('advisory');
+    });
+
+    it('a blocked asset → BLOCKING blocked-media problem naming the asset', () => {
+      const input: ListingProblemInput = {
+        ...complete,
+        assetScans: [{ kind: 'cover', status: 'blocked' }],
+      };
+      expect(codes(input)).toEqual(['blocked-media']);
+      expect(severityOf('blocked-media', input)).toBe('blocking');
+      const label = computeListingProblems(input).problems.find(
+        (p) => p.code === 'blocked-media'
+      )?.label;
+      expect(label).toMatch(/replace the blocked cover/i);
+    });
+
+    it('dedups by KIND (N blocked screenshots → one problem; blocked wins over pending for a kind)', () => {
+      const input: ListingProblemInput = {
+        ...complete,
+        assetScans: [
+          { kind: 'screenshot', status: 'blocked' },
+          { kind: 'screenshot', status: 'blocked' },
+          { kind: 'screenshot', status: 'pending' },
+        ],
+      };
+      const problems = computeListingProblems(input).problems.filter(
+        (p) => p.code === 'blocked-media' || p.code === 'scanning-media'
+      );
+      // One blocked-media, no scanning-media (blocked wins for the screenshot kind).
+      expect(problems.map((p) => p.code)).toEqual(['blocked-media']);
+    });
+
+    it('orders blocked (blocking) BEFORE pending (advisory)', () => {
+      const input: ListingProblemInput = {
+        ...complete,
+        assetScans: [
+          { kind: 'icon', status: 'pending' },
+          { kind: 'cover', status: 'blocked' },
+        ],
+      };
+      const scanCodes = computeListingProblems(input)
+        .problems.filter((p) => p.code === 'blocked-media' || p.code === 'scanning-media')
+        .map((p) => p.code);
+      expect(scanCodes).toEqual(['blocked-media', 'scanning-media']);
+    });
+  });
 });

@@ -3,6 +3,7 @@ import {
   POLL_BUDGET_MS,
   POLL_SCHEDULE_MS,
   classifyAttachResult,
+  classifyScanStatus,
   nextPollDelay,
   shouldKeepPolling,
 } from '~/components/Apps/assetPolling';
@@ -15,11 +16,23 @@ import {
  */
 
 describe('classifyAttachResult', () => {
-  it('a resolved { status: "attached" } → attached (terminal)', () => {
-    expect(classifyAttachResult({ result: { status: 'attached' } })).toEqual({ kind: 'attached' });
+  it('a resolved { status: "attached" } → attached, scanPending false (scan already clean)', () => {
+    expect(classifyAttachResult({ result: { status: 'attached' } })).toEqual({
+      kind: 'attached',
+      scanPending: false,
+    });
   });
 
-  it('a resolved { status: "pending" } → scanning (retriable — keep polling)', () => {
+  it('a resolved { status: "attached", scanPending: true } → attached but scan still in-flight', () => {
+    // Item 1: the id is STORED even mid-scan; the caller keeps a "Scanning…" badge and
+    // polls the scan status separately. The attach itself is done (not retriable).
+    expect(classifyAttachResult({ result: { status: 'attached', scanPending: true } })).toEqual({
+      kind: 'attached',
+      scanPending: true,
+    });
+  });
+
+  it('a resolved { status: "pending" } → scanning (legacy allowPending:false — keep re-attaching)', () => {
     expect(classifyAttachResult({ result: { status: 'pending' } })).toEqual({ kind: 'scanning' });
   });
 
@@ -122,7 +135,7 @@ describe('shouldKeepPolling', () => {
   });
 
   it('STOPS on an attached outcome (terminal, no delay)', () => {
-    expect(shouldKeepPolling({ kind: 'attached' }, 0)).toEqual({ keep: false });
+    expect(shouldKeepPolling({ kind: 'attached', scanPending: false }, 0)).toEqual({ keep: false });
   });
 
   it('STOPS on an error outcome (terminal — blocked/NSFW)', () => {
@@ -138,5 +151,17 @@ describe('shouldKeepPolling', () => {
       delayMs: 10,
     });
     expect(shouldKeepPolling({ kind: 'scanning' }, 1, schedule, budget)).toEqual({ keep: false });
+  });
+});
+
+describe('classifyScanStatus (per-asset scan badge)', () => {
+  it('maps scanned → scanned, blocked → blocked', () => {
+    expect(classifyScanStatus('scanned')).toBe('scanned');
+    expect(classifyScanStatus('blocked')).toBe('blocked');
+  });
+
+  it('maps pending and an absent/unknown status → scanning (keep polling)', () => {
+    expect(classifyScanStatus('pending')).toBe('scanning');
+    expect(classifyScanStatus(undefined)).toBe('scanning');
   });
 });

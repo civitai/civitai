@@ -18,6 +18,13 @@ import {
  * (`listMySubmissions`) procs project the needed fields and call this per row.
  */
 
+/** The scan state of a single ATTACHED asset — feeds the scan dimension below. */
+export type ListingAssetScan = {
+  kind: 'icon' | 'cover' | 'screenshot';
+  /** `scanned` (clean), `pending` (still scanning), `blocked` (prohibited content). */
+  status: 'scanned' | 'pending' | 'blocked';
+};
+
 export type ListingProblemInput = {
   /** Image FK for the listing icon (null ⇒ missing). */
   iconId: number | null;
@@ -31,6 +38,14 @@ export type ListingProblemInput = {
   tagline: string | null;
   /** Marketplace category (null / whitespace-only ⇒ a problem). */
   category: string | null;
+  /**
+   * Optional per-asset scan states (from the assets' `ingestion`). When provided, a
+   * `blocked` asset becomes a BLOCKING problem ("Replace the blocked <asset> before
+   * it can publish") and a `pending` asset becomes an ADVISORY heads-up ("Media
+   * still scanning"). Omitting it (the default) yields NO scan problems — the pre-
+   * scan-dimension behavior, so existing callers are unchanged.
+   */
+  assetScans?: ListingAssetScan[];
 };
 
 export type ListingProblemCode =
@@ -39,7 +54,9 @@ export type ListingProblemCode =
   | 'no-screenshots'
   | 'empty-description'
   | 'empty-tagline'
-  | 'empty-category';
+  | 'empty-category'
+  | 'blocked-media'
+  | 'scanning-media';
 
 /**
  * A problem's severity relative to the publish FLOOR (icon + cover):
@@ -107,6 +124,32 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
     problems.push({ code: 'empty-tagline', label: 'Missing tagline', severity: 'advisory' });
   if (isEmpty(listing.category))
     problems.push({ code: 'empty-category', label: 'Missing category', severity: 'advisory' });
+
+  // Scan dimension (Item 1): a still-`pending` asset is advisory (it will resolve);
+  // a `blocked` asset is BLOCKING — the listing can't go live until it's replaced
+  // (the go-live `assertAssetsScanClean` gate would reject it). Deduped by asset
+  // KIND so N blocked screenshots yield one problem, and blocked wins over pending
+  // for the same kind. Ordered blocked-first (higher severity), then pending.
+  const scans = listing.assetScans ?? [];
+  const blockedKinds = new Set<ListingAssetScan['kind']>();
+  const pendingKinds = new Set<ListingAssetScan['kind']>();
+  for (const s of scans) {
+    if (s.status === 'blocked') blockedKinds.add(s.kind);
+    else if (s.status === 'pending') pendingKinds.add(s.kind);
+  }
+  for (const kind of pendingKinds) if (blockedKinds.has(kind)) pendingKinds.delete(kind);
+  for (const kind of blockedKinds)
+    problems.push({
+      code: 'blocked-media',
+      label: `Replace the blocked ${kind} before it can publish`,
+      severity: 'blocking',
+    });
+  for (const kind of pendingKinds)
+    problems.push({
+      code: 'scanning-media',
+      label: `${kind[0].toUpperCase()}${kind.slice(1)} is still being scanned`,
+      severity: 'advisory',
+    });
 
   return { problems };
 }
