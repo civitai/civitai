@@ -22,7 +22,7 @@
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import * as z from 'zod';
-import { CONTEST_SNAPSHOT_KEY_PREFIX, KEY_VALUE_KEYS } from '~/server/common/constants';
+import { CacheTTL, CONTEST_SNAPSHOT_KEY_PREFIX, KEY_VALUE_KEYS } from '~/server/common/constants';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
@@ -211,33 +211,51 @@ type Gates = {
   disqualifiedIds: number[];
 };
 
-async function loadGates(window: ResolvedWindow): Promise<Gates> {
-  // `User.id` is autoincrement but NOT strictly monotonic with `createdAt` — at
-  // least one backdated system account exists. `max(id) WHERE createdAt <= cutoff`
-  // would let that single row drag the threshold up and wave through every account
-  // registered since. `min(id) WHERE createdAt > cutoff` minus one can only ever be
-  // too strict, which is the safe direction for an anti-cheat gate.
-  const [threshold] = await withSpan(
-    'contest-score.age-threshold',
-    () =>
-      dbRead.$queryRaw<{ threshold: number; bandUsers: number }[]>`
-      WITH t AS (
-        SELECT COALESCE(
-          (SELECT min(id) FROM "User" WHERE "createdAt" > ${window.ageCutoff}) - 1,
-          (SELECT max(id) FROM "User")
-        ) AS threshold
-      )
-      SELECT
-        t.threshold::int AS "threshold",
-        (
-          SELECT count(*)::int FROM "User" u
-          WHERE u."createdAt" <= ${window.ageCutoff} AND u.id > t.threshold
-        ) AS "bandUsers"
-      FROM t
-    `
-  );
+/**
+ * `User.id` is autoincrement but NOT strictly monotonic with `createdAt` — at least
+ * one backdated system account exists. `max(id) WHERE createdAt <= cutoff` would let
+ * that single row drag the threshold up and wave through every account registered
+ * since. `min(id) WHERE createdAt > cutoff` minus one can only ever be too strict,
+ * which is the safe direction for an anti-cheat gate.
+ *
+ * `User` has no index on `createdAt`, so the planner walks the primary key from id 1
+ * discarding ~12.7M rows: ~12s, and the single largest cost in a run. The answer is
+ * a pure function of the cutoff and effectively immutable (a later registration
+ * always has both a higher id and a later `createdAt`), so it is cached hard. An
+ * index on `User."createdAt"` would make this instant and let the cache go.
+ */
+async function loadAgeThreshold(ageCutoff: Date) {
+  const key = `${
+    REDIS_KEYS.CACHES.CONTEST_COMMUNITY_SCORE
+  }:age-threshold:${ageCutoff.toISOString()}` as RedisKeyTemplateCache;
 
-  if (threshold?.bandUsers)
+  return fetchThroughCache(
+    key,
+    () =>
+      withSpan('contest-score.age-threshold', async () => {
+        // Two statements, not one: as a single CTE the planner materializes the band
+        // count against an unknown threshold and the query takes ~50s instead of ~12s.
+        const [{ threshold }] = await dbRead.$queryRaw<{ threshold: number }[]>`
+          SELECT COALESCE(
+            (SELECT min(id) FROM "User" WHERE "createdAt" > ${ageCutoff}) - 1,
+            (SELECT max(id) FROM "User")
+          )::int AS "threshold"
+        `;
+        const [{ bandUsers }] = await dbRead.$queryRaw<{ bandUsers: number }[]>`
+          SELECT count(*)::int AS "bandUsers"
+          FROM "User" u
+          WHERE u."createdAt" <= ${ageCutoff} AND u.id > ${threshold}
+        `;
+        return { threshold, bandUsers };
+      }),
+    { ttl: CacheTTL.week, lockTTL: 60 }
+  );
+}
+
+async function loadGates(window: ResolvedWindow): Promise<Gates> {
+  const threshold = await loadAgeThreshold(window.ageCutoff);
+
+  if (threshold.bandUsers)
     console.warn(
       `[contest-score] age gate band holds ${threshold.bandUsers} user(s) registered before the cutoff but carrying an id above the threshold; they are disqualified.`
     );
@@ -423,10 +441,10 @@ function chPairTable(pairs: EntryPair[]) {
     .join(',');
   return `
     SELECT
-      toUInt64(p.1) AS entityId,
-      toUInt64(p.2) AS entryId,
-      toUInt64(p.3) AS creatorId,
-      toUInt64(p.4) AS addedById
+      toInt64(p.1) AS entityId,
+      toInt64(p.2) AS entryId,
+      toInt64(p.3) AS creatorId,
+      toInt64(p.4) AS addedById
     FROM (SELECT arrayJoin([${tuples}]) AS p)
   `;
 }
@@ -771,7 +789,7 @@ async function computeCommunityScore(input: WindowInput): Promise<ContestCommuni
       toImagePairs(imageRows, entries),
       gates,
       (ids) => `
-        SELECT userId, entityId
+        SELECT toInt64(userId) AS userId, toInt64(entityId) AS entityId
         FROM reactions
         WHERE type = 'Image_Create'
           AND entityId IN (${ids})
@@ -784,7 +802,7 @@ async function computeCommunityScore(input: WindowInput): Promise<ContestCommuni
       modelPairs(entries),
       gates,
       (ids) => `
-        SELECT userId, modelId AS entityId
+        SELECT toInt64(userId) AS userId, toInt64(modelId) AS entityId
         FROM modelVersionEvents
         WHERE type = 'Download'
           AND modelId IN (${ids})
@@ -801,7 +819,7 @@ async function computeCommunityScore(input: WindowInput): Promise<ContestCommuni
       versionPairs,
       gates,
       (ids) => `
-        SELECT userId, resource AS entityId
+        SELECT toInt64(userId) AS userId, toInt64(resource) AS entityId
         FROM orchestration.jobs
         ARRAY JOIN resourcesUsed AS resource
         WHERE resource IN (${ids})
@@ -975,7 +993,7 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
     const downloadEvents = `
       SELECT s.userId AS userId, p.entryId AS entryId, p.creatorId AS creatorId, s.ip AS ip
       FROM (
-        SELECT userId, modelId AS entityId, ip
+        SELECT toInt64(userId) AS userId, toInt64(modelId) AS entityId, ip
         FROM modelVersionEvents
         WHERE type = 'Download'
           AND modelId IN (${modelIds || '0'})
@@ -988,7 +1006,7 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
       ? `
       SELECT s.userId AS userId, p.entryId AS entryId, p.creatorId AS creatorId, s.ip AS ip
       FROM (
-        SELECT userId, entityId, ip
+        SELECT toInt64(userId) AS userId, toInt64(entityId) AS entityId, ip
         FROM reactions
         WHERE type = 'Image_Create'
           AND entityId IN (${imageIds})
