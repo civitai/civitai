@@ -72,6 +72,7 @@ import {
   mintReviewBlockTokenSchema,
   previewRequestSchema,
   rejectRequestSchema,
+  retriggerBuildSchema,
   startAgentReviewSchema,
   teardownPreviewSchema,
   withdrawRequestSchema,
@@ -1917,6 +1918,54 @@ export const blocksRouter = router({
         });
       }
       return { ok: true };
+    }),
+
+  /**
+   * MOD-ONLY: re-fire the Tekton build for an ALREADY-APPROVED publish request
+   * whose build never started (the STRANDED case: `approveRequest` committed the
+   * approval and then threw inside `triggerBuild`, leaving `deploy_state` null
+   * forever) or whose build/deploy failed.
+   *
+   * 🔴 The commit sha is read from the DB row — the input carries NO sha, so a
+   * caller cannot name an arbitrary/unreviewed commit to build and deploy. See
+   * `retriggerBuildSchema` and the service's supersede guard.
+   *
+   * MOD-ONLY IS A DELIBERATE CHOICE, not an oversight: owner self-service would
+   * need its own abuse controls and a build-capacity budget. The owner instead
+   * gets the real build-failure reason on /apps/my-submissions plus a
+   * "contact a moderator" affordance.
+   */
+  retriggerBuild: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(retriggerBuildSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { retriggerBuild } = await import('~/server/services/blocks/publish-request.service');
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Re-triggering builds is restricted to civitai team');
+      }
+      try {
+        return await retriggerBuild({
+          publishRequestId: input.publishRequestId,
+          // Bound to the SESSION user — never client-supplied. Also the rate-limit
+          // subject, so a mod cannot spend another mod's quota.
+          reviewerUserId: ctx.user.id,
+        });
+      } catch (err) {
+        if (err instanceof TRPCError) throw err;
+        const serviceCode = err instanceof Error ? (err as { code?: unknown }).code : undefined;
+        const code =
+          serviceCode === 'NOT_FOUND'
+            ? 'NOT_FOUND'
+            : serviceCode === 'RATE_LIMITED'
+            ? 'TOO_MANY_REQUESTS'
+            : // A build-service outage is OUR fault, not a malformed request —
+              // reporting it as a 400 mislabels an incident as user error (and
+              // keeps it off the server-fault error board).
+            serviceCode === 'TRIGGER_FAILED'
+            ? 'INTERNAL_SERVER_ERROR'
+            : 'BAD_REQUEST';
+        throw new TRPCError({ code, message: (err as Error).message });
+      }
     }),
 
   /**

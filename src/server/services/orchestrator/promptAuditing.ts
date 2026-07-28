@@ -1,10 +1,11 @@
 import { CacheTTL, constants } from '~/server/common/constants';
-import { NotificationCategory } from '~/server/common/enums';
+import { BlocklistType, NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateUserById } from '~/server/services/user.service';
 import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-helpers';
@@ -282,8 +283,22 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     // const allowlist = await getCachedPromptAllowlist();
     const allowlist = new Set<string>();
 
+    // Moderator-managed benign phrases (proper nouns / technical terms that
+    // coincidentally contain a detection token) are blanked before auditing, so the
+    // generation gate and the post-generation scan audit agree on what's benign.
+    // Only the audited copy is cleaned — the original prompt is what gets generated,
+    // reported to ClickHouse, and stored on the blocked-prompt entry below.
+    const [auditedPrompt, auditedNegativePrompt] = await Promise.all([
+      stripBenignPhrases(prompt, BlocklistType.PromptBenignPhrase),
+      stripBenignPhrases(negativePrompt, BlocklistType.NegativeBenignPhrase),
+    ]);
+
     // Run regex-based audit (enriched to capture structured trigger data)
-    const { triggers, success } = auditPromptEnriched(prompt, negativePrompt, checkProfanity);
+    const { triggers, success } = auditPromptEnriched(
+      auditedPrompt ?? prompt,
+      auditedNegativePrompt,
+      checkProfanity
+    );
 
     if (!success) {
       // Filter out allowlisted triggers before counting toward mute
@@ -298,10 +313,12 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     }
 
     // Run external moderation service
-    const { flagged, categories } = await extModeration.moderatePrompt(prompt).catch((error) => {
-      logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-      return { flagged: false, categories: [] as string[] };
-    });
+    const { flagged, categories } = await extModeration
+      .moderatePrompt(auditedPrompt ?? prompt)
+      .catch((error) => {
+        logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
+        return { flagged: false, categories: [] as string[] };
+      });
 
     if (flagged) {
       const externalTriggers: PromptTrigger[] = categories.map((cat) => ({

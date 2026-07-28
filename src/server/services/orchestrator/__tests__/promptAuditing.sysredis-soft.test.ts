@@ -60,6 +60,12 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
+// Benign-phrase stripping runs before the audit and reads the main `redis` (stubbed
+// `{}` above). Pass the text through so this suite stays about the sysRedis counting
+// path — `promptAuditing.benign-phrases.test.ts` covers the strip itself.
+vi.mock('~/server/services/blocklist.service', () => ({
+  stripBenignPhrases: vi.fn(async (text?: string) => text),
+}));
 
 // Force the regex audit to flag the prompt so auditPromptServer enters its catch
 // and reaches addBlockedPrompt (the reads under test).

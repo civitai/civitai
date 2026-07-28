@@ -474,6 +474,15 @@ export const serverSchema = z
     MEILI_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().int().min(1).optional().default(10),
     MEILI_CIRCUIT_WINDOW_SECONDS: z.coerce.number().int().min(1).optional().default(30),
     MEILI_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
+    // The resource-select picker runs on its own limiter, outside the shared
+    // `search` semaphore + circuit (see withMeiliResourceSelect). It is
+    // user-initiated and un-polled, so shedding it produces a blank modal
+    // rather than the deferred retry that shedding the feed produces — a much
+    // worse trade. Concurrency is high-but-bounded (a runaway backstop, not a
+    // brownout guard) and the timeout stays well under Traefik's 30s router
+    // timeout so a hung backend still can't pin event-loop slots.
+    MEILI_RESOURCE_SELECT_CONCURRENCY: z.coerce.number().int().min(1).optional().default(500),
+    MEILI_RESOURCE_SELECT_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(10_000),
     PODNAME: z.string().optional(),
     INTEGRATION_TOKEN: z.string().optional(),
     NEWSLETTER_ID: z.string().optional(),

@@ -115,6 +115,22 @@ export const rejectRequestSchema = z.object({
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
 
+/**
+ * Input for the MOD-ONLY `blocks.retriggerBuild` — re-fire the Tekton build for
+ * an ALREADY-APPROVED request whose build never started (or failed).
+ *
+ * `publishRequestId` is the ONLY field, and that is load-bearing: the commit sha
+ * to rebuild is read from the DB row, NEVER supplied by the caller. Accepting a
+ * sha here would let a moderator rebuild + deploy an ARBITRARY commit that was
+ * never reviewed. Keeping the sha off the wire makes that structurally
+ * impossible rather than merely validated-against.
+ */
+export const retriggerBuildSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type RetriggerBuildInput = z.infer<typeof retriggerBuildSchema>;
+
 /** Input for the MOD-ONLY `blocks.getPublishRequestScreenshots` (F-E E5 review). */
 export const getPublishRequestScreenshotsSchema = z.object({
   publishRequestId: z.string().min(1).max(64),

@@ -43,6 +43,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -491,6 +492,33 @@ function UnifiedHistoryTab({
     }
   };
 
+  // APPROVED tab only — re-fire the build for an approved request whose build
+  // never started (deploy state null) or failed. The mutation takes ONLY the
+  // request id; the sha to rebuild is read server-side from the already-reviewed
+  // DB row. Tracks the in-flight id so only that row's button spins/disables.
+  const [retriggeringId, setRetriggeringId] = useState<string | null>(null);
+  const retriggerMutation = trpc.blocks.retriggerBuild.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        message: 'Build re-triggered — the deploy state will update as it progresses.',
+      });
+      resetPaging();
+      void onsiteApprovedQ.refetch();
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Re-trigger failed', error: new Error(e.message) }),
+    onSettled: () => setRetriggeringId(null),
+  });
+  const onRetriggerBuild = useCallback(
+    (publishRequestId: string) => {
+      // Belt against a double-fire that slips past the button's own disabled state.
+      if (retriggerMutation.isPending) return;
+      setRetriggeringId(publishRequestId);
+      retriggerMutation.mutate({ publishRequestId });
+    },
+    [retriggerMutation]
+  );
+
   return (
     <UnifiedReviewList
       onsiteItems={onsiteItems}
@@ -506,6 +534,10 @@ function UnifiedHistoryTab({
       hasMore={onsiteNext != null || offsiteNext != null}
       isLoadingMore={onsiteQuery.isFetching || offsiteQuery.isFetching}
       onLoadMore={onLoadMore}
+      // Deploy column + retrigger control exist on the APPROVED tab only; the
+      // Rejected tab passes neither and renders exactly as before.
+      onRetriggerBuild={isApproved ? onRetriggerBuild : undefined}
+      retriggeringId={retriggeringId}
     />
   );
 }

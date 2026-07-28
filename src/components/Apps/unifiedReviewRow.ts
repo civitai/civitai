@@ -84,10 +84,38 @@ export type UnifiedReviewRow = {
   /** Present ONLY on a `kind: 'combined'` row: the two underlying request ids +
    *  payloads (code + listing-media) that the combined surface stacks. */
   combined?: CombinedReviewPayload;
+  /** On-site APPROVED rows only: the build/deploy lifecycle of the approved
+   *  version, so the Approved tab can show that an approval never actually
+   *  shipped (and offer a re-trigger). Undefined for every other row kind. */
+  deploy?: ReviewRowDeploy;
 };
+
+/** The deploy lifecycle projection carried on an on-site approved review row. */
+export type ReviewRowDeploy = {
+  /** `null` = never transitioned: a legacy pre-feature row, OR the STRANDED case. */
+  state: string | null;
+  updatedAt: Date | null;
+  /** Approval time — the anchor `canRetriggerBuild` measures the post-approval
+   *  grace window from (a null state has no transition of its own). */
+  reviewedAt: Date | null;
+  /** The publish-request id — the ONLY argument `blocks.retriggerBuild` takes. */
+  publishRequestId: string;
+};
+// NOTE: `deployDetail` is deliberately NOT projected here. It carries the
+// TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes) and
+// the moderator queue never renders it — carrying it into this payload would be
+// dead data on a surface where a future renderer would have to re-derive the
+// escaping guarantees. The owner-facing /apps/my-submissions row is where the
+// excerpt is shown, and it reads it straight from its own query.
 
 function toDate(d: string | Date): Date {
   return typeof d === 'string' ? new Date(d) : d;
+}
+
+function toOptionalDate(d: string | Date | null | undefined): Date | null {
+  if (!d) return null;
+  const date = typeof d === 'string' ? new Date(d) : d;
+  return Number.isFinite(date.getTime()) ? date : null;
 }
 
 /** The on-site request shape consumed by the adapter (a superset of the pending
@@ -109,6 +137,18 @@ export function onsiteRequestToUnifiedRow(
       ? (req.manifest as Record<string, unknown>).name
       : undefined;
   const title = typeof manifestName === 'string' && manifestName.length > 0 ? manifestName : req.slug;
+  // Approved rows carry the deploy lifecycle (added to `listApprovedRequests`);
+  // pending/rejected rows do not, so `deploy` stays undefined and every existing
+  // caller/fixture is unaffected.
+  const deploy: ReviewRowDeploy | undefined =
+    'deployState' in req
+      ? {
+          state: (req as { deployState?: string | null }).deployState ?? null,
+          updatedAt: toOptionalDate((req as { deployUpdatedAt?: string | Date | null }).deployUpdatedAt),
+          reviewedAt: toOptionalDate(reviewedAt),
+          publishRequestId: req.id,
+        }
+      : undefined;
   return {
     key: `onsite:${req.id}`,
     kind: 'onsite',
@@ -122,6 +162,7 @@ export function onsiteRequestToUnifiedRow(
     // Carried for code+media pairing + the combined surface.
     appBlockId: req.appBlockId,
     onsiteRequest: req,
+    deploy,
   };
 }
 

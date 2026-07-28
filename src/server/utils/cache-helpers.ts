@@ -792,6 +792,18 @@ export async function fetchThroughCache<T>(
     return fetchThroughCacheFailOpen(key, fetchFn);
   }
 
+  // A malformed entry (no `data`, or a non-numeric `cachedAt`) is treated as a MISS
+  // rather than served. Two reasons: the signature promises `T`, so returning
+  // `cachedData.data` hands callers an `undefined` the type system said was
+  // impossible — that shape crashed `model.getResourceSelect` on 2026-07-28. And a
+  // missing `cachedAt` makes the staleness compare `NaN > n` → false, so the bad
+  // entry would never expire into a refresh. Nulling it here routes both cases
+  // through the origin fetch below, which overwrites the entry and self-heals.
+  // Only `undefined` counts as missing — `null` is a legitimate cached value.
+  if (cachedData && (cachedData.data === undefined || typeof cachedData.cachedAt !== 'number')) {
+    cachedData = null;
+  }
+
   const cachedExpired =
     !cachedData || (cachedData && Date.now() - ttl * 1000 > cachedData.cachedAt);
   if (cachedExpired) {
