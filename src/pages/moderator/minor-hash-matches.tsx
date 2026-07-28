@@ -68,9 +68,13 @@ export default function MinorHashMatches() {
                     </NextLink>
                   </Table.Td>
                   <Table.Td>
-                    <NextLink href={`/user/${item.username ?? ''}`} target="_blank">
-                      {item.username ?? item.userId}
-                    </NextLink>
+                    {item.username ? (
+                      <NextLink href={`/user/${item.username}`} target="_blank">
+                        {item.username}
+                      </NextLink>
+                    ) : (
+                      <Text>{item.userId}</Text>
+                    )}
                   </Table.Td>
                   <Table.Td>
                     <Badge>{item.status}</Badge>
@@ -85,7 +89,10 @@ export default function MinorHashMatches() {
                       <Button
                         size="compact-sm"
                         color="red"
-                        loading={setMinorMutation.isPending}
+                        loading={
+                          setMinorMutation.isPending &&
+                          setMinorMutation.variables?.id === item.modelId
+                        }
                         onClick={() => setMinorMutation.mutate({ id: item.modelId, minor: true })}
                       >
                         Set as Minor
@@ -93,7 +100,10 @@ export default function MinorHashMatches() {
                       <Button
                         size="compact-sm"
                         variant="light"
-                        loading={dismissMutation.isPending}
+                        loading={
+                          dismissMutation.isPending &&
+                          dismissMutation.variables?.id === item.modelId
+                        }
                         onClick={() => dismissMutation.mutate({ id: item.modelId })}
                       >
                         Dismiss
