@@ -113,6 +113,13 @@ export type ApprovedRequest = ReviewedRequestCommon & {
   reviewedAt: string | Date | null;
   approvalNotes: string | null;
   reviewedBy: UserProfile | null;
+  /** Build/deploy lifecycle for the approved version — `null` means either a
+   *  legacy pre-feature row OR the STRANDED case (approved, but the build never
+   *  started). Selected by `listApprovedRequests`; optional so older callers /
+   *  fixtures that omit it still typecheck. */
+  deployState?: string | null;
+  deployDetail?: string | null;
+  deployUpdatedAt?: string | Date | null;
 };
 
 export type RejectedRequest = ReviewedRequestCommon & {
@@ -166,9 +173,15 @@ export function formatDate(d: string | Date | null | undefined): string {
 export function OnsiteReviewModal({
   selection,
   onClose,
+  onActioned,
 }: {
   selection: OnsiteReviewSelection;
   onClose: () => void;
+  /** Fired after a successful approve/reject, forwarded to the inline
+   *  `ReviewActionBar`. The unified review page passes the tab's `resetPaging` so a
+   *  decided item leaves the accumulated list (mirrors the off-site modal). Optional
+   *  + additive — no approve/reject logic change. */
+  onActioned?: () => void | Promise<void>;
 }) {
   // Set by the body while an approve/reject mutation is in flight so this shell's
   // onClose (Escape / overlay click / the X) refuses to close mid-action — the
@@ -193,6 +206,7 @@ export function OnsiteReviewModal({
           key={selection.request.id}
           selection={selection}
           onClose={onClose}
+          onActioned={onActioned}
           busyRef={busyRef}
         />
       )}
@@ -253,6 +267,7 @@ export function OnsiteReviewModalBody({
   selection,
   onClose,
   busyRef,
+  onActioned,
   hideInlineActions = false,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
@@ -260,6 +275,9 @@ export function OnsiteReviewModalBody({
   /** Modal shell close-guard ref, passed through to the inline action bar.
    *  Omitted by the page, which renders its own (sticky) action bar. */
   busyRef?: { current: boolean };
+  /** Forwarded to the inline `ReviewActionBar` — fired after a successful
+   *  approve/reject (e.g. the review page's tab paging reset). Optional + additive. */
+  onActioned?: () => void | Promise<void>;
   /** Suppress the inline approve/reject footer so the page can render the actions
    *  in its own sticky bottom bar (the modal keeps them inline). */
   hideInlineActions?: boolean;
@@ -445,7 +463,12 @@ export function OnsiteReviewModalBody({
             which renders the same `ReviewActionBar` pinned in a sticky bottom bar.
             The bar self-suppresses for read-only approved/rejected history. */}
         {!hideInlineActions && (
-          <ReviewActionBar selection={selection} onClose={onClose} busyRef={busyRef} />
+          <ReviewActionBar
+            selection={selection}
+            onClose={onClose}
+            onActioned={onActioned}
+            busyRef={busyRef}
+          />
         )}
       </Stack>
   );

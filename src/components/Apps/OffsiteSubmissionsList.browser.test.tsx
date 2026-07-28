@@ -401,3 +401,43 @@ describe('OffsiteSubmissionsList — moderation history modal', () => {
     await expect.element(page.getByTestId('apps-offsite-history-empty')).toBeInTheDocument();
   });
 });
+
+describe('OffsiteSubmissionsList — advisory listing-problems warning', () => {
+  test('a row WITH problems renders the warning icon; hovering lists each problem label', async () => {
+    renderWithProviders(
+      <OffsiteSubmissionsList
+        submissions={[
+          live({
+            problems: [
+              { code: 'missing-cover', label: 'Missing cover image' },
+              { code: 'empty-description', label: 'Missing description' },
+            ],
+          }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    const warn = page.getByTestId('apps-submission-problems');
+    await expect.element(warn).toBeInTheDocument();
+    await warn.hover();
+    await expect
+      .element(page.getByText('Missing cover image', { exact: false }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByText('Missing description', { exact: false }))
+      .toBeInTheDocument();
+  });
+
+  test('a clean row (no problems) shows NO warning icon', async () => {
+    renderWithProviders(
+      <OffsiteSubmissionsList
+        submissions={[live({ problems: [] })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('live-off', { exact: false })).toBeInTheDocument();
+    expect(page.getByTestId('apps-submission-problems').elements()).toHaveLength(0);
+  });
+});

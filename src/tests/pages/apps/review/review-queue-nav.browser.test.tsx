@@ -51,7 +51,12 @@ vi.mock('~/components/Apps/AppListingsModerationTable', () => ({
   AppListingsModerationTable: () => null,
 }));
 vi.mock('~/components/Apps/ActivePreviewsPanel', () => ({ ActivePreviewsPanel: () => null }));
-vi.mock('~/components/Apps/OffsiteReviewQueue', () => ({ OffsiteReportsQueue: () => null }));
+// The off-site review modal is now PAGE-OWNED (rendered by the page) — stub it + the
+// reports queue so this test isolates the on-site pending queue's selection path.
+vi.mock('~/components/Apps/OffsiteReviewQueue', () => ({
+  OffsiteReportsQueue: () => null,
+  OffsiteReviewModal: () => null,
+}));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 
 const PENDING = {
@@ -71,19 +76,38 @@ const PENDING = {
 };
 
 const inert = { invalidate: vi.fn() };
+const emptyQuery = () => ({
+  data: { items: [], nextCursor: null },
+  isLoading: false,
+  isFetching: false,
+  isError: false,
+  error: null,
+});
 vi.mock('~/utils/trpc', () => ({
   trpc: {
-    useUtils: () => ({ blocks: { listPendingRequests: inert, listApprovedRequests: inert, listRejectedRequests: inert } }),
+    useUtils: () => ({
+      blocks: { listPendingRequests: inert, listApprovedRequests: inert, listRejectedRequests: inert },
+      appListings: { listPendingRequests: inert, listApprovedRequests: inert, listRejectedRequests: inert },
+    }),
     blocks: {
       listPendingRequests: {
-        useQuery: () => ({ data: { items: [PENDING] }, isLoading: false, isError: false, error: null }),
+        useQuery: () => ({
+          data: { items: [PENDING], nextCursor: null },
+          isLoading: false,
+          isFetching: false,
+          isError: false,
+          error: null,
+        }),
       },
-      listApprovedRequests: {
-        useQuery: () => ({ data: { items: [] }, isLoading: false, isError: false, error: null }),
-      },
-      listRejectedRequests: {
-        useQuery: () => ({ data: { items: [] }, isLoading: false, isError: false, error: null }),
-      },
+      listApprovedRequests: { useQuery: emptyQuery },
+      listRejectedRequests: { useQuery: emptyQuery },
+    },
+    // The unified pending queue also reads the OFF-SITE pending source; return an
+    // empty page so this test isolates the single on-site row's selection path.
+    appListings: {
+      listPendingRequests: { useQuery: emptyQuery },
+      listApprovedRequests: { useQuery: emptyQuery },
+      listRejectedRequests: { useQuery: emptyQuery },
     },
   },
 }));

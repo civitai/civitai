@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef } from 'react';
 import type { ColumnItem } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
@@ -12,6 +12,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useScrollMargin } from '~/hooks/useScrollMargin';
 import type { AdFeedItem } from '~/components/Ads/ads.utils';
 
 type Props<TData> = {
@@ -48,8 +49,13 @@ export function MasonryColumnsVirtual<TData>({
     withAds
   );
 
+  // Measured here rather than per column: the columns are flush with this wrapper, and
+  // this component doesn't re-render on scroll the way each column does.
+  const ref = useRef<HTMLDivElement>(null);
+  const scrollMargin = useScrollMargin(ref);
+
   return (
-    <div className="mx-auto flex justify-center gap-4">
+    <div ref={ref} className="mx-auto flex justify-center gap-4">
       {columns.map((items, colIndex) => (
         <VirtualColumn
           key={colIndex}
@@ -57,6 +63,7 @@ export function MasonryColumnsVirtual<TData>({
           render={render}
           itemId={itemId}
           columnWidth={columnWidth}
+          scrollMargin={scrollMargin}
           className={clsx(
             'flex max-w-[450px] flex-col gap-4',
             columnCount === 1 ? 'w-full' : 'w-[320px]'
@@ -75,6 +82,7 @@ function VirtualColumn<TData>({
   style,
   itemId,
   overscan = 5,
+  scrollMargin,
   ...rest
 }: {
   items: ColumnItem<AdFeedItem<TData>>[];
@@ -84,8 +92,8 @@ function VirtualColumn<TData>({
   itemId?: (data: TData) => string | number;
   columnWidth: number;
   overscan?: number;
+  scrollMargin: number;
 }) {
-  const ref = useRef<HTMLDivElement | null>(null);
   const scrollAreaRef = useScrollAreaRef();
 
   const getItemKey = useCallback(
@@ -96,13 +104,6 @@ function VirtualColumn<TData>({
     },
     [items]
   );
-
-  const [scrollMargin, setScrollMargin] = useState(0);
-  useLayoutEffect(() => {
-    if (ref.current && scrollAreaRef?.current) {
-      setScrollMargin(getOffsetTopRelativeToAncestor(ref.current, scrollAreaRef.current));
-    }
-  }, []);
 
   const rowVirtualizer = useVirtualizer({
     count: items.length,
@@ -120,7 +121,6 @@ function VirtualColumn<TData>({
 
   return (
     <div
-      ref={ref}
       className={className}
       style={{
         width: '100%',
@@ -186,20 +186,4 @@ function VirtualItem<TData>({
     default:
       return null;
   }
-}
-
-function getOffsetTopRelativeToAncestor(descendant: HTMLElement, ancestor: HTMLElement): number {
-  let offset = 0;
-  let current: HTMLElement | null = descendant;
-
-  while (current && current !== ancestor) {
-    offset += current.offsetTop;
-    current = current.offsetParent as HTMLElement;
-  }
-
-  if (current !== ancestor) {
-    throw new Error('Ancestor is not an offsetParent of the descendant');
-  }
-
-  return offset;
 }

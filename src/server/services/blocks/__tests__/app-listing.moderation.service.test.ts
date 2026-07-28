@@ -129,14 +129,20 @@ describe('listAllListingsForModeration — filters, keyset + pagination', () => 
   it('excludes shadow revision drafts (revisionOfId: null) and applies no filter by default', async () => {
     await listAllListingsForModeration({ limit: 25 });
     const { where, orderBy, take } = lastFindMany();
-    expect(where).toEqual({ revisionOfId: null });
+    // Status + search clauses (each possibly an `OR`) are composed under `AND` so
+    // neither overwrites the other's `OR` key; with no filters the AND is empty.
+    expect(where).toEqual({ revisionOfId: null, AND: [] });
     expect(orderBy).toEqual({ id: 'desc' });
     expect(take).toBe(26); // limit + 1
   });
 
   it('binds the status filter when provided', async () => {
     await listAllListingsForModeration({ status: 'removed', limit: 25 });
-    expect(lastFindMany().where).toMatchObject({ status: 'removed', revisionOfId: null });
+    // A concrete status is bound as an AND member (a plain `{ status }` clause).
+    expect(lastFindMany().where).toMatchObject({
+      revisionOfId: null,
+      AND: [{ status: 'removed' }],
+    });
   });
 
   it('binds the kind filter when provided', async () => {
@@ -146,10 +152,15 @@ describe('listAllListingsForModeration — filters, keyset + pagination', () => 
 
   it('builds a case-insensitive name/slug OR for search (trimmed)', async () => {
     await listAllListingsForModeration({ search: '  Cool  ', limit: 25 });
+    // The search OR is an AND member (so it can't collide with a status OR).
     expect(lastFindMany().where).toMatchObject({
-      OR: [
-        { name: { contains: 'Cool', mode: 'insensitive' } },
-        { slug: { contains: 'Cool', mode: 'insensitive' } },
+      AND: [
+        {
+          OR: [
+            { name: { contains: 'Cool', mode: 'insensitive' } },
+            { slug: { contains: 'Cool', mode: 'insensitive' } },
+          ],
+        },
       ],
     });
   });

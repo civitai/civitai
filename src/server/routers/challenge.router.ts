@@ -13,6 +13,7 @@ import {
   getUserUnjudgedEntriesSchema,
   getWinnerCooldownStatusSchema,
   requestReviewSchema,
+  toggleChallengeNotifySchema,
   upsertChallengeSchema,
   userChallengeUpsertSchema,
   upsertChallengeEventSchema,
@@ -76,6 +77,10 @@ import {
   upsertChallengeCategory,
 } from '~/server/services/challenge-category.service';
 import { getUserChallengeCreateEligibility } from '~/server/services/challenge-eligibility.service';
+import {
+  toggleChallengeNotify,
+  getTrackedChallengeIds,
+} from '~/server/services/challenge-engagement.service';
 import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -171,6 +176,19 @@ export const challengeRouter = router({
     .input(getUserEntryCountSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) => getUserEntryCount(input.challengeId, ctx.user.id)),
+
+  // Toggle "notify me" tracking on a challenge
+  toggleNotify: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite, blockApiKeys: true })
+    .input(toggleChallengeNotifySchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => toggleChallengeNotify({ ...input, userId: ctx.user.id })),
+
+  // Challenge ids the current user is tracking (open challenges only)
+  getTrackedIds: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ ctx }) => getTrackedChallengeIds(ctx.user.id)),
 
   // Pay to guarantee entries get reviewed by the AI judge
   requestReview: protectedProcedure

@@ -16,16 +16,16 @@ import {
   IconExternalLink,
   IconInfoCircle,
   IconLock,
+  IconSparkles,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   OFFSITE_CATEGORY_OPTIONS,
   OFFSITE_CONTENT_RATING_OPTIONS,
   OFFSITE_SUBMIT_LIMITS,
   isUrlStepComplete,
-  normalizeLinkUrl,
   scopeJustificationError,
   validateOffsiteSubmitForm,
   type OffsiteSubmitFormErrors,
@@ -33,7 +33,9 @@ import {
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
 import { FadeIn } from '~/components/Apps/wizardMotion';
-import { ListingAssetStep, type MetaSuggestions } from '~/components/Apps/ListingAssetStep';
+import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
+import { describeMissingChannels } from '~/components/Apps/listingAutofillStatus';
+import { useListingAutofill } from '~/components/Apps/useListingAutofill';
 import {
   buildScalarPatch,
   editContextToForm,
@@ -79,6 +81,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
 
   const [active, setActive] = useState<number>(STEP_URL);
   const [values, setValues] = useState<OffsiteSubmitFormValues>(() => editContextToForm(edit));
+  // Latest `values` for the OG-apply effect's emptiness check (the effect must read
+  // current emptiness WITHOUT depending on `values`, and the async `setValues` updater
+  // hasn't run yet when we compute the button's feedback — same reason the create
+  // wizard computes off `data`).
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
   const [errors, setErrors] = useState<OffsiteSubmitFormErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [assetsDirty, setAssetsDirty] = useState(false);
@@ -96,33 +104,23 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const shadowId = edit.shadowId;
   const effectiveId = approved ? shadowId : edit.parentId;
 
-  // OG metadata auto-pull (same SSRF-safe path as create) — re-fires on a URL
-  // change; NON-DESTRUCTIVE (fills only blank name/tagline; asset suggestions show
-  // only for an empty asset slot, so a prefilled asset is never clobbered).
-  const [metaUrl, setMetaUrl] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<MetaSuggestions>({});
-  const appliedMetaRef = useRef<string | null>(null);
-  const metaQuery = trpc.appListings.fetchListingMetaFromUrl.useQuery(
-    { url: metaUrl ?? '' },
-    { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
-  );
-  useEffect(() => {
-    if (!metaQuery.data || appliedMetaRef.current === metaUrl) return;
-    appliedMetaRef.current = metaUrl;
-    const data = metaQuery.data;
-    setValues((v) => ({
-      ...v,
-      name: v.name.trim().length === 0 && data.name ? data.name : v.name,
-      tagline: v.tagline.trim().length === 0 && data.tagline ? data.tagline : v.tagline,
-      // Description autofill: fill ONLY when empty, truncated to the field bound —
-      // never clobbers existing copy (non-destructive OG re-pull on a URL change).
-      description:
-        v.description.trim().length === 0 && data.description
-          ? data.description.slice(0, OFFSITE_SUBMIT_LIMITS.descriptionMax)
-          : v.description,
-    }));
-    setSuggestions({ coverImageUrl: data.coverImageUrl, iconImageUrl: data.iconImageUrl });
-  }, [metaQuery.data, metaUrl]);
+  // OG metadata auto-pull via the shared `useListingAutofill` hook (same SSRF-safe path
+  // as create) — auto-fires on a URL CHANGE (blur/Enter/advance + a debounced pause);
+  // NON-DESTRUCTIVE (fills only blank name/tagline/description; an icon/cover suggestion
+  // is only ACTIONABLE for an EMPTY slot, so a prefilled asset is never clobbered).
+  // Seeded with the prefilled URL so it does NOT auto-fire on mount for an existing
+  // listing — only a change (or the assets-step "Re-pull from site" button) fires.
+  const autofill = useListingAutofill({
+    externalUrl: values.externalUrl,
+    setValues,
+    valuesRef,
+    onBeforeFire: (url) => setField('externalUrl', url),
+    initialUrl: edit.scalars.externalUrl ?? undefined,
+    // A suggestion is only actionable for a slot the prefill left EMPTY (imageId == null
+    // — the only case where ListingAssetStep renders a "Use this"), so the note never
+    // claims "applied" for an already-filled slot.
+    isSuggestionActionable: (kind) => edit.assets[kind].imageId == null,
+  });
 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();
@@ -153,9 +151,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       setErrors((prev) => ({ ...prev, externalUrl: undefined }));
       return;
     }
-    const result = normalizeLinkUrl(values.externalUrl);
-    if (result.error) return;
-    setField('externalUrl', result.url);
+    // Canonicalise + auto-fire the OG pull (once per distinct URL) via the hook.
+    const { error } = autofill.triggerFromUrl(values.externalUrl);
+    if (error) return; // a bad URL keeps whatever's typed (no hard error on blur here)
     setErrors((prev) => ({ ...prev, externalUrl: undefined }));
   }
 
@@ -168,14 +166,12 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
       setActive(STEP_DETAILS);
       return;
     }
-    const result = normalizeLinkUrl(values.externalUrl);
-    if (result.error) {
-      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
+    const { error } = autofill.triggerFromUrl(values.externalUrl);
+    if (error) {
+      setErrors((prev) => ({ ...prev, externalUrl: error }));
       return;
     }
-    setField('externalUrl', result.url);
     setErrors((prev) => ({ ...prev, externalUrl: undefined }));
-    setMetaUrl(result.url); // re-fire the OG auto-pull for the (possibly new) URL
     setActive(STEP_DETAILS);
   }
 
@@ -323,7 +319,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 description="Your app’s public https link — users open it from the listing."
                 placeholder="example.com/app"
                 value={values.externalUrl}
-                onChange={(e) => setField('externalUrl', e.currentTarget.value)}
+                onChange={(e) => {
+                  setField('externalUrl', e.currentTarget.value);
+                  autofill.clearNote();
+                }}
                 onBlur={handleUrlBlur}
                 onKeyDown={handleUrlKeyDown}
                 error={errors.externalUrl}
@@ -341,6 +340,51 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                   <Text size="sm">
                     This listing has no App URL. Adding one lets users open your app (and lets us
                     suggest a name, description and images) — but it’s optional here.
+                  </Text>
+                </Alert>
+              )}
+              {/* The OG pull auto-fires when the URL changes to a valid https URL (blur,
+                  Enter, Next, or a debounced pause) — no manual button. A subtle inline
+                  status reports loading / applied / partial / empty / error. The
+                  assets-step "Re-pull from site" button is the manual retry. */}
+              {autofill.loading && (
+                <Group gap={6} data-testid="apps-offsite-edit-meta-loading">
+                  <Loader size={12} />
+                  <Text size="xs" c="dimmed">
+                    Looking for a name, description and images from your link…
+                  </Text>
+                </Group>
+              )}
+              {!autofill.loading && autofill.result?.status === 'error' && (
+                <Text size="xs" c="red" data-testid="apps-offsite-edit-autofill-error">
+                  Couldn’t read that site’s details.
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'empty' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-edit-autofill-empty">
+                  {autofill.result.siteExposedNothing
+                    ? 'Your site didn’t expose a name, description, icon or cover to pull — add them manually.'
+                    : 'Nothing to autofill — your details and assets are already set.'}
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'partial' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-edit-autofill-partial">
+                  Pulled what your link exposed — {describeMissingChannels(autofill.result.missing)}{' '}
+                  {(autofill.result.missing?.length ?? 0) > 1 ? 'were' : 'was'} not found; add{' '}
+                  {(autofill.result.missing?.length ?? 0) > 1 ? 'those' : 'that'} manually. Check the
+                  Details and Assets steps for what we found.
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'applied' && (
+                <Alert
+                  color="grape"
+                  variant="light"
+                  icon={<IconSparkles size={16} />}
+                  data-testid="apps-offsite-edit-autofill-applied"
+                >
+                  <Text size="sm">
+                    Pulled the latest details from your link — check the Details and Assets steps to
+                    review the name, description and the suggested icon/cover.
                   </Text>
                 </Alert>
               )}
@@ -460,7 +504,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               <ListingAssetStep
                 listingId={effectiveId}
                 contentRating={values.contentRating}
-                suggestions={suggestions}
+                suggestions={autofill.suggestions}
+                onRepull={autofill.repull}
+                repullLoading={autofill.loading}
                 initial={edit.assets}
                 allowRemove
                 onAssetMutated={() => setAssetsDirty(true)}

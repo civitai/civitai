@@ -54,7 +54,15 @@ export const getServerSideProps = createServerSideProps({
       await ssg?.post.getContestCollectionDetails.prefetch({ id: postId });
       await ssg?.hiddenPreferences.getHidden.prefetch();
 
-      return { props: { postId } };
+      // PostDetail gates on `forcedBrowsingLevel || nsfwLevel`; the forced level comes from
+      // contest-collection details the client only resolves after hydration.
+      return {
+        props: { postId },
+        gating: {
+          contentNsfwLevel: post.nsfwLevel,
+          nsfw: post.nsfw,
+        },
+      };
     } catch (error) {
       console.error('Error fetching post detail:', error);
       return { notFound: true };

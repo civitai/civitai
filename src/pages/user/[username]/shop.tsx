@@ -69,8 +69,9 @@ function UserShopPage() {
   // Moderators bypass the gates below so they can view/manage any creator's shop.
   if (isError && !isModerator) return <NotFound />;
   if (!isModerator) {
+    // Membership only matters for the OWNER (their shop tools); visitors just
+    // need the shop to be live — the getShop error above covers that.
     if (isOwner && !isCreatorProgramMember) return <ManageUpsell />;
-    if (!isOwner && !isCreatorProgramMember) return <NotFound />;
   }
 
   const baseUrl = `/user/${username}`;

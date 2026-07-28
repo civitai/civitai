@@ -18,6 +18,12 @@ vi.mock('~/server/services/orchestrator/civitai', () => ({
 vi.mock('~/server/services/vault.service', () => ({
   setVaultFromSubscription: vi.fn().mockResolvedValue(undefined),
 }));
+// Added by #3322: invalidateSubscriptionCaches now busts the read-time membership-
+// validity cache via redis.del. Without this mock the real redis client is called,
+// which hangs (~240s CI timeout) and rejects (breaking the "no log"/"exactly 2" asserts).
+vi.mock('~/server/services/creator-membership.service', () => ({
+  bustCreatorMembershipValidCache: vi.fn().mockResolvedValue(undefined),
+}));
 
 describe('getPrepaidTokens', () => {
   describe('null/empty metadata', () => {

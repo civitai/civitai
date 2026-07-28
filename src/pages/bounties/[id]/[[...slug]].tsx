@@ -112,9 +112,17 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
       // Fetch bounty to check slug and prefetch for client hydration
       const bounty = await ssg.bounty.getById.fetch({ id: result.data.id }).catch(() => null);
+
+      if (bounty)
+        gating = {
+          contentNsfwLevel: bounty.nsfwLevel,
+          nsfw: bounty.nsfw,
+        };
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (bounty) {
@@ -134,7 +142,7 @@ export const getServerSideProps = createServerSideProps({
       await ssg.hiddenPreferences.getHidden.prefetch();
     }
 
-    return { props: removeEmpty(result.data) };
+    return { props: removeEmpty(result.data), gating };
   },
 });
 

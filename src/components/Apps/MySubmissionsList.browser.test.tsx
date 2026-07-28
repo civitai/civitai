@@ -929,13 +929,16 @@ describe('MySubmissionsList — P4 onsite unpublish / republish / history', () =
 });
 
 describe('MySubmissionsList — P4 surfaced manage links', () => {
-  test('a live app links Edit → edit-manifest and Revenue → revenue for the app block', async () => {
+  test('a live app links Edit → /edit, Listing images → /edit?tab=media, Revenue → revenue', async () => {
     renderWithProviders(
       <MySubmissionsList submissions={[live()]} onWithdraw={vi.fn()} withdrawing={false} />
     );
     const edit = page.getByTestId('apps-onsite-edit-live-app');
     await expect.element(edit).toBeInTheDocument();
-    expect(edit.element().getAttribute('href')).toBe('/apps/block-a/edit-manifest');
+    expect(edit.element().getAttribute('href')).toBe('/apps/block-a/edit');
+    const media = page.getByTestId('apps-onsite-listing-media-live-app');
+    await expect.element(media).toBeInTheDocument();
+    expect(media.element().getAttribute('href')).toBe('/apps/block-a/edit?tab=media');
     const revenue = page.getByTestId('apps-onsite-revenue-live-app');
     await expect.element(revenue).toBeInTheDocument();
     expect(revenue.element().getAttribute('href')).toBe('/apps/block-a/revenue');
@@ -949,6 +952,43 @@ describe('MySubmissionsList — P4 surfaced manage links', () => {
     await page.getByTestId('apps-submissions-section-mod-removed-toggle').click();
     await expect.element(page.getByTestId('apps-onsite-revenue-gone-app')).toBeInTheDocument();
     expect(page.getByTestId('apps-onsite-edit-gone-app').elements()).toHaveLength(0);
+  });
+});
+
+describe('MySubmissionsList — advisory listing-problems warning', () => {
+  test('a row WITH problems renders the warning icon; hovering lists each problem label', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[
+          makeSubmission({
+            problems: [
+              { code: 'missing-icon', label: 'Missing icon' },
+              { code: 'empty-tagline', label: 'Missing tagline' },
+            ],
+          }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    const warn = page.getByTestId('apps-submission-problems');
+    await expect.element(warn).toBeInTheDocument();
+    // The HoverCard dropdown mounts on hover and enumerates each problem label.
+    await warn.hover();
+    await expect.element(page.getByText('Missing icon', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('Missing tagline', { exact: false })).toBeInTheDocument();
+  });
+
+  test('a clean row (no problems) shows NO warning icon', async () => {
+    renderWithProviders(
+      <MySubmissionsList
+        submissions={[makeSubmission({ problems: [] })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('my-app', { exact: false })).toBeInTheDocument();
+    expect(page.getByTestId('apps-submission-problems').elements()).toHaveLength(0);
   });
 });
 

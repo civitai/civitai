@@ -10,7 +10,6 @@
  * Uses CFG scale (guidance), seed, and aspect ratio.
  */
 
-import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
@@ -69,11 +68,12 @@ const seedreamResolutionOptions = [
   { label: '4K', value: '4K' },
 ] as const;
 
-/** Versions that support the 2K/4K resolution toggle */
+/** Versions that support the 2K/4K resolution toggle. v5.0-pro is 2K-only — it
+ *  accepts 4K dimensions but downsamples to 2K, so offering the toggle just
+ *  promises a resolution it never returns. */
 const versionsWithResolutionToggle = new Set<number>([
   seedreamVersionIds['v4.5'],
   seedreamVersionIds['v5.0-lite'],
-  seedreamVersionIds['v5.0-pro'],
 ]);
 
 const supportsResolutionToggle = (modelId?: number) =>

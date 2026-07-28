@@ -9,6 +9,7 @@ import {
 } from '~/server/logging/trpc-serialize-log';
 
 import { appRouter } from '~/server/routers';
+import { isAdGatedContent } from '~/shared/utils/ad-gating';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
@@ -104,9 +105,13 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
+    // `.red` is exempt — it serves direct ads, no GAM auction, no policy center.
+    const adsGated = !!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating);
+
     return {
       props: {
         ...(props ?? {}),
+        adsGated,
         // Success-only: an errored prefetch would put a TRPCError instance in the
         // dehydrated state, and the devalue write (TRPC_WRITE_DEVALUE) throws on
         // non-POJOs — turning one failed prefetch into a page-wide SSR 500. Dropping
@@ -133,10 +138,20 @@ export function createServerSideProps<P>({
   };
 }
 
+/**
+ * Content rating declared by pages that render `<Gated>`. Consumed here — it never reaches
+ * Next.js — and becomes the `adsGated` prop `_app` hands to `AdsProvider`.
+ *
+ * Rating only, no owner/mod/crawler exemptions: the verdict must be identical for every
+ * request to a URL, since one auction is enough to put it in GAM's policy violation center.
+ */
+export type AdGatingDeclaration = { contentNsfwLevel: number; nsfw?: boolean };
+
 type GetPropsFnResult<P> = {
   props: P | Promise<P>;
   redirect: Redirect;
   notFound: true;
+  gating: AdGatingDeclaration;
 };
 
 type CreateServerSidePropsProps<P> = {
@@ -148,7 +163,7 @@ type CreateServerSidePropsProps<P> = {
   requireModerator?: boolean;
   resolver?: (
     context: CustomGetServerSidePropsContext
-  ) => Promise<GetServerSidePropsResult<P> | void>;
+  ) => Promise<(GetServerSidePropsResult<P> & { gating?: AdGatingDeclaration }) | void>;
 };
 
 type CustomGetServerSidePropsContext = {

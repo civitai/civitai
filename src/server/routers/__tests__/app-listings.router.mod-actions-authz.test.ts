@@ -26,6 +26,7 @@ const {
   mockReport,
   mockListReports,
   mockResetOnsite,
+  mockPreviewForReview,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
 } = vi.hoisted(() => ({
@@ -43,6 +44,7 @@ const {
   mockListEvents: vi.fn(async () => ({ items: [], nextCursor: null })),
   mockReport: vi.fn(async () => ({ reportId: 'alrp_1' })),
   mockListReports: vi.fn(async () => ({ items: [], nextCursor: null })),
+  mockPreviewForReview: vi.fn(async () => ({ card: {}, detail: {} })),
   mockIsAppBlocksEnabled: vi.fn(),
   mockIsAppBlocksAuthorEnabled: vi.fn(),
 }));
@@ -58,6 +60,11 @@ vi.mock('~/server/services/blocks/offsite-moderation.service', () => ({
   dismissReport: mockDismiss,
   listModerationEvents: mockListEvents,
   resetOnsiteListingToPending: mockResetOnsite,
+}));
+// The listing-preview projection is dynamically imported by getListingPreviewForReview;
+// mock just that export so the mod-gate authz can be exercised without a DB.
+vi.mock('~/server/services/blocks/app-listing.service', () => ({
+  getListingPreviewForReview: mockPreviewForReview,
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
@@ -284,6 +291,38 @@ describe('mod actions — error mapping via mapOffsiteError', () => {
       caller.claimListing({ appListingId: 'apl_1', targetUserId: -5, reason: REASON })
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockClaim).not.toHaveBeenCalled();
+  });
+});
+
+describe('getListingPreviewForReview — moderator-only read', () => {
+  it('a tester is FORBIDDEN; the projection service is NOT called', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
+    await expect(caller.getListingPreviewForReview({ listingId: 'apl_1' })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockPreviewForReview).not.toHaveBeenCalled();
+  });
+
+  it('anonymous is rejected; the projection service is NOT called', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.getListingPreviewForReview({ listingId: 'apl_1' })).rejects.toBeInstanceOf(
+      TRPCError
+    );
+    expect(mockPreviewForReview).not.toHaveBeenCalled();
+  });
+
+  it('a moderator passes the gate and the projection runs with the listing id', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.getListingPreviewForReview({ listingId: 'apl_9' })).resolves.toBeDefined();
+    expect(mockPreviewForReview).toHaveBeenCalledWith({ listingId: 'apl_9' });
+  });
+
+  it('the router exposes getListingPreviewForReview', () => {
+    const procs = Object.keys(
+      (appListingsRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def
+        .procedures
+    );
+    expect(procs).toContain('getListingPreviewForReview');
   });
 });
 

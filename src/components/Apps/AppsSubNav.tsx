@@ -12,6 +12,7 @@ import { useRouter } from 'next/router';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useIsClient } from '~/providers/IsClientProvider';
 
 /**
  * The conditions that drive which sub-nav tabs are visible. Sourced from the
@@ -175,6 +176,19 @@ export function AppsSubNav() {
   const router = useRouter();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  // 🔴 HYDRATION-SAFE tab set. The CONDITIONAL tabs are driven by the client-only
+  // `getNavSummary` query, whose data is present in the CLIENT's very first render
+  // but ABSENT during SSR (tRPC runs with `ssr: false`, so the server always
+  // renders `EMPTY_SUMMARY` = the two always-on tabs). Rendering the resolved
+  // summary on the first client paint therefore produced a DIFFERENT tab set than
+  // the server HTML (e.g. 2 tabs SSR vs 6 tabs client for a user with
+  // installs/submissions/approved-apps/reviewer status) — a React hydration
+  // mismatch (#418/#425) that bails hydration of the ENTIRE /apps page root,
+  // leaving every /apps page un-hydrated and inert (dead buttons, queries that
+  // never fire). Gate on `useIsClient()` so the server AND the first client paint
+  // both render the deterministic always-on set; the conditional tabs reveal only
+  // AFTER mount, once hydration has already matched.
+  const isClient = useIsClient();
 
   const { data } = trpc.blocks.getNavSummary.useQuery(undefined, {
     enabled: !!features.appBlocks && !!currentUser,
@@ -183,5 +197,7 @@ export function AppsSubNav() {
 
   if (!features.appBlocks) return null;
 
-  return <AppsSubNavView summary={data ?? EMPTY_SUMMARY} currentPath={router.pathname} />;
+  const summary = isClient ? data ?? EMPTY_SUMMARY : EMPTY_SUMMARY;
+
+  return <AppsSubNavView summary={summary} currentPath={router.pathname} />;
 }

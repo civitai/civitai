@@ -595,10 +595,20 @@ function stageApproveScenario(listing: {
     revisionOfId: null,
   };
   const count = listing.screenshotCount === undefined ? 1 : listing.screenshotCount;
+  const screenshotRows = Array.from({ length: count }, (_, i) => ({ imageId: 1000 + i }));
   mockRead.appListing.findUnique.mockResolvedValue(listingRow);
   mockRead.appListingScreenshot.count.mockResolvedValue(count);
+  mockRead.appListingScreenshot.findMany.mockResolvedValue(screenshotRows);
   mockWrite.appListing.findUnique.mockResolvedValue(listingRow);
   mockWrite.appListingScreenshot.count.mockResolvedValue(count);
+  mockWrite.appListingScreenshot.findMany.mockResolvedValue(screenshotRows);
+  // Item 1: the go-live scan-clean gate re-reads each attached asset's `ingestion`.
+  // Stage every queried image id as `Scanned` on BOTH clients so a normal scenario
+  // passes; a scan-gate test overrides one client to inject a pending/blocked asset.
+  const scanned = async (args: { where: { id: { in: number[] } } }) =>
+    (args?.where?.id?.in ?? []).map((id) => ({ id, ingestion: 'Scanned' }));
+  mockRead.image.findMany.mockImplementation(scanned as never);
+  mockWrite.image.findMany.mockImplementation(scanned as never);
 }
 
 describe('approveExternalRequest', () => {
@@ -705,8 +715,11 @@ describe('approveExternalRequest', () => {
         connectClient: { select: { allowedScopes: true } },
       },
     });
-    expect(mockWrite.appListingScreenshot.count).toHaveBeenCalledWith({
+    // The screenshot imageIds (for the floor count + the scan gate) are read from
+    // the PRIMARY via findMany inside the tx, filtered to imageId != null.
+    expect(mockWrite.appListingScreenshot.findMany).toHaveBeenCalledWith({
       where: { appListingId: 'apl_1', imageId: { not: null } },
+      select: { imageId: true },
     });
   });
 
@@ -724,7 +737,7 @@ describe('approveExternalRequest', () => {
     });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('cover') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: cover') });
     // We DID open the tx (the authoritative gate runs inside it) but bailed BEFORE
     // any flip — neither the request nor the listing status changed.
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
@@ -732,15 +745,74 @@ describe('approveExternalRequest', () => {
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 
-  it('REPLICA-LAG: replica shows a screenshot but the PRIMARY count is 0 → approve BLOCKED', async () => {
+  it('FLIPPED (partial-media): PRIMARY screenshot count 0 with icon+cover still APPROVES (screenshots optional)', async () => {
+    // The floor gate ignores the screenshot count entirely, so a primary count of 0
+    // (icon+cover present) is no longer a block — the approve proceeds and flips.
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
-    mockWrite.appListingScreenshot.count.mockResolvedValue(0); // primary: no real screenshot
+    mockWrite.appListingScreenshot.findMany.mockResolvedValue([]); // primary: no real screenshot
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).resolves.toMatchObject({ listingId: 'apl_1' });
+    expect(mockWrite.$transaction).toHaveBeenCalled();
+  });
+
+  // Item 1 — the go-live SCAN-CLEAN gate. A listing may be SUBMITTED with a still-
+  // scanning image, but it can never be APPROVED until every asset is `Scanned`
+  // (none pending, none `Blocked`). Two catch sites: the pre-tx replica fail-fast
+  // AND the authoritative in-tx primary re-read (TOCTOU).
+  const injectIngestion = (ingestionById: Record<number, string>) => {
+    const impl = async (args: { where: { id: { in: number[] } } }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({
+        id,
+        ingestion: ingestionById[id] ?? 'Scanned',
+      }));
+    return impl as never;
+  };
+
+  it('SCAN GATE (pre-tx fail-fast): icon still Pending on the replica → BAD_REQUEST, tx never opened', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    // Replica shows the icon still scanning → the pre-tx gate rejects before the tx.
+    mockRead.image.findMany.mockImplementation(injectIngestion({ 1: 'Pending' }));
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: expect.stringContaining('screenshots'),
+      message: expect.stringContaining('still scanning: icon'),
     });
+    // Fail-fast BEFORE the transaction — nothing mutated.
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('SCAN GATE (in-tx TOCTOU): replica reads Scanned but the PRIMARY reads Pending → BAD_REQUEST, no flip', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    // Replica: all Scanned (pre-tx passes). Primary: the icon flipped to Pending
+    // between the two reads → the authoritative in-tx gate must catch it and roll back.
+    mockWrite.image.findMany.mockImplementation(injectIngestion({ 1: 'Pending' }));
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('still scanning: icon'),
+    });
+    // We DID open the tx (the authoritative gate runs inside it) but bailed BEFORE any flip.
+    expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('SCAN GATE: a BLOCKED asset → BAD_REQUEST naming it, no mutation', async () => {
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    // The screenshot (imageId 1000) came back Blocked from scanning.
+    mockRead.image.findMany.mockImplementation(injectIngestion({ 1000: 'Blocked' }));
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('blocked: screenshot'),
+    });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 
@@ -764,33 +836,33 @@ describe('approveExternalRequest', () => {
     expect(supersede.data).toEqual({ status: 'withdrawn' });
   });
 
-  it('BLOCKED by assertListingAssetsComplete — missing ICON → BAD_REQUEST, no mutation', async () => {
+  it('BELOW FLOOR by assertListingMeetsFloor — missing ICON → BAD_REQUEST, no mutation', async () => {
     stageApproveScenario({ iconId: null, coverId: 2, screenshotCount: 1 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('icon') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: icon') });
     // Missing on the replica too → fail-fast before the tx even opens.
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 
-  it('BLOCKED by assertListingAssetsComplete — missing COVER → BAD_REQUEST, no mutation', async () => {
+  it('BELOW FLOOR by assertListingMeetsFloor — missing COVER → BAD_REQUEST, no mutation', async () => {
     stageApproveScenario({ iconId: 1, coverId: null, screenshotCount: 1 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('cover') });
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: cover') });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
-  it('BLOCKED by assertListingAssetsComplete — missing SCREENSHOT → BAD_REQUEST, no mutation', async () => {
+  it('FLIPPED (partial-media): missing SCREENSHOT is now OPTIONAL — icon+cover, 0 screenshots APPROVES', async () => {
+    // Was previously BLOCKED by the full-completeness gate; the floor gate
+    // (icon+cover) lets a screenshot-less listing publish. This is the whole point.
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 0 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('screenshots'),
-    });
-    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ listingId: 'apl_1' });
+    // The approve proceeded into the transaction (the flip happened).
+    expect(mockWrite.$transaction).toHaveBeenCalled();
   });
 
   it('all assets present → the gate PASSES (approve proceeds); the count query excludes imageId-null rows', async () => {
@@ -800,8 +872,11 @@ describe('approveExternalRequest', () => {
     ).resolves.toMatchObject({ listingId: 'apl_1' });
     // A screenshot whose Image was deleted (imageId null) is excluded by the count
     // query — assert we filter on imageId != null on the primary.
-    expect(mockWrite.appListingScreenshot.count).toHaveBeenCalledWith({
+    // The screenshot imageIds (for the floor count + the scan gate) are read from
+    // the PRIMARY via findMany inside the tx, filtered to imageId != null.
+    expect(mockWrite.appListingScreenshot.findMany).toHaveBeenCalledWith({
       where: { appListingId: 'apl_1', imageId: { not: null } },
+      select: { imageId: true },
     });
   });
 
@@ -877,7 +952,11 @@ describe('approveExternalRequest', () => {
     mockWrite.appListingScreenshot.findMany.mockResolvedValue(
       levels.filter((l) => l.id >= 10).map((l) => ({ imageId: l.id }))
     );
-    mockWrite.image.findMany.mockResolvedValue(levels.map((l) => ({ nsfwLevel: l.nsfwLevel })));
+    // Rows carry `id` + `ingestion` (for the in-tx scan-clean gate) alongside
+    // `nsfwLevel` (for the rating derive) — both go through this same image.findMany.
+    mockWrite.image.findMany.mockResolvedValue(
+      levels.map((l) => ({ id: l.id, nsfwLevel: l.nsfwLevel, ingestion: 'Scanned' }))
+    );
   }
 
   function ratingStampedOnFlip(): unknown {

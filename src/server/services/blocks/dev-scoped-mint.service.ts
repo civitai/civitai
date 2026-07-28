@@ -160,6 +160,59 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
 ]);
 
 /**
+ * The MOD-REVIEW-SANDBOX "RUN FOR REAL" host-mint allowlist (#2831). Used ONLY
+ * when a moderator EXPLICITLY opts in (per-preview, behind a loud consent gate)
+ * to run an UNAPPROVED review app FOR REAL against THEIR OWN account, so they can
+ * fully evaluate generation / storage / buzz before approving.
+ *
+ * It is the render-only `REVIEW_MINT_SCOPE_ALLOWLIST` PLUS the SELF-BOUND
+ * capabilities needed to exercise a page app end-to-end — and NOTHING that could
+ * move money OUT or touch another user:
+ *
+ * ADDED over render-only (all SELF-BOUND to the reviewing mod):
+ *   - `ai:write:budgeted`   real Buzz SPEND-IN for generation (also gated by the
+ *                           per-call budget AND the aggregate session cap below)
+ *   - `apps:storage:read`   the mod's OWN per-app KV (see caveat *)
+ *   - `apps:storage:write`  the mod's OWN per-app KV (see caveat *)
+ *   - `buzz:read:self`      the mod's OWN balance/ledger (self-bound read)
+ *
+ * DELIBERATELY WITHHELD (clamped out regardless of what the pending manifest
+ * declares — the clamp keeps only scopes IN this set, so a malicious manifest
+ * declaring extra scopes gets NONE of these):
+ *   - `social:tip:self`               real money OUT — NEVER granted (invariant #4)
+ *   - `apps:storage:shared:read|write` cross-user shared datastore — NEVER (invariant #2)
+ *   - `collections:read:private`      third-party-reachable private data
+ *   - `collections:write:self`        write surface not needed to evaluate a page app
+ *
+ * (*) App Storage WORKS under run-for-real via a dedicated preview namespace:
+ * `resolveStorageContext` (apps.router), when the token carries the signed
+ * `reviewRunForReal` claim, resolves a DISPOSABLE, per-publishRequest, ISOLATED
+ * `apprev_<pubreq>` schema (provisioned on demand) instead of the un-approved
+ * `app_<slug>` schema. Reads/writes are self-bound to the mod, cannot reach another
+ * pending app's namespace, and never pollute the eventual approved app's schema; the
+ * preview schema is dropped on the approve/reject teardown. Generation + own-Buzz-read
+ * likewise work (self-bound; no approved AppBlock row required).
+ *
+ * Money-OUT (`social:tip:self`) is excluded SOLELY by its ABSENCE from this
+ * allowlist: the clamp keeps only scopes in the allowlist (step b), so a manifest
+ * declaring `social:tip:self` gets it dropped for a review mint. NOTE this is NOT
+ * a page-wide rule — `PAGE_FORBIDDEN_SCOPES` is intentionally EMPTY because a
+ * PROD page token legitimately CAN carry a bounded, consent-gated `social:tip:self`
+ * (a page tip button, capped per-tip + per-day in /api/v1/blocks/tip). The
+ * review-sandbox exclusion is therefore this allowlist ALONE — verified by a
+ * regression test (a run-for-real mint never yields `social:tip:self`).
+ */
+export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
+  'models:read:self',
+  'user:read:self',
+  'collections:read:self',
+  'ai:write:budgeted',
+  'apps:storage:read',
+  'apps:storage:write',
+  'buzz:read:self',
+]);
+
+/**
  * The AUDITED scope clamp belt (dev-token.ts steps 7a–7g), extracted verbatim.
  * Start from `scopeSource` (the app's approved snapshot, an owned pending request's
  * un-reviewed `manifest.scopes`, or the caller's self-declared body scopes) and:
@@ -169,7 +222,10 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  *   c) keep only scopes within the app's OAuth ceiling (approved path only —
  *      `oauthAllowed !== null`); OMITTED for a pending / no-row / ephemeral app
  *      (no OauthClient — passing 0 would WRONGLY strip every non-skip scope),
- *   d) drop the PAGE_FORBIDDEN money/spend scopes (the page hard rule),
+ *   d) drop any PAGE_FORBIDDEN scopes — currently a NO-OP (PAGE_FORBIDDEN_SCOPES
+ *      is intentionally EMPTY: every page-requestable money scope is now bounded).
+ *      Retained as the deterministic re-forbid hook; it is NOT the money-out gate
+ *      for the review sandbox — that is the allowlist (b), which omits social:tip:self,
  *   e) if the body narrowed, intersect with the requested subset,
  *   f) BEARER-credential spend ceiling — strip `ai:write:budgeted` unless
  *      `keyCanSpend` (dev-token: the bearer's AIServicesWrite bit; host-mint:
@@ -314,6 +370,15 @@ export async function signDevScopedPageToken(opts: {
   blockInstanceId: string;
   granted: string[];
   buzzBudget: number | undefined;
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831) marker. When true, stamps a
+   * signed `reviewRunForReal: true` claim so the runtime spend paths
+   * (submitWorkflow / customComfy) enforce the TIGHT per-(mod, publishRequestId)
+   * aggregate Buzz ceiling instead of the ordinary per-user daily cap. The flag
+   * is only trustworthy because it is inside the RS256-signed payload. Absent
+   * (default) → byte-identical to a normal dev-scoped page token.
+   */
+  reviewRunForReal?: boolean;
 }): Promise<Awaited<ReturnType<typeof BlockTokenService.sign>>> {
   const ctx: Record<string, unknown> = {
     slotId: PAGE_SLOT_ID,
@@ -334,5 +399,6 @@ export async function signDevScopedPageToken(opts: {
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
     dev: true,
+    ...(opts.reviewRunForReal === true ? { reviewRunForReal: true } : {}),
   });
 }

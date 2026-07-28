@@ -13,7 +13,11 @@ import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { getPrimaryFileTypes, primaryFileTypesByModelType } from '~/utils/file-display-helpers';
+import {
+  getPrimaryFileTypes,
+  primaryFileTypesByModelType,
+  UNQUANTIZED_QUANT_TYPE,
+} from '~/utils/file-display-helpers';
 import {
   getModelFileFormat,
   inferGgufQuantType,
@@ -30,7 +34,6 @@ import { isDefined } from '~/utils/type-guards';
 type ZodErrorSchema = { _errors: string[] };
 type SchemaError = {
   type?: ZodErrorSchema;
-  size?: ZodErrorSchema;
   fp?: ZodErrorSchema;
   format?: ZodErrorSchema;
   quantType?: ZodErrorSchema;
@@ -349,7 +352,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         if (!err) return;
         const fileName = files[i]?.name ?? `File ${i + 1}`;
         const fields: string[] = [];
-        if (err.size?._errors?.length) fields.push('model size');
         if (err.fp?._errors?.length) fields.push('precision');
         if (err.quantType?._errors?.length) fields.push('quant type');
         if (err.type?._errors?.length) fields.push('file type');
@@ -779,13 +781,6 @@ const metadataSchema = modelFileMetadataSchema
     name: z.string(),
   })
   .refine(
-    (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),
-    {
-      error: 'Model size is required for model files',
-      path: ['size'],
-    }
-  )
-  .refine(
     (data) =>
       data.type === 'Model' && data.modelType === 'Checkpoint' && !data.name.endsWith('.gguf')
         ? !!data.fp
@@ -798,6 +793,10 @@ const metadataSchema = modelFileMetadataSchema
   .refine((data) => (data.name.endsWith('.gguf') ? !!data.quantType : true), {
     error: 'Quant type is required for GGUF files',
     path: ['quantType'],
+  })
+  .refine((data) => (data.quantType === UNQUANTIZED_QUANT_TYPE ? !!data.fp : true), {
+    error: 'Floating point is required for unquantized files',
+    path: ['fp'],
   })
   .array();
 
@@ -829,7 +828,12 @@ const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
     title: 'Duplicate file types',
     error: new Error(
       conflicts
-        .map((group) => `${group.map((f) => f.name).join(', ')}: same type and settings`)
+        .map(
+          (group) =>
+            `${group
+              .map((f) => f.name)
+              .join(', ')}: same type, size, format, precision and quant, one must differ`
+        )
         .join('\n')
     ),
   });

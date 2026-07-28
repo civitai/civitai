@@ -190,6 +190,17 @@ function manifestHasPage(manifest: unknown): boolean {
 }
 
 /**
+ * The already-public standalone origin for an ONSITE listing (no token/scope) —
+ * the same `<slug>.<APPS_DOMAIN>` host the webhook validates the bundle's iframe
+ * against. Shared by the card AND detail projections so their `liveUrl` for a
+ * given slug can never drift. Both projections only compose this once the row
+ * has passed the deploy-gate (list SQL + detail read), so the origin is live.
+ */
+function onsiteLiveUrl(slug: string): string {
+  return `https://${slug}.${env.APPS_DOMAIN}`;
+}
+
+/**
  * The Prisma `select` for a hydrated listing row (shared by card + detail). Only
  * fields the public projection uses — the internal columns (status, ownership
  * beyond the chip, raw manifest internals) are never selected into a public DTO.
@@ -249,6 +260,9 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
     kind: 'onsite',
     appBlockId: row.appBlockId ?? null,
     hasPage: manifestHasPage(row.appBlock?.manifest),
+    // Surfaced on the card so a client can link the onsite app without an N+1
+    // detail fetch. Same derivation as the detail projection (shared helper).
+    liveUrl: onsiteLiveUrl(row.slug),
   };
 }
 
@@ -289,8 +303,9 @@ function detailKindData(row: HydratedListing): ListingDetailKindData {
     appBlockId: row.appBlockId ?? null,
     hasPage: manifestHasPage(row.appBlock?.manifest),
     // Already-public standalone origin (no token/scope) — same host the webhook
-    // validates the bundle's iframe against. Built from slug + APPS_DOMAIN.
-    liveUrl: `https://${row.slug}.${env.APPS_DOMAIN}`,
+    // validates the bundle's iframe against. Shared derivation with the card
+    // projection (onsiteLiveUrl) so list + detail can never drift.
+    liveUrl: onsiteLiveUrl(row.slug),
   };
 }
 
@@ -305,6 +320,33 @@ function galleryScreenshots(row: HydratedListing): ListingGalleryScreenshot[] {
     out.push({ url: getEdgeUrl(s.image.url, { width: 1200 }), caption: s.caption ?? null });
   }
   return out;
+}
+
+/**
+ * MOD-ONLY review preview: project a SHADOW / pending listing (by its own id — the
+ * review row's `appListingId`) into the SAME `ListingCard` + `ListingDetail` store
+ * shapes the public `getAppDetail` read serves, so the moderator sees the app's
+ * REAL media (icon / cover / ordered screenshots) + scalars (name / tagline /
+ * description / category / contentRating / creator) laid out as the store card +
+ * detail — before approval.
+ *
+ * Reuses `listingHydrateSelect` + `projectListingCard` / `projectListingDetail`
+ * verbatim (the SAME image→CDN-URL derivation as the approved-listing read), so the
+ * preview can never drift from the live store projection and there is NO second
+ * image-URL builder. UNLIKE the public read it is NOT status-filtered (a mod may
+ * preview a draft / pending / shadow listing); the caller (`moderatorProcedure`) is
+ * the authz gate. Read-only — no listing mutation. Returns `null` when the id has no
+ * listing row (the client then falls back to a placeholder-art layout preview).
+ */
+export async function getListingPreviewForReview(args: {
+  listingId: string;
+}): Promise<{ card: ListingCard; detail: ListingDetail } | null> {
+  const row = await dbRead.appListing.findUnique({
+    where: { id: args.listingId },
+    select: listingHydrateSelect,
+  });
+  if (!row) return null;
+  return { card: projectListingCard(row), detail: projectListingDetail(row) };
 }
 
 /** Project a hydrated listing row → the PUBLIC detail DTO (allowlist). */
@@ -556,6 +598,12 @@ export async function getListingDetail(
   const redCapable = opts.redCapable ?? false;
   // Default `full` for callers that don't pass a scope (see listAvailableListings).
   const scope = opts.scope ?? 'full';
+  // STORE-SCOPE `none` (default-closed): a caller with no store visibility gets
+  // nothing — symmetric with the list path's `listingPublicVisibilityFilter('none')`
+  // → FALSE. The v1 endpoints short-circuit `none` before calling this, but honor
+  // the gate here too so a future non-endpoint caller passing `none` can't reach a
+  // listing's detail.
+  if (scope === 'none') return null;
   // Assert exactly-one selector in the SERVICE (the zod `.refine` only guards the
   // tRPC boundary, but this fn is exported). Neither → `findFirst({ slug:
   // undefined })` would return an ARBITRARY approved row (enumeration footgun);

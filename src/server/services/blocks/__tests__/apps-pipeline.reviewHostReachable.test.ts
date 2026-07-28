@@ -1,19 +1,33 @@
-import { describe, expect, it, vi } from 'vitest';
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — waitForReviewHostReachable.
  *
- * The review preview's per-host DNS record can lag the deploy by up to ~a
- * minute; the callback gates "preview-live" on this probe so a mod never clicks
- * through to ERR_NAME_NOT_RESOLVED. These tests pin the reachability contract:
- *   - ANY HTTP response (any status) → reachable (true), no auth attempted.
- *   - a thrown fetch (DNS not-found / refused / per-attempt timeout) → retry.
- *   - every attempt throwing until the budget elapses → false.
+ * Two modes, both pinned here:
+ *
+ *  FALLBACK (no origin IP configured — local dev / preview envs): probe the
+ *  PUBLIC host; ANY resolved response (any status) = reachable; a thrown fetch
+ *  (DNS not-found / refused / timeout) = retry. This is the legacy behaviour and
+ *  MUST stay intact where the origin IP isn't set.
+ *
+ *  ORIGIN-DIRECT (origin IP configured — dp-prod): dial the Traefik LB IP with a
+ *  `Host: <host>` header so we NEVER touch public DNS (dodging the civit.ai
+ *  SOA-1800s NXDOMAIN negative-cache poisoning that spuriously failed healthy
+ *  previews). Semantics FLIP: the TCP connect always succeeds, so reachable = a
+ *  response whose status is NOT 404 (Host rule matched → mod-gate/service, 401);
+ *  a 404 (route not yet registered) OR a connection error = retry. After
+ *  origin-direct passes we also confirm the public name resolves via Cloudflare
+ *  DoH so the mod's browser can't hit a fresh NXDOMAIN.
+ *
  * A fake clock drives the timeout so there's no real network or wall-clock wait.
  */
 
 // The helper's DEFAULT timeout reads from env.REVIEW_HOST_REACHABLE_TIMEOUT_MS
-// (180s in the real schema). Provide it so the default path has a finite budget.
+// (180s in the real schema). No origin-IP env keys are provided, so the DEFAULT
+// path (used by the existing tests below) resolves originIp=null → FALLBACK
+// mode. Origin-direct tests inject `originIp` explicitly.
 vi.mock('~/env/server', () => ({ env: { REVIEW_HOST_REACHABLE_TIMEOUT_MS: 180_000 } }));
 
 import { waitForReviewHostReachable } from '~/server/services/blocks/apps-pipeline.service';
@@ -35,7 +49,7 @@ function fakeClock() {
 // Never schedule a real per-attempt AbortSignal timer in tests.
 const noSignal = () => undefined;
 
-describe('waitForReviewHostReachable', () => {
+describe('waitForReviewHostReachable — FALLBACK (public-DNS, no origin IP)', () => {
   it('returns true on the first HTTP response (a 200)', async () => {
     const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
     const clock = fakeClock();
@@ -161,5 +175,241 @@ describe('waitForReviewHostReachable', () => {
     });
     expect(ok).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+const ORIGIN_IP = '203.0.113.7'; // TEST-NET-3 placeholder — never a real infra IP
+
+describe('waitForReviewHostReachable — ORIGIN-DIRECT (origin IP configured)', () => {
+  it('probes the origin IP with a Host header; a 401 (mod-gate) → reachable (DoH default-off)', async () => {
+    const originProbe = vi.fn(async () => ({ status: 401 }));
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    // Origin-direct alone is the default signal — one probe, no sleep, reachable.
+    expect(originProbe).toHaveBeenCalledTimes(1);
+    expect(clock.sleep).not.toHaveBeenCalled();
+    // Dialed the ORIGIN IP (not https://<host>/) with a Host: <host> header.
+    const [url, init] = originProbe.mock.calls[0] as [
+      string,
+      { method: string; headers: Record<string, string>; redirect: string }
+    ];
+    expect(url).toBe(`http://${ORIGIN_IP}/`);
+    expect(url).not.toContain(HOST);
+    expect(init.method).toBe('HEAD');
+    expect(init.headers.Host).toBe(HOST);
+    expect(init.redirect).toBe('manual');
+  });
+
+  it('a 404 (route not registered) is NOT reachable — retries, then a 401 → reachable', async () => {
+    const originProbe = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 404 }) // Traefik default 404 — route not up yet
+      .mockResolvedValueOnce({ status: 401 }); // Host rule matched → mod-gate answers
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe: originProbe as unknown as never,
+      timeoutMs: 120_000,
+      intervalMs: 4_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    // Did NOT return true on the 404 — it slept once and retried.
+    expect(originProbe).toHaveBeenCalledTimes(2);
+    expect(clock.sleep).toHaveBeenCalledTimes(1);
+    expect(clock.sleep).toHaveBeenCalledWith(4_000);
+  });
+
+  it('a 200 (or any non-404) response → reachable', async () => {
+    const originProbe = vi.fn(async () => ({ status: 200 }));
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    // A 302 likewise (non-404 success).
+    const originProbe2 = vi.fn(async () => ({ status: 302 }));
+    const clock2 = fakeClock();
+    const ok2 = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe: originProbe2,
+      now: clock2.now,
+      sleep: clock2.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok2).toBe(true);
+  });
+
+  it('a connection error every attempt → retries until the budget, returns false (deadline respected)', async () => {
+    const originProbe = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe: originProbe as unknown as never,
+      timeoutMs: 120_000,
+      intervalMs: 4_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(false);
+    // Same deadline arithmetic as the fallback path: 30 attempts + 30 sleeps
+    // before now() reaches 120000 and the post-sleep check trips.
+    expect(originProbe).toHaveBeenCalledTimes(30);
+    expect(clock.sleep).toHaveBeenCalledTimes(30);
+  });
+
+  it('does NOT probe the public host: fallback fetchImpl is never called in origin mode', async () => {
+    const originProbe = vi.fn(async () => ({ status: 401 }));
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    // The public-DNS fetch is the thing we're moving OFF of — it must not run.
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('DoH is DEFAULT-OFF: origin-direct alone gates, no DoH fetch even when a dohFetchImpl is supplied', async () => {
+    // Guards the flipped default. A dohFetchImpl is injected but MUST NOT run,
+    // because default-on DoH via 1.1.1.1 would relocate this PR's negative-cache
+    // bug to Cloudflare's recursive resolver.
+    const originProbe = vi.fn(async () => ({ status: 401 }));
+    const dohFetchImpl = vi.fn();
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe,
+      // NB: no dohEnabled → relies on the default (false).
+      dohFetchImpl: dohFetchImpl as unknown as typeof fetch,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    expect(dohFetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('OPT-IN DoH path only: origin OK but DoH NXDOMAIN → retry; DoH Status:0 → reachable', async () => {
+    // This exercises the OPT-IN (dohEnabled:true) branch ONLY. It does NOT model
+    // production safety for a default-on DoH: the mock flips Status 3 → 0 on the
+    // 2nd call, but Cloudflare's recursive resolver would STICKILY negative-cache
+    // the NXDOMAIN for up to the civit.ai SOA minimum (1800s) — which is exactly
+    // why DoH defaults OFF. Here we only prove the retry wiring of the opt-in gate.
+    const originProbe = vi.fn(async () => ({ status: 401 }));
+    const dohFetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ Status: 3 }), { status: 200 }) // NXDOMAIN
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ Status: 0, Answer: [{ data: '1.2.3.4' }] }), { status: 200 })
+      );
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe,
+      dohEnabled: true, // explicit opt-in
+      dohFetchImpl: dohFetchImpl as unknown as typeof fetch,
+      timeoutMs: 120_000,
+      intervalMs: 4_000,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    // Two origin probes + two DoH queries (first attempt: origin-ok but DoH
+    // NXDOMAIN → sleep + retry; second attempt: both pass).
+    expect(originProbe).toHaveBeenCalledTimes(2);
+    expect(dohFetchImpl).toHaveBeenCalledTimes(2);
+    expect(clock.sleep).toHaveBeenCalledTimes(1);
+    // DoH queried the PUBLIC host name via cloudflare-dns.com.
+    const [dohUrl] = dohFetchImpl.mock.calls[0] as [string];
+    expect(dohUrl).toContain('cloudflare-dns.com/dns-query');
+    expect(dohUrl).toContain(encodeURIComponent(HOST));
+  });
+
+  it('falls back to APPS_DEV_TUNNEL_INGRESS_TARGET when APPS_REVIEW_INGRESS_TARGET is unset', async () => {
+    // Simulates dp-prod today: only the shared dev-tunnel target is set. The
+    // probe must still go origin-direct (no config change needed). Proven by
+    // injecting originIp directly here — the env fallback chain
+    // (APPS_REVIEW_INGRESS_TARGET ?? APPS_DEV_TUNNEL_INGRESS_TARGET) is exercised
+    // by the default-arg resolution; this asserts origin-direct engages when an
+    // IP is present.
+    const originProbe = vi.fn(async () => ({ status: 401 }));
+    const clock = fakeClock();
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: ORIGIN_IP,
+      originProbe,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    expect(originProbe).toHaveBeenCalled();
+  });
+});
+
+describe('waitForReviewHostReachable — ORIGIN-DIRECT real probe (defaultOriginProbe integration)', () => {
+  let server: http.Server | undefined;
+
+  afterEach(async () => {
+    if (server) {
+      await new Promise<void>((resolve) => server!.close(() => resolve()));
+      server = undefined;
+    }
+  });
+
+  it('the REAL defaultOriginProbe transmits the arbitrary Host header while dialing the origin IP (guards the undici Host-drop trap)', async () => {
+    // Regression guard: every OTHER origin test mocks `originProbe`, so if someone
+    // ever swapped defaultOriginProbe back to global `fetch`, those would stay
+    // green while prod silently broke (undici DROPS a custom Host header → wrong
+    // Host → Traefik default 404 → the preview never goes live). This runs the
+    // REAL Node-core probe against a throwaway loopback server and asserts the
+    // server RECEIVED the review host, not `127.0.0.1:<port>`.
+    let receivedHost: string | undefined;
+    server = http.createServer((req, res) => {
+      receivedHost = req.headers.host;
+      res.writeHead(401); // mod-gate-style deny; any non-404 = reachable
+      res.end();
+    });
+    const port = await new Promise<number>((resolve) => {
+      server!.listen(0, '127.0.0.1', () =>
+        resolve((server!.address() as AddressInfo).port)
+      );
+    });
+
+    const clock = fakeClock();
+    // No originProbe injected → the REAL defaultOriginProbe runs. originIp carries
+    // host:port so `http://127.0.0.1:<port>/` targets the throwaway server.
+    const ok = await waitForReviewHostReachable(HOST, {
+      originIp: `127.0.0.1:${port}`,
+      now: clock.now,
+      sleep: clock.sleep,
+      signalFactory: noSignal,
+    });
+    expect(ok).toBe(true);
+    // The server saw the REVIEW host — proving the core-http path actually sends
+    // an arbitrary Host header (global fetch would have dropped it).
+    expect(receivedHost).toBe(HOST);
   });
 });

@@ -396,16 +396,28 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const indexRecordsWithImages = models
     .map((modelRecord) => {
       const { modelVersions, ...model } = modelRecord;
-      const [modelVersion] = modelVersions;
 
-      if (!modelVersion) {
+      if (!modelVersions.length) {
         return null;
       }
 
-      const modelImages = images.filter(
-        (image) =>
-          image.modelVersionId === modelVersion.id &&
-          image.availability !== Availability.Unsearchable
+      // Keep images for the newest version of each distinct base model — not just the
+      // latest version — so base-model-filtered cards can show a matching version's
+      // cover. The latest version goes first, so images[0] stays the primary cover.
+      const coveredBaseModels = new Set<string>();
+      const coveredVersionIds: number[] = [];
+      for (const version of modelVersions) {
+        if (coveredBaseModels.has(version.baseModel)) continue;
+        coveredBaseModels.add(version.baseModel);
+        coveredVersionIds.push(version.id);
+      }
+
+      const modelImages = coveredVersionIds.flatMap((versionId) =>
+        images.filter(
+          (image) =>
+            image.modelVersionId === versionId &&
+            image.availability !== Availability.Unsearchable
+        )
       );
 
       return {

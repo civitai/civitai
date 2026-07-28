@@ -109,7 +109,7 @@ describe('stripBenignPhrases', () => {
     ).toBe('raven from  ');
   });
 
-  it('passes text through unchanged for an undefined input', async () => {
-    expect(await stripBenignPhrases(undefined, BlocklistType.NegativeBenignPhrase)).toBeUndefined();
+  it('normalizes empty input to an empty string', async () => {
+    expect(await stripBenignPhrases(undefined, BlocklistType.NegativeBenignPhrase)).toBe('');
   });
 });

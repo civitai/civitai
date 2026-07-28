@@ -13,14 +13,19 @@ import {
   IconHistory,
   IconMessage,
   IconPencil,
+  IconPhoto,
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { AppAnalyticsInline } from '~/components/Apps/AppAnalyticsInline';
+import {
+  ListingProblemsIndicator,
+  type ListingProblem,
+} from '~/components/Apps/ListingProblemsIndicator';
 import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
-import { isStaleDeploy } from '~/components/Apps/deploy-status';
+import { isStaleDeploy, isStrandedDeploy } from '~/components/Apps/deploy-status';
 import {
   canOwnerRepublish,
   canOwnerUnpublish,
@@ -104,6 +109,9 @@ export type Submission = {
   /** Whether the backing block's manifest declares a launchable page — drives the
    *  Open-live → `/apps/run/<slug>` vs standalone-origin vs model-slot branching. */
   hasPage?: boolean | null;
+  /** Advisory listing-completeness problems (missing assets + empty key fields),
+   *  from the server's `computeListingProblems`. Empty ⇒ no warning icon. */
+  problems?: ListingProblem[];
 };
 
 /** Owner-control handlers threaded from the list down to each latest row. */
@@ -130,8 +138,16 @@ export function formatSubmissionDate(d: string | Date): string {
   return formatDate(d, 'MMMM D, YYYY');
 }
 
+/** Copy for the STRANDED state, shared by the badge tooltip and the row alert so
+ *  the two can never drift. The author cannot fix this themselves — the approval
+ *  is durable and only a moderator can re-fire the build — so the guidance is to
+ *  ask, NOT to resubmit at a new version. */
+export const STRANDED_DEPLOY_MESSAGE =
+  'This version was approved but its build never started, so the code was never deployed. ' +
+  'This is not something you can fix by editing your app — contact a moderator to re-run the build.';
+
 export function statusBadge(
-  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt'>,
+  submission: Pick<Submission, 'status' | 'deployState' | 'deployUpdatedAt' | 'reviewedAt'>,
   /** The "live" green badge is reserved for the CURRENTLY-PUBLISHED version (the
    *  newest approved one). A previous approved version — even one whose deploy is
    *  still marked 'live' — shows a plain "approved" badge instead. */
@@ -141,6 +157,23 @@ export function statusBadge(
   // For an approved request, show the real build/deploy lifecycle rather than a
   // flat "approved" — the dev cares whether their code is actually live.
   if (status === 'approved') {
+    // STRANDED — approved long ago, but the build never started so `deployState`
+    // was never written. Checked BEFORE the switch, whose `default` branch would
+    // otherwise render a healthy green "approved" for exactly this case.
+    // `isStrandedDeploy` only fires past DEPLOY_STALE_AFTER_MS with no recorded
+    // transition, so a freshly-approved row (and every pre-feature legacy row
+    // that ever transitioned) is untouched.
+    if (isStrandedDeploy(submission)) {
+      return (
+        <Badge
+          color="orange"
+          leftSection={<IconAlertTriangle size={12} />}
+          title={STRANDED_DEPLOY_MESSAGE}
+        >
+          build never started
+        </Badge>
+      );
+    }
     if (isStaleDeploy(submission)) {
       return (
         <Badge
@@ -286,7 +319,10 @@ function StatusCell({
   );
   return (
     <Stack gap={6} align="flex-start">
-      {chip}
+      <Group gap={6} wrap="nowrap">
+        {chip}
+        <ListingProblemsIndicator problems={submission.problems ?? []} />
+      </Group>
       {notes && <ReviewerNotesButton notes={notes} variant={variant} />}
     </Stack>
   );
@@ -410,15 +446,89 @@ function OnsiteRow({
               icon={<IconAlertTriangle size={16} />}
               title="Build / deploy failed"
             >
-              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                {s.deployDetail ??
-                  'The build or deploy failed. Fix the issue and resubmit a new version.'}
-              </Text>
+              <DeployFailureDetail detail={s.deployDetail} slug={s.slug} />
+            </Alert>
+          </Table.Td>
+        </Table.Tr>
+      )}
+      {s.status === 'approved' && isStrandedDeploy(s) && (
+        <Table.Tr>
+          <Table.Td colSpan={8} p={0}>
+            <Alert
+              color="orange"
+              variant="light"
+              radius={0}
+              icon={<IconAlertTriangle size={16} />}
+              title="Approved, but the build never started"
+              data-testid={`apps-submissions-stranded-${s.slug}`}
+            >
+              <Text size="sm">{STRANDED_DEPLOY_MESSAGE}</Text>
             </Alert>
           </Table.Td>
         </Table.Tr>
       )}
     </>
+  );
+}
+
+/**
+ * The build/deploy failure body shown to the APP AUTHOR.
+ *
+ * `deployDetail` is now `"Build <status>"` plus, when the pipeline sent one, a
+ * blank line and a sanitized excerpt of the real build log — the line that
+ * actually tells the author what to fix ("no package-lock.json is committed…").
+ * Before this, that line existed only in a build log they cannot read.
+ *
+ * RENDERING SAFETY — the excerpt originates from tenant-influenced build output.
+ * It is sanitized server-side to printable text + newlines
+ * (`sanitizeBuildFailureReason`) AND rendered here through ordinary React text
+ * interpolation, which escapes. There is deliberately no `dangerouslySetInnerHTML`
+ * anywhere on this path, so even a hostile excerpt renders as literal characters.
+ *
+ * LAYOUT — the excerpt is capped at ~14rem of scrollable height and scrolls on
+ * BOTH axes inside its own box, so a multi-KB stack trace or a very long line can
+ * never blow out the table row or push the page into horizontal scroll.
+ */
+function DeployFailureDetail({ detail, slug }: { detail: string | null; slug: string }) {
+  const fallback = 'The build or deploy failed. Fix the issue and resubmit a new version.';
+  if (!detail) {
+    return <Text size="sm">{fallback}</Text>;
+  }
+  // Split the "Build <status>" headline from the log excerpt (the server joins
+  // them with a blank line). No excerpt → the headline is the whole message and
+  // renders exactly as it did before this feature.
+  const separator = detail.indexOf('\n\n');
+  const headline = separator === -1 ? detail : detail.slice(0, separator);
+  const excerpt = separator === -1 ? null : detail.slice(separator + 2);
+  return (
+    <Stack gap={6}>
+      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+        {headline}
+      </Text>
+      {excerpt && (
+        // A plain <pre> rather than Mantine's <Code block>: the excerpt needs
+        // `pre-wrap` + a hard height cap, and owning the styles outright keeps
+        // that guarantee independent of the component library's own CSS.
+        <pre
+          data-testid={`apps-submissions-failure-detail-${slug}`}
+          style={{
+            margin: 0,
+            padding: '0.5rem 0.65rem',
+            borderRadius: 4,
+            fontSize: '0.75rem',
+            lineHeight: 1.45,
+            fontFamily: 'var(--mantine-font-family-monospace, monospace)',
+            background: 'var(--mantine-color-default, rgba(0,0,0,0.06))',
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            maxHeight: '14rem',
+            overflow: 'auto',
+          }}
+        >
+          {excerpt}
+        </pre>
+      )}
+    </Stack>
   );
 }
 
@@ -802,11 +912,23 @@ function SubmissionActions({
             size="xs"
             variant="default"
             component={Link}
-            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit-manifest`}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit`}
             leftSection={<IconPencil size={12} />}
             data-testid={`apps-onsite-edit-${s.slug}`}
           >
             Edit
+          </Button>
+        )}
+        {showEdit && s.appBlockId && (
+          <Button
+            size="xs"
+            variant="default"
+            component={Link}
+            href={`/apps/${encodeURIComponent(s.appBlockId)}/edit?tab=media`}
+            leftSection={<IconPhoto size={12} />}
+            data-testid={`apps-onsite-listing-media-${s.slug}`}
+          >
+            Listing images
           </Button>
         )}
         {canManage && s.appBlockId && (

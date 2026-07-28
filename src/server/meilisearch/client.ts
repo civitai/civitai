@@ -442,10 +442,7 @@ export const meiliFetchFailfastTotal = registerCounterWithLabels({
  */
 export class MeilisearchFetchError extends Error {
   readonly name = 'MeilisearchFetchError';
-  constructor(
-    public readonly status: number,
-    public readonly responseText: string
-  ) {
+  constructor(public readonly status: number, public readonly responseText: string) {
     super(`Meilisearch fetch failed (${status}): ${responseText}`);
   }
 }
@@ -605,7 +602,7 @@ export class MeiliCallTimeoutError extends Error {
  * p-limit is already in use elsewhere (see src/utils/generator-import.ts).
  */
 export type MeiliBackend = 'search' | 'metricsSearch';
-type LimiterKey = MeiliBackend | 'healthProbe';
+type LimiterKey = MeiliBackend | 'healthProbe' | 'resourceSelect';
 
 const HEALTH_PROBE_CONCURRENCY = 2;
 
@@ -613,6 +610,7 @@ const limiters: Record<LimiterKey, ReturnType<typeof pLimit>> = {
   search: pLimit(env.MEILI_CALL_CONCURRENCY),
   metricsSearch: pLimit(env.MEILI_CALL_CONCURRENCY),
   healthProbe: pLimit(HEALTH_PROBE_CONCURRENCY),
+  resourceSelect: pLimit(env.MEILI_RESOURCE_SELECT_CONCURRENCY),
 };
 
 // Observability counters & gauge — see N1 in PR description. The active gauge
@@ -825,11 +823,7 @@ function recordCallOutcome(backend: MeiliBackend, isTrial: boolean, failed: bool
   }
 
   // Non-trial path: check the rolling window for trip.
-  if (
-    c.state === 'CLOSED' &&
-    failed &&
-    c.failures.length >= env.MEILI_CIRCUIT_TRIP_THRESHOLD
-  ) {
+  if (c.state === 'CLOSED' && failed && c.failures.length >= env.MEILI_CIRCUIT_TRIP_THRESHOLD) {
     transition(backend, c, 'OPEN', now);
   }
 }
@@ -868,9 +862,10 @@ async function runWithLimiter<T>(
   key: LimiterKey,
   backendLabel: string,
   fn: () => Promise<T>,
-  opts: { useTimeout?: boolean } = {}
+  opts: { useTimeout?: boolean; timeoutMs?: number } = {}
 ): Promise<T> {
   const useTimeout = opts.useTimeout ?? true;
+  const timeoutMs = opts.timeoutMs ?? env.MEILI_CALL_TIMEOUT_MS;
 
   // Circuit breaker gate — only for the two user-traffic backends. healthProbe
   // bypasses the circuit so the kubelet probe always issues a real request.
@@ -925,8 +920,13 @@ async function runWithLimiter<T>(
           timer = setTimeout(() => {
             meiliCallTimeoutsCounter.inc({ backend: backendLabel });
             failedForCircuit = true;
-            reject(new MeiliCallTimeoutError('timeout'));
-          }, env.MEILI_CALL_TIMEOUT_MS);
+            reject(
+              new MeiliCallTimeoutError(
+                'timeout',
+                `Meilisearch call exceeded ${timeoutMs}ms timeout`
+              )
+            );
+          }, timeoutMs);
           // Don't keep the event loop alive for this timer; the surrounding
           // Promise.race resolves either way.
           timer.unref?.();
@@ -962,17 +962,39 @@ export function withMeiliHealthProbe<T>(fn: () => Promise<T>): Promise<T> {
   return runWithLimiter('healthProbe', 'healthProbe', fn);
 }
 
+/**
+ * Resource-select (generation picker) variant of withMeili().
+ *
+ * Runs on a dedicated limiter and — because the circuit gate in runWithLimiter
+ * only admits the two shared user-traffic backends — bypasses the `search`
+ * circuit breaker entirely, the same way withMeiliHealthProbe() does.
+ *
+ * WHY the picker is exempt: shedding it is far more costly than shedding its
+ * co-tenants. The image feed and the polled orchestrator routes recover on
+ * their next tick, but the picker is a foreground, user-initiated, un-retried
+ * modal — a shed call renders "No models found", i.e. a false statement that no
+ * models exist. It was also insulated from all of this before the search moved
+ * server-side (the browser queried Meili directly), so this restores the prior
+ * blast radius rather than widening it.
+ *
+ * Its own timeouts still count toward nothing but its own failure — it neither
+ * trips the shared circuit nor is tripped BY it, so a brownout in site search /
+ * getModelsRaw / the feed can no longer blank the picker. The timeout is kept
+ * (generous, not removed) so a hung backend still can't hold event-loop slots
+ * to Traefik's 30s router timeout — the 2026-05-29 SIGKILL path.
+ */
+export function withMeiliResourceSelect<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithLimiter('resourceSelect', 'resourceSelect', fn, {
+    timeoutMs: env.MEILI_RESOURCE_SELECT_TIMEOUT_MS,
+  });
+}
+
 // Methods on a Meilisearch index that issue a network call to the backend and
 // therefore should run under withMeili(). Limited to read-side methods —
 // write operations (updateDocuments, etc.) are intentionally NOT wrapped
 // because they're driven by background indexing jobs which have their own
 // retry loops and aren't part of the user-facing hot path.
-const WRAPPED_INDEX_METHODS = new Set([
-  'search',
-  'searchGet',
-  'getDocument',
-  'getDocuments',
-]);
+const WRAPPED_INDEX_METHODS = new Set(['search', 'searchGet', 'getDocument', 'getDocuments']);
 
 /**
  * Wrap a MeiliSearch client so that read-side calls on returned indexes
@@ -1012,7 +1034,11 @@ function wrapIndexWithLimiter<T extends object>(index: T): T {
   return new Proxy(index, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
-      if (typeof value === 'function' && typeof prop === 'string' && WRAPPED_INDEX_METHODS.has(prop)) {
+      if (
+        typeof value === 'function' &&
+        typeof prop === 'string' &&
+        WRAPPED_INDEX_METHODS.has(prop)
+      ) {
         return function wrappedMethod(this: unknown, ...args: unknown[]) {
           return runWithLimiter('search', 'search', () => value.apply(target, args));
         };

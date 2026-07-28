@@ -148,7 +148,7 @@ function CollectionCheckboxItem({
           size="xs"
           label="Tag your entry"
           value={selectedItem.tagId?.toString() ?? null}
-          comboboxProps={{ withinPortal: false }}
+          comboboxProps={{ withinPortal: true, zIndex: 500 }}
           onChange={(value) => onTagChange(value ? parseInt(value, 10) : null)}
           clearable={false}
           allowDeselect={false}
@@ -157,7 +157,6 @@ function CollectionCheckboxItem({
             value: tag.id.toString(),
             label: tag.name,
           }))}
-          style={{ zIndex: 400 }}
         />
       )}
     </Stack>

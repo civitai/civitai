@@ -37,6 +37,12 @@ export type ReviewChecklistItem = {
 /** The off-site listing facts the content checklist derives its auto-checks from. */
 export type OffsiteChecklistData = {
   name: string | null | undefined;
+  // An on-site listing-MEDIA revision (`kind: 'onsite'`) is reviewed by this same
+  // content checklist but has NO external URL by design — pass `kind: 'onsite'` so
+  // the `url-https` item is OMITTED (a URL-less onsite row must not show a false
+  // "URL is https" warn). Omitted / `'offsite'` keeps the item (a real off-site
+  // listing with a missing / http URL still warns — unchanged).
+  kind?: ReviewChecklistKind;
   externalUrl: string | null | undefined;
   hasIcon: boolean;
   hasCover: boolean;
@@ -124,6 +130,11 @@ export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChe
   const screenshotOk = data.screenshotCount >= 1;
   const isConnect = data.connectClientId != null;
   const unjustifiedSensitive = isConnect ? unjustifiedSensitiveScopeKeys(data) : [];
+  // An on-site listing-media revision has no external URL by design — omit the
+  // `url-https` item entirely so the mod doesn't see a false red-X. Any off-site
+  // listing (kind omitted or 'offsite') keeps the item and still warns on a
+  // missing / non-https URL — behaviour unchanged.
+  const includeUrlItem = data.kind !== 'onsite';
   return [
     {
       id: 'name',
@@ -131,12 +142,16 @@ export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChe
       hint: 'The listing has a non-empty display name.',
       status: namePresent ? 'ok' : 'warn',
     },
-    {
-      id: 'url-https',
-      label: 'URL is https and opens externally',
-      hint: 'The target is a valid https:// URL rendered with target="_blank" rel="noopener".',
-      status: urlValid ? 'ok' : 'warn',
-    },
+    ...(includeUrlItem
+      ? [
+          {
+            id: 'url-https',
+            label: 'URL is https and opens externally',
+            hint: 'The target is a valid https:// URL rendered with target="_blank" rel="noopener".',
+            status: (urlValid ? 'ok' : 'warn') as ReviewChecklistItemStatus,
+          },
+        ]
+      : []),
     {
       id: 'icon',
       label: 'Icon present',

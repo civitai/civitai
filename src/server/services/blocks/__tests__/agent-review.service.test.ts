@@ -353,21 +353,23 @@ describe('startAgentReview — provisioning failure', () => {
 });
 
 describe('deleteAgentReviewResources', () => {
-  it('LISTs deployments + services by the review-agent selector then DELETEs by name', async () => {
+  it('LISTs jobs + (legacy) deployments + services by the review-agent selector then DELETEs by name', async () => {
     await deleteAgentReviewResources({ slug: 'my-app', publishRequestId: PUBREQ });
 
     const lists = calls.filter((c) => c.method === 'GET');
-    expect(lists.length).toBe(2);
+    expect(lists.length).toBe(3);
     for (const l of lists) {
       expect(decodeURIComponent(l.url)).toContain(
         `civitai.com/role=review-agent,civitai.com/publish-request-id=${PUBREQ}`
       );
     }
+    // The current workload is a Job; deployments/services remain as legacy sweeps.
+    expect(lists.some((l) => l.url.includes('/jobs?'))).toBe(true);
     expect(lists.some((l) => l.url.includes('/deployments?'))).toBe(true);
     expect(lists.some((l) => l.url.includes('/services?'))).toBe(true);
 
     const deletes = calls.filter((c) => c.method === 'DELETE');
-    expect(deletes.length).toBe(2);
+    expect(deletes.length).toBe(3);
     for (const d of deletes) {
       expect(d.url).toContain('/review-agent-abc');
       expect(d.url).not.toContain('labelSelector');
@@ -392,6 +394,9 @@ describe('buildAgentReviewApplyScript', () => {
     const script = buildAgentReviewApplyScript('civitai-apps');
     expect(script).toContain('/templates/review-agent.yaml.tmpl');
     expect(script).toContain('kubectl apply -f /tmp/rendered.yaml');
+    // Idempotent re-dispatch: a same-name review-agent Job (immutable spec) is
+    // deleted before apply recreates it.
+    expect(script).toContain('kubectl delete job "${AGENT_NAME}" -n civitai-apps --ignore-not-found');
     // The rendered manifest embeds the presigned URL + callback token — never cat
     // it (match an actual `cat` command line, not the "Do NOT cat" comment).
     expect(script).not.toContain('\ncat /tmp/rendered.yaml');
