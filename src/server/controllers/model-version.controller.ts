@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
@@ -6,13 +7,13 @@ import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { getOwnerDonationGoals } from '~/server/services/donation-goal.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
   LinkedComponentSettings,
-  ModelVersionEarlyAccessConfig,
   ModelVersionEarlyAccessPurchase,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -29,15 +30,15 @@ import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
 import {
   addAdditionalLicensePermissions,
+  assertUserEarlyAccessLimits,
   createModelVersionPostFromTraining,
   deleteVersionById,
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
-  getUserEarlyAccessModelVersions,
   getVersionById,
   getWorkflowIdFromModelVersion,
-  modelVersionDonationGoals,
+  modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
   queryModelVersions,
@@ -48,10 +49,6 @@ import {
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import {
-  getMaxEarlyAccessDays,
-  getMaxEarlyAccessModels,
-} from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -114,8 +111,6 @@ const loadModelVersion = async ({
         description: true,
         baseModel: true,
         baseModelType: true,
-        earlyAccessConfig: true,
-        earlyAccessEndsAt: true,
         trainedWords: true,
         epochs: true,
         steps: true,
@@ -279,12 +274,25 @@ const loadModelVersion = async ({
     const canGenerate = versionState?.canGenerate ?? false;
     const wildcardSetId = versionState?.wildcardSetId;
 
+    // Expose the version's gate + EA donation goal (the client reads paidAccess.terms directly).
+    // The donationGoal seeds ONLY the owner's edit form, so use the RAW owner read (unfiltered by the
+    // public EA-window/opt-out) and never hand it to a non-owner — public display reads the goal from
+    // modelVersion.donationGoal instead.
+    const paidAccess = (await getPaidAccess('ModelVersion', [id]))[id];
+    const isOwnerOrMod =
+      !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
+    const eaDonationGoal =
+      paidAccess && isOwnerOrMod
+        ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
+        : null;
+
     return {
       ...version,
       licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
       canGenerate,
       wildcardSetId,
-      earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
+      paidAccess: toModelVersionPaidAccessDto(paidAccess),
+      donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
@@ -370,34 +378,24 @@ export const upsertModelVersionHandler = async ({
       input.trainingDetails = undefined;
     }
 
-    if (!!input.earlyAccessConfig?.timeframe) {
-      const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta, features: ctx.features });
-
-      if (!ctx.user.isModerator && input.earlyAccessConfig?.timeframe > maxDays) {
-        throw throwBadRequestError('Early access days exceeds user limit');
-      }
+    // A permanent (never-expiring) gate carries no timeframeDays, so it skips every timed-window cap
+    // below (max-days, max-concurrent EA models, and the CP tier check). Restrict it to moderators on
+    // this path — the Creator Studio sets permanent gates via the WEBHOOK_TOKEN-gated early-access
+    // endpoint, never through modelVersion.upsert.
+    if (input.paidAccess?.permanent && !ctx.user.isModerator) {
+      throw throwBadRequestError('Permanent access can only be set from the Creator Studio.');
     }
 
-    if (input?.earlyAccessConfig?.timeframe) {
-      // Confirm the user doesn't have any other early access models that are still active.
-      const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: ctx.user.id });
+    await assertUserEarlyAccessLimits({
+      userId: ctx.user.id,
+      userMeta: ctx.user.meta,
+      features: ctx.features,
+      isModerator: ctx.user.isModerator,
+      timeframeDays: input.paidAccess?.timeframeDays,
+      versionId: input.id,
+    });
 
-      if (
-        !ctx.user.isModerator &&
-        activeEarlyAccess.length >=
-          getMaxEarlyAccessModels({ userMeta: ctx.user.meta, features: ctx.features }) &&
-        (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
-      ) {
-        throw throwBadRequestError(
-          'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
-        );
-      }
-    }
-
-    if (
-      input?.usageControl !== ModelUsageControl.Download &&
-      input?.earlyAccessConfig?.chargeForDownload
-    ) {
+    if (input?.usageControl !== ModelUsageControl.Download && !!input.paidAccess?.terms.download) {
       throw throwBadRequestError(
         'Cannot charge for download if downloads are disabled for this model version'
       );
@@ -567,7 +565,6 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        earlyAccessConfig: true,
         model: { select: { userId: true, nsfw: true } },
       },
     });
@@ -869,7 +866,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
   }
 };
 
-export const modelVersionDonationGoalsHandler = async ({
+export const modelVersionDonationGoalHandler = async ({
   input,
   ctx,
 }: {
@@ -881,7 +878,7 @@ export const modelVersionDonationGoalsHandler = async ({
     // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
     // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
     // throws NOT_FOUND at the source, so this is belt-and-suspenders.
-    return await modelVersionDonationGoals({
+    return await modelVersionDonationGoal({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,

@@ -84,6 +84,8 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   // an undefined value makes p-limit throw "Expected concurrency to be a number".
   // Mirror the production default (server-schema.ts: .default(50)).
   MEILI_CALL_CONCURRENCY: 50,
+  // Same module-load pLimit() trap for the resource-select limiter (server-schema.ts: .default(500)).
+  MEILI_RESOURCE_SELECT_CONCURRENCY: 500,
   // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
   SIGNALS_CALL_CONCURRENCY: 30,
   LOGGING: '',

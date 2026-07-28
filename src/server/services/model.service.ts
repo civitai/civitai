@@ -166,7 +166,9 @@ import {
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
+import { isPaidAccessActive } from '@civitai/buzz';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -223,7 +225,7 @@ type ModelRaw = {
   lastVersionAt: Date;
   publishedAt: Date | null;
   locked: boolean;
-  earlyAccessDeadline: Date;
+  earlyAccessDeadline: Date | null; // derived post-query from PaidAccess (see getModelEarlyAccessDeadlines)
   mode: string;
   rank: {
     downloadCount: number;
@@ -267,6 +269,38 @@ type ModelRaw = {
  * Test endpoint: GET /api/internal/test-model-feed-filters?token=<JOB_TOKEN>
  * Run after changes to verify filters work correctly with baseModel filtering.
  */
+
+// Model-level early-access, derived live from PaidAccess (the single source of truth — there is no
+// denormalized Model.earlyAccessDeadline column). A model is "in early access" iff any of its versions
+// has an active timed gate; its deadline is the latest such endsAt.
+export async function getModelEarlyAccessDeadlines(
+  modelIds: number[]
+): Promise<Map<number, Date>> {
+  if (!modelIds.length) return new Map();
+  const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
+    SELECT mv."modelId", MAX(pa."endsAt") AS deadline
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
+      AND mv.status = 'Published'::"ModelStatus"
+      AND mv."modelId" IN (${Prisma.join(modelIds)})
+    GROUP BY mv."modelId"
+  `;
+  return new Map(rows.map((r) => [Number(r.modelId), r.deadline]));
+}
+
+// All model ids with at least one active timed gate — for filtering a feed down to early access.
+export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT mv."modelId"
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
+      AND mv.status = 'Published'::"ModelStatus"
+  `;
+  return rows.map((r) => Number(r.modelId));
+}
+
 export const getModelsRaw = async ({
   input,
   include,
@@ -678,7 +712,14 @@ export const getModelsRaw = async ({
   }
 
   if (earlyAccess) {
-    AND.push(Prisma.sql`m."earlyAccessDeadline" >= ${new Date()}`);
+    AND.push(
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
+        WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
+          AND pamv.status = 'Published'::"ModelStatus" AND pa."endsAt" > NOW()
+      )`
+    );
   }
   if (availability) {
     if (availability === Availability.Private && !(username || isModerator)) {
@@ -874,7 +915,6 @@ export const getModelsRaw = async ({
       m."publishedAt",
       m."locked",
       m."meta",
-      m."earlyAccessDeadline",
       ${pSql}."mode",
       ${pSql}."availability",
       jsonb_build_object(
@@ -960,9 +1000,8 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics] = await withSpan(
-    'model:getAll:parallelFetch',
-    () =>
+  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, earlyAccessDeadlines] =
+    await withSpan('model:getAll:parallelFetch', () =>
       Promise.all([
         userBasicCache.fetch(userIds),
         getProfilePicturesForUsers(userIds),
@@ -971,8 +1010,14 @@ export const getModelsRaw = async ({
         includeCosmetics
           ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
           : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+        // Early-access deadline derived from PaidAccess — one batched lookup instead of a per-row
+        // correlated subquery on this hot query.
+        getModelEarlyAccessDeadlines(modelIds),
       ])
-  );
+    );
+  for (const model of models) {
+    model.earlyAccessDeadline = earlyAccessDeadlines.get(model.id) ?? null;
+  }
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -1216,7 +1261,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     isPrivate = true;
   }
   if (earlyAccess) {
-    AND.push({ earlyAccessDeadline: { gte: new Date() } });
+    AND.push({ id: { in: await getActiveEarlyAccessModelIds() } });
   }
 
   if (supportsGeneration) {
@@ -1562,17 +1607,19 @@ export const getModelVersionsMicro = async ({
       id: true,
       name: true,
       index: true,
-      earlyAccessEndsAt: true,
-      earlyAccessPermanent: true,
       createdAt: true,
       publishedAt: true,
     },
   });
 
-  return versions.map(({ earlyAccessEndsAt, earlyAccessPermanent, ...v }) => ({
-    ...v,
-    isEarlyAccess: earlyAccessPermanent || (!!earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt)),
-  }));
+  const paidAccess = await getPaidAccess(
+    'ModelVersion',
+    versions.map((v) => v.id)
+  );
+  return versions.map((v) => {
+    const row = paidAccess[v.id];
+    return { ...v, isEarlyAccess: !!row && isPaidAccessActive(row) };
+  });
 };
 
 export const updateModelById = async ({
@@ -3006,35 +3053,13 @@ export const getSimpleModelWithVersions = async ({
   return model;
 };
 
+// A model's early-access state is derived live from PaidAccess — there is no Model.earlyAccessDeadline
+// column. Callers invoke this after a gate change (upsert / publish / delete / purchase / goal-end) so
+// the Meili document — which stores a sync-time projection of the deadline for search-result cards —
+// gets re-derived, and the feed/card caches refresh.
 export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
-  // Using dbWrite here cause immediately after a version has been unlocked it may update the model,
-  // meaning we need the latest version.
-  const model = await dbWrite.model.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      publishedAt: true,
-      modelVersions: {
-        where: { status: ModelStatus.Published },
-        select: { id: true, earlyAccessEndsAt: true, createdAt: true },
-      },
-    },
-  });
-  if (!model) throw throwNotFoundError();
-
-  const { modelVersions } = model;
-  const nextEarlyAccess = modelVersions.find((v) => !!v.earlyAccessEndsAt);
-
-  if (nextEarlyAccess) {
-    await updateModelById({
-      id,
-      data: {
-        earlyAccessDeadline: nextEarlyAccess.earlyAccessEndsAt,
-      },
-    });
-  } else {
-    await updateModelById({ id, data: { earlyAccessDeadline: null } });
-  }
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await dataForModelsCache.refresh(id);
 };
 
 /**

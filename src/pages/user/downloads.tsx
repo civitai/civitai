@@ -1,7 +1,7 @@
 import { Center, Container, Group, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { DownloadCard } from '~/components/Downloads/DownloadCard';
 import {
   DownloadActiveFilters,
@@ -14,6 +14,7 @@ import {
 } from '~/components/Downloads/download.utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useScrollMargin } from '~/hooks/useScrollMargin';
 import type { DownloadHistoryItem } from '~/server/services/download.service';
 import { trpc } from '~/utils/trpc';
 
@@ -25,7 +26,7 @@ export default function Downloads() {
   const queryUtils = trpc.useUtils();
   const scrollAreaRef = useScrollAreaRef();
   const listRef = useRef<HTMLDivElement>(null);
-  const [scrollMargin, setScrollMargin] = useState(0);
+  const scrollMargin = useScrollMargin(listRef);
 
   const { filters, setFilters, clearFilters, hasActiveFilters } = useDownloadFilters();
 
@@ -43,19 +44,6 @@ export default function Downloads() {
     () => filterDownloads(downloads, filters),
     [downloads, filters]
   );
-
-  // Calculate scroll margin (offset from top of scroll container to our list)
-  useLayoutEffect(() => {
-    if (listRef.current && scrollAreaRef?.current) {
-      let offset = 0;
-      let current: HTMLElement | null = listRef.current;
-      while (current && current !== scrollAreaRef.current) {
-        offset += current.offsetTop;
-        current = current.offsetParent as HTMLElement;
-      }
-      setScrollMargin(offset);
-    }
-  }, [scrollAreaRef, isLoading]);
 
   // Set up virtualizer for efficient rendering using the main scroll area
   const virtualizer = useVirtualizer({

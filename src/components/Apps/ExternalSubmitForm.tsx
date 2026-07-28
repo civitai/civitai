@@ -24,13 +24,7 @@ import {
   IconWorld,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   OFFSITE_CATEGORY_OPTIONS,
   OFFSITE_CONTENT_RATING_OPTIONS,
@@ -41,14 +35,15 @@ import {
   isClientStepComplete,
   isCreateDetailsStepComplete,
   isCreateUrlStepComplete,
-  normalizeLinkUrl,
   toSubmitExternalInput,
   validateExternalCreateForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
-import { ListingAssetStep, type MetaSuggestions } from '~/components/Apps/ListingAssetStep';
+import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
+import { describeMissingChannels } from '~/components/Apps/listingAutofillStatus';
+import { useListingAutofill } from '~/components/Apps/useListingAutofill';
 import { ExternalListingEditForm } from '~/components/Apps/ExternalListingEditForm';
 import { FadeIn } from '~/components/Apps/wizardMotion';
 import type { ListingEditContext } from '~/components/Apps/offsiteEditConfig';
@@ -126,16 +121,18 @@ function ExternalCreateForm() {
   // SENSITIVE justification surfaces its required error at once.
   const [showScopeErrors, setShowScopeErrors] = useState(false);
 
-  // App-URL metadata auto-pull: once a valid URL is entered, fetch the target page's
-  // OG metadata SERVER-side (SSRF-safe) and surface prefill + asset suggestions.
-  const [metaUrl, setMetaUrl] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<MetaSuggestions>({});
-  const [autofillApplied, setAutofillApplied] = useState(false);
-  const appliedMetaRef = useRef<string | null>(null);
-  // Host-derived name kept as a FALLBACK only — used to fill `name` when the OG-meta
-  // fetch settles with no usable `<title>`. The real page title is preferred (see the
-  // meta effect); we never seed this up front so the title can win.
+  // App-URL metadata auto-pull is owned by the shared `useListingAutofill` hook
+  // (declared below `applyNormalizedUrl`): once a valid https URL is entered — on blur,
+  // Enter, step-advance, OR a debounced pause in typing — it fetches the target page's
+  // OG metadata SERVER-side (SSRF-safe) and surfaces fill-if-empty prefill + asset
+  // suggestions. Host-derived name kept as a FALLBACK only — used to fill `name` when
+  // the OG-meta fetch settles with no usable `<title>` (the real page title is
+  // preferred); never seeded up front so the title can win.
   const hostNameFallbackRef = useRef<string>('');
+  // Latest `values` for the hook's emptiness reads (its async `setValues` updater hasn't
+  // committed yet when the status note is computed).
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
 
   const currentUser = useCurrentUser();
   const isModerator = !!currentUser?.isModerator;
@@ -201,52 +198,18 @@ function ExternalCreateForm() {
     : ownSelectedClient;
   const allowedScopes = selectedClient?.allowedScopes ?? 0;
 
-  const metaQuery = trpc.appListings.fetchListingMetaFromUrl.useQuery(
-    { url: metaUrl ?? '' },
-    { enabled: !!metaUrl, retry: false, refetchOnWindowFocus: false, staleTime: Infinity }
-  );
-
-  // Apply the OG-meta prefill ONCE per settled URL. Runs only after the fetch settles
-  // (success OR error) for the current `metaUrl`, so the real page `<title>`
-  // (`data.name`) has a chance to arrive before we touch the `name` field — the Name
-  // input lives on the later Details step, so the fetch has time. NAME precedence:
-  // prefer the extracted `<title>`; if the fetch yields none (or errors), fall back to
-  // the host-derived name. Every field is fill-if-empty, so typed text is never
-  // clobbered.
-  useEffect(() => {
-    if (!metaUrl || appliedMetaRef.current === metaUrl) return;
-    // Wait until the fetch settles for THIS url. With a per-url cache key + retry:false,
-    // `metaQuery.data` (when present) belongs to `metaUrl`, and `isError` is its result.
-    if (metaQuery.isFetching) return;
-    const data = metaQuery.data;
-    const settled = !!data || metaQuery.isError;
-    if (!settled) return;
-    appliedMetaRef.current = metaUrl;
-
-    // Prefer the page <title> (data.name) over the host-derived fallback name.
-    const resolvedName = data?.name || hostNameFallbackRef.current;
-    setValues((v) => ({
-      ...v,
-      name: v.name.trim().length === 0 && resolvedName ? resolvedName : v.name,
-      tagline: v.tagline.trim().length === 0 && data?.tagline ? data.tagline : v.tagline,
-      // Description autofill: fill ONLY when empty, truncated to the field bound —
-      // a suggestion the author can freely edit or clear (never clobbers typed text).
-      description:
-        v.description.trim().length === 0 && data?.description
-          ? data.description.slice(0, OFFSITE_SUBMIT_LIMITS.descriptionMax)
-          : v.description,
-    }));
-    setSuggestions({ coverImageUrl: data?.coverImageUrl, iconImageUrl: data?.iconImageUrl });
-    // Reveal the "we found your details" note whenever the link yielded anything the
-    // author can accept (computed from `data` directly — NOT the async setValues
-    // updater, whose side effects haven't run yet at this point).
-    if (
-      data &&
-      (data.name || data.tagline || data.description || data.coverImageUrl || data.iconImageUrl)
-    ) {
-      setAutofillApplied(true);
-    }
-  }, [metaUrl, metaQuery.isFetching, metaQuery.data, metaQuery.isError]);
+  // Shared autofill core (auto-trigger + fill-if-empty apply + suggestions + status +
+  // repull). CREATE prefers the page <title>, falling back to the host-derived name;
+  // every asset slot starts empty so all suggestions are actionable (default). The
+  // Name input lives on the later Details step, so the fetch has time to settle before
+  // the author sees it.
+  const autofill = useListingAutofill({
+    externalUrl: values.externalUrl,
+    setValues,
+    valuesRef,
+    nameFallbackRef: hostNameFallbackRef,
+    onBeforeFire: applyNormalizedUrl,
+  });
 
   const submitMutation = trpc.appListings.submitExternalListing.useMutation({
     onSuccess: (res: Submitted) => {
@@ -313,18 +276,14 @@ function ExternalCreateForm() {
     }));
   }
 
-  // The App URL is REQUIRED. Blur tidies it into canonical https (no blocking); the
-  // required gate is enforced on advance.
+  // The App URL is REQUIRED. Blur tidies it into canonical https (no blocking) and
+  // auto-fires the OG pull via the hook (once per distinct URL); the required gate is
+  // enforced on advance. `onBeforeFire` (applyNormalizedUrl) canonicalises + derives
+  // the slug + stashes the host-name fallback when the pull fires.
   function handleUrlBlur() {
     if (values.externalUrl.trim().length === 0) return;
-    const result = normalizeLinkUrl(values.externalUrl);
-    if (result.error) {
-      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
-      return;
-    }
-    applyNormalizedUrl(result.url);
-    setMetaUrl(result.url);
-    setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+    const { error } = autofill.triggerFromUrl(values.externalUrl);
+    setErrors((prev) => ({ ...prev, externalUrl: error }));
   }
 
   function handleAdvanceFromUrl() {
@@ -332,13 +291,11 @@ function ExternalCreateForm() {
       setErrors((prev) => ({ ...prev, externalUrl: 'Enter your app’s URL to continue.' }));
       return;
     }
-    const result = normalizeLinkUrl(values.externalUrl);
-    if (result.error) {
-      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
+    const { error } = autofill.triggerFromUrl(values.externalUrl);
+    if (error) {
+      setErrors((prev) => ({ ...prev, externalUrl: error }));
       return;
     }
-    applyNormalizedUrl(result.url);
-    setMetaUrl(result.url);
     setErrors((prev) => ({ ...prev, externalUrl: undefined }));
     setActive(STEP_APP);
   }
@@ -476,13 +433,56 @@ function ExternalCreateForm() {
                 data-testid="apps-offsite-submit-url"
               />
 
-              {metaQuery.isFetching && (
+              {/* The OG pull now auto-fires once a valid https URL is entered (blur,
+                  Enter, Next, or a debounced pause) — no manual button. A subtle inline
+                  status reports loading / applied / partial / empty / error. */}
+              {autofill.loading && (
                 <Group gap={6} data-testid="apps-offsite-meta-loading">
                   <Loader size={12} />
                   <Text size="xs" c="dimmed">
                     Looking for a name, description and images from your link…
                   </Text>
                 </Group>
+              )}
+              {!autofill.loading && autofill.result?.status === 'error' && (
+                <Text size="xs" c="red" data-testid="apps-offsite-submit-autofill-error">
+                  Couldn’t read that site’s details — check the URL, or add your images and
+                  description manually.
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'empty' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-submit-autofill-empty">
+                  {autofill.result.siteExposedNothing ? (
+                    <>
+                      Your site didn’t expose a name, description, icon or cover to pull. Add them
+                      to the page’s <Code>&lt;head&gt;</Code>, or add your details and images
+                      manually on the next steps.
+                    </>
+                  ) : (
+                    'Nothing new to pull — your details and assets are already set.'
+                  )}
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'partial' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-submit-autofill-partial">
+                  Pulled what your link exposed — {describeMissingChannels(autofill.result.missing)}{' '}
+                  {(autofill.result.missing?.length ?? 0) > 1 ? 'were' : 'was'} not found; add{' '}
+                  {(autofill.result.missing?.length ?? 0) > 1 ? 'those' : 'that'} manually. Check the
+                  Details and Assets steps for what we found.
+                </Text>
+              )}
+              {!autofill.loading && autofill.result?.status === 'applied' && (
+                <Alert
+                  color="grape"
+                  variant="light"
+                  icon={<IconSparkles size={16} />}
+                  data-testid="apps-offsite-submit-autofill-applied"
+                >
+                  <Text size="sm">
+                    Pulled the latest details from your link — check the Details step for the
+                    name and description, and the Assets step for the suggested icon/cover.
+                  </Text>
+                </Alert>
               )}
 
               <Group justify="space-between">
@@ -610,7 +610,7 @@ function ExternalCreateForm() {
         >
           <FadeIn>
             <Stack gap="md" mt="md">
-              {autofillApplied && (
+              {autofill.applied && (
                 <FadeIn>
                   <Alert
                     color="grape"
@@ -625,7 +625,7 @@ function ExternalCreateForm() {
                   </Alert>
                 </FadeIn>
               )}
-              {metaQuery.isFetching && (
+              {autofill.loading && (
                 <Group gap={6} data-testid="apps-offsite-meta-loading">
                   <Loader size={12} />
                   <Text size="xs" c="dimmed">
@@ -759,7 +759,9 @@ function ExternalCreateForm() {
               <ListingAssetStep
                 listingId={submitted.listingId}
                 contentRating={values.contentRating}
-                suggestions={suggestions}
+                suggestions={autofill.suggestions}
+                onRepull={autofill.repull}
+                repullLoading={autofill.loading}
                 header={
                   <Alert
                     color="green"

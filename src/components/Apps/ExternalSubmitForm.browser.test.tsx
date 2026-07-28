@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => ({
     isSuccess: boolean;
     isError?: boolean;
   },
+  // The meta query's `refetch` — a same-url "Pull from site" re-click calls it
+  // (staleTime:Infinity + retry:false makes `setMetaUrl(sameUrl)` a no-op), so we assert
+  // it fired on re-click to prove the once-per-url guard is bypassed on a manual retry.
+  refetch: vi.fn(),
   clients: {
     data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 4 | 32 }] as unknown,
     isLoading: false,
@@ -46,21 +50,44 @@ vi.mock('~/utils/trpc', () => {
   const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   return {
     trpc: {
+      // ListingAssetStep (reached on the Assets step) calls `trpc.useUtils()` and
+      // `utils.appListings.getAssetScanStatuses.fetch` on an accept — stub both.
+      useUtils: () => ({
+        appListings: {
+          getAssetScanStatuses: { fetch: vi.fn().mockResolvedValue([]) },
+        },
+      }),
       appListings: {
         submitExternalListing: {
-          useMutation: (opts?: unknown) => {
+          useMutation: (opts?: { onSuccess?: (r: unknown) => void }) => {
             mocks.submit(opts);
-            return { mutate: mocks.mutate, mutateAsync: vi.fn(), isPending: false };
+            return {
+              // On mutate, fire the caller's onSuccess so the wizard transitions to the
+              // Assets step (setSubmitted + STEP_ASSETS) — the only place the captured
+              // `suggestions` render. Existing tests assert the call count, unaffected.
+              mutate: (vars: unknown) => {
+                mocks.mutate(vars);
+                opts?.onSuccess?.({
+                  listingId: 'apl_new',
+                  publishRequestId: 'apr_new',
+                  slug: 'vitrine',
+                });
+              },
+              mutateAsync: vi.fn(),
+              isPending: false,
+            };
           },
         },
         fetchListingMetaFromUrl: {
-          useQuery: () => mocks.meta,
+          useQuery: () => ({ ...mocks.meta, refetch: mocks.refetch }),
         },
         persistAssetImage: { useMutation: mutation },
         ingestAssetFromUrl: { useMutation: mutation },
+        ingestAssetFromDataUri: { useMutation: mutation },
         setIcon: { useMutation: mutation },
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
+        removeScreenshot: { useMutation: mutation },
       },
       oauthClient: {
         getAll: { useQuery: () => mocks.clients },
@@ -96,6 +123,7 @@ const { ExternalSubmitForm } = await import('./ExternalSubmitForm');
 beforeEach(() => {
   mocks.submit.mockClear();
   mocks.mutate.mockClear();
+  mocks.refetch.mockClear();
   mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
   mocks.clients = {
     data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: READONLY_SCOPES }],
@@ -397,5 +425,186 @@ describe('ExternalSubmitForm — OAuth step: mod global-search + create deeplink
     await expect.element(link).toHaveAttribute('href', '/user/account');
     await expect.element(link).toHaveAttribute('target', '_blank');
     await expect.element(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+});
+
+/**
+ * Auto-trigger + inline status + assets-step "Re-pull from site" (create wizard).
+ * The manual "Pull from site" button was REMOVED: entering a valid https URL now
+ * auto-fires the OG pull (on blur / advance), a subtle inline status reports the
+ * four-state outcome (applied / partial / empty / error), and the assets step carries
+ * the sole manual retry. Also covers the inline data-URI icon suggestion (radio case).
+ */
+describe('ExternalSubmitForm — auto-trigger, status, re-pull, data-URI icon', () => {
+  /** Fill a URL + advance to the App step (blur auto-fires the pull). */
+  async function fillUrlAndAdvance(url: string) {
+    await page.getByTestId('apps-offsite-submit-url').fill(url);
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
+    await page.getByTestId('apps-offsite-wizard-next-url').click();
+  }
+  /** Drive URL → App → Details → create draft → Assets. */
+  async function reachAssets() {
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await page.getByRole('button', { name: 'Create draft' }).click();
+  }
+
+  test('the manual "Pull from site" button is GONE (auto-trigger replaces it)', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+    expect(page.getByTestId('apps-offsite-submit-autofill').elements()).toHaveLength(0);
+  });
+
+  test('entering a valid URL auto-fires the pull (on blur): fills empty name/description + shows the applied note', async () => {
+    mocks.meta = {
+      data: {
+        name: 'Civitai Cosmetic Studio',
+        tagline: 'short',
+        description: 'Pulled from the link.',
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://cosmetic-studio.civitai.com');
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
+    // The applied note appears WITHOUT any button click — the pull auto-fired on blur.
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-applied'))
+      .toBeInTheDocument();
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('Civitai Cosmetic Studio');
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-description'))
+      .toHaveValue('Pulled from the link.');
+  });
+
+  test('a site exposing SOME channels shows the honest PARTIAL note (radio: title + icon, no cover/description)', async () => {
+    mocks.meta = {
+      data: {
+        name: 'AI Radio',
+        iconDataUri: 'data:image/svg+xml,%3Csvg%2F%3E',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://radio.example.com');
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-partial'))
+      .toBeInTheDocument();
+    // NOT a spurious applied/empty.
+    expect(page.getByTestId('apps-offsite-submit-autofill-applied').elements()).toHaveLength(0);
+  });
+
+  test('a site that exposed NOTHING (SPA #3344) shows the honest empty note — never "already filled"', async () => {
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://spa.example.com');
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-empty'))
+      .toBeInTheDocument();
+  });
+
+  test('an ERRORED pull shows the error note (no spurious applied/empty/partial)', async () => {
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false, isError: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://broken.example.com');
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-error'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-submit-autofill-applied').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-submit-autofill-empty').elements()).toHaveLength(0);
+  });
+
+  test('the pulled https icon/cover suggestions flow to the Assets step (Use this previews)', async () => {
+    mocks.meta = {
+      data: {
+        name: 'Vitrine',
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await fillUrlAndAdvance('https://vitrine.civitai.com');
+    await reachAssets();
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-accept-cover')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-offsite-suggested-icon-preview'))
+      .toBeInTheDocument();
+  });
+
+  test('an inline data-URI icon (radio) surfaces as an icon "Use this" tile on the Assets step', async () => {
+    mocks.meta = {
+      data: {
+        name: 'AI Radio',
+        iconDataUri: 'data:image/svg+xml,%3Csvg%2F%3E',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await fillUrlAndAdvance('https://radio.example.com');
+    await reachAssets();
+    // The inline data-URI icon offers an accept tile even though there's no https icon URL.
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-offsite-suggested-icon-preview'))
+      .toBeInTheDocument();
+    // No cover suggestion (the site exposed none).
+    expect(page.getByTestId('apps-offsite-accept-cover').elements()).toHaveLength(0);
+  });
+
+  test('the assets-step "Re-pull from site" button invokes repull (refetch of the current url)', async () => {
+    mocks.meta = {
+      data: {
+        name: 'Vitrine',
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await fillUrlAndAdvance('https://vitrine.civitai.com');
+    await reachAssets();
+    const repull = page.getByTestId('apps-offsite-assets-repull');
+    await expect.element(repull).toBeInTheDocument();
+    // The URL was fired via setMetaUrl (new url), so a repull of the SAME url must
+    // refetch — proving the button re-runs the query.
+    mocks.refetch.mockClear();
+    await repull.click();
+    await vi.waitFor(() => expect(mocks.refetch).toHaveBeenCalled());
+  });
+
+  test('does NOT clobber a name the user already typed', async () => {
+    // Reach Details with no meta applied, type a name, then a later settled pull must not clobber.
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://vitrine.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await page.getByTestId('apps-offsite-submit-name').fill('User Typed Name');
+    // A later re-render with settled meta carrying a title must respect the typed name.
+    mocks.meta = {
+      data: { name: 'OG Title' },
+      isFetching: false,
+      isSuccess: true,
+    };
+    await page.getByRole('textbox', { name: /^Tagline/ }).fill('trigger a re-render');
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('User Typed Name');
   });
 });

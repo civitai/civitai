@@ -5,6 +5,8 @@ import { componentFileTypes, constants } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
+import { isPaidAccessActive } from '@civitai/buzz';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import {
@@ -203,9 +205,6 @@ export const getFileForModelVersion = async ({
       },
       name: true,
       trainedWords: true,
-      earlyAccessEndsAt: true,
-      earlyAccessConfig: true,
-      earlyAccessPermanent: true,
       createdAt: true,
       requireAuth: true,
       usageControl: true,
@@ -226,9 +225,10 @@ export const getFileForModelVersion = async ({
     isModerator: user?.isModerator ?? undefined,
   });
 
-  const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
-  const inEarlyAccess =
-    !!modelVersion.earlyAccessPermanent || (deadline !== undefined && new Date() < deadline);
+  // Paid-access gate now sourced from PaidAccess (mirrors the old columns during Phase 1).
+  const paidAccess = (await getPaidAccess('ModelVersion', [modelVersion.id]))[modelVersion.id];
+  const inEarlyAccess = !!paidAccess && isPaidAccessActive(paidAccess);
+  const deadline = paidAccess?.endsAt ?? undefined;
   const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
 
   const archived = modelVersion.model.mode === ModelModifier.Archived;

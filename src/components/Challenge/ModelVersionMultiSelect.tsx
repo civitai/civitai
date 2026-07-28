@@ -94,7 +94,7 @@ export function ModelVersionMultiSelect({
         ],
         excludeIds: value,
       },
-      selectSource: 'modelVersion',
+      selectSource: 'generation',
     });
   };
 

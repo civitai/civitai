@@ -15,16 +15,19 @@ import { renderWithProviders } from '../../../test/component-setup';
  * each finding card carries a subtle "copy link" affordance.
  *
  * Covers:
+ *  - the tab IA (Item 1/2): tabs render in the order Scopes → Security → Code
+ *    review, there is NO Summary tab, the default selected tab is Scopes, the
+ *    count badges are present, and `summaryMd` is NOT rendered even when provided;
  *  - on the page route, landing on `#finding-security-1` activates the Security
  *    audit tab, the card carries `id="finding-security-1"`, `scrollIntoView`
  *    fires (deterministic post-commit scroll), and a copy-link renders;
  *  - a bare tab hash (`#code`) activates that tab with no finding target;
  *  - on the modal route there is NO deep-linking (no copy-link, no anchor id).
  *
- * The Summary tab renders `summaryMd` through CustomMarkdown, which reads
- * `useCurrentUser()`. We keep `summaryMd` null here so that surface is never hit,
- * and boundary-stub the hook anyway (null user is fine — the standard pattern in
- * the sibling AgentReview tests).
+ * The report renderer no longer has a markdown surface (Summary removed), so no
+ * `CustomMarkdown` / `useCurrentUser` path is hit — we boundary-stub the hook
+ * anyway (null user is fine — the standard pattern in the sibling AgentReview
+ * tests) so nothing reaches for a session provider the scaffold doesn't have.
  */
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -65,16 +68,62 @@ afterEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
+describe('ReportTabs — tab IA (Item 1/2: drop Summary, reorder, default Scopes)', () => {
+  // Neutral (non-page) route so deep-linking is inert and the DEFAULT tab is what
+  // renders — the tab-order/default assertions don't depend on the hash.
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/apps/review');
+  });
+
+  test('renders exactly three tabs in order Scopes → Security → Code review, no Summary', async () => {
+    renderWithProviders(<ReportTabs report={REPORT} costCapped={false} />);
+
+    const tabs = page.getByRole('tab').elements();
+    expect(tabs).toHaveLength(3);
+    const labels = tabs.map((t) => t.textContent ?? '');
+    expect(labels[0]).toMatch(/Scopes/);
+    expect(labels[1]).toMatch(/Security audit/);
+    expect(labels[2]).toMatch(/Code review/);
+    // No Summary tab remains.
+    expect(page.getByRole('tab', { name: /Summary/ }).elements().length).toBe(0);
+  });
+
+  test('the default selected tab is Scopes', async () => {
+    renderWithProviders(<ReportTabs report={REPORT} costCapped={false} />);
+    await expect
+      .element(page.getByRole('tab', { name: /Scopes/ }))
+      .toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('count badges are present in the tab labels', async () => {
+    renderWithProviders(<ReportTabs report={REPORT} costCapped={false} />);
+    // REPORT has 1 code finding + 2 security findings + 0 scopes.
+    await expect.element(page.getByRole('tab', { name: /Code review.*1/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('tab', { name: /Security audit.*2/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('tab', { name: /Scopes.*0/ })).toBeInTheDocument();
+  });
+
+  test('summaryMd is NOT rendered even when the report carries one', async () => {
+    const withSummary = { ...REPORT, summaryMd: 'SENTINEL_SUMMARY_PROSE_XYZ' };
+    renderWithProviders(<ReportTabs report={withSummary} costCapped={false} />);
+    // The report renders (advisory banner present) …
+    await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
+    // … but the prose overview is nowhere in the DOM (all tabs are keepMounted, so
+    // this is a true "never rendered" assertion, not just "not on the active tab").
+    expect(document.body.textContent).not.toContain('SENTINEL_SUMMARY_PROSE_XYZ');
+  });
+});
+
 describe('ReportTabs — deep-link to a finding (page route)', () => {
   test('landing on #finding-security-1 activates the Security audit tab', async () => {
     renderWithProviders(<ReportTabs report={REPORT} costCapped={false} />);
 
-    // The Security audit tab is selected (not the default Summary).
+    // The Security audit tab is selected (not the default Scopes).
     await expect
       .element(page.getByRole('tab', { name: /Security audit/ }))
       .toHaveAttribute('aria-selected', 'true');
     await expect
-      .element(page.getByRole('tab', { name: /Summary/ }))
+      .element(page.getByRole('tab', { name: /Scopes/ }))
       .toHaveAttribute('aria-selected', 'false');
 
     // The targeted finding is visible in the now-active tab.
@@ -138,9 +187,9 @@ describe('ReportTabs — modal route (deep-linking inert)', () => {
     window.history.replaceState(null, '', '/apps/review#finding-security-1');
     renderWithProviders(<ReportTabs report={REPORT} costCapped={false} />);
 
-    // Default Summary tab stays active — the finding hash is NOT honored.
+    // Default Scopes tab stays active — the finding hash is NOT honored.
     await expect
-      .element(page.getByRole('tab', { name: /Summary/ }))
+      .element(page.getByRole('tab', { name: /Scopes/ }))
       .toHaveAttribute('aria-selected', 'true');
 
     // No copy-link affordances and no per-finding anchor id anywhere (pre-feature

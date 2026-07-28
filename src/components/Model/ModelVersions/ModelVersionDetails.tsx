@@ -1,3 +1,4 @@
+import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
 import {
   Accordion,
   ActionIcon,
@@ -93,7 +94,7 @@ import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
+import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -279,8 +280,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     civitaiLinked && !!version.hashes && version.hashes?.length > 0 && hasDownloadPermissions;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
-  const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();
-  const earlyAccessConfig = version?.earlyAccessConfig;
+  const paidAccessEndsAt = version?.paidAccess?.endsAt;
+  const isEarlyAccess = !!paidAccessEndsAt && paidAccessEndsAt > new Date();
+  const paidAccessTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
@@ -289,10 +291,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     isSelectableInGenerator &&
     features.imageGeneration &&
     // !shouldOmit &&
-    (!isEarlyAccess ||
-      !!earlyAccessConfig?.chargeForGeneration ||
-      !!earlyAccessConfig?.freeGeneration ||
-      hasGeneratePermissions);
+    (!isEarlyAccess || !!paidAccessTerms?.generation || hasGeneratePermissions);
   const canGenerate = couldGenerate && version.canGenerate;
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
@@ -657,10 +656,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       data-activity="create:model"
                       disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
-                        !hasGeneratePermissions &&
-                        !isLoadingAccess &&
-                        earlyAccessConfig?.chargeForGeneration
-                          ? earlyAccessConfig?.generationPrice
+                        !hasGeneratePermissions && !isLoadingAccess && paidAccessTerms
+                          ? generationPrice(paidAccessTerms)
                           : undefined
                       }
                       onPurchase={() => onPurchase('generation')}
@@ -931,10 +928,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       onSelectFileId={setSelectedFileId}
                       canDownload={canDownload}
                       downloadPrice={
-                        !hasDownloadPermissions &&
-                        !isLoadingAccess &&
-                        earlyAccessConfig?.chargeForDownload
-                          ? earlyAccessConfig?.downloadPrice
+                        !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
+                          ? paidAccessTerms.download.price
                           : undefined
                       }
                       isLoadingAccess={isLoadingAccess}
@@ -1023,7 +1018,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             modelId={model.id}
             versionId={version.id}
             modelType={model.type}
-            deadline={version.earlyAccessEndsAt ?? undefined}
+            deadline={paidAccessEndsAt ?? undefined}
           />
           <ModelFileAlert
             versionId={version.id}
@@ -1121,10 +1116,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   userPreferences={user?.filePreferences}
                   canDownload={canDownload}
                   downloadPrice={
-                    !hasDownloadPermissions &&
-                    !isLoadingAccess &&
-                    earlyAccessConfig?.chargeForDownload
-                      ? earlyAccessConfig?.downloadPrice
+                    !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
+                      ? paidAccessTerms.download.price
                       : undefined
                   }
                   isLoadingAccess={isLoadingAccess}
@@ -1370,7 +1363,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             {version.hiddenMetrics?.downloads ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
-                              <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
+                              <AnimatedCount
+                                value={liveMetrics.downloadCount}
+                                abbreviate={false}
+                                resetKey={version.id}
+                              />
                             )}
                           </Text>
                         </Group>
@@ -1382,7 +1379,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             {version.hiddenMetrics?.generations ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
-                              <AnimatedCount value={liveMetrics.generationCount} />
+                              <AnimatedCount
+                                value={liveMetrics.generationCount}
+                                resetKey={version.id}
+                              />
                             )}
                           </Text>
                         </Group>
@@ -1394,7 +1394,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             {version.hiddenMetrics?.buzz ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
-                              <AnimatedCount value={liveMetrics.earnedAmount} />
+                              <AnimatedCount
+                                value={liveMetrics.earnedAmount}
+                                resetKey={version.id}
+                              />
                             )}
                           </Text>
                         </Group>
@@ -1733,7 +1736,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </UserResourceReviewComposite>
           )}
 
-          <ModelVersionDonationGoals modelVersionId={version.id} />
+          <ModelVersionDonationGoal modelVersionId={version.id} />
 
           <SmartCreatorCard
             user={model.user}

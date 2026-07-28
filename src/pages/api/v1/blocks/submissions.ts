@@ -7,6 +7,7 @@ import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { dbRead } from '~/server/db/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
+import { isApprovedAndServing } from '~/shared/constants/app-block-deploy.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -115,13 +116,20 @@ type SubmissionRow = {
  * columns (bundleKey/bundleSha256/forgejoCommitSha/manifest/file diffs/reviewer
  * id), and never another user's data (rows are self-scoped at the query).
  *
- * `liveUrl` is the `https://<slug>.civit.ai/` surface, surfaced ONLY once the
- * app is actually serving (deployState 'live', or a legacy null deployState on
- * an approved row — same "assume live" rule as the /apps/my-submissions UI).
+ * `liveUrl` is the `https://<slug>.civit.ai/` surface, surfaced ONLY once the app
+ * is actually serving — `isApprovedAndServing`, the SHARED predicate (and shared
+ * staleness/epoch constants) the owner-facing UI reasons with.
+ *
+ * 🔴 It is NOT "approved && deployState != 'failed'". A STRANDED approval (the
+ * build never fired, so deploy_state stayed null) would otherwise hand
+ * `civitai app status` a working-looking `liveUrl` for an app that 404s — the
+ * exact invisible failure this feature exists to remove, re-created on the CLI
+ * surface. The predicate still returns true for a LEGACY null state (approved
+ * before deploy-state tracking existed, or carrying a recorded transition), so
+ * pre-feature rows that genuinely deployed keep their URL.
  */
 function shapeRow(row: SubmissionRow, appsDomain: string) {
-  const isApproved = row.status === 'approved';
-  const isLive = isApproved && (row.deployState === 'live' || row.deployState == null);
+  const isLive = isApprovedAndServing(row);
   return {
     id: row.id,
     blockId: row.slug, // the app slug == `block_id` that builds <slug>.civit.ai

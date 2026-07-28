@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { isPaidAccessActive } from '@civitai/buzz';
+import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
@@ -28,11 +30,11 @@ import {
   type HiddenModelMetrics,
 } from '~/server/utils/model-metric-privacy';
 import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
+import { getOwnerDonationGoals } from '~/server/services/donation-goal.service';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type {
   LinkedComponentSettings,
-  ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
@@ -259,6 +261,19 @@ export const getModelHandler = async ({
       userId: ctx.user?.id,
     });
 
+    const paidAccessByVersion = await getPaidAccess(
+      'ModelVersion',
+      filteredVersions.map((x) => x.id)
+    );
+    // The DTO donationGoal seeds ONLY the owner's edit form → raw owner read (unfiltered by the
+    // public EA-window/opt-out), and owner/mod only. Public display reads modelVersion.donationGoal.
+    const donationGoalsByVersion = isOwner
+      ? await getOwnerDonationGoals(
+          'ModelVersion',
+          filteredVersions.map((x) => x.id)
+        )
+      : {};
+
     // Only pass non-linked-component resources to getResourceData
     const regularResourceIds =
       model.modelVersions.flatMap((version) =>
@@ -336,11 +351,12 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const eaConfig = version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
-      let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
-      if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
+      const paidAccess = paidAccessByVersion[version.id];
+      const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
-        !!earlyAccessDeadline || (features.earlyAccessModel && !!eaConfig?.permanent);
+        features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
+      // Permanent gate => endsAt null => no countdown; a timed gate surfaces its live deadline.
+      const earlyAccessDeadline = paidAccessGated ? paidAccess?.endsAt ?? undefined : undefined;
 
       const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
       const isDownloadable = version.usageControl === ModelUsageControl.Download || isOwner;
@@ -416,7 +432,8 @@ export const getModelHandler = async ({
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
+        paidAccess: toModelVersionPaidAccessDto(paidAccess),
+        donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,
         // Raw flags are mod-only — they also carry payout/licensing state that

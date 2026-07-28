@@ -62,9 +62,11 @@ import type {
  * — same screenshot-grid + description + external-link discipline — so listings
  * feel native.
  *
- * DARK / parallel-run: rendered only by the mod-only `/apps/store-preview/<slug>`
- * surface. The live `/apps/[appBlockId]` detail + `AppDetailsModal` + default
- * `/apps` are byte-unchanged; the canonical `/apps/[slug]` cutover is P2d.
+ * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>`
+ * surface AND, in read-only `preview` mode (see props), by the moderator
+ * listing-media review as a store preview of an unapproved shadow listing. The
+ * live `/apps/[appBlockId]` detail + `AppDetailsModal` + default `/apps` are
+ * byte-unchanged; the canonical `/apps/[slug]` cutover is P2d.
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in
  * the pure view-model (`safeExternalHref`) + rendered with rel="noopener
@@ -280,9 +282,24 @@ export interface AppListingDetailBodyProps {
   detail: ListingDetail;
   /** Whether the viewer can launch an in-host page app (the `appBlocksPages` flag). */
   canOpenPage?: boolean;
+  /**
+   * READ-ONLY preview posture. When set, render ONLY the presentational parts —
+   * hero cover, icon, name, tagline, creator chip, content-rating badge, screenshot
+   * gallery, description markdown — and OMIT every LIVE/interactive surface: the
+   * comments + recommend reviews, the report / review / primary-action / owner-edit
+   * buttons, and the recommend roll-up. Used by the moderator listing-media review
+   * to render an unapproved SHADOW listing as a store preview WITHOUT loading its
+   * comments/reviews (which don't exist yet) or exposing user actions on an
+   * un-approved listing. When NOT set, behaviour is byte-identical to before.
+   */
+  preview?: boolean;
 }
 
-export function AppListingDetailBody({ detail, canOpenPage = false }: AppListingDetailBodyProps) {
+export function AppListingDetailBody({
+  detail,
+  canOpenPage = false,
+  preview = false,
+}: AppListingDetailBodyProps) {
   const currentUser = useCurrentUser();
   const recommendLabel = getRecommendLabel(detail.recommend, detail.reviewCount);
   const hasRecommend = detail.recommend.recommendPct != null;
@@ -296,12 +313,15 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
 
   return (
     <Stack gap="lg">
-      <Anchor component={Link} href="/apps/store-preview" size="sm">
-        <Group gap={4}>
-          <IconArrowLeft size={14} />
-          Back to store
-        </Group>
-      </Anchor>
+      {/* Back-to-store nav is a live-surface affordance — omitted in preview. */}
+      {!preview && (
+        <Anchor component={Link} href="/apps/store-preview" size="sm">
+          <Group gap={4}>
+            <IconArrowLeft size={14} />
+            Back to store
+          </Group>
+        </Anchor>
+      )}
 
       <HeroCover coverUrl={detail.coverUrl} category={detail.category} name={detail.name} />
 
@@ -330,6 +350,10 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
             )}
           </Stack>
         </Group>
+        {/* Action column (primary action + owner edit + review/report) — every
+            item here is a LIVE interactive affordance, so the whole column is
+            omitted in read-only preview. */}
+        {!preview && (
         <Box style={{ flexShrink: 0 }}>
           <Stack gap="xs" align="flex-end">
             <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
@@ -356,26 +380,33 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
             <ReportListingButton appListingId={detail.id} />
           </Stack>
         </Box>
-      </Group>
-
-      {/* Recommend rollup — Steam-style "N% recommend (M)" or "No reviews yet". */}
-      <Group gap="md" wrap="wrap">
-        <Group gap={6} wrap="nowrap">
-          <IconThumbUp size={16} className={hasRecommend ? 'text-green-500' : 'text-gray-500'} />
-          <Text size="sm" fw={500}>
-            {recommendLabel}
-          </Text>
-        </Group>
-        {hasRecommend && (
-          <Text size="xs" c="dimmed">
-            {detail.recommend.recommendedCount.toLocaleString()} recommend ·{' '}
-            {detail.recommend.notRecommendedCount.toLocaleString()} don&apos;t
-          </Text>
         )}
       </Group>
 
-      {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text). */}
-      <AppListingReviews appListingId={detail.id} />
+      {/* Recommend rollup + recent reviews are review AGGREGATES — omitted in
+          preview (a shadow listing has none, and we must not query them). */}
+      {!preview && (
+        <>
+          {/* Recommend rollup — Steam-style "N% recommend (M)" or "No reviews yet". */}
+          <Group gap="md" wrap="wrap">
+            <Group gap={6} wrap="nowrap">
+              <IconThumbUp size={16} className={hasRecommend ? 'text-green-500' : 'text-gray-500'} />
+              <Text size="sm" fw={500}>
+                {recommendLabel}
+              </Text>
+            </Group>
+            {hasRecommend && (
+              <Text size="xs" c="dimmed">
+                {detail.recommend.recommendedCount.toLocaleString()} recommend ·{' '}
+                {detail.recommend.notRecommendedCount.toLocaleString()} don&apos;t
+              </Text>
+            )}
+          </Group>
+
+          {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text). */}
+          <AppListingReviews appListingId={detail.id} />
+        </>
+      )}
 
       <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 
@@ -405,8 +436,11 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
       {/* CommentsV2 discussion — reuses the shared comment + moderation stack keyed
           on the listing's Thread (`entityType="appListing"`, integer surrogate).
           Additive + separate from the recommend-style reviews above. Only reached
-          for an APPROVED listing (getListingDetail is approved-only). */}
-      <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
+          for an APPROVED listing (getListingDetail is approved-only) — omitted in
+          preview (a shadow listing has no thread; loading it would 404/N+1). */}
+      {!preview && (
+        <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
+      )}
     </Stack>
   );
 }

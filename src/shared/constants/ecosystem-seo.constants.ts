@@ -3256,25 +3256,25 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Seedream: {
     key: 'Seedream',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-07-27',
     name: 'Seedream',
     metaDescription:
-      "Generate with Seedream on Civitai — ByteDance's text-to-image model with 4K resolution, sharp typography, and strong prompt adherence. Browse models & prompts.",
+      "Generate with Seedream on Civitai — ByteDance's text-to-image model with up to 4K output, sharp typography, and strong prompt adherence. Browse models & prompts.",
     modality: 'image',
     hero: {
       intro:
-        "Seedream is ByteDance's text-to-image model, built for high-resolution output, strong prompt adherence, and fine-grained typography — legible text inside the image, including Chinese characters. Seedream 4.0 adds native 4K resolution. Generate with every Seedream version right here on Civitai — no GPU, no install.",
-      badges: ['Text-to-Image', '4K + Typography', 'By ByteDance'],
+        "Seedream is ByteDance's text-to-image model, built for high-resolution output, strong prompt adherence, and fine-grained typography — legible text inside the image, including Chinese characters. On Civitai, v4.5 and v5.0 Lite can render at 4K; the other versions output at 2K. Generate with every Seedream version right here on Civitai — no GPU, no install.",
+      badges: ['Text-to-Image', 'Up to 4K + Typography', 'By ByteDance'],
     },
     overview: [
       "Seedream is ByteDance's text-to-image model, developed by the company's Seed research team. It is designed around high-resolution output, strong prompt adherence, and fine-grained typography — rendering legible text inside the image, including Chinese characters, rather than overlaying it. According to ByteDance's technical write-ups, Seedream 3.0 introduced native 2K output, and Seedream 4.0 raised that to native 4K resolution. It is a distinct model from Seedance, ByteDance's video generator.",
-      'The family has iterated quickly. Compared with Seedream 2.0, later releases roughly doubled the training data and improved image resolution, complex-attribute adherence, fine-grained text rendering, and overall aesthetics and fidelity. On Civitai you can run several generations — v3.0, v4.0, v4.5, and the v5.0 Lite and v5.0 Pro tiers — with v5.0 Pro as the current flagship. Because Seedream is API-only, there are no open weights to download and no LoRAs to stack; every version is hosted and ready to generate directly in the browser.',
+      'The family has iterated quickly. Compared with Seedream 2.0, later releases roughly doubled the training data and improved image resolution, complex-attribute adherence, fine-grained text rendering, and overall aesthetics and fidelity. On Civitai you can run several generations — v3.0, v4.0, v4.5, and the v5.0 Lite and v5.0 Pro tiers — with v5.0 Pro as the current flagship. A 2K/4K switch appears on v4.5 and v5.0 Lite; the remaining versions, v5.0 Pro included, render at 2K, so pick v4.5 or v5.0 Lite when you specifically need 4K. Because Seedream is API-only, there are no open weights to download and no LoRAs to stack; every version is hosted and ready to generate directly in the browser.',
       'Choose Seedream when legible in-image text and typography, high-resolution output, or careful adherence to complex prompts matter — it is a strong fit for posters, signage, packaging, and text-heavy design work, and ByteDance publishes an official prompting guide for it. For the deepest library of community styles and characters via LoRAs, the SDXL-based Pony and Illustrious ecosystems still lead; Qwen-Image is the closest open-weight alternative for text-in-image work. As a premium hosted model, Seedream costs more Buzz per image than lighter open checkpoints — a fair trade when resolution and prompt precision are the priority.',
     ],
     promptTips: [
       'Write in natural language, not tag lists. Describe the subject, setting, lighting, and style in plain sentences — Seedream is built to follow detailed, descriptive prompts rather than comma-separated Danbooru tags.',
       'For text in the image, put the exact words in quotation marks. Fine-grained typography is a Seedream strength — it renders legible small text and long layouts, and handles Chinese characters as well as English.',
-      'Ask for the resolution you want. Seedream supports high-resolution output (up to 4K from Seedream 4.0 on), so state the aspect ratio and a high-detail intent when you need crisp, print-scale results.',
+      'Pick the resolution in the generator, not the prompt. Output size comes from the aspect-ratio control and, on v4.5 and v5.0 Lite, a 2K/4K switch — asking for "4K" in the prompt text does nothing. Still describe a high-detail intent when you want crisp, print-scale results.',
       'Be explicit about complex attributes and composition. Later Seedream versions were tuned for complex-attribute adherence, so spell out counts, colors, spatial relationships, and per-object details rather than leaving them implied.',
       "Consult ByteDance's official Seedream prompting guide for model-specific structure, and skip SD-style weight syntax like (word:1.5) — describe emphasis in words instead.",
     ],
@@ -3383,11 +3383,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     faq: [
       {
         q: 'How much does it cost to generate with Seedream?',
-        a: 'Generation on Civitai runs on Buzz, and Seedream sits toward the premium end — it is a hosted, API-only model from ByteDance, and its high-resolution, 4K-capable renders cost more Buzz per image than lighter open checkpoints like SDXL or Illustrious. Every account still earns free Blue Buzz daily by reacting to images and other on-site activity, so you can try Seedream without spending real money; you will simply work through Buzz faster than on cheaper models, so let your daily Blue Buzz accumulate or add a membership for higher limits.',
+        a: 'Generation on Civitai runs on Buzz, and Seedream sits toward the premium end — it is a hosted, API-only model from ByteDance, and its high-resolution renders cost more Buzz per image than lighter open checkpoints like SDXL or Illustrious. Price is set per version and does not change with the resolution you pick, so a 4K image on v4.5 costs the same as a 2K one. Every account still earns free Blue Buzz daily by reacting to images and other on-site activity, so you can try Seedream without spending real money; you will simply work through Buzz faster than on cheaper models, so let your daily Blue Buzz accumulate or add a membership for higher limits.',
       },
       {
         q: 'What is Seedream best at?',
-        a: 'Legible in-image text and fine-grained typography, high-resolution output up to 4K, and adherence to complex, detailed prompts — a strong fit for posters, signage, packaging, and text-heavy design. Try it in the Civitai generator.',
+        a: 'Legible in-image text and fine-grained typography, high-resolution output — up to 4K on v4.5 and v5.0 Lite, 2K elsewhere — and adherence to complex, detailed prompts. A strong fit for posters, signage, packaging, and text-heavy design. Try it in the Civitai generator.',
       },
       {
         q: 'Is Seedream the same as Seedance?',
@@ -3403,7 +3403,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Which Seedream version should I use?',
-        a: 'v5.0 Pro is the current flagship and the default; v5.0 Lite is a lighter tier, and v4.0 is where 4K resolution arrived. Remix an example above to compare versions on the same prompt.',
+        a: 'v5.0 Pro is the current flagship and the default, and it renders at 2K. If you need 4K, choose v4.5 or v5.0 Lite — they are the two versions with a 2K/4K switch. Remix an example above to compare versions on the same prompt.',
       },
     ],
     attribution: 'a hosted text-to-image model by ByteDance (Seedream)',
@@ -3412,6 +3412,16 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         field: 'promptTips',
         claim: 'prompting tips',
         note: 'Prompt guide was a generic fallback — tips grounded in the model card. ByteDance publishes an official Seedream guide worth mirroring.',
+      },
+      {
+        field: 'overview',
+        claim: '4K availability per version',
+        note: 'Page previously implied 4K from v4.0 onward, including the v5.0 Pro flagship. On Civitai the 2K/4K switch exists only on v4.5 and v5.0 Lite (see `versionsWithResolutionToggle` in seedream-graph.ts); everything else renders at 2K. The upstream ByteDance claim about v4.0 is left attributed in the overview. Corrected 2026-07-27 after a user reported a 4K request returning 2K.',
+      },
+      {
+        field: 'faq',
+        claim: 'resolution does not affect price',
+        note: 'Seedream is priced flat per version — an orchestrator whatIf returns the same cost at 2048x2048 and 4096x4096 (v5.0 Pro 135, v5.0 Lite 52, v4.5 60). Re-check if ByteDance moves to resolution-tiered pricing.',
       },
     ],
   },

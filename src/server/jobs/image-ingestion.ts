@@ -16,6 +16,35 @@ import { decreaseDate } from '~/utils/date-helpers';
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
+// Hard per-image backstop for the send loop below. The sends run sequentially within
+// each 250-image chunk (concurrency 4), so a SINGLE ingestImage that never resolves
+// stalls its whole chunk and the run never completes — and because createJob only
+// records duration/errors once the run settles, a killed run records NOTHING (the
+// exact "absent from job metrics" signature) and re-loads the same stuck oldest-1000
+// rows every 5 min, so the backlog never drains. The orchestrator submit is already
+// bounded per-attempt (createImageIngestionRequest), but this also covers any other
+// external await inside ingestImage (Redis flag read, prompt lookup, the scanJobs
+// UPDATE). Set above the bounded submit worst case (~15s × 3 + backoff) so it never
+// pre-empts a legitimately-retrying submit; a fired timeout just fails that image →
+// it stays queued and is retried on a later run.
+const INGEST_IMAGE_TIMEOUT_MS = 60 * 1000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`ingestImage timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 type IngestImageRow = IngestImageInput & {
   scanRequestedAt: Date | null;
   ingestion: string;
@@ -134,15 +163,10 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
   // Pending image is flipped to Error (below, in the prod block), which routes it
   // into the EXISTING capped Error-retry machinery — it gets a bounded number of
   // real retries and then terminalizes, instead of being Pending forever.
-  const pendingTimeoutDate = decreaseDate(
-    now,
-    env.IMAGE_SCANNING_PENDING_TIMEOUT,
-    'minutes'
-  );
+  const pendingTimeoutDate = decreaseDate(now, env.IMAGE_SCANNING_PENDING_TIMEOUT, 'minutes');
   const agedOutPendingIds = images
     .filter(
-      (img) =>
-        img.ingestion === 'Pending' && !img.isBackfill && img.createdAt <= pendingTimeoutDate
+      (img) => img.ingestion === 'Pending' && !img.isBackfill && img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);
   const agedOutPendingSet = new Set(agedOutPendingIds);
@@ -397,7 +421,18 @@ async function sendImagesForScanBulk(
       const failedImages: IngestImageInput[] = [];
 
       for (const image of imagesToProcess) {
-        const imageSuccess = await ingestImage({ image, lowPriority: options?.lowPriority });
+        // Bound each submit AND catch throws so one hung/failing image can't stall or
+        // abort the batch — a timeout or error just marks this image failed (retried
+        // in-batch below, then on a later run), never rejects the whole run.
+        let imageSuccess = false;
+        try {
+          imageSuccess = await withTimeout(
+            ingestImage({ image, lowPriority: options?.lowPriority }),
+            INGEST_IMAGE_TIMEOUT_MS
+          );
+        } catch {
+          imageSuccess = false;
+        }
         if (!imageSuccess) {
           failedImages.push(image);
         }

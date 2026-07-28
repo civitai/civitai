@@ -10,7 +10,6 @@ import {
   IconLink,
   IconShieldLock,
 } from '@tabler/icons-react';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import {
   fileLineLabel,
   findingAnchorId,
@@ -19,7 +18,6 @@ import {
   parseAgentReport,
   parseReportHash,
   sectionAnalysisError,
-  severityBreakdown,
   sortFindingsBySeverity,
   type AgentFinding,
   type CodeReviewView,
@@ -33,21 +31,21 @@ import {
  * App Blocks — AGENTIC MOD CODE-REVIEW report renderer (P2, Phase-2 redesign).
  *
  * The report was a single scrolling "wall of text". This restructures it into
- * TABBED, scannable, per-finding sections — Summary | Code review (N) | Security
- * audit (N) | Scopes (N) — with counts in the tab labels and one section visible
- * at a time. It is a REUSABLE, prop-only renderer (no tRPC, no onsite-only
- * assumptions) so the offsite listing review (`OffsiteReviewModal`) can adopt it
- * later. It renders in BOTH the queue modal and the new review page — one shared
- * component, no divergence.
+ * TABBED, scannable, per-finding sections — Scopes (N) | Security audit (N) |
+ * Code review (N) — with counts in the tab labels and one section visible at a
+ * time. (The former free-text "Summary" tab was dropped; the agent prose overview
+ * is no longer surfaced here.) It is a REUSABLE, prop-only renderer (no tRPC, no
+ * onsite-only assumptions) so the offsite listing review (`OffsiteReviewModal`)
+ * can adopt it later. It renders in BOTH the queue modal and the new review page —
+ * one shared component, no divergence.
  *
  * 🔴 SANITIZATION — every value here is ADVERSARIAL. The report is generated from
  * an untrusted, prompt-injectable bundle. All free text (finding titles, details,
  * evidence, scope notes) is rendered through React (auto-escaped) — never
- * `dangerouslySetInnerHTML`, never raw HTML. ONLY `summaryMd` is rendered through
- * `CustomMarkdown` (react-markdown, NO `rehype-raw`, `disallowedElements={['img']}`)
- * so raw HTML is escaped to inert text and no `<img>` fires an external fetch from
- * the moderator's browser (tracking-pixel / IP+UA leak). This closes the
- * stored-XSS-at-render concern for the report surface.
+ * `dangerouslySetInnerHTML`, never raw HTML. With the markdown summary removed,
+ * there is no `CustomMarkdown` / raw-HTML surface at all here — every value is
+ * inert React text. This keeps the stored-XSS-at-render concern closed for the
+ * report surface.
  */
 
 function severityColor(severity?: string): string {
@@ -304,55 +302,6 @@ function TabLabel({ label, count }: { label: string; count?: number }) {
 }
 
 // --- Tab bodies (exported for offsite reuse) -------------------------------
-
-export function SummaryTab({
-  summaryMd,
-  codeReview,
-  securityAudit,
-  scopeCount,
-}: {
-  summaryMd?: string | null;
-  codeReview: CodeReviewView;
-  securityAudit: SecurityAuditView;
-  scopeCount: number;
-}) {
-  const sec = severityBreakdown(securityAudit.findings);
-  const secBreak: string[] = [];
-  if (sec.critical) secBreak.push(`${sec.critical} critical`);
-  if (sec.high) secBreak.push(`${sec.high} high`);
-  const secSuffix = secBreak.length ? ` (${secBreak.join(', ')})` : '';
-
-  return (
-    <Stack gap="sm">
-      {/* Counts-first roll-up. */}
-      <Group gap="xs" data-testid="report-rollup">
-        <Badge variant="light" color="gray" leftSection={<IconCode size={12} />}>
-          Code {codeReview.findings.length}
-        </Badge>
-        <Badge
-          variant="light"
-          color={sec.critical || sec.high ? 'red' : 'gray'}
-          leftSection={<IconShieldLock size={12} />}
-        >
-          Security {securityAudit.findings.length}
-          {secSuffix}
-        </Badge>
-        <Badge variant="light" color="gray" leftSection={<IconKey size={12} />}>
-          {scopeCount} {scopeCount === 1 ? 'scope' : 'scopes'}
-        </Badge>
-      </Group>
-
-      {summaryMd ? (
-        // ONLY markdown surface — CustomMarkdown (no rehype-raw, img-guarded).
-        <div className="markdown-content" data-testid="report-summary-md">
-          <CustomMarkdown disallowedElements={['img']}>{summaryMd}</CustomMarkdown>
-        </div>
-      ) : (
-        <EmptyState label="No summary was provided." />
-      )}
-    </Stack>
-  );
-}
 
 export function CodeReviewTab({
   codeReview,
@@ -720,7 +669,9 @@ export function ReportTabs({
     costUsd?: unknown;
     startedAt?: unknown;
     completedAt?: unknown;
-    summaryMd?: string | null;
+    // NOTE: `summaryMd` may still be present on the underlying report row (shared
+    // type), but it is intentionally NOT rendered here — the Summary tab was
+    // dropped. Callers pass the whole report object; the excess field is ignored.
     codeReview?: unknown;
     securityAudit?: unknown;
     scopeVerdicts?: unknown;
@@ -747,7 +698,8 @@ export function ReportTabs({
   // so the guard never fires. All window/document/history access lives inside
   // effects and event handlers (SSR-safe).
   const [deepLinkable, setDeepLinkable] = useState(false);
-  const [activeTab, setActiveTab] = useState<ReportTabValue>('summary');
+  // Default to the first tab (Scopes) now that Summary is gone.
+  const [activeTab, setActiveTab] = useState<ReportTabValue>('scopes');
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   // The finding to scroll to once its tab has COMMITTED. keepMounted panels are
   // display:none until active, so we defer the scroll to the [activeTab] effect
@@ -860,35 +812,19 @@ export function ReportTabs({
       <Tabs value={activeTab} onChange={handleTabChange} keepMounted>
         {/* Scrollable on narrow — the list scrolls within itself, never overflowing the page. */}
         <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}>
-          <Tabs.Tab value="summary" leftSection={<IconInfoCircle size={14} />}>
-            Summary
-          </Tabs.Tab>
-          <Tabs.Tab value="code" leftSection={<IconCode size={14} />}>
-            <TabLabel label="Code review" count={codeReview.findings.length} />
+          <Tabs.Tab value="scopes" leftSection={<IconKey size={14} />}>
+            <TabLabel label="Scopes" count={scopeVerdicts.scopes.length} />
           </Tabs.Tab>
           <Tabs.Tab value="security" leftSection={<IconShieldLock size={14} />}>
             <TabLabel label="Security audit" count={securityAudit.findings.length} />
           </Tabs.Tab>
-          <Tabs.Tab value="scopes" leftSection={<IconKey size={14} />}>
-            <TabLabel label="Scopes" count={scopeVerdicts.scopes.length} />
+          <Tabs.Tab value="code" leftSection={<IconCode size={14} />}>
+            <TabLabel label="Code review" count={codeReview.findings.length} />
           </Tabs.Tab>
         </Tabs.List>
 
-        <Tabs.Panel value="summary" pt="sm">
-          <SummaryTab
-            summaryMd={report.summaryMd}
-            codeReview={codeReview}
-            securityAudit={securityAudit}
-            scopeCount={scopeVerdicts.scopes.length}
-          />
-        </Tabs.Panel>
-        <Tabs.Panel value="code" pt="sm">
-          <CodeReviewTab
-            codeReview={codeReview}
-            error={codeError}
-            deepLinkable={deepLinkable}
-            highlightedId={highlightedId}
-          />
+        <Tabs.Panel value="scopes" pt="sm">
+          <ScopesTab scopeVerdicts={scopeVerdicts} error={scopeError} />
         </Tabs.Panel>
         <Tabs.Panel value="security" pt="sm">
           <SecurityAuditTab
@@ -898,8 +834,13 @@ export function ReportTabs({
             highlightedId={highlightedId}
           />
         </Tabs.Panel>
-        <Tabs.Panel value="scopes" pt="sm">
-          <ScopesTab scopeVerdicts={scopeVerdicts} error={scopeError} />
+        <Tabs.Panel value="code" pt="sm">
+          <CodeReviewTab
+            codeReview={codeReview}
+            error={codeError}
+            deepLinkable={deepLinkable}
+            highlightedId={highlightedId}
+          />
         </Tabs.Panel>
       </Tabs>
 

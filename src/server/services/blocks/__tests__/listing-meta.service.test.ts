@@ -36,10 +36,19 @@ const { mockSafeFetch, SafeFetchError } = vi.hoisted(() => {
 });
 vi.mock('~/server/utils/safe-fetch', () => ({ safeFetch: mockSafeFetch, SafeFetchError }));
 
-const { mockMetadata, mockSharp } = vi.hoisted(() => {
+const { mockMetadata, mockToBuffer, mockSharp } = vi.hoisted(() => {
   const mockMetadata = vi.fn();
-  const mockSharp = vi.fn(() => ({ metadata: mockMetadata }));
-  return { mockMetadata, mockSharp };
+  const mockToBuffer = vi.fn();
+  // A single chainable instance backs both the URL path (`sharp(bytes).metadata()`) and
+  // the data-URI path (`sharp(bytes,{density}).resize(...).png().toBuffer()` then
+  // `sharp(png).metadata()`).
+  const instance: Record<string, unknown> = {};
+  instance.resize = () => instance;
+  instance.png = () => instance;
+  instance.toBuffer = mockToBuffer;
+  instance.metadata = mockMetadata;
+  const mockSharp = vi.fn(() => instance);
+  return { mockMetadata, mockToBuffer, mockSharp };
 });
 vi.mock('sharp', () => ({ default: mockSharp }));
 
@@ -55,12 +64,14 @@ vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage
 
 import {
   fetchListingMeta,
+  ingestListingAssetFromDataUri,
   ingestListingAssetFromUrl,
 } from '~/server/services/blocks/listing-meta.service';
 
 beforeEach(() => {
   mockSafeFetch.mockReset();
   mockMetadata.mockReset();
+  mockToBuffer.mockReset();
   mockSharp.mockClear();
   mockUploadImageBufferToStore.mockReset();
   mockCreateImage.mockReset();
@@ -217,6 +228,109 @@ describe('ingestListingAssetFromUrl', () => {
     await expect(
       ingestListingAssetFromUrl({ input: { url: 'https://cdn.example.com/x', kind: 'icon' }, userId: 1 })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 SECURITY: the inline data-URI icon path (the radio.civitai.com favicon case). It
+ * NEVER routes through safeFetch (bytes come from the data URI itself), REJECTS any
+ * non-image MIME, caps the decoded size, and RASTERIZES to PNG so the bytes that reach
+ * the store are ALWAYS PNG — raw SVG is never persisted or served (XSS vector). All I/O
+ * (sharp, the store upload, createImage) is mocked; the rasterize chain returns a
+ * sentinel PNG buffer so the "never raw SVG" invariant is assertable.
+ */
+describe('ingestListingAssetFromDataUri', () => {
+  const pngBytes = Buffer.from('rasterized-png-bytes');
+
+  function primeRaster() {
+    mockToBuffer.mockResolvedValue(pngBytes);
+    mockMetadata.mockResolvedValue({ width: 128, height: 128, format: 'png' });
+    mockUploadImageBufferToStore.mockResolvedValue({ key: 'store-uuid-key', backend: 'backblaze' });
+    mockCreateImage.mockResolvedValue({ id: 555 });
+  }
+
+  it('decodes + RASTERIZES a data:image/svg+xml icon to PNG, stores the PNG (never raw SVG), and createImage runs the standard scan pipeline', async () => {
+    primeRaster();
+    const svg = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E';
+    const res = await ingestListingAssetFromDataUri({
+      input: { dataUri: svg, kind: 'icon' },
+      userId: 7,
+    });
+    expect(res).toEqual({ imageId: 555 });
+
+    // NEVER RAW SVG: the bytes uploaded are the RASTERIZED PNG (the sentinel from
+    // toBuffer), and the object Content-Type is image/png — not the source SVG.
+    expect(mockUploadImageBufferToStore).toHaveBeenCalledTimes(1);
+    expect(mockUploadImageBufferToStore).toHaveBeenCalledWith(
+      pngBytes,
+      expect.objectContaining({ contentType: 'image/png' })
+    );
+
+    // Standard scan pipeline (no bypass), PNG mime, data-URI provenance stamped.
+    expect(mockCreateImage).toHaveBeenCalledTimes(1);
+    const arg = mockCreateImage.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      url: 'store-uuid-key',
+      type: 'image',
+      mimeType: 'image/png',
+      userId: 7,
+      metadata: { source: 'app-listing-og-pull-datauri', appListingAssetKind: 'icon' },
+    });
+    expect(arg.skipIngestion).toBeUndefined();
+  });
+
+  it('REJECTS a data:text/html icon (non-image) without rasterizing or ingesting', async () => {
+    await expect(
+      ingestListingAssetFromDataUri({
+        input: { dataUri: 'data:text/html,%3Cscript%3Ealert(1)%3C%2Fscript%3E', kind: 'icon' },
+        userId: 1,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockToBuffer).not.toHaveBeenCalled();
+    expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('REJECTS a data:application/javascript icon (non-image)', async () => {
+    await expect(
+      ingestListingAssetFromDataUri({
+        input: { dataUri: 'data:application/javascript,alert(1)', kind: 'icon' },
+        userId: 1,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('REJECTS an oversized decoded data URI (decompression-abuse bound) before rasterizing', async () => {
+    // URL-encoded all-ASCII payload → decoded byte length == payload length. >2MB.
+    const huge = 'data:image/png,' + 'A'.repeat(2 * 1024 * 1024 + 16);
+    await expect(
+      ingestListingAssetFromDataUri({ input: { dataUri: huge, kind: 'icon' }, userId: 1 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockToBuffer).not.toHaveBeenCalled();
+    expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('REJECTS a malformed data URI (no payload separator)', async () => {
+    await expect(
+      ingestListingAssetFromDataUri({ input: { dataUri: 'data:image/png;base64', kind: 'icon' }, userId: 1 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('REJECTS an image data URI whose bytes cannot be rasterized (sharp throws)', async () => {
+    mockToBuffer.mockRejectedValue(new Error('input buffer contains unsupported image format'));
+    await expect(
+      ingestListingAssetFromDataUri({
+        input: { dataUri: 'data:image/png;base64,QG5vdC1hLXBuZw==', kind: 'icon' },
+        userId: 1,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
     expect(mockCreateImage).not.toHaveBeenCalled();
   });
 });

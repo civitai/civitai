@@ -56,6 +56,16 @@ vi.mock('~/server/services/model-file.service', () => ({
   filesForModelVersionCache: {},
   markFileReplaced: mockMarkReplaced,
 }));
+// Keep the real paid-access module (which reads REDIS_KEYS.CACHES.PAID_ACCESS at import) out of the graph.
+vi.mock('~/server/services/paid-access.service', () => ({
+  getPaidAccess: vi.fn(async () => ({})),
+  writePaidAccessForModelVersion: vi.fn(),
+  materializePaidAccessEndsAt: vi.fn(),
+  bustPaidAccessCache: vi.fn(),
+  paidAccessInputFromLegacyConfig: vi.fn(() => null),
+  earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
+  earlyAccessConfigFromPaidAccess: vi.fn(),
+}));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import { addLinkedComponent } from '~/server/services/model-version.service';

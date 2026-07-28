@@ -248,8 +248,11 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     await vi.waitFor(() => {
       const r = replies.last('RESOURCE_PICKER_RESULT');
       if (!r) throw new Error('no reply yet');
-      // EXACTLY the six-field allowlist — IDs + the public display names of the
-      // user-picked resource — nothing else.
+      // EXACTLY the projectSafeGenerationResource allowlist — IDs + public display
+      // names + the PUBLIC recommended generation settings (strength/min/max clamp,
+      // trainedWords, clipSkip; widened in PR-C so a block can seed a weight slider +
+      // trigger-word display). Defaults fill the unset settings on `fakeResource()`.
+      // Nothing outside the allowlist — no availability/access/early-access internals.
       expect(r.payload).toEqual({
         requestId: 'rq_pick',
         selected: {
@@ -259,25 +262,31 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
           versionName: 'v1.0',
           baseModel: 'Flux.1 D',
           modelType: 'Checkpoint',
+          strength: 1,
+          minStrength: -1,
+          maxStrength: 2,
+          trainedWords: [],
+          clipSkip: null,
         },
       });
     });
 
     // Adversarial leak check: the reply payload must NOT carry any of the
-    // sensitive fields present on the source GenerationResource. The two public
-    // display names (modelName/versionName) ARE allowed now — everything else
+    // sensitive fields present on the source GenerationResource. The public display
+    // names (modelName/versionName) and the PUBLIC recommended settings (strength/
+    // min/max clamp, trainedWords, clipSkip) ARE allowed — everything else
     // (availability/access/early-access/nsfw/poi/minor/cover-image/userId/the
-    // full model object) must STILL be dropped; the leak-prevention property
-    // holds, only the two name fields were added.
+    // full model object) must STILL be dropped; the leak-prevention property holds.
     const payload = replies.last('RESOURCE_PICKER_RESULT')!.payload as {
       selected: Record<string, unknown>;
     };
     const sel = payload.selected;
     const sensitiveAbsent = ['availability', 'hasAccess', 'canGenerate', 'image', 'name',
-      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'trainedWords', 'model'];
+      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'model'];
     for (const k of sensitiveAbsent) expect(sel).not.toHaveProperty(k);
     expect(Object.keys(sel).sort()).toEqual(
-      ['baseModel', 'modelId', 'modelName', 'modelType', 'versionId', 'versionName']
+      ['baseModel', 'clipSkip', 'maxStrength', 'minStrength', 'modelId', 'modelName',
+        'modelType', 'strength', 'trainedWords', 'versionId', 'versionName']
     );
     replies.stop();
   });

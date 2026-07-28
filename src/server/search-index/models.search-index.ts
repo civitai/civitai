@@ -267,6 +267,25 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   }
   const membershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
 
+  // Early-access deadline is derived from PaidAccess (no Model column) and projected into the doc at
+  // index time. A model is in early access iff a version holds an active timed gate; the deadline is
+  // the latest such endsAt. Gate changes queue a re-index so this stays fresh.
+  const modelIds = models.map((m) => m.id);
+  const earlyAccessRows = modelIds.length
+    ? await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
+        SELECT mv."modelId", MAX(pa."endsAt") AS deadline
+        FROM "PaidAccess" pa
+        JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+        WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
+          AND mv.status = 'Published'::"ModelStatus"
+          AND mv."modelId" IN (${Prisma.join(modelIds)})
+        GROUP BY mv."modelId"
+      `
+    : [];
+  const earlyAccessDeadlineMap = new Map<number, Date>(
+    earlyAccessRows.map((r) => [Number(r.modelId), r.deadline])
+  );
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -308,6 +327,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
+        earlyAccessDeadline: earlyAccessDeadlineMap.get(model.id) ?? null,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
@@ -396,16 +416,28 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const indexRecordsWithImages = models
     .map((modelRecord) => {
       const { modelVersions, ...model } = modelRecord;
-      const [modelVersion] = modelVersions;
 
-      if (!modelVersion) {
+      if (!modelVersions.length) {
         return null;
       }
 
-      const modelImages = images.filter(
-        (image) =>
-          image.modelVersionId === modelVersion.id &&
-          image.availability !== Availability.Unsearchable
+      // Keep images for the newest version of each distinct base model — not just the
+      // latest version — so base-model-filtered cards can show a matching version's
+      // cover. The latest version goes first, so images[0] stays the primary cover.
+      const coveredBaseModels = new Set<string>();
+      const coveredVersionIds: number[] = [];
+      for (const version of modelVersions) {
+        if (coveredBaseModels.has(version.baseModel)) continue;
+        coveredBaseModels.add(version.baseModel);
+        coveredVersionIds.push(version.id);
+      }
+
+      const modelImages = coveredVersionIds.flatMap((versionId) =>
+        images.filter(
+          (image) =>
+            image.modelVersionId === versionId &&
+            image.availability !== Availability.Unsearchable
+        )
       );
 
       return {

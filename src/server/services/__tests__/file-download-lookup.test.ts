@@ -76,6 +76,12 @@ vi.mock('~/server/services/bountyEntry.service', () => ({
   getBountyEntryFilteredFiles: vi.fn(),
 }));
 
+// getFileForModelVersion sources the EA gate from getPaidAccess; return no gate
+// so the lookup runs unblocked (matches the pre-cutover column defaults here).
+vi.mock('~/server/services/paid-access.service', () => ({
+  getPaidAccess: vi.fn(async () => ({})),
+}));
+
 // Control whether the delivery URL resolves. A throw here is the
 // "genuinely unresolvable URL" case the fix must turn into a 404 (`not-found`),
 // NOT a 500 (`error`).

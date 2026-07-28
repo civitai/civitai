@@ -27,8 +27,13 @@ import {
   type AnyRequest,
   type OnsiteReviewMode,
 } from '~/components/Apps/OnsiteReviewModal';
+import {
+  CombinedReviewModal,
+  type CombinedReviewSelection,
+} from '~/components/Apps/CombinedReviewModal';
 import { UnifiedReviewList } from '~/components/Apps/UnifiedReviewList';
 import type {
+  CombinedReviewPayload,
   OffsiteReviewRequest,
   OnsiteReviewRequest,
 } from '~/components/Apps/unifiedReviewRow';
@@ -38,6 +43,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -145,6 +151,10 @@ export default function ReviewQueuePage() {
     onActioned?: () => void | Promise<void>;
     readOnly?: boolean;
   } | null>(null);
+  // Combined code+media review surface — opened when a PENDING row is an app that has
+  // BOTH a pending code request AND a pending listing-media revision (page-owned, one
+  // instance). Each stacked section keeps its own independent approve/reject.
+  const [combinedReview, setCombinedReview] = useState<CombinedReviewSelection>(null);
 
   // DUAL-PATH on-site row selection: under the `appReviewPage` flag a row NAVIGATES
   // to the deep-linkable detail page `/apps/review/<id>`; with the flag off it opens
@@ -165,6 +175,13 @@ export default function ReviewQueuePage() {
   const openOffsiteReview = useCallback(
     (row: OffsitePendingRow, onActioned?: () => void | Promise<void>, readOnly = false) => {
       setOffsiteReview({ row, onActioned, readOnly });
+    },
+    []
+  );
+
+  const openCombinedReview = useCallback(
+    (payload: CombinedReviewPayload, onActioned?: () => void | Promise<void>) => {
+      setCombinedReview({ ...payload, onActioned });
     },
     []
   );
@@ -211,6 +228,7 @@ export default function ReviewQueuePage() {
             <UnifiedPendingTab
               openOnsiteReview={openOnsiteReview}
               openOffsiteReview={openOffsiteReview}
+              openCombinedReview={openCombinedReview}
             />
           </Tabs.Panel>
 
@@ -255,6 +273,7 @@ export default function ReviewQueuePage() {
         onActioned={offsiteReview?.onActioned}
         readOnly={offsiteReview?.readOnly}
       />
+      <CombinedReviewModal selection={combinedReview} onClose={() => setCombinedReview(null)} />
     </>
   );
 }
@@ -271,6 +290,7 @@ export default function ReviewQueuePage() {
 function UnifiedPendingTab({
   openOnsiteReview,
   openOffsiteReview,
+  openCombinedReview,
 }: {
   openOnsiteReview: (
     req: AnyRequest,
@@ -281,6 +301,10 @@ function UnifiedPendingTab({
     row: OffsitePendingRow,
     onActioned?: () => void | Promise<void>,
     readOnly?: boolean
+  ) => void;
+  openCombinedReview: (
+    payload: CombinedReviewPayload,
+    onActioned?: () => void | Promise<void>
   ) => void;
 }) {
   const features = useFeatureFlags();
@@ -333,6 +357,10 @@ function UnifiedPendingTab({
     (row: OffsitePendingRow) => openOffsiteReview(row, resetPaging),
     [openOffsiteReview, resetPaging]
   );
+  const boundCombined = useCallback(
+    (payload: CombinedReviewPayload) => openCombinedReview(payload, resetPaging),
+    [openCombinedReview, resetPaging]
+  );
 
   const onLoadMore = () => {
     if (onsiteNext != null) {
@@ -352,6 +380,7 @@ function UnifiedPendingTab({
       direction="asc"
       openOnsiteReview={boundOnsite}
       openOffsiteReview={boundOffsite}
+      openCombinedReview={boundCombined}
       isLoading={onsiteQuery.isLoading || offsiteQuery.isLoading}
       errorMessage={onsiteQuery.error?.message ?? offsiteQuery.error?.message}
       emptyLabel="Queue is empty. Nothing waiting for review."
@@ -463,6 +492,33 @@ function UnifiedHistoryTab({
     }
   };
 
+  // APPROVED tab only — re-fire the build for an approved request whose build
+  // never started (deploy state null) or failed. The mutation takes ONLY the
+  // request id; the sha to rebuild is read server-side from the already-reviewed
+  // DB row. Tracks the in-flight id so only that row's button spins/disables.
+  const [retriggeringId, setRetriggeringId] = useState<string | null>(null);
+  const retriggerMutation = trpc.blocks.retriggerBuild.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        message: 'Build re-triggered — the deploy state will update as it progresses.',
+      });
+      resetPaging();
+      void onsiteApprovedQ.refetch();
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Re-trigger failed', error: new Error(e.message) }),
+    onSettled: () => setRetriggeringId(null),
+  });
+  const onRetriggerBuild = useCallback(
+    (publishRequestId: string) => {
+      // Belt against a double-fire that slips past the button's own disabled state.
+      if (retriggerMutation.isPending) return;
+      setRetriggeringId(publishRequestId);
+      retriggerMutation.mutate({ publishRequestId });
+    },
+    [retriggerMutation]
+  );
+
   return (
     <UnifiedReviewList
       onsiteItems={onsiteItems}
@@ -478,6 +534,10 @@ function UnifiedHistoryTab({
       hasMore={onsiteNext != null || offsiteNext != null}
       isLoadingMore={onsiteQuery.isFetching || offsiteQuery.isFetching}
       onLoadMore={onLoadMore}
+      // Deploy column + retrigger control exist on the APPROVED tab only; the
+      // Rejected tab passes neither and renders exactly as before.
+      onRetriggerBuild={isApproved ? onRetriggerBuild : undefined}
+      retriggeringId={retriggeringId}
     />
   );
 }

@@ -21,12 +21,12 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useMutateDonationGoal } from '~/components/DonationGoal/donation-goal.util';
 import {
   useModelVersionPermission,
-  useQueryModelVersionDonationGoals,
+  useQueryModelVersionDonationGoal,
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ModelVersionDonationGoal } from '~/types/router';
+import type { ModelVersionDonationGoal as ModelVersionDonationGoalData } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -35,7 +35,7 @@ const DonationGoalItem = ({
   donationGoal,
   modelVersionId,
 }: {
-  donationGoal: ModelVersionDonationGoal;
+  donationGoal: ModelVersionDonationGoalData;
   modelVersionId: number;
 }) => {
   const theme = useMantineTheme();
@@ -49,9 +49,8 @@ const DonationGoalItem = ({
     modelVersionId,
   });
 
-  const earlyAccessEndsAt = modelVersion?.earlyAccessEndsAt;
-  const modelVersionIsEarlyAccess =
-    modelVersion?.earlyAccessEndsAt && (modelVersion?.earlyAccessEndsAt ?? new Date()) > new Date();
+  const earlyAccessEndsAt = modelVersion?.paidAccess?.endsAt;
+  const modelVersionIsEarlyAccess = !!earlyAccessEndsAt && earlyAccessEndsAt > new Date();
 
   const canDonate = donationGoal.userId !== currentUser?.id && donationGoal.active;
 
@@ -85,7 +84,7 @@ const DonationGoalItem = ({
       withBorder
     >
       <Stack gap="xs">
-        {donationGoal.isEarlyAccess && progress < 100 && modelVersionIsEarlyAccess && (
+        {progress < 100 && modelVersionIsEarlyAccess && (
           <Text c="yellow" size="xs" fw={500}>
             The creator of this {resourceLabel} has set a donation goal! You can donate to make this
             resource available to everyone before the end of Early Access.
@@ -174,8 +173,8 @@ const DonationGoalItem = ({
   );
 };
 
-const ModelVersionDonationGoals = ({ modelVersionId }: Props) => {
-  const { donationGoals, isLoading } = useQueryModelVersionDonationGoals({
+const ModelVersionDonationGoal = ({ modelVersionId }: Props) => {
+  const { donationGoal, isLoading } = useQueryModelVersionDonationGoal({
     modelVersionId: modelVersionId,
   });
   const features = useFeatureFlags();
@@ -184,9 +183,9 @@ const ModelVersionDonationGoals = ({ modelVersionId }: Props) => {
     return null;
   }
 
-  // Donation goals are absent on most models, so a loading skeleton would just
-  // appear then collapse (layout shift). Render nothing until there are goals.
-  if (isLoading || !donationGoals?.length) {
+  // A donation goal is absent on most models, so a loading skeleton would just
+  // appear then collapse (layout shift). Render nothing until the goal is present.
+  if (isLoading || !donationGoal) {
     return null;
   }
 
@@ -195,11 +194,7 @@ const ModelVersionDonationGoals = ({ modelVersionId }: Props) => {
       <Title order={4} mb={0}>
         Support this model
       </Title>
-      {donationGoals.map((goal) => {
-        return (
-          <DonationGoalItem key={goal.id} donationGoal={goal} modelVersionId={modelVersionId} />
-        );
-      })}
+      <DonationGoalItem donationGoal={donationGoal} modelVersionId={modelVersionId} />
     </Stack>
   );
 };
@@ -208,4 +203,4 @@ type Props = {
   modelVersionId: number;
 };
 
-export default ModelVersionDonationGoals;
+export default ModelVersionDonationGoal;

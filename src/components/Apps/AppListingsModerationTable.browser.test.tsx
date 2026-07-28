@@ -320,8 +320,13 @@ describe('AppListingsModerationTable — effective status (draft-with-pending �
     await expect.element(draftSection).toBeInTheDocument();
 
     const draftPendingRow = page.getByTestId('apps-mod-listing-row-draft-pending-ext');
-    const orphanRow = page.getByTestId('apps-mod-listing-row-draft-orphan-ext');
     await expect.element(draftPendingRow).toBeInTheDocument();
+
+    // The Draft section is a quiet, default-COLLAPSED trailing section (collapsible:
+    // true in MOD_SECTION_META) — its rows aren't in the DOM until it's expanded. Open
+    // it so the orphan draft row renders.
+    await page.getByTestId('apps-mod-listings-section-draft-toggle').click();
+    const orphanRow = page.getByTestId('apps-mod-listing-row-draft-orphan-ext');
     await expect.element(orphanRow).toBeInTheDocument();
 
     // Bucketing: the draft-with-pending sits in the Pending section, the orphan in Draft.

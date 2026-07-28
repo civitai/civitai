@@ -145,6 +145,55 @@ describe('extractListingMeta', () => {
     });
   });
 
+  describe('inline data-URI icon channel (iconDataUri)', () => {
+    it('surfaces a data:image/svg+xml favicon as iconDataUri (radio.civitai.com case) — name set, cover/description undefined', () => {
+      // radio.civitai.com's <head>: only a <title> + an inline SVG favicon. No og:image,
+      // no description. The https icon channel drops the data: URI; the inline channel
+      // surfaces it so the author still gets an accept-able icon.
+      const svg = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E';
+      const html = `<title>AI Radio</title><link rel="icon" type="image/svg+xml" href="${svg}">`;
+      const r = extractListingMeta(html, BASE);
+      expect(r.name).toBe('AI Radio');
+      expect(r.iconDataUri).toBe(svg);
+      // No usable https icon, no cover, no description — genuinely absent.
+      expect(r.iconImageUrl).toBeUndefined();
+      expect(r.coverImageUrl).toBeUndefined();
+      expect(r.description).toBeUndefined();
+      expect(r.tagline).toBeUndefined();
+    });
+
+    it('surfaces a base64 data:image/png apple-touch-icon as iconDataUri', () => {
+      const dataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+      const html = `<link rel="apple-touch-icon" href="${dataUri}">`;
+      expect(extractListingMeta(html, BASE).iconDataUri).toBe(dataUri);
+    });
+
+    it('does NOT surface a data:text/html icon as iconDataUri (non-image rejected)', () => {
+      const html = `<link rel="icon" href="data:text/html,%3Cscript%3Ealert(1)%3C%2Fscript%3E">`;
+      const r = extractListingMeta(html, BASE);
+      expect(r.iconDataUri).toBeUndefined();
+      expect(r.iconImageUrl).toBeUndefined();
+    });
+
+    it('prefers a real https favicon for iconImageUrl but STILL surfaces an inline data-URI icon separately', () => {
+      const dataUri = 'data:image/svg+xml,%3Csvg%2F%3E';
+      const html = `
+        <link rel="icon" href="/favicon.png">
+        <link rel="apple-touch-icon" href="${dataUri}">`;
+      const r = extractListingMeta(html, BASE);
+      // The https favicon is NOT shadowed by the data-URI apple-touch-icon.
+      expect(r.iconImageUrl).toBe('https://vendor.example.com/favicon.png');
+      expect(r.iconDataUri).toBe(dataUri);
+    });
+
+    it('a normal page with no data-URI icon leaves iconDataUri undefined (https icon still works)', () => {
+      const html = `<link rel="icon" href="/favicon.ico">`;
+      const r = extractListingMeta(html, BASE);
+      expect(r.iconImageUrl).toBe('https://vendor.example.com/favicon.ico');
+      expect(r.iconDataUri).toBeUndefined();
+    });
+  });
+
   describe('adversarial-input cost (event-loop-freeze / ReDoS guard)', () => {
     // Regression for the O(n^2) container-regex freeze: many unclosed <header>
     // open tags forced the lazy backreference match to rescan to EOF at every

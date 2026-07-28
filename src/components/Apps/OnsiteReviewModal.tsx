@@ -113,6 +113,13 @@ export type ApprovedRequest = ReviewedRequestCommon & {
   reviewedAt: string | Date | null;
   approvalNotes: string | null;
   reviewedBy: UserProfile | null;
+  /** Build/deploy lifecycle for the approved version — `null` means either a
+   *  legacy pre-feature row OR the STRANDED case (approved, but the build never
+   *  started). Selected by `listApprovedRequests`; optional so older callers /
+   *  fixtures that omit it still typecheck. */
+  deployState?: string | null;
+  deployDetail?: string | null;
+  deployUpdatedAt?: string | Date | null;
 };
 
 export type RejectedRequest = ReviewedRequestCommon & {

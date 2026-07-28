@@ -72,6 +72,7 @@ import {
   mintReviewBlockTokenSchema,
   previewRequestSchema,
   rejectRequestSchema,
+  retriggerBuildSchema,
   startAgentReviewSchema,
   teardownPreviewSchema,
   withdrawRequestSchema,
@@ -1676,18 +1677,18 @@ export const blocksRouter = router({
     }),
 
   /**
-   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT proxy. A moderator
-   * viewing a live/complete report can ask the SAME ephemeral agent pod follow-up
-   * questions ("why did you flag scope X", "show the call site"). Non-streaming
-   * request/response (v1); streaming SSE is a follow-up.
+   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT. A moderator viewing a
+   * report can ask follow-up questions ("why did you flag scope X", "show the call
+   * site"). Non-streaming request/response (v1); streaming SSE is a follow-up.
    *
    * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
    * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
    * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
    * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
-   * rejects. The service loads the report, requires the pod to be up
-   * (running|complete|cost-capped → else PRECONDITION_FAILED), proxies to the
-   * pod's in-cluster gateway with the DERIVED bearer, and returns `{ reply }`.
+   * rejects. The service loads the PERSISTED report and answers as a STATELESS
+   * civitai→LLM completion grounded on that report (no live agent — a `failed`
+   * report is still chattable; only a missing/torn-down review → PRECONDITION_FAILED),
+   * returning `{ reply }`.
    */
   agentReviewChat: moderatorProcedure
     .use(enforceAppBlocksFlag)
@@ -1917,6 +1918,54 @@ export const blocksRouter = router({
         });
       }
       return { ok: true };
+    }),
+
+  /**
+   * MOD-ONLY: re-fire the Tekton build for an ALREADY-APPROVED publish request
+   * whose build never started (the STRANDED case: `approveRequest` committed the
+   * approval and then threw inside `triggerBuild`, leaving `deploy_state` null
+   * forever) or whose build/deploy failed.
+   *
+   * 🔴 The commit sha is read from the DB row — the input carries NO sha, so a
+   * caller cannot name an arbitrary/unreviewed commit to build and deploy. See
+   * `retriggerBuildSchema` and the service's supersede guard.
+   *
+   * MOD-ONLY IS A DELIBERATE CHOICE, not an oversight: owner self-service would
+   * need its own abuse controls and a build-capacity budget. The owner instead
+   * gets the real build-failure reason on /apps/my-submissions plus a
+   * "contact a moderator" affordance.
+   */
+  retriggerBuild: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(retriggerBuildSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { retriggerBuild } = await import('~/server/services/blocks/publish-request.service');
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Re-triggering builds is restricted to civitai team');
+      }
+      try {
+        return await retriggerBuild({
+          publishRequestId: input.publishRequestId,
+          // Bound to the SESSION user — never client-supplied. Also the rate-limit
+          // subject, so a mod cannot spend another mod's quota.
+          reviewerUserId: ctx.user.id,
+        });
+      } catch (err) {
+        if (err instanceof TRPCError) throw err;
+        const serviceCode = err instanceof Error ? (err as { code?: unknown }).code : undefined;
+        const code =
+          serviceCode === 'NOT_FOUND'
+            ? 'NOT_FOUND'
+            : serviceCode === 'RATE_LIMITED'
+            ? 'TOO_MANY_REQUESTS'
+            : // A build-service outage is OUR fault, not a malformed request —
+              // reporting it as a 400 mislabels an incident as user error (and
+              // keeps it off the server-fault error board).
+            serviceCode === 'TRIGGER_FAILED'
+            ? 'INTERNAL_SERVER_ERROR'
+            : 'BAD_REQUEST';
+        throw new TRPCError({ code, message: (err as Error).message });
+      }
     }),
 
   /**

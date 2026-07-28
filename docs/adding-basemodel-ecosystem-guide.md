@@ -715,7 +715,6 @@ After adding a new model, verify:
 - [ ] Model appears in `activeBaseModels` if not hidden
 - [ ] Ecosystem appears in `baseModelGroups` array export
 - [ ] `getBaseModelGenerationConfig()` includes new ecosystem (if has generation support)
-- [ ] `getGenerationBaseModelConfigs()` includes new ecosystem (if has generation support)
 
 ### Documentation
 - [ ] Updated this guide with new patterns (if introducing new pattern)

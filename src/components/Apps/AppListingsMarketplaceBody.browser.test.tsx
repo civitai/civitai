@@ -37,6 +37,12 @@ const mocks = vi.hoisted(() => ({
   lastArgs: null as null | Record<string, unknown>,
 }));
 
+// The grid renders AppListingCard, which calls useCurrentUser() (owner "Edit"
+// deep-link gate, added in #3392). Without a mock it hits the real
+// CivitaiSessionContext — absent in the provider stack — and throws "missing
+// CivitaiSessionContext", crashing every card render. Mock a signed-out viewer.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     appListings: {

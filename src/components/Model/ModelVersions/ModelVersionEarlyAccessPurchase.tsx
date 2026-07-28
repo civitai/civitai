@@ -1,4 +1,10 @@
 import { Anchor, Button, Center, Loader, Modal, Stack, Text } from '@mantine/core';
+import {
+  type ModelVersionTerms,
+  DEFAULT_GENERATION_TRIAL_LIMIT,
+  generationPrice,
+  paidGenerationGrant,
+} from '@civitai/buzz';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -28,14 +34,20 @@ export const ModelVersionEarlyAccessPurchase = ({
     isLoadingAccess,
     canDownload,
     canGenerate,
-    earlyAccessConfig,
-    earlyAccessEndsAt,
+    paidAccess,
     modelVersion,
   } = useModelVersionPermission({
     modelVersionId,
   });
   const { modelVersionEarlyAccessPurchase, purchasingModelVersionEarlyAccess } =
     useMutateModelVersion();
+
+  const paidAccessTerms = paidAccess?.terms as ModelVersionTerms | undefined;
+  const downloadPrice = paidAccessTerms?.download?.price;
+  const genPrice = paidAccessTerms ? generationPrice(paidAccessTerms) : undefined;
+  const genTrialLimit = paidAccessTerms
+    ? paidGenerationGrant(paidAccessTerms)?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT
+    : undefined;
 
   const invalidateWhatIf = useInvalidateWhatIf();
 
@@ -61,12 +73,8 @@ export const ModelVersionEarlyAccessPurchase = ({
   };
 
   const supportsGeneration = features.imageGeneration && modelVersion?.canGenerate;
-  const supportsDownloadPurchase =
-    earlyAccessConfig?.chargeForDownload && earlyAccessConfig?.downloadPrice;
-  const supportsGenerationPurchase =
-    supportsGeneration &&
-    earlyAccessConfig?.chargeForGeneration &&
-    earlyAccessConfig?.generationPrice;
+  const supportsDownloadPurchase = !!downloadPrice;
+  const supportsGenerationPurchase = supportsGeneration && !!genPrice;
 
   const userCanDoLabel = [
     supportsDownloadPurchase && 'download',
@@ -78,7 +86,7 @@ export const ModelVersionEarlyAccessPurchase = ({
 
   return (
     <Modal {...dialog} title="Get access to this Model Version!" size="sm" withCloseButton>
-      {!earlyAccessConfig || isLoadingAccess ? (
+      {!paidAccess || isLoadingAccess ? (
         <Center my="md">
           <Loader />
         </Center>
@@ -101,7 +109,7 @@ export const ModelVersionEarlyAccessPurchase = ({
             {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
             period or just waiting until it becomes public. The remaining time for early access is{' '}
             <Text component="span" fw="bold">
-              <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
+              <Countdown endTime={paidAccess?.endsAt ?? new Date()} />
             </Text>
           </Text>
           <Stack>
@@ -111,7 +119,7 @@ export const ModelVersionEarlyAccessPurchase = ({
                   type="submit"
                   label="Get Download Access"
                   loading={purchasingModelVersionEarlyAccess}
-                  buzzAmount={earlyAccessConfig?.downloadPrice as number}
+                  buzzAmount={downloadPrice as number}
                   onPerformTransaction={() => handlePurchase('download')}
                   disabled={canDownload}
                 />
@@ -127,13 +135,13 @@ export const ModelVersionEarlyAccessPurchase = ({
                   type="submit"
                   label="Get Generation Access"
                   loading={purchasingModelVersionEarlyAccess}
-                  buzzAmount={earlyAccessConfig?.generationPrice as number}
+                  buzzAmount={genPrice as number}
                   onPerformTransaction={() => handlePurchase('generation')}
                   disabled={canGenerate}
                 />
                 <Text size="xs" c="dimmed">
                   The creator of the {resourceLabel} has enabled{' '}
-                  {earlyAccessConfig.generationTrialLimit} trials for generation. Test this{' '}
+                  {genTrialLimit} trials for generation. Test this{' '}
                   {resourceLabel}{' '}
                   <GenerateButton
                     versionId={modelVersionId}
