@@ -631,6 +631,22 @@ function FileCard({
     },
   });
 
+  // Persisted on change rather than through the file's inline Save: the page-level
+  // "Save Changes" button only starts uploads, so a deferred flag silently gets lost.
+  const requiredMutation = trpc.modelFile.update.useMutation({
+    onError(_error, variables) {
+      updateFile(versionFile.uuid, { isRequired: !variables.metadata?.isRequired });
+      showErrorNotification({
+        error: new Error('Could not update the required flag, please try again'),
+      });
+    },
+  });
+
+  const handleToggleRequired = (isRequired: boolean) => {
+    updateFile(versionFile.uuid, { isRequired });
+    if (versionFile.id) requiredMutation.mutate({ id: versionFile.id, metadata: { isRequired } });
+  };
+
   const handleRenameOpen = () => {
     setRenameValue(versionFile.overrideName ?? versionFile.name);
     setRenameOpen(true);
@@ -711,9 +727,7 @@ function FileCard({
                 size="xs"
                 label="Required"
                 checked={versionFile.isRequired ?? false}
-                onChange={(e) =>
-                  updateFile(versionFile.uuid, { isRequired: e.currentTarget.checked })
-                }
+                onChange={(e) => handleToggleRequired(e.currentTarget.checked)}
                 mt={4}
               />
             )}
@@ -1003,15 +1017,16 @@ function FileEditForm({
       size: initialFile.size,
       fp: initialFile.fp,
       quantType: initialFile.quantType,
-      isRequired: initialFile.isRequired,
     });
   };
 
+  // isRequired is excluded because its toggle persists on change — comparing it
+  // would leave Save/Reset showing for a value that's already saved.
   const canManualSave =
     !!versionFile.id &&
     !isEqual(
-      { ...versionFile, overrideName: undefined },
-      { ...initialFile, overrideName: undefined }
+      { ...versionFile, overrideName: undefined, isRequired: undefined },
+      { ...initialFile, overrideName: undefined, isRequired: undefined }
     );
 
   const isCheckpoint = versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint';
