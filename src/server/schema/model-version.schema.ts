@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import type { ModelVersionTerms } from '@civitai/buzz';
 import * as z from 'zod';
 import {
   MAX_DONATION_GOAL,
@@ -362,36 +363,54 @@ export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 
 export const MAX_LICENSING_FEE = 100;
 
-export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
-export const modelVersionEarlyAccessConfigSchema = z.object({
-  timeframe: z.number(),
-  // Permanent pay-for-access (CU 868ke4949): the gate never expires. Creator-Program-member-only; enforced
-  // at the write endpoint. `timeframe` is 0 for permanent (the trigger's permanent branch ignores it).
-  permanent: z.boolean().optional().default(false),
-  chargeForDownload: z.boolean().default(false),
-  downloadPrice: z.number().min(100).max(MAX_DONATION_GOAL).optional(),
-  chargeForGeneration: z.boolean().default(false),
-  generationPrice: z.number().min(50).optional(),
-  generationTrialLimit: z.number().max(1000).default(10),
-  donationGoalEnabled: z.boolean().default(false),
-  donationGoal: z.number().min(MIN_DONATION_GOAL).max(MAX_DONATION_GOAL).optional(),
-  donationGoalId: z.number().optional(),
-  originalPublishedAt: z.coerce.date().optional(),
-  freeGeneration: z.boolean().optional(),
+// Paid-access write boundary — the zod contract the client sends (mirrors the @civitai/buzz domain
+// types). `terms` is bundle semantics: buying `download` grants generation too; `generation`
+// describes how non-buyers may generate.
+const downloadGrantSchema = z.object({ price: z.number().min(100).max(MAX_DONATION_GOAL) });
+const generationGrantSchema = z.union([
+  z.object({ free: z.literal(true) }),
+  // `price` optional → falls back to the download price; `trialLimit` = free test generations.
+  // trialLimit must be an integer: mini/[id].ts CASTs it to int in raw SQL, which hard-errors (500)
+  // on a fractional value rather than rounding.
+  z.object({
+    price: z.number().min(50).optional(),
+    trialLimit: z.number().int().min(0).max(1000).optional(),
+  }),
+]);
+export const modelVersionTermsSchema = z.object({
+  download: downloadGrantSchema.optional(),
+  generation: generationGrantSchema.optional(),
 });
 
-export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema;
-// modelVersionEarlyAccessConfigSchema.omit({
-//   buzzTransactionId: true,
-// });
+export type ModelVersionPaidAccessInputSchema = z.infer<typeof modelVersionPaidAccessInputSchema>;
+export const modelVersionPaidAccessInputSchema = z.object({
+  // permanent = never-expiring gate (CP-member-only, enforced at the write endpoint). timeframeDays
+  // is the pre-publish window; 0 (and not permanent) means "configured but ungated" → gate cleared.
+  permanent: z.boolean().optional(),
+  timeframeDays: z.number().min(0).optional(),
+  terms: modelVersionTermsSchema,
+});
 
-// Narrow input for editing only a version's early-access config (e.g. from the
-// creator studio) without round-tripping the whole version. `id` is named for
-// the `isOwnerOrModerator` middleware; a null config clears early access.
-export type UpdateEarlyAccessConfigInput = z.infer<typeof updateEarlyAccessConfigSchema>;
-export const updateEarlyAccessConfigSchema = z.object({
+export const donationGoalInputSchema = z.object({
+  amount: z.number().min(MIN_DONATION_GOAL).max(MAX_DONATION_GOAL),
+});
+
+// Read DTO for a model version's gate — the single shape the version is loaded with (getById /
+// getModel) and the form initializes from. NOT the write-input shape (that's the schemas above).
+export type ModelVersionPaidAccessDto = {
+  endsAt: Date | null;
+  timeframeDays: number | null;
+  terms: ModelVersionTerms;
+};
+
+// Narrow input for editing only a version's paid access (e.g. from the creator studio) without
+// round-tripping the whole version. `id` is named for the `isOwnerOrModerator` middleware; a null
+// `paidAccess` clears the gate.
+export type UpdateModelVersionPaidAccessInput = z.infer<typeof updateModelVersionPaidAccessSchema>;
+export const updateModelVersionPaidAccessSchema = z.object({
   id: z.number(),
-  earlyAccessConfig: earlyAccessConfigInput.nullish(),
+  paidAccess: modelVersionPaidAccessInputSchema.nullish(),
+  donationGoal: donationGoalInputSchema.nullish(),
 });
 
 export const modelVersionUpsertSchema2 = z.object({
@@ -429,7 +448,8 @@ export const modelVersionUpsertSchema2 = z.object({
   recommendedResources: z.array(recommendedResourceSchema).optional(),
   templateId: z.number().optional(),
   bountyId: z.number().optional(),
-  earlyAccessConfig: earlyAccessConfigInput.nullish(),
+  paidAccess: modelVersionPaidAccessInputSchema.nullish(),
+  donationGoal: donationGoalInputSchema.nullish(),
   earlyAccessGoalConfig: z
     .object({
       unitAmount: z.number(),

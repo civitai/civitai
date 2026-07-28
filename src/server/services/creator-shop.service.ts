@@ -67,7 +67,8 @@ import type {
   UpdateCreatorShopItemInput,
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
+import type { ModelVersionTerms } from '@civitai/buzz';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
@@ -686,14 +687,16 @@ export const getCreatorShop = async ({
     // Drives the Models section visibility — the storefront only lists the
     // creator's currently-Early-Access models (paid tiers come later). Preview
     // counts site-wide so the Models section always renders.
-    dbRead.model.count({
-      where: {
-        ...(preview ? {} : { userId }),
-        status: ModelStatus.Published,
-        deletedAt: null,
-        earlyAccessDeadline: { gte: now },
-      },
-    }),
+    dbRead.$queryRaw<{ count: number }[]>`
+      SELECT COUNT(DISTINCT m.id)::int AS count
+      FROM "Model" m
+      JOIN "ModelVersion" mv ON mv."modelId" = m.id
+      JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+      WHERE m.status = 'Published'::"ModelStatus" AND m."deletedAt" IS NULL
+        AND mv.status = 'Published'::"ModelStatus"
+        AND pa."endsAt" > NOW()
+        ${preview ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+    `.then((r) => r[0]?.count ?? 0),
   ]);
 
   // Sanitize meta to only the purchase count the card needs — never the creator
@@ -746,13 +749,10 @@ export const getCreatorShop = async ({
 export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAccessPricesInput) => {
   const prices: Record<number, number> = {};
   if (!modelVersionIds.length) return prices;
-  const versions = await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: { id: true, earlyAccessConfig: true },
-  });
-  for (const v of versions) {
-    const cfg = v.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
-    if (cfg?.chargeForDownload && cfg.downloadPrice) prices[v.id] = cfg.downloadPrice;
+  const paidAccess = await getPaidAccess('ModelVersion', modelVersionIds);
+  for (const id of modelVersionIds) {
+    const terms = paidAccess[id]?.terms as ModelVersionTerms | undefined;
+    if (terms?.download?.price) prices[id] = terms.download.price;
   }
   return prices;
 };

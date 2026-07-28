@@ -2,7 +2,7 @@ import * as z from 'zod';
 import type { Sampler } from '~/server/common/constants';
 import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
-import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
+import { modelVersionTermsSchema } from '~/server/schema/model-version.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { generationSamplers } from '~/shared/constants/generation.constants';
@@ -60,8 +60,9 @@ const generationResourceSchemaBase = z.object({
   name: z.string(),
   trainedWords: z.string().array().default([]),
   baseModel: z.string(),
-  earlyAccessEndsAt: z.coerce.date().optional(),
-  earlyAccessConfig: modelVersionEarlyAccessConfigSchema.optional(),
+  paidAccess: z
+    .object({ endsAt: z.coerce.date().nullable(), terms: modelVersionTermsSchema })
+    .nullish(),
   canGenerate: z.boolean(),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),

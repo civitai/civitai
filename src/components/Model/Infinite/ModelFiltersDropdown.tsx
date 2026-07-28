@@ -214,11 +214,15 @@ export function DumbModelFiltersDropdown({
               }
             >
               <Group gap={8} mb={4}>
-                {Object.values(Availability).map((availability) => (
-                  <FilterChip key={availability} value={availability}>
-                    <span>{availability}</span>
-                  </FilterChip>
-                ))}
+                {/* EarlyAccess is never a model-level availability — gating lives in PaidAccess and is
+                    surfaced by the Early Access toggle above, so the chip would always match nothing. */}
+                {Object.values(Availability)
+                  .filter((availability) => availability !== Availability.EarlyAccess)
+                  .map((availability) => (
+                    <FilterChip key={availability} value={availability}>
+                      <span>{availability}</span>
+                    </FilterChip>
+                  ))}
               </Group>
             </Chip.Group>
           </>

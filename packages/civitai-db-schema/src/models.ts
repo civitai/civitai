@@ -152,6 +152,8 @@ export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage" | "Exte
 
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
+export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
+
 export type EntityCollaboratorStatus = "Pending" | "Approved" | "Rejected";
 
 export type ClubAdminPermission = "ManageMemberships" | "ManageTiers" | "ManagePosts" | "ManageClub" | "ManageResources" | "ViewRevenue" | "WithdrawRevenue";
@@ -907,6 +909,7 @@ export interface ModelVersion {
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
+  initialPublishedAt: Date | null;
   status: ModelStatus;
   trainingStatus: TrainingStatus | null;
   trainingDetails: JsonValue | null;
@@ -3046,6 +3049,17 @@ export interface EntityAccess {
   meta: JsonValue | null;
 }
 
+export interface PaidAccess {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  endsAt: Date | null;
+  timeframeDays: number | null;
+  terms: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface EntityCollaborator {
   entityType: EntityType;
   entityId: number;
@@ -3414,6 +3428,8 @@ export interface DonationGoal {
   description: string | null;
   goalAmount: number;
   paidAmount: number;
+  entityType: PaidAccessEntityType | null;
+  entityId: number | null;
   modelVersionId: number | null;
   modelVersion?: ModelVersion | null;
   createdAt: Date;
@@ -4669,6 +4685,7 @@ export interface ComicChapter {
   earlyAccessConfig: JsonValue | null;
   earlyAccessEndsAt: Date | null;
   publishedAt: Date | null;
+  initialPublishedAt: Date | null;
   nsfwLevel: number;
   createdAt: Date;
   updatedAt: Date;

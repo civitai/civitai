@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
+import { type ModelVersionTerms } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
-import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
@@ -18,11 +18,11 @@ import type {
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import { applyPaidAccessGating } from '~/server/services/generation/paid-access-gating';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import type { GenerationAlias, ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -1139,6 +1139,9 @@ export async function getResourceData(
 
     return {
       ...item,
+      // Merged in after the cache read (see mergePaidAccess) from PaidAccess — NOT stored in the 1h
+      // resourceDataCache, whose TTL would serve stale gating terms after a config change.
+      paidAccess: null as { endsAt: Date | null; terms: ModelVersionTerms } | null,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
       strength: settings?.strength ?? 1,
@@ -1182,29 +1185,8 @@ export async function getResourceData(
       .then((data) => data.map((item) => transformGenerationData(item)));
   }
 
-  async function getEntityAccess(resources: ReturnType<typeof transformGenerationData>[]) {
-    const earlyAccessIds = resources
-      .filter(
-        (x) =>
-          x.covered &&
-          !x.hasAccess &&
-          x.earlyAccessConfig &&
-          // Free generation will technically bypass access checks, but we still want to show the early access badge
-          !x.earlyAccessConfig.freeGeneration
-      )
-      .map((x) => x.id);
-
-    return user.id
-      ? await hasEntityAccess({
-          entityType: 'ModelVersion',
-          entityIds: earlyAccessIds,
-          userId: user.id,
-          isModerator: user.isModerator,
-          permissions: EntityAccessPermission.EarlyAccessGeneration,
-        })
-      : [];
-  }
-
+  // The ids the viewer has actually PURCHASED generation access to (the EntityAccess side of the
+  // decision, which the pure gate can't know). One batched lookup; empty for anon.
   async function getModelFiles(resources: ReturnType<typeof transformGenerationData>[]) {
     const versionIds = resources.filter((x) => x.hasAccess).map((x) => x.id);
     return await getFilesForModelVersionCache(versionIds);
@@ -1311,20 +1293,11 @@ export async function getResourceData(
       })
       .then(async (resources) => {
         const substitutes = await getResourceDataSubstitutes(resources);
-        const entityAccess = await getEntityAccess([...resources, ...substitutes]);
+        const allResources = [...resources, ...substitutes];
+        // TODO - surface the number of remaining free trial generations.
+        await applyPaidAccessGating(allResources, user);
 
-        for (const resource of [...resources, ...substitutes]) {
-          if (!resource.hasAccess) {
-            // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
-            resource.hasAccess = !!(
-              entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
-              !!resource.earlyAccessConfig?.generationTrialLimit
-            );
-            resource.canGenerate = resource.hasAccess && resource.canGenerate;
-          }
-        }
-
-        const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
+        const modelFilesCached = await getModelFiles(allResources);
 
         return resources.map((resource) => {
           const modelFiles = modelFilesCached[resource.id]?.files ?? [];
