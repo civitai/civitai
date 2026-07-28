@@ -166,6 +166,14 @@ function CategoryTable({
             No qualified engagement in this category — every entry is tied, so no ranking is shown.
           </Alert>
         )}
+        {category.truncated && (
+          <Alert color="red" title="This category is incomplete — ranks withheld">
+            {category.missingCount} {category.missingCount === 1 ? 'entry is' : 'entries are'}{' '}
+            missing from this run because the contest exceeded the per-run entry ceiling. Scores are
+            normalized against the entries that survived, so every score here is wrong by an unknown
+            amount. Narrow the window and run again before using this category.
+          </Alert>
+        )}
         <Table.ScrollContainer minWidth={900}>
           <Table striped highlightOnHover verticalSpacing="xs">
             <Table.Thead>
@@ -197,7 +205,21 @@ function CategoryTable({
             <Table.Tbody>
               {entries.map((entry) => (
                 <Table.Tr key={entry.collectionItemId} opacity={entry.eligible ? 1 : 0.55}>
-                  <Table.Td>{entry.rank ?? '—'}</Table.Td>
+                  <Table.Td>
+                    <Group gap={4} wrap="nowrap">
+                      <Text size="sm">{entry.rank ?? '—'}</Text>
+                      {entry.sharedRank && (
+                        <Tooltip
+                          label="Tied on score with another entry — they share this rank"
+                          withArrow
+                        >
+                          <Badge color="yellow" variant="light" size="xs">
+                            tie
+                          </Badge>
+                        </Tooltip>
+                      )}
+                    </Group>
+                  </Table.Td>
                   <Table.Td>
                     <Group gap="xs" wrap="nowrap">
                       {entry.image && (
@@ -257,7 +279,19 @@ function CategoryTable({
                     </Tooltip>
                   </Table.Td>
                   <Table.Td>
-                    <Text fw={600}>{entry.eligible ? entry.score.toFixed(3) : '—'}</Text>
+                    <Group gap={4} wrap="nowrap">
+                      <Text fw={600}>{entry.eligible ? entry.score.toFixed(3) : '—'}</Text>
+                      {entry.belowDisplayPrecision && (
+                        <Tooltip
+                          label="An adjacent entry's score differs only below the precision shown here. Do not separate them on this number alone."
+                          withArrow
+                        >
+                          <Badge color="orange" variant="light" size="xs">
+                            ~
+                          </Badge>
+                        </Tooltip>
+                      )}
+                    </Group>
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -272,10 +306,19 @@ function CategoryTable({
 function ScoreBody({ score }: { score: ContestCommunityScoreResult }) {
   return (
     <Stack gap="lg">
+      {/* Driven by the score itself, not by the live query, so a snapshot taken
+          mid-contest carries the same warning as the live view it came from. */}
+      {score.partial && (
+        <Alert color="orange" title="Preview — the contest was still open">
+          Scored up to {formatDate(score.window.effectiveEnd, 'MMM D, YYYY h:mm A')}. These
+          standings are not a final result.
+        </Alert>
+      )}
       {score.truncated.entries && (
-        <Alert color="yellow">
-          Showing the first {score.entryCount} entries only. Narrow the category or status filter to
-          score the rest.
+        <Alert color="red" title="Entries were dropped from this run">
+          This contest has more entries than a single run scores, so the {score.entryCount} oldest
+          were kept and the newest dropped. Affected categories have their ranks withheld. Narrow
+          the window and run again.
         </Alert>
       )}
       {score.truncated.images && (
@@ -316,6 +359,7 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
   const [start, setStart] = useState<Date | null>(null);
   const [end, setEnd] = useState<Date | null>(null);
   const [snapshotKey, setSnapshotKey] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState<string | null>(null);
 
   const filters = useMemo(
     () => ({
@@ -382,9 +426,10 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
     <Stack gap="lg">
       <Stack gap="xs">
         <Text c="dimmed" size="sm">
-          Entries ranked by distinct qualified users per signal, normalized within each category.
-          Raw counts include engagement that failed qualification; a large gap is a prompt for human
-          review, never an automatic disqualification.
+          Accepted entries only, ranked by distinct qualified users per signal and normalized within
+          each category. Entries still in review and rejected entries are not scored. Raw counts
+          include engagement that failed qualification; a large gap is a prompt for human review,
+          never an automatic disqualification.
         </Text>
         <Group gap="sm" align="flex-end">
           <DatePickerInput
@@ -445,13 +490,6 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
         </Alert>
       )}
 
-      {result?.partial && (
-        <Alert color="orange" title="Preview — the contest is still open">
-          Scored up to {formatDate(result.window.effectiveEnd, 'MMM D, YYYY h:mm A')}. These
-          standings are not a final result.
-        </Alert>
-      )}
-
       {isLoading ? (
         <Center py="xl">
           <Loader size="xl" />
@@ -468,11 +506,14 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
         </Stack>
       )}
 
-      <Accordion variant="contained">
+      {/* Controlled, and the editor is mounted only while open: an always-mounted
+          panel would fetch the config and put its values in every moderator's browser
+          on tab open, whether or not anyone asked to see them. */}
+      <Accordion variant="contained" value={configOpen} onChange={setConfigOpen}>
         <Accordion.Item value="config">
           <Accordion.Control>Scoring configuration</Accordion.Control>
           <Accordion.Panel>
-            <ContestScoringConfigEditor collectionId={collectionId} />
+            {configOpen === 'config' && <ContestScoringConfigEditor collectionId={collectionId} />}
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
@@ -493,6 +534,13 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
                       {formatDate(ref.takenAt, 'MMM D, YYYY h:mm A')}
                     </Text>
                   </UnstyledButton>
+                  {ref.partial && (
+                    <Tooltip label="Taken while the contest was still open" withArrow>
+                      <Badge color="orange" variant="light" size="xs">
+                        Partial
+                      </Badge>
+                    </Tooltip>
+                  )}
                   {ref.source && (
                     <Badge color="grape" variant="light" size="xs">
                       {ref.source}
