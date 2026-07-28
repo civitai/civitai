@@ -96,6 +96,13 @@ the blob and PaidAccess must itself represent "configured, not yet published." `
   instead (see Divergences).
 - **Phase 2 (NOT now):** drop `earlyAccessEndsAt` / `earlyAccessPermanent` / `earlyAccessConfig`; drop the
   `early_access` + comic EA triggers; drop the vestigial `availability='EarlyAccess'` clauses.
+  - **`Model.earlyAccessDeadline` (now code-unused):** Phase 1 stopped reading/writing it — early-access
+    state is derived live from `PaidAccess` everywhere (feed/shop filters use `EXISTS` over PaidAccess;
+    the Meili index projects the deadline from PaidAccess at sync time; gate writes queue a re-index).
+    Drop the column (`ALTER TABLE "Model" DROP COLUMN "earlyAccessDeadline"`) once the read-side is
+    verified in prod. Also remove/hide the now-meaningless `EarlyAccess` chip from the model feed's
+    **availability** filter (it matches `Model.availability='EarlyAccess'`, which is never set — use the
+    Early Access *toggle* instead).
   - **`DonationGoal` cleanup (all now code-unused):** drop `DonationGoal.modelVersionId` (+ its FK and the
     `donation_goal_fill_entity` transition trigger) and make `(entityType, entityId)` the primary key; drop
     `DonationGoal.isEarlyAccess` (EA-ness is derived live from the entity's `PaidAccess` record — no flag) and

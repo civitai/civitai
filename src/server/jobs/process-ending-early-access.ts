@@ -1,6 +1,8 @@
 import { uniq } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { modelsSearchIndex } from '~/server/search-index';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { createJob, getJobDate } from './job';
 
@@ -36,6 +38,10 @@ export const processingEngingEarlyAccess = createJob(
       const modelIds = uniq(republished.map((v) => v.modelId));
       await bustMvCache(updatedIds, modelIds);
       await dataForModelsCache.refresh(modelIds);
+      // Gate ended → re-index so the Meili document's derived early-access deadline clears.
+      await modelsSearchIndex.queueUpdate(
+        modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
     }
 
     await setLastRun();

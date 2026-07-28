@@ -687,14 +687,16 @@ export const getCreatorShop = async ({
     // Drives the Models section visibility — the storefront only lists the
     // creator's currently-Early-Access models (paid tiers come later). Preview
     // counts site-wide so the Models section always renders.
-    dbRead.model.count({
-      where: {
-        ...(preview ? {} : { userId }),
-        status: ModelStatus.Published,
-        deletedAt: null,
-        earlyAccessDeadline: { gte: now },
-      },
-    }),
+    dbRead.$queryRaw<{ count: number }[]>`
+      SELECT COUNT(DISTINCT m.id)::int AS count
+      FROM "Model" m
+      JOIN "ModelVersion" mv ON mv."modelId" = m.id
+      JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+      WHERE m.status = 'Published'::"ModelStatus" AND m."deletedAt" IS NULL
+        AND mv.status = 'Published'::"ModelStatus"
+        AND pa."endsAt" > NOW()
+        ${preview ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+    `.then((r) => r[0]?.count ?? 0),
   ]);
 
   // Sanitize meta to only the purchase count the card needs — never the creator

@@ -812,7 +812,10 @@ export default function ModelDetailsV2({
       hasGeneratePermissions ||
       currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
-  const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
+  // Model-level early-access is derived from its versions' gates (no Model.earlyAccessDeadline column).
+  const inEarlyAccess = model.modelVersions.some(
+    (v) => !!v.earlyAccessDeadline && isFutureDate(v.earlyAccessDeadline)
+  );
   const versionIsEarlyAccess =
     selectedVersion &&
     !!selectedVersion.earlyAccessDeadline &&

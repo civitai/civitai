@@ -5,6 +5,7 @@ import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/com
 import { uniq } from 'lodash-es';
 import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { modelsSearchIndex } from '~/server/search-index';
 import {
   bustMvCache,
   publishModelVersionsWithEarlyAccess,
@@ -240,22 +241,8 @@ export const processScheduledPublishing = createJob(
               continueOnError: true,
               tx,
             });
-
-            // Update Model early access deadline in one operation
-            await tx.$executeRaw`
-              -- Update model early access deadline
-              UPDATE "Model" mo
-              SET "earlyAccessDeadline" = GREATEST(mea."earlyAccessDeadline", mo."earlyAccessDeadline")
-              FROM (
-                SELECT mv."modelId", pa."endsAt" AS "earlyAccessDeadline"
-                FROM "ModelVersion" mv
-                JOIN "PaidAccess" pa
-                  ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
-                WHERE mv.id IN (${Prisma.join(earlyAccess)})
-              ) as mea
-              WHERE mo."id" = mea."modelId"
-                AND (mo.meta IS NULL OR (mo.meta->>'cannotPublish')::boolean IS NOT TRUE);
-            `;
+            // Early-access state is derived from PaidAccess; the affected models are re-indexed below
+            // (processedModelIds) so Meili re-derives the deadline — no column to update here.
           }
         }
       },
@@ -313,7 +300,14 @@ export const processScheduledPublishing = createJob(
         ...scheduledModelVersions.map((entity) => entity.extras?.modelId),
       ]),
     ].filter(isDefined);
-    if (processedModelIds.length) await dataForModelsCache.refresh(processedModelIds);
+    if (processedModelIds.length) {
+      await dataForModelsCache.refresh(processedModelIds);
+      // Early-access deadline is derived from PaidAccess at index time — re-index so a version that
+      // just entered (or left) early access re-projects into the Meili document.
+      await modelsSearchIndex.queueUpdate(
+        processedModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
+    }
 
     await setLastRun();
   }
