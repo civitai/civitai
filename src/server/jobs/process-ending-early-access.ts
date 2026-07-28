@@ -38,7 +38,6 @@ export const processingEngingEarlyAccess = createJob(
       const modelIds = uniq(republished.map((v) => v.modelId));
       await bustMvCache(updatedIds, modelIds);
       await dataForModelsCache.refresh(modelIds);
-      // Gate ended → re-index so the Meili document's derived early-access deadline clears.
       await modelsSearchIndex.queueUpdate(
         modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );

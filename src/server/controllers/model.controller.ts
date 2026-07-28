@@ -107,7 +107,7 @@ import {
   toggleLockModel,
   unpublishModelById,
   updateModelById,
-  updateModelEarlyAccessDeadline,
+  queueModelEarlyAccessReindex,
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -754,7 +754,7 @@ export const publishModelHandler = async ({
       modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
-    await updateModelEarlyAccessDeadline({ id: updatedModel.id }).catch((e) => {
+    await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });

@@ -241,8 +241,6 @@ export const processScheduledPublishing = createJob(
               continueOnError: true,
               tx,
             });
-            // Early-access state is derived from PaidAccess; the affected models are re-indexed below
-            // (processedModelIds) so Meili re-derives the deadline — no column to update here.
           }
         }
       },
@@ -302,8 +300,6 @@ export const processScheduledPublishing = createJob(
     ].filter(isDefined);
     if (processedModelIds.length) {
       await dataForModelsCache.refresh(processedModelIds);
-      // Early-access deadline is derived from PaidAccess at index time — re-index so a version that
-      // just entered (or left) early access re-projects into the Meili document.
       await modelsSearchIndex.queueUpdate(
         processedModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
