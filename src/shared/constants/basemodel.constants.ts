@@ -1079,6 +1079,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Boogu - LORA training (AI Toolkit only)
   { ecosystemId: ECO.Boogu, supportType: 'training', modelTypes: loraOnly },
 
+  // Mage-Flow - LORA training (AI Toolkit only)
+  { ecosystemId: ECO.MageFlow, supportType: 'training', modelTypes: loraOnly },
+
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
 

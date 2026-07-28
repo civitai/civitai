@@ -391,7 +391,7 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
 
   const session = await stripe.billingPortal.sessions.create({
     customer: customerId,
-    return_url: `${baseUrl}/user/account`,
+    return_url: `${baseUrl}/user/membership`,
   });
 
   return { url: session.url };
