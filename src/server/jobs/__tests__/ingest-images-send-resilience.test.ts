@@ -42,7 +42,7 @@ const { mockDbRead, mockDbWrite, mockIngestImage, mockDeleteImages, mockLimitCon
       // Image id 2 hangs forever; all others succeed. A hung submit must not stall
       // or reject the run — the per-image timeout turns it into a failed send.
       mockIngestImage: vi.fn(({ image }: { image: { id: number } }) =>
-        image.id === 2 ? new Promise<boolean>(() => {}) : Promise.resolve(true)
+        image.id === 2 ? new Promise<boolean>(() => undefined) : Promise.resolve(true)
       ),
       mockDeleteImages: vi.fn(async () => undefined),
       mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
@@ -70,10 +70,8 @@ vi.mock('~/env/server', () => ({
 import { ingestImages } from '~/server/jobs/image-ingestion';
 
 const ctx = {} as Parameters<typeof ingestImages.run>[0];
-async function runJob<T extends { run: (ctx: any) => { result: Promise<unknown> } }>(
-  job: T
-): Promise<unknown> {
-  return await job.run(ctx).result;
+async function runJob(): Promise<unknown> {
+  return await ingestImages.run(ctx).result;
 }
 
 beforeEach(() => {
@@ -90,7 +88,7 @@ afterEach(() => {
 
 describe('ingest-images send resilience', () => {
   it('completes the run and submits the healthy images even when one ingestImage hangs', async () => {
-    const p = runJob(ingestImages) as Promise<{
+    const p = runJob() as Promise<{
       sent: number;
       sentUserPending: number;
       failedSends: number;
