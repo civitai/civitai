@@ -105,8 +105,14 @@ export const submitExternalListingSchema = z
     // AppBlocksDevTunnel bits, which a client's `allowedScopes` MAY legitimately carry,
     // so bounding at Full could reject a valid subset. The per-client subset check still
     // lives in the service (it needs the client's `allowedScopes`).
-    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES),
-    // Per-value length bound only; full key/subset validation is in the service.
+    // OPTIONAL + IGNORED by the service. The listing's requested scopes are
+    // AUTO-DERIVED server-side from the client's CURRENT `allowedScopes` at submit
+    // time (server-authoritative snapshot — a form-supplied mask is never trusted).
+    // Still bounded here (int/nonnegative/≤ALL_SCOPES) so a provided value can't
+    // overflow int4, but the stored value comes from the client, not this field.
+    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES).optional(),
+    // Per-value length bound only; full key/subset validation is in the service
+    // (validated against the DERIVED scope set = the client's allowedScopes).
     scopeJustifications: z.record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH)),
     // OPTIONAL homepage / Visit link. Validated for the https-only shape only when present.
     externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
@@ -205,6 +211,18 @@ export const beginListingRevisionSchema = z.object({
   listingId: z.string().min(1).max(64),
 });
 export type BeginListingRevisionInput = z.infer<typeof beginListingRevisionSchema>;
+
+/**
+ * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
+ * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
+ * on-site listing-media page. Returns the `AppListing.id` (the target for
+ * `beginListingRevision` + the asset procs). Owner-bound in the service
+ * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
+ */
+export const getMyListingForAppSchema = z.object({
+  appBlockId: z.string().min(1).max(64),
+});
+export type GetMyListingForAppInput = z.infer<typeof getMyListingForAppSchema>;
 
 /**
  * AUTHOR: owner-gated prefill read for the dual-mode edit wizard

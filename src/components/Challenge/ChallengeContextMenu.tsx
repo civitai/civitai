@@ -1,14 +1,18 @@
 import type { ActionIconProps, MenuProps } from '@mantine/core';
 import { Menu } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { IconEdit, IconTrash } from '@tabler/icons-react';
+import { IconBell, IconEdit, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useDeleteUserChallenge } from '~/components/Challenge/challenge.utils';
+import {
+  useDeleteUserChallenge,
+  useToggleChallengeNotify,
+  useTrackedChallengeIds,
+} from '~/components/Challenge/challenge.utils';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 type Props = MenuProps & {
@@ -21,6 +25,8 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
   const features = useFeatureFlags();
   const router = useRouter();
   const { deleteChallenge, deleting } = useDeleteUserChallenge();
+  const { trackedIds } = useTrackedChallengeIds();
+  const { toggleNotify } = useToggleChallengeNotify();
   const deletingRef = useRef(false);
 
   const isOwner =
@@ -35,8 +41,12 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
     isOwner &&
     (challenge.status === ChallengeStatus.Scheduled ||
       challenge.status === ChallengeStatus.Cancelled);
+  const canTrack =
+    !!currentUser &&
+    (challenge.status === ChallengeStatus.Scheduled || challenge.status === ChallengeStatus.Active);
+  const tracking = trackedIds.has(challenge.id);
 
-  if (!canDelete) return null;
+  if (!canDelete && !canTrack) return null;
 
   // A Cancelled challenge was already refunded by the void, so don't promise another refund.
   const deleteMessage =
@@ -56,6 +66,18 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
         />
       </Menu.Target>
       <Menu.Dropdown>
+        {canTrack && (
+          <Menu.Item
+            leftSection={<IconBell size={14} stroke={1.5} />}
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              void toggleNotify(challenge.id, !tracking);
+            }}
+          >
+            {tracking ? 'Stop notifying me' : 'Notify me'}
+          </Menu.Item>
+        )}
         {canEdit && (
           <Link legacyBehavior href={`/challenges/${challenge.id}/edit`} passHref>
             <Menu.Item component="a" leftSection={<IconEdit size={14} stroke={1.5} />}>
@@ -63,39 +85,41 @@ export function ChallengeContextMenu({ challenge, buttonProps, ...menuProps }: P
             </Menu.Item>
           </Link>
         )}
-        <Menu.Item
-          color="red"
-          leftSection={<IconTrash size={14} stroke={1.5} />}
-          disabled={deleting}
-          onClick={(e: React.MouseEvent) => {
-            e.stopPropagation();
-            e.preventDefault();
-            openConfirmModal({
-              title: 'Delete challenge',
-              children: deleteMessage,
-              centered: true,
-              closeOnConfirm: false,
-              labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
-              confirmProps: { color: 'red' },
-              onConfirm: async () => {
-                if (deletingRef.current) return;
-                deletingRef.current = true;
-                try {
-                  await deleteChallenge(challenge.id);
-                  closeAllModals();
-                  const atDetails = router.pathname === '/challenges/[id]/[[...slug]]';
-                  if (atDetails) await router.push('/challenges');
-                } catch {
-                  // notification is surfaced by the mutation's onError
-                } finally {
-                  deletingRef.current = false;
-                }
-              },
-            });
-          }}
-        >
-          Delete
-        </Menu.Item>
+        {canDelete && (
+          <Menu.Item
+            color="red"
+            leftSection={<IconTrash size={14} stroke={1.5} />}
+            disabled={deleting}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              e.preventDefault();
+              openConfirmModal({
+                title: 'Delete challenge',
+                children: deleteMessage,
+                centered: true,
+                closeOnConfirm: false,
+                labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
+                confirmProps: { color: 'red' },
+                onConfirm: async () => {
+                  if (deletingRef.current) return;
+                  deletingRef.current = true;
+                  try {
+                    await deleteChallenge(challenge.id);
+                    closeAllModals();
+                    const atDetails = router.pathname === '/challenges/[id]/[[...slug]]';
+                    if (atDetails) await router.push('/challenges');
+                  } catch {
+                    // notification is surfaced by the mutation's onError
+                  } finally {
+                    deletingRef.current = false;
+                  }
+                },
+              });
+            }}
+          >
+            Delete
+          </Menu.Item>
+        )}
       </Menu.Dropdown>
     </Menu>
   );

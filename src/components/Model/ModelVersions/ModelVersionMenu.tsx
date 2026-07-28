@@ -10,6 +10,7 @@ import {
   IconCloudX,
   IconAi,
   IconShieldHalf,
+  IconPlaylistX,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -32,6 +33,7 @@ export function ModelVersionMenu({
   active,
   published,
   canGenerate,
+  generationDisabled,
   showToggleCoverage,
 }: {
   modelVersionId: number;
@@ -41,6 +43,7 @@ export function ModelVersionMenu({
   active: boolean;
   published: boolean;
   canGenerate: boolean;
+  generationDisabled: boolean;
   showToggleCoverage: boolean;
 }) {
   const router = useRouter();
@@ -62,6 +65,38 @@ export function ModelVersionMenu({
   function handleEnqueueNsfwLevelUpdate() {
     enqueuNsfwLevelUpdateMutation.mutate({ id: modelVersionId });
   }
+
+  const toggleGenerationDisabledMutation = trpc.generation.toggleGenerationDisabled.useMutation({
+    onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Error updating resource availability',
+        error: new Error(error.message),
+      }),
+  });
+
+  // "Unblock" rather than "enable": clearing the flag only removes the moderator
+  // block — coverage, status and base-model support still decide whether the
+  // version can actually generate.
+  const handleToggleGeneration = () => {
+    const label = generationDisabled ? 'Unblock generation' : 'Block generation';
+    dialogStore.trigger({
+      id: 'toggle-generation-blocked',
+      component: ConfirmDialog,
+      props: {
+        title: label,
+        message: generationDisabled
+          ? 'Removes the moderator block on this version. Whether it can actually generate still depends on coverage and base-model support.'
+          : 'This version will be blocked from the generator for everyone. Existing generations are unaffected.',
+        labels: { cancel: 'Cancel', confirm: label },
+        confirmProps: { color: generationDisabled ? 'blue' : 'red' },
+        // Error is surfaced by the mutation's onError — swallow the rejection so
+        // the dialog still closes and clears its loading state.
+        onConfirm: () =>
+          toggleGenerationDisabledMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
+      },
+    });
+  };
 
   const { toggle, isPending: isLoading } = useToggleCheckpointCoverageMutation();
   const handleToggleCoverage = async ({
@@ -221,6 +256,27 @@ export function ModelVersionMenu({
               {canGenerate ? 'Remove from generation' : 'Add to generation'}
             </Menu.Item>
           </>
+        )}
+
+        {currentUser?.isModerator && (
+          <Menu.Item
+            disabled={toggleGenerationDisabledMutation.isPending}
+            leftSection={
+              toggleGenerationDisabledMutation.isPending ? (
+                <Loader size="xs" />
+              ) : (
+                <IconPlaylistX size={14} stroke={1.5} />
+              )
+            }
+            color="yellow"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              e.preventDefault();
+              handleToggleGeneration();
+            }}
+          >
+            {generationDisabled ? 'Unblock generation' : 'Block generation'}
+          </Menu.Item>
         )}
 
         <Menu.Item

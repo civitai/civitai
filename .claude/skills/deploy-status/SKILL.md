@@ -51,7 +51,7 @@ Driver script: `deploy-chain.sh` (in this skill dir). Dependency-light bash + ku
 - `bash deploy-chain.sh status` — full chain snapshot for the **latest** release-branch prod run.
 - `bash deploy-chain.sh status <sha>` — snapshot for the prod run matching that commit (full or short sha, matched on the `git.repository.branch.commit` label). A raw sha for a tag/stage build correctly resolves to **no prod run** (it is never reported as prod).
 - `bash deploy-chain.sh status <tag>` — a semver tag (e.g. `v5.0.1817` / `5.0.1817`, must contain a dot) is resolved to the **release-branch HEAD** via `gh`, then matched to its prod run.
-- `bash deploy-chain.sh watch [<tag|sha>]` — poll the chain to completion, printing each transition; exits 0 when **both** SSR and API primaries are on the new tag, exits 1 if the build fails or a canary rolls back.
+- `bash deploy-chain.sh watch [<tag|sha>]` — poll the chain to completion, printing each transition; exits 0 only when **every serving pool is fully ROLLED** onto the new image (`updatedReplicas == readyReplicas == desired` for all app deployments), exits 1 if the build fails or a canary rolls back. Not merely when the deploy spec image flips.
 
 ### What `status` prints (the full phase chain)
 
@@ -59,7 +59,7 @@ Driver script: `deploy-chain.sh` (in this skill dir). Dependency-light bash + ku
 2. **IMAGE PICKED UP** — Flux ImagePolicy `flux-system/civitai-prod-release` `.status.latestImage` (`ghcr.io/civitai/civitai-prod:<14-digit-ts>-<sha7>`). ~1m GHCR scan.
 3. **TAG PINNED TO GIT** — `ImageUpdateAutomation` (`flux-system/civitai-dp-prod`) commits the new tag to trunk (<=5m); reflected once primaries pick it up.
 4. **CANARY** — two Flagger Canary CRs in `civitai-dp-prod`: `civitai-dp-prod` (**SSR**) and `civitai-dp-prod-api` (**API / tRPC path**). Reads `.status.phase`, `.status.canaryWeight`, `.status.iterations`, `.status.failedChecks` + recent Warning events (rollbacks).
-5. **PRIMARIES (100% prod)** — `civitai-dp-prod-primary` (SSR) and `civitai-dp-prod-api-primary` (API). Deploy is fully live when both primary images == the new tag. **The API primary on the new tag is what makes tRPC procedures live.**
+5. **PRIMARIES (100% prod)** — `civitai-dp-prod-primary` (SSR), `civitai-dp-prod-api-primary` (API), plus the other serving pools (`-api-heavy`, `-jobs`, …). **Deploy is fully live ONLY when every app deployment is fully ROLLED onto the new image — `updatedReplicas == readyReplicas == desired` — NOT when the deploy spec image flips.** Flagger promotes the spec image minutes before the pods finish their rolling update, so a procedure added in the new image is NOT_FOUND on the not-yet-rolled pods. **Never tell anyone a change is live off the spec image / `status`'s image line alone — wait for the "FULLY ON PROD — every app deployment rolled" summary (or `watch` exit 0).** The API primary fully rolled is what makes tRPC procedures live; the jobs pool fully rolled is what makes cron changes live.
 
 Then an overall **SUMMARY** line: where in the chain + ETA (building / awaiting Flux pickup / canary progressing / rolled back / fully on prod).
 

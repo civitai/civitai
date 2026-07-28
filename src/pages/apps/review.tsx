@@ -1,74 +1,75 @@
+import { Tabs } from '@mantine/core';
 import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Code,
-  Group,
-  Stack,
-  Table,
-  Tabs,
-  Text,
-} from '@mantine/core';
-import {
-  IconAlertTriangle,
   IconCheck,
+  IconClipboardList,
   IconClock,
-  IconExternalLink,
   IconFlag,
   IconX,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import type { MouseEvent } from 'react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ActivePreviewsPanel } from '~/components/Apps/ActivePreviewsPanel';
 import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
-// `OffsiteReviewQueue` (the flat pending-only off-site list) is SUPERSEDED by the
-// unified `AppListingsModerationTable` below (which covers pending too, via the
-// per-row Review action). It stays exported for a one-line rollback: swap the
-// `<AppListingsModerationTable />` in the Pending panel back to `<OffsiteReviewQueue />`.
-import { OffsiteReportsQueue } from '~/components/Apps/OffsiteReviewQueue';
-// The on-site (App Block) review modal + its request types and byte-formatters
-// were EXTRACTED to `OnsiteReviewModal.tsx` (mirrors the #3154 diff-panel
-// extraction) so the modal is importable into a browser test WITHOUT this page's
-// `getServerSideProps`/`createServerSideProps` tRPC-server graph. This page mounts
-// it identically to before.
+// The off-site review MODAL is now PAGE-OWNED (lifted here) so a single instance is
+// shared by the unified Pending list AND the `AppListingsModerationTable` — no
+// divergence. `OffsiteReportsQueue` still powers the Reports tab.
+import {
+  OffsiteReportsQueue,
+  OffsiteReviewModal,
+  type OffsitePendingRow,
+} from '~/components/Apps/OffsiteReviewQueue';
+// The on-site (App Block) review modal + its request types were EXTRACTED to
+// `OnsiteReviewModal.tsx` so the modal is importable into a browser test WITHOUT
+// this page's `getServerSideProps` tRPC-server graph.
 import {
   OnsiteReviewModal,
-  formatBytes,
-  formatDate,
   type AnyRequest,
-  type ApprovedRequest,
-  type FileSummary,
-  type ManifestDiffSummary,
-  type PendingRequest,
-  type RejectedRequest,
+  type OnsiteReviewMode,
 } from '~/components/Apps/OnsiteReviewModal';
+import {
+  CombinedReviewModal,
+  type CombinedReviewSelection,
+} from '~/components/Apps/CombinedReviewModal';
+import { UnifiedReviewList } from '~/components/Apps/UnifiedReviewList';
+import type {
+  CombinedReviewPayload,
+  OffsiteReviewRequest,
+  OnsiteReviewRequest,
+} from '~/components/Apps/unifiedReviewRow';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
- * /apps/review — Moderator review queue + history for App Blocks publish
- * requests.
+ * /apps/review — Moderator review queue + history for Apps (on-site App Blocks AND
+ * off-site external listings), UNIFIED into one list per tab.
  *
- * Three tabs:
- *  - Pending  — oldest-first FIFO queue; click into a row to approve/reject.
- *  - Approved — newest-first history with the mod's optional approval notes
- *               and the "View code in Forgejo" link. Read-only modal.
- *  - Rejected — newest-first history with the required rejection reason
- *               surfaced inline. Read-only modal.
+ * Five tabs:
+ *  - Pending  — ONE oldest-first FIFO list interleaving on-site publish requests
+ *               (`blocks.listPendingRequests`) + off-site requests
+ *               (`appListings.listPendingRequests`). Each row carries a kind badge
+ *               (App / External) and a Review action that opens the CORRECT modal.
+ *  - Approved — unified newest-first history (on-site + off-site approved requests).
+ *  - Rejected — unified newest-first history (on-site + off-site rejected requests).
+ *  - Reports  — off-site listing report queue + mod takedown actions (unchanged).
+ *  - Manage listings — the full all-status lifecycle table (reset/relist/claim/purge).
  *
- * Active tab is mirrored to `?tab=approved|rejected` so a mod can deep-link
- * to a specific history view (e.g. when pasting into a Discord thread).
+ * Both review modals are PAGE-OWNED (lifted here): the on-site `OnsiteReviewModal`
+ * and the off-site `OffsiteReviewModal`. The unified list + the management table
+ * both call the page's `openOnsiteReview` / `openOffsiteReview` — so there is exactly
+ * ONE instance of each modal and the kinds never cross. This is presentation +
+ * modal-state lifting only: no server proc, modal internal, or approve/reject/
+ * lifecycle logic changes.
  *
- * v0 gate: requires `isModerator`. v1 (W11 audit) opens to reviewers
- * outside the civitai team behind RBAC.
+ * Active tab is mirrored to `?tab=` so a mod can deep-link a specific view.
+ *
+ * v0 gate: requires `isAppReviewer`. Dark + mod-only.
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -89,28 +90,36 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-// The request types (PendingRequest / ApprovedRequest / RejectedRequest /
-// AnyRequest, FileSummary, ManifestDiffSummary) moved to `OnsiteReviewModal.tsx`
-// alongside the modal and are imported above.
-
-type TabValue = 'pending' | 'approved' | 'rejected' | 'reports';
+type TabValue = 'pending' | 'approved' | 'rejected' | 'reports' | 'manage';
 
 function isTabValue(v: unknown): v is TabValue {
-  return v === 'pending' || v === 'approved' || v === 'rejected' || v === 'reports';
+  return (
+    v === 'pending' ||
+    v === 'approved' ||
+    v === 'rejected' ||
+    v === 'reports' ||
+    v === 'manage'
+  );
 }
 
-// `formatBytes` + `formatDate` moved to `OnsiteReviewModal.tsx` (imported above).
-// The global active-previews panel + its `formatAge` helper moved to
-// `~/components/Apps/ActivePreviewsPanel` (mirrors the OnsiteReviewModal
-// extraction) so the panel is mountable in a browser test without this page's
-// `getServerSideProps` server graph. It's imported above and rendered identically.
+/** Rows fetched per source per page (bounded by each proc's schema at ≤100). Mod
+ *  queues are low/moderate volume, so one bounded page per source + Load-more is
+ *  simple and correct. */
+const PAGE_LIMIT = 50;
+
+/** Append `page` onto `accumulated`, dropping ids already present (defensive dedup
+ *  in case Load-more double-fires before a fetch settles). */
+function mergeById<T extends { id: string }>(accumulated: T[], page: T[]): T[] {
+  const seen = new Set(accumulated.map((r) => r.id));
+  return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
+}
 
 export default function ReviewQueuePage() {
   const features = useFeatureFlags();
   const router = useRouter();
 
-  // Sync active tab with `?tab=` so deep-links land on the right view. Use
-  // shallow routing so the page query doesn't re-trigger getServerSideProps.
+  // Sync active tab with `?tab=` so deep-links land on the right view. Shallow
+  // routing so the page query doesn't re-trigger getServerSideProps.
   const tab: TabValue = useMemo(() => {
     const qt = router.query.tab;
     if (typeof qt === 'string' && isTabValue(qt)) return qt;
@@ -125,10 +134,57 @@ export default function ReviewQueuePage() {
     );
   };
 
+  // On-site review modal selection (page-owned). `onActioned` lets the opening tab
+  // refresh its own paginated query after an approve/reject (symmetric with off-site).
   const [selected, setSelected] = useState<{
     request: AnyRequest;
-    mode: TabValue;
+    mode: OnsiteReviewMode;
+    onActioned?: () => void | Promise<void>;
   } | null>(null);
+  // Off-site review modal — LIFTED to the page so one instance is shared by the
+  // unified Pending list and the management table. `onActioned` lets whichever
+  // surface opened it refresh its own paginated query after an approve/reject;
+  // `readOnly` makes a history-tab (Approved/Rejected) open a read-only detail view
+  // (no Approve/Reject buttons) — matching the on-site history posture.
+  const [offsiteReview, setOffsiteReview] = useState<{
+    row: OffsitePendingRow;
+    onActioned?: () => void | Promise<void>;
+    readOnly?: boolean;
+  } | null>(null);
+  // Combined code+media review surface — opened when a PENDING row is an app that has
+  // BOTH a pending code request AND a pending listing-media revision (page-owned, one
+  // instance). Each stacked section keeps its own independent approve/reject.
+  const [combinedReview, setCombinedReview] = useState<CombinedReviewSelection>(null);
+
+  // DUAL-PATH on-site row selection: under the `appReviewPage` flag a row NAVIGATES
+  // to the deep-linkable detail page `/apps/review/<id>`; with the flag off it opens
+  // the modal exactly as before. Off-site has no detail page → always the modal.
+  const linkToPage = !!features?.appReviewPage;
+
+  const openOnsiteReview = useCallback(
+    (request: AnyRequest, mode: OnsiteReviewMode, onActioned?: () => void | Promise<void>) => {
+      if (linkToPage) {
+        void router.push(`/apps/review/${request.id}`);
+        return;
+      }
+      setSelected({ request, mode, onActioned });
+    },
+    [linkToPage, router]
+  );
+
+  const openOffsiteReview = useCallback(
+    (row: OffsitePendingRow, onActioned?: () => void | Promise<void>, readOnly = false) => {
+      setOffsiteReview({ row, onActioned, readOnly });
+    },
+    []
+  );
+
+  const openCombinedReview = useCallback(
+    (payload: CombinedReviewPayload, onActioned?: () => void | Promise<void>) => {
+      setCombinedReview({ ...payload, onActioned });
+    },
+    []
+  );
 
   if (!features?.appBlocks) return <NotFound />;
 
@@ -138,7 +194,7 @@ export default function ReviewQueuePage() {
       <AppsPageLayout
         size="xl"
         title="App publish-request queue"
-        subtitle="Moderator review for Apps. Pending queue is oldest-first; history tabs are newest-first."
+        subtitle="Moderator review for Apps. On-site + external submissions share one queue per tab; Pending is oldest-first, history is newest-first."
       >
         <ActivePreviewsPanel />
 
@@ -162,35 +218,46 @@ export default function ReviewQueuePage() {
             <Tabs.Tab value="reports" leftSection={<IconFlag size={14} />}>
               Reports
             </Tabs.Tab>
+            <Tabs.Tab value="manage" leftSection={<IconClipboardList size={14} />}>
+              Manage listings
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
-            {/* On-site (App Block) queue — deep code review (byte-unchanged). The
-                onsite iframe/preview review lives here and is KEPT as-is. */}
-            <PendingTab
-              onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
+            {/* ONE unified oldest-first queue: on-site + off-site pending requests. */}
+            <UnifiedPendingTab
+              openOnsiteReview={openOnsiteReview}
+              openOffsiteReview={openOffsiteReview}
+              openCombinedReview={openCombinedReview}
             />
-            {/* Unified moderator LISTINGS MANAGEMENT table (W13 post-approval mgmt,
-                P2) — all statuses across both kinds, with per-row lifecycle actions.
-                REPLACES the flat off-site pending list (`OffsiteReviewQueue`): a
-                pending off-site row's Review action opens that same review modal, so
-                the table now covers pending too while adding post-approval
-                management (reset/hide/relist/claim/purge) that had no home. */}
-            <AppListingsModerationTable />
           </Tabs.Panel>
 
           <Tabs.Panel value="approved" pt="md">
-            <ApprovedTab onSelect={(r) => setSelected({ request: r, mode: 'approved' })} />
+            <UnifiedHistoryTab
+              kind="approved"
+              openOnsiteReview={openOnsiteReview}
+              openOffsiteReview={openOffsiteReview}
+            />
           </Tabs.Panel>
 
           <Tabs.Panel value="rejected" pt="md">
-            <RejectedTab onSelect={(r) => setSelected({ request: r, mode: 'rejected' })} />
+            <UnifiedHistoryTab
+              kind="rejected"
+              openOnsiteReview={openOnsiteReview}
+              openOffsiteReview={openOffsiteReview}
+            />
           </Tabs.Panel>
 
           <Tabs.Panel value="reports" pt="md">
-            {/* Off-site listing REPORT queue + mod takedown actions (W13 P3b PR3).
-                Dark + mod-only; read via appListings.listListingReports. */}
+            {/* Off-site listing REPORT queue + mod takedown actions. Unchanged. */}
             <OffsiteReportsQueue />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="manage" pt="md">
+            {/* Full all-status listings MANAGEMENT table (reset/relist/claim/purge).
+                Its pending rows' Review action opens the same page-owned off-site
+                modal; its lifecycle-action modals stay local to it. */}
+            <AppListingsModerationTable openOffsiteReview={openOffsiteReview} />
           </Tabs.Panel>
         </Tabs>
       </AppsPageLayout>
@@ -198,351 +265,279 @@ export default function ReviewQueuePage() {
       <OnsiteReviewModal
         selection={selected}
         onClose={() => setSelected(null)}
+        onActioned={selected?.onActioned}
       />
+      <OffsiteReviewModal
+        request={offsiteReview?.row ?? null}
+        onClose={() => setOffsiteReview(null)}
+        onActioned={offsiteReview?.onActioned}
+        readOnly={offsiteReview?.readOnly}
+      />
+      <CombinedReviewModal selection={combinedReview} onClose={() => setCombinedReview(null)} />
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Pending tab — original FIFO queue with approve/reject modal.
+// Unified PENDING tab — one oldest-first list merging the on-site + off-site
+// pending queues. Each source is independently keyset-paginated; Load-more
+// advances whichever source(s) still have a next page, and the pure merge
+// re-sorts the full accumulated set. (Global order across the two independently-
+// paginated sources is exact once both first pages are loaded — fine at mod-queue
+// volumes; we never build a server-side cross-table cursor.)
 // ---------------------------------------------------------------------------
 
-function PendingTab({ onSelect }: { onSelect: (r: PendingRequest) => void }) {
-  const features = useFeatureFlags();
-  const queue = trpc.blocks.listPendingRequests.useQuery(
-    { limit: 50 },
-    { enabled: !!features?.appBlocks }
-  );
-
-  const items = (queue.data?.items ?? []) as PendingRequest[];
-
-  // The modal invalidates listPendingRequests via trpc.useUtils() on
-  // approve/reject success, which forces this query to refetch
-  // automatically — no prop-drilled onActioned callback needed.
-
-  return (
-    <Stack gap="md">
-      <Text c="dimmed" size="sm">
-        {queue.isLoading ? 'Loading…' : `${items.length} pending.`}
-      </Text>
-
-      {queue.isError && (
-        <Alert color="red" icon={<IconAlertTriangle size={16} />}>
-          {queue.error.message}
-        </Alert>
-      )}
-
-      {!queue.isLoading && items.length === 0 && (
-        <Card withBorder p="lg">
-          <Group gap="xs">
-            <IconCheck color="var(--mantine-color-green-6)" size={20} />
-            <Text>Queue is empty. Nothing waiting for review.</Text>
-          </Group>
-        </Card>
-      )}
-
-      {items.length > 0 && (
-        <Card withBorder p={0}>
-          <Table verticalSpacing="md" horizontalSpacing="md">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>App</Table.Th>
-                <Table.Th>Version</Table.Th>
-                <Table.Th>Submitter</Table.Th>
-                <Table.Th>Submitted</Table.Th>
-                <Table.Th>Bundle</Table.Th>
-                <Table.Th>Changes</Table.Th>
-                <Table.Th />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {items.map((r) => {
-                const fs = (r.fileSummary ?? {}) as FileSummary;
-                const mds = (r.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-                const isFirst = mds.kind === 'first-version';
-                return (
-                  <Table.Tr key={r.id} style={{ cursor: 'pointer' }}>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <Group gap={6}>
-                        <Code>{r.slug}</Code>
-                        {isFirst && (
-                          <Badge color="violet" size="xs">
-                            first version
-                          </Badge>
-                        )}
-                      </Group>
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <Code>{r.version}</Code>
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      {r.submittedBy.username ?? `#${r.submittedBy.id}`}
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <Group gap={4}>
-                        <IconClock size={14} />
-                        <Text size="xs">{formatDate(r.submittedAt)}</Text>
-                      </Group>
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <Text size="xs" c="dimmed">
-                        {formatBytes(r.bundleSizeBytes)} ·{' '}
-                        {fs.files?.length ?? 0} files
-                      </Text>
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <Group gap={6}>
-                        {(fs.added?.length ?? 0) > 0 && (
-                          <Badge color="green" size="xs">
-                            +{fs.added.length}
-                          </Badge>
-                        )}
-                        {(fs.changed?.length ?? 0) > 0 && (
-                          <Badge color="yellow" size="xs">
-                            ~{fs.changed.length}
-                          </Badge>
-                        )}
-                        {(fs.removed?.length ?? 0) > 0 && (
-                          <Badge color="red" size="xs">
-                            −{fs.removed.length}
-                          </Badge>
-                        )}
-                      </Group>
-                    </Table.Td>
-                    <Table.Td>
-                      <Button
-                        size="xs"
-                        variant="default"
-                        onClick={() => onSelect(r)}
-                        rightSection={<IconExternalLink size={12} />}
-                      >
-                        Review
-                      </Button>
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
-        </Card>
-      )}
-    </Stack>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Approved tab — cursor-paginated history with inline approval notes.
-// ---------------------------------------------------------------------------
-
-function ApprovedTab({ onSelect }: { onSelect: (r: ApprovedRequest) => void }) {
-  return (
-    <HistoryTab
-      kind="approved"
-      onSelect={(r) => onSelect(r as ApprovedRequest)}
-      emptyLabel="No approved publish requests yet."
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Rejected tab — cursor-paginated history with inline rejection reason.
-// ---------------------------------------------------------------------------
-
-function RejectedTab({ onSelect }: { onSelect: (r: RejectedRequest) => void }) {
-  return (
-    <HistoryTab
-      kind="rejected"
-      onSelect={(r) => onSelect(r as RejectedRequest)}
-      emptyLabel="No rejected publish requests yet."
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Shared history tab — drives both approved + rejected. Differs only by the
-// tRPC proc it calls and the inline mod-note column it renders.
-// ---------------------------------------------------------------------------
-
-function HistoryTab({
-  kind,
-  onSelect,
-  emptyLabel,
+function UnifiedPendingTab({
+  openOnsiteReview,
+  openOffsiteReview,
+  openCombinedReview,
 }: {
-  kind: 'approved' | 'rejected';
-  onSelect: (r: ApprovedRequest | RejectedRequest) => void;
-  emptyLabel: string;
+  openOnsiteReview: (
+    req: AnyRequest,
+    mode: OnsiteReviewMode,
+    onActioned?: () => void | Promise<void>
+  ) => void;
+  openOffsiteReview: (
+    row: OffsitePendingRow,
+    onActioned?: () => void | Promise<void>,
+    readOnly?: boolean
+  ) => void;
+  openCombinedReview: (
+    payload: CombinedReviewPayload,
+    onActioned?: () => void | Promise<void>
+  ) => void;
 }) {
   const features = useFeatureFlags();
-  const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [accumulated, setAccumulated] = useState<Array<ApprovedRequest | RejectedRequest>>([]);
+  const enabled = !!features?.appBlocks;
 
-  // Reset accumulated state when switching between tabs (kind doesn't
-  // change in practice — each HistoryTab instance is per-kind — but if a
-  // mod reloads the page on a different tab we start fresh).
-  // Both procs share the listPendingRequestsSchema shape so the input
-  // types are interchangeable.
-  const approvedQuery = trpc.blocks.listApprovedRequests.useQuery(
-    { limit: 25, cursor },
-    { enabled: !!features?.appBlocks && kind === 'approved' }
+  const [onsiteCursor, setOnsiteCursor] = useState<string | undefined>(undefined);
+  const [offsiteCursor, setOffsiteCursor] = useState<string | undefined>(undefined);
+  const [onsiteAcc, setOnsiteAcc] = useState<OnsiteReviewRequest[]>([]);
+  const [offsiteAcc, setOffsiteAcc] = useState<OffsiteReviewRequest[]>([]);
+
+  const onsiteQuery = trpc.blocks.listPendingRequests.useQuery(
+    { limit: PAGE_LIMIT, cursor: onsiteCursor },
+    { enabled, retry: false }
   );
-  const rejectedQuery = trpc.blocks.listRejectedRequests.useQuery(
-    { limit: 25, cursor },
-    { enabled: !!features?.appBlocks && kind === 'rejected' }
+  const offsiteQuery = trpc.appListings.listPendingRequests.useQuery(
+    { limit: PAGE_LIMIT, cursor: offsiteCursor },
+    { enabled, retry: false }
   );
-  const query = kind === 'approved' ? approvedQuery : rejectedQuery;
 
-  const page = (query.data?.items ?? []) as Array<ApprovedRequest | RejectedRequest>;
+  const onsitePage = (onsiteQuery.data?.items ?? []) as OnsiteReviewRequest[];
+  const offsitePage = (offsiteQuery.data?.items ?? []) as OffsiteReviewRequest[];
 
-  // Merge each page result into the accumulated list. Dedupe by id in case
-  // the user clicks Load more multiple times before the previous fetch
-  // settled (defensive — react-query usually serializes these).
-  const merged = useMemo(() => {
-    if (!cursor) return page;
-    const seen = new Set(accumulated.map((r) => r.id));
-    return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
-  }, [accumulated, page, cursor]);
+  const onsiteItems = useMemo(
+    () => (onsiteCursor ? mergeById(onsiteAcc, onsitePage) : onsitePage),
+    [onsiteAcc, onsitePage, onsiteCursor]
+  );
+  const offsiteItems = useMemo(
+    () => (offsiteCursor ? mergeById(offsiteAcc, offsitePage) : offsitePage),
+    [offsiteAcc, offsitePage, offsiteCursor]
+  );
+
+  const onsiteNext = onsiteQuery.data?.nextCursor ?? null;
+  const offsiteNext = offsiteQuery.data?.nextCursor ?? null;
+
+  const resetPaging = useCallback(() => {
+    setOnsiteAcc([]);
+    setOffsiteAcc([]);
+    setOnsiteCursor(undefined);
+    setOffsiteCursor(undefined);
+  }, []);
+
+  const boundOnsite = useCallback(
+    // Register the tab's paging reset as the onsite modal's post-success callback so
+    // approving/rejecting an onsite item clears the accumulators + refetches page 1
+    // (mirrors the offsite path — kills the stale ghost-row after a decision).
+    (req: OnsiteReviewRequest) => openOnsiteReview(req, 'pending', resetPaging),
+    [openOnsiteReview, resetPaging]
+  );
+  const boundOffsite = useCallback(
+    (row: OffsitePendingRow) => openOffsiteReview(row, resetPaging),
+    [openOffsiteReview, resetPaging]
+  );
+  const boundCombined = useCallback(
+    (payload: CombinedReviewPayload) => openCombinedReview(payload, resetPaging),
+    [openCombinedReview, resetPaging]
+  );
 
   const onLoadMore = () => {
-    // Snapshot the current page before advancing the cursor so the next
-    // useQuery call starts a new fetch.
-    setAccumulated(merged);
-    const next = query.data?.nextCursor ?? undefined;
-    if (next) setCursor(next);
+    if (onsiteNext != null) {
+      setOnsiteAcc(onsiteItems);
+      setOnsiteCursor(onsiteNext);
+    }
+    if (offsiteNext != null) {
+      setOffsiteAcc(offsiteItems);
+      setOffsiteCursor(offsiteNext);
+    }
   };
 
   return (
-    <Stack gap="md">
-      <Text c="dimmed" size="sm">
-        {query.isLoading ? 'Loading…' : `${merged.length} shown.`}
-      </Text>
-
-      {query.isError && (
-        <Alert color="red" icon={<IconAlertTriangle size={16} />}>
-          {query.error.message}
-        </Alert>
-      )}
-
-      {!query.isLoading && merged.length === 0 && (
-        <Card withBorder p="lg">
-          <Group gap="xs">
-            <IconCheck color="var(--mantine-color-gray-6)" size={20} />
-            <Text>{emptyLabel}</Text>
-          </Group>
-        </Card>
-      )}
-
-      {merged.length > 0 && (
-        <Card withBorder p={0}>
-          <Table verticalSpacing="md" horizontalSpacing="md">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>App</Table.Th>
-                <Table.Th>Version</Table.Th>
-                <Table.Th>Submitter</Table.Th>
-                <Table.Th>{kind === 'approved' ? 'Approved by' : 'Rejected by'}</Table.Th>
-                <Table.Th>Reviewed</Table.Th>
-                <Table.Th>{kind === 'approved' ? 'Notes' : 'Reason'}</Table.Th>
-                <Table.Th />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {merged.map((r) => {
-                const isApproved = kind === 'approved';
-                const approved = r as ApprovedRequest;
-                const rejected = r as RejectedRequest;
-                const note = isApproved ? approved.approvalNotes : rejected.rejectionReason;
-                return (
-                  <Table.Tr key={r.id} style={{ cursor: 'pointer' }}>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <Code>{r.slug}</Code>
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <Code>{r.version}</Code>
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      {r.submittedBy.username ?? `#${r.submittedBy.id}`}
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      {r.reviewedBy
-                        ? r.reviewedBy.username
-                          ? `@${r.reviewedBy.username}`
-                          : `#${r.reviewedBy.id}`
-                        : '—'}
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <Group gap={4}>
-                        <IconClock size={14} />
-                        <Text size="xs">{formatDate(r.reviewedAt)}</Text>
-                      </Group>
-                    </Table.Td>
-                    <Table.Td onClick={() => onSelect(r)}>
-                      <HistoryNoteCell note={note} />
-                    </Table.Td>
-                    <Table.Td>
-                      <Button
-                        size="xs"
-                        variant="default"
-                        onClick={() => onSelect(r)}
-                        rightSection={<IconExternalLink size={12} />}
-                      >
-                        View
-                      </Button>
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
-            </Table.Tbody>
-          </Table>
-        </Card>
-      )}
-
-      {query.data?.nextCursor && !query.isFetching && (
-        <Group justify="center">
-          <Button variant="default" onClick={onLoadMore}>
-            Load more
-          </Button>
-        </Group>
-      )}
-    </Stack>
+    <UnifiedReviewList
+      onsiteItems={onsiteItems}
+      offsiteItems={offsiteItems}
+      direction="asc"
+      openOnsiteReview={boundOnsite}
+      openOffsiteReview={boundOffsite}
+      openCombinedReview={boundCombined}
+      isLoading={onsiteQuery.isLoading || offsiteQuery.isLoading}
+      errorMessage={onsiteQuery.error?.message ?? offsiteQuery.error?.message}
+      emptyLabel="Queue is empty. Nothing waiting for review."
+      dateLabel="Submitted"
+      actionLabel="Review"
+      hasMore={onsiteNext != null || offsiteNext != null}
+      isLoadingMore={onsiteQuery.isFetching || offsiteQuery.isFetching}
+      onLoadMore={onLoadMore}
+    />
   );
 }
 
-/**
- * Inline mod-note cell. Notes are usually one line; collapse anything
- * over ~120 chars behind a Show more toggle so the table rows don't
- * stretch unboundedly.
- */
-function HistoryNoteCell({ note }: { note: string | null | undefined }) {
-  const [expanded, setExpanded] = useState(false);
-  if (!note) {
-    return (
-      <Text size="xs" c="dimmed">
-        —
-      </Text>
-    );
-  }
-  const long = note.length > 120;
-  const shown = expanded || !long ? note : `${note.slice(0, 120).trimEnd()}…`;
+// ---------------------------------------------------------------------------
+// Unified HISTORY tab (drives both Approved + Rejected) — newest-first, merging
+// the on-site + off-site decided requests. Mirrors the pending tab's dual-source
+// keyset pagination. All four history queries are declared (rules of hooks); only
+// the active kind's pair is enabled.
+// ---------------------------------------------------------------------------
+
+function UnifiedHistoryTab({
+  kind,
+  openOnsiteReview,
+  openOffsiteReview,
+}: {
+  kind: 'approved' | 'rejected';
+  openOnsiteReview: (
+    req: AnyRequest,
+    mode: OnsiteReviewMode,
+    onActioned?: () => void | Promise<void>
+  ) => void;
+  openOffsiteReview: (
+    row: OffsitePendingRow,
+    onActioned?: () => void | Promise<void>,
+    readOnly?: boolean
+  ) => void;
+}) {
+  const features = useFeatureFlags();
+  const enabled = !!features?.appBlocks;
+  const isApproved = kind === 'approved';
+
+  const [onsiteCursor, setOnsiteCursor] = useState<string | undefined>(undefined);
+  const [offsiteCursor, setOffsiteCursor] = useState<string | undefined>(undefined);
+  const [onsiteAcc, setOnsiteAcc] = useState<OnsiteReviewRequest[]>([]);
+  const [offsiteAcc, setOffsiteAcc] = useState<OffsiteReviewRequest[]>([]);
+
+  const onsiteApprovedQ = trpc.blocks.listApprovedRequests.useQuery(
+    { limit: PAGE_LIMIT, cursor: onsiteCursor },
+    { enabled: enabled && isApproved, retry: false }
+  );
+  const onsiteRejectedQ = trpc.blocks.listRejectedRequests.useQuery(
+    { limit: PAGE_LIMIT, cursor: onsiteCursor },
+    { enabled: enabled && !isApproved, retry: false }
+  );
+  const offsiteApprovedQ = trpc.appListings.listApprovedRequests.useQuery(
+    { limit: PAGE_LIMIT, cursor: offsiteCursor },
+    { enabled: enabled && isApproved, retry: false }
+  );
+  const offsiteRejectedQ = trpc.appListings.listRejectedRequests.useQuery(
+    { limit: PAGE_LIMIT, cursor: offsiteCursor },
+    { enabled: enabled && !isApproved, retry: false }
+  );
+
+  const onsiteQuery = isApproved ? onsiteApprovedQ : onsiteRejectedQ;
+  const offsiteQuery = isApproved ? offsiteApprovedQ : offsiteRejectedQ;
+
+  const onsitePage = (onsiteQuery.data?.items ?? []) as OnsiteReviewRequest[];
+  const offsitePage = (offsiteQuery.data?.items ?? []) as OffsiteReviewRequest[];
+
+  const onsiteItems = useMemo(
+    () => (onsiteCursor ? mergeById(onsiteAcc, onsitePage) : onsitePage),
+    [onsiteAcc, onsitePage, onsiteCursor]
+  );
+  const offsiteItems = useMemo(
+    () => (offsiteCursor ? mergeById(offsiteAcc, offsitePage) : offsitePage),
+    [offsiteAcc, offsitePage, offsiteCursor]
+  );
+
+  const onsiteNext = onsiteQuery.data?.nextCursor ?? null;
+  const offsiteNext = offsiteQuery.data?.nextCursor ?? null;
+
+  const resetPaging = useCallback(() => {
+    setOnsiteAcc([]);
+    setOffsiteAcc([]);
+    setOnsiteCursor(undefined);
+    setOffsiteCursor(undefined);
+  }, []);
+
+  const boundOnsite = useCallback(
+    // History rows open in read-only mode ('approved'/'rejected'), so the action bar
+    // self-suppresses and onActioned never fires — but wire resetPaging for symmetry.
+    (req: OnsiteReviewRequest) => openOnsiteReview(req, kind, resetPaging),
+    [openOnsiteReview, kind, resetPaging]
+  );
+  const boundOffsite = useCallback(
+    // Off-site history opens the modal READ-ONLY (no Approve/Reject buttons) — an
+    // already-decided request would only error NOT_PENDING; this matches on-site.
+    (row: OffsitePendingRow) => openOffsiteReview(row, resetPaging, true),
+    [openOffsiteReview, resetPaging]
+  );
+
+  const onLoadMore = () => {
+    if (onsiteNext != null) {
+      setOnsiteAcc(onsiteItems);
+      setOnsiteCursor(onsiteNext);
+    }
+    if (offsiteNext != null) {
+      setOffsiteAcc(offsiteItems);
+      setOffsiteCursor(offsiteNext);
+    }
+  };
+
+  // APPROVED tab only — re-fire the build for an approved request whose build
+  // never started (deploy state null) or failed. The mutation takes ONLY the
+  // request id; the sha to rebuild is read server-side from the already-reviewed
+  // DB row. Tracks the in-flight id so only that row's button spins/disables.
+  const [retriggeringId, setRetriggeringId] = useState<string | null>(null);
+  const retriggerMutation = trpc.blocks.retriggerBuild.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        message: 'Build re-triggered — the deploy state will update as it progresses.',
+      });
+      resetPaging();
+      void onsiteApprovedQ.refetch();
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Re-trigger failed', error: new Error(e.message) }),
+    onSettled: () => setRetriggeringId(null),
+  });
+  const onRetriggerBuild = useCallback(
+    (publishRequestId: string) => {
+      // Belt against a double-fire that slips past the button's own disabled state.
+      if (retriggerMutation.isPending) return;
+      setRetriggeringId(publishRequestId);
+      retriggerMutation.mutate({ publishRequestId });
+    },
+    [retriggerMutation]
+  );
+
   return (
-    <Stack gap={2} maw={360}>
-      <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-        {shown}
-      </Text>
-      {long && (
-        <Text
-          component="button"
-          type="button"
-          size="xs"
-          c="blue"
-          onClick={(e: MouseEvent<HTMLButtonElement>) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-        >
-          {expanded ? 'Show less' : 'Show more'}
-        </Text>
-      )}
-    </Stack>
+    <UnifiedReviewList
+      onsiteItems={onsiteItems}
+      offsiteItems={offsiteItems}
+      direction="desc"
+      openOnsiteReview={boundOnsite}
+      openOffsiteReview={boundOffsite}
+      isLoading={onsiteQuery.isLoading || offsiteQuery.isLoading}
+      errorMessage={onsiteQuery.error?.message ?? offsiteQuery.error?.message}
+      emptyLabel={isApproved ? 'No approved requests yet.' : 'No rejected requests yet.'}
+      dateLabel="Reviewed"
+      actionLabel="View"
+      hasMore={onsiteNext != null || offsiteNext != null}
+      isLoadingMore={onsiteQuery.isFetching || offsiteQuery.isFetching}
+      onLoadMore={onLoadMore}
+      // Deploy column + retrigger control exist on the APPROVED tab only; the
+      // Rejected tab passes neither and renders exactly as before.
+      onRetriggerBuild={isApproved ? onRetriggerBuild : undefined}
+      retriggeringId={retriggeringId}
+    />
   );
 }

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
@@ -134,21 +135,81 @@ async function getAnnouncementsCached(domain?: DomainColor) {
   return getAnnouncementsCachedMemo(domain ?? '');
 }
 
+/**
+ * Enabled announcements whose (open-ended) start/end window overlaps `[from, to]`.
+ *
+ * The single source of truth for "is this announcement showing". `activeAnnouncementWhere`
+ * is the degenerate `from === to === now` case used by the read path; the media health
+ * check widens only the upper bound so it can see a banner before it goes live.
+ */
+export function announcementWindowOverlapsWhere(
+  from: Date,
+  to: Date
+): Prisma.AnnouncementWhereInput {
+  return {
+    disabled: false,
+    AND: [
+      {
+        OR: [{ startsAt: { lte: to } }, { startsAt: { equals: null } }],
+      },
+      {
+        OR: [{ endsAt: { gte: from } }, { endsAt: { equals: null } }],
+      },
+    ],
+  };
+}
+
+/**
+ * The "currently live" predicate: enabled, and now is inside the (open-ended)
+ * start/end window. Shared with the announcement media health check so a monitor
+ * can never disagree with the read path about which announcements are live.
+ */
+export function activeAnnouncementWhere(now: Date): Prisma.AnnouncementWhereInput {
+  return announcementWindowOverlapsWhere(now, now);
+}
+
+/**
+ * How far ahead of "now" the media health check looks.
+ *
+ * The check runs hourly, so a monitor limited to *currently-live* announcements would
+ * find a broken banner up to an hour after it went live — i.e. users see it first. One
+ * day of look-ahead means a scheduled announcement's banner is verified well before it
+ * is shown, and costs nothing: the extra rows are few and their keys de-duplicate
+ * against the live ones. A finding on a not-yet-live announcement is just as actionable,
+ * and cheaper to fix.
+ */
+export const ANNOUNCEMENT_MEDIA_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Every announcement that carries a banner image key and is either live now or goes
+ * live within `lookaheadMs`, across all domains. Used by the media health check —
+ * deliberately NOT domain-filtered, since a broken banner on a single-domain
+ * announcement is just as broken.
+ */
+export async function getMonitoredAnnouncementImageRefs(
+  lookaheadMs: number = ANNOUNCEMENT_MEDIA_LOOKAHEAD_MS
+) {
+  const now = new Date();
+  const announcements = await dbRead.announcement.findMany({
+    where: announcementWindowOverlapsWhere(now, new Date(now.getTime() + lookaheadMs)),
+    select: { id: true, metadata: true },
+  });
+
+  return announcements
+    .map(({ id, metadata }) => ({
+      id,
+      key: ((metadata ?? {}) as AnnouncementMetaSchema).image,
+    }))
+    .filter((x): x is { id: number; key: string } => !!x.key);
+}
+
 export type AnnouncementDTO = Awaited<ReturnType<typeof getAnnouncements>>[number];
 async function getAnnouncements(domain?: DomainColor) {
   const now = new Date();
   const announcements = await dbWrite.announcement.findMany({
     where: {
-      disabled: false,
+      ...activeAnnouncementWhere(now),
       domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
-      AND: [
-        {
-          OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
-        },
-        {
-          OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
-        },
-      ],
     },
     select: {
       createdAt: true,

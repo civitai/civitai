@@ -152,6 +152,8 @@ export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage" | "Exte
 
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
+export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
+
 export type EntityCollaboratorStatus = "Pending" | "Approved" | "Rejected";
 
 export type ClubAdminPermission = "ManageMemberships" | "ManageTiers" | "ManagePosts" | "ManageClub" | "ManageResources" | "ViewRevenue" | "WithdrawRevenue";
@@ -195,6 +197,8 @@ export type PoolTrigger = "Entry" | "User";
 export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
 
 export type ChallengeIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
+export type ChallengeEngagementType = "Notify";
 
 export type EntityMetric_EntityType_Type = "Image";
 
@@ -606,6 +610,7 @@ export interface User {
   challengeWins?: ChallengeWinner[];
   challengeJudges?: ChallengeJudge[];
   challengeEventsCreated?: ChallengeEvent[];
+  challengeEngagements?: ChallengeEngagement[];
   rewardsBonusEventsCreated?: RewardsBonusEvent[];
   strikes?: UserStrike[];
   issuedStrikes?: UserStrike[];
@@ -792,7 +797,6 @@ export interface Model {
   uploadType: ModelUploadType;
   locked: boolean;
   underAttack: boolean;
-  earlyAccessDeadline: Date | null;
   mode: ModelModifier | null;
   unlisted: boolean;
   gallerySettings: JsonValue;
@@ -801,6 +805,7 @@ export interface Model {
   lockedProperties: string[];
   scannedAt: Date | null;
   sfwOnly: boolean;
+  isOfficial: boolean;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -903,6 +908,7 @@ export interface ModelVersion {
   createdAt: Date;
   updatedAt: Date;
   publishedAt: Date | null;
+  initialPublishedAt: Date | null;
   status: ModelStatus;
   trainingStatus: TrainingStatus | null;
   trainingDetails: JsonValue | null;
@@ -916,9 +922,6 @@ export interface ModelVersion {
   settings: JsonValue | null;
   availability: Availability;
   nsfwLevel: number;
-  earlyAccessEndsAt: Date | null;
-  earlyAccessConfig: JsonValue | null;
-  earlyAccessPermanent: boolean;
   uploadType: ModelUploadType;
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
@@ -2277,6 +2280,7 @@ export interface Comment {
   modelId: number;
   locked: boolean | null;
   hidden: boolean | null;
+  pinnedAt: Date | null;
   comments?: Comment[];
   reactions?: CommentReaction[];
   reports?: CommentReport[];
@@ -3041,6 +3045,17 @@ export interface EntityAccess {
   meta: JsonValue | null;
 }
 
+export interface PaidAccess {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  endsAt: Date | null;
+  timeframeDays: number | null;
+  terms: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface EntityCollaborator {
   entityType: EntityType;
   entityId: number;
@@ -3408,11 +3423,11 @@ export interface DonationGoal {
   title: string;
   description: string | null;
   goalAmount: number;
-  paidAmount: number;
+  entityType: PaidAccessEntityType | null;
+  entityId: number | null;
   modelVersionId: number | null;
   modelVersion?: ModelVersion | null;
   createdAt: Date;
-  isEarlyAccess: boolean;
   active: boolean;
   donations?: Donation[];
 }
@@ -3680,6 +3695,7 @@ export interface Challenge {
   winners?: ChallengeWinner[];
   threads?: Thread[];
   reports?: ChallengeReport[];
+  engagements?: ChallengeEngagement[];
   eventId: number | null;
   event?: ChallengeEvent | null;
 }
@@ -3722,6 +3738,15 @@ export interface ChallengeCategory {
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ChallengeEngagement {
+  userId: number;
+  user?: User;
+  challengeId: number;
+  challenge?: Challenge;
+  type: ChallengeEngagementType;
+  createdAt: Date;
 }
 
 export interface ChallengeWinner {
@@ -4654,6 +4679,7 @@ export interface ComicChapter {
   earlyAccessConfig: JsonValue | null;
   earlyAccessEndsAt: Date | null;
   publishedAt: Date | null;
+  initialPublishedAt: Date | null;
   nsfwLevel: number;
   createdAt: Date;
   updatedAt: Date;

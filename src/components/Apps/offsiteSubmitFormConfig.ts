@@ -18,11 +18,12 @@ import {
 } from '~/server/services/blocks/marketplace-categories.constants';
 import {
   SCOPE_JUSTIFICATION_MAX_LENGTH,
+  SENSITIVE_TOKEN_SCOPES,
   connectScopesSubsetOfCeiling,
+  isSensitiveTokenScope,
   tokenScopeKeyByBit,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
 
 /**
  * App Store Listings (W13) — external-app submit form field/validation config
@@ -65,9 +66,15 @@ export type OffsiteSubmitFormValues = {
   changelog: string;
   /** REQUIRED: the id of the caller's own OAuth client (chosen in the picker). */
   connectClientId: string | null;
-  /** The disclosed requested-scope bitmask (⊆ the selected client's allowedScopes). */
+  /**
+   * The requested-scope bitmask, AUTO-DERIVED from the selected client's
+   * `allowedScopes` (no longer author-picked). Kept in the view-model so the
+   * read-only display + justification inputs iterate it and the client mirror can
+   * assert the (now trivial) subset invariant; the SERVER re-snapshots it from the
+   * client's current `allowedScopes` at submit time (authoritative).
+   */
   requestedScopes: number;
-  /** enum-key → rationale (only checked scopes get an entry). */
+  /** enum-key → rationale (only derived scopes get an entry). */
   scopeJustifications: Record<string, string>;
 };
 
@@ -175,9 +182,15 @@ export function isOffsiteSubmitFormValid(values: OffsiteSubmitFormValues): boole
  *   - Take the hostname (already lowercased by the URL parser), strip a leading
  *     `www.`, and use the FIRST dot-label as the base
  *     (`vitrine.civitai.com` → `vitrine`; `www.my-app.io` → `my-app`).
- *   - `name`  = the base, hyphen-word title-cased: each `-`-separated word gets
- *     its first char upper-cased and the remainder lower-cased, rejoined with
- *     `-` (`vitrine` → `Vitrine`; `my-app` → `My-App`; `example` → `Example`).
+ *   - `name`  = the base, word title-cased: each `-`-separated word gets its
+ *     first char upper-cased and the remainder lower-cased, rejoined with a
+ *     SPACE so the human-readable name reads naturally
+ *     (`vitrine` → `Vitrine`; `my-app` → `My App`;
+ *     `cosmetic-studio` → `Cosmetic Studio`; `example` → `Example`). This name
+ *     is only a FALLBACK — the submit wizard prefers the page's real `<title>`
+ *     (from the OG-meta fetch) and uses this host-derived name solely when the
+ *     meta fetch yields no usable title. Only the `name` is de-hyphenated; the
+ *     `slug` below keeps hyphens (slugs need them).
  *   - `slug`  = the base kebab-cased + SLUG_REGEX-sanitized: lower-cased, every
  *     run of non `[a-z0-9]` chars collapsed to a single `-`, leading/trailing `-`
  *     trimmed, and any leading non-letters dropped (SLUG_REGEX requires a leading
@@ -205,7 +218,7 @@ export function deriveListingFromUrl(url: string): { name: string; slug: string 
     .split('-')
     .filter((word) => word.length > 0)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join('-');
+    .join(' ');
 
   const slugCandidate = base
     .toLowerCase()
@@ -292,24 +305,124 @@ export function scopeKeyForBit(bit: number): string {
   return tokenScopeKeyByBit(bit) ?? String(bit);
 }
 
+/** One expanded scope row from a mask: `{ bit, key, label }`. */
+export type ScopeEntry = { bit: number; key: string; label: string };
+
 /**
- * Toggle a single scope bit in `requestedScopes`, pruning any justification whose
- * scope is no longer requested (so the payload never carries a dangling rationale the
- * server would reject). PURE.
+ * Split a requested-scope mask into SENSITIVE vs NON-SENSITIVE rows (each
+ * `{ bit, key, label }`, sorted by bit). Sensitivity is the shared
+ * `isSensitiveTokenScope` predicate (money / private data / cross-user writes) —
+ * the SAME classification the server's approval gate (`assertConnectSensitiveScopes
+ * Justified`) and the mod-review `ConnectScopesPanel` use, so the author sees
+ * exactly the scopes that will require a justification before approval. PURE.
  */
-export function toggleScopeBit(
-  values: OffsiteSubmitFormValues,
-  bit: number
-): OffsiteSubmitFormValues {
-  const requestedScopes = Flags.hasFlag(values.requestedScopes, bit)
-    ? values.requestedScopes & ~bit
-    : values.requestedScopes | bit;
-  const requestedKeys = new Set(tokenScopeMaskToList(requestedScopes).map((s) => s.key));
-  const scopeJustifications: Record<string, string> = {};
-  for (const [key, text] of Object.entries(values.scopeJustifications)) {
-    if (requestedKeys.has(key)) scopeJustifications[key] = text;
+export function partitionScopesBySensitivity(mask: number): {
+  sensitive: ScopeEntry[];
+  nonSensitive: ScopeEntry[];
+} {
+  const scopes = tokenScopeMaskToList(mask);
+  return {
+    sensitive: scopes.filter((s) => isSensitiveTokenScope(s.bit)),
+    nonSensitive: scopes.filter((s) => !isSensitiveTokenScope(s.bit)),
+  };
+}
+
+/**
+ * The SENSITIVE scope keys in `mask` whose justification is blank (missing or
+ * whitespace-only). Empty ⇒ every sensitive scope is justified. Non-sensitive
+ * scopes are never required, so they never appear here. PURE.
+ */
+export function missingSensitiveJustifications(values: OffsiteSubmitFormValues): string[] {
+  return partitionScopesBySensitivity(values.requestedScopes)
+    .sensitive.map((s) => s.key)
+    .filter((key) => (values.scopeJustifications[key] ?? '').trim().length === 0);
+}
+
+/**
+ * Shape justifications for the SUBMIT/EDIT payload keeping ONLY sensitive scopes
+ * (non-sensitive scopes have no author input and need no rationale — see
+ * {@link shapeScopeJustifications}). Trims, drops empties, and prunes any key not
+ * a currently-requested SENSITIVE scope. PURE — the single source both the create
+ * payload and the edit scalar-diff use, so they stay byte-identical.
+ */
+export function shapeSensitiveJustifications(
+  justifications: Record<string, string>,
+  mask: number
+): Record<string, string> {
+  return shapeScopeJustifications(justifications, mask & SENSITIVE_TOKEN_SCOPES);
+}
+
+/**
+ * Validate the per-scope justification map, mirroring the SENSITIVE-only model:
+ *   - every value ≤ SCOPE_JUSTIFICATION_MAX_LENGTH (the shared server bound), and
+ *   - every SENSITIVE requested scope carries a non-empty justification.
+ * Non-sensitive scopes are never required. Returns a single error string (or
+ * undefined). PURE — shared by the create validator + the edit save gate.
+ */
+export function scopeJustificationError(values: OffsiteSubmitFormValues): string | undefined {
+  for (const text of Object.values(values.scopeJustifications)) {
+    if (text.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+      return `Each justification must be at most ${SCOPE_JUSTIFICATION_MAX_LENGTH} characters.`;
+    }
   }
-  return { ...values, requestedScopes, scopeJustifications };
+  if (missingSensitiveJustifications(values).length > 0) {
+    return 'Add a justification for each sensitive permission.';
+  }
+  return undefined;
+}
+
+/**
+ * Drop every justification whose scope is NOT in `mask` (the derived requested set),
+ * so the payload never carries a dangling rationale for a scope the app no longer
+ * requests (which the server would reject). PURE.
+ */
+export function pruneJustificationsToMask(
+  justifications: Record<string, string>,
+  mask: number
+): Record<string, string> {
+  const keys = new Set(tokenScopeMaskToList(mask).map((s) => s.key));
+  const out: Record<string, string> = {};
+  for (const [key, text] of Object.entries(justifications)) {
+    if (keys.has(key)) out[key] = text;
+  }
+  return out;
+}
+
+/**
+ * AUTO-DERIVE the requested scopes from the selected client's `allowedScopes`: the
+ * listing requests EXACTLY the client's allowed set (no author picking), and any
+ * justification for a scope no longer present is pruned. Called on selecting /
+ * changing the OAuth client. PURE. (Replaces the removed `toggleScopeBit` — the
+ * picker is gone; scopes are derived, not toggled.)
+ */
+export function deriveScopesFromClient(
+  values: OffsiteSubmitFormValues,
+  allowedScopes: number
+): OffsiteSubmitFormValues {
+  return {
+    ...values,
+    requestedScopes: allowedScopes,
+    scopeJustifications: pruneJustificationsToMask(values.scopeJustifications, allowedScopes),
+  };
+}
+
+/**
+ * Shape a raw justification map into the SUBMIT/EDIT payload form: trim each value,
+ * DROP empties, and keep only keys whose scope is in `mask` (the derived requested
+ * set). PURE — the single source for both `toSubmitExternalInput` (create) and the
+ * edit scalar-patch diff, so the two produce byte-identical justification payloads.
+ */
+export function shapeScopeJustifications(
+  justifications: Record<string, string>,
+  mask: number
+): Record<string, string> {
+  const keys = new Set(tokenScopeMaskToList(mask).map((s) => s.key));
+  const out: Record<string, string> = {};
+  for (const [key, text] of Object.entries(justifications)) {
+    const trimmed = text.trim();
+    if (trimmed.length > 0 && keys.has(key)) out[key] = trimmed;
+  }
+  return out;
 }
 
 /**
@@ -332,12 +445,11 @@ export function validateConnectFields(
     errors.requestedScopes = 'A requested scope is not allowed by this OAuth app.';
   }
 
-  for (const [, text] of Object.entries(values.scopeJustifications)) {
-    if (text.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
-      errors.scopeJustifications = `Each justification must be at most ${SCOPE_JUSTIFICATION_MAX_LENGTH} characters.`;
-      break;
-    }
-  }
+  // SENSITIVE-only justification model: sensitive scopes each REQUIRE a rationale
+  // (mirrors the server approval gate); non-sensitive scopes are read-only, never
+  // required. Also bounds any provided justification's length.
+  const justificationError = scopeJustificationError(values);
+  if (justificationError) errors.scopeJustifications = justificationError;
 
   return errors;
 }
@@ -354,7 +466,21 @@ export function validateExternalCreateForm(
   return { ...validateOffsiteSubmitForm(values), ...validateConnectFields(values, allowedScopes) };
 }
 
-/** The CREATE wizard Step-0 (App & scopes) gate: a client is chosen + subset valid + URL ok if present. */
+/**
+ * The CREATE wizard App-URL step gate (now the FIRST step): the App URL is
+ * REQUIRED — a non-blank, valid https URL. (Contrast {@link isUrlStepComplete},
+ * the EDIT gate, which grandfathers a blank URL on a pre-existing listing.)
+ */
+export function isCreateUrlStepComplete(values: OffsiteSubmitFormValues): boolean {
+  return values.externalUrl.trim().length > 0 && validateExternalUrl(values.externalUrl).ok;
+}
+
+/**
+ * The CREATE wizard App & scopes gate: a client is chosen, the derived scopes are
+ * a valid subset of the client's ceiling, and every SENSITIVE scope carries a
+ * (bounded, non-empty) justification. The App URL is gated on its OWN first step
+ * now, so it is no longer checked here.
+ */
 export function isClientStepComplete(
   values: OffsiteSubmitFormValues,
   allowedScopes: number
@@ -362,10 +488,7 @@ export function isClientStepComplete(
   return (
     !!values.connectClientId &&
     connectScopesSubsetOfCeiling(values.requestedScopes, allowedScopes) &&
-    Object.values(values.scopeJustifications).every(
-      (t) => t.length <= SCOPE_JUSTIFICATION_MAX_LENGTH
-    ) &&
-    (values.externalUrl.trim().length === 0 || validateExternalUrl(values.externalUrl).ok)
+    scopeJustificationError(values) === undefined
   );
 }
 
@@ -379,10 +502,10 @@ export function isCreateDetailsStepComplete(
 
 /**
  * Shape the form state into the `submitExternalListing` mutation input: trim the text
- * fields, coerce empty optionals to `undefined` (an omitted homepage URL is left
- * OUT), and reduce `scopeJustifications` to ONLY the requested scopes with a non-empty
- * (trimmed) rationale. PURE + unit-tested. `connectClientId` MUST be set (gated by the
- * client step).
+ * fields, coerce empty optionals to `undefined` (an omitted App URL is left OUT),
+ * and reduce `scopeJustifications` to ONLY the requested SENSITIVE scopes with a
+ * non-empty (trimmed) rationale. PURE + unit-tested. `connectClientId` MUST be set
+ * (gated by the client step).
  */
 export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
   slug: string;
@@ -397,12 +520,12 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
   contentRating: OffsiteContentRating;
   changelog?: string;
 } {
-  const requestedKeys = new Set(tokenScopeMaskToList(values.requestedScopes).map((s) => s.key));
-  const scopeJustifications: Record<string, string> = {};
-  for (const [key, text] of Object.entries(values.scopeJustifications)) {
-    const trimmed = text.trim();
-    if (trimmed.length > 0 && requestedKeys.has(key)) scopeJustifications[key] = trimmed;
-  }
+  // Only SENSITIVE scopes carry a justification in the merged model; non-sensitive
+  // keys are pruned so a stale/legacy rationale never rides along in the payload.
+  const scopeJustifications = shapeSensitiveJustifications(
+    values.scopeJustifications,
+    values.requestedScopes
+  );
   return {
     slug: values.slug.trim(),
     name: values.name.trim(),

@@ -41,7 +41,6 @@ import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { type Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
@@ -88,10 +87,9 @@ export function CommentContent({
   borderless,
   ...groupProps
 }: CommentProps) {
-  const currentUser = useCurrentUser();
   const { expanded, toggleExpanded, setRootThread } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
-  const { canDelete, canEdit, canReply, canHide, badge, canReport } = useCommentV2Context();
+  const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
 
   const { data: replyCount = 0 } = trpc.commentv2.getCount.useQuery({
     entityId: comment.id,
@@ -231,7 +229,7 @@ export function CommentContent({
                   {comment.hidden ? 'Unhide comment' : 'Hide comment'}
                 </Menu.Item>
               )}
-              {currentUser?.isModerator && !comment.hidden && (
+              {canPin && !comment.hidden && (
                 <Menu.Item
                   leftSection={
                     comment.pinnedAt ? (

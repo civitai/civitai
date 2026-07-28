@@ -25,6 +25,7 @@ const { mockDbWrite } = vi.hoisted(() => {
     modelVersion: mk(),
     modelFile: mk(),
     entityAccess: mk(),
+    paidAccess: mk(),
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
@@ -68,6 +69,16 @@ vi.mock('~/server/services/model.service', () => ({
   ingestModelById: vi.fn(),
   updateModelLastVersionAt: vi.fn(),
 }));
+// Keep the real paid-access module (which reads REDIS_KEYS.CACHES.PAID_ACCESS at import) out of the graph.
+vi.mock('~/server/services/paid-access.service', () => ({
+  getPaidAccess: vi.fn(async () => ({})),
+  writePaidAccessForModelVersion: vi.fn(),
+  materializePaidAccessEndsAt: vi.fn(),
+  bustPaidAccessCache: vi.fn(),
+  paidAccessInputFromLegacyConfig: vi.fn(() => null),
+  earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
+  earlyAccessConfigFromPaidAccess: vi.fn(),
+}));
 vi.mock('~/server/services/model-file.service', () => ({ filesForModelVersionCache: {} }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => {
@@ -95,7 +106,10 @@ function wireTransaction() {
 const VERSION_ID = 4242;
 
 function stubVersionRows(fileUrls: string[]) {
-  mockDbWrite.modelFile.findMany.mockResolvedValue(fileUrls.map((url) => ({ url })));
+  // The tx snapshot selects `{ url, hashes: { hash } }` (hashes added by #3323 for
+  // by-hash edge-cache purge) — mock rows must carry `hashes` or `files.flatMap`
+  // dereferences undefined.
+  mockDbWrite.modelFile.findMany.mockResolvedValue(fileUrls.map((url) => ({ url, hashes: [] })));
   mockDbWrite.modelVersion.findFirstOrThrow.mockResolvedValue({
     id: VERSION_ID,
     modelId: 7,

@@ -170,6 +170,7 @@ export function PostDetailContent({ postId }: Props) {
       contentNsfwLevel={forcedBrowsingLevel || post.nsfwLevel}
       nsfw={post.nsfw}
       bypassRating={isOwnerOrMod}
+      suppressAds={!post.publishedAt}
       meta={{
         title: (post?.title ?? `Image post by ${post?.user.username ?? 'civitai'}`) + ' | Civitai',
         description:

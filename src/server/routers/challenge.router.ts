@@ -7,12 +7,13 @@ import {
   getCompletedChallengesWithWinnersSchema,
   getInfiniteChallengesSchema,
   getModeratorChallengesSchema,
-  getMyParticipatedSchema,
+  getMyChallengesSchema,
   getUpcomingThemesSchema,
   getUserEntryCountSchema,
   getUserUnjudgedEntriesSchema,
   getWinnerCooldownStatusSchema,
   requestReviewSchema,
+  toggleChallengeNotifySchema,
   upsertChallengeSchema,
   userChallengeUpsertSchema,
   upsertChallengeEventSchema,
@@ -49,7 +50,7 @@ import {
   getDailyChallenges,
   getInfiniteChallenges,
   getModeratorChallenges,
-  getMyParticipated,
+  getMyChallenges,
   getUpcomingThemes,
   getUserChallengeForEdit,
   getUserEntryCount,
@@ -59,6 +60,7 @@ import {
   upsertChallenge,
   upsertUserChallenge,
   upsertChallengeEvent,
+  rescanChallenge,
   voidChallenge,
   getActiveJudges,
   getChallengeSystemConfig,
@@ -75,6 +77,10 @@ import {
   upsertChallengeCategory,
 } from '~/server/services/challenge-category.service';
 import { getUserChallengeCreateEligibility } from '~/server/services/challenge-eligibility.service';
+import {
+  toggleChallengeNotify,
+  getTrackedChallengeIds,
+} from '~/server/services/challenge-engagement.service';
 import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -101,13 +107,13 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .query(() => getDailyChallenges()),
 
-  // Current user's recently participated-in challenges (entered or won), recent-first.
-  getMyParticipated: protectedProcedure
+  // Current user's own challenges — entered or created — most-recent-activity first.
+  getMyChallenges: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
-    .input(getMyParticipatedSchema)
+    .input(getMyChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) =>
-      getMyParticipated({ ...input, userId: ctx.user.id, isGreen: ctx.features.isGreen })
+      getMyChallenges({ ...input, userId: ctx.user.id, isGreen: ctx.features.isGreen })
     ),
 
   // Get single challenge by ID (public — sensitive fields stripped)
@@ -170,6 +176,19 @@ export const challengeRouter = router({
     .input(getUserEntryCountSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(({ input, ctx }) => getUserEntryCount(input.challengeId, ctx.user.id)),
+
+  // Toggle "notify me" tracking on a challenge
+  toggleNotify: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite, blockApiKeys: true })
+    .input(toggleChallengeNotifySchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => toggleChallengeNotify({ ...input, userId: ctx.user.id })),
+
+  // Challenge ids the current user is tracking (open challenges only)
+  getTrackedIds: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .use(isFlagProtected('challengePlatform'))
+    .query(({ ctx }) => getTrackedChallengeIds(ctx.user.id)),
 
   // Pay to guarantee entries get reviewed by the AI judge
   requestReview: protectedProcedure
@@ -270,7 +289,13 @@ export const challengeRouter = router({
   voidChallenge: moderatorProcedure
     .input(challengeQuickActionSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input }) => voidChallenge(input.id)),
+    .mutation(({ input }) => voidChallenge(input.id, 'moderator')),
+
+  // Moderator: Re-run the content scan (moderated text + cover image) for a challenge
+  rescan: moderatorProcedure
+    .input(challengeQuickActionSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => rescanChallenge({ id: input.id, moderatorId: ctx.user.id })),
 
   // Active judges for the challenge form dropdowns. Any authenticated user may call it; the service
   // returns the full list (with sensitive fields) to moderators and the public, SFW-selectable subset
@@ -316,7 +341,7 @@ export const challengeRouter = router({
   getActiveEvents: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(() => getActiveEvents()),
+    .query(({ ctx }) => getActiveEvents(ctx.user?.id)),
 
   // Public: Get single event by ID
   getEventById: publicProcedure

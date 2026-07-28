@@ -253,6 +253,9 @@ export const toggleModelLockSchema = z.object({
   locked: z.boolean(),
 });
 
+export type SetModelMinorInput = z.infer<typeof setModelMinorSchema>;
+export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean() });
+
 export type ModelMeta = Partial<{
   unpublishedReason: UnpublishReason;
   customMessage: string;
@@ -371,6 +374,53 @@ export type SetModelCollectionShowcaseInput = z.infer<typeof setModelCollectionS
 export const setModelCollectionShowcaseSchema = z.object({
   id: z.number(),
   collectionId: z.number().nullable(),
+});
+
+export type SetModelOfficialInput = z.infer<typeof setModelOfficialSchema>;
+export const setModelOfficialSchema = z.object({
+  id: z.number(),
+  isOfficial: z.boolean(),
+});
+
+export const resourceSelectTabs = [
+  'all',
+  'official',
+  'featured',
+  'recent',
+  'liked',
+  'mine',
+] as const;
+export const resourceSelectSources = [
+  'generation',
+  'training',
+  'addResource',
+  'modelVersion',
+  'auction',
+] as const;
+export const resourceSelectSorts = ['relevance', 'popularity', 'newest'] as const;
+
+export type GetResourceSelectInput = z.infer<typeof getResourceSelectSchema>;
+export const getResourceSelectSchema = z.object({
+  tab: z.enum(resourceSelectTabs),
+  selectSource: z.enum(resourceSelectSources),
+  query: z.string().optional(),
+  sort: z.enum(resourceSelectSorts).default('relevance'),
+  cursor: z.number().optional(),
+  limit: z.number().min(1).max(100).default(20),
+  resources: z
+    .object({
+      type: z.enum(ModelType),
+      baseModels: z.string().array().default([]),
+    })
+    .array()
+    .default([]),
+  filterTypes: z.enum(ModelType).array().default([]),
+  filterBaseModels: z.string().array().default([]),
+  tagName: z.string().optional(),
+  canGenerate: z.boolean().optional(),
+  excludedVersionIds: z.number().array().default([]),
+  // recent → generation only: orchestrator history ids resolved client-side
+  restrictToIds: z.number().array().optional(),
 });
 
 export type MigrateResourceToCollectionInput = z.infer<typeof migrateResourceToCollectionSchema>;

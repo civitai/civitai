@@ -144,7 +144,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.challengePlatform && features.userChallenges,
           icon: IconTrophy,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Challenges',
+          label: 'Your Challenges',
           newUntil: new Date('2026-08-15'),
         },
         {

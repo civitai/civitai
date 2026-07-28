@@ -80,9 +80,12 @@ function UserMultiSelect({
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
+  // An all-digits term is treated as a userId lookup instead of a username search.
+  const searchTerm = debouncedSearch.trim();
+  const searchId = /^\d+$/.test(searchTerm) ? Number(searchTerm) : undefined;
   const { data, isLoading, isFetching } = trpc.user.getAll.useQuery(
-    { query: debouncedSearch.trim(), limit: 10 },
-    { enabled: debouncedSearch.trim().length > 0 }
+    searchId ? { ids: [searchId], limit: 10 } : { query: searchTerm, limit: 10 },
+    { enabled: searchTerm.length > 0 }
   );
   const options =
     data
@@ -94,7 +97,7 @@ function UserMultiSelect({
       <Autocomplete
         ref={searchInputRef}
         label={`Users (${selectedUsers.size} selected)`}
-        placeholder="Search users by username"
+        placeholder="Search users by username or id"
         data={options}
         value={search}
         onChange={setSearch}

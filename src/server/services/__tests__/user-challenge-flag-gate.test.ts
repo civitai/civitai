@@ -75,6 +75,7 @@ vi.mock('~/server/services/post.service', () => ({ getPostsInfinite: vi.fn() }))
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   chargeEntryFees: mockChargeEntryFees,
 }));
+vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
 
 const { validateContestCollectionEntry } = await import('~/server/services/collection.service');
 
@@ -84,7 +85,9 @@ function wireChallengeFindFirst({ userChallengeCollection }: { userChallengeColl
   mockChallengeFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
     const isFlagGateLookup =
       where.source === 'User' && !('entryFee' in where) && !('createdById' in where);
-    if (isFlagGateLookup) return userChallengeCollection ? { id: 1 } : null;
+    // status: 'Active' satisfies the assertUserChallengeAcceptingEntries timing gate (which shares
+    // this source-only lookup shape) so the flag-gate behavior under test is what actually decides.
+    if (isFlagGateLookup) return userChallengeCollection ? { id: 1, status: 'Active' } : null;
     return null; // every other challenge lookup: nothing configured
   });
 }

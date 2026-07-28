@@ -544,6 +544,7 @@ model User {
   challengeWins              ChallengeWinner[]
   challengeJudges            ChallengeJudge[]
   challengeEventsCreated     ChallengeEvent[]
+  challengeEngagements       ChallengeEngagement[]
   rewardsBonusEventsCreated  RewardsBonusEvent[]             @relation("RewardsBonusEventCreator")
   strikes                     UserStrike[]                    @relation("userStrikes")
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
@@ -876,7 +877,6 @@ model Model {
   uploadType          ModelUploadType @default(Created)
   locked              Boolean         @default(false)
   underAttack         Boolean         @default(false)
-  earlyAccessDeadline DateTime?
   mode                ModelModifier?
   unlisted            Boolean         @default(false)
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
@@ -885,6 +885,7 @@ model Model {
   lockedProperties    String[]        @default([])
   scannedAt           DateTime?
   sfwOnly             Boolean         @default(false)
+  isOfficial          Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -1026,6 +1027,7 @@ model ModelVersion {
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
   publishedAt          DateTime?
+  initialPublishedAt   DateTime?
   status               ModelStatus       @default(Draft)
   trainingStatus       TrainingStatus?
   trainingDetails      Json?
@@ -1039,9 +1041,6 @@ model ModelVersion {
   settings             Json?
   availability         Availability      @default(Public)
   nsfwLevel            Int               @default(0)
-  earlyAccessEndsAt    DateTime?
-  earlyAccessConfig    Json?
-  earlyAccessPermanent Boolean           @default(false)
   uploadType           ModelUploadType   @default(Created)
   usageControl         ModelUsageControl @default(Download)
   earlyAccessTimeFrame Int               @default(0)
@@ -3445,6 +3444,7 @@ model Comment {
   modelId      Int
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
+  pinnedAt     DateTime?
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]
@@ -4534,6 +4534,31 @@ model EntityAccess {
   @@id([accessToId, accessToType, accessorId, accessorType])
 }
 
+enum PaidAccessEntityType {
+  ModelVersion
+  ComicChapter
+}
+
+// The config side of paid access (the purchase side is EntityAccess). Row exists => gated.
+// endsAt IS NULL <=> permanent; a date => timed; a donation goal overwrites it to now() to end early.
+// terms = PaidAccessTerms (bundle semantics). See docs/creator-studio/paid-access-schema.md.
+model PaidAccess {
+  entityType    PaidAccessEntityType
+  entityId      Int
+  ownerId       Int
+  endsAt        DateTime?
+  // Timed-window length in days for a not-yet-published gate; endsAt is materialized to
+  // publishedAt + timeframeDays at publish. NULL = permanent (no timed window).
+  timeframeDays Int?
+  terms         Json
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@id([entityType, entityId])
+  @@index([ownerId, entityType, endsAt]) // + a partial index (ownerId, entityType) WHERE endsAt IS NULL, added via raw SQL migration
+  @@index([entityType, endsAt]) // expiry-job + early-access-complete notification scan by end time
+}
+
 enum EntityCollaboratorStatus {
   Pending
   Approved
@@ -5044,14 +5069,18 @@ model DonationGoal {
   title          String
   description    String?
   goalAmount     Int
-  paidAmount     Int           @default(0)
+  // Polymorphic target (mirrors PaidAccess). Nullable while modelVersionId is dual-written;
+  // becomes the sole target when modelVersionId is dropped (re-key migration).
+  entityType     PaidAccessEntityType?
+  entityId       Int?
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
-  isEarlyAccess  Boolean       @default(false)
   active         Boolean       @default(true)
 
   donations Donation[]
+
+  @@index([entityType, entityId])
 }
 
 model Donation {
@@ -5442,9 +5471,10 @@ model Challenge {
   updatedAt DateTime @updatedAt
 
   // Relations
-  winners ChallengeWinner[]
-  threads Thread[]
-  reports ChallengeReport[]
+  winners     ChallengeWinner[]
+  threads     Thread[]
+  reports     ChallengeReport[]
+  engagements ChallengeEngagement[]
 
   // Event grouping
   eventId Int?
@@ -5513,6 +5543,23 @@ model ChallengeCategory {
   updatedAt DateTime @updatedAt
 
   @@index([active])
+}
+
+enum ChallengeEngagementType {
+  Notify
+}
+
+model ChallengeEngagement {
+  userId      Int
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeId Int
+  challenge   Challenge               @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  type        ChallengeEngagementType
+  createdAt   DateTime                @default(now())
+
+  @@id([type, challengeId, userId])
+  @@index([challengeId])
+  @@index([userId], type: Hash)
 }
 
 model ChallengeWinner {
@@ -6621,6 +6668,7 @@ model ComicChapter {
   earlyAccessConfig Json?
   earlyAccessEndsAt DateTime?
   publishedAt       DateTime?
+  initialPublishedAt DateTime?
   nsfwLevel         Int                @default(0)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt

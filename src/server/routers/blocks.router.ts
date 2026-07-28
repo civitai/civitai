@@ -10,7 +10,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
+import {
+  parseSubjectUserId,
+  verifyBlockToken,
+  type BlockTokenClaims,
+} from '~/server/middleware/block-scope.middleware';
+import { REVIEW_RUN_FOR_REAL_BUZZ_CAP } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
@@ -58,6 +63,7 @@ import {
   agentReviewChatSchema,
   getAgentReviewSchema,
   getPublishRequestDiffSchema,
+  getPublishRequestSchema,
   getPublishRequestScreenshotsSchema,
   getReviewStatusSchema,
   listApprovedRequestsSchema,
@@ -66,6 +72,7 @@ import {
   mintReviewBlockTokenSchema,
   previewRequestSchema,
   rejectRequestSchema,
+  retriggerBuildSchema,
   startAgentReviewSchema,
   teardownPreviewSchema,
   withdrawRequestSchema,
@@ -96,6 +103,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
+import { computeListingProblems } from '~/server/services/blocks/listing-problems';
 import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
@@ -677,13 +685,103 @@ async function reserveBlockBuzzSpend(
  * value and handing the user a window of extra cap headroom. Pinning the key
  * eliminates that race.
  */
-async function refundBlockBuzzSpend(
-  key: ReturnType<typeof buzzCapRedisKey>,
-  cost: number
-): Promise<void> {
+async function refundBlockBuzzSpend(key: string, cost: number): Promise<void> {
   await sysRedis.decrBy(key, Math.ceil(cost)).catch(() => {
     /* best-effort — see note above; a lost refund over-counts (stricter cap) */
   });
+}
+
+// ---- MOD REVIEW SANDBOX "run for real" AGGREGATE Buzz cap (#2831) ----------
+//
+// When a moderator opts IN (consent-gated) to run an UNAPPROVED review app FOR
+// REAL against their OWN account, the token's per-call `buzzBudget` bounds ONE
+// submit — but a hostile app can loop many ≤budget submits (the exact hole the
+// per-user daily cap comment above describes). This is the run-for-real analog:
+// a per-(mod, publishRequestId) CUMULATIVE ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP),
+// swapped IN PLACE OF the ordinary per-user daily cap for a run-for-real token so
+// there is still exactly ONE reserve/refund path per submit (the whole refund
+// choreography below keys off the returned `key`, so it works unchanged).
+//
+// The key binds to (mod, publishRequestId) — NOT the token jti — so re-minting /
+// re-confirming the consent CANNOT reset the ceiling within the window. Window =
+// the key's 25h TTL (re-armed on first write): the ceiling is cumulative per
+// (mod, publishRequestId) over a rolling ~25h, NOT reset per submit or per mint.
+// It is STRICTLY TIGHTER than the 50k/day cap, so it is the binding constraint;
+// the mod's OWN non-review block usage still counts against the daily key separately.
+const REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
+
+function reviewRunForRealBuzzCapKey(
+  userId: number,
+  publishRequestId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP}:${userId}:${publishRequestId}`;
+}
+
+/**
+ * Atomically reserves `cost` against the (mod, publishRequestId) run-for-real
+ * cumulative counter. Identical atomic INCRBY + first-write-EX (+ ttl<0 re-arm)
+ * shape as `reserveBlockBuzzSpend`; fails CLOSED on a Redis error (throws).
+ */
+async function reserveReviewRunForRealBuzzSpend(
+  userId: number,
+  publishRequestId: string,
+  cost: number
+): Promise<{ total: number; key: ReturnType<typeof reviewRunForRealBuzzCapKey> }> {
+  const key = reviewRunForRealBuzzCapKey(userId, publishRequestId);
+  const total = await sysRedis.incrBy(key, Math.ceil(cost));
+  if (total <= Math.ceil(cost)) {
+    await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
+  } else {
+    const ttl = await sysRedis.ttl(key);
+    if (ttl < 0) await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_BUZZ_CAP_TTL_SECONDS);
+  }
+  return { total, key };
+}
+
+/**
+ * Picks the correct cumulative Buzz reservation for a submit given its verified
+ * token claims: a RUN-FOR-REAL token (signed `reviewRunForReal:true`) reserves
+ * against the tight per-(mod, publishRequestId) cumulative ceiling (rolling ~25h
+ * window); every other token keeps the ordinary per-user daily cap —
+ * BYTE-IDENTICAL to before. Returns the reserved `key` (all refund sites key off
+ * it) plus the `cap` to compare the running `total` against. The run-for-real
+ * reservation id is the token's `appBlockId` claim (the `pubreq_<ULID>` request id
+ * the mint stamps).
+ */
+async function reserveBlockBuzzSpendForClaims(
+  claims: BlockTokenClaims,
+  userId: number,
+  cost: number
+): Promise<{ total: number; key: string; cap: number }> {
+  if (claims.reviewRunForReal === true) {
+    const { total, key } = await reserveReviewRunForRealBuzzSpend(userId, claims.appBlockId, cost);
+    return { total, key, cap: REVIEW_RUN_FOR_REAL_BUZZ_CAP };
+  }
+  const { total, key } = await reserveBlockBuzzSpend(userId, cost);
+  return { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };
+}
+
+// RUN-FOR-REAL mint rate limit — per-mod fixed window. A privileged,
+// money-touching opt-in (each accept re-mints a spend-capable token), so bound
+// the mint rate to blunt an account-compromise / runaway-client storm. Same
+// INCR + first-hit EX (+ ttl<0 self-heal) shape as the other BLOCKS limiters;
+// fails CLOSED (returns false) on a Redis error.
+const REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT = { max: 30, windowSeconds: 3600 } as const;
+
+async function checkReviewRunForRealMintRateLimit(userId: number): Promise<boolean> {
+  const key = `${REDIS_SYS_KEYS.BLOCKS.REVIEW_RUN_FOR_REAL_BUZZ_CAP}:mint-rate:${userId}` as const;
+  try {
+    const count = await sysRedis.incrBy(key, 1);
+    if (count === 1) {
+      await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.windowSeconds);
+    } else {
+      const ttl = await sysRedis.ttl(key);
+      if (ttl < 0) await sysRedis.expire(key, REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.windowSeconds);
+    }
+    return count <= REVIEW_RUN_FOR_REAL_MINT_RATE_LIMIT.max;
+  } catch {
+    return false;
+  }
 }
 
 // EPHEMERAL DEV-TUNNEL rate limit (Phase 1 pre-submit). Per-user fixed window,
@@ -1356,6 +1454,34 @@ export const blocksRouter = router({
     }),
 
   /**
+   * MOD-ONLY single-request fetch — powers the per-submission review PAGE
+   * (`/apps/review/<publishRequestId>`, `appReviewPage` flag). Returns the SAME
+   * hydrated request shape one item of `listPending/Approved/RejectedRequests`
+   * returns, plus the derived `mode`, so the extracted `OnsiteReviewModalBody`
+   * renders on the page identically to the modal path. A missing / withdrawn /
+   * superseded id → NOT_FOUND (fail-closed; never leaks which).
+   *
+   * Same auth shape as the other review reads: `moderatorProcedure` +
+   * `isModerator` belt + `enforceAppBlocksFlag` — no public path.
+   */
+  getPublishRequest: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getPublishRequestSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review is restricted to civitai team');
+      }
+      const { getReviewRequestById } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      const result = await getReviewRequestById(input.publishRequestId);
+      if (!result) {
+        throw throwNotFoundError(`Publish request ${input.publishRequestId} not found`);
+      }
+      return result;
+    }),
+
+  /**
    * MOD REVIEW SANDBOX (#2831) — start a temporary, mod-gated preview of a
    * PENDING version so the mod can run the actual block before approving.
    * Triggers a SEPARATE review build (distinct image + host from production)
@@ -1448,15 +1574,30 @@ export const blocksRouter = router({
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
+      // RUN-FOR-REAL rate limit — a privileged, money-touching opt-in. Bound how
+      // many run-for-real re-mints one mod can trigger per window (blunts an
+      // account-compromise / runaway-client mint storm). Only the run-for-real
+      // path is limited; the ordinary render-only mint is unaffected.
+      if (input.runForReal) {
+        const allowed = await checkReviewRunForRealMintRateLimit(ctx.user.id);
+        if (!allowed) {
+          throw new TRPCError({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'run-for-real mint rate limit reached — please wait a moment and retry',
+          });
+        }
+      }
       const { mintReviewBlockToken } = await import(
         '~/server/services/blocks/publish-request.service'
       );
       try {
         // The mod id is SERVER-derived (never client-supplied) so the token can
-        // only ever be self-bound to the calling moderator.
+        // only ever be self-bound to the calling moderator. `runForReal` is the
+        // mod's explicit, consent-gated opt-in (default false → render-only).
         return await mintReviewBlockToken({
           publishRequestId: input.publishRequestId,
           modUserId: ctx.user.id,
+          runForReal: input.runForReal,
         });
       } catch (err) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
@@ -1536,18 +1677,18 @@ export const blocksRouter = router({
     }),
 
   /**
-   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT proxy. A moderator
-   * viewing a live/complete report can ask the SAME ephemeral agent pod follow-up
-   * questions ("why did you flag scope X", "show the call site"). Non-streaming
-   * request/response (v1); streaming SSE is a follow-up.
+   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT. A moderator viewing a
+   * report can ask follow-up questions ("why did you flag scope X", "show the call
+   * site"). Non-streaming request/response (v1); streaming SSE is a follow-up.
    *
    * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
    * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
    * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
    * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
-   * rejects. The service loads the report, requires the pod to be up
-   * (running|complete|cost-capped → else PRECONDITION_FAILED), proxies to the
-   * pod's in-cluster gateway with the DERIVED bearer, and returns `{ reply }`.
+   * rejects. The service loads the PERSISTED report and answers as a STATELESS
+   * civitai→LLM completion grounded on that report (no live agent — a `failed`
+   * report is still chattable; only a missing/torn-down review → PRECONDITION_FAILED),
+   * returning `{ reply }`.
    */
   agentReviewChat: moderatorProcedure
     .use(enforceAppBlocksFlag)
@@ -1780,6 +1921,54 @@ export const blocksRouter = router({
     }),
 
   /**
+   * MOD-ONLY: re-fire the Tekton build for an ALREADY-APPROVED publish request
+   * whose build never started (the STRANDED case: `approveRequest` committed the
+   * approval and then threw inside `triggerBuild`, leaving `deploy_state` null
+   * forever) or whose build/deploy failed.
+   *
+   * 🔴 The commit sha is read from the DB row — the input carries NO sha, so a
+   * caller cannot name an arbitrary/unreviewed commit to build and deploy. See
+   * `retriggerBuildSchema` and the service's supersede guard.
+   *
+   * MOD-ONLY IS A DELIBERATE CHOICE, not an oversight: owner self-service would
+   * need its own abuse controls and a build-capacity budget. The owner instead
+   * gets the real build-failure reason on /apps/my-submissions plus a
+   * "contact a moderator" affordance.
+   */
+  retriggerBuild: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(retriggerBuildSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { retriggerBuild } = await import('~/server/services/blocks/publish-request.service');
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Re-triggering builds is restricted to civitai team');
+      }
+      try {
+        return await retriggerBuild({
+          publishRequestId: input.publishRequestId,
+          // Bound to the SESSION user — never client-supplied. Also the rate-limit
+          // subject, so a mod cannot spend another mod's quota.
+          reviewerUserId: ctx.user.id,
+        });
+      } catch (err) {
+        if (err instanceof TRPCError) throw err;
+        const serviceCode = err instanceof Error ? (err as { code?: unknown }).code : undefined;
+        const code =
+          serviceCode === 'NOT_FOUND'
+            ? 'NOT_FOUND'
+            : serviceCode === 'RATE_LIMITED'
+            ? 'TOO_MANY_REQUESTS'
+            : // A build-service outage is OUR fault, not a malformed request —
+              // reporting it as a 400 mislabels an incident as user error (and
+              // keeps it off the server-fault error board).
+            serviceCode === 'TRIGGER_FAILED'
+            ? 'INTERNAL_SERVER_ERROR'
+            : 'BAD_REQUEST';
+        throw new TRPCError({ code, message: (err as Error).message });
+      }
+    }),
+
+  /**
    * Developer-facing list: every publish request submitted by the current
    * viewer, newest first. The /apps/my-submissions page renders this.
    * Returns the rejection reason inline so the dev sees mod feedback
@@ -1854,14 +2043,56 @@ export const blocksRouter = router({
       // live/removed listing state. A publish request stays `approved` after an owner
       // unpublish, so the request status alone can't tell live from owner-hidden. One
       // batched findMany (NOT per-row) keyed by appBlockId.
-      const listingByBlockId = new Map<string, { id: string; status: string }>();
+      // Additive projection (advisory listing-completeness warning on
+      // /apps/my-submissions): the asset ids + key text fields + a screenshot
+      // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
+      // helper below. Purely additive — the owner-controls fields are unchanged.
+      const listingByBlockId = new Map<
+        string,
+        {
+          id: string;
+          status: string;
+          iconId: number | null;
+          coverId: number | null;
+          description: string | null;
+          tagline: string | null;
+          category: string | null;
+          screenshotCount: number;
+        }
+      >();
       if (appBlockIds.length) {
         const listings = await dbRead.appListing.findMany({
           where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
-          select: { id: true, appBlockId: true, status: true },
+          select: {
+            id: true,
+            appBlockId: true,
+            status: true,
+            iconId: true,
+            coverId: true,
+            description: true,
+            tagline: true,
+            category: true,
+            // Filtered COUNT — only screenshots whose Image is still live. A row
+            // whose Image was deleted (imageId → null via onDelete: SetNull) has
+            // no displayable asset, so it must not inflate the count, else the
+            // `no-screenshots` warning is a false-negative. Matches the
+            // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
+            // in app-listing-assets.service.ts (buildAssetStatus).
+            _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+          },
         });
         for (const l of listings) {
-          if (l.appBlockId) listingByBlockId.set(l.appBlockId, { id: l.id, status: l.status });
+          if (l.appBlockId)
+            listingByBlockId.set(l.appBlockId, {
+              id: l.id,
+              status: l.status,
+              iconId: l.iconId,
+              coverId: l.coverId,
+              description: l.description,
+              tagline: l.tagline,
+              category: l.category,
+              screenshotCount: l._count.screenshots,
+            });
         }
       }
 
@@ -1912,6 +2143,19 @@ export const blocksRouter = router({
           appListingId: listing?.id ?? null,
           listingStatus: listing?.status ?? null,
           lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
+          // Advisory listing-completeness problems (missing assets + empty key
+          // fields). Empty when there's no backing listing yet (a pending first
+          // version) — nothing to flag until a listing row exists.
+          problems: listing
+            ? computeListingProblems({
+                iconId: listing.iconId,
+                coverId: listing.coverId,
+                screenshotCount: listing.screenshotCount,
+                description: listing.description,
+                tagline: listing.tagline,
+                category: listing.category,
+              }).problems
+            : [],
           // Whether the manifest declares a launchable page (drives the Open-live →
           // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
           // subset only.
@@ -3629,18 +3873,29 @@ export const blocksRouter = router({
       // record (no separate fire-and-forget incr that could silently drop and
       // under-count). A Redis error on the reserve throws → fails CLOSED,
       // matching the old read path.
-      const { total, key: buzzCapKey } = await reserveBlockBuzzSpend(userId, cost);
-      if (total > BLOCK_BUZZ_CAP_PER_DAY) {
+      // A RUN-FOR-REAL review token reserves against the tight per-(mod,
+      // publishRequestId) cumulative ceiling (rolling ~25h window) instead of the
+      // per-user daily cap (reserveBlockBuzzSpendForClaims picks the right one;
+      // every refund site below keys off the returned `buzzCapKey`, unchanged).
+      const {
+        total,
+        key: buzzCapKey,
+        cap: buzzCap,
+      } = await reserveBlockBuzzSpendForClaims(claims, userId, cost);
+      if (total > buzzCap) {
         await refundBlockBuzzSpend(buzzCapKey, cost);
         return {
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
-            error:
-              `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
-              `across your installed apps, this generation costs ${cost}, ` +
-              `daily cap is ${BLOCK_BUZZ_CAP_PER_DAY}`,
+            error: claims.reviewRunForReal === true
+              ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
+                `spent this review session, this generation costs ${cost}, ` +
+                `session cap is ${buzzCap}`
+              : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
+                `across your installed apps, this generation costs ${cost}, ` +
+                `daily cap is ${buzzCap}`,
           },
         };
       }
@@ -3657,10 +3912,16 @@ export const blocksRouter = router({
       // reject fail-safe (NO spend).
       //
       // EXCLUSION: skipped for DEV/live-harness tokens (`claims.dev === true`),
-      // which carry a synthetic non-FK appBlockId and already have the
-      // per-session dev-tunnel spend backstop below — so a dev iterating locally
-      // is never clamped by the aggregate cap (matches recordSpendAttribution
-      // being inert for a synthetic appId).
+      // which carry EITHER a synthetic non-FK appBlockId (ephemeral / pre-approval
+      // apps) OR — since #3285 — a real `apb_` id for an owner dev-tunnelling their
+      // OWN suspended/pending/deprecated app. The G8 skip is still safe in both
+      // cases because a dev token is SELF-BOUND: only the owner can spend, and only
+      // their own Buzz, still bounded by the per-user daily cap above + the
+      // per-session dev-tunnel spend backstop below — so a dev iterating locally is
+      // never clamped by the aggregate (anti-Sybil) cap, which exists to bound
+      // MANY viewers funnelling through one PUBLIC app (impossible for a self-bound
+      // dev token). For the synthetic-id case this also matches recordSpendAttribution
+      // being inert for a non-FK appId.
       let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
       if (claims.dev !== true) {
         const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
@@ -4996,7 +5257,7 @@ export const blocksRouter = router({
         allowedScopes: block.app?.allowedScopes ?? 0,
         allowedOrigins: (block.app?.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
       };
-      const validation = BlockManifestValidator.validate(merged, appContext);
+      const validation = await BlockManifestValidator.validateSubmission(merged, appContext);
       if (!validation.valid) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -5414,20 +5675,29 @@ async function submitCustomComfyWorkflow(opts: {
     };
   }
 
-  // (2) Reserve the CEILING (not the 0 estimate) against the per-user daily cap so
-  // post-paid spend can't slip past the 50k/day ceiling counted at ~0.
-  const { total, key: buzzCapKey } = await reserveBlockBuzzSpend(userId, ceiling);
-  if (total > BLOCK_BUZZ_CAP_PER_DAY) {
+  // (2) Reserve the CEILING (not the 0 estimate) against the cumulative cap so
+  // post-paid spend can't slip past it counted at ~0. A RUN-FOR-REAL review token
+  // reserves against the tight per-(mod, publishRequestId) session ceiling; every
+  // other token keeps the per-user 50k/day cap (byte-identical).
+  const {
+    total,
+    key: buzzCapKey,
+    cap: buzzCap,
+  } = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+  if (total > buzzCap) {
     await refundBlockBuzzSpend(buzzCapKey, ceiling);
     return {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: ceiling },
-        error:
-          `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
-          `across your installed apps, this generation may cost up to ${ceiling}, ` +
-          `daily cap is ${BLOCK_BUZZ_CAP_PER_DAY}`,
+        error: claims.reviewRunForReal === true
+          ? `review run-for-real Buzz cap reached: ${total - Math.ceil(ceiling)} already ` +
+            `spent this review session, this generation may cost up to ${ceiling}, ` +
+            `session cap is ${buzzCap}`
+          : `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
+            `across your installed apps, this generation may cost up to ${ceiling}, ` +
+            `daily cap is ${buzzCap}`,
       },
     };
   }

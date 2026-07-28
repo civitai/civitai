@@ -1,17 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockDbWrite, mockIsFlipt, mockCounters, mockHistogram } = vi.hoisted(() => ({
-  mockDbWrite: { $queryRaw: vi.fn() },
-  mockIsFlipt: vi.fn(),
-  mockCounters: {
-    attempts: { inc: vi.fn() },
-    runs: { inc: vi.fn() },
-    errors: { inc: vi.fn() },
-    posts: { inc: vi.fn() },
-    images: { inc: vi.fn() },
-  },
-  mockHistogram: { observe: vi.fn() },
-}));
+const { mockDbWrite, mockIsFlipt, mockCounters, mockHistogram, mockGetJobDate, mockSetLastRun } =
+  vi.hoisted(() => ({
+    mockDbWrite: { $queryRaw: vi.fn() },
+    mockIsFlipt: vi.fn(),
+    mockCounters: {
+      attempts: { inc: vi.fn() },
+      runs: { inc: vi.fn() },
+      errors: { inc: vi.fn() },
+      posts: { inc: vi.fn() },
+      images: { inc: vi.fn() },
+      skipped: { inc: vi.fn() },
+    },
+    mockHistogram: { observe: vi.fn() },
+    mockSetLastRun: vi.fn(() => Promise.resolve()),
+    mockGetJobDate: vi.fn(),
+  }));
 
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/flipt/client', () => ({
@@ -26,13 +30,19 @@ vi.mock('~/server/prom/client', () => ({
   reemitPostsScannedCounter: mockCounters.posts,
   reemitImagesEmittedCounter: mockCounters.images,
   reemitRunDurationHistogram: mockHistogram,
+  reemitSkippedRateLimitCounter: mockCounters.skipped,
 }));
-// createJob just returns the body fn so the test can invoke it directly.
-vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
+// createJob just returns the body fn so the test can invoke it directly; getJobDate
+// is mocked so each test can pin the stored last-run time and observe the writer.
+vi.mock('~/server/jobs/job', () => ({
+  createJob: (_n: string, _c: string, fn: unknown) => fn,
+  getJobDate: mockGetJobDate,
+}));
 
 import {
   buildReemitQuery,
   getReemitConfig,
+  getReemitMinIntervalSecs,
   reemitBitdexOps,
 } from '~/server/jobs/reemit-bitdex-ops';
 
@@ -42,11 +52,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.REEMIT_LOOKBACK_SECS;
   delete process.env.REEMIT_SETTLE_SECS;
+  delete process.env.REEMIT_MIN_INTERVAL_SECS;
+  // Default: last emit was long ago (epoch) so the rate-limit never trips unless a
+  // test explicitly pins a recent last-run time.
+  mockGetJobDate.mockResolvedValue([new Date(0), mockSetLastRun]);
 });
 
 afterEach(() => {
   delete process.env.REEMIT_LOOKBACK_SECS;
   delete process.env.REEMIT_SETTLE_SECS;
+  delete process.env.REEMIT_MIN_INTERVAL_SECS;
 });
 
 describe('buildReemitQuery', () => {
@@ -101,6 +116,22 @@ describe('getReemitConfig', () => {
   });
 });
 
+describe('getReemitMinIntervalSecs', () => {
+  it('defaults to 270s (just under the */5 cadence)', () => {
+    expect(getReemitMinIntervalSecs()).toBe(270);
+  });
+
+  it('honors a positive env override', () => {
+    process.env.REEMIT_MIN_INTERVAL_SECS = '120';
+    expect(getReemitMinIntervalSecs()).toBe(120);
+  });
+
+  it('falls back to the default on invalid / non-positive values', () => {
+    process.env.REEMIT_MIN_INTERVAL_SECS = '0';
+    expect(getReemitMinIntervalSecs()).toBe(270);
+  });
+});
+
 describe('reemitBitdexOps job body', () => {
   it('no-ops when the Flipt flag is OFF (default-off gate)', async () => {
     mockIsFlipt.mockResolvedValue(false);
@@ -112,6 +143,39 @@ describe('reemitBitdexOps job body', () => {
     expect(mockCounters.attempts.inc).not.toHaveBeenCalled();
     expect(mockCounters.runs.inc).not.toHaveBeenCalled();
     expect(mockCounters.errors.inc).not.toHaveBeenCalled();
+    // The rate-limit did not trip (last run was long ago) and, since nothing was
+    // emitted, the last-run marker is left untouched.
+    expect(mockCounters.skipped.inc).not.toHaveBeenCalled();
+    expect(mockSetLastRun).not.toHaveBeenCalled();
+  });
+
+  it('skips (rate-limited) when the last emit is inside the min interval', async () => {
+    // Last successful emit was 60s ago — well inside the 270s default interval.
+    mockGetJobDate.mockResolvedValue([new Date(Date.now() - 60_000), mockSetLastRun]);
+    mockIsFlipt.mockResolvedValue(true);
+
+    await runJob();
+
+    // Skipped before the flag was even read; nothing emitted, marker untouched.
+    expect(mockCounters.skipped.inc).toHaveBeenCalledTimes(1);
+    expect(mockIsFlipt).not.toHaveBeenCalled();
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockCounters.attempts.inc).not.toHaveBeenCalled();
+    expect(mockSetLastRun).not.toHaveBeenCalled();
+  });
+
+  it('runs once the min interval has elapsed and advances the last-run marker', async () => {
+    // Last emit was 5 minutes ago — past the 270s interval.
+    mockGetJobDate.mockResolvedValue([new Date(Date.now() - 300_000), mockSetLastRun]);
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ postsScanned: 3, imagesEmitted: 12 }]);
+
+    await runJob();
+
+    expect(mockCounters.skipped.inc).not.toHaveBeenCalled();
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    // The window advances only after a successful emit.
+    expect(mockSetLastRun).toHaveBeenCalledTimes(1);
   });
 
   it('emits once and records metrics from the returned counts when ON', async () => {
@@ -128,6 +192,7 @@ describe('reemitBitdexOps job body', () => {
     expect(mockCounters.posts.inc).toHaveBeenCalledWith(3);
     expect(mockCounters.images.inc).toHaveBeenCalledWith(12);
     expect(mockHistogram.observe).toHaveBeenCalledTimes(1);
+    expect(mockSetLastRun).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ postsScanned: 3, imagesEmitted: 12 });
   });
 
@@ -144,5 +209,7 @@ describe('reemitBitdexOps job body', () => {
     expect(mockCounters.errors.inc).toHaveBeenCalledTimes(1);
     expect(mockCounters.runs.inc).not.toHaveBeenCalled();
     expect(mockHistogram.observe).not.toHaveBeenCalled();
+    // A failed emit must NOT advance the rate-limit window — the next fire retries.
+    expect(mockSetLastRun).not.toHaveBeenCalled();
   });
 });

@@ -74,12 +74,14 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
+import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
 import {
   refundUserChallengeFunds,
   buildWinnerPayoutTransactions,
   getChallengeBuzzType,
+  reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
@@ -1313,6 +1315,11 @@ export async function pickWinnersForChallenge(
             prizes: finalPrizes,
           });
         }
+
+        await reportPoolFundingShortfall({
+          challengeId: currentChallenge.challengeId,
+          collectionId: currentChallenge.collectionId,
+        });
       }
 
       // 3. Get judged entries + LLM judgment
@@ -1523,6 +1530,16 @@ export async function pickWinnersForChallenge(
           position: entry.position,
           prize: entry.prize,
         },
+      });
+    }
+
+    if (currentChallenge.challengeId) {
+      await sendChallengeResultsNotification({
+        challengeId: currentChallenge.challengeId,
+        challengeTitle: currentChallenge.title,
+        excludeUserIds: [
+          ...new Set([...winningEntries.map((entry) => entry.userId), ...paidParticipants]),
+        ],
       });
     }
     log('Winners notified');

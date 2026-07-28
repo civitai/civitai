@@ -279,7 +279,7 @@ Located in `src/server/orchestrator/`:
 Would you like me to dive deeper into any specific area or add more details about particular integration methods?
 
 @dev: Please review the contents of these files to refine your understanding. These are critical files to the generation process and are typically updated when adding support for new base model types and generation engines:
-- src/shared/constants/base-model.constants.ts
+- src/shared/constants/basemodel.constants.ts
 - src/shared/constants/generation.constants.ts
 - src/server/common/constants.ts
 - src/components/ImageGeneration/GenerationForm/GenerationForm2.tsx

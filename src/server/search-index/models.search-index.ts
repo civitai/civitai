@@ -7,6 +7,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
+import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
@@ -14,7 +15,6 @@ import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { dbRead } from '~/server/db/client';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
   anyMetricHidden,
@@ -32,7 +32,7 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 
 const READ_BATCH_SIZE = 2000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -242,8 +242,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
-  const unavailableGenResources = await getUnavailableResources();
-
   // Creator Controls metric privacy: store which model-level metrics are hidden so
   // the search card can render the "hidden" notice. Effective only while the owner
   // holds a valid CP membership; the real metrics/rank stay in the doc so sort order
@@ -269,6 +267,22 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   }
   const membershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
 
+  const modelIds = models.map((m) => m.id);
+  const earlyAccessRows = modelIds.length
+    ? await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
+        SELECT mv."modelId", MAX(pa."endsAt") AS deadline
+        FROM "PaidAccess" pa
+        JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+        WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
+          AND mv.status = 'Published'::"ModelStatus"
+          AND mv."modelId" IN (${Prisma.join(modelIds)})
+        GROUP BY mv."modelId"
+      `
+    : [];
+  const earlyAccessDeadlineMap = new Map<number, Date>(
+    earlyAccessRows.map((r) => [Number(r.modelId), r.deadline])
+  );
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -292,7 +306,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const canGenerate = modelVersions.some(
         (x) =>
           x.generationCoverage?.covered &&
-          !unavailableGenResources.includes(x.id) &&
+          !isGenerationDisabled(x.flags) &&
           isBaseModelGenerationSupported(x.baseModel, model.type)
       );
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
@@ -310,6 +324,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
+        earlyAccessDeadline: earlyAccessDeadlineMap.get(model.id) ?? null,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
@@ -341,7 +356,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate:
               generationCoverage?.covered &&
-              unavailableGenResources.indexOf(x.id) === -1 &&
+              !isGenerationDisabled(x.flags) &&
               isBaseModelGenerationSupported(x.baseModel, model.type),
             settings: settings as RecommendedSettingsSchema,
             baseModel: x.baseModel as BaseModel,
@@ -398,16 +413,28 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const indexRecordsWithImages = models
     .map((modelRecord) => {
       const { modelVersions, ...model } = modelRecord;
-      const [modelVersion] = modelVersions;
 
-      if (!modelVersion) {
+      if (!modelVersions.length) {
         return null;
       }
 
-      const modelImages = images.filter(
-        (image) =>
-          image.modelVersionId === modelVersion.id &&
-          image.availability !== Availability.Unsearchable
+      // Keep images for the newest version of each distinct base model — not just the
+      // latest version — so base-model-filtered cards can show a matching version's
+      // cover. The latest version goes first, so images[0] stays the primary cover.
+      const coveredBaseModels = new Set<string>();
+      const coveredVersionIds: number[] = [];
+      for (const version of modelVersions) {
+        if (coveredBaseModels.has(version.baseModel)) continue;
+        coveredBaseModels.add(version.baseModel);
+        coveredVersionIds.push(version.id);
+      }
+
+      const modelImages = coveredVersionIds.flatMap((versionId) =>
+        images.filter(
+          (image) =>
+            image.modelVersionId === versionId &&
+            image.availability !== Availability.Unsearchable
+        )
       );
 
       return {
@@ -428,6 +455,43 @@ export type ModelSearchIndexRecord = Awaited<
   ReturnType<typeof transformData>
 >['indexReadyRecords'][number] &
   Awaited<ReturnType<typeof transformData>>['indexRecordsWithImages'][number];
+
+// Build the same card-ready records the Meili index holds, but straight from the
+// DB for a handful of ids — so callers (e.g. the official-models pin in the
+// resource picker) don't depend on those docs being present/fresh in Meili.
+// Reuses transformData so the shape stays identical to a search hit.
+export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSearchIndexRecord[]> {
+  if (!ids.length) return [];
+
+  const models = await dbRead.model.findMany({
+    select: modelSearchIndexSelect,
+    where: { id: { in: ids }, status: ModelStatus.Published },
+  });
+  if (!models.length) return [];
+
+  const batchIds = models.map((m) => m.id);
+  const [cosmetics, tags] = await Promise.all([
+    getCosmeticsForEntity({ ids: batchIds, entity: 'Model' }),
+    modelTagCache.fetch(batchIds),
+  ]);
+  const modelVersionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
+  const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
+
+  const { indexReadyRecords, indexRecordsWithImages } = await transformData({
+    models,
+    tags,
+    cosmetics,
+    images,
+  });
+
+  const imagesById = new Map(indexRecordsWithImages.map((r) => [r.id, r.images]));
+  const byId = new Map(
+    indexReadyRecords.map((r) => [r.id, { ...r, images: imagesById.get(r.id) ?? [] }])
+  );
+  // Preserve the caller's id order.
+  return ids.map((id) => byId.get(id)).filter(isDefined) as ModelSearchIndexRecord[];
+}
 
 export const modelsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,

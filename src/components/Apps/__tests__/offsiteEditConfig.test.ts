@@ -7,6 +7,7 @@ import {
   isApprovedEdit,
   type ListingEditContext,
 } from '~/components/Apps/offsiteEditConfig';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * W13 — dual-mode edit wizard PURE config. Covers the prefill mapping
@@ -97,6 +98,81 @@ describe('buildScalarPatch', () => {
     const ctx = makeCtx();
     expect(buildScalarPatch(ctx, { ...editContextToForm(ctx), category: 'games' }).category).toBe('games');
     expect(buildScalarPatch(ctx, { ...editContextToForm(ctx), category: null }).category).toBeNull();
+  });
+});
+
+describe('connect scope disclosure', () => {
+  // 13 = UserRead(1) | ModelsRead(4) | ModelsWrite(8).
+  const FULL = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.ModelsWrite;
+
+  // Justifications are now SENSITIVE-only (UserRead + ModelsWrite are sensitive;
+  // ModelsRead is not), so the disclosure keeps rationale for those two.
+  function connectCtx(overrides: Partial<ListingEditContext> = {}): ListingEditContext {
+    return makeCtx({
+      connectClientId: 'oauth-1',
+      connectAllowedScopes: FULL,
+      connectRequestedScopes: FULL,
+      connectScopeJustifications: { UserRead: 'reason', ModelsWrite: 'reason' },
+      ...overrides,
+    });
+  }
+
+  it('editContextToForm derives requestedScopes from the client + prunes stale/non-sensitive justifications', () => {
+    const form = editContextToForm(
+      connectCtx({
+        connectAllowedScopes: TokenScope.UserRead, // client now only allows UserRead (sensitive)
+        connectScopeJustifications: { UserRead: 'a', ModelsWrite: 'b' },
+      })
+    );
+    expect(form.connectClientId).toBe('oauth-1');
+    expect(form.requestedScopes).toBe(TokenScope.UserRead);
+    // ModelsWrite is no longer in the derived set → its justification is pruned.
+    expect(form.scopeJustifications).toEqual({ UserRead: 'a' });
+  });
+
+  it('editContextToForm drops a NON-SENSITIVE stored justification (no author input for it)', () => {
+    const form = editContextToForm(
+      connectCtx({ connectScopeJustifications: { ModelsRead: 'legacy', UserRead: 'keep' } })
+    );
+    // ModelsRead is non-sensitive → pruned; UserRead (sensitive) is kept.
+    expect(form.scopeJustifications).toEqual({ UserRead: 'keep' });
+  });
+
+  it('no scope patch when nothing changed', () => {
+    const ctx = connectCtx();
+    const patch = buildScalarPatch(ctx, editContextToForm(ctx));
+    expect('requestedScopes' in patch).toBe(false);
+    expect('scopeJustifications' in patch).toBe(false);
+  });
+
+  it('sends the derived mask + shaped SENSITIVE justifications when a justification changed', () => {
+    const ctx = connectCtx();
+    const form = {
+      ...editContextToForm(ctx),
+      scopeJustifications: { UserRead: 'updated', ModelsWrite: 'reason' },
+    };
+    const patch = buildScalarPatch(ctx, form);
+    expect(patch.requestedScopes).toBe(FULL);
+    expect(patch.scopeJustifications).toEqual({ UserRead: 'updated', ModelsWrite: 'reason' });
+  });
+
+  it('re-enters review when the client allowedScopes DRIFTED from the stored snapshot', () => {
+    // Approved snapshot was ModelsRead only; the client now allows FULL → the form
+    // shows/submits FULL, so even an untouched-justification save re-snapshots.
+    const ctx = connectCtx({
+      connectRequestedScopes: TokenScope.ModelsRead,
+      connectAllowedScopes: FULL,
+    });
+    const patch = buildScalarPatch(ctx, editContextToForm(ctx));
+    expect(patch.requestedScopes).toBe(FULL);
+  });
+
+  it('no scope fields for a listing without a connect client', () => {
+    const ctx = makeCtx({ connectClientId: null });
+    const form = { ...editContextToForm(ctx), scopeJustifications: { ModelsRead: 'x' } };
+    const patch = buildScalarPatch(ctx, form);
+    expect('requestedScopes' in patch).toBe(false);
+    expect('scopeJustifications' in patch).toBe(false);
   });
 });
 

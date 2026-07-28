@@ -238,12 +238,14 @@ export const modelNotifications = createNotificationProcessor({
           mv."publishedAt" updated_published_at
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
+        JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
         where
-          (mv."earlyAccessConfig"->>'originalTimeframe')::int > 0
-        AND mv."publishedAt" >= '${lastSent}'
+          pa."endsAt" IS NOT NULL
+          AND pa."endsAt" <= NOW()
+          AND pa."endsAt" >= '${lastSent}'
         -- Wall-clock floor: bound to last 30 minutes so a stale cursor cannot force a
         -- giant table scan. See new-model-from-following / new-model-version for details.
-        AND mv."publishedAt" > NOW() - INTERVAL '30 minutes'
+        AND pa."endsAt" > NOW() - INTERVAL '30 minutes'
       ), early_access_complete AS (
         SELECT DISTINCT
           mve."userId" owner_id,

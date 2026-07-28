@@ -1,6 +1,8 @@
 import { uniq } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { modelsSearchIndex } from '~/server/search-index';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { createJob, getJobDate } from './job';
 
@@ -8,32 +10,38 @@ export const processingEngingEarlyAccess = createJob(
   'process-ending-early-access',
   '*/1 * * * *',
   async () => {
-    // This job republishes early access versions that have ended as "New"
-    const [, setLastRun] = await getJobDate('process-ending-early-access');
+    // The gate ends on its own: PaidAccess.endsAt is a materialized timestamp and reads derive
+    // active-ness live, so we never delete or mutate the row here. This job's only remaining job is
+    // to republish the version as "New" once, right after its timed gate elapses.
+    //
+    // Bounded to gates that ended since the last run (endsAt in (lastRun, now]) for an indexed scan.
+    // Marker-free idempotency: after republish, publishedAt jumps to NOW() (past endsAt), so
+    // `mv.publishedAt < pa.endsAt` no longer matches. Permanent/pending gates have endsAt NULL → excluded.
+    const [lastRun, setLastRun] = await getJobDate('process-ending-early-access');
 
-    const updated = await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
-      UPDATE "ModelVersion"
-      SET "earlyAccessConfig" =
-          COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
-            'timeframe', 0,
-            'originalPublishedAt', "publishedAt",
-            'originalTimeframe', "earlyAccessConfig"->>'timeframe'
-          ),
-        "earlyAccessEndsAt" = NULL,
-        "publishedAt" = NOW(),
-        "availability" = 'Public'
-      WHERE status = 'Published'
-        AND "earlyAccessEndsAt" <= NOW()
-      RETURNING "id", "modelId"
+    const republished = await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
+      UPDATE "ModelVersion" mv
+      SET "publishedAt" = NOW(),
+          "availability" = 'Public'
+      FROM "PaidAccess" pa
+      WHERE pa."entityType" = 'ModelVersion'
+        AND pa."entityId" = mv.id
+        AND pa."endsAt" > ${lastRun}
+        AND pa."endsAt" <= NOW()
+        AND mv."publishedAt" < pa."endsAt"
+        AND mv.status = 'Published'
+      RETURNING mv.id, mv."modelId"
     `;
 
-    if (updated.length > 0) {
-      const updatedIds = updated.map((v) => v.id);
-      const modelIds = uniq(updated.map((v) => v.modelId));
+    if (republished.length > 0) {
+      const updatedIds = republished.map((v) => v.id);
+      const modelIds = uniq(republished.map((v) => v.modelId));
       await bustMvCache(updatedIds, modelIds);
       await dataForModelsCache.refresh(modelIds);
+      await modelsSearchIndex.queueUpdate(
+        modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      );
     }
-    // Ensures user gets access to the resource after purchasing.
 
     await setLastRun();
   }

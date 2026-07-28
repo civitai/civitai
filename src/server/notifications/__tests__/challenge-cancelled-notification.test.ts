@@ -95,6 +95,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
+  reportPoolFundingShortfall: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
@@ -195,7 +196,7 @@ describe('voidChallenge — entrant cancellation notification', () => {
     mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 3 });
     mockDbRead.$queryRaw.mockRejectedValue(new Error('transient DB error'));
 
-    await expect(voidChallenge(7)).resolves.toEqual({ success: true });
+    await expect(voidChallenge(7)).resolves.toEqual({ success: true, voided: true });
 
     expect(mockCreateNotification).not.toHaveBeenCalled();
     expect(mockLogToAxiom).toHaveBeenCalledTimes(1);

@@ -121,16 +121,27 @@ function ModelCardContent({ data }: Props) {
     [data.id, data.name, targetVersionId, useModelVersionRedirect]
   );
 
+  // The search doc carries images for the newest version of each base model, but
+  // images[0] is always the latest version's cover — show the matched version's
+  // cover instead when a base-model filter is active. The feed type omits
+  // modelVersionId (its images are already the matched version's), so it falls back.
+  const image =
+    (activeBaseModels?.length
+      ? data.images.find(
+          (i) => (i as { modelVersionId?: number }).modelVersionId === targetVersionId
+        )
+      : undefined) ?? data.images[0];
+
   return (
     <AspectRatioImageCard
       href={href}
       cosmetic={data.cosmetic?.data}
       contentType="model"
       contentId={data.id}
-      image={data.images[0]}
+      image={image}
       alt={data.name}
       onSite={!!data.version.trainingStatus}
-      isRemix={!!data.images[0]?.remixOfId}
+      isRemix={!!image?.remixOfId}
       header={
         <div className="flex w-full items-start justify-between">
           <div className="flex flex-wrap gap-1">

@@ -43,8 +43,13 @@ import {
   CHALLENGE_ENTRY_HOUSE_CUT,
   getEntryPoolContribution,
 } from '~/shared/constants/challenge.constants';
-import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import {
+  recordChallengeEntryFeesBuzz,
+  recordChallengeRefundBuzz,
+  recordChallengeRefundFailure,
+} from '~/server/prom/challenge.metrics';
 
 const log = createLogger('challenge-funding', 'yellow');
 
@@ -209,6 +214,15 @@ export async function chargeEntryFees({
     }).catch(() => {});
   }
 
+  // Economy telemetry: Buzz newly charged this call (house + pool legs charged for the FIRST time —
+  // conflicts/retries already counted on the original charge, so this can't double-count). Entry
+  // fees only exist on source=User challenges.
+  recordChallengeEntryFeesBuzz({
+    source: ChallengeSource.User,
+    buzzType: fromAccountType,
+    amount: houseResult.transactions.length * houseAmount + newPoolCharges * poolAmount,
+  });
+
   return { paidImageIds, unpaidImageIds };
 }
 
@@ -249,17 +263,22 @@ async function refundChallengeFundsByPrefix(input: {
   externalTransactionIdPrefix: string;
   description: string;
   details: { challengeId: number };
-}): Promise<number> {
+}): Promise<{ count: number; amount: number }> {
   try {
-    const { refundedTransactions } = await refundMultiAccountTransaction(input);
-    return refundedTransactions.length;
+    const { refundedTransactions, totalRefunded } = await refundMultiAccountTransaction(input);
+    return { count: refundedTransactions.length, amount: totalRefunded };
   } catch (e) {
-    if (e instanceof TRPCError && e.code === 'NOT_FOUND') return 0;
+    if (e instanceof TRPCError && e.code === 'NOT_FOUND') return { count: 0, amount: 0 };
     throw e;
   }
 }
 
-export async function refundUserChallengeFunds(challengeId: number) {
+export async function refundUserChallengeFunds(
+  challengeId: number,
+  // Telemetry-only: what triggered the refund. Normalized to void|delete|other in the metric
+  // helper; does not affect refund behavior.
+  reason: 'void' | 'delete' | 'completion' | 'other' = 'other'
+) {
   const challenge = await dbRead.challenge.findUnique({
     where: { id: challengeId },
     select: {
@@ -267,35 +286,96 @@ export async function refundUserChallengeFunds(challengeId: number) {
       basePrizePool: true,
       createdById: true,
       entryFee: true,
+      buzzType: true,
     },
   });
   if (!challenge || challenge.source !== ChallengeSource.User) return { refundedEntries: 0 };
 
   let refundedEntries = 0;
-  if (challenge.entryFee > 0) {
-    // The trailing `-` keeps this prefix from matching another challenge's fees (e.g. challenge 5's
-    // `challenge-entry-fee-5-` never matches challenge 50's `challenge-entry-fee-50-...`).
-    refundedEntries = await refundChallengeFundsByPrefix({
-      externalTransactionIdPrefix: `challenge-entry-fee-${challengeId}-`,
-      description: 'Challenge cancelled — entry fee refund',
-      details: { challengeId },
-    });
-  }
+  try {
+    let refundedAmount = 0;
+    if (challenge.entryFee > 0) {
+      // The trailing `-` keeps this prefix from matching another challenge's fees (e.g. challenge 5's
+      // `challenge-entry-fee-5-` never matches challenge 50's `challenge-entry-fee-50-...`).
+      const res = await refundChallengeFundsByPrefix({
+        externalTransactionIdPrefix: `challenge-entry-fee-${challengeId}-`,
+        description: 'Challenge cancelled — entry fee refund',
+        details: { challengeId },
+      });
+      refundedEntries = res.count;
+      refundedAmount += res.amount;
+    }
 
-  if (challenge.basePrizePool > 0 && challenge.createdById != null) {
-    // Reverse the actual escrow charge by its collision-safe prefix (mint-safe) — the `-creator`
-    // token makes this prefix unambiguous vs other challenge ids (5 vs 50, 51, ...).
-    await refundChallengeFundsByPrefix({
-      externalTransactionIdPrefix: `challenge-initial-prize-${challengeId}-creator`,
-      description: 'Challenge cancelled — initial prize refund',
-      details: { challengeId },
+    if (challenge.basePrizePool > 0 && challenge.createdById != null) {
+      // Reverse the actual escrow charge by its collision-safe prefix (mint-safe) — the `-creator`
+      // token makes this prefix unambiguous vs other challenge ids (5 vs 50, 51, ...).
+      const res = await refundChallengeFundsByPrefix({
+        externalTransactionIdPrefix: `challenge-initial-prize-${challengeId}-creator`,
+        description: 'Challenge cancelled — initial prize refund',
+        details: { challengeId },
+      });
+      refundedAmount += res.amount;
+    }
+
+    recordChallengeRefundBuzz({
+      source: challenge.source,
+      buzzType: challenge.buzzType,
+      reason,
+      amount: refundedAmount,
     });
+  } catch (e) {
+    // A real refund failure (NOT_FOUND is already swallowed as a no-op inside the prefix helper);
+    // count it, then rethrow so the caller's void/delete recovery path is unchanged.
+    recordChallengeRefundFailure({ source: challenge.source, reason });
+    throw e;
   }
 
   log(
     `Refunded ${refundedEntries} entry-fee pool contributions + initial prize for cancelled challenge ${challengeId}`
   );
   return { refundedEntries };
+}
+
+/**
+ * Alert when a completing user challenge holds less Buzz than its accepted entries imply. An
+ * entry that reached the collection without a paid pool leg still competes for the prizes, so
+ * the shortfall silently shrinks every winner's payout (challenge 413 completed with 2 entries
+ * and a pool of 0, paying its winners nothing). Never throws — reporting only.
+ */
+export async function reportPoolFundingShortfall({
+  challengeId,
+  collectionId,
+}: {
+  challengeId: number;
+  collectionId: number | null;
+}) {
+  if (!collectionId) return;
+
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { source: true, entryFee: true, basePrizePool: true, prizePool: true },
+  });
+  if (!challenge || challenge.source !== ChallengeSource.User || challenge.entryFee <= 0) return;
+
+  const entryCount = await dbRead.collectionItem.count({
+    where: { collectionId, status: CollectionItemStatus.ACCEPTED },
+  });
+  const expectedPool =
+    challenge.basePrizePool + getEntryPoolContribution(challenge.entryFee) * entryCount;
+  const shortfall = expectedPool - challenge.prizePool;
+  if (shortfall <= 0) return;
+
+  await logToAxiom({
+    type: 'warning',
+    name: 'challenge-pool-funding-shortfall',
+    message: 'Challenge completing with a prize pool below what its accepted entries imply',
+    challengeId,
+    entryCount,
+    entryFee: challenge.entryFee,
+    prizePool: challenge.prizePool,
+    expectedPool,
+    shortfall,
+  }).catch(() => {});
 }
 
 /** Build the winner-prize transactions for a challenge, paid in its stored currency. Pure. */

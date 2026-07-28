@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   fileLineLabel,
+  findingAnchorId,
+  findingBody,
   formatCostUsd,
   parseAgentReport,
+  parseReportHash,
+  sectionAnalysisError,
+  severityBreakdown,
+  severityRank,
+  sortFindingsBySeverity,
+  type AgentFinding,
 } from '~/components/Apps/agentReviewReport';
 
 /**
@@ -135,5 +143,167 @@ describe('fileLineLabel', () => {
     expect(fileLineLabel('a.js')).toBe('a.js');
     expect(fileLineLabel('a.js', '')).toBe('a.js');
     expect(fileLineLabel(undefined, 3)).toBeNull();
+  });
+});
+
+describe('findingBody', () => {
+  it('prefers the richer `detail` over legacy `description`', () => {
+    expect(findingBody({ evidence: [], detail: 'D', description: 'legacy' })).toBe('D');
+    expect(findingBody({ evidence: [], description: 'legacy' })).toBe('legacy');
+    expect(findingBody({ evidence: [] })).toBeUndefined();
+  });
+});
+
+describe('parseAgentReport — richer finding fields', () => {
+  it('captures category / detail / evidence / suggestion / diffStatus / confidence', () => {
+    const v = parseAgentReport({
+      codeReview: {
+        findings: [
+          {
+            file: 'a.js',
+            line: 3,
+            severity: 'high',
+            category: 'security',
+            title: 'X',
+            detail: 'the detail',
+            evidence: ['a.js:3', 'b.js:9'],
+            suggestion: 'do Y',
+            diffStatus: 'added',
+          },
+        ],
+      },
+      securityAudit: {
+        findings: [{ severity: 'critical', title: 'Z', evidence: ['c.js:1'], confidence: 'high' }],
+      },
+    });
+    const f = v.codeReview.findings[0];
+    expect(f.category).toBe('security');
+    expect(f.detail).toBe('the detail');
+    expect(f.evidence).toEqual(['a.js:3', 'b.js:9']);
+    expect(f.suggestion).toBe('do Y');
+    expect(f.diffStatus).toBe('added');
+    expect(v.securityAudit.findings[0].confidence).toBe('high');
+    // A wrong-typed evidence array falls back to [] (never throws).
+    const bad = parseAgentReport({ codeReview: { findings: [{ title: 'T', evidence: 'nope' }] } });
+    expect(bad.codeReview.findings[0].evidence).toEqual([]);
+  });
+});
+
+describe('severityRank + sortFindingsBySeverity', () => {
+  it('ranks by descending risk; unknown severities sort last', () => {
+    expect(severityRank('critical')).toBeLessThan(severityRank('high'));
+    expect(severityRank('high')).toBeLessThan(severityRank('medium'));
+    expect(severityRank('low')).toBeLessThan(severityRank('info'));
+    expect(severityRank('bogus')).toBeGreaterThan(severityRank('info'));
+    expect(severityRank(undefined)).toBeGreaterThan(severityRank('info'));
+  });
+
+  it('sorts critical → info, stable within a bucket, without mutating input', () => {
+    const input: AgentFinding[] = [
+      { evidence: [], severity: 'low', title: 'L' },
+      { evidence: [], severity: 'critical', title: 'C' },
+      { evidence: [], severity: 'medium', title: 'M1' },
+      { evidence: [], severity: 'medium', title: 'M2' },
+      { evidence: [], title: 'unknown' },
+    ];
+    const out = sortFindingsBySeverity(input);
+    expect(out.map((f) => f.title)).toEqual(['C', 'M1', 'M2', 'L', 'unknown']);
+    // Input untouched.
+    expect(input[0].title).toBe('L');
+  });
+});
+
+describe('severityBreakdown', () => {
+  it('buckets counts (medium + moderate collapse; unknown → other)', () => {
+    const b = severityBreakdown([
+      { evidence: [], severity: 'critical' },
+      { evidence: [], severity: 'high' },
+      { evidence: [], severity: 'medium' },
+      { evidence: [], severity: 'moderate' },
+      { evidence: [], severity: 'low' },
+      { evidence: [], severity: 'info' },
+      { evidence: [], severity: 'weird' },
+      { evidence: [] },
+    ]);
+    expect(b).toEqual({ total: 8, critical: 1, high: 1, medium: 2, low: 1, info: 1, other: 2 });
+  });
+});
+
+describe('findingAnchorId', () => {
+  it('builds finding-<tab>-<index> for the two finding tabs', () => {
+    expect(findingAnchorId('code', 0)).toBe('finding-code-0');
+    expect(findingAnchorId('security', 2)).toBe('finding-security-2');
+  });
+  it('tolerates odd indices without throwing (never a hard requirement)', () => {
+    expect(findingAnchorId('code', -1)).toBe('finding-code--1');
+    expect(findingAnchorId('security', Number.NaN)).toBe('finding-security-NaN');
+  });
+});
+
+describe('parseReportHash', () => {
+  it('parses a finding anchor into { tab, anchorId }', () => {
+    expect(parseReportHash('#finding-security-2')).toEqual({
+      tab: 'security',
+      anchorId: 'finding-security-2',
+    });
+    expect(parseReportHash('#finding-code-0')).toEqual({
+      tab: 'code',
+      anchorId: 'finding-code-0',
+    });
+  });
+
+  it('tolerates a missing leading #', () => {
+    expect(parseReportHash('finding-security-1')).toEqual({
+      tab: 'security',
+      anchorId: 'finding-security-1',
+    });
+    expect(parseReportHash('code')).toEqual({ tab: 'code' });
+  });
+
+  it('parses a bare tab hash', () => {
+    expect(parseReportHash('#code')).toEqual({ tab: 'code' });
+    expect(parseReportHash('#security')).toEqual({ tab: 'security' });
+    expect(parseReportHash('#scopes')).toEqual({ tab: 'scopes' });
+  });
+
+  it('returns {} for empty / unknown / malformed input', () => {
+    expect(parseReportHash('')).toEqual({});
+    expect(parseReportHash('#')).toEqual({});
+    expect(parseReportHash('#unknown')).toEqual({});
+    // `summary` is no longer a tab (the Summary tab was dropped) → not recognized.
+    expect(parseReportHash('#summary')).toEqual({});
+    // A tab value outside the union is ignored (not a finding tab, not a bare tab).
+    expect(parseReportHash('#finding-scopes-2')).toEqual({});
+    expect(parseReportHash('#finding-summary-0')).toEqual({});
+    // Non-numeric / missing index does not match the finding anchor.
+    expect(parseReportHash('#finding-security-')).toEqual({});
+    expect(parseReportHash('#finding-security-abc')).toEqual({});
+    // A trailing suffix must not match (anchored regex).
+    expect(parseReportHash('#finding-security-2x')).toEqual({});
+    // Whitespace-only.
+    expect(parseReportHash('   ')).toEqual({});
+  });
+
+  it('round-trips findingAnchorId → parseReportHash', () => {
+    for (const tab of ['code', 'security'] as const) {
+      for (const i of [0, 1, 7, 42]) {
+        const anchorId = findingAnchorId(tab, i);
+        expect(parseReportHash(`#${anchorId}`)).toEqual({ tab, anchorId });
+      }
+    }
+  });
+});
+
+describe('sectionAnalysisError', () => {
+  it('detects an { error } object or a bare string; null for well-formed/empty', () => {
+    expect(sectionAnalysisError({ error: 'boom' })).toBe('boom');
+    expect(sectionAnalysisError({ error: { code: 'X' } })).toContain('X');
+    expect(sectionAnalysisError('runner crashed')).toBe('runner crashed');
+    expect(sectionAnalysisError({ findings: [] })).toBeNull();
+    expect(sectionAnalysisError({})).toBeNull();
+    expect(sectionAnalysisError(null)).toBeNull();
+    expect(sectionAnalysisError(undefined)).toBeNull();
+    expect(sectionAnalysisError({ error: null })).toBeNull();
+    expect(sectionAnalysisError('   ')).toBeNull();
   });
 });

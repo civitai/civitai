@@ -9,6 +9,7 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
 import type { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { transformModelHits } from '~/shared/search/models-transform';
 import type { ReverseSearchIndexKey } from '~/components/Search/search.types';
 import { reverseSearchIndexMap } from '~/components/Search/search.types';
 import type { ToolSearchIndexRecord } from '~/server/search-index/tools.search-index';
@@ -16,23 +17,9 @@ import type { ComicSearchIndexRecord } from '~/server/search-index/comics.search
 import type { ImageMetadata } from '~/server/schema/media.schema';
 
 // #region [transformers]
-function handleOldImageTags(tags?: number[] | { id: number }[]) {
-  if (!tags) return [];
-  return tags.map((tag) => (typeof tag === 'number' ? tag : tag?.id));
-}
-
 type ModelsTransformed = ReturnType<typeof modelsTransform>;
 function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
-  return items.map((item) => ({
-    ...item,
-    nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
-    tags: item.tags.map((t) => t.id),
-    images:
-      item.images?.map((image) => ({
-        ...image,
-        tags: handleOldImageTags(image.tags),
-      })) ?? [],
-  }));
+  return transformModelHits(items);
 }
 
 type ImagesTransformed = ReturnType<typeof imagesTransform>;

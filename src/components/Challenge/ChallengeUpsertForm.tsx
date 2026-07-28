@@ -925,7 +925,12 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               <>
             <Group justify="space-between" wrap="wrap">
               <Title order={4}>Prizes</Title>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={totalPrizePool} size="lg" />
+              <CurrencyBadge
+                currency={Currency.BUZZ}
+                type={selectedBuzzType}
+                unitAmount={totalPrizePool}
+                size="lg"
+              />
             </Group>
 
             {/* Prize Mode Toggle */}
@@ -943,7 +948,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <InputNumber
                   name="prize1Buzz"
                   label="1st Place"
-                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
@@ -952,7 +957,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <InputNumber
                   name="prize2Buzz"
                   label="2nd Place"
-                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
@@ -961,7 +966,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <InputNumber
                   name="prize3Buzz"
                   label="3rd Place"
-                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
@@ -976,7 +981,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <InputNumber
                   name="basePrizePool"
                   label="Base Prize Pool"
-                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
@@ -988,7 +993,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   <InputNumber
                     name="buzzPerAction"
                     label="Buzz Per Trigger"
-                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                     currency={Currency.BUZZ}
                     min={0}
                     step={1}
@@ -1010,7 +1015,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   name="maxPrizePool"
                   label="Max Prize Pool (optional)"
                   description="Leave empty for unlimited growth"
-                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                  leftSection={<CurrencyIcon currency="BUZZ" type={selectedBuzzType} size={16} />}
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}

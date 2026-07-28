@@ -1675,6 +1675,16 @@ export const REDIS_SYS_KEYS = {
      */
     SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit',
     /**
+     * Per-user (fallback per-IP) rate-limit counter for the PUBLIC app-catalog
+     * read (`/api/v1/apps` list + `/api/v1/apps/{slug}` detail). Same
+     * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
+     * created with its TTL), on `sysRedis`. Mirrors the 60/60 limit the tRPC
+     * marketplace procs carry, keyed on the authenticated user when a bearer is
+     * present and the client IP otherwise. Bounds a scripted crawler of the
+     * published-apps listing.
+     */
+    APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -1718,6 +1728,20 @@ export const REDIS_SYS_KEYS = {
      * absent for them (synthetic appBlockId), matching the txt2img caps.
      */
     CUSTOM_COMFY_SETTLE: 'system:blocks:custom-comfy-settle',
+    /**
+     * MOD REVIEW SANDBOX "run for real" (#2831) — AGGREGATE Buzz-spend ceiling
+     * for a moderator opting IN to run an UNAPPROVED review app for real against
+     * their OWN account. Keyed `${REVIEW_RUN_FOR_REAL_BUZZ_CAP}:<modUserId>:<publishRequestId>`
+     * so ALL run-for-real generations by one mod against one pending request
+     * accumulate against a SINGLE tight session ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP)
+     * — a per-call budget alone can't bound a hostile app looping sub-budget calls
+     * (blocks.router.ts §aggregate-cap). The key intentionally binds to
+     * (mod, publishRequestId) NOT the token jti, so re-minting/re-confirming the
+     * consent CANNOT reset the ceiling within the window. Same atomic INCRBY
+     * reserve-and-refund + hard-TTL EX shape as the sibling BLOCKS caps, on
+     * `sysRedis`.
+     */
+    REVIEW_RUN_FOR_REAL_BUZZ_CAP: 'system:blocks:review-run-for-real-buzz-cap',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
@@ -1944,6 +1968,9 @@ export const REDIS_SYS_KEYS = {
   },
   WEBHOOKS: {
     MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
+    // Per-workflow job-level failure reason, stashed from `job:failed`/`job:expired`
+    // callbacks so the terminal workflow event can classify the failure. Short TTL.
+    IMAGE_SCAN_JOB_REASON: 'webhooks:image-scan:job-reason',
   },
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
@@ -2001,9 +2028,11 @@ export const REDIS_KEYS = {
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
+    ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
+    PAID_ACCESS: 'packed:caches:paid-access',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
@@ -2023,6 +2052,7 @@ export const REDIS_KEYS = {
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
     FEATURED_MODELS: 'packed:featured-models-2',
+    OFFICIAL_MODELS: 'packed:caches:official-models',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
@@ -2089,6 +2119,20 @@ export const REDIS_KEYS = {
     // registered image resolves immediately), busted when `hideMeta` flips in
     // updatePostImage. See `getCachedImageDeliveryMetadata` in image-delivery.service.
     IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata',
+    // Per-user `id -> isValidCreatorMember(boolean)` for the read-time metric-privacy /
+    // donation-goal hide gate (#3266). Near-static per user; both TRUE and FALSE are
+    // cached (the resolver is a total function over the id). Busted on any subscription
+    // change via `invalidateSubscriptionCaches`; TTL backstops the non-webhook paths.
+    // See `getValidCreatorMembershipMap` in creator-membership.service.
+    CREATOR_MEMBERSHIP_VALID: 'packed:caches:creator-membership-valid',
+    // Per-user `id -> { hideModelBuzz, hideModelDownloads, hideModelGenerations }` — the
+    // three model-metric-privacy DEFAULT flags read off `User.settings` at read time
+    // (#3266). A tiny derived slice so the hot model-read paths (feed / v1 list /
+    // associated) never fetch + synchronously deserialize the FULL `settings` blob per
+    // owner per request just to read three booleans. Busted on any settings write via
+    // `setUserSetting`; `CacheTTL.md` backstops any other writer. See
+    // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
+    USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

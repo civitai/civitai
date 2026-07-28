@@ -127,7 +127,7 @@ const formSchema = upsertBountyInputSchema
     error: 'Expiration date must be after start date',
     path: ['expiresAt'],
   })
-  .refine((data) => data.nsfw && data.buzzType === 'green', {
+  .refine((data) => !(data.buzzType === 'green' && data.nsfw), {
     error: 'When using Green Buzz, you are not allowed to create NSFW content',
     path: ['nsfw'],
   });
@@ -180,6 +180,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         bounty.files.length > 0 &&
         bounty.files.every((f) => f.metadata?.ownRights === true),
       nsfw: bounty?.nsfw ?? false,
+      buzzType: mainBuzzType as 'green' | 'yellow',
     },
     shouldUnregister: false,
   });
@@ -271,6 +272,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         const result = await upsertBounty({
           ...bounty,
           ...rest,
+          buzzType: mainBuzzType as 'green' | 'yellow',
           startsAt: stripTime(startsAt),
           expiresAt: stripTime(expiresAt),
           images: filteredImages,
@@ -386,13 +388,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                             case BountyType.ModelCreation:
                               form.setValue('details.baseModel', 'SD 1.5');
                               form.setValue('details.modelFormat', 'SafeTensor');
-                              form.setValue('details.modelSize', 'full');
                               break;
                             case BountyType.LoraCreation:
                             case BountyType.EmbedCreation:
                               form.setValue('details.baseModel', 'SD 1.5');
                               form.setValue('details.modelFormat', undefined);
-                              form.setValue('details.modelSize', undefined);
                               break;
                             default:
                               form.setValue('details', undefined);
@@ -769,20 +769,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       data={[...constants.modelFileFormats]}
                       fullWidth
                       orientation="vertical"
-                    />
-                  </Input.Wrapper>
-                  <Input.Wrapper
-                    className={classes.fluid}
-                    label="Preferred model size"
-                    labelProps={{ w: '100%' }}
-                    withAsterisk
-                  >
-                    <InputSegmentedControl
-                      classNames={classes}
-                      name="details.modelSize"
-                      radius="sm"
-                      data={[...constants.modelFileSizes]}
-                      fullWidth
                     />
                   </Input.Wrapper>
                 </Stack>

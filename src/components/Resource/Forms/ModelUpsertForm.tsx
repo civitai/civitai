@@ -112,7 +112,9 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category', 'tags'];
+// 'tags' is deliberately absent: the field is named `tagsOnModels`, so the watch effect below
+// could never auto-apply it, the input has no locked state, and nothing enforces it server-side.
+const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category'];
 
 const availabilityDetails = {
   [Availability.Public]: {
@@ -592,7 +594,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   name="poi"
                   label="Depicts an actual person"
                   description={isLockedDescription(
-                    'category',
+                    'poi',
                     'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
                   )}
                   onChange={(value) => {
@@ -618,7 +620,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   name="nsfw"
                   label="Is intended to produce mature themes"
                   disabled={isLocked('nsfw') || poi === 'true' || minor || isPrivate}
-                  description={isLockedDescription('category')}
+                  description={isLockedDescription('nsfw')}
                   onChange={(event) => {
                     if (event.target.checked) {
                       form.setValue('poi', 'false');

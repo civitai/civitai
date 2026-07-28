@@ -81,6 +81,7 @@ import type {
   BountyEngagementType,
   CsamReportType,
   Availability,
+  PaidAccessEntityType,
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
@@ -103,6 +104,7 @@ import type {
   PoolTrigger,
   ChallengeReviewCostType,
   ChallengeIngestionStatus,
+  ChallengeEngagementType,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   ComicProjectStatus,
@@ -1399,6 +1401,12 @@ export type ChallengeCategory = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type ChallengeEngagement = {
+  userId: number;
+  challengeId: number;
+  type: ChallengeEngagementType;
+  createdAt: Generated<Timestamp>;
+};
 export type ChallengeEvent = {
   id: Generated<number>;
   title: string;
@@ -1739,6 +1747,7 @@ export type ComicChapter = {
   earlyAccessConfig: unknown | null;
   earlyAccessEndsAt: Timestamp | null;
   publishedAt: Timestamp | null;
+  initialPublishedAt: Timestamp | null;
   nsfwLevel: Generated<number>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
@@ -1845,6 +1854,7 @@ export type Comment = {
   modelId: number;
   locked: Generated<boolean | null>;
   hidden: Generated<boolean | null>;
+  pinnedAt: Timestamp | null;
 };
 export type CommentReaction = {
   id: Generated<number>;
@@ -2024,10 +2034,10 @@ export type DonationGoal = {
   title: string;
   description: string | null;
   goalAmount: number;
-  paidAmount: Generated<number>;
+  entityType: PaidAccessEntityType | null;
+  entityId: number | null;
   modelVersionId: number | null;
   createdAt: Generated<Timestamp>;
-  isEarlyAccess: Generated<boolean>;
   active: Generated<boolean>;
 };
 export type DownloadHistory = {
@@ -2384,7 +2394,6 @@ export type Model = {
   uploadType: Generated<ModelUploadType>;
   locked: Generated<boolean>;
   underAttack: Generated<boolean>;
-  earlyAccessDeadline: Timestamp | null;
   mode: ModelModifier | null;
   unlisted: Generated<boolean>;
   gallerySettings: Generated<unknown>;
@@ -2393,6 +2402,7 @@ export type Model = {
   lockedProperties: Generated<string[]>;
   scannedAt: Timestamp | null;
   sfwOnly: Generated<boolean>;
+  isOfficial: Generated<boolean>;
   allowNoCredit: Generated<boolean>;
   allowCommercialUse: Generated<CommercialUse[]>;
   allowDerivatives: Generated<boolean>;
@@ -2662,6 +2672,7 @@ export type ModelVersion = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   publishedAt: Timestamp | null;
+  initialPublishedAt: Timestamp | null;
   status: Generated<ModelStatus>;
   trainingStatus: TrainingStatus | null;
   trainingDetails: unknown | null;
@@ -2674,9 +2685,6 @@ export type ModelVersion = {
   settings: unknown | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
-  earlyAccessEndsAt: Timestamp | null;
-  earlyAccessConfig: unknown | null;
-  earlyAccessPermanent: Generated<boolean>;
   uploadType: Generated<ModelUploadType>;
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
@@ -2802,6 +2810,16 @@ export type Outbox = {
   createdAt: Generated<Timestamp | null>;
   details: unknown | null;
   attempts: number | null;
+};
+export type PaidAccess = {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  endsAt: Timestamp | null;
+  timeframeDays: number | null;
+  terms: unknown;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type Partner = {
   id: Generated<number>;
@@ -3929,6 +3947,7 @@ export type DB = {
   CashWithdrawal: CashWithdrawal;
   Challenge: Challenge;
   ChallengeCategory: ChallengeCategory;
+  ChallengeEngagement: ChallengeEngagement;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
   ChallengeReport: ChallengeReport;
@@ -4060,6 +4079,7 @@ export type DB = {
   OauthClient: OauthClient;
   OauthConsent: OauthConsent;
   Outbox: Outbox;
+  PaidAccess: PaidAccess;
   Partner: Partner;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;

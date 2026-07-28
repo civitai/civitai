@@ -9,10 +9,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 /**
- * Horizontal row of the current user's recently participated-in challenges, including its own
+ * Horizontal row of the current user's own challenges — entered or created — including its own
  * section header so the whole section disappears when there's nothing to show. Renders nothing
- * while logged out, while fetching, or when the user has no entries — most users have no entries,
- * so a skeleton band here would flash a titled personal section at them and then remove it.
+ * while logged out, while fetching, or when the user has none: most users have none, so a
+ * skeleton band here would flash a titled personal section at them and then remove it.
  */
 export function YourChallengesRow() {
   const currentUser = useCurrentUser();
@@ -20,7 +20,7 @@ export function YourChallengesRow() {
     data: challenges,
     isLoading,
     isRefetching,
-  } = trpc.challenge.getMyParticipated.useQuery(
+  } = trpc.challenge.getMyChallenges.useQuery(
     { limit: 6 },
     { enabled: !!currentUser, trpc: { context: { skipBatch: true } } }
   );
@@ -37,7 +37,7 @@ export function YourChallengesRow() {
       <div>
         <Title order={3}>Your Challenges</Title>
         <Text size="xs" c="dimmed">
-          Challenges you&apos;ve recently entered
+          Challenges you&apos;ve entered or created
         </Text>
       </div>
     </Group>
@@ -54,7 +54,11 @@ export function YourChallengesRow() {
           {headerLeft}
           <Button
             component={Link}
-            href="/challenges?engagement=participated"
+            href={
+              filtered.every((c) => c.myResult === 'hosting')
+                ? '/challenges?engagement=created'
+                : '/challenges?engagement=participated'
+            }
             variant="subtle"
             size="compact-sm"
             rightSection={<IconChevronRight size={16} />}

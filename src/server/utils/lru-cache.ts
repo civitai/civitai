@@ -13,9 +13,37 @@ import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 const DEFAULT_MAX_SIZE = 1000;
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Pragmatic retained-bytes estimator for a decoded JS value. Uses the UTF-16
+ * JSON length (`* 2`) plus a small fixed per-entry overhead, clamped to ≥1 (a
+ * `sizeCalculation` return of 0 is rejected by lru-cache). It runs on each `set`
+ * (miss-fill, not on hits), so it stays cheap; it is an ESTIMATE for bounding
+ * heap, not an exact `retainedSize`. Callers can override via `sizeCalculation`.
+ */
+export function roughSizeOf(value: unknown): number {
+  let json: string;
+  try {
+    json = JSON.stringify(value) ?? '';
+  } catch {
+    json = ''; // circular/unserializable → fall back to the fixed overhead
+  }
+  return Math.max(1, json.length * 2 + 64);
+}
+
 export type LruCacheOptions<K, V extends {}> = {
-  /** Maximum number of items in cache (default: 1000) */
+  /** Maximum number of items in cache (default: 1000). Belt-and-suspenders entry cap. */
   max?: number;
+  /**
+   * Optional byte budget for the cache. When set, the LRU evicts to keep the sum
+   * of entry sizes ≤ maxSize (a deterministic heap cap), in ADDITION to `max`.
+   * Requires a `sizeCalculation` (defaults to `roughSizeOf`).
+   */
+  maxSize?: number;
+  /**
+   * Per-value size estimator used when `maxSize` is set. Runs on each `set`
+   * (miss-fill). Defaults to `roughSizeOf`. Must return a positive integer.
+   */
+  sizeCalculation?: (value: V, key: string) => number;
   /** TTL in milliseconds (default: 5 minutes). Set to 0 for no TTL. */
   ttl?: number;
   /** Name for metrics tracking */
@@ -46,11 +74,22 @@ export type LruCacheOptions<K, V extends {}> = {
  * ```
  */
 export function createLruCache<K, V extends {}>(options: LruCacheOptions<K, V>) {
-  const { max = DEFAULT_MAX_SIZE, ttl = DEFAULT_TTL_MS, name, keyFn, fetchFn } = options;
+  const { max = DEFAULT_MAX_SIZE, maxSize, sizeCalculation, ttl = DEFAULT_TTL_MS, name, keyFn, fetchFn } =
+    options;
 
   const cache = new LRUCache<string, V>({
     max,
     ttl: ttl > 0 ? ttl : undefined,
+    // Byte cap (deterministic heap bound), enabled only when maxSize is set —
+    // lru-cache requires a sizeCalculation whenever maxSize is present. Clamp the
+    // estimator to a positive integer (0 is rejected).
+    ...(maxSize
+      ? {
+          maxSize,
+          sizeCalculation: (value: V, key: string) =>
+            Math.max(1, Math.round((sizeCalculation ?? roughSizeOf)(value, key))),
+        }
+      : {}),
   });
 
   return {

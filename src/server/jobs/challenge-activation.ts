@@ -16,6 +16,9 @@ import { startScheduledChallenge } from './daily-challenge-processing';
 import { logToAxiom } from '~/server/logging/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { CHALLENGE_JOB_CONCURRENCY } from '~/shared/constants/challenge.constants';
+import { getChallengeNotifyRecipients } from '~/server/services/challenge-engagement.service';
+import { createNotification } from '~/server/services/notification.service';
+import { NotificationCategory } from '~/server/common/enums';
 
 const log = createLogger('jobs:challenge-activation', 'blue');
 
@@ -54,7 +57,7 @@ export async function runChallengeActivation() {
             }
             if (rescanned !== ChallengeIngestionStatus.Blocked && !gracePassed) return;
           }
-          await voidChallenge(challengeId);
+          await voidChallenge(challengeId, 'activation');
           log(`Voided unscanned user challenge ${challengeId} (${ingestion})`);
         } catch (error) {
           const err = error as Error;
@@ -89,6 +92,31 @@ export async function runChallengeActivation() {
           return;
         }
         await startScheduledChallenge(challenge, config);
+
+        // Best-effort: a notification failure must never leave a challenge un-activated.
+        try {
+          const trackers = await getChallengeNotifyRecipients(challenge.challengeId);
+          if (trackers.length) {
+            await createNotification({
+              type: 'challenge-starting',
+              category: NotificationCategory.Update,
+              key: `challenge-starting:${challenge.challengeId}`,
+              userIds: trackers,
+              details: {
+                challengeId: challenge.challengeId,
+                challengeTitle: challenge.title,
+              },
+            });
+          }
+        } catch (error) {
+          const err = error as Error;
+          logToAxiom({
+            type: 'warning',
+            name: 'challenge-starting-notification',
+            message: err.message,
+            challengeId: challenge.challengeId,
+          });
+        }
       } catch (error) {
         const err = error as Error;
         logToAxiom({

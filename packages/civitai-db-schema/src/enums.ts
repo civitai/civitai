@@ -740,6 +740,13 @@ export const Availability = {
 
 export type Availability = (typeof Availability)[keyof typeof Availability];
 
+export const PaidAccessEntityType = {
+  ModelVersion: 'ModelVersion',
+  ComicChapter: 'ComicChapter',
+} as const;
+
+export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
+
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
@@ -947,6 +954,12 @@ export const ChallengeIngestionStatus = {
 } as const;
 
 export type ChallengeIngestionStatus = (typeof ChallengeIngestionStatus)[keyof typeof ChallengeIngestionStatus];
+
+export const ChallengeEngagementType = {
+  Notify: 'Notify',
+} as const;
+
+export type ChallengeEngagementType = (typeof ChallengeEngagementType)[keyof typeof ChallengeEngagementType];
 
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',

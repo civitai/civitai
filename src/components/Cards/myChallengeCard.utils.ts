@@ -1,11 +1,39 @@
+import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import type { MyChallengeResult } from '~/server/schema/challenge.schema';
+import { slugit } from '~/utils/string-helpers';
 
-export type MyChallengeCtaKind = 'results' | 'entry' | 'add';
+export type MyChallengeCtaKind = 'results' | 'entries' | 'entry' | 'add' | 'manage';
+
+// Detail-page deep-link targets. `results` lands on the winners podium (`#winners`), the others
+// on the entries gallery (`#entries`); `?mine=1` seeds the My Entries filter and `?submit=1`
+// opens the submit modal on arrival.
+export function getMyChallengeCtaHref(
+  kind: MyChallengeCtaKind,
+  { id, title }: { id: number; title: string }
+) {
+  if (kind === 'manage') return `/challenges/${id}/edit`;
+  const href = `/challenges/${id}/${slugit(title)}`;
+  if (kind === 'entry') return `${href}?mine=1#entries`;
+  if (kind === 'add') return `${href}?submit=1#entries`;
+  if (kind === 'results') return `${href}#winners`;
+  return `${href}#entries`;
+}
 
 export function getMyChallengeCta(
   result: MyChallengeResult,
-  isLive: boolean
+  isLive: boolean,
+  status: ChallengeStatus
 ): { kind: MyChallengeCtaKind; label: string; filled: 'white' | 'blue' } {
+  if (result === 'hosting') {
+    // Before it starts, the only useful action is editing it — after that, looking at it. While
+    // it's live or judging there are no winners yet, so point at the entries; once completed the
+    // "results" are the winners podium.
+    if (status === ChallengeStatus.Scheduled)
+      return { kind: 'manage', label: 'Manage', filled: 'white' };
+    if (isLive || status === ChallengeStatus.Completing)
+      return { kind: 'entries', label: 'View entries', filled: 'white' };
+    return { kind: 'results', label: 'View results', filled: 'white' };
+  }
   if (result === 'judging') return { kind: 'entry', label: 'View entry', filled: 'white' };
   if (result === 'entered' && isLive)
     return { kind: 'add', label: 'Add another entry', filled: 'blue' };
@@ -15,8 +43,14 @@ export function getMyChallengeCta(
 export function getMyChallengeBadge(
   result: MyChallengeResult,
   myPlace: number | null
-): { label: string; color: 'gold' | 'dark' | 'blue' | 'green'; icon: 'trophy' | 'medal' | 'hourglass' | 'check' } {
+): {
+  label: string;
+  color: 'gold' | 'dark' | 'blue' | 'green' | 'grape';
+  icon: 'trophy' | 'medal' | 'hourglass' | 'check' | 'crown';
+} {
   switch (result) {
+    case 'hosting':
+      return { label: 'Hosting', color: 'grape', icon: 'crown' };
     case 'won':
       return { label: 'Won', color: 'gold', icon: 'trophy' };
     case 'placed':

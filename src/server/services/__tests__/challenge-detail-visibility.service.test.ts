@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // detail page of a user challenge regardless of its scan/POI/cover state (a stuck-Scheduled
 // challenge 404'd for mods because the scan gate only exempted the creator). The public gates
 // must keep applying to everyone else.
-const { mockDbRead, mockGetChallengeById } = vi.hoisted(() => ({
+const { mockDbRead, mockGetChallengeById, mockAmIBlockedByUser } = vi.hoisted(() => ({
   mockDbRead: {
     $queryRaw: vi.fn(),
     modelVersion: { findMany: vi.fn() },
@@ -13,6 +13,7 @@ const { mockDbRead, mockGetChallengeById } = vi.hoisted(() => ({
     collectionItem: { count: vi.fn() },
   },
   mockGetChallengeById: vi.fn(),
+  mockAmIBlockedByUser: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -64,6 +65,7 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getCosmeticsForUsers: vi.fn(() => ({})),
   getProfilePicturesForUsers: vi.fn(() => ({})),
+  amIBlockedByUser: mockAmIBlockedByUser,
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -289,5 +291,43 @@ describe('getChallengeDetail — userChallenges flag gate', () => {
     );
 
     expect(await getChallengeDetail(400, RANDO_ID, false, false, false)).not.toBeNull();
+  });
+});
+
+describe('getChallengeDetail — creator block gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.$queryRaw.mockResolvedValue([
+      { id: OWNER_ID, username: 'creator', image: null, deletedAt: null },
+    ]);
+  });
+
+  it('hides a user challenge from a viewer the creator has blocked', async () => {
+    mockGetChallengeById.mockResolvedValue(makeUserChallenge({ ingestion: 'Scanned' }));
+    mockAmIBlockedByUser.mockResolvedValue(true);
+    expect(await getChallengeDetail(400, RANDO_ID, false, false, true)).toBeNull();
+    expect(mockAmIBlockedByUser).toHaveBeenCalledWith({ userId: RANDO_ID, targetUserId: OWNER_ID });
+  });
+
+  it('still shows it to a viewer who is not blocked', async () => {
+    mockGetChallengeById.mockResolvedValue(makeUserChallenge({ ingestion: 'Scanned' }));
+    mockAmIBlockedByUser.mockResolvedValue(false);
+    expect(await getChallengeDetail(400, RANDO_ID, false, false, true)).not.toBeNull();
+  });
+
+  it('exempts moderators even when blocked', async () => {
+    mockGetChallengeById.mockResolvedValue(makeUserChallenge({ ingestion: 'Scanned' }));
+    mockAmIBlockedByUser.mockResolvedValue(true);
+    expect(await getChallengeDetail(400, MOD_ID, false, true, true)).not.toBeNull();
+    expect(mockAmIBlockedByUser).not.toHaveBeenCalled();
+  });
+
+  it('does not block-gate System (daily) challenges', async () => {
+    mockGetChallengeById.mockResolvedValue(
+      makeUserChallenge({ ingestion: 'Scanned', source: 'System', buzzType: 'yellow' })
+    );
+    mockAmIBlockedByUser.mockResolvedValue(true);
+    expect(await getChallengeDetail(400, RANDO_ID, false, false, true)).not.toBeNull();
+    expect(mockAmIBlockedByUser).not.toHaveBeenCalled();
   });
 });

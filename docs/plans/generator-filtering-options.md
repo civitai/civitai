@@ -192,6 +192,10 @@ const generationFilterSchema = z.object({
 
 Add new filter sections:
 
+> Written against `base-model.constants.ts`, which has since been removed. The
+> equivalents now live in `basemodel.constants.ts`; `getGenerationBaseModelConfigs`
+> and `baseModelGroupConfig` were dead code and were retired with it.
+
 ```tsx
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {

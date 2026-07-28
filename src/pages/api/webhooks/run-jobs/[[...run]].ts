@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
+import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
@@ -23,6 +24,7 @@ import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
 import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
+import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
@@ -168,6 +170,7 @@ export const jobs: Job[] = [
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
+  sweepStaleAgentReviewsJob,
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,
@@ -204,6 +207,7 @@ export const jobs: Job[] = [
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
+  announcementMediaCheckJob,
 ];
 
 const log = createLogger('jobs', 'green');

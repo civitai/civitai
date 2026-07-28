@@ -6,6 +6,7 @@ import { CompletedChallengesInfinite } from '~/components/Challenge/Infinite/Com
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { ChallengeSource } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
@@ -38,7 +39,7 @@ function PreviousWinnersPage() {
             </div>
           </Group>
 
-          <CompletedChallengesInfinite />
+          <CompletedChallengesInfinite filters={{ source: [ChallengeSource.System] }} />
         </Stack>
       </MasonryContainer>
     </>

@@ -83,7 +83,7 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
                 <CreateComment />
                 <Stack className="relative">
                   {data?.map((comment) => (
-                    <Comment key={comment.id} comment={comment} />
+                    <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
                   ))}
                 </Stack>
                 {showMore && (
@@ -99,7 +99,7 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
                   </Center>
                 )}
                 {created.map((comment) => (
-                  <Comment key={comment.id} comment={comment} />
+                  <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
                 ))}
               </Stack>
             </Stack>

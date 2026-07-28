@@ -5,7 +5,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 // The band is personal: it must be completely absent (no header, no skeleton) for
-// logged-out users, while the query is in flight, and when the user has no entries —
+// logged-out users, while the query is in flight, and when the user has no challenges —
 // otherwise a titled "Your Challenges" band flashes at every first-time visitor.
 
 const mocks = vi.hoisted(() => ({
@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/utils/trpc', () => ({
-  trpc: { challenge: { getMyParticipated: { useQuery: mocks.useQuery } } },
+  trpc: { challenge: { getMyChallenges: { useQuery: mocks.useQuery } } },
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -63,17 +63,17 @@ describe('YourChallengesRow', () => {
     await expect.element(page.getByText('Your Challenges')).not.toBeInTheDocument();
   });
 
-  test('renders nothing when the user has no entries', async () => {
+  test('renders nothing when the user has no challenges', async () => {
     mocks.useQuery.mockReturnValue(queryResult([]));
     await renderWithProviders(<YourChallengesRow />);
     await expect.element(page.getByText('Your Challenges')).not.toBeInTheDocument();
   });
 
-  test('renders the header, See all link, and a card per entry', async () => {
+  test('renders the header, See all link, and a card per challenge', async () => {
     mocks.useQuery.mockReturnValue(
       queryResult([
-        { id: 7, title: 'Neon Cats' },
-        { id: 8, title: 'Foggy Forests' },
+        { id: 7, title: 'Neon Cats', myResult: 'entered' },
+        { id: 8, title: 'Foggy Forests', myResult: 'hosting' },
       ])
     );
     await renderWithProviders(<YourChallengesRow />);
@@ -83,5 +83,26 @@ describe('YourChallengesRow', () => {
     await expect
       .element(page.getByRole('link', { name: /see all/i }))
       .toHaveAttribute('href', '/challenges?engagement=participated');
+  });
+
+  test('See all links to Created when the row is entirely hosted challenges', async () => {
+    mocks.useQuery.mockReturnValue(
+      queryResult([
+        { id: 7, title: 'Neon Cats', myResult: 'hosting' },
+        { id: 8, title: 'Foggy Forests', myResult: 'hosting' },
+      ])
+    );
+    await renderWithProviders(<YourChallengesRow />);
+    await expect
+      .element(page.getByRole('link', { name: /see all/i }))
+      .toHaveAttribute('href', '/challenges?engagement=created');
+  });
+
+  test('the subtitle covers both entered and created challenges', async () => {
+    mocks.useQuery.mockReturnValue(queryResult([{ id: 7, title: 'Neon Cats' }]));
+    await renderWithProviders(<YourChallengesRow />);
+    await expect
+      .element(page.getByText("Challenges you've entered or created"))
+      .toBeInTheDocument();
   });
 });

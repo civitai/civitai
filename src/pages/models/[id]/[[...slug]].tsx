@@ -21,6 +21,7 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconArchive,
   IconArrowsLeftRight,
+  IconBabyCarriage,
   IconBan,
   IconBolt,
   IconBookmark,
@@ -40,13 +41,14 @@ import {
   IconRecycle,
   IconReload,
   IconRepeat,
+  IconRosetteDiscountCheck,
   IconTagOff,
   IconTrash,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -91,8 +93,9 @@ import { Gated } from '~/components/Gated/Gated';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
+import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
-import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
+import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -110,6 +113,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import useIsClient from '~/hooks/useIsClient';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
@@ -128,7 +132,6 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
 import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
-import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import {
   showErrorNotification,
@@ -244,6 +247,9 @@ export const getServerSideProps = createServerSideProps({
     //   }
     // }
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+    let suppressAds = false;
+
     if (ssg) {
       // Fetch the model first so we can short-circuit on slug mismatch before
       // doing any other prefetch work. Stale links from search results /
@@ -251,6 +257,14 @@ export const getServerSideProps = createServerSideProps({
       const model = await ssg.model.getById
         .fetch({ id, excludeTrainingData: true })
         .catch(() => null);
+
+      if (model) {
+        gating = {
+          contentNsfwLevel: model.nsfwLevel,
+          nsfw: model.nsfw,
+        };
+        suppressAds = model.status !== ModelStatus.Published;
+      }
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (model) {
@@ -369,11 +383,11 @@ export const getServerSideProps = createServerSideProps({
 
     return {
       props: { id },
+      gating,
+      suppressAds,
     };
   },
 });
-
-type ModelVersionDetail = ModelById['modelVersions'][number];
 
 export default function ModelDetailsV2({
   id,
@@ -389,6 +403,7 @@ export default function ModelDetailsV2({
 
   const [opened, { toggle }] = useDisclosure();
   const canShowRail = useMediaQuery(`(min-width: ${RAIL_ACTIVATE_WIDTH}px)`, false);
+  const allowAds = useBrowsingSettings((x) => x.allowAds);
 
   const { blockedUsers } = useHiddenPreferencesData();
 
@@ -396,10 +411,6 @@ export default function ModelDetailsV2({
     id,
     excludeTrainingData: true,
   });
-  // NOTE: the removed v4 `onSuccess` set selectedVersion to modelVersions[0] on each fetch.
-  // That is already covered (URL-aware) by the `selectedVersion` useState initializer below
-  // and the querystring-sync effect further down — replicating it via useEffect([model]) would
-  // also fire on cached/SSR mounts (where onSuccess did not) and clobber deep-linked versions.
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const rawVersionId = router.query.modelVersionId;
@@ -421,11 +432,13 @@ export default function ModelDetailsV2({
       ? model?.modelVersions.filter((v) => v.status === ModelStatus.Published) ?? []
       : model?.modelVersions ?? [];
   }, [isOwner, model?.modelVersions]);
-  const latestVersion =
+  // The querystring is the source of truth for which version is shown. Deriving it
+  // (rather than mirroring it into state) is what keeps an in-page link to a sibling
+  // version from being snapped back by a sync effect.
+  const selectedVersion =
     publishedVersions.find((version) => version.id === modelVersionId) ??
     publishedVersions[0] ??
     null;
-  const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const selectedEcosystemName = getBaseModelSeoName(selectedVersion?.baseModel);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
   const buzzEarned =
@@ -444,7 +457,7 @@ export default function ModelDetailsV2({
   // TODO change this to just grab one image, since that's all it's used for
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(
     {
-      modelVersionId: latestVersion?.id,
+      modelVersionId: selectedVersion?.id,
       prioritizedUserIds: model ? [model.user.id] : undefined,
       period: 'AllTime',
       sort: ImageSort.MostReactions,
@@ -453,7 +466,7 @@ export default function ModelDetailsV2({
       include: [],
       withMeta: false,
     },
-    { enabled: !!latestVersion }
+    { enabled: !!selectedVersion }
   );
 
   const deleteMutation = trpc.model.delete.useMutation({
@@ -654,37 +667,39 @@ export default function ModelDetailsV2({
     toggleCannotPromoteMutation.mutate({ id });
   };
 
+  const setOfficialMutation = trpc.model.setOfficial.useMutation({
+    async onSuccess({ id, isOfficial }) {
+      const prevModel = queryUtils.model.getById.getData({ id });
+      await queryUtils.model.getById.cancel({ id });
+      if (prevModel) {
+        queryUtils.model.getById.setData({ id }, { ...prevModel, isOfficial });
+      }
+      showSuccessNotification({
+        message: isOfficial ? 'Marked as official' : 'Unmarked as official',
+      });
+    },
+    onError(error) {
+      showErrorNotification({ title: 'Failed to update', error: new Error(error.message) });
+    },
+  });
+  const handleSetOfficial = (isOfficial: boolean) => {
+    setOfficialMutation.mutate({ id, isOfficial });
+  };
+
   const view = router.query.view;
   const basicView = view === 'basic' && isModerator;
   const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
 
+  // Pin the resolved version into the url so shares/refreshes land on what's displayed.
+  // One-way (state never drives this back): the url already decides the selection.
   useEffect(() => {
-    // Change the selected modelVersion based on querystring param
-    if (loadingModel) return;
-    const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
-    const current = publishedVersions.find((v) => v.id === selectedVersion?.id);
-    if (!current) {
-      // Selected version is no longer present (deep-link / removed version): fall back.
-      setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
-    } else if (current !== selectedVersion) {
-      // Re-sync the held reference to the freshly-fetched object after a refetch. This
-      // replaces the query `onSuccess` removed in the RQ v5 migration; without it, the
-      // id-based effect below would compare a stale object ref and (with `router` in deps)
-      // loop on router.replace whenever a mod action invalidates model.getById.
-      setSelectedVersion(current);
-    }
-    if (selectedVersion && queryVersion?.id !== selectedVersion.id) {
-      router.replace(
-        getModelUrl({
-          modelId: id,
-          modelName: model?.name,
-          modelVersionId: selectedVersion.id,
-        }),
-        undefined,
-        { shallow: true }
-      );
-    }
-  }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel, router]);
+    if (loadingModel || !selectedVersion || selectedVersion.id === modelVersionId) return;
+    router.replace(
+      getModelUrl({ modelId: id, modelName: model?.name, modelVersionId: selectedVersion.id }),
+      undefined,
+      { shallow: true }
+    );
+  }, [id, model?.name, selectedVersion, modelVersionId, loadingModel, router]);
 
   useEffect(() => {
     if (!canLoadBelowTheFold) return;
@@ -779,7 +794,9 @@ export default function ModelDetailsV2({
       hasGeneratePermissions ||
       currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
-  const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
+  const inEarlyAccess = model.modelVersions.some(
+    (v) => !!v.earlyAccessDeadline && isFutureDate(v.earlyAccessDeadline)
+  );
   const versionIsEarlyAccess =
     selectedVersion &&
     !!selectedVersion.earlyAccessDeadline &&
@@ -792,13 +809,15 @@ export default function ModelDetailsV2({
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${model.meta?.customMessage ?? 'Flagged by system'}.`;
   const isBannedFromPromotion = model.meta?.cannotPromote ?? false;
-  const showRail = !model.poi;
+  const adsDisabledByUser = (currentUser?.isMember ?? false) && !allowAds;
+  const showRail = !model.poi && !adsDisabledByUser;
 
   return (
     <Gated
       contentNsfwLevel={model.nsfwLevel}
       nsfw={model.nsfw}
       bypassRating={isOwner}
+      suppressAds={!published}
       meta={{
         title: `${model.name}${
           selectedVersion ? ' - ' + selectedVersion.name : ''
@@ -861,11 +880,12 @@ export default function ModelDetailsV2({
                     <StatHoverCard
                       label="Unique Downloads"
                       value={model.rank?.downloadCountAllTime ?? 0}
+                      message={model.hiddenMetrics?.downloads ? HIDDEN_METRIC_MESSAGE : undefined}
                     >
                       <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                         <Text className={classes.modelBadgeText}>
                           {model.hiddenMetrics?.downloads ? (
-                            <HiddenMetricNotice />
+                            <HiddenMetricNotice size={18} withTooltip={false} />
                           ) : (
                             abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)
                           )}
@@ -881,7 +901,7 @@ export default function ModelDetailsV2({
                         <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
                           <Text className={classes.modelBadgeText}>
                             {model.hiddenMetrics?.generations ? (
-                              <HiddenMetricNotice />
+                              <HiddenMetricNotice size={18} />
                             ) : (
                               abbreviateNumber(model.rank?.generationCountAllTime ?? 0)
                             )}
@@ -912,7 +932,11 @@ export default function ModelDetailsV2({
                       </StatHoverCard>
                     )}
                     {!model.poi && (
-                      <StatHoverCard label="Buzz Earned" value={buzzEarned}>
+                      <StatHoverCard
+                        label="Buzz Earned"
+                        value={buzzEarned}
+                        message={model.hiddenMetrics?.buzz ? HIDDEN_METRIC_MESSAGE : undefined}
+                      >
                         <div>
                           <InteractiveTipBuzzButton
                             toUserId={model.user.id}
@@ -929,7 +953,7 @@ export default function ModelDetailsV2({
                             >
                               <Text className={classes.modelBadgeText}>
                                 {model.hiddenMetrics?.buzz ? (
-                                  <HiddenMetricNotice />
+                                  <HiddenMetricNotice size={18} withTooltip={false} />
                                 ) : (
                                   abbreviateNumber(buzzEarned)
                                 )}
@@ -1052,6 +1076,13 @@ export default function ModelDetailsV2({
                               {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
                             </Menu.Item>
                             <Menu.Item
+                              color="blue"
+                              leftSection={<IconRosetteDiscountCheck size={14} stroke={1.5} />}
+                              onClick={() => handleSetOfficial(!model.isOfficial)}
+                            >
+                              {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
+                            </Menu.Item>
+                            <Menu.Item
                               color="red.6"
                               leftSection={<IconTrash size={14} stroke={1.5} />}
                               onClick={() => handleDeleteModel({ permanently: true })}
@@ -1157,6 +1188,16 @@ export default function ModelDetailsV2({
                                     </Menu.Item>
                                   )}
                                 </ToggleLockModel>
+                                <ToggleMinorModel modelId={model.id} minor={model.minor}>
+                                  {({ onClick }) => (
+                                    <Menu.Item
+                                      leftSection={<IconBabyCarriage size={14} stroke={1.5} />}
+                                      onClick={onClick}
+                                    >
+                                      {model.minor ? 'Unset as Minor' : 'Set as Minor'}
+                                    </Menu.Item>
+                                  )}
+                                </ToggleMinorModel>
                                 <ToggleLockModelComments
                                   modelId={model.id}
                                   locked={model.meta?.commentsLocked}
@@ -1404,10 +1445,15 @@ export default function ModelDetailsV2({
                 selected={selectedVersion?.id}
                 onVersionClick={(version) => {
                   if (version.id !== selectedVersion?.id) {
-                    setSelectedVersion(version);
-                    // router.replace(`/models/${model.id}?modelVersionId=${version.id}`, undefined, {
-                    //   shallow: true,
-                    // });
+                    router.replace(
+                      getModelUrl({
+                        modelId: model.id,
+                        modelName: model.name,
+                        modelVersionId: version.id,
+                      }),
+                      undefined,
+                      { shallow: true }
+                    );
                   }
                 }}
                 showExtraIcons={isOwner || isModerator}

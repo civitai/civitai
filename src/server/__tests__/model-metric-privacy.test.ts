@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   anyMetricHidden,
+  gateHiddenMetrics,
   getMetaMetricPrivacy,
   getUserMetricPrivacyDefaults,
+  noHiddenMetrics,
   resolveModelHiddenMetrics,
   resolveVersionHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
@@ -195,5 +197,118 @@ describe('anyMetricHidden', () => {
   it('true when any flag set, false otherwise', () => {
     expect(anyMetricHidden(NONE)).toBe(false);
     expect(anyMetricHidden({ buzz: false, downloads: true, generations: false })).toBe(true);
+  });
+});
+
+/**
+ * Short-circuit invariant (the read-path cost optimization): when NO owner flag is set
+ * — no model/version meta flag AND no user default — the resolvers return NONE for BOTH
+ * membership values. This is what lets the hot read paths skip the membership lookup
+ * entirely (a redis/DB round-trip) whenever `anyMetricHidden(meta) || anyMetricHidden(
+ * userDefaults)` is false: the output is provably identical to running the full
+ * resolution. A regression here would break the "skip when nothing hidden" guarantee.
+ */
+describe('short-circuit: membership is irrelevant when nothing is hidden', () => {
+  it('resolveModelHiddenMetrics returns NONE for member AND non-member when no flags set', () => {
+    const asMember = resolveModelHiddenMetrics({
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: true,
+    });
+    const asNonMember = resolveModelHiddenMetrics({
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: false,
+    });
+    expect(asMember).toEqual(NONE);
+    expect(asNonMember).toEqual(NONE);
+    expect(asMember).toEqual(asNonMember); // membership value cannot change the output
+  });
+
+  it('resolveVersionHiddenMetrics returns NONE for member AND non-member when no flags set', () => {
+    const asMember = resolveVersionHiddenMetrics({
+      versionMeta: {},
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: true,
+    });
+    const asNonMember = resolveVersionHiddenMetrics({
+      versionMeta: {},
+      modelMeta: {},
+      userSettings: {},
+      isOwnerOrModerator: false,
+      hasValidMembership: false,
+    });
+    expect(asMember).toEqual(NONE);
+    expect(asNonMember).toEqual(NONE);
+    expect(asMember).toEqual(asNonMember);
+  });
+
+  it('once ANY flag is set, membership DOES matter (so the short-circuit must not fire)', () => {
+    const gate = { modelMeta: { hideBuzz: true }, isOwnerOrModerator: false } as const;
+    expect(resolveModelHiddenMetrics({ ...gate, hasValidMembership: true })).toEqual({
+      buzz: true,
+      downloads: false,
+      generations: false,
+    });
+    expect(resolveModelHiddenMetrics({ ...gate, hasValidMembership: false })).toEqual(NONE);
+  });
+});
+
+describe('noHiddenMetrics', () => {
+  it('returns an all-visible result', () => {
+    expect(noHiddenMetrics()).toEqual(NONE);
+  });
+
+  it('returns a FRESH object each call (no shared mutable ref)', () => {
+    const a = noHiddenMetrics();
+    const b = noHiddenMetrics();
+    expect(a).not.toBe(b);
+    a.downloads = true; // mutating one must not affect the other
+    expect(b.downloads).toBe(false);
+  });
+});
+
+/**
+ * Read-time flag gate (`modelMetricPrivacyReadtime`). This is the choke-point every
+ * gated surface (getModel / associated-resources / browse feed) uses to select
+ * between running #3266's metric-privacy resolution (flag ON) and skipping it
+ * entirely (flag OFF). ON must be byte-identical to calling the resolver directly;
+ * OFF must NOT invoke the resolver and must emit raw (all-visible) metrics.
+ */
+describe('gateHiddenMetrics — read-time flag gate', () => {
+  it('ON: runs the resolver and returns its result unchanged (current behaviour)', () => {
+    const resolve = vi.fn(() =>
+      resolveModelHiddenMetrics({
+        modelMeta: { hideDownloads: true },
+        isOwnerOrModerator: false,
+        hasValidMembership: true,
+      })
+    );
+    const result = gateHiddenMetrics(true, resolve);
+    expect(resolve).toHaveBeenCalledTimes(1); // resolution IS invoked when ON
+    expect(result).toEqual({ buzz: false, downloads: true, generations: false });
+  });
+
+  it('OFF: does NOT invoke the resolver and returns raw all-visible metrics', () => {
+    const resolve = vi.fn(() =>
+      resolveModelHiddenMetrics({
+        modelMeta: ALL_HIDDEN, // would hide everything if it ran
+        isOwnerOrModerator: false,
+        hasValidMembership: true,
+      })
+    );
+    const result = gateHiddenMetrics(false, resolve);
+    expect(resolve).not.toHaveBeenCalled(); // the whole resolution is skipped
+    expect(result).toEqual(NONE); // raw metrics — nothing hidden (pre-#3266)
+  });
+
+  it('OFF path returns a fresh object (parity with the resolver contract)', () => {
+    const a = gateHiddenMetrics(false, () => noHiddenMetrics());
+    const b = gateHiddenMetrics(false, () => noHiddenMetrics());
+    expect(a).not.toBe(b);
   });
 });

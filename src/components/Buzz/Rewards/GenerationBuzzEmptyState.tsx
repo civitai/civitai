@@ -1,7 +1,7 @@
-import { useCallback, useRef } from 'react';
 import { Button, Divider, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCalendarStats, IconChartBar, IconRocket } from '@tabler/icons-react';
 import Link from 'next/link';
+import { useSpotlight } from '~/hooks/useSpotlight';
 
 export type EmptyStateProps = {
   /** The color associated with the current buzz type (e.g. yellow hex) */
@@ -24,21 +24,9 @@ export function GenerationBuzzEmptyState({
   loading,
   mode = 'onboarding',
 }: EmptyStateProps) {
-  // Spotlight effect — uses refs + direct DOM manipulation to avoid re-renders on mouse move
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(400px circle at ${x}px ${y}px, light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04)), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    color: 'light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04))',
+  });
 
   if (!loading && mode === 'noEarningsThisMonth') {
     return (

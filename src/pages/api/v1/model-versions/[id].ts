@@ -24,8 +24,13 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { logToAxiom } from '~/server/logging/client';
-import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
-import { resolveVersionHiddenMetrics } from '~/server/utils/model-metric-privacy';
+import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
+import {
+  anyMetricHidden,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveVersionHiddenMetrics,
+} from '~/server/utils/model-metric-privacy';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -49,6 +54,11 @@ export default MixedAuthEndpoint(async function handler(
   const allowedBrowsingLevels = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   try {
+    // NOTE(paid-access): this endpoint intentionally does NOT return early-access state
+    // (`earlyAccessEndsAt` / `earlyAccessConfig` were dropped with the legacy columns). Decision
+    // (confirmed): the public v1 API should not surface paid-access gate details; there are no active
+    // consumers of these fields. If that ever needs to change, reconstruct from PaidAccess (endsAt +
+    // terms) the way mini/[id].ts does.
     const modelVersion = await dbRead.$queryRaw<
       (ModelVersionApiReturn & { vaeId?: number | null })[]
     >`
@@ -66,8 +76,6 @@ export default MixedAuthEndpoint(async function handler(
         mv."trainingDetails",
         mv."baseModel",
         mv."baseModelType",
-        mv."earlyAccessEndsAt",
-        mv."earlyAccessConfig",
         mv.description,
         (SELECT rr."resourceId" FROM "RecommendedResource" rr
          WHERE rr."sourceId" = mv.id
@@ -194,14 +202,23 @@ export async function prepareModelVersionResponse(
       model: { select: { meta: true, userId: true, user: { select: { settings: true } } } },
     },
   });
+  // Only resolve CP membership when something is actually hidden (version meta, model
+  // meta, or the owner's user default). When nothing is hidden, the resolver returns
+  // NONE regardless of membership, so the cached membership read can be skipped —
+  // byte-identical output. The check, when needed, is served from the read-through cache.
+  const ownerHidesAnything =
+    anyMetricHidden(getMetaMetricPrivacy(privacy?.meta)) ||
+    anyMetricHidden(getMetaMetricPrivacy(privacy?.model?.meta)) ||
+    anyMetricHidden(getUserMetricPrivacyDefaults(privacy?.model?.user?.settings));
   const hidden = resolveVersionHiddenMetrics({
     versionMeta: privacy?.meta,
     modelMeta: privacy?.model?.meta,
     userSettings: privacy?.model?.user?.settings,
     isOwnerOrModerator: false,
-    hasValidMembership: privacy?.model?.userId
-      ? await hasValidCreatorMembership(privacy.model.userId)
-      : false,
+    hasValidMembership:
+      ownerHidesAnything && privacy?.model?.userId
+        ? await hasValidCreatorMembershipCached(privacy.model.userId)
+        : false,
   });
 
   return {

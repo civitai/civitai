@@ -47,7 +47,10 @@ export default function AppsPage() {
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,
           a separate post-deploy op step) — the empty state renders sanely
           ("No apps yet"); expected + fine while dark. */}
-      <AppsPageLayout size="xl">
+      <AppsPageLayout size={1600}>
+        {/* Widened past the default `xl` (1320px) token — a 5-across grid at this
+            container width needs the extra room to keep card text from
+            truncating (see AppListingsMarketplaceBody's `xl` column span). */}
         <AppListingsMarketplaceBody />
       </AppsPageLayout>
     </>

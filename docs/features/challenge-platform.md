@@ -55,7 +55,7 @@ Judging is category-driven for **all** sources (no feature flag): any challenge 
 **Client**
 - `src/components/Challenge/ChallengeUpsertForm.tsx` (unified create/edit, `variant` prop), `CategoryWeights.tsx`, `ChallengeContextMenu.tsx`, `ChallengeSubmitModal.tsx`, `challenge.utils.ts`.
 - `src/components/Cards/ChallengeCard.tsx`.
-- `src/pages/challenges/index.tsx` (feed + "My Challenges"), `src/pages/challenges/[id]/[[...slug]].tsx` (detail), `src/pages/challenges/[id]/edit.tsx`, `src/pages/challenges/create.tsx`, `src/pages/moderator/challenges.tsx`.
+- `src/pages/challenges/index.tsx` (feed + "Your Challenges" personal view), `src/pages/challenges/[id]/[[...slug]].tsx` (detail), `src/pages/challenges/[id]/edit.tsx`, `src/pages/challenges/create.tsx`, `src/pages/moderator/challenges.tsx`.
 
 **Config source**: `getChallengeConfig()` reads `REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG` from sysRedis with a code-default fallback (fail-open). LLM prompt text comes from the `ChallengeType` table; judge personas from `ChallengeJudge`.
 
@@ -225,7 +225,7 @@ Creators can **view / edit / delete their own `User` challenges only while `Sche
 - `deleteUserChallenge({ id, userId })` — `protectedProcedure`, both flags; guards owner + `source=User` + `Scheduled` + 0 entries, then `deleteChallenge` (refunds escrowed prize, cascades). Delete re-reads status so it **fails safe** if it races activation (blocks on `Active`); full idempotency under concurrent delete is an open verification item **(deferred)**.
 - `getUserChallengeForEdit({ id, userId })` — owner-gated edit payload.
 - `getInfiniteChallenges`/`getChallengeDetail` expose top-level **`createdById`** (the field all owner checks use).
-- Client: `useDeleteUserChallenge()`, `ChallengeContextMenu` (owner Edit/Delete, self-gating), owner menu on `ChallengeCard` + detail; edit route `/challenges/[id]/edit` (`variant="user"`, standing-only); "My Challenges" mode at `/challenges?engagement=created` (creator exempt from scan gate, `visibleAt=now()`); nav link in the user dropdown.
+- Client: `useDeleteUserChallenge()`, `ChallengeContextMenu` (owner Edit/Delete, self-gating), owner menu on `ChallengeCard` + detail; edit route `/challenges/[id]/edit` (`variant="user"`, standing-only, creator exempt from scan gate, `visibleAt=now()`). The two personal engagement views are merged into one **"Your Challenges"** page (`/challenges?engagement=participated|created`) with a Participated | Created control plus a status control; Created defaults to Scheduled. The horizontal `YourChallengesRow` on `/challenges` covers both entered and created challenges (`getMyChallenges`; `MyChallengeResult` gains a `hosting` member with its own badge and "Manage"/"View results" CTA), and its "See all" link routes to whichever tab the row's contents match. Community Challenges' participation filter has a "Hosting" option (`ChallengeParticipation.Created`). The user-dropdown nav link reads "Your Challenges".
 
 ---
 

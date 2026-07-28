@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
-import type { AutoCheck } from '~/server/schema/creator-shop.schema';
+import type { AutoCheck, CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import {
   cosmeticDimensionsLabel,
   cosmeticImageRequirements,
@@ -11,9 +11,15 @@ import { formatBytes } from '~/utils/number-helpers';
 
 export type PreviewCosmetic = ComponentProps<typeof CosmeticPreview>['cosmetic'];
 
-export const buildData = (type: CosmeticType, imageId: string, animated: boolean) => {
-  if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration)
-    return { url: imageId, animated };
+export const buildData = (
+  type: CosmeticType,
+  imageId: string,
+  animated: boolean,
+  offsets?: CosmeticOffsets | null
+) => {
+  if (type === CosmeticType.ProfileDecoration)
+    return { url: imageId, animated, ...(offsets ? { offsets } : {}) };
+  if (type === CosmeticType.Badge) return { url: imageId, animated };
   if (type === CosmeticType.ProfileBackground)
     return { url: imageId, type: MediaType.image, animated };
   return { url: imageId };

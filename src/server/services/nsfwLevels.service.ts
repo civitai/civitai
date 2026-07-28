@@ -11,7 +11,7 @@ import {
   comicsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -19,35 +19,53 @@ import {
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
+// Postgres caps a prepared statement at 32767 bind variables, and an `in` list
+// spends one per id. A backlogged JobQueue easily exceeds that, which fails the
+// whole run with P2035 and leaves the backlog to grow. (Bit us 2026-07-24.)
+const ID_QUERY_BATCH_SIZE = 5000;
+const idQueryLimiter = () => Limiter({ batchSize: ID_QUERY_BATCH_SIZE, limit: 2 });
+
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
   const [images, connections, articles, collectionItems, model3ds] = await Promise.all([
-    dbRead.image.findMany({
-      where: { id: { in: imageIds } },
-      select: { postId: true },
-    }),
-    dbRead.imageConnection.findMany({
-      where: { imageId: { in: imageIds } },
-      select: { entityType: true, entityId: true },
-    }),
-    dbRead.article.findMany({
-      where: { coverId: { in: imageIds } },
-      select: { id: true },
-    }),
-    dbRead.collectionItem.findMany({
-      where: { imageId: { in: imageIds }, status: CollectionItemStatus.ACCEPTED },
-      select: { collectionId: true },
-    }),
-    dbRead.model3D.findMany({
-      where: { thumbnailImageId: { in: imageIds } },
-      select: { id: true },
-    }),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.image.findMany({
+        where: { id: { in: ids } },
+        select: { postId: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.imageConnection.findMany({
+        where: { imageId: { in: ids } },
+        select: { entityType: true, entityId: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.article.findMany({
+        where: { coverId: { in: ids } },
+        select: { id: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.collectionItem.findMany({
+        where: { imageId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+        select: { collectionId: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.model3D.findMany({
+        where: { thumbnailImageId: { in: ids } },
+        select: { id: true },
+      })
+    ),
   ]);
 
-  const comicPanels = await dbRead.comicPanel.findMany({
-    where: { imageId: { in: imageIds } },
-    select: { projectId: true },
-  });
+  const comicPanels = await idQueryLimiter().process(imageIds, (ids) =>
+    dbRead.comicPanel.findMany({
+      where: { imageId: { in: ids } },
+      select: { projectId: true },
+    })
+  );
 
   return {
     postIds: images.map((x) => x.postId).filter(isDefined),
@@ -73,14 +91,18 @@ async function getImageConnectedEntities(imageIds: number[]) {
 
 async function getPostConnectedEntities(postIds: number[]) {
   const [posts, collectionItems] = await Promise.all([
-    dbRead.post.findMany({
-      where: { id: { in: postIds } },
-      select: { modelVersionId: true },
-    }),
-    dbRead.collectionItem.findMany({
-      where: { postId: { in: postIds }, status: CollectionItemStatus.ACCEPTED },
-      select: { collectionId: true },
-    }),
+    idQueryLimiter().process(postIds, (ids) =>
+      dbRead.post.findMany({
+        where: { id: { in: ids } },
+        select: { modelVersionId: true },
+      })
+    ),
+    idQueryLimiter().process(postIds, (ids) =>
+      dbRead.collectionItem.findMany({
+        where: { postId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+        select: { collectionId: true },
+      })
+    ),
   ]);
 
   return {
@@ -90,10 +112,12 @@ async function getPostConnectedEntities(postIds: number[]) {
 }
 
 async function getModelVersionConnectedEntities(modelVersionIds: number[]) {
-  const modelVersions = await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: { modelId: true },
-  });
+  const modelVersions = await idQueryLimiter().process(modelVersionIds, (ids) =>
+    dbRead.modelVersion.findMany({
+      where: { id: { in: ids } },
+      select: { modelId: true },
+    })
+  );
 
   return {
     modelIds: modelVersions.map((x) => x.modelId),
@@ -101,10 +125,12 @@ async function getModelVersionConnectedEntities(modelVersionIds: number[]) {
 }
 
 async function getModelConnectedEntities(modelIds: number[]) {
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { modelId: { in: modelIds }, status: CollectionItemStatus.ACCEPTED },
-    select: { collectionId: true },
-  });
+  const collectionItems = await idQueryLimiter().process(modelIds, (ids) =>
+    dbRead.collectionItem.findMany({
+      where: { modelId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+      select: { collectionId: true },
+    })
+  );
 
   return {
     collectionIds: collectionItems.map((x) => x.collectionId),
@@ -112,10 +138,12 @@ async function getModelConnectedEntities(modelIds: number[]) {
 }
 
 async function getArticleConnectedEntities(articleIds: number[]) {
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { articleId: { in: articleIds }, status: CollectionItemStatus.ACCEPTED },
-    select: { collectionId: true },
-  });
+  const collectionItems = await idQueryLimiter().process(articleIds, (ids) =>
+    dbRead.collectionItem.findMany({
+      where: { articleId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+      select: { collectionId: true },
+    })
+  );
 
   return {
     collectionIds: collectionItems.map((x) => x.collectionId),

@@ -8,7 +8,7 @@ import {
   getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
   getVersionLicenseHandler,
-  modelVersionDonationGoalsHandler,
+  modelVersionDonationGoalHandler,
   modelVersionEarlyAccessPurchaseHandler,
   modelVersionGeneratedImagesOnTimeframeHandler,
   publishModelVersionHandler,
@@ -56,6 +56,7 @@ import {
   upsertExplorationPrompt,
   bustMvCache,
   mergeVersions,
+  getUserEarlyAccessModelVersions,
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
@@ -135,6 +136,9 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .query(({ input }) => getExplorationPromptsById(input)),
+  getUserEarlyAccessVersions: protectedProcedure.query(({ ctx }) =>
+    getUserEarlyAccessModelVersions({ userId: ctx.user.id })
+  ),
   toggleNotifyEarlyAccess: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(getByIdSchema)
@@ -215,10 +219,10 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite, blockApiKeys: true })
     .input(modelVersionEarlyAccessPurchase)
     .mutation(modelVersionEarlyAccessPurchaseHandler),
-  donationGoals: publicProcedure
+  donationGoal: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
-    .query(modelVersionDonationGoalsHandler),
+    .query(modelVersionDonationGoalHandler),
   getTrainingDetails: moderatorProcedure
     .input(getByIdSchema)
     .query(getModelVersionForTrainingReviewHandler),

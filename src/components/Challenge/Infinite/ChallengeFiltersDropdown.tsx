@@ -21,6 +21,9 @@ const participationFilters = [
   { value: ChallengeParticipation.Entered, label: 'Entered' },
   { value: ChallengeParticipation.NotEntered, label: 'Not Entered' },
   { value: ChallengeParticipation.Won, label: 'Won' },
+  // "Created" is the ownership axis on the Your Challenges page; "Hosting" here keeps the two
+  // surfaces from meaning different things by the same word. The stored value stays `created`.
+  { value: ChallengeParticipation.Created, label: 'Hosting' },
 ];
 
 const defaultStatus = ['active', 'upcoming'];
@@ -38,7 +41,8 @@ export function parseParticipationQuery(
   if (
     value === ChallengeParticipation.Entered ||
     value === ChallengeParticipation.NotEntered ||
-    value === ChallengeParticipation.Won
+    value === ChallengeParticipation.Won ||
+    value === ChallengeParticipation.Created
   )
     return value;
   return undefined;
@@ -154,7 +158,7 @@ export function ChallengeFiltersDropdown() {
 
       {currentUser && (
         <Stack gap={0}>
-          <Divider label="My Challenges" className="text-sm font-bold" mb={4} />
+          <Divider label="Challenge Participation" className="text-sm font-bold" mb={4} />
           <Chip.Group
             value={mergedFilters.participation ?? ''}
             onChange={handleParticipationChange}

@@ -40,11 +40,27 @@ export const agentFindingSchema = z
     file: optString,
     line: optLine,
     severity: optString,
+    category: optString,
     title: optString,
+    // `detail` is the runner's primary body field; `description` is kept for
+    // back-compat with earlier report rows. The UI renders `detail ?? description`.
+    detail: optString,
     description: optString,
+    evidence: stringArray,
+    suggestion: optString,
+    // Code-review-only: the diff status of the finding's location ('added' | …).
+    diffStatus: optString,
+    // Security-audit-only: the agent's confidence in the finding ('high' | …).
+    confidence: optString,
   })
-  .catch({});
+  // Fallback keeps `evidence` a defined array so callers never guard `.map`.
+  .catch({ evidence: [] });
 export type AgentFinding = z.infer<typeof agentFindingSchema>;
+
+/** The body text of a finding — the richer `detail` wins over legacy `description`. */
+export function findingBody(f: AgentFinding): string | undefined {
+  return f.detail ?? f.description;
+}
 
 export const priorFindingSchema = z
   .object({
@@ -162,4 +178,149 @@ export function formatCostUsd(costUsd: unknown): string | null {
 export function fileLineLabel(file?: string, line?: number | string): string | null {
   if (!file) return null;
   return line == null || line === '' ? file : `${file}:${line}`;
+}
+
+// --- Severity ordering + roll-up (pure, unit-testable) ---------------------
+
+/** Severity buckets in descending-risk order. Unknown severities sort LAST. */
+export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'moderate', 'low', 'info'] as const;
+
+/**
+ * Rank a severity for sorting — lower = higher risk (sorts first). Unknown /
+ * missing severities get a rank past the known set so they land at the bottom,
+ * never above a real `low`/`info` finding.
+ */
+export function severityRank(severity?: string): number {
+  const i = SEVERITY_ORDER.indexOf((severity ?? '').toLowerCase() as (typeof SEVERITY_ORDER)[number]);
+  return i === -1 ? SEVERITY_ORDER.length : i;
+}
+
+/**
+ * A severity-sorted COPY of the findings (critical → info → unknown), stable
+ * within a bucket (original order preserved) so equal-severity findings keep the
+ * agent's ordering. Never mutates the input.
+ */
+export function sortFindingsBySeverity(findings: AgentFinding[]): AgentFinding[] {
+  return findings
+    .map((f, i) => ({ f, i }))
+    .sort((a, b) => severityRank(a.f.severity) - severityRank(b.f.severity) || a.i - b.i)
+    .map((x) => x.f);
+}
+
+export type SeverityBreakdown = {
+  total: number;
+  critical: number;
+  high: number;
+  /** `medium` + `moderate` collapsed into one bucket. */
+  medium: number;
+  low: number;
+  info: number;
+  /** Anything with an unknown / missing severity. */
+  other: number;
+};
+
+/** Count findings per severity bucket for the counts-first roll-up. */
+export function severityBreakdown(findings: AgentFinding[]): SeverityBreakdown {
+  const b: SeverityBreakdown = { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0, other: 0 };
+  for (const f of findings) {
+    b.total += 1;
+    switch ((f.severity ?? '').toLowerCase()) {
+      case 'critical':
+        b.critical += 1;
+        break;
+      case 'high':
+        b.high += 1;
+        break;
+      case 'medium':
+      case 'moderate':
+        b.medium += 1;
+        break;
+      case 'low':
+        b.low += 1;
+        break;
+      case 'info':
+        b.info += 1;
+        break;
+      default:
+        b.other += 1;
+    }
+  }
+  return b;
+}
+
+// --- Deep-link to a finding (pure, unit-testable) --------------------------
+
+/**
+ * The report renderer's tab identifiers (in display order: Scopes → Security →
+ * Code review). The former `summary` tab was dropped — the agent prose overview
+ * is no longer surfaced in this renderer.
+ */
+export type ReportTabValue = 'scopes' | 'security' | 'code';
+
+const REPORT_TAB_VALUES: readonly ReportTabValue[] = ['scopes', 'security', 'code'];
+
+/** The two tabs that carry per-finding anchors (scopes does not). */
+export type FindingTab = 'code' | 'security';
+
+/**
+ * The DOM id / deep-link anchor for a single finding. `index` is the finding's
+ * position in the SEVERITY-SORTED render list (the order the moderator sees), so
+ * a shared `#finding-<tab>-<index>` link lands on the same visible card.
+ */
+export function findingAnchorId(tab: FindingTab, index: number): string {
+  return `finding-${tab}-${index}`;
+}
+
+/** `finding-<code|security>-<index>` where index is a non-negative integer. */
+const FINDING_ANCHOR_RE = /^finding-(code|security)-(\d+)$/;
+
+/**
+ * Parse a report URL hash into a tab + optional finding anchor. Total and
+ * defensive — never throws on junk. Recognizes:
+ *   - `#finding-security-2` → { tab: 'security', anchorId: 'finding-security-2' }
+ *   - a bare `#code` / `#summary` / `#security` / `#scopes` → { tab }
+ *   - empty / unknown / malformed → {}
+ * Tolerates a leading `#` or none. A tab value outside the union is ignored.
+ */
+export function parseReportHash(hash: string): { tab?: ReportTabValue; anchorId?: string } {
+  if (typeof hash !== 'string') return {};
+  const raw = (hash.startsWith('#') ? hash.slice(1) : hash).trim();
+  if (!raw) return {};
+  const findingMatch = FINDING_ANCHOR_RE.exec(raw);
+  if (findingMatch) {
+    // Group 1 is 'code' | 'security', both members of the tab union.
+    return { tab: findingMatch[1] as FindingTab, anchorId: raw };
+  }
+  if ((REPORT_TAB_VALUES as readonly string[]).includes(raw)) {
+    return { tab: raw as ReportTabValue };
+  }
+  return {};
+}
+
+/**
+ * Detect a FAILED analysis section. The runner persists each of
+ * `codeReview` / `securityAudit` / `scopeVerdicts` verbatim; if a sub-analysis
+ * failed it stores an `{ error: … }` object (or a bare string) in that slot
+ * instead of the structured shape. The tolerant `parseAgentReport` would quietly
+ * flatten that to an EMPTY section (indistinguishable from "nothing found"), so
+ * this structural check runs on the RAW slot first to surface an explicit
+ * "analysis failed" state. Returns the trimmed error message, or `null` when the
+ * slot is absent/empty/well-formed.
+ */
+export function sectionAnalysisError(raw: unknown): string | null {
+  if (raw == null) return null;
+  // A bare string in a structured slot is a runner failure/log dump, not data.
+  if (typeof raw === 'string') {
+    const s = raw.trim();
+    return s ? s.slice(0, 500) : null;
+  }
+  if (typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    if ('error' in o && o.error != null) {
+      const e = o.error;
+      const msg = typeof e === 'string' ? e : JSON.stringify(e);
+      return msg.slice(0, 500);
+    }
+  }
+  return null;
 }

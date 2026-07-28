@@ -21,8 +21,8 @@ export default function CreateUserChallengePage() {
     );
   }
 
-  // On a query error `eligibility` stays undefined and we fall through to the form; the create
-  // mutation still enforces the gate, degrading to the existing error-on-submit behavior.
+  // On a query error `eligibility` stays undefined and no gate renders; the create mutation still
+  // enforces it, degrading to the existing error-on-submit behavior.
   return (
     <>
       <Meta title="Create a Challenge" deIndex />
@@ -31,10 +31,13 @@ export default function CreateUserChallengePage() {
           <Center py="xl">
             <Loader />
           </Center>
-        ) : eligibility && !eligibility.canCreate ? (
-          <ChallengeCreateRequirements eligibility={eligibility} />
         ) : (
-          <ChallengeUpsertForm variant="user" />
+          <>
+            <ChallengeUpsertForm variant="user" />
+            {eligibility && !eligibility.canCreate && (
+              <ChallengeCreateRequirements eligibility={eligibility} />
+            )}
+          </>
         )}
       </Container>
     </>

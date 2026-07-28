@@ -8,6 +8,7 @@ import {
 } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
@@ -96,6 +97,12 @@ export const getAllUserCollectionsInputSchema = z
     permission: z.enum(CollectionContributorPermission),
     permissions: z.array(z.enum(CollectionContributorPermission)),
     type: z.enum(CollectionType).optional(),
+    // When true, also surface active-window Contest collections (Review-write, Public-read) the
+    // user hasn't followed, so they can submit an entry from the picker without joining first.
+    includeActiveContests: z.boolean(),
+    // The model the picker is targeting. Active contests only surface when the user owns it —
+    // you can only submit your own models — so this gates the includeActiveContests branch.
+    contestModelId: z.number(),
   })
   .partial();
 
@@ -105,6 +112,15 @@ export const collectionMetadataSchema = z
     endsAt: z.coerce.date().nullish(),
     challengeDate: z.coerce.date().nullish(),
     maxItemsPerUser: z.coerce.number().optional(),
+    // Empty/absent means every base model is allowed. Values must match ModelVersion.baseModel
+    // exactly — an unrecognized one matches no version and locks the contest to zero entries.
+    baseModels: z
+      .string()
+      .array()
+      .optional()
+      .refine((value) => !value || value.every((x) => (baseModels as string[]).includes(x)), {
+        error: 'Unrecognized base model',
+      }),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
     submissionsHiddenUntilEndDate: z.boolean().optional(),

@@ -31,6 +31,8 @@ type ImageDetailState = {
   toggleInfo: () => void;
   close: () => void;
   navigate: (id: number) => void;
+  loadMore: () => void;
+  hasMore: boolean;
   updateImage: (id: number, data: Partial<ImagesInfiniteModel>) => void;
   collection?: CollectionByIdModel;
   hideReactions?: boolean;
@@ -82,13 +84,27 @@ export function ImageDetailProvider({
   // #region [data fetching]
   const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
   const browsingLevel = useBrowsingLevelDebounced();
-  const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(
+  const {
+    images: queryImages = [],
+    isInitialLoading: imagesLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useQueryImages(
     // TODO: Hacky way to prevent sending the userId when filtering by reactions
     { ...filters, userId: !!reactions?.length ? undefined : userId, postId, browsingLevel },
     { enabled: shouldFetchMany }
   );
 
-  const images = initialImages.length > 0 ? initialImages : queryImages;
+  const usingQueryImages = initialImages.length === 0;
+  const images = usingQueryImages ? queryImages : initialImages;
+
+  // Seeded from a feed card, `images` is a fixed window the feed handed us — only
+  // the query we own here can grow.
+  const hasMore = usingQueryImages && shouldFetchMany && !!hasNextPage;
+  const loadMore = () => {
+    if (hasMore && !isFetchingNextPage) fetchNextPage();
+  };
 
   const shouldFetchImage =
     !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
@@ -217,6 +233,8 @@ export function ImageDetailProvider({
         isMod,
         shareUrl,
         navigate,
+        loadMore,
+        hasMore,
         index,
         updateImage,
         collection,

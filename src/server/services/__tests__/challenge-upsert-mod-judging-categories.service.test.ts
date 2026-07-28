@@ -26,7 +26,10 @@ const { mockDbRead, mockDbWrite, mockTx, mockCreateImage, mockGetChallengeConfig
     };
     return {
       mockTx: tx,
-      mockDbRead: { challenge: { findUnique: vi.fn() } },
+      mockDbRead: {
+        challenge: { findUnique: vi.fn() },
+        challengeJudge: { findUnique: vi.fn().mockResolvedValue({ userId: 1 }) },
+      },
       mockDbWrite: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
       mockCreateImage: vi.fn(),
       mockGetChallengeConfig: vi.fn().mockResolvedValue({ defaultJudgeId: 1 }),

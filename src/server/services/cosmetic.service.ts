@@ -54,7 +54,7 @@ export const getPaginatedCosmetics = async (input: GetPaginatedCosmeticsInput) =
   const { take, skip } = getPagination(limit, page);
 
   const where: Prisma.CosmeticFindManyArgs['where'] = {};
-  if (input.name) where.name = { contains: input.name };
+  if (input.name) where.name = { contains: input.name, mode: 'insensitive' };
   if (input.types && input.types.length) where.type = { in: input.types };
   const items = await dbRead.cosmetic.findMany({
     where,

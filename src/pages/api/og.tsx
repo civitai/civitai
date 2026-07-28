@@ -11,8 +11,13 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { buildOgCoverEdgeUrl, fetchImageAsDataUri } from '~/server/utils/og-image-helpers';
-import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
-import { resolveModelHiddenMetrics } from '~/server/utils/model-metric-privacy';
+import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
+import {
+  anyMetricHidden,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveModelHiddenMetrics,
+} from '~/server/utils/model-metric-privacy';
 import { isDefined } from '~/utils/type-guards';
 
 // --- Schema & Types ---
@@ -163,11 +168,19 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
 
   // Creator Controls: the OG card is a public, shared asset — gate downloads /
   // generations by the owner's stored flags + active CP membership.
+  // Only resolve CP membership when the owner actually hides something. When nothing is
+  // hidden, the resolver returns NONE regardless of membership, so the cached membership
+  // read can be skipped — byte-identical. The check, when needed, uses the read-through cache.
+  const ownerHidesAnything =
+    anyMetricHidden(getMetaMetricPrivacy(model.meta)) ||
+    anyMetricHidden(getUserMetricPrivacyDefaults(model.user?.settings));
   const hidden = resolveModelHiddenMetrics({
     modelMeta: model.meta,
     userSettings: model.user?.settings,
     isOwnerOrModerator: false,
-    hasValidMembership: await hasValidCreatorMembership(model.userId),
+    hasValidMembership: ownerHidesAnything
+      ? await hasValidCreatorMembershipCached(model.userId)
+      : false,
   });
 
   // Run metric + image queries in parallel

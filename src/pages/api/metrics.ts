@@ -3,6 +3,9 @@ import { EOL } from 'os';
 import client from 'prom-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { instrumentationRegistry } from '~/server/prom/client';
+// Side-effect import: registers the challenge state gauges (collect()-based) on the default
+// registry so they are present + scraped even before the first challenge op runs this session.
+import '~/server/prom/challenge.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const labels: Record<string, string> = {};

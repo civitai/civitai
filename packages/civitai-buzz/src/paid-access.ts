@@ -1,50 +1,105 @@
-// One canonical answer to "is this version behind paid access, and in which mode?".
-//
-// Four fields encode this today — `earlyAccessEndsAt`, `earlyAccessPermanent`, and the `timeframe` / `permanent`
-// keys inside `earlyAccessConfig`. Permanent access is the case that breaks every timed-window assumption: it has
-// NO end date and `timeframe: 0`. Re-deriving the answer at each call site is what produced a run of "permanent
-// versions are invisible / uneditable / silently wiped" bugs, so derive it here instead.
-//
-// `ModelVersion.earlyAccessPermanent` is the authoritative field: a DB trigger keeps it in sync with
-// `earlyAccessConfig.permanent`, and it is what the download paywall reads. Pass the unsaved config flag only
-// when reading a form value that hasn't been written yet.
+// Paid access — pure helpers shared by the main app and the creator-studio spoke.
+// The gate reads ONE column, `endsAt`: active <=> endsAt IS NULL (permanent) OR endsAt > now().
+// `terms` is bundle semantics (a `download` purchase grants generation too). No termsVersion —
+// the zod write boundary is the contract. See docs/creator-studio/paid-access-schema.md.
 
-export type PaidAccessMode = 'none' | 'timed' | 'permanent';
+export type PaidAccessEntityType = 'ModelVersion' | 'ComicChapter';
 
-export type PaidAccessInput = {
-  earlyAccessEndsAt?: Date | string | null;
-  permanent?: boolean | null;
+export type Grant = { price: number };
+
+/**
+ * Generation-only access for non-buyers of the `download` tier:
+ *  - `{ free: true }`          → generation is free / ungated (bypasses the access check)
+ *  - `{ price?, trialLimit? }` → paid generation-only tier. `price` is optional — when omitted the
+ *                                effective price falls back to the `download` tier's price. `trialLimit`
+ *                                is the number of free test generations before purchase is required.
+ */
+export type GenerationGrant = { free: true } | { price?: number; trialLimit?: number };
+
+/** Free test generations before a paid generation-only tier requires purchase (grant default). */
+export const DEFAULT_GENERATION_TRIAL_LIMIT = 10;
+
+/**
+ * ModelVersion — bundle: `download` is the full-access tier (buying it grants generation too);
+ * `generation` describes how non-buyers may generate (free / cheaper paid tier); a MISSING
+ * `generation` means generation is bundled with `download` (must buy it — not free).
+ */
+export type ModelVersionTerms = {
+  download?: Grant;
+  generation?: GenerationGrant;
 };
 
-const toDate = (value: Date | string | null | undefined): Date | null =>
-  value == null ? null : value instanceof Date ? value : new Date(value);
+/** True if generation is free/ungated (the `{ free: true }` grant). */
+export const isFreeGeneration = (terms: ModelVersionTerms): boolean =>
+  !!terms.generation && 'free' in terms.generation;
 
-export function paidAccessMode(input: PaidAccessInput, now: Date = new Date()): PaidAccessMode {
-  if (input.permanent) return 'permanent';
-  const endsAt = toDate(input.earlyAccessEndsAt);
-  return endsAt && endsAt > now ? 'timed' : 'none';
-}
-
-/** Currently gated behind payment — permanent, or a timed window that hasn't elapsed. */
-export function isPaidAccessActive(input: PaidAccessInput, now?: Date): boolean {
-  return paidAccessMode(input, now) !== 'none';
-}
+/** The paid generation-only tier, if any (undefined for free or bundled generation). */
+export const paidGenerationGrant = (
+  terms: ModelVersionTerms
+): { price?: number; trialLimit?: number } | undefined =>
+  terms.generation && !('free' in terms.generation) ? terms.generation : undefined;
 
 /**
- * A timed window has elapsed (or never started). Permanent access has no window, so it is never "over" — this is
- * the check that must not disable permanent controls after publishing.
+ * Effective price to purchase generation-only access: the paid tier's own `price`, or the `download`
+ * tier's price when the grant leaves `price` unset. Undefined when there is no paid generation tier
+ * (free or bundled generation).
  */
-export function isTimedWindowOver(input: PaidAccessInput, now: Date = new Date()): boolean {
-  if (input.permanent) return false;
-  const endsAt = toDate(input.earlyAccessEndsAt);
-  return !endsAt || endsAt <= now;
-}
+export const generationPrice = (terms: ModelVersionTerms): number | undefined => {
+  const paid = paidGenerationGrant(terms);
+  if (!paid) return undefined;
+  return paid.price ?? (terms.download?.price as number | undefined);
+};
+/** ComicChapter — one grant: unlock/read the chapter. */
+export type ComicChapterTerms = { access: Grant };
+
+export type PaidAccessTerms = ModelVersionTerms | ComicChapterTerms;
+
+export type PaidAccessRow = {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  endsAt: Date | null;
+  /** Timed-window length in days; null = permanent. Materialized into endsAt at publish. */
+  timeframeDays?: number | null;
+  terms: PaidAccessTerms;
+};
+
+/** Active <=> permanent (no window) or the timed window is still open. */
+export const isPaidAccessActive = (
+  row: Pick<PaidAccessRow, 'endsAt'>,
+  now: Date = new Date()
+): boolean => row.endsAt == null || row.endsAt > now;
 
 /**
- * SQL predicate for "currently behind paid access", for queries that can't use the helpers above. Filtering on
- * `earlyAccessEndsAt` alone silently drops permanent versions. The column is NOT NULL DEFAULT false, so no
- * coalesce is needed.
+ * Active *and* timed — a window that is set and still open (`endsAt > now`). Unlike `isPaidAccessActive`
+ * this EXCLUDES permanent gates (endsAt null), so it answers "is there a live early-access window that
+ * could end early?" — the rule shared by the donation-goal completion + the delete/merge guards.
  */
-export function paidAccessSql(alias = 'mv'): string {
-  return `(${alias}."earlyAccessPermanent" OR ${alias}."earlyAccessEndsAt" > NOW())`;
-}
+export const isTimedGateActive = (
+  row: Pick<PaidAccessRow, 'endsAt'>,
+  now: Date = new Date()
+): boolean => row.endsAt != null && row.endsAt > now;
+
+/**
+ * Free trial generations a paid generation-only tier grants before purchase (absent → default,
+ * matching mini/[id].ts's COALESCE so the two endpoints agree; 0 = none).
+ */
+export const generationTrialLimit = (terms: ModelVersionTerms): number => {
+  const grant = paidGenerationGrant(terms);
+  return grant ? grant.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT : 0;
+};
+
+/** Whether a non-buyer may generate at all: free for everyone, or a positive trial limit. */
+export const generationOpenToNonBuyers = (terms: ModelVersionTerms): boolean =>
+  isFreeGeneration(terms) || generationTrialLimit(terms) > 0;
+
+/**
+ * The full generation-access decision for one viewer: an owner/mod always may; otherwise a buyer;
+ * otherwise only if generation is open to non-buyers (free / trial). `hasBought` is the caller's
+ * EntityAccess result — the purchase side that isn't part of the terms.
+ */
+export const grantsGeneration = (
+  terms: ModelVersionTerms,
+  { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
+): boolean => isOwnerOrMod || hasBought || generationOpenToNonBuyers(terms);
+

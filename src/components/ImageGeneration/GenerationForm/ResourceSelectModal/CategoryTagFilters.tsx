@@ -1,21 +1,13 @@
-import { useState } from 'react';
-import { useRefinementList } from 'react-instantsearch';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 
 export function CategoryTagFilters() {
-  const [tag, setTag] = useState<string>();
-  const { refine } = useRefinementList({ attribute: 'tags.name' });
-
-  const handleSetTag = (value?: string) => {
-    if (tag) refine(tag);
-    if (value) refine(value);
-    setTag(value);
-  };
+  const { categoryTag, setCategoryTag } = useResourceSelectContext();
 
   return (
     <CategoryTags
-      selected={tag}
-      setSelected={handleSetTag}
+      selected={categoryTag}
+      setSelected={(value) => setCategoryTag(value)}
       filter={(tag) => !['celebrity'].includes(tag)}
       includeEA={false}
       includeAll={false}

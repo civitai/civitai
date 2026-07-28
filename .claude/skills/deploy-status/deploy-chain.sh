@@ -145,6 +145,35 @@ print_primaries() {
   echo "$ssr|$api"
 }
 
+# ---- rollout across ALL app deployments -----------------------------------------
+# "Fully live" means every app deployment (image repo == civitai-prod) is on the
+# target sha AND fully rolled (updatedReplicas == desired == readyReplicas). The
+# Flagger promote flips a deployment's SPEC image minutes before its pods finish
+# the rolling update, so a procedure added in the new image is NOT_FOUND on the
+# not-yet-rolled pods. Never call a deploy "live" off the spec image alone.
+# Sets: ROLLOUT_DONE (1/0), ROLLOUT_DETAIL (per-deploy lines), ROLLOUT_LAG (laggards).
+app_rollout() {
+  local tshort="$1"
+  ROLLOUT_DONE=1; ROLLOUT_DETAIL=""; ROLLOUT_LAG=""
+  local name up des rdy img
+  while read -r name up des rdy img; do
+    [ -z "$name" ] && continue
+    case "$img" in "$IMAGE_REPO"*) ;; *) continue ;; esac   # app deployments only
+    [ "$up" = "<none>" ] && up=0; [ "$des" = "<none>" ] && des=0; [ "$rdy" = "<none>" ] && rdy=0
+    up=${up:-0}; des=${des:-0}; rdy=${rdy:-0}
+    # Skip scaled-to-0 deployments (Flagger canary shells at rest) — not a serving pool.
+    [ "$des" -eq 0 ] 2>/dev/null && continue
+    ROLLOUT_DETAIL+="    $name: ${up}/${des} updated, ${rdy} ready, ${img##*:}"$'\n'
+    if [[ "$img" != *"$tshort"* ]]; then
+      ROLLOUT_DONE=0; ROLLOUT_LAG+="$name(old image ${img##*:}) "
+    elif [ "$up" != "$des" ] || [ "$rdy" != "$des" ]; then
+      ROLLOUT_DONE=0; ROLLOUT_LAG+="$name(${up}/${des} rolled, ${rdy} ready) "
+    fi
+  done < <(k -n "$NS_APP" get deploy \
+    -o custom-columns='N:.metadata.name,U:.status.updatedReplicas,D:.spec.replicas,R:.status.readyReplicas,I:.spec.template.spec.containers[0].image' \
+    --no-headers)
+}
+
 # ---- overall summary ------------------------------------------------------------
 # Args: build_reason, target_image, latest_image, ssr_prim, api_prim, canary_ssr_phase
 summarize() {
@@ -167,20 +196,33 @@ summarize() {
     fi
     return
   fi
-  # image in policy — are primaries on it?
-  if [ "$ssr" = "$api" ] && [ "$ssr" = "$latest" ]; then
-    if [ "$cphase" = "Succeeded" ] || [ "$cphase" = "Initialized" ] || [ -z "$cphase" ]; then
-      echo "  PHASE: FULLY ON PROD. Both primaries == $latest. Done."
-      return
-    fi
+  # Canary rollback short-circuits everything.
+  case "$cphase" in
+    Failed|*ollback*)
+      echo "  PHASE: CANARY $cphase — ROLLED BACK. Prod stays on old image. STOP."
+      return ;;
+  esac
+
+  # image in policy — are ALL app deployments fully ROLLED onto it (not just spec)?
+  app_rollout "$(short "$target")"
+  local canary_ok=0
+  { [ "$cphase" = "Succeeded" ] || [ "$cphase" = "Initialized" ] || [ -z "$cphase" ]; } && canary_ok=1
+
+  if [ "$ROLLOUT_DONE" = 1 ] && [ "$canary_ok" = 1 ]; then
+    echo "  PHASE: FULLY ON PROD — every app deployment rolled onto $latest. Safe to announce live."
+    return
   fi
+
+  # Spec image promoted but at least one service still cycling pods (or canary still
+  # stepping) -> NOT safe to tell anyone it's live yet.
+  echo "  PHASE: PROMOTED but ROLLING OUT — NOT fully live yet. Do NOT announce until every service is rolled."
+  echo "  laggards: ${ROLLOUT_LAG:-<none>}"
+  printf "%b" "$ROLLOUT_DETAIL"
   case "$cphase" in
     Progressing|Promoting|Finalising)
-      echo "  PHASE: CANARY $cphase. Rolling 10->50% in 2-min steps. ETA ~4-10m to 100%." ;;
-    Failed|*ollback*)
-      echo "  PHASE: CANARY $cphase — ROLLED BACK. Prod stays on old image. STOP." ;;
+      echo "  canary SSR=$cphase (still stepping 10->50% traffic). ETA ~4-10m." ;;
     *)
-      echo "  PHASE: image in policy ($latest); primaries SSR=$ssr API=$api. Canary=$cphase. ETA ~4-10m." ;;
+      echo "  canary=$cphase; primary pods finishing their rolling update. ETA ~2-8m." ;;
   esac
 }
 

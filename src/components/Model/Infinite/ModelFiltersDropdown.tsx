@@ -214,11 +214,14 @@ export function DumbModelFiltersDropdown({
               }
             >
               <Group gap={8} mb={4}>
-                {Object.values(Availability).map((availability) => (
-                  <FilterChip key={availability} value={availability}>
-                    <span>{availability}</span>
-                  </FilterChip>
-                ))}
+                {/* EarlyAccess is never a model-level availability (gating is in PaidAccess); use the toggle above. */}
+                {Object.values(Availability)
+                  .filter((availability) => availability !== Availability.EarlyAccess)
+                  .map((availability) => (
+                    <FilterChip key={availability} value={availability}>
+                      <span>{availability}</span>
+                    </FilterChip>
+                  ))}
               </Group>
             </Chip.Group>
           </>

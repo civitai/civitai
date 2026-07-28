@@ -32,6 +32,7 @@ import {
   requestReviewHandler,
   restoreModelHandler,
   setModelCollectionShowcaseHandler,
+  setModelMinorHandler,
   toggleCheckpointCoverageHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
@@ -54,6 +55,7 @@ import {
   getModelByIdSchema,
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
+  getResourceSelectSchema,
   getMyTrainingModelsSchema,
   getSimpleModelsInfiniteSchema,
   limitOnly,
@@ -66,6 +68,8 @@ import {
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
   setModelCollectionShowcaseSchema,
+  setModelMinorSchema,
+  setModelOfficialSchema,
   setModelsCategorySchema,
   toggleCheckpointCoverageSchema,
   toggleModelLockSchema,
@@ -83,11 +87,13 @@ import {
   getSimpleModelWithVersions,
   migrateResourceToCollection,
   setAssociatedResources,
+  setModelOfficial,
   setModelsCategory,
   toggleCannotPromote,
   toggleCannotPublish,
   toggleLockComments,
 } from '~/server/services/model.service';
+import { getResourceSelectModels } from '~/server/services/resource-select.service';
 import { rescanModel } from '~/server/services/model-file-scan.service';
 import {
   guardedProcedure,
@@ -187,6 +193,10 @@ export const modelRouter = router({
   getFeaturedModels: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .query(() => getFeaturedModels()),
+  getResourceSelect: publicProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getResourceSelectSchema)
+    .query(({ ctx, input }) => getResourceSelectModels(input, { user: ctx.user })),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(modelUpsertSchema)
@@ -341,4 +351,10 @@ export const modelRouter = router({
     .mutation(({ input, ctx }) =>
       toggleCannotPublish({ ...input, isModerator: ctx.user.isModerator ?? false })
     ),
+  setOfficial: moderatorProcedure
+    .input(setModelOfficialSchema)
+    .mutation(({ input, ctx }) =>
+      setModelOfficial({ ...input, isModerator: ctx.user.isModerator ?? false })
+    ),
+  setMinor: moderatorProcedure.input(setModelMinorSchema).mutation(setModelMinorHandler),
 });

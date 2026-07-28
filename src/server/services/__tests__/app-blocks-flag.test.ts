@@ -30,6 +30,8 @@ import {
   isAppBlocksEnabled,
   isAppBlocksAuthorEnabled,
   isAppListingsEnabled,
+  isExternalListingsPublicEnabled,
+  resolveStoreVisibilityScope,
 } from '../app-blocks-flag';
 
 // Faithful stand-in for the live `app-blocks-enabled` rule: base OFF, with a
@@ -251,7 +253,7 @@ describe('isAppListingsEnabled — dedicated visibility flag + OR-fallback (W13)
 
   function fakeVisibilityFlags(
     flag: string,
-    entityId = 'global',
+    _entityId = 'global',
     context: Record<string, string> = {}
   ): boolean {
     if (flag === 'app-blocks-enabled') return context.isModerator === 'true';
@@ -339,5 +341,120 @@ describe('isAppListingsEnabled — dedicated visibility flag + OR-fallback (W13)
     expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-pipeline-enabled');
     expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-runtime-enabled');
     expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-author');
+  });
+});
+
+/**
+ * External-before-onsite GA (Phase 1) — the PUBLIC EXTERNAL flag + scope resolver.
+ *
+ * `isExternalListingsPublicEnabled` is a PLAIN GLOBAL boolean (no user context).
+ * `resolveStoreVisibilityScope` composes it with `isAppListingsEnabled` on TWO
+ * independent axes, priority-ordered so a mod/tester ALWAYS gets `full`:
+ *   - mod/tester (app-listings/app-blocks-enabled ON)      → `full`
+ *   - public flag ON, non-privileged (or anon)             → `public-external`
+ *   - neither                                              → `none` (fail-closed)
+ *
+ * 🔴 DARK-by-default: with `app-listings-public-external` ABSENT (the as-merged
+ * state), a mod resolves `full` and everyone else `none` — byte-identical to today.
+ *
+ * The fake models all THREE keys: `app-blocks-enabled` = mod segment; `app-listings`
+ * = a per-user grant set (empty = dark window); `app-listings-public-external` = a
+ * configurable GLOBAL boolean.
+ */
+describe('resolveStoreVisibilityScope — external-before-onsite GA (Phase 1)', () => {
+  let appListingsGrants: Set<string>;
+  let publicExternalOn: boolean;
+
+  function fakeScopeFlags(
+    flag: string,
+    _entityId = 'global',
+    context: Record<string, string> = {}
+  ): boolean {
+    if (flag === 'app-blocks-enabled') return context.isModerator === 'true';
+    if (flag === 'app-listings') {
+      return typeof context.userId === 'string' && appListingsGrants.has(context.userId);
+    }
+    // Plain GLOBAL boolean — resolves the same regardless of entityId/context.
+    if (flag === 'app-listings-public-external') return publicExternalOn;
+    return false;
+  }
+
+  beforeEach(() => {
+    appListingsGrants = new Set();
+    publicExternalOn = false;
+    mockIsFlipt.mockReset();
+    mockIsFlipt.mockImplementation(async (...args: Parameters<typeof fakeScopeFlags>) =>
+      fakeScopeFlags(...args)
+    );
+  });
+
+  it('isExternalListingsPublicEnabled evaluates the plain global flag (no context)', async () => {
+    publicExternalOn = true;
+    await expect(isExternalListingsPublicEnabled()).resolves.toBe(true);
+    expect(mockIsFlipt).toHaveBeenCalledWith('app-listings-public-external');
+    publicExternalOn = false;
+    await expect(isExternalListingsPublicEnabled()).resolves.toBe(false);
+  });
+
+  it('DARK default (public flag absent): mod → full, non-mod/anon → none (byte-identical to today)', async () => {
+    // The as-merged state — `app-listings-public-external` grants nobody.
+    await expect(
+      resolveStoreVisibilityScope({ user: makeUser({ isModerator: true }) })
+    ).resolves.toBe('full');
+    await expect(
+      resolveStoreVisibilityScope({ user: makeUser({ id: 555, isModerator: false }) })
+    ).resolves.toBe('none');
+    await expect(resolveStoreVisibilityScope({ user: undefined })).resolves.toBe('none');
+    await expect(resolveStoreVisibilityScope()).resolves.toBe('none');
+  });
+
+  it('mod resolves full REGARDLESS of the public flag (public flag never narrows a mod)', async () => {
+    publicExternalOn = true;
+    await expect(
+      resolveStoreVisibilityScope({ user: makeUser({ isModerator: true }) })
+    ).resolves.toBe('full');
+    // The public flag is the SECOND axis — never consulted once `full` short-circuits.
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-listings-public-external');
+  });
+
+  it('app-listings-granted tester resolves full REGARDLESS of the public flag', async () => {
+    appListingsGrants.add('888');
+    publicExternalOn = true;
+    await expect(
+      resolveStoreVisibilityScope({ user: makeUser({ id: 888, isModerator: false }) })
+    ).resolves.toBe('full');
+  });
+
+  it('public flag ON + non-privileged viewer → public-external', async () => {
+    publicExternalOn = true;
+    await expect(
+      resolveStoreVisibilityScope({ user: makeUser({ id: 555, isModerator: false }) })
+    ).resolves.toBe('public-external');
+  });
+
+  it('public flag ON + ANONYMOUS viewer → public-external (the anon audience)', async () => {
+    publicExternalOn = true;
+    await expect(resolveStoreVisibilityScope({ user: undefined })).resolves.toBe('public-external');
+    await expect(resolveStoreVisibilityScope()).resolves.toBe('public-external');
+  });
+
+  it('fail-closed: neither flag → none (public flag absent / Flipt down)', async () => {
+    mockIsFlipt.mockImplementation(async () => false);
+    await expect(
+      resolveStoreVisibilityScope({ user: makeUser({ id: 555, isModerator: false }) })
+    ).resolves.toBe('none');
+    await expect(resolveStoreVisibilityScope({ user: undefined })).resolves.toBe('none');
+  });
+
+  it('reads ONLY app-listings / app-blocks-enabled / app-listings-public-external keys', async () => {
+    publicExternalOn = true;
+    await resolveStoreVisibilityScope({ user: makeUser({ id: 555, isModerator: false }) });
+    for (const call of mockIsFlipt.mock.calls) {
+      expect(['app-listings', 'app-blocks-enabled', 'app-listings-public-external']).toContain(
+        call[0]
+      );
+    }
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-pipeline-enabled');
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('app-blocks-runtime-enabled');
   });
 });

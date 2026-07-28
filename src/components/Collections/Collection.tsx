@@ -515,7 +515,10 @@ export function Collection({
     (!metadata.submissionEndDate || new Date(metadata.submissionEndDate) > new Date());
 
   const submissionPeriod =
-    metadata.submissionStartDate || metadata.submissionEndDate || metadata.maxItemsPerUser ? (
+    metadata.submissionStartDate ||
+    metadata.submissionEndDate ||
+    metadata.maxItemsPerUser ||
+    metadata.baseModels?.length ? (
       <Popover
         zIndex={200}
         position="bottom-end"
@@ -532,15 +535,22 @@ export function Collection({
           <Stack gap="xs">
             {metadata.submissionStartDate && (
               <Text size="sm">
-                Submission start date: {formatDate(metadata.submissionStartDate)}
+                Submission start date:{' '}
+                {formatDate(metadata.submissionStartDate, 'MMM D, YYYY h:mma')}
               </Text>
             )}
             {metadata.submissionEndDate && (
-              <Text size="sm">Submission end date: {formatDate(metadata.submissionEndDate)}</Text>
+              <Text size="sm">
+                Submission end date: {formatDate(metadata.submissionEndDate, 'MMM D, YYYY h:mma')}
+              </Text>
             )}
 
             {metadata.maxItemsPerUser && (
               <Text size="sm">Max items per user: {metadata.maxItemsPerUser}</Text>
+            )}
+
+            {!!metadata.baseModels?.length && (
+              <Text size="sm">Allowed base models: {metadata.baseModels.join(', ')}</Text>
             )}
           </Stack>
         </Popover.Dropdown>
@@ -560,6 +570,7 @@ export function Collection({
             currentUser?.id === collection.user.id ||
             (currentUser?.isModerator ?? false)
           }
+          suppressAds={collection.read !== 'Public'}
           meta={{
             title: `${collection.name}${
               collection.user.username ? ` - collection posted by ${collection.user.username}` : ''
@@ -834,7 +845,7 @@ export function Collection({
                   <AlertWithIcon icon={<IconAlertCircle />}>
                     <Text>
                       This collection is not accepting entries just yet. Please come back after{' '}
-                      {formatDate(metadata.submissionStartDate)}
+                      {formatDate(metadata.submissionStartDate, 'MMM D, YYYY h:mma')}
                     </Text>
                   </AlertWithIcon>
                 ) : (
@@ -843,7 +854,7 @@ export function Collection({
                       <AlertWithIcon icon={<IconAlertCircle />}>
                         <Text>
                           This collection is accepting entries until{' '}
-                          {formatDate(metadata.submissionEndDate)}.{' '}
+                          {formatDate(metadata.submissionEndDate, 'MMM D, YYYY h:mma')}.{' '}
                           {metadata.submissionsHiddenUntilEndDate ? (
                             <>
                               You will only be able to see your own entries until the submission

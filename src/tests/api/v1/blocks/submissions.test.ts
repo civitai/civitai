@@ -354,6 +354,78 @@ describe('GET /api/v1/blocks/submissions', () => {
     expect(out.submissions[0].liveUrl).toBeNull();
   });
 
+  /**
+   * 🔴 `liveUrl` and the TWO opposite meanings of a null deployState.
+   *
+   * This is the surface `civitai app status` reads. Handing it a working-looking
+   * URL for a STRANDED approval (the build never fired, so deploy_state stayed
+   * null) re-creates on the CLI exactly the invisible failure this feature exists
+   * to remove. But a LEGACY row — approved before deploy-state tracking existed —
+   * has the same null and genuinely IS serving, so it must keep its URL.
+   */
+  it('liveUrl is null for a STRANDED approval (tracked era, build never fired)', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockFindMany.mockResolvedValueOnce([
+      dbRow({
+        status: 'approved',
+        deployState: null,
+        // Approved AFTER deploy-state tracking began, and nothing ever transitioned.
+        reviewedAt: new Date('2026-06-21T00:00:00Z'),
+        deployUpdatedAt: null,
+      }),
+    ]);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const out = res._getJSONData() as { submissions: Array<{ liveUrl: string | null }> };
+    expect(out.submissions[0].liveUrl).toBeNull();
+  });
+
+  it('liveUrl is PRESERVED for a LEGACY approval predating deploy-state tracking', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockFindMany.mockResolvedValueOnce([
+      dbRow({
+        status: 'approved',
+        deployState: null,
+        // Approved before the deploy_state column existed: null is expected here
+        // and says nothing about whether the app deployed. It did.
+        reviewedAt: new Date('2026-05-01T00:00:00Z'),
+        deployUpdatedAt: null,
+      }),
+    ]);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    const out = res._getJSONData() as { submissions: Array<{ liveUrl: string | null }> };
+    expect(out.submissions[0].liveUrl).toBe('https://my-page-app.civit.ai/');
+  });
+
+  it('liveUrl is PRESERVED for a null-state row that DID record a transition', async () => {
+    // A recorded deployUpdatedAt proves the lifecycle ran at some point, so this
+    // is not the stranded signature whatever the approval date.
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockFindMany.mockResolvedValueOnce([
+      dbRow({
+        status: 'approved',
+        deployState: null,
+        reviewedAt: new Date('2026-06-21T00:00:00Z'),
+        deployUpdatedAt: new Date('2026-06-22T00:00:00Z'),
+      }),
+    ]);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    const out = res._getJSONData() as { submissions: Array<{ liveUrl: string | null }> };
+    expect(out.submissions[0].liveUrl).toBe('https://my-page-app.civit.ai/');
+  });
+
+  it('liveUrl is null for a FAILED build', async () => {
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockFindMany.mockResolvedValueOnce([dbRow({ status: 'approved', deployState: 'failed' })]);
+    const { req, res } = authGet();
+    await handler(req as never, res as never);
+    const out = res._getJSONData() as { submissions: Array<{ liveUrl: string | null }> };
+    expect(out.submissions[0].liveUrl).toBeNull();
+  });
+
   it('liveUrl is null for a pending (not-approved) submission', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
     mockFindMany.mockResolvedValueOnce([

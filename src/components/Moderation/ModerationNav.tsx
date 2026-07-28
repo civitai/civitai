@@ -33,7 +33,6 @@ export function ModerationNav() {
         },
         { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
-        { label: 'Generation', href: '/moderator/generation' },
         {
           label: 'Service Status',
           href: '/moderator/service-status',
@@ -132,7 +131,12 @@ export function ModerationNav() {
           <IconBadge />
         </LegacyActionIcon>
       </Menu.Target>
-      <Menu.Dropdown>{menuItems}</Menu.Dropdown>
+      <Menu.Dropdown
+        className="overflow-y-auto"
+        style={{ maxHeight: 'calc(100dvh - 80px)' }}
+      >
+        {menuItems}
+      </Menu.Dropdown>
     </Menu>
   );
 }

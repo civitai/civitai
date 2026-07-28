@@ -4,6 +4,7 @@ import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBloc
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ShopItem } from '~/components/Shop/ShopItem';
+import { CIVITAI_SHOP_ATTRIBUTION } from '~/server/schema/cosmetic-shop.schema';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -62,7 +63,12 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
           const { shopItem } = item;
           return (
             <div key={shopItem.id} className="p-2">
-              <ShopItem item={shopItem} sectionItemCreatedAt={item.createdAt} />
+              <ShopItem
+                item={shopItem}
+                sectionItemCreatedAt={item.createdAt}
+                creator={shopItem.cosmetic.creator}
+                viaShopUserId={CIVITAI_SHOP_ATTRIBUTION}
+              />
             </div>
           );
         })}

@@ -115,6 +115,22 @@ export const rejectRequestSchema = z.object({
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
 
+/**
+ * Input for the MOD-ONLY `blocks.retriggerBuild` — re-fire the Tekton build for
+ * an ALREADY-APPROVED request whose build never started (or failed).
+ *
+ * `publishRequestId` is the ONLY field, and that is load-bearing: the commit sha
+ * to rebuild is read from the DB row, NEVER supplied by the caller. Accepting a
+ * sha here would let a moderator rebuild + deploy an ARBITRARY commit that was
+ * never reviewed. Keeping the sha off the wire makes that structurally
+ * impossible rather than merely validated-against.
+ */
+export const retriggerBuildSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type RetriggerBuildInput = z.infer<typeof retriggerBuildSchema>;
+
 /** Input for the MOD-ONLY `blocks.getPublishRequestScreenshots` (F-E E5 review). */
 export const getPublishRequestScreenshotsSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
@@ -130,6 +146,14 @@ export const getPublishRequestDiffSchema = z.object({
 });
 
 export type GetPublishRequestDiffInput = z.infer<typeof getPublishRequestDiffSchema>;
+
+/** Input for the MOD-ONLY `blocks.getPublishRequest` — single-request fetch that
+ *  powers the per-submission review PAGE (`/apps/review/<publishRequestId>`). */
+export const getPublishRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type GetPublishRequestInput = z.infer<typeof getPublishRequestSchema>;
 
 /** Input for the MOD-ONLY review-sandbox `blocks.previewRequest` /
  *  `blocks.getReviewStatus` (#2831). */
@@ -150,6 +174,15 @@ export type GetReviewStatusInput = z.infer<typeof getReviewStatusSchema>;
  *  host handshakes with. Same shape as previewRequest (the pending request id). */
 export const mintReviewBlockTokenSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831). Default false → the render-only
+   * sandbox (byte-identical to today). When true, the mod has EXPLICITLY opted in
+   * (behind a loud client consent gate) to run the unapproved app for real against
+   * their OWN account; the server re-mints a wider, still-clamped, still-self-bound,
+   * still-forced-SFW token with a per-call budget + an aggregate session Buzz cap.
+   * The opt-in is authorized + rate-limited server-side regardless of this flag.
+   */
+  runForReal: z.boolean().optional().default(false),
 });
 
 export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;

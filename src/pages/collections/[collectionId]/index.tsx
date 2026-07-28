@@ -23,9 +23,12 @@ export const getServerSideProps = createServerSideProps({
 
     if (!features?.collections) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+    let suppressAds = false;
+
     if (ssg) {
-      await Promise.all([
-        ssg.collection.getById.prefetch({ id: collectionId }),
+      const [data] = await Promise.all([
+        ssg.collection.getById.fetch({ id: collectionId }).catch(() => null),
         ...(session
           ? [
               ssg.collection.getAllUser.prefetch({
@@ -35,12 +38,24 @@ export const getServerSideProps = createServerSideProps({
             ]
           : []),
       ]);
+
+      const collection = data?.collection;
+      if (collection) {
+        gating = {
+          contentNsfwLevel: collection.metadata?.forcedBrowsingLevel || collection.nsfwLevel,
+          nsfw: collection.nsfw ?? undefined,
+        };
+        // A non-public collection is contributor-only, so there is no audience to monetize.
+        suppressAds = collection.read !== 'Public';
+      }
     }
 
     return {
       props: {
         collectionId: Number(ctx.query.collectionId),
       },
+      gating,
+      suppressAds,
     };
   },
 });

@@ -52,6 +52,11 @@ vi.mock('~/server/services/blocklist.service', () => ({
 vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
+// upsertComment now runs a block check; stub the block resolver's user lookup so
+// the heavy real user.service module isn't pulled into this unit test.
+vi.mock('~/server/services/user.service', () => ({
+  amIBlockedByUser: vi.fn(async () => false),
+}));
 
 import {
   getCommentCount,
