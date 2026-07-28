@@ -12,7 +12,6 @@ import { extractCloudflareUuid } from '~/utils/article-helpers';
  */
 
 const MAX_HEADING_DEPTH = 3;
-const MIN_TABLE_COLUMN_WIDTH = 3;
 
 /** Schemes the sanitizer will keep on an `<a href>`. */
 const WEB_URL = /^(https?:|ftp:|mailto:|\/|#)/i;
@@ -67,6 +66,8 @@ type MdNode = {
   identifier?: string;
   depth?: number;
   checked?: boolean | null;
+  ordered?: boolean;
+  spread?: boolean;
   children?: MdNode[];
 };
 
@@ -86,28 +87,56 @@ function toPlainText(node: MdNode): string {
   return node.children.map(toPlainText).join('');
 }
 
-/** Padded pipe text for a code block; rebuilt from cells so ragged tables align. */
-function renderTableAsText(table: MdNode): string {
-  const rows = (table.children ?? []).map((row) =>
-    (row.children ?? []).map((cell) => toPlainText(cell).replace(/\s+/g, ' ').trim())
+const bullets = (items: MdNode[]): MdNode => ({
+  type: 'list',
+  ordered: false,
+  spread: false,
+  children: items,
+});
+
+const bullet = (children: MdNode[]): MdNode => ({ type: 'listItem', spread: false, children });
+
+/**
+ * A nested bullet list, one item per row: the first cell names the row and the
+ * rest become `Header: value` children.
+ *
+ * Not a code block — the editor constrains its width, so a padded pipe table
+ * wraps mid-row and becomes unreadable. Cell contents are moved across as inline
+ * nodes rather than flattened to text, which also keeps link targets.
+ */
+function renderTableAsList(table: MdNode): MdNode {
+  const [header, ...body] = table.children ?? [];
+  const headers = (header?.children ?? []).map((cell) => toPlainText(cell).trim());
+
+  // Header-only table: nothing to nest, so just list the column names.
+  if (!body.length)
+    return bullets(
+      headers
+        .filter(Boolean)
+        .map((name) => bullet([{ type: 'paragraph', children: [{ type: 'text', value: name }] }]))
+    );
+
+  // Every cell keeps its column name, including the first — dropping that header
+  // silently lost what the row label meant.
+  const labelled = (name: string | undefined, inline: MdNode[]): MdNode => ({
+    type: 'paragraph',
+    children: name
+      ? [{ type: 'strong', children: [{ type: 'text', value: `${name}: ` }] }, ...inline]
+      : inline,
+  });
+
+  return bullets(
+    body.map((row) => {
+      const [first, ...rest] = row.children ?? [];
+      const label = labelled(headers[0], first?.children ?? []);
+
+      const details = rest
+        .filter((cell) => (cell.children ?? []).length > 0)
+        .map((cell, index) => bullet([labelled(headers[index + 1], cell.children ?? [])]));
+
+      return bullet(details.length ? [label, bullets(details)] : [label]);
+    })
   );
-  if (!rows.length) return '';
-
-  // Widest row, not the header's width: remark keeps excess body cells, and this
-  // renders to a code block that is never re-parsed as a table, so clamping to
-  // the header would just delete them.
-  const columnCount = Math.max(...rows.map((row) => row.length));
-  const widths = Array.from({ length: columnCount }, (_, column) =>
-    Math.max(MIN_TABLE_COLUMN_WIDTH, ...rows.map((row) => (row[column] ?? '').length))
-  );
-
-  const renderRow = (cells: string[]) =>
-    `| ${widths.map((width, i) => (cells[i] ?? '').padEnd(width)).join(' | ')} |`;
-
-  const [header, ...body] = rows;
-  const divider = `| ${widths.map((width) => '-'.repeat(width)).join(' | ')} |`;
-
-  return [renderRow(header), divider, ...body.map(renderRow)].join('\n');
 }
 
 function prefixParagraph(item: MdNode, prefix: string) {
@@ -136,7 +165,7 @@ function fitToEditorSchema(
     const child = children[i];
 
     if (child.type === 'table') {
-      children[i] = { type: 'code', value: renderTableAsText(child) };
+      children[i] = renderTableAsList(child);
       stats.tablesConverted++;
       continue;
     }
@@ -240,7 +269,7 @@ export function describeMarkdownConversion({
   const plural = (count: number, noun: string) => `${count} ${noun}${count > 1 ? 's' : ''}`;
   const notes: string[] = [];
 
-  if (tablesConverted) notes.push(`${plural(tablesConverted, 'table')} converted to code blocks`);
+  if (tablesConverted) notes.push(`${plural(tablesConverted, 'table')} converted to lists`);
   if (headingsClamped) notes.push(`${plural(headingsClamped, 'heading')} lowered to H3`);
   if (taskItemsConverted) notes.push(`${plural(taskItemsConverted, 'checklist item')} flattened`);
   if (externalImagesLinked)

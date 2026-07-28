@@ -84,7 +84,9 @@ describe('convertMarkdownForEditor', () => {
     expect(html).toContain('<hr>');
   });
 
-  it('down-converts a GFM table to an aligned code block', () => {
+  // A code block is width-constrained in the editor, so a padded pipe table
+  // wrapped mid-row and was unreadable. A list reflows.
+  it('down-converts a GFM table to a nested list', () => {
     const result = convertMarkdownForEditor(
       [
         '| Your generator | Use the | Notes |',
@@ -96,16 +98,37 @@ describe('convertMarkdownForEditor', () => {
 
     expect(result.tablesConverted).toBe(1);
     expect(result.html).not.toContain('<table');
-    expect(result.html).toContain('<pre><code>');
+    expect(result.html).not.toContain('<pre>');
+    expect(result.html).toContain('<ul>');
+
+    // One top-level item per body row, and every cell keeps its column name so
+    // nothing about the table's meaning is lost.
+    expect(result.html).toContain('<strong>Your generator: </strong>');
+    expect(result.html).toContain('Illustrious');
+    expect(result.html).toContain('Flux');
+    expect(result.html).toContain('<strong>Use the: </strong>');
     expect(result.html).toContain('Natural-language block');
+    expect(result.html).toContain('<strong>Notes: </strong>');
+    expect(result.html).toContain('keep the tail');
+  });
 
-    // Rows are padded to one width so the block stays legible.
-    const code = result.html.match(/<pre><code>([\s\S]*?)<\/code><\/pre>/)?.[1] ?? '';
-    const rows = code.trim().split('\n');
+  // Flattening cells to text used to discard hrefs, and download tables are the
+  // most common table in a Civitai article.
+  it('keeps link targets from table cells', () => {
+    const result = convertMarkdownForEditor(
+      '| Model | File |\n|---|---|\n| Flux | [dl](https://example.com/a.zip) |'
+    );
 
-    expect(rows).toHaveLength(4);
-    expect(new Set(rows.map((row) => row.length)).size).toBe(1);
-    expect(rows[1]).toMatch(/^\|( -+ \|)+$/);
+    expect(result.html).toContain('href="https://example.com/a.zip"');
+  });
+
+  it('lists the column names for a header-only table', () => {
+    const result = convertMarkdownForEditor('| a | b |\n|---|---|');
+
+    expect(result.tablesConverted).toBe(1);
+    expect(result.html).toContain('<ul>');
+    expect(result.html).toContain('a');
+    expect(result.html).toContain('b');
   });
 
   it('keeps blockquotes intact', () => {
@@ -208,13 +231,12 @@ describe('convertMarkdownForEditor', () => {
     expect(markdownToEditorHtml(input)).toBe('<h1>Body</h1>');
   });
 
-  // remark keeps body cells past the header width, and this renders to a code
-  // block that is never re-parsed as a table — so clamping to the header would
-  // just delete them.
+  // remark keeps body cells past the header width, so they must survive even
+  // though they have no header to be labelled with.
   it('keeps every cell of a ragged table', () => {
     const result = convertMarkdownForEditor('| a | b |\n|---|---|\n| 1 | 2 | 3 | 4 |');
 
-    for (const cell of ['a', 'b', '1', '2', '3', '4']) expect(result.html).toContain(cell);
+    for (const cell of ['1', '2', '3', '4']) expect(result.html).toContain(cell);
   });
 
   it.each([

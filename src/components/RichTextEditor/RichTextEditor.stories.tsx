@@ -51,7 +51,7 @@ function Harness({ controls }: { controls: ControlType[] }) {
 
         <Alert color="blue" p="xs">
           <Text size="xs">
-            Tables arrive as code blocks and H4+ collapse to H3 — the article sanitizer has no tag
+            Tables arrive as nested lists and H4+ collapse to H3 — the article sanitizer has no tag
             for them. Blockquotes, headings, lists, code and inline marks are kept as-is.
           </Text>
         </Alert>
