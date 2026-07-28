@@ -2354,10 +2354,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // listing and the flow converges. The listing is never permanently orphaned.
   //
   // IDEMPOTENT on `appBlockId` (the 1:1 unique): first-version approve CREATES it;
-  // a subsequent-version approve finds it present and SKIPS — it must NEVER clobber
-  // curator edits (category/featured/featuredOrder) made after the first approve.
-  // A concurrent create (a racing approve or the backfill) is absorbed by the
-  // P2002 catch. We NEVER update an existing listing here.
+  // a subsequent-version approve finds it present and RE-SYNCS only the
+  // MANIFEST-GOVERNED scalars (see (3b-sync) below). A concurrent create (a racing
+  // approve or the backfill) is absorbed by the P2002 catch.
   //
   // ONSITE ONLY: approveRequest only ever produces hosted (external_url IS NULL)
   // AppBlocks, so `mapAppBlockToListing` yields kind='onsite'. The offsite
@@ -2372,7 +2371,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // OauthClient owner are mirrored faithfully — important for the transition case
   // where an app approved BEFORE this feature (possibly already curated) has its
   // first listing minted now on a subsequent-version approve.
-  const { mapAppBlockToListing } = await import('./app-listing-mapper');
+  const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
   try {
     const existingListing = await dbRead.appListing.findUnique({
       where: { appBlockId },
@@ -2403,6 +2402,51 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           select: { id: true },
         });
       }
+    } else {
+      // (3b-sync) MANIFEST-GOVERNED COPY RE-SYNC (subsequent-version approve).
+      //
+      // WHY: an onsite listing's name / tagline / description / category have NO
+      // author surface other than the manifest ("ONSITE = ASSETS-ONLY" — the
+      // `/apps/[appBlockId]/edit` Listing tab is media-only, and
+      // `applyApprovedRevision`'s onsite branch deliberately copies ONLY assets).
+      // Before this, those scalars were snapshotted ONCE at the FIRST approve and
+      // never refreshed, so a dev who added/edited a description (or the newly
+      // manifest-governed tagline) in a later version kept seeing "Missing
+      // description" forever and the store kept serving the v1 copy.
+      //
+      // WHEN: only on a MODERATOR APPROVE — never on a manifest save. A save
+      // parks a pending review; the mod is the gate, so store-visible copy never
+      // changes without re-review.
+      //
+      // WHAT WE DO NOT TOUCH (curated / mod-owned): assets (icon / cover /
+      // screenshots), `featured` / `featuredOrder`, `contentRating` (mod override,
+      // floored at the derived rating), `status`, `slug`, `externalUrl`.
+      //
+      // `category` comes from `AppBlock.category` — NOT the manifest — because
+      // step (3a) writes the manifest category onto that column ONLY when it is
+      // still null, so a moderator's curated category (via `setMarketplaceMeta`)
+      // survives. Reading the manifest here would silently undo mod curation on
+      // every version bump. When the column is null we still write null (the
+      // "Missing category" advisory stands, and a mod can curate later).
+      //
+      // Scoped `kind: 'onsite'` (belt-and-suspenders: approveRequest only ever
+      // produces hosted blocks) and keyed on `appBlockId`, which is `@unique` and
+      // NULL on shadow revision rows — so a live media revision in flight cannot
+      // be hit by this write.
+      const ab = await dbWrite.appBlock.findUnique({
+        where: { id: appBlockId },
+        select: { blockId: true, manifest: true, category: true },
+      });
+      if (ab) {
+        await dbWrite.appListing.updateMany({
+          where: { appBlockId, kind: 'onsite' },
+          data: buildListingScalarSync({
+            manifest: ab.manifest,
+            blockId: ab.blockId,
+            category: ab.category,
+          }),
+        });
+      }
     }
   } catch (err) {
     // The store listing is a CONVENIENCE — it must NEVER gate the approve/deploy.
@@ -2422,8 +2466,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     if (code !== 'P2002') {
       // eslint-disable-next-line no-console
       console.warn(
-        `[approveRequest] onsite AppListing auto-create failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
-          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run: ${
+        `[approveRequest] onsite AppListing auto-create/copy-sync failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run, ` +
+          `or (for an existing listing) its store copy stays on the previously-approved version until the next approve: ${
             err instanceof Error ? err.message : String(err)
           }`
       );

@@ -14,7 +14,15 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { BlockScopeSelector } from '~/components/Apps/BlockScopeSelector';
 import { buildScopeJustifications } from '~/components/Apps/blockScopeSelection';
-import { ALLOWED_CONTENT_RATINGS } from '~/server/services/block-manifest-validator.service';
+import {
+  ALLOWED_CONTENT_RATINGS,
+  MANIFEST_TAGLINE_MAX_LENGTH,
+} from '~/server/services/block-manifest-validator.service';
+import {
+  MARKETPLACE_CATEGORIES,
+  MARKETPLACE_CATEGORY_LABELS,
+  isMarketplaceCategory,
+} from '~/server/services/blocks/marketplace-categories.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -36,6 +44,8 @@ type StoredManifest = Record<string, unknown> & {
   version?: string;
   name?: string;
   description?: string;
+  tagline?: string;
+  category?: string;
   contentRating?: string;
   scopes?: string[];
   scopeJustifications?: Record<string, string>;
@@ -60,6 +70,15 @@ export function ManifestEditForm({
 
   const [name, setName] = useState<string>(manifest.name ?? '');
   const [description, setDescription] = useState<string>(manifest.description ?? '');
+  // One-line store pitch + marketplace category. Both are MANIFEST-GOVERNED for
+  // an onsite listing (the /apps/[appBlockId]/edit Listing tab is media-only), so
+  // this form is the ONLY place an author sets them. Empty tagline / null
+  // category = "not set" and is sent as an explicit `null` so the server CLEARS
+  // the manifest key (see the nullable patch fields in blocks.router).
+  const [tagline, setTagline] = useState<string>(manifest.tagline ?? '');
+  const [category, setCategory] = useState<string | null>(
+    isMarketplaceCategory(manifest.category) ? manifest.category : null
+  );
   const [contentRating, setContentRating] = useState<string>(manifest.contentRating ?? 'g');
   const [version, setVersion] = useState<string>(bumpPatch(currentVersion));
   // Declared scopes, seeded from the stored manifest. Driven by the
@@ -119,6 +138,10 @@ export function ManifestEditForm({
         version,
         name: name.trim() || undefined,
         description: description.trim() || undefined,
+        // Explicit `null` = clear the manifest key (an `undefined` may be dropped
+        // in transit and the server merge would then retain the stored value).
+        tagline: tagline.trim() || null,
+        category: category ?? null,
         contentRating,
         scopes,
         scopeJustifications: shouldSend ? scopeJustifications : undefined,
@@ -134,7 +157,11 @@ export function ManifestEditForm({
     });
   }
 
-  const canSave = versionValid && versionHigher && !mutation.isPending && name.trim().length > 0;
+  // Advisory client gate only — the server re-validates every field with
+  // BlockManifestValidator (which is what actually enforces the tagline cap).
+  const taglineTooLong = tagline.trim().length > MANIFEST_TAGLINE_MAX_LENGTH;
+  const canSave =
+    versionValid && versionHigher && !mutation.isPending && name.trim().length > 0 && !taglineTooLong;
 
   return (
     <Stack gap="md">
@@ -156,6 +183,16 @@ export function ManifestEditForm({
         error={name.trim().length === 0 ? 'Name is required' : undefined}
       />
 
+      <TextInput
+        label="Tagline"
+        description={`A one-line pitch shown under your app's name in the Apps store. Optional — leave it empty for no tagline. Max ${MANIFEST_TAGLINE_MAX_LENGTH} characters.`}
+        value={tagline}
+        onChange={(e) => setTagline(e.currentTarget.value)}
+        error={
+          taglineTooLong ? `Tagline must be at most ${MANIFEST_TAGLINE_MAX_LENGTH} characters` : undefined
+        }
+      />
+
       <Textarea
         label="Description"
         autosize
@@ -163,6 +200,19 @@ export function ManifestEditForm({
         maxRows={6}
         value={description}
         onChange={(e) => setDescription(e.currentTarget.value)}
+      />
+
+      <Select
+        label="Category"
+        description="Where your app is filed in the Apps store. Optional — a moderator can categorise it for you. A category a moderator has already set is not overwritten."
+        placeholder="No category"
+        clearable
+        data={[...MARKETPLACE_CATEGORIES].map((c) => ({
+          value: c,
+          label: MARKETPLACE_CATEGORY_LABELS[c],
+        }))}
+        value={category}
+        onChange={setCategory}
       />
 
       <Select

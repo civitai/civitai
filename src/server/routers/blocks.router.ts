@@ -5104,6 +5104,19 @@ export const blocksRouter = router({
             renderMode: z.string().min(1).max(16).optional(),
             trustTier: z.string().min(1).max(16).optional(),
             description: z.string().max(5000).optional(),
+            // One-line store pitch + marketplace category. Both are
+            // MANIFEST-GOVERNED for an onsite listing (there is no other author
+            // surface — the /apps/[appBlockId]/edit Listing tab is media-only),
+            // so the editor writes them here and they flow to the store listing
+            // on approve. The BlockManifestValidator re-checks both below
+            // (tagline ≤140 trimmed, category ∈ MARKETPLACE_CATEGORIES); these
+            // bounds are just coarse request-size guards. `.nullable()` so the
+            // client can explicitly CLEAR a previously-set value (an `undefined`
+            // may be dropped in transit, and the server merge is
+            // `{...stored, ...patch}` — so a dropped key would retain the old
+            // value; see the same reasoning for scopeJustifications).
+            tagline: z.string().max(500).nullable().optional(),
+            category: z.string().max(64).nullable().optional(),
             scopes: z.array(z.string().min(1).max(128)).max(64).optional(),
             // Optional per-scope justification map (scope-id → rationale). The
             // BlockManifestValidator re-checks it below (keys must be declared
@@ -5207,6 +5220,16 @@ export const blocksRouter = router({
         blockId: slug,
         iframe: { ...storedIframe, ...(patch.iframe ?? {}) },
       };
+
+      // Explicit CLEAR for the nullable optional fields. The client sends `null`
+      // to REMOVE a previously-set `tagline`/`category`; a plain `undefined` may
+      // be dropped in transit, and the `{...stored, ...patch}` merge above would
+      // then retain the stored value. Both fields are OPTIONAL in the manifest,
+      // and the validator rejects a non-string/blank value, so "cleared" must
+      // mean the KEY IS ABSENT — not `null`.
+      for (const key of ['tagline', 'category'] as const) {
+        if (patch[key] === null) delete merged[key];
+      }
 
       // version must STRICTLY increase so each edit is a new, ordered version
       // (mirrors a ZIP submitVersion). Reject equal/lower to keep the version

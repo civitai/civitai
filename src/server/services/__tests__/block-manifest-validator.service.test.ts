@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BlockManifestValidator } from '../block-manifest-validator.service';
+import {
+  BlockManifestValidator,
+  MANIFEST_TAGLINE_MAX_LENGTH,
+} from '../block-manifest-validator.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 
@@ -666,6 +669,85 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(result.errors.some((e) => e.startsWith('category must be one of'))).toBe(true);
+      }
+    });
+  });
+
+  // The OPTIONAL one-line store `tagline`. Absent is fine (the store shows no
+  // tagline); present must be a string whose TRIMMED length is 1..140. This is
+  // the AUTHORITATIVE gate — the published JSON schema is a shape hint.
+  describe('tagline (optional store one-liner)', () => {
+    it('accepts a manifest with NO tagline (optional, backward-compatible)', () => {
+      // VALID_MANIFEST declares no tagline.
+      expect(BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a normal tagline', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'The fastest way to remix a model' };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a tagline EXACTLY at the cap', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH) };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts an over-cap tagline whose TRIMMED length fits (padding is not counted)', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        tagline: `   ${'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH)}   `,
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('rejects a tagline one char OVER the cap', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH + 1) };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e === `tagline must be ≤${MANIFEST_TAGLINE_MAX_LENGTH} chars`)
+        ).toBe(true);
+      }
+    });
+
+    it.each([
+      [42, 'number'],
+      [null, 'null'],
+      [{ text: 'hi' }, 'object'],
+      [['hi'], 'array'],
+      [true, 'boolean'],
+    ])('rejects a non-string tagline %j (%s)', (tagline) => {
+      const manifest = { ...VALID_MANIFEST, tagline };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e === 'tagline must be a string')).toBe(true);
+      }
+    });
+
+    it.each([
+      ['', 'empty string'],
+      ['   ', 'spaces only'],
+      ['\n\t ', 'whitespace only'],
+    ])('rejects a blank tagline %j (%s) — omit it instead', (tagline) => {
+      const manifest = { ...VALID_MANIFEST, tagline };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')
+        ).toBe(true);
+      }
+    });
+
+    it('does not regress the other manifest rules (a bad blockId still fails alongside a good tagline)', () => {
+      const manifest = { ...VALID_MANIFEST, blockId: 'X', tagline: 'fine' };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.startsWith('blockId must be'))).toBe(true);
+        expect(result.errors.some((e) => e.startsWith('tagline'))).toBe(false);
       }
     });
   });

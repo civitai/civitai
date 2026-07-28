@@ -87,6 +87,16 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-listing-mapper', () => ({
   mapAppBlockToListing: () => ({ id: 'apl_mapped' }),
+  // The approve path also imports the manifest-governed copy re-sync builder
+  // (subsequent-version approve). Stubbed so this suite stays focused on the
+  // notification emission; the re-sync itself has its own suite
+  // (publish-request.listingSync.test.ts).
+  buildListingScalarSync: () => ({
+    name: 'Cool App',
+    description: null,
+    tagline: null,
+    category: null,
+  }),
 }));
 vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',

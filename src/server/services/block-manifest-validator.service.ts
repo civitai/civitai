@@ -34,6 +34,16 @@ interface RawManifest {
    * hasn't already curated one — see `approveRequest`). Absent is fine.
    */
   category?: unknown;
+  /**
+   * OPTIONAL one-line pitch shown under the app's name on its `/apps` store card
+   * + detail page. Manifest-governed (the onsite store listing has NO other
+   * author surface for it — see the "ONSITE = ASSETS-ONLY" invariant in
+   * `offsite-listing.service`), so it flows to the listing on approve and is
+   * re-synced on every subsequent approved version. When present it must be a
+   * string whose TRIMMED length is 1..{@link MANIFEST_TAGLINE_MAX_LENGTH}; absent
+   * is fine (the store simply shows no tagline).
+   */
+  tagline?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -126,6 +136,21 @@ const BLOCK_ID_MAX_LENGTH = 40;
 // CANONICAL version rule: semantic version `x.y.z` with an optional
 // `-prerelease` suffix. Single-sourced with the published schema + the CLI.
 const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+
+/**
+ * CANONICAL `tagline` length cap. Deliberately the SAME bound off-site listings
+ * use (`OFFSITE_TAGLINE_MAX` in `~/server/schema/blocks/offsite-listing.schema`)
+ * so the two store kinds render consistently in the same card/detail slots.
+ *
+ * It is re-declared here rather than imported because this module is
+ * CLIENT-BUNDLE-SAFE (see the `ssrf-hostname` note above — `ManifestEditForm.tsx`
+ * imports it), and `offsite-listing.schema` pulls in zod + the external-app
+ * schema graph. A drift-guard test
+ * (`manifest-tagline.schema-drift.test.ts`) asserts this const, the canonical
+ * published schema's `tagline.maxLength`, and `OFFSITE_TAGLINE_MAX` are all equal,
+ * so the duplication can never silently diverge.
+ */
+export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
 
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
@@ -341,6 +366,25 @@ export class BlockManifestValidator {
     // submission path validates its taxonomy category.
     if (m.category !== undefined && !isMarketplaceCategory(m.category)) {
       errors.push(`category must be one of ${MARKETPLACE_CATEGORIES.join(', ')}`);
+    }
+
+    // Optional `tagline` (the one-line store pitch). Absent is fine. When
+    // present it must be a STRING whose TRIMMED length is 1..140 — trimmed so a
+    // whitespace-only value is rejected here rather than silently landing as a
+    // blank tagline on the store card, and so the cap can't be evaded with
+    // padding. The cap mirrors off-site listings (see
+    // MANIFEST_TAGLINE_MAX_LENGTH) so both store kinds render the same slot.
+    if (m.tagline !== undefined) {
+      if (typeof m.tagline !== 'string') {
+        errors.push('tagline must be a string');
+      } else {
+        const trimmed = m.tagline.trim();
+        if (trimmed.length === 0) {
+          errors.push('tagline must not be blank (omit it instead)');
+        } else if (trimmed.length > MANIFEST_TAGLINE_MAX_LENGTH) {
+          errors.push(`tagline must be ≤${MANIFEST_TAGLINE_MAX_LENGTH} chars`);
+        }
+      }
     }
 
     if (!Array.isArray(m.scopes)) {
