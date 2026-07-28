@@ -239,13 +239,16 @@ export async function setContestScoringConfig({
     // previous run already used.
     const version = Math.max(existing?.version ?? 0, globalConfig?.version ?? 0) + 1;
     const updatedAt = new Date().toISOString();
-    const next: ContestScoringConfig = {
+    // Through the READER's schema, not just the mutation input's. The input covers
+    // the editable fields; this is the row a run will actually parse, so a write that
+    // the reader would reject must fail here rather than at the next run.
+    const next = parseConfig(collectionId, {
       ...config,
       version,
       updatedById: userId,
       updatedByUsername: username ?? null,
       updatedAt,
-    };
+    });
 
     await dbWrite.$transaction([
       dbWrite.keyValue.upsert({
