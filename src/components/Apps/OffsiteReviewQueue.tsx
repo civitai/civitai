@@ -31,7 +31,13 @@ import {
   IconQuestionMark,
   IconX,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
+import {
+  buildListingCardPreview,
+  buildListingDetailPreview,
+} from '~/components/Apps/reviewListingPreview';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import {
   ReasonGatedActionModal,
@@ -248,6 +254,15 @@ export function OffsiteReviewQueue() {
   );
 }
 
+/**
+ * Thin outer shell — owns the Mantine `<Modal>` (kept mounted + `opened`-toggled so
+ * open/close animates) + the static per-request title, and derives the in-flight
+ * close-guard from a `busyRef` the body writes. The interactive body is a SEPARATE
+ * component keyed on `request.id` so it REMOUNTS per request (deterministically
+ * resetting its approve/reject UI state — mirrors `OnsiteReviewModal`). The body is
+ * exported so the combined code+media review surface can re-host it WITHOUT this
+ * `<Modal>` shell.
+ */
 export function OffsiteReviewModal({
   request,
   onClose,
@@ -256,16 +271,81 @@ export function OffsiteReviewModal({
 }: {
   request: OffsitePendingRow | null;
   onClose: () => void;
+  onActioned?: () => void | Promise<void>;
+  readOnly?: boolean;
+}) {
+  const busyRef = useRef(false);
+  const isOnsite = request?.kind === 'onsite';
+  return (
+    <Modal
+      opened={!!request}
+      onClose={() => {
+        if (busyRef.current) return;
+        onClose();
+      }}
+      title={
+        request ? (
+          <Group gap={6}>
+            <Text fw={600}>{request.slug}</Text>
+            <Badge
+              color={isOnsite ? 'teal' : 'grape'}
+              size="sm"
+              variant="light"
+              data-testid="apps-offsite-kind-badge"
+            >
+              {isOnsite ? 'listing media' : 'external'}
+            </Badge>
+          </Group>
+        ) : null
+      }
+      size="lg"
+      centered
+    >
+      {request && (
+        <OffsiteReviewModalBody
+          key={request.id}
+          request={request}
+          onClose={onClose}
+          onActioned={onActioned}
+          readOnly={readOnly}
+          busyRef={busyRef}
+        />
+      )}
+    </Modal>
+  );
+}
+
+/**
+ * Interactive off-site / listing-media review BODY (icon/cover/screenshot assets +
+ * scan status + content review + the listing PREVIEW + approve/reject). Extracted
+ * from the modal shell so BOTH the standalone modal and the combined code+media
+ * review surface render the exact same controls + mutations from one source. Keyed
+ * by its callers on `request.id` so its transient state resets per request.
+ *
+ * `busyRef` (optional) is written each render so a hosting modal shell can refuse an
+ * in-flight close (the pre-split close-guard); the combined surface uses it too.
+ */
+export function OffsiteReviewModalBody({
+  request,
+  onClose,
+  onActioned,
+  readOnly = false,
+  busyRef,
+}: {
+  request: OffsitePendingRow | null;
+  onClose: () => void;
   /** Fired after a successful approve/reject — lets a host (e.g. the mod
    *  management table) invalidate its own query in addition to the review queues. */
   onActioned?: () => void | Promise<void>;
   /** History-tab (Approved/Rejected) posture: HIDE the Approve.../Reject... action
-   *  buttons so the modal is a read-only detail view (an already-decided request
+   *  buttons so the body is a read-only detail view (an already-decided request
    *  errors `NOT_PENDING` server-side — the buttons are misleading). Matches the
    *  on-site history read-only view. Purely presentational: it only conditionally
    *  RENDERS the buttons; the approve/reject handlers are unchanged. Default false so
    *  the Pending tab + the mgmt table's pending Review keep full actions. */
   readOnly?: boolean;
+  /** Modal-shell close-guard ref, written each render with the in-flight state. */
+  busyRef?: { current: boolean };
 }) {
   const utils = trpc.useUtils();
   const features = useFeatureFlags();
@@ -429,30 +509,12 @@ export function OffsiteReviewModal({
   const hasBlockedAsset = !assetsQuery.isLoading && (assetsData?.hasBlockedAsset ?? false);
   const hasPendingScan = !assetsQuery.isLoading && (assetsData?.hasPendingScan ?? false);
 
+  // Publish the in-flight state to a hosting modal shell so its onClose can guard
+  // on it (written during render so it is current by the time a close fires).
+  if (busyRef) busyRef.current = busy;
+
   return (
-    <Modal
-      opened={!!request}
-      onClose={() => {
-        if (busy) return;
-        close();
-      }}
-      title={
-        <Group gap={6}>
-          <Text fw={600}>{request.slug}</Text>
-          <Badge
-            color={isOnsite ? 'teal' : 'grape'}
-            size="sm"
-            variant="light"
-            data-testid="apps-offsite-kind-badge"
-          >
-            {isOnsite ? 'listing media' : 'external'}
-          </Badge>
-        </Group>
-      }
-      size="lg"
-      centered
-    >
-      <Stack gap="md">
+    <Stack gap="md">
         {isOnsite && (
           <Text size="xs" c="dimmed" data-testid="apps-offsite-onsite-note">
             Listing media update — the on-site app’s media (icon / cover / screenshots)
@@ -554,6 +616,8 @@ export function OffsiteReviewModal({
             )}
           </Stack>
         </Card>
+
+        <ListingPreviewSection request={request} />
 
         {isConnect && (
           <ConnectScopesPanel
@@ -801,7 +865,50 @@ export function OffsiteReviewModal({
           </Group>
           ))}
       </Stack>
-    </Modal>
+  );
+}
+
+/**
+ * Store PREVIEW of the pending listing — the grid CARD + the store DETAIL as a
+ * shopper would see them once approved, built from the review row via the pure
+ * `reviewListingPreview` builders. `AppListingDetailBody` runs in read-only
+ * `preview` mode (no comments / reviews / report / primary-action / owner-edit).
+ *
+ * NOTE (front-end-only scope): the uploaded ART (icon / cover / screenshots) is
+ * reviewed via the assets + scan-status panels above. The mod-review data carries
+ * image IDs, not CDN `url` keys, so this preview renders the LAYOUT with the store
+ * components' built-in placeholder art. A pixel-accurate media preview would need
+ * the review query to project image URLs — a server change, deliberately not made
+ * here.
+ */
+function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
+  const card = buildListingCardPreview(request);
+  const detail = buildListingDetailPreview(request);
+  return (
+    <Stack gap="xs" data-testid="apps-listing-preview">
+      <Divider
+        label={
+          <Group gap={6}>
+            <IconInfoCircle size={14} />
+            <Text size="sm" fw={600}>
+              Listing preview
+            </Text>
+          </Group>
+        }
+        labelPosition="left"
+      />
+      <Text size="xs" c="dimmed">
+        Listing preview — how it will appear once approved. Uploaded art is reviewed
+        via the assets + scan status above; this preview uses placeholder art where an
+        image isn’t resolvable on this surface.
+      </Text>
+      <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
+        <AppListingCard card={card} />
+      </div>
+      <Card withBorder p="md" data-testid="apps-listing-preview-detail">
+        <AppListingDetailBody detail={detail} preview />
+      </Card>
+    </Stack>
   );
 }
 

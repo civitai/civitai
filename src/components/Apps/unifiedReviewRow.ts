@@ -18,7 +18,23 @@ import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
  * `OffsiteReviewModal`) — the kinds never cross.
  */
 
-export type UnifiedReviewKind = 'onsite' | 'offsite';
+export type UnifiedReviewKind = 'onsite' | 'offsite' | 'combined';
+
+/**
+ * The two underlying pending requests carried by a COMBINED row — an app that has
+ * BOTH a pending on-site CODE request AND a pending on-site listing-MEDIA revision.
+ * The combined review surface opens both sections from these payloads + ids.
+ */
+export type CombinedReviewPayload = {
+  /** The on-site CODE publish-request id (`onsite:<id>` source). */
+  onsiteRequestId: string;
+  /** The on-site listing-MEDIA revision publish-request id (`onsite-listing:<id>`). */
+  listingRequestId: string;
+  /** The raw code request (opens the code-review section). */
+  onsiteRequest: OnsiteReviewRequest;
+  /** The raw listing-media row (opens the media-review section + preview). */
+  listingRow: OffsitePendingRow;
+};
 
 /** Minimal user chip carried on a unified row (rendered by the list). */
 export type ReviewSubmitterChip = {
@@ -55,6 +71,19 @@ export type UnifiedReviewRow = {
   submittedAt: Date;
   /** Opens the correct review modal for this row's kind. */
   onReview: () => void;
+  /** Backing AppBlock id, when known (on-site CODE rows carry it) — the PRIMARY key
+   *  for pairing a code row with its listing-media row; pairing falls back to `slug`
+   *  when either side lacks it. Undefined for rows with no backing block. */
+  appBlockId?: string | null;
+  /** Raw on-site CODE request payload (set by the on-site adapter) — carried so a
+   *  COMBINED row can open the code-review section from it. */
+  onsiteRequest?: OnsiteReviewRequest;
+  /** Raw listing row payload (set by the listing adapter) — carried so a COMBINED
+   *  row can open the media-review section from it. */
+  offsiteRow?: OffsitePendingRow;
+  /** Present ONLY on a `kind: 'combined'` row: the two underlying request ids +
+   *  payloads (code + listing-media) that the combined surface stacks. */
+  combined?: CombinedReviewPayload;
 };
 
 function toDate(d: string | Date): Date {
@@ -90,6 +119,9 @@ export function onsiteRequestToUnifiedRow(
     submitter: req.submittedBy,
     submittedAt: toDate(reviewedAt ?? req.submittedAt),
     onReview: () => openOnsiteReview(req),
+    // Carried for code+media pairing + the combined surface.
+    appBlockId: req.appBlockId,
+    onsiteRequest: req,
   };
 }
 
@@ -179,7 +211,81 @@ export function offsiteRequestToUnifiedRow(
     submitter: req.submittedBy,
     submittedAt: toDate(reviewedAt ?? req.submittedAt),
     onReview: () => openOffsiteReview(row),
+    // Carried so a COMBINED row can open the media-review section from this payload.
+    // (The listing queue row has no backing appBlockId; pairing falls back to slug.)
+    offsiteRow: row,
   };
+}
+
+/** Do two rows belong to the SAME app? Prefer a backing-block match; fall back to
+ *  slug (a listing-media row carries no appBlockId, so code+media pairs match on
+ *  slug — the same app slug on both sides). */
+function sameApp(a: UnifiedReviewRow, b: UnifiedReviewRow): boolean {
+  if (a.appBlockId && b.appBlockId) return a.appBlockId === b.appBlockId;
+  return !!a.slug && a.slug === b.slug;
+}
+
+/**
+ * Collapse an on-site CODE row + an on-site listing-MEDIA row for the SAME app into
+ * ONE combined row carrying both request ids + payloads. ONLY these two kinds
+ * combine — an external/offsite listing (no separate code request) and an app with
+ * just one of the two are left untouched. Pure: given the deduped rows + a combined
+ * opener, returns a new row list with each matched pair replaced by a combined row
+ * (order of first appearance preserved for the pre-sort list).
+ */
+function combineCodeAndMediaRows(
+  rows: UnifiedReviewRow[],
+  openCombined: (payload: CombinedReviewPayload) => void
+): UnifiedReviewRow[] {
+  const codeRows = rows.filter((r) => r.kind === 'onsite' && r.onsiteRequest);
+  const mediaRows = rows.filter((r) => r.key.startsWith('onsite-listing:') && r.offsiteRow);
+  const consumedMedia = new Set<string>();
+  const combinedByCodeKey = new Map<string, UnifiedReviewRow>();
+
+  for (const code of codeRows) {
+    const media = mediaRows.find((m) => !consumedMedia.has(m.key) && sameApp(code, m));
+    if (!media || !code.onsiteRequest || !media.offsiteRow) continue;
+    consumedMedia.add(media.key);
+    const payload: CombinedReviewPayload = {
+      onsiteRequestId: code.onsiteRequest.id,
+      listingRequestId: media.offsiteRow.id,
+      onsiteRequest: code.onsiteRequest,
+      listingRow: media.offsiteRow,
+    };
+    combinedByCodeKey.set(code.key, {
+      // Deterministic, unique key from BOTH child keys.
+      key: `combined:${code.key}+${media.key}`,
+      kind: 'combined',
+      badge: 'App + media',
+      badgeColor: 'indigo',
+      title: code.title,
+      slug: code.slug,
+      submitter: code.submitter,
+      // Sort by the EARLIER of the two so the pair surfaces by when the app first
+      // needed review (oldest-first pending); tiebreak by key stays stable.
+      submittedAt: new Date(
+        Math.min(code.submittedAt.getTime(), media.submittedAt.getTime())
+      ),
+      appBlockId: code.appBlockId ?? media.appBlockId,
+      onReview: () => openCombined(payload),
+      combined: payload,
+    });
+  }
+
+  if (combinedByCodeKey.size === 0) return rows;
+
+  // Rebuild: replace each matched code row with its combined row (in place, so
+  // ordering is stable) and drop the consumed media rows.
+  const out: UnifiedReviewRow[] = [];
+  for (const r of rows) {
+    if (r.kind === 'onsite' && combinedByCodeKey.has(r.key)) {
+      out.push(combinedByCodeKey.get(r.key)!);
+      continue;
+    }
+    if (r.key.startsWith('onsite-listing:') && consumedMedia.has(r.key)) continue;
+    out.push(r);
+  }
+  return out;
 }
 
 /**
@@ -187,24 +293,31 @@ export function offsiteRequestToUnifiedRow(
  * date-sorted list.
  *   - dedup by `key` (first occurrence wins; on-site keys and off-site keys are
  *     namespaced so cross-kind rows never collide — dedup is a within-kind guard);
+ *   - when `openCombined` is provided (the PENDING queue), collapse an on-site CODE
+ *     row + an on-site listing-MEDIA row for the SAME app into ONE combined row
+ *     carrying both ids/payloads (see `combineCodeAndMediaRows`). History tabs omit
+ *     the opener, so decided rows are never combined;
  *   - sort by `submittedAt` — `asc` = oldest-first (pending FIFO), `desc` =
  *     newest-first (history);
  *   - STABLE, direction-independent tiebreak by `key` so equal timestamps always
  *     order identically (no render churn).
  *
- * Pure — no drops, no side effects. Every input row appears in the output exactly
- * once.
+ * Pure — no side effects. Every input row appears in the output exactly once, EXCEPT
+ * a combined code+media pair, which appears as its single combined row.
  */
 export function mergeReviewRows(
   onsite: UnifiedReviewRow[],
   offsite: UnifiedReviewRow[],
-  direction: 'asc' | 'desc'
+  direction: 'asc' | 'desc',
+  openCombined?: (payload: CombinedReviewPayload) => void
 ): UnifiedReviewRow[] {
   const byKey = new Map<string, UnifiedReviewRow>();
   for (const row of onsite) if (!byKey.has(row.key)) byKey.set(row.key, row);
   for (const row of offsite) if (!byKey.has(row.key)) byKey.set(row.key, row);
 
-  const rows = Array.from(byKey.values());
+  let rows = Array.from(byKey.values());
+  if (openCombined) rows = combineCodeAndMediaRows(rows, openCombined);
+
   rows.sort((a, b) => {
     const ta = a.submittedAt.getTime();
     const tb = b.submittedAt.getTime();
