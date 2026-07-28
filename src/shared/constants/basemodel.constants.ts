@@ -209,6 +209,7 @@ export const ECO = {
 
   // Microsoft
   MAI: 71,
+  MageFlow: 78,
 
   // Ideogram
   Ideogram: 72,
@@ -626,6 +627,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'MAI',
     familyId: 21,
     sortOrder: 160,
+  },
+  {
+    id: ECO.MageFlow,
+    key: 'MageFlow',
+    displayName: 'Mage-Flow',
+    familyId: 21,
+    sortOrder: 161,
   },
 
   // Ideogram Family (familyId: 22)
@@ -1067,6 +1075,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Boogu - LORA training (AI Toolkit only)
   { ecosystemId: ECO.Boogu, supportType: 'training', modelTypes: loraOnly },
+
+  // Mage-Flow - LORA training (AI Toolkit only)
+  { ecosystemId: ECO.MageFlow, supportType: 'training', modelTypes: loraOnly },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -2001,6 +2012,7 @@ export const BM = {
   Tripo: 94,
   Hunyuan3D: 95,
   Reve: 96,
+  MageFlow: 97,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2377,7 +2389,7 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
   {
     id: 21,
     name: 'Microsoft',
-    description: "Microsoft AI's MAI family of image generation and editing models",
+    description: "Microsoft's image generation and editing models",
   },
   {
     id: 22,
@@ -2700,6 +2712,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.MAI,
     licenseId: 36,
+  },
+
+  // Mage-Flow
+  {
+    id: BM.MageFlow,
+    name: 'MageFlow',
+    description: "Microsoft's 4B native-resolution image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MageFlow,
+    licenseId: 19,
   },
 
   // Mochi

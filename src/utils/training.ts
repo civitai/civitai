@@ -24,6 +24,7 @@ export const trainingBaseModelTypesImage = [
   'anima',
   'boogu',
   'krea2',
+  'mageflow',
 ] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2', 'ltx23'] as const;
 export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl'] as const;
@@ -351,6 +352,23 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'krea2' },
   },
   //
+  mageflow: {
+    label: 'Base',
+    pretty: 'Mage-Flow 4B Base',
+    type: 'mageflow',
+    description: "Microsoft's 4B native-resolution image generation and editing model.",
+    // Placeholder AIR — replace with the canonical civitai checkpoint URN once the
+    // Mage-Flow base model is uploaded to the main site
+    // (urn:air:mageflow:checkpoint:civitai:<modelId>@<versionId>). Mage-Flow is an
+    // AI-Toolkit-only ecosystem, so this air is not sent as the orchestrator `model`
+    // (the orchestrator resolves the base model from the ecosystem); it's used for
+    // UI display / getModel.
+    air: 'urn:air:mageflow:repository:huggingface:microsoft/Mage-Flow-Base@main.tar',
+    baseModel: 'MageFlow',
+    isNew: true,
+    aiToolkit: { ecosystem: 'mageflow' },
+  },
+  //
   flux2klein_4b: {
     label: '4B Base',
     pretty: 'Flux.2 Klein 4B Base',
@@ -532,6 +550,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   anima: 'anima',
   boogu: 'boogu',
   krea2: 'krea2',
+  mageflow: 'mageflow',
   acestep15: 'ace_step_15',
   acestep15xl: 'ace_step_15_xl',
 };
@@ -630,6 +649,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'anima',
     'boogu',
     'krea2',
+    'mageflow',
     'acestep15',
     'acestep15xl',
   ];
@@ -649,6 +669,7 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'anima',
     'boogu',
     'krea2',
+    'mageflow',
     'acestep15',
     'acestep15xl',
   ];
@@ -677,6 +698,7 @@ export const getDefaultEngine = (
   if (baseType === 'anima') return 'ai-toolkit'; // Anima requires AI Toolkit
   if (baseType === 'boogu') return 'ai-toolkit'; // Boogu requires AI Toolkit
   if (baseType === 'krea2') return 'ai-toolkit'; // Krea 2 requires AI Toolkit
+  if (baseType === 'mageflow') return 'ai-toolkit'; // Mage-Flow requires AI Toolkit
   if (baseType === 'acestep15' || baseType === 'acestep15xl') return 'ai-toolkit'; // Audio models require AI Toolkit
   if (baseType === 'wan') return 'ai-toolkit'; // Wan defaults to AI Toolkit
   if (baseType === 'hunyuan') return 'musubi';
