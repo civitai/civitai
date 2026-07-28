@@ -357,13 +357,10 @@ export const trainingModelInfo: {
     pretty: 'Mage-Flow 4B Base',
     type: 'mageflow',
     description: "Microsoft's 4B native-resolution image generation and editing model.",
-    // Placeholder AIR — replace with the canonical civitai checkpoint URN once the
-    // Mage-Flow base model is uploaded to the main site
-    // (urn:air:mageflow:checkpoint:civitai:<modelId>@<versionId>). Mage-Flow is an
-    // AI-Toolkit-only ecosystem, so this air is not sent as the orchestrator `model`
-    // (the orchestrator resolves the base model from the ecosystem); it's used for
-    // UI display / getModel.
-    air: 'urn:air:mageflow:repository:huggingface:microsoft/Mage-Flow-Base@main.tar',
+    // Mage-Flow is an AI-Toolkit-only ecosystem, so this AIR is NOT sent as the orchestrator
+    // `model` (the orchestrator resolves the base model from the ecosystem); it's only used for
+    // UI display / getModel. Points at the locked Mage Flow generation checkpoint.
+    air: 'urn:air:mageflow:checkpoint:civitai:2812690@3172038',
     baseModel: 'MageFlow',
     isNew: true,
     aiToolkit: { ecosystem: 'mageflow' },
