@@ -561,7 +561,7 @@ function ManifestField(props: {
                 title: `Pick ${def.label}`,
                 onSelect: (resource) => onChange(resource.id),
                 options: { resources: [{ type: resourceType }] },
-                selectSource: 'modelVersion',
+                selectSource: 'generation',
               })
             }
           >

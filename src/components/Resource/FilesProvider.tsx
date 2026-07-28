@@ -329,6 +329,98 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     }
   };
 
+  // Called once the finished file has been cleared from the upload tracker, so the
+  // toast can't announce a completed upload while the row still renders a progress bar.
+  const showUploadFinishedNotification = (result: {
+    id: number;
+    name: string;
+    modelVersion: { id: number; status: ModelStatus; _count: { posts: number } };
+  }) => {
+    const hasPublishedPosts = result.modelVersion._count.posts > 0;
+    const isVersionPublished = result.modelVersion.status === ModelStatus.Published;
+    const { uploading } = useS3UploadStore
+      .getState()
+      .getStatus((item) => item.meta?.versionId === result.modelVersion.id);
+    const stillUploading = uploading > 0;
+
+    const notificationId = `upload-finished-${result.id}`;
+    showNotification({
+      id: notificationId,
+      autoClose: stillUploading,
+      color: 'green',
+      title: `Finished uploading ${result.name}`,
+      styles: { root: { alignItems: 'flex-start' } },
+      message: !stillUploading ? (
+        <Stack gap={4}>
+          {isVersionPublished ? (
+            <>
+              <Text size="sm" c="dimmed">
+                All files finished uploading.
+              </Text>
+              <Link
+                href={getModelUrl({
+                  modelId: model?.id ?? 0,
+                  modelName: model?.name,
+                  modelVersionId: result.modelVersion.id,
+                })}
+                passHref
+                legacyBehavior
+              >
+                <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
+                  Go to model
+                </Anchor>
+              </Link>
+            </>
+          ) : hasPublishedPosts ? (
+            <>
+              <Text size="sm" c="dimmed">
+                {`Your files have finished uploading, let's publish this version.`}
+              </Text>
+              <Text
+                c="blue.4"
+                size="sm"
+                style={{ cursor: 'pointer' }}
+                onClick={() => {
+                  hideNotification(notificationId);
+
+                  showNotification({
+                    id: 'publishing-version',
+                    message: 'Publishing...',
+                    loading: true,
+                  });
+
+                  if (model?.status !== ModelStatus.Published)
+                    publishModelMutation.mutate({
+                      id: model?.id as number,
+                      versionIds: [result.modelVersion.id],
+                    });
+                  else publishVersionMutation.mutate({ id: result.modelVersion.id });
+                }}
+              >
+                Publish it
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text size="sm" c="dimmed">
+                Your files have finished uploading, but you still need to add a post.
+              </Text>
+              <Link
+                href={`/models/${model?.id}/model-versions/${result.modelVersion.id}/wizard?step=3`}
+                passHref
+                legacyBehavior
+              >
+                <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
+                  Finish setup
+                </Anchor>
+              </Link>
+            </>
+          )}
+        </Stack>
+      ) : undefined,
+    });
+  };
+
   // Passing a uuid validates only that file — editing one file's settings shouldn't
   // fail because another file in the version is still missing metadata.
   const checkValidation = (uuid?: string) => {
@@ -422,90 +514,6 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
   const createFileMutation = trpc.modelFile.create.useMutation({
     async onSuccess(result) {
-      const hasPublishedPosts = result.modelVersion._count.posts > 0;
-      const isVersionPublished = result.modelVersion.status === ModelStatus.Published;
-      const { uploading } = useS3UploadStore
-        .getState()
-        .getStatus((item) => item.meta?.versionId === result.modelVersion.id);
-      const stillUploading = uploading > 0;
-
-      const notificationId = `upload-finished-${result.id}`;
-      showNotification({
-        id: notificationId,
-        autoClose: stillUploading,
-        color: 'green',
-        title: `Finished uploading ${result.name}`,
-        styles: { root: { alignItems: 'flex-start' } },
-        message: !stillUploading ? (
-          <Stack gap={4}>
-            {isVersionPublished ? (
-              <>
-                <Text size="sm" c="dimmed">
-                  All files finished uploading.
-                </Text>
-                <Link
-                  href={getModelUrl({
-                    modelId: model?.id ?? 0,
-                    modelName: model?.name,
-                    modelVersionId: result.modelVersion.id,
-                  })}
-                  passHref
-                  legacyBehavior
-                >
-                  <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
-                    Go to model
-                  </Anchor>
-                </Link>
-              </>
-            ) : hasPublishedPosts ? (
-              <>
-                <Text size="sm" c="dimmed">
-                  {`Your files have finished uploading, let's publish this version.`}
-                </Text>
-                <Text
-                  c="blue.4"
-                  size="sm"
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => {
-                    hideNotification(notificationId);
-
-                    showNotification({
-                      id: 'publishing-version',
-                      message: 'Publishing...',
-                      loading: true,
-                    });
-
-                    if (model?.status !== ModelStatus.Published)
-                      publishModelMutation.mutate({
-                        id: model?.id as number,
-                        versionIds: [result.modelVersion.id],
-                      });
-                    else publishVersionMutation.mutate({ id: result.modelVersion.id });
-                  }}
-                >
-                  Publish it
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text size="sm" c="dimmed">
-                  Your files have finished uploading, but you still need to add a post.
-                </Text>
-                <Link
-                  href={`/models/${model?.id}/model-versions/${result.modelVersion.id}/wizard?step=3`}
-                  passHref
-                  legacyBehavior
-                >
-                  <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
-                    Finish setup
-                  </Anchor>
-                </Link>
-              </>
-            )}
-          </Stack>
-        ) : undefined,
-      });
-
       await queryUtils.modelVersion.getById.invalidate({
         id: result.modelVersion.id,
         withFiles: true,
@@ -688,6 +696,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
             setFiles((state) =>
               state.map((x) => (x.uuid === uuid ? { ...x, id: saved.id, isUploading: false } : x))
             );
+            showUploadFinishedNotification(saved);
           } catch (e: unknown) {
             showErrorNotification({
               title: 'Failed to save file',

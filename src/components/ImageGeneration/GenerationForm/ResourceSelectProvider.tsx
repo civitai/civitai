@@ -51,9 +51,9 @@ export function ResourceSelectProvider({
   const { generation } = useCurrentUserSettings();
   const selectSource = props.selectSource ?? 'generation';
 
-  // For modelVersion linking, always start on the 'all' tab (and don't persist)
-  // since 'recent' depends on recommended models that are often empty for new
-  // uploads.
+  // For modelVersion linking, start on the 'official' tab (and don't persist):
+  // linking a canonical component is the intended path, and the persisted tab
+  // ('recent'/'liked') depends on data that's often empty for new uploads.
   const persistTab = selectSource !== 'modelVersion';
   const [storedTab, setStoredTab] = useStorage<Tabs>({
     type: 'localStorage',
@@ -61,7 +61,9 @@ export function ResourceSelectProvider({
     defaultValue: defaultTab,
     getInitialValueInEffect: false,
   });
-  const [localTab, setLocalTab] = useState<Tabs>(defaultTab);
+  const [localTab, setLocalTab] = useState<Tabs>(
+    selectSource === 'modelVersion' ? 'official' : defaultTab
+  );
   // useStorage's value widens to `Tabs | undefined`; fall back to the default so
   // the context always exposes a concrete tab.
   const tab = (persistTab ? storedTab : localTab) ?? defaultTab;
