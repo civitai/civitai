@@ -225,7 +225,7 @@ type ModelRaw = {
   lastVersionAt: Date;
   publishedAt: Date | null;
   locked: boolean;
-  earlyAccessDeadline: Date | null; // derived post-query from PaidAccess (see getModelEarlyAccessDeadlines)
+  earlyAccessDeadline: Date | null;
   mode: string;
   rank: {
     downloadCount: number;
@@ -270,9 +270,6 @@ type ModelRaw = {
  * Run after changes to verify filters work correctly with baseModel filtering.
  */
 
-// Model-level early-access, derived live from PaidAccess (the single source of truth — there is no
-// denormalized Model.earlyAccessDeadline column). A model is "in early access" iff any of its versions
-// has an active timed gate; its deadline is the latest such endsAt.
 export async function getModelEarlyAccessDeadlines(
   modelIds: number[]
 ): Promise<Map<number, Date>> {
@@ -289,7 +286,6 @@ export async function getModelEarlyAccessDeadlines(
   return new Map(rows.map((r) => [Number(r.modelId), r.deadline]));
 }
 
-// All model ids with at least one active timed gate — for filtering a feed down to early access.
 export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
   const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
     SELECT DISTINCT mv."modelId"
@@ -1010,8 +1006,6 @@ export const getModelsRaw = async ({
         includeCosmetics
           ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
           : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-        // Early-access deadline derived from PaidAccess — one batched lookup instead of a per-row
-        // correlated subquery on this hot query.
         getModelEarlyAccessDeadlines(modelIds),
       ])
     );
@@ -3046,11 +3040,7 @@ export const getSimpleModelWithVersions = async ({
   return model;
 };
 
-// A model's early-access state is derived live from PaidAccess — there is no Model.earlyAccessDeadline
-// column. Callers invoke this after a gate change (upsert / publish / delete / purchase / goal-end) so
-// the Meili document — which stores a sync-time projection of the deadline for search-result cards —
-// gets re-derived, and the feed/card caches refresh.
-export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
+export const queueModelEarlyAccessReindex = async ({ id }: GetByIdInput) => {
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   await dataForModelsCache.refresh(id);
 };

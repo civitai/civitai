@@ -17,7 +17,7 @@ import {
   getPaidAccess,
 } from '~/server/services/paid-access.service';
 import { bustMvCache } from '~/server/services/model-version.service';
-import { updateModelEarlyAccessDeadline } from '~/server/services/model.service';
+import { queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { logToAxiom } from '~/server/logging/client';
 
 // Batch read-side accessor for the public donation goal per entity — mirrors getPaidAccess. The
@@ -374,11 +374,9 @@ const bustPublicDonationGoalsCache = async (entityType: PaidAccessEntityType, en
   if (entityType === 'ModelVersion') await modelVersionPublicDonationGoalsCache.bust(entityId);
 };
 
-// When a ModelVersion's timed gate ends EARLY (its donation goal was met), the app-maintained
-// Model.earlyAccessDeadline and the card/feed caches must be recomputed — otherwise the now-free model
-// lingers in early-access filters + shows a false EA-ending badge until the ORIGINAL deadline. Natural
-// expiry doesn't need this (there the deadline value equals the real expiry and self-filters).
-// Entity-dispatched so the completion flow above stays generic. Fail-open (post-commit; see the guard).
+// A goal-met early end must refresh the model's derived early-access state (feed/card caches + Meili
+// re-index) so the now-free model doesn't linger in early-access filters. Natural expiry is handled by
+// its own job. Fail-open (runs post-commit — see the guard).
 const syncModelAfterEarlyGateEnd = async (entityType: PaidAccessEntityType, entityId: number) => {
   if (entityType !== 'ModelVersion') return;
   const version = await dbRead.modelVersion.findUnique({
@@ -386,7 +384,7 @@ const syncModelAfterEarlyGateEnd = async (entityType: PaidAccessEntityType, enti
     select: { modelId: true },
   });
   if (!version) return;
-  await updateModelEarlyAccessDeadline({ id: version.modelId });
+  await queueModelEarlyAccessReindex({ id: version.modelId });
   await bustMvCache(entityId, version.modelId);
   await dataForModelsCache.refresh(version.modelId);
 };

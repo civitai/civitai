@@ -267,9 +267,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   }
   const membershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
 
-  // Early-access deadline is derived from PaidAccess (no Model column) and projected into the doc at
-  // index time. A model is in early access iff a version holds an active timed gate; the deadline is
-  // the latest such endsAt. Gate changes queue a re-index so this stays fresh.
   const modelIds = models.map((m) => m.id);
   const earlyAccessRows = modelIds.length
     ? await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`

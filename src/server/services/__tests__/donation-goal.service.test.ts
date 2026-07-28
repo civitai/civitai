@@ -51,7 +51,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: mockBustMvCache }));
 vi.mock('~/server/services/model.service', () => ({
-  updateModelEarlyAccessDeadline: mockUpdateEaDeadline,
+  queueModelEarlyAccessReindex: mockUpdateEaDeadline,
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/paid-access.service', () => ({
