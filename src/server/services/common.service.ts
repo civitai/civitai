@@ -126,6 +126,28 @@ export const hasEntityAccess = async ({
     data = await dbRead.$queryRaw<EntityAccessDataType[]>(query);
   }
 
+  const matched = entityIds.map((entityId) => ({
+    entityId,
+    entityType,
+    hasAccess: false,
+    availability: Availability.Private,
+    permissions: -1,
+    ...data.find((x) => x.entityId === entityId),
+  }));
+
+  // The three "grant everyone full access" exits below all return this identical shape.
+  const grantAll = () =>
+    matched.map((d) => ({
+      entityId: d.entityId,
+      entityType,
+      hasAccess: true,
+      availability: d.availability,
+      permissions: EntityAccessPermission.All,
+    }));
+
+  // Moderators bypass gating entirely → skip the PaidAccess fetch below.
+  if (isModerator) return grantAll();
+
   // Gated-ness for model versions comes from PaidAccess, not `availability`, so a version stays
   // behind the permission check once the EarlyAccess enum value is retired (Phase 2). During Phase 1
   // a PaidAccess row exists iff availability='EarlyAccess' & active, so this is behavior-preserving.
@@ -141,42 +163,16 @@ export const hasEntityAccess = async ({
   const isOpenAccess = (entityId: number, availability: Availability) =>
     OPEN_ACCESS_AVAILABILITY.some((a) => a === availability) && !paidGatedIds.has(entityId);
 
-  const matched = entityIds.map((entityId) => ({
-    entityId,
-    entityType,
-    hasAccess: false,
-    availability: Availability.Private,
-    permissions: -1,
-    ...data.find((x) => x.entityId === entityId),
-  }));
-
   // Private, EarlyAccess, and any PaidAccess-gated version require a permission check.
   const privateRecords = matched.filter((d) => !isOpenAccess(d.entityId, d.availability));
 
   // All entities are public. Access granted to everyone.
-  if (privateRecords.length === 0 || isModerator) {
-    return matched.map((d) => ({
-      entityId: d.entityId,
-      entityType,
-      hasAccess: true,
-      availability: d.availability,
-      permissions: EntityAccessPermission.All,
-    }));
-  }
+  if (privateRecords.length === 0) return grantAll();
 
   const ownedRecords = matched.filter((d) => d.userId === userId);
 
   // Owners always have access.
-  if (userId && ownedRecords.length === matched.length) {
-    // Access to all records since all are owned by the user.
-    return matched.map((d) => ({
-      entityId: d.entityId,
-      entityType,
-      hasAccess: true,
-      availability: d.availability,
-      permissions: EntityAccessPermission.All,
-    }));
-  }
+  if (userId && ownedRecords.length === matched.length) return grantAll();
 
   if (!userId) {
     // Unauthenticated user. Only grant access to public items.

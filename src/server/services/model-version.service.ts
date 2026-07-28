@@ -2,6 +2,9 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from '~/types/session';
+import type { UserMeta } from '~/server/schema/user.schema';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { getMaxEarlyAccessDays, getMaxEarlyAccessModels } from '~/server/utils/early-access-helpers';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
@@ -293,6 +296,41 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
   `;
 };
 
+// The user-level early-access caps (max timed-window days + max concurrent timed-EA models), enforced
+// in ONE place for both the tRPC upsert and the REST early-access endpoint. Throws BAD_REQUEST on
+// violation; a no-op for moderators, permanent gates, and non-gated writes (no timeframeDays).
+export async function assertUserEarlyAccessLimits({
+  userId,
+  userMeta,
+  features,
+  isModerator,
+  timeframeDays,
+  versionId,
+}: {
+  userId: number;
+  userMeta?: UserMeta;
+  features?: FeatureAccess;
+  isModerator?: boolean;
+  timeframeDays?: number | null;
+  versionId?: number;
+}) {
+  if (!timeframeDays || isModerator) return;
+
+  if (timeframeDays > getMaxEarlyAccessDays({ userMeta, features })) {
+    throw throwBadRequestError('Early access days exceeds user limit');
+  }
+
+  const active = await getUserEarlyAccessModelVersions({ userId });
+  if (
+    active.length >= getMaxEarlyAccessModels({ userMeta, features }) &&
+    (!versionId || !active.some((v) => v.id === versionId))
+  ) {
+    throw throwBadRequestError(
+      'You have exceeded the maximum number of early access models you can have.'
+    );
+  }
+}
+
 // Licensing lineage roots selectable for a given base model — versions
 // registered in `LicensingRoot` whose fee others inherit (e.g. an ecosystem's
 // Base / Turbo checkpoints). Scoped to the caller's model type so a LoRA isn't
@@ -347,11 +385,18 @@ function assertPaidAccessInput(input: ModelVersionPaidAccessInputSchema | null |
   if (!input) return;
   const gated = !!input.permanent || (input.timeframeDays ?? 0) > 0;
   if (!gated) return;
-  const paidGeneration = !!input.terms.generation && !('free' in input.terms.generation);
+  const generation = input.terms.generation;
+  const paidGeneration = !!generation && !('free' in generation);
   if (!input.terms.download && !paidGeneration) {
     throw throwBadRequestError(
       'You must charge for downloads or generations if you gate this version behind payment.'
     );
+  }
+  // A paid generation-only tier with no `price` falls back to the download price — so with no download
+  // tier either, the effective purchase amount is undefined. Reject it (earlyAccessPurchase would
+  // otherwise charge `undefined` Buzz).
+  if (paidGeneration && (generation as { price?: number }).price == null && !input.terms.download) {
+    throw throwBadRequestError('A generation-only paid tier must set a price.');
   }
 }
 
@@ -1774,7 +1819,10 @@ export const earlyAccessPurchase = async ({
   const generationTier = paidGenerationGrant(terms);
 
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
-  // Only an active goal receives the purchase's donation record.
+  // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the
+  // public getDonationGoals, whose display filters would drop the goal for permanent/opted-out gates) —
+  // safe on this buyer path because we only read `.id`/`.active` internally to attach the donation and
+  // trip completion; the goal is never returned to the purchaser.
   const ownerGoal = (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
   const earlyAccessDonationGoal = ownerGoal?.active ? ownerGoal : null;
 

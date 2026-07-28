@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { type PaidAccessEntityType, isPaidAccessActive, isTimedGateActive } from '@civitai/buzz';
+import { type PaidAccessEntityType, isTimedGateActive } from '@civitai/buzz';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dataForModelsCache, modelVersionPublicDonationGoalsCache } from '~/server/redis/caches';
 import type { DonationGoalWithTotal } from '~/server/redis/donation-goals-cache';
@@ -46,9 +46,8 @@ export async function getDonationGoals(
     const goal = entry.goal;
     // Show only while a live TIMED window is open (permanent/ended/absent gates expose nothing).
     const row = paidAccess[id];
-    const endsAt = row && isPaidAccessActive(row) ? row.endsAt : null;
     result[id] =
-      goal && endsAt && endsAt > now && !hiddenOwnerIds.has(goal.userId) ? goal : null;
+      goal && row && isTimedGateActive(row, now) && !hiddenOwnerIds.has(goal.userId) ? goal : null;
   }
   return result;
 }
@@ -58,6 +57,11 @@ export async function getDonationGoals(
 // and the owner branch of `modelVersionDonationGoal` need (a draft/permanent/opted-out/completed
 // version still has its goal). NOT cached: the public cache holds only `active: true` goals, so it
 // can't serve this. Callers MUST gate on ownership/moderator — never hand this to an anonymous viewer.
+//
+// Missing-key contract differs from `getDonationGoals` on purpose: this seeds `null` for EVERY id
+// (goal-or-null), whereas getDonationGoals OMITS non-existent entities so its 404 path can distinguish
+// "no goal" from "no entity". Owner callers resolve entity existence separately, so absence isn't
+// meaningful here — seeding null keeps the return total for the caller's known id set.
 export async function getOwnerDonationGoals(
   entityType: PaidAccessEntityType,
   ids: number[]
@@ -275,12 +279,23 @@ export const donateToGoal = async ({
       },
     });
 
-    // Returns an updated copy of the goal.
-    const updatedDonationGoal = await checkDonationGoalComplete({
-      entityType: goal.entityType,
-      entityId: goal.entityId,
-    });
-    return updatedDonationGoal;
+    // The donation is COMMITTED. Closing the goal + ending the gate is a best-effort side effect that
+    // must NOT reach the refund path below — a throw there would reverse a real, committed donation and
+    // the donor double-donates on retry. Same guard earlyAccessPurchase puts around this call.
+    try {
+      return await checkDonationGoalComplete({
+        entityType: goal.entityType,
+        entityId: goal.entityId,
+      });
+    } catch (completionError) {
+      logToAxiom({
+        type: 'error',
+        name: 'donation-goal-complete-after-donate',
+        error: completionError,
+        donationGoalId,
+      }).catch(() => undefined);
+      return goal;
+    }
   } catch (e) {
     if (performedTransaction) {
       // Refund using multi-account transaction

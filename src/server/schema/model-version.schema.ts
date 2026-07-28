@@ -368,9 +368,11 @@ const downloadGrantSchema = z.object({ price: z.number().min(100).max(MAX_DONATI
 const generationGrantSchema = z.union([
   z.object({ free: z.literal(true) }),
   // `price` optional → falls back to the download price; `trialLimit` = free test generations.
+  // trialLimit must be an integer: mini/[id].ts CASTs it to int in raw SQL, which hard-errors (500)
+  // on a fractional value rather than rounding.
   z.object({
     price: z.number().min(50).optional(),
-    trialLimit: z.number().min(0).max(1000).optional(),
+    trialLimit: z.number().int().min(0).max(1000).optional(),
   }),
 ]);
 export const modelVersionTermsSchema = z.object({

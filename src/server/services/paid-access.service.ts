@@ -145,6 +145,14 @@ export async function writePaidAccessForModelVersion(
     await dbWrite.paidAccess.deleteMany({
       where: { entityType: 'ModelVersion', entityId: versionId },
     });
+    // Reconcile decoupled availability: a version migrated at cutover keeps availability='EarlyAccess'
+    // even though gating now lives in PaidAccess. Removing the gate must return it to 'Public', or
+    // hasEntityAccess (which treats 'EarlyAccess' as not-open) locks non-buyers out permanently — the
+    // natural-expiry job can't rescue it either (its UPDATE joins the now-deleted PaidAccess row).
+    await dbWrite.$executeRaw`
+      UPDATE "ModelVersion" SET "availability" = 'Public'
+      WHERE id = ${versionId} AND "availability" = 'EarlyAccess'
+    `;
     await bustPaidAccessCache('ModelVersion', [versionId]);
     return;
   }

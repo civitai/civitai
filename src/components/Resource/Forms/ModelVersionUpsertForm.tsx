@@ -99,8 +99,8 @@ const formEarlyAccessConfigSchema = z.object({
   accessPrice: z.number().optional(),
   // Optional cheaper generation-only tier; defaults to the access price when unset.
   generationPrice: z.number().optional(),
-  // Free preview generations before purchase is required (the trial limit).
-  freePreviewGenerations: z.number().default(DEFAULT_GENERATION_TRIAL_LIMIT),
+  // Free preview generations before purchase is required (the trial limit; integer — see trialLimit).
+  freePreviewGenerations: z.number().int().default(DEFAULT_GENERATION_TRIAL_LIMIT),
   donationGoalEnabled: z.boolean().default(false),
   donationGoal: z.number().optional(),
 });
@@ -263,6 +263,8 @@ export function ModelVersionUpsertForm({
   const isEarlyAccessOver =
     version?.status === 'Published' &&
     (!version?.paidAccess?.endsAt || !isFutureDate(version.paidAccess.endsAt));
+  // A donation goal is immutable once it exists (create-once), and locked once the EA window is over.
+  const donationGoalLocked = !!version?.donationGoal || isEarlyAccessOver;
 
   const MAX_EARLY_ACCCESS = 30;
 
@@ -833,9 +835,7 @@ export function ModelVersionUpsertForm({
                               </div>
                               <InputSwitch
                                 name="earlyAccessConfig.donationGoalEnabled"
-                                disabled={
-                                  !!version?.donationGoal || isEarlyAccessOver
-                                }
+                                disabled={donationGoalLocked}
                                 onChange={(e) => {
                                   if (e.target.checked) {
                                     form.setValue('earlyAccessConfig.donationGoal', 50000);
@@ -857,10 +857,7 @@ export function ModelVersionUpsertForm({
                                   max={MAX_DONATION_GOAL}
                                   step={100}
                                   leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                                  disabled={
-                                    !!version?.donationGoal ||
-                                    isEarlyAccessOver
-                                  }
+                                  disabled={donationGoalLocked}
                                 />
                                 <Switch
                                   label="Hide donation goals from public view"

@@ -30,12 +30,12 @@ import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
 import {
   addAdditionalLicensePermissions,
+  assertUserEarlyAccessLimits,
   createModelVersionPostFromTraining,
   deleteVersionById,
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
-  getUserEarlyAccessModelVersions,
   getVersionById,
   getWorkflowIdFromModelVersion,
   modelVersionDonationGoal,
@@ -49,10 +49,6 @@ import {
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import {
-  getMaxEarlyAccessDays,
-  getMaxEarlyAccessModels,
-} from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -390,26 +386,14 @@ export const upsertModelVersionHandler = async ({
       throw throwBadRequestError('Permanent access can only be set from the Creator Studio.');
     }
 
-    const earlyAccessDays = input.paidAccess?.timeframeDays;
-    if (earlyAccessDays) {
-      const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta, features: ctx.features });
-      if (!ctx.user.isModerator && earlyAccessDays > maxDays) {
-        throw throwBadRequestError('Early access days exceeds user limit');
-      }
-
-      // Confirm the user doesn't have any other early access models that are still active.
-      const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: ctx.user.id });
-      if (
-        !ctx.user.isModerator &&
-        activeEarlyAccess.length >=
-          getMaxEarlyAccessModels({ userMeta: ctx.user.meta, features: ctx.features }) &&
-        (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
-      ) {
-        throw throwBadRequestError(
-          'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
-        );
-      }
-    }
+    await assertUserEarlyAccessLimits({
+      userId: ctx.user.id,
+      userMeta: ctx.user.meta,
+      features: ctx.features,
+      isModerator: ctx.user.isModerator,
+      timeframeDays: input.paidAccess?.timeframeDays,
+      versionId: input.id,
+    });
 
     if (input?.usageControl !== ModelUsageControl.Download && !!input.paidAccess?.terms.download) {
       throw throwBadRequestError(

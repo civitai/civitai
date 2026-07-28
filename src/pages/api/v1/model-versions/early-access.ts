@@ -1,13 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { updateModelVersionPaidAccessSchema } from '~/server/schema/model-version.schema';
 import {
-  getUserEarlyAccessModelVersions,
+  assertUserEarlyAccessLimits,
   getVersionById,
   updateModelVersionPaidAccess,
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getMaxEarlyAccessDays, getMaxEarlyAccessModels } from '~/server/utils/early-access-helpers';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { env } from '~/env/server';
 import type { SessionUser } from '~/types/session';
@@ -47,25 +46,17 @@ export default AuthedEndpoint(
         .json({ error: 'Permanent access can only be set from the Creator Studio.' });
     }
 
-    if (paidAccess?.timeframeDays && !user.isModerator) {
-      const features = getFeatureFlags({ user, req });
-      const maxDays = getMaxEarlyAccessDays({ userMeta: user.meta, features });
-      if (paidAccess.timeframeDays > maxDays) {
-        return res.status(400).json({ error: 'Early access days exceeds user limit' });
-      }
-
-      const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: user.id });
-      if (
-        activeEarlyAccess.length >= getMaxEarlyAccessModels({ userMeta: user.meta, features }) &&
-        !activeEarlyAccess.some((v) => v.id === input.id)
-      ) {
-        return res.status(400).json({
-          error: 'You have exceeded the maximum number of early access models you can have.',
-        });
-      }
-    }
-
     try {
+      // Shared user-level EA caps (max days + max concurrent). Throws BAD_REQUEST → mapped to 400 below.
+      await assertUserEarlyAccessLimits({
+        userId: user.id,
+        userMeta: user.meta,
+        features: getFeatureFlags({ user, req }),
+        isModerator: user.isModerator,
+        timeframeDays: paidAccess?.timeframeDays,
+        versionId: input.id,
+      });
+
       const updated = await updateModelVersionPaidAccess(input);
 
       await updateModelEarlyAccessDeadline({ id: updated.modelId }).catch((e) => {

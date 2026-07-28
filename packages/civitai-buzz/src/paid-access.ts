@@ -80,3 +80,26 @@ export const isTimedGateActive = (
   now: Date = new Date()
 ): boolean => row.endsAt != null && row.endsAt > now;
 
+/**
+ * Free trial generations a paid generation-only tier grants before purchase (absent → default,
+ * matching mini/[id].ts's COALESCE so the two endpoints agree; 0 = none).
+ */
+export const generationTrialLimit = (terms: ModelVersionTerms): number => {
+  const grant = paidGenerationGrant(terms);
+  return grant ? grant.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT : 0;
+};
+
+/** Whether a non-buyer may generate at all: free for everyone, or a positive trial limit. */
+export const generationOpenToNonBuyers = (terms: ModelVersionTerms): boolean =>
+  isFreeGeneration(terms) || generationTrialLimit(terms) > 0;
+
+/**
+ * The full generation-access decision for one viewer: an owner/mod always may; otherwise a buyer;
+ * otherwise only if generation is open to non-buyers (free / trial). `hasBought` is the caller's
+ * EntityAccess result — the purchase side that isn't part of the terms.
+ */
+export const grantsGeneration = (
+  terms: ModelVersionTerms,
+  { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
+): boolean => isOwnerOrMod || hasBought || generationOpenToNonBuyers(terms);
+

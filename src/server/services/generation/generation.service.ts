@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import {
   type ModelVersionTerms,
+  grantsGeneration,
   isFreeGeneration,
   isPaidAccessActive,
-  paidGenerationGrant,
 } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
@@ -1192,42 +1192,64 @@ export async function getResourceData(
       .then((data) => data.map((item) => transformGenerationData(item)));
   }
 
-  // Merge paid-access from its OWN cache (busted on change), rather than baking it into the 1h
-  // resourceDataCache where a config change would go unseen until the TTL expires.
-  async function mergePaidAccess(resources: ReturnType<typeof transformGenerationData>[]) {
+  // The ids the viewer has actually PURCHASED generation access to (the EntityAccess side of the
+  // decision, which the pure gate can't know). One batched lookup; empty for anon.
+  async function getPurchasedGenerationIds(ids: number[]): Promise<Set<number>> {
+    if (!user.id || !ids.length) return new Set();
+    const access = await hasEntityAccess({
+      entityType: 'ModelVersion',
+      entityIds: ids,
+      userId: user.id,
+      isModerator: user.isModerator,
+      permissions: EntityAccessPermission.EarlyAccessGeneration,
+    });
+    return new Set(access.filter((e) => e.hasAccess).map((e) => e.entityId));
+  }
+
+  // Resolve generation access for gated resources. Gating lives in PaidAccess now, but a gated
+  // version's `availability` stays 'Public', so resource-data optimistically set hasAccess=true — here
+  // we replace that with the real decision (owner/mod, purchased, or open to non-buyers). Paid-access
+  // terms are merged from their own cache (not the 1h resourceDataCache, which would serve stale terms).
+  async function applyPaidAccessGating(resources: ReturnType<typeof transformGenerationData>[]) {
     const ids = [...new Set(resources.map((r) => r.id))];
     if (!ids.length) return;
     const paidAccess = await getPaidAccess('ModelVersion', ids);
+    const isOwnerOrMod = (ownerId: number) =>
+      (!!user.id && ownerId === user.id) || !!user.isModerator;
+
+    // Collect the active gates + expose their terms on the wire DTO; ungated resources are untouched.
+    const gated = new Map<
+      number,
+      { resource: (typeof resources)[number]; ownerId: number; terms: ModelVersionTerms }
+    >();
     for (const r of resources) {
-      const pa = paidAccess[r.id];
-      r.paidAccess =
-        pa && isPaidAccessActive(pa)
-          ? { endsAt: pa.endsAt, terms: pa.terms as ModelVersionTerms }
-          : null;
+      const row = paidAccess[r.id];
+      if (row && isPaidAccessActive(row)) {
+        const terms = row.terms as ModelVersionTerms;
+        gated.set(r.id, { resource: r, ownerId: row.ownerId, terms });
+        r.paidAccess = { endsAt: row.endsAt, terms };
+      } else {
+        r.paidAccess = null;
+      }
     }
-  }
 
-  async function getEntityAccess(resources: ReturnType<typeof transformGenerationData>[]) {
-    const earlyAccessIds = resources
-      .filter(
-        (x) =>
-          x.covered &&
-          !x.hasAccess &&
-          x.paidAccess?.terms &&
-          // Free generation will technically bypass access checks, but we still want to show the early access badge
-          !isFreeGeneration(x.paidAccess.terms)
-      )
-      .map((x) => x.id);
+    // One purchase lookup, only for gated resources a non-owner must pay for (covered + non-free).
+    const purchased = await getPurchasedGenerationIds(
+      [...gated.values()]
+        .filter(
+          ({ resource, ownerId, terms }) =>
+            resource.covered && !isOwnerOrMod(ownerId) && !isFreeGeneration(terms)
+        )
+        .map(({ resource }) => resource.id)
+    );
 
-    return user.id
-      ? await hasEntityAccess({
-          entityType: 'ModelVersion',
-          entityIds: earlyAccessIds,
-          userId: user.id,
-          isModerator: user.isModerator,
-          permissions: EntityAccessPermission.EarlyAccessGeneration,
-        })
-      : [];
+    for (const { resource, ownerId, terms } of gated.values()) {
+      resource.hasAccess = grantsGeneration(terms, {
+        isOwnerOrMod: isOwnerOrMod(ownerId),
+        hasBought: purchased.has(resource.id),
+      });
+      resource.canGenerate = resource.hasAccess && resource.canGenerate;
+    }
   }
 
   async function getModelFiles(resources: ReturnType<typeof transformGenerationData>[]) {
@@ -1336,25 +1358,11 @@ export async function getResourceData(
       })
       .then(async (resources) => {
         const substitutes = await getResourceDataSubstitutes(resources);
-        await mergePaidAccess([...resources, ...substitutes]);
-        const entityAccess = await getEntityAccess([...resources, ...substitutes]);
+        const allResources = [...resources, ...substitutes];
+        // TODO - surface the number of remaining free trial generations.
+        await applyPaidAccessGating(allResources);
 
-        for (const resource of [...resources, ...substitutes]) {
-          if (!resource.hasAccess) {
-            // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
-            // A gate grants generation to a non-buyer when generation is free for everyone
-            // (`{ free: true }`) OR the paid generation tier offers free trial generations. Free
-            // generation must stay generatable — parity with the old default-trialLimit behavior.
-            const terms = resource.paidAccess?.terms;
-            resource.hasAccess = !!(
-              entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
-              (terms && (isFreeGeneration(terms) || paidGenerationGrant(terms)?.trialLimit))
-            );
-            resource.canGenerate = resource.hasAccess && resource.canGenerate;
-          }
-        }
-
-        const modelFilesCached = await getModelFiles([...resources, ...substitutes]);
+        const modelFilesCached = await getModelFiles(allResources);
 
         return resources.map((resource) => {
           const modelFiles = modelFilesCached[resource.id]?.files ?? [];
