@@ -244,7 +244,7 @@ describe('approveRequest (3b) — FIRST approve creates the listing (path unchan
 describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-governed copy', () => {
   beforeEach(() => {
     // A listing already exists for this app ⇒ the re-sync branch.
-    db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
+    db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'onsite' });
   });
 
   it('updates name/description/tagline/category from the new manifest and never creates', async () => {
@@ -339,5 +339,61 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
 
     expect(scalarSyncCalls()).toHaveLength(0);
     expect(db.write.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES to sync onto an off-site listing — and says so instead of failing silently', async () => {
+    // An off-site listing's name/tagline/description are AUTHOR-supplied through
+    // the submit wizard, NOT manifest-governed, so writing manifest copy onto one
+    // would clobber the author's edits. approveRequest only ever produces hosted
+    // blocks, so this is anomalous — which is exactly why it must be LOUD rather
+    // than a silent zero-row no-op that disables the feature unnoticed.
+    db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'offsite' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    expect(scalarSyncCalls()).toHaveLength(0);
+    expect(db.write.appListing.create).not.toHaveBeenCalled();
+    expect(
+      warn.mock.calls.some(
+        (c) =>
+          typeof c[0] === 'string' &&
+          c[0].includes('skipping listing copy re-sync') &&
+          c[0].includes("kind='offsite'")
+      )
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('WARNS when the re-sync matches zero rows (replica lag) instead of silently skipping', async () => {
+    // The replica said a listing exists but the PRIMARY matched none. Benign and
+    // self-converging, but invisible-by-default would mean the store quietly keeps
+    // serving the previously-approved copy — the exact bug this re-sync fixes.
+    db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    expect(scalarSyncCalls()).toHaveLength(1);
+    expect(
+      warn.mock.calls.some(
+        (c) => typeof c[0] === 'string' && c[0].includes('re-sync matched 0 rows')
+      )
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('does NOT warn when the re-sync matches its row', async () => {
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    expect(
+      warn.mock.calls.some(
+        (c) => typeof c[0] === 'string' && c[0].includes('re-sync matched 0 rows')
+      )
+    ).toBe(false);
+    warn.mockRestore();
   });
 });

@@ -26,7 +26,14 @@ const SCHEMA_PATH = path.join(REPO_ROOT, 'public/schemas/app-block/v1.json');
 describe('app-block v1 schema ⇄ tagline bound drift guard', () => {
   const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')) as {
     required?: unknown;
-    properties?: { tagline?: { type?: unknown; minLength?: unknown; maxLength?: unknown } };
+    properties?: {
+      tagline?: {
+        type?: unknown;
+        minLength?: unknown;
+        maxLength?: unknown;
+        pattern?: unknown;
+      };
+    };
   };
 
   it('declares tagline as an OPTIONAL non-empty string', () => {
@@ -37,6 +44,26 @@ describe('app-block v1 schema ⇄ tagline bound drift guard', () => {
     // Optional: must NOT be listed in the schema's top-level `required`.
     const required = Array.isArray(schema.required) ? (schema.required as string[]) : [];
     expect(required).not.toContain('tagline');
+  });
+
+  it('rejects a whitespace-only tagline the same way the validator does', () => {
+    // The validator rejects a BLANK tagline (it trims first). JSON Schema's
+    // minLength counts characters, so `"   "` would slip through it — the
+    // `\S` pattern is what keeps the schema from being MORE PERMISSIVE than the
+    // server, which is the divergence direction that actually hurts (a dev
+    // green locally, rejected at submit).
+    const pattern = schema.properties?.tagline?.pattern;
+    expect(pattern).toBe('\\S');
+    const re = new RegExp(pattern as string);
+    expect(re.test('   ')).toBe(false);
+    expect(re.test('')).toBe(false);
+    expect(re.test('\n\t ')).toBe(false);
+    expect(re.test('A crisp one-liner')).toBe(true);
+    // Padding around real content still passes the schema — matching the server,
+    // which trims before measuring. (The validator's own blank/over-cap
+    // rejections are covered in block-manifest-validator.service.test.ts; this
+    // guard's job is only that the SCHEMA is never the more permissive of the two.)
+    expect(re.test('  padded  ')).toBe(true);
   });
 
   it('schema maxLength equals the validator cap MANIFEST_TAGLINE_MAX_LENGTH', () => {

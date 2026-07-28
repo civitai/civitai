@@ -38,7 +38,9 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
     },
     appListing: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 'apl_existing' })),
+      findUnique: vi.fn(
+        async (..._a: unknown[]): Promise<unknown> => ({ id: 'apl_existing', kind: 'onsite' })
+      ),
       create: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
@@ -156,7 +158,7 @@ beforeEach(() => {
   db.write.appBlock.findUnique.mockResolvedValue({ id: 'apb_existing' });
   db.write.oauthClient.update.mockResolvedValue({});
   db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
-  db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
+  db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'onsite' });
   s3.send.mockImplementation(async () => ({
     Body: { transformToByteArray: async () => holder.zipBytes },
   }));
