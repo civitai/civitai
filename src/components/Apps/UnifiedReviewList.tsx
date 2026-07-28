@@ -1,7 +1,14 @@
 import { Alert, Badge, Button, Card, Code, Group, Stack, Table, Text } from '@mantine/core';
-import { IconAlertTriangle, IconCheck, IconClock, IconExternalLink } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconClock,
+  IconExternalLink,
+  IconRefresh,
+} from '@tabler/icons-react';
+import { useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
+import { canRetriggerBuild } from '~/components/Apps/deploy-status';
 import {
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
@@ -38,6 +45,8 @@ export function UnifiedReviewList({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  onRetriggerBuild,
+  retriggeringId,
 }: {
   onsiteItems: OnsiteReviewRequest[];
   offsiteItems: OffsiteReviewRequest[];
@@ -64,12 +73,24 @@ export function UnifiedReviewList({
   hasMore: boolean;
   isLoadingMore?: boolean;
   onLoadMore: () => void;
+  /** APPROVED tab only. When provided, rows that carry a deploy projection render a
+   *  Deploy column (including the STRANDED "build never started" state) plus a
+   *  "Retrigger build" control wired to `blocks.retriggerBuild`. Omitted on the
+   *  Pending/Rejected tabs, where neither exists — so those tabs are unchanged. */
+  onRetriggerBuild?: (publishRequestId: string) => void;
+  /** The publish-request id currently being re-triggered — disables + spins ITS
+   *  button only, so a double-click cannot fire the mutation twice client-side. */
+  retriggeringId?: string | null;
 }) {
   const rows = useMemo(() => {
     const onsiteRows = onsiteItems.map((r) => onsiteRequestToUnifiedRow(r, openOnsiteReview));
     const offsiteRows = offsiteItems.map((r) => offsiteRequestToUnifiedRow(r, openOffsiteReview));
     return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview);
   }, [onsiteItems, offsiteItems, direction, openOnsiteReview, openOffsiteReview, openCombinedReview]);
+
+  // The Deploy column exists only where a retrigger handler was supplied (the
+  // Approved tab). Pending/Rejected render exactly as before.
+  const showDeploy = !!onRetriggerBuild;
 
   return (
     <Stack gap="md">
@@ -103,12 +124,20 @@ export function UnifiedReviewList({
                 <Table.Th>App</Table.Th>
                 <Table.Th>Submitter</Table.Th>
                 <Table.Th>{dateLabel}</Table.Th>
+                {showDeploy && <Table.Th>Deploy</Table.Th>}
                 <Table.Th />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {rows.map((row) => (
-                <UnifiedReviewRowView key={row.key} row={row} actionLabel={actionLabel} />
+                <UnifiedReviewRowView
+                  key={row.key}
+                  row={row}
+                  actionLabel={actionLabel}
+                  showDeploy={showDeploy}
+                  onRetriggerBuild={onRetriggerBuild}
+                  retriggeringId={retriggeringId ?? null}
+                />
               ))}
             </Table.Tbody>
           </Table>
@@ -132,8 +161,114 @@ export function UnifiedReviewList({
   );
 }
 
-function UnifiedReviewRowView({ row, actionLabel }: { row: UnifiedReviewRow; actionLabel: string }) {
+/**
+ * Deploy-state chip for an on-site APPROVED row. The point of this column is the
+ * `null` case: an approval whose build never started looked, until now, exactly
+ * like a healthy one in the mod queue.
+ */
+function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: string }) {
+  const testId = `apps-unified-review-deploy-${rowKey}`;
+  if (state === null || state === undefined) {
+    return (
+      <Badge
+        size="sm"
+        color="orange"
+        variant="light"
+        leftSection={<IconAlertTriangle size={11} />}
+        title="No build was ever recorded for this approval — the build most likely never started."
+        data-testid={testId}
+      >
+        never built
+      </Badge>
+    );
+  }
+  const color =
+    state === 'live'
+      ? 'green'
+      : state === 'failed'
+      ? 'red'
+      : state.startsWith('preview-')
+      ? 'grape'
+      : 'blue';
+  return (
+    <Badge size="sm" color={color} variant="light" data-testid={testId}>
+      {state}
+    </Badge>
+  );
+}
+
+/**
+ * "Retrigger build" — re-fires the Tekton build for an already-approved request
+ * using its STORED commit sha (the mutation takes only the request id).
+ *
+ * Two independent double-fire guards, because a duplicated PipelineRun is the
+ * failure mode here:
+ *   1. `armed` — the first click asks for confirmation, the second fires. A stray
+ *      double-click therefore arms-then-fires ONCE rather than firing twice.
+ *   2. `busy` — while the mutation for THIS row is in flight the button is both
+ *      `disabled` and `loading`.
+ * The server holds the authoritative guard anyway (a per-request redis NX lock).
+ */
+function RetriggerBuildButton({
+  publishRequestId,
+  disabled,
+  busy,
+  onRetrigger,
+  rowKey,
+}: {
+  publishRequestId: string;
+  disabled: boolean;
+  busy: boolean;
+  onRetrigger: (publishRequestId: string) => void;
+  rowKey: string;
+}) {
+  const [armed, setArmed] = useState(false);
+  return (
+    <Button
+      size="compact-xs"
+      variant={armed ? 'filled' : 'default'}
+      color={armed ? 'orange' : undefined}
+      leftSection={<IconRefresh size={12} />}
+      disabled={disabled || busy}
+      loading={busy}
+      title={
+        disabled
+          ? 'This version is deployed (or a build is still running) — nothing to re-trigger.'
+          : 'Re-run the build for the commit that was already approved.'
+      }
+      data-testid={`apps-unified-review-retrigger-${rowKey}`}
+      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+        // The row's other cells open the review modal on click; this control must
+        // not also do that.
+        e.stopPropagation();
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        onRetrigger(publishRequestId);
+      }}
+    >
+      {armed ? 'Confirm rebuild' : 'Retrigger build'}
+    </Button>
+  );
+}
+
+function UnifiedReviewRowView({
+  row,
+  actionLabel,
+  showDeploy,
+  onRetriggerBuild,
+  retriggeringId,
+}: {
+  row: UnifiedReviewRow;
+  actionLabel: string;
+  showDeploy: boolean;
+  onRetriggerBuild?: (publishRequestId: string) => void;
+  retriggeringId: string | null;
+}) {
   const submitter = row.submitter;
+  const deploy = row.deploy;
   return (
     <Table.Tr style={{ cursor: 'pointer' }} data-testid={`apps-unified-review-row-${row.key}`}>
       <Table.Td onClick={row.onReview}>
@@ -167,6 +302,28 @@ function UnifiedReviewRowView({ row, actionLabel }: { row: UnifiedReviewRow; act
           <Text size="xs">{row.submittedAt.toLocaleString()}</Text>
         </Group>
       </Table.Td>
+      {showDeploy && (
+        <Table.Td>
+          {deploy ? (
+            <Stack gap={4} align="flex-start">
+              <DeployStateChip state={deploy.state} rowKey={row.key} />
+              {onRetriggerBuild && (
+                <RetriggerBuildButton
+                  publishRequestId={deploy.publishRequestId}
+                  rowKey={row.key}
+                  disabled={!canRetriggerBuild(deploy)}
+                  busy={retriggeringId === deploy.publishRequestId}
+                  onRetrigger={onRetriggerBuild}
+                />
+              )}
+            </Stack>
+          ) : (
+            <Text size="xs" c="dimmed">
+              —
+            </Text>
+          )}
+        </Table.Td>
+      )}
       <Table.Td>
         <Button
           size="xs"

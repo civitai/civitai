@@ -463,3 +463,171 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(mockTriggerApply).not.toHaveBeenCalled();
   });
 });
+
+// ---- OPTIONAL `failureReason` excerpt ---------------------------------------
+//
+// The pipeline may append ONE optional trailing string field, `failureReason`, to
+// a NON-SUCCESS callback. These tests pin BOTH deploy orderings of that
+// independently-shipped contract:
+//
+//   new pipeline + OLD web  — the field is unknown; the handler has no strict
+//     schema (it JSON.parses and validates named fields only) and the HMAC is
+//     computed over the RAW BYTES before parsing, so an added field can neither
+//     break the signature nor the parse. Proven by the "old-web" simulation below,
+//     which verifies a body CONTAINING failureReason against `verifySignature`.
+//
+//   OLD pipeline + new web  — the field is absent; `deploy_detail` must be
+//     BYTE-IDENTICAL to what shipped before. Pinned as an exact-string assertion.
+
+describe('build-callback handler — failureReason excerpt (A1/A2)', () => {
+  const failBody = (over: Record<string, unknown> = {}) => ({
+    ...validSuccessBody(),
+    status: 'Failed',
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFlag.enabled = true;
+    mockRedis.nxResult = true;
+    mockRedis.nxThrows = false;
+  });
+  afterEach(async () => {
+    await flush();
+  });
+
+  it('ABSENT failureReason → the EXACT pre-feature deploy_detail (dark-safe)', async () => {
+    const res = makeRes();
+    await invoke(signedReq(failBody()), res);
+    expect(res._status).toBe(200);
+    // Byte-identical to the previous `Build ${status.slice(0,60)}` expression.
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build Failed');
+  });
+
+  it('PRESENT failureReason → the Build prefix, a blank line, then the excerpt', async () => {
+    const res = makeRes();
+    await invoke(
+      signedReq(failBody({ failureReason: 'ERROR: no package-lock.json is committed' })),
+      res
+    );
+    expect(res._status).toBe(200);
+    expect(mockMarkDeploy).toHaveBeenCalledWith(
+      SLUG,
+      SHA,
+      'failed',
+      'Build Failed\n\nERROR: no package-lock.json is committed'
+    );
+  });
+
+  it('NON-STRING failureReason is ignored (same detail as absent)', async () => {
+    for (const bogus of [42, true, { message: 'x' }, ['x'], null]) {
+      vi.clearAllMocks();
+      const res = makeRes();
+      await invoke(signedReq(failBody({ failureReason: bogus })), res);
+      expect(res._status).toBe(200);
+      expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build Failed');
+    }
+  });
+
+  it('re-sanitizes server-side — escapes/control chars never reach the DB', async () => {
+    const ESC = String.fromCharCode(0x1b);
+    const NUL = String.fromCharCode(0x00);
+    const res = makeRes();
+    await invoke(
+      signedReq(failBody({ failureReason: `${ESC}[1;31mERROR${ESC}[0m${NUL}: bad lockfile\r\nline2` })),
+      res
+    );
+    const detail = mockMarkDeploy.mock.calls.at(-1)?.[3] as string;
+    expect(detail).toBe('Build Failed\n\nERROR: bad lockfile\nline2');
+    expect(detail).not.toContain(ESC);
+    expect(detail).not.toContain(NUL);
+    expect(detail).not.toContain('\r');
+  });
+
+  it('OVERSIZED failureReason is truncated with an explicit marker', async () => {
+    const res = makeRes();
+    await invoke(signedReq(failBody({ failureReason: 'z'.repeat(7000) })), res);
+    const detail = mockMarkDeploy.mock.calls.at(-1)?.[3] as string;
+    expect(detail.length).toBeLessThan(4000);
+    expect(detail.endsWith('... [truncated]')).toBe(true);
+  });
+
+  it('a SUCCESS callback ignores failureReason entirely (apply path unchanged)', async () => {
+    const res = makeRes();
+    await invoke(signedReq({ ...validSuccessBody(), failureReason: 'should be ignored' }), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ ok: true, applied: true });
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+    // No 'failed' transition, and no excerpt anywhere in the states written.
+    for (const call of mockMarkDeploy.mock.calls) expect(call[2]).not.toBe('failed');
+  });
+
+  it('the RESPONSE body is unchanged by the new field (Tekton contract intact)', async () => {
+    const res = makeRes();
+    await invoke(signedReq(failBody({ failureReason: 'boom' })), res);
+    expect(res._body).toEqual({ ok: true, applied: false, reason: 'build failed' });
+  });
+
+  // ---- HMAC is unaffected by the added field --------------------------------
+
+  it('a body CONTAINING failureReason verifies — the signature is over raw bytes', () => {
+    const raw = Buffer.from(JSON.stringify(failBody({ failureReason: 'why it broke' })), 'utf8');
+    const sig = createHmac('sha256', SECRET).update(raw).digest('hex');
+    expect(verifySignature(raw, sig)).toBe(true);
+    expect(verifySignature(raw, `sha256=${sig}`)).toBe(true);
+  });
+
+  it('flipping ONE byte of a failureReason body breaks the signature', () => {
+    const raw = Buffer.from(JSON.stringify(failBody({ failureReason: 'why it broke' })), 'utf8');
+    const sig = createHmac('sha256', SECRET).update(raw).digest('hex');
+    const tampered = Buffer.from(raw);
+    tampered[tampered.length - 5] ^= 0x01;
+    expect(verifySignature(tampered, sig)).toBe(false);
+  });
+
+  it('OLD-WEB SIMULATION: an old handler ignores the unknown field and still verifies', () => {
+    // The pre-feature handler had NO `failureReason` in its CallbackBody type and no
+    // strict schema — it JSON.parsed and read named fields only. Reproduce that:
+    // signature over the raw bytes passes, and the parsed object still exposes every
+    // field the old handler cared about, so `new pipeline + old web` is a no-op.
+    const body = failBody({ failureReason: 'unknown to the old handler' });
+    const raw = Buffer.from(JSON.stringify(body), 'utf8');
+    expect(verifySignature(raw, createHmac('sha256', SECRET).update(raw).digest('hex'))).toBe(true);
+    const parsed = JSON.parse(raw.toString('utf8')) as Record<string, unknown>;
+    expect(parsed.slug).toBe(SLUG);
+    expect(parsed.sha).toBe(SHA);
+    expect(parsed.appBlockId).toBe(APB);
+    expect(parsed.status).toBe('Failed');
+  });
+
+  it('a REALISTIC 2000-char excerpt stays well inside MAX_BODY_BYTES', () => {
+    // Contract: excerpt <= 2000 chars; base body ~250 B; MAX_BODY_BYTES = 8 KiB.
+    // A real build-log excerpt is printable text plus newlines/quotes, each of
+    // which costs 1-2 bytes once JSON-escaped.
+    const printable = ('ERROR: cannot find module "foo"\n' as string).repeat(65).slice(0, 2000);
+    const body = JSON.stringify(failBody({ failureReason: printable }));
+    expect(Buffer.byteLength(body, 'utf8')).toBeLessThan(8 * 1024);
+  });
+
+  it('DOCUMENTED CEILING: an all-control-character excerpt WOULD exceed 8 KiB', () => {
+    //  JSON-escapes to six bytes, so a pathological 2000-char excerpt of
+    // pure control characters serializes to ~12 KB and `readRawBody` would 413 it
+    // BEFORE the handler ever parses.
+    //
+    // Not a security issue and not a regression — the pre-existing 8 KiB ceiling
+    // still holds and rejects it. The consequence is a DEGRADATION: that callback
+    // is dropped, so the request keeps its previous state (it looks stalled)
+    // instead of flipping to 'failed'. The emitting pipeline is contractually
+    // required to send a SANITIZED excerpt, which by construction contains no
+    // control characters, so this is unreachable in practice. Pinned so the
+    // arithmetic is on the record rather than assumed.
+    const pathological = JSON.stringify(
+      failBody({ failureReason: String.fromCharCode(0x01).repeat(2000) })
+    );
+    expect(Buffer.byteLength(pathological, 'utf8')).toBeGreaterThan(8 * 1024);
+    // The safe budget for a control-character-free excerpt: even fully quote/
+    // newline-escaped at 2 bytes each, 2000 chars fits.
+    const escapeHeavy = JSON.stringify(failBody({ failureReason: '"\n'.repeat(1000) }));
+    expect(Buffer.byteLength(escapeHeavy, 'utf8')).toBeLessThan(8 * 1024);
+  });
+});
