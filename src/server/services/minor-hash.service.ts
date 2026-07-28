@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { setModelMinor } from '~/server/services/model.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export type MinorHashMatch = { modelId: number; userId: number };
@@ -171,4 +172,82 @@ export async function sweepMinorHashMatches({
   await limitConcurrency(tasks, 5);
 
   return report;
+}
+
+export type MinorHashReviewRow = {
+  modelId: number;
+  modelName: string;
+  userId: number;
+  username: string | null;
+  status: string;
+  hash: string;
+  minorModelId: number;
+  minorUserId: number;
+};
+
+export async function getMinorHashMatchesForReview({
+  page,
+  limit,
+}: {
+  page: number;
+  limit: number;
+}) {
+  const offset = (page - 1) * limit;
+
+  const items = await dbRead.$queryRaw<MinorHashReviewRow[]>`
+    WITH ${minorSrcCte},
+    candidates AS (
+      SELECT DISTINCT m.id AS "modelId", m.name AS "modelName", m."userId",
+             m.status::text AS status, mfh.hash
+      FROM "ModelFileHash" mfh
+      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = 'Model'
+      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE mfh.type = 'SHA256'
+        AND mfh.hash IN (SELECT hash FROM minor_src)
+        AND NOT m.minor
+        AND m.status <> 'Deleted'
+        AND NOT (m.meta ? 'minorHashDismissed')
+    )
+    SELECT
+      c."modelId", c."modelName", c."userId", u.username, c.status, c.hash,
+      s."minorModelId", s."userId" AS "minorUserId"
+    FROM candidates c
+    JOIN LATERAL (
+      SELECT s."minorModelId", s."userId"
+      FROM minor_src s
+      WHERE s.hash = c.hash AND s."userId" <> c."userId"
+      ORDER BY s."minorModelId"
+      LIMIT 1
+    ) s ON TRUE
+    LEFT JOIN "User" u ON u.id = c."userId"
+    WHERE NOT EXISTS (
+      SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" = c."userId"
+    )
+    ORDER BY c."modelId"
+    LIMIT ${limit} OFFSET ${offset}
+  `;
+
+  return { items };
+}
+
+export async function dismissMinorHashMatch({
+  modelId,
+  userId,
+}: {
+  modelId: number;
+  userId: number;
+}) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET meta = COALESCE(meta, '{}'::jsonb)
+      || jsonb_build_object('minorHashDismissed', jsonb_build_object('at', now(), 'by', ${userId}))
+    WHERE id = ${modelId}
+  `;
+
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: modelId,
+    activity: 'dismissMinorHashMatch',
+  });
 }

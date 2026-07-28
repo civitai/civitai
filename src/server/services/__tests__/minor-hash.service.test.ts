@@ -21,6 +21,8 @@ import {
   applyMinorHashMatch,
   checkMinorHashOnScan,
   sweepMinorHashMatches,
+  getMinorHashMatchesForReview,
+  dismissMinorHashMatch,
 } from '~/server/services/minor-hash.service';
 
 beforeEach(() => {
@@ -241,5 +243,32 @@ describe('sweepMinorHashMatches', () => {
     expect(text).toContain(`m.status <> 'Deleted'`);
     expect(text).toContain('LIMIT');
     expect(values).toContain(250);
+  });
+});
+
+describe('getMinorHashMatchesForReview', () => {
+  it('excludes dismissed models and paginates', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getMinorHashMatchesForReview({ page: 3, limit: 25 });
+
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain(`NOT (m.meta ? 'minorHashDismissed')`);
+    expect(values).toContain(25); // limit
+    expect(values).toContain(50); // offset = (page - 1) * limit
+  });
+});
+
+describe('dismissMinorHashMatch', () => {
+  it('merges the dismissal into Model.meta and records the activity', async () => {
+    await dismissMinorHashMatch({ modelId: 100, userId: 7 });
+
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockTrackModActivity).toHaveBeenCalledWith(7, {
+      entityType: 'model',
+      entityId: 100,
+      activity: 'dismissMinorHashMatch',
+    });
   });
 });
