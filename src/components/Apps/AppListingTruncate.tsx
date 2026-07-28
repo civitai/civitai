@@ -52,9 +52,10 @@ export function useIsOverflowing<T extends HTMLElement = HTMLElement>() {
 export function TruncatedText({
   children,
   tooltipLabel,
+  style,
   ...textProps
 }: { children: string; tooltipLabel?: string } & TextProps) {
-  const { ref, overflowing } = useIsOverflowing<HTMLParagraphElement>();
+  const { ref, overflowing } = useIsOverflowing<HTMLSpanElement>();
   return (
     <Tooltip
       label={tooltipLabel ?? children}
@@ -64,7 +65,27 @@ export function TruncatedText({
       maw={320}
       withArrow
     >
-      <Text ref={ref} span {...textProps}>
+      {/* `component="span"` (inline-VALID inside the chip's <a>) + an explicit
+          `inline-block` so the element HAS a client box. Mantine's `span` boolean
+          prop forces `display: inline`, whose clientWidth/scrollWidth are always 0
+          — the overflow measurement then never trips and the Tooltip is dead (and
+          the passed `lineClamp` never clips either). Clipping on a single line
+          below makes `scrollWidth > clientWidth` a true overflow signal; the inline
+          `display` overrides any `-webkit-box` a forwarded `lineClamp` would set. */}
+      <Text
+        ref={ref}
+        component="span"
+        {...textProps}
+        style={{
+          ...style,
+          display: 'inline-block',
+          maxWidth: '100%',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          verticalAlign: 'bottom',
+        }}
+      >
         {children}
       </Text>
     </Tooltip>
