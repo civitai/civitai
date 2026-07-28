@@ -310,7 +310,9 @@ export const getHomeBlockData = async ({
 
       return {
         ...homeBlock,
-        metadata,
+        // Client slices by metadata.cosmeticShopSection.maxItems, so hand back the section we
+        // actually resolved rather than the clone's snapshot of a different section.
+        metadata: { ...metadata, cosmeticShopSection: cosmeticShopSectionMeta },
         cosmeticShopSection,
       };
     }

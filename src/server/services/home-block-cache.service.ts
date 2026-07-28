@@ -63,6 +63,9 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
   const parsedHomeBlock = {
     ...(homeBlockWithData || {}),
     ...homeBlock,
+    // ...but metadata may have been resolved through to the source block, so it can't come from
+    // the clone's snapshot.
+    metadata: homeBlockWithData?.metadata ?? homeBlock.metadata,
   };
 
   if (homeBlockWithData) {
