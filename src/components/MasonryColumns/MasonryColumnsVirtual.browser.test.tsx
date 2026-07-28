@@ -4,6 +4,9 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as AdsProvider from '~/components/Ads/AdsProvider';
+import type * as AdsUtils from '~/components/Ads/ads.utils';
+import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 // Model-page gallery blanking (CU 868kgxjv7).
 //
@@ -19,15 +22,15 @@ import { renderWithProviders } from '../../../test/component-setup';
 // Ads/browsing-level are ambient app context this component reads but the bug
 // doesn't involve; stub the hooks and keep each module's other exports intact.
 vi.mock('~/components/Ads/AdsProvider', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/components/Ads/AdsProvider')>()),
+  ...(await importOriginal<typeof AdsProvider>()),
   useAdsContext: () => ({ adsEnabled: false, useDirectAds: false }),
 }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/components/BrowsingLevel/BrowsingLevelProvider')>()),
+  ...(await importOriginal<typeof BrowsingLevelProvider>()),
   useBrowsingLevelDebounced: () => 1,
 }));
 vi.mock('~/components/Ads/ads.utils', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/components/Ads/ads.utils')>()),
+  ...(await importOriginal<typeof AdsUtils>()),
   useCreateAdFeed: () => (args: { data: unknown[] }) =>
     args.data.map((item) => ({ type: 'data' as const, data: item })),
 }));
