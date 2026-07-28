@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { setModelMinor } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -67,6 +69,49 @@ const SYSTEM_USER_ID = constants.system.user.id;
 
 export type MinorHashOutcome = 'flagged' | 'queued' | 'skipped';
 
+// `setModelMinor` overwrites nsfw/sfwOnly/gallerySettings.level and propagates
+// `minor` to every image without recording what was there before, which makes the
+// auto-flag paths (unlike a moderator's deliberate click) effectively irreversible.
+// Captured atomically in one statement — the WHERE guard makes it idempotent (a
+// re-flag can never clobber the original pre-state) without a separate read.
+// Best-effort: losing pre-state must block the ability to roll back later, not the
+// auto-flag itself, so failures are logged rather than thrown.
+export async function captureMinorHashAutoFlagState(modelId: number): Promise<void> {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+        'minorHashAutoFlag', jsonb_build_object(
+          'at', now(),
+          'prevNsfw', m.nsfw,
+          'prevSfwOnly', m."sfwOnly",
+          'prevGalleryLevel', (m."gallerySettings"->>'level')::int,
+          'prevLockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[])),
+          'prevMinorImageIds', COALESCE((
+            SELECT jsonb_agg(i.id)
+            FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            JOIN "Image" i ON i."postId" = p.id
+            WHERE mv."modelId" = m.id AND i.minor
+          ), '[]'::jsonb)
+        )
+      )
+      WHERE m.id = ${modelId}
+        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? 'minorHashAutoFlag')
+    `;
+  } catch (error) {
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'minor-hash-capture',
+        message: error instanceof Error ? error.message : String(error),
+        modelId,
+      },
+      'webhooks'
+    ).catch(() => null);
+  }
+}
+
 export async function applyMinorHashMatch({
   modelId,
   userId,
@@ -82,6 +127,7 @@ export async function applyMinorHashMatch({
   if (!others.length) return 'skipped';
   if (!others.some((match) => match.userId === userId)) return 'queued';
 
+  await captureMinorHashAutoFlagState(modelId);
   await setModelMinor({
     id: modelId,
     minor: true,
@@ -136,6 +182,12 @@ export async function checkMinorHashOnScan({
   }
 }
 
+// Each task awaits ~6-8 sequential round trips, so throughput is bounded by DB
+// latency; capping simultaneous models is the only lever needed. `limit` is the
+// per-call batch size, and both actions are resumable, so a large backfill is
+// drained by repeated small calls rather than one long-running request.
+export const DEFAULT_SWEEP_CONCURRENCY = 5;
+
 export type SweepCandidate = { modelId: number; userId: number; sameUploader: boolean };
 
 export type SweepReport = {
@@ -150,9 +202,11 @@ export type SweepReport = {
 export async function sweepMinorHashMatches({
   dryRun,
   limit,
+  concurrency = DEFAULT_SWEEP_CONCURRENCY,
 }: {
   dryRun: boolean;
   limit: number;
+  concurrency?: number;
 }): Promise<SweepReport> {
   // `limit` caps writes, so the returned slice is same-uploader rows only. The
   // report's totals therefore come from a separate uncapped count — otherwise a
@@ -188,6 +242,7 @@ export async function sweepMinorHashMatches({
 
   const tasks = rows.map((row) => async () => {
     try {
+      await captureMinorHashAutoFlagState(row.modelId);
       await setModelMinor({
         id: row.modelId,
         minor: true,
@@ -209,7 +264,7 @@ export async function sweepMinorHashMatches({
     }
   });
 
-  await limitConcurrency(tasks, 5);
+  await limitConcurrency(tasks, concurrency);
 
   // Logged here rather than by the caller so an HTTP timeout on a long backfill
   // cannot lose the record of writes that already committed.
@@ -307,4 +362,164 @@ export async function dismissMinorHashMatch({
     entityId: modelId,
     activity: 'dismissMinorHashMatch',
   });
+}
+
+type RollbackCandidateRow = {
+  modelId: number;
+  prevNsfw: boolean;
+  prevSfwOnly: boolean;
+  prevGalleryLevel: number | null;
+  prevLockedProperties: string[];
+  prevMinorImageIds: number[];
+  // A moderator has since reviewed and affirmed the flag by hand (a later
+  // `ModActivity` row with activity = 'setMinor') — their decision must stand.
+  humanConfirmed: boolean;
+};
+
+export type RollbackOutcome = 'rolledBack' | 'skipped' | 'failed';
+export type RollbackSample = { modelId: number; outcome: RollbackOutcome };
+
+export type RollbackReport = {
+  candidates: number;
+  rolledBack: number;
+  skipped: number;
+  failed: number;
+  sample: RollbackSample[];
+};
+
+export async function rollbackMinorHashAutoFlags({
+  dryRun,
+  limit,
+  concurrency = DEFAULT_SWEEP_CONCURRENCY,
+}: {
+  dryRun: boolean;
+  limit: number;
+  concurrency?: number;
+}): Promise<RollbackReport> {
+  const rows = await dbRead.$queryRaw<RollbackCandidateRow[]>`
+    SELECT m.id AS "modelId",
+           (m.meta->'minorHashAutoFlag'->>'prevNsfw')::boolean AS "prevNsfw",
+           (m.meta->'minorHashAutoFlag'->>'prevSfwOnly')::boolean AS "prevSfwOnly",
+           (m.meta->'minorHashAutoFlag'->>'prevGalleryLevel')::int AS "prevGalleryLevel",
+           ARRAY(
+             SELECT jsonb_array_elements_text(m.meta->'minorHashAutoFlag'->'prevLockedProperties')
+           ) AS "prevLockedProperties",
+           ARRAY(
+             SELECT (jsonb_array_elements_text(m.meta->'minorHashAutoFlag'->'prevMinorImageIds'))::int
+           ) AS "prevMinorImageIds",
+           EXISTS (
+             SELECT 1 FROM "ModActivity" ma
+             WHERE ma."entityType" = 'model'
+               AND ma."entityId" = m.id
+               AND ma.activity = 'setMinor'
+               AND ma."createdAt" > (m.meta->'minorHashAutoFlag'->>'at')::timestamptz
+           ) AS "humanConfirmed"
+    FROM "Model" m
+    WHERE m.meta ? 'minorHashAutoFlag'
+    ORDER BY m.id
+    LIMIT ${limit}
+  `;
+
+  const report: RollbackReport = {
+    candidates: rows.length,
+    rolledBack: 0,
+    skipped: 0,
+    failed: 0,
+    sample: [],
+  };
+
+  const addSample = (modelId: number, outcome: RollbackOutcome) => {
+    if (report.sample.length < 20) report.sample.push({ modelId, outcome });
+  };
+
+  if (dryRun) {
+    for (const row of rows) {
+      if (row.humanConfirmed) {
+        report.skipped++;
+        addSample(row.modelId, 'skipped');
+      } else {
+        report.rolledBack++;
+        addSample(row.modelId, 'rolledBack');
+      }
+    }
+    return report;
+  }
+
+  const tasks = rows.map((row) => async () => {
+    if (row.humanConfirmed) {
+      report.skipped++;
+      addSample(row.modelId, 'skipped');
+      return;
+    }
+
+    try {
+      // Reuses setModelMinor's own machinery (search index, caches, image
+      // propagation) instead of hand-rolling the unset — it also clears every
+      // image's `minor`, including ones legitimately minor beforehand, which is
+      // why prevMinorImageIds gets re-marked afterward.
+      await setModelMinor({
+        id: row.modelId,
+        minor: false,
+        userId: SYSTEM_USER_ID,
+        activity: 'rollbackMinorAutoHash',
+      });
+
+      await dbWrite.$executeRaw`
+        UPDATE "Model"
+        SET nsfw = ${row.prevNsfw},
+            "sfwOnly" = ${row.prevSfwOnly},
+            "gallerySettings" = CASE
+              WHEN ${row.prevGalleryLevel}::int IS NULL
+                THEN COALESCE("gallerySettings", '{}'::jsonb) - 'level'
+              ELSE COALESCE("gallerySettings", '{}'::jsonb)
+                || jsonb_build_object('level', ${row.prevGalleryLevel}::int)
+            END,
+            "lockedProperties" = ${row.prevLockedProperties}::text[],
+            meta = COALESCE(meta, '{}'::jsonb) - 'minorHashAutoFlag'
+        WHERE id = ${row.modelId}
+      `;
+
+      if (row.prevMinorImageIds.length) {
+        await dbWrite.$executeRaw`
+          UPDATE "Image" SET minor = true WHERE id = ANY(${row.prevMinorImageIds}::int[])
+        `;
+        await queueImageSearchIndexUpdate({
+          ids: row.prevMinorImageIds,
+          action: SearchIndexUpdateQueueAction.Update,
+        });
+      }
+
+      report.rolledBack++;
+      addSample(row.modelId, 'rolledBack');
+    } catch (error) {
+      report.failed++;
+      addSample(row.modelId, 'failed');
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'minor-hash-rollback',
+          message: error instanceof Error ? error.message : String(error),
+          modelId: row.modelId,
+        },
+        'webhooks'
+      ).catch(() => null);
+    }
+  });
+
+  await limitConcurrency(tasks, concurrency);
+
+  await logToAxiom(
+    {
+      type: 'info',
+      name: 'minor-hash-rollback',
+      message: 'rollback complete',
+      candidates: report.candidates,
+      rolledBack: report.rolledBack,
+      skipped: report.skipped,
+      failed: report.failed,
+    },
+    'webhooks'
+  ).catch(() => null);
+
+  return report;
 }

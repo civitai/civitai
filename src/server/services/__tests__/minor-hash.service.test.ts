@@ -1,20 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
   mockDbRead: { $queryRaw: vi.fn() },
   mockDbWrite: { $queryRaw: vi.fn(), $executeRaw: vi.fn() },
 }));
 
-const { mockSetModelMinor, mockTrackModActivity, mockLogToAxiom } = vi.hoisted(() => ({
-  mockSetModelMinor: vi.fn(),
-  mockTrackModActivity: vi.fn(),
-  mockLogToAxiom: vi.fn(),
-}));
+const { mockSetModelMinor, mockTrackModActivity, mockLogToAxiom, mockQueueImageSearchIndexUpdate } =
+  vi.hoisted(() => ({
+    mockSetModelMinor: vi.fn(),
+    mockTrackModActivity: vi.fn(),
+    mockLogToAxiom: vi.fn(),
+    mockQueueImageSearchIndexUpdate: vi.fn(),
+  }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/model.service', () => ({ setModelMinor: mockSetModelMinor }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: mockTrackModActivity }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+vi.mock('~/server/services/image.service', () => ({
+  queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
+}));
 
 import {
   findMinorHashMatches,
@@ -23,6 +29,8 @@ import {
   sweepMinorHashMatches,
   getMinorHashMatchesForReview,
   dismissMinorHashMatch,
+  captureMinorHashAutoFlagState,
+  rollbackMinorHashAutoFlags,
   minorSrcCte,
   minorHashCandidatesCte,
   MINOR_HASH_FILE_TYPE,
@@ -173,6 +181,73 @@ describe('applyMinorHashMatch', () => {
     });
 
     expect(result).toBe('skipped');
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+});
+
+describe('captureMinorHashAutoFlagState', () => {
+  it('guards against overwriting an existing capture', async () => {
+    await captureMinorHashAutoFlagState(100);
+
+    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain(`NOT (COALESCE(m.meta, '{}'::jsonb) ? 'minorHashAutoFlag')`);
+  });
+
+  it('merges into meta via || rather than overwriting the column', async () => {
+    await captureMinorHashAutoFlagState(100);
+
+    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('COALESCE(m.meta');
+    expect(text).toContain('||');
+    expect(text).toContain(`'minorHashAutoFlag'`);
+  });
+
+  it('derives prevMinorImageIds via the ModelVersion -> Post -> Image join', async () => {
+    await captureMinorHashAutoFlagState(100);
+
+    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('"ModelVersion" mv');
+    expect(text).toContain('"Post" p');
+    expect(text).toContain('"Image" i');
+    expect(text).toContain('i.minor');
+  });
+
+  it('swallows a write failure and logs instead of throwing', async () => {
+    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('db exploded'));
+
+    await expect(captureMinorHashAutoFlagState(100)).resolves.toBeUndefined();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'minor-hash-capture', modelId: 100 }),
+      'webhooks'
+    );
+  });
+});
+
+describe('applyMinorHashMatch — pre-state capture', () => {
+  it('captures pre-state before flagging', async () => {
+    await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      matches: [{ modelId: 50, userId: 5 }],
+    });
+
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const captureOrder = mockDbWrite.$executeRaw.mock.invocationCallOrder[0];
+    const flagOrder = mockSetModelMinor.mock.invocationCallOrder[0];
+    expect(captureOrder).toBeLessThan(flagOrder);
+  });
+
+  it('does not capture when the outcome is only queued', async () => {
+    await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      matches: [{ modelId: 50, userId: 9 }],
+    });
+
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(mockSetModelMinor).not.toHaveBeenCalled();
   });
 });
@@ -403,6 +478,22 @@ describe('sweepMinorHashMatches', () => {
     expect(text).not.toContain('LIMIT');
     expect(values).not.toContain(250);
   });
+
+  it('captures pre-state for every flagged row before setModelMinor', async () => {
+    mockSweepQueries();
+
+    await sweepMinorHashMatches({ dryRun: false, limit: 100 });
+
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(sweepRows.length);
+  });
+
+  it('does not capture pre-state on a dry run', async () => {
+    mockSweepQueries();
+
+    await sweepMinorHashMatches({ dryRun: true, limit: 100 });
+
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
 });
 
 describe('getMinorHashMatchesForReview', () => {
@@ -436,5 +527,188 @@ describe('dismissMinorHashMatch', () => {
       entityId: 100,
       activity: 'dismissMinorHashMatch',
     });
+  });
+});
+
+function rollbackRow(overrides: Partial<{
+  modelId: number;
+  prevNsfw: boolean;
+  prevSfwOnly: boolean;
+  prevGalleryLevel: number | null;
+  prevLockedProperties: string[];
+  prevMinorImageIds: number[];
+  humanConfirmed: boolean;
+}> = {}) {
+  return {
+    modelId: 200,
+    prevNsfw: false,
+    prevSfwOnly: false,
+    prevGalleryLevel: 31,
+    prevLockedProperties: ['poi'],
+    prevMinorImageIds: [123, 456],
+    humanConfirmed: false,
+    ...overrides,
+  };
+}
+
+describe('rollbackMinorHashAutoFlags', () => {
+  it('unsets minor and restores nsfw, sfwOnly, gallery level, and lockedProperties', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow()]);
+
+    const report = await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    expect(mockSetModelMinor).toHaveBeenCalledWith({
+      id: 200,
+      minor: false,
+      userId: -1,
+      activity: 'rollbackMinorAutoHash',
+    });
+
+    const restoreCall = mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray).join('?').includes('SET nsfw')
+    );
+    expect(restoreCall).toBeDefined();
+    const [strings, ...values] = restoreCall!;
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('"sfwOnly"');
+    expect(text).toContain('"gallerySettings"');
+    expect(text).toContain('"lockedProperties"');
+    expect(text).toContain(`meta = COALESCE(meta, '{}'::jsonb) - 'minorHashAutoFlag'`);
+    expect(values).toContain(31); // prevGalleryLevel
+    expect(values).toContainEqual(['poi']); // prevLockedProperties
+
+    expect(report).toMatchObject({ candidates: 1, rolledBack: 1, skipped: 0, failed: 0 });
+  });
+
+  it('re-marks prevMinorImageIds back to minor and queues them for search-index update', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ prevMinorImageIds: [123, 456] })]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    const imageCall = mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray).join('?').includes('UPDATE "Image"')
+    );
+    expect(imageCall).toBeDefined();
+    const text = Array.from(imageCall![0] as TemplateStringsArray).join('?');
+    expect(text).toContain('SET minor = true');
+
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [123, 456],
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+  });
+
+  it('does not touch images when prevMinorImageIds is empty', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ prevMinorImageIds: [] })]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    const imageCall = mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray).join('?').includes('UPDATE "Image"')
+    );
+    expect(imageCall).toBeUndefined();
+    expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
+  });
+
+  it('skips a model with a later human setMinor confirmation', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ humanConfirmed: true })]);
+
+    const report = await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(report).toMatchObject({ candidates: 1, rolledBack: 0, skipped: 1, failed: 0 });
+  });
+
+  it('queries the human-confirmation gate against a later ModActivity setMinor row', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
+
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('"ModActivity" ma');
+    expect(text).toContain(`ma.activity = 'setMinor'`);
+    expect(text).toContain('"createdAt" >');
+    expect(text).toContain(`m.meta ? 'minorHashAutoFlag'`);
+  });
+
+  it('writes nothing on a dry run but reports the anticipated split', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([
+      rollbackRow({ modelId: 200, humanConfirmed: false }),
+      rollbackRow({ modelId: 201, humanConfirmed: true }),
+    ]);
+
+    const report = await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
+
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
+    expect(report).toMatchObject({ candidates: 2, rolledBack: 1, skipped: 1, failed: 0 });
+    expect(report.sample).toHaveLength(2);
+  });
+
+  it('reports a per-model failure without aborting the batch', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([
+      rollbackRow({ modelId: 200 }),
+      rollbackRow({ modelId: 201 }),
+    ]);
+    mockSetModelMinor.mockRejectedValueOnce(new Error('boom'));
+
+    const report = await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    expect(report).toMatchObject({ candidates: 2, rolledBack: 1, skipped: 0, failed: 1 });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'minor-hash-rollback',
+        message: 'boom',
+        modelId: 200,
+      }),
+      'webhooks'
+    );
+  });
+
+  it('does not abort the batch when setModelMinor rejects with a non-Error value', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 200 })]);
+    mockSetModelMinor.mockRejectedValueOnce(null);
+
+    const report = await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    expect(report).toMatchObject({ rolledBack: 0, failed: 1 });
+  });
+
+  it('caps the sample at 20 rows', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => rollbackRow({ modelId: i }));
+    mockDbRead.$queryRaw.mockResolvedValue(many);
+
+    const report = await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    expect(report.sample).toHaveLength(20);
+  });
+
+  it('logs the report on a real run so a timeout cannot lose it', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow()]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'minor-hash-rollback',
+        message: 'rollback complete',
+        candidates: 1,
+        rolledBack: 1,
+        skipped: 0,
+        failed: 0,
+      }),
+      'webhooks'
+    );
+  });
+
+  it('does not log a dry run', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow()]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
+
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 });

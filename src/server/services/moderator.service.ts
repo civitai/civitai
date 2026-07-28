@@ -11,6 +11,7 @@ type ModelModActivity = {
     | 'setMinor'
     | 'unsetMinor'
     | 'setMinorAutoHash'
+    | 'rollbackMinorAutoHash'
     | 'dismissMinorHashMatch';
 };
 

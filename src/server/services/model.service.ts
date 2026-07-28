@@ -2063,7 +2063,11 @@ export async function applyModelFlagSideEffects({
 // fields the "Set as Minor" quick action locks against creator edits.
 export const MINOR_LOCKED_PROPERTIES = ['minor', 'nsfw', 'sfwOnly'];
 
-export type ModelMinorActivity = 'setMinor' | 'unsetMinor' | 'setMinorAutoHash';
+export type ModelMinorActivity =
+  | 'setMinor'
+  | 'unsetMinor'
+  | 'setMinorAutoHash'
+  | 'rollbackMinorAutoHash';
 
 export async function setModelMinor({
   id,
