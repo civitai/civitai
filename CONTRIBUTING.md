@@ -43,8 +43,23 @@ several dozen test files fail to *collect* — noise that looks like your change
 broke something when it didn't. Same applies to any new git worktree; worktrees
 don't check out submodules for you.
 
-If you cloned before the submodule URL moved to HTTPS, run
-`git submodule sync --recursive` once to pick up the new URL.
+### If you cloned before the URL moved to HTTPS
+
+Run this once:
+
+```bash
+git submodule sync --recursive
+```
+
+`git submodule init` writes the URL into `.git/config` the first time it runs and
+never overwrites it afterwards — **including when that first attempt failed.** So
+if you ever tried `--init` while the submodule was still private and got an auth
+error, your clone has the old SSH URL recorded and `--init` will keep failing with
+the identical error no matter how many times you pull. `sync` is the fix, and for
+that case it is required, not optional.
+
+The recorded URL also lives in the *shared* config rather than per-worktree, so
+every existing and future worktree of that clone inherits it until you sync.
 
 ## Verifying locally
 
