@@ -5,6 +5,7 @@ import {
   IconInfoCircle,
   IconPhoto,
   IconRefresh,
+  IconSparkles,
   IconTrash,
   IconUpload,
   IconX,
@@ -45,8 +46,18 @@ import { trpc } from '~/utils/trpc';
  * thumbnail, replaceable — and screenshots removable when `allowRemove`).
  */
 
-/** Server-suggested image URLs from the URL's page metadata (cover = og:image, icon = favicon/apple-touch). */
-export type MetaSuggestions = { coverImageUrl?: string; iconImageUrl?: string };
+/**
+ * Server-suggested image URLs from the URL's page metadata (cover = og:image, icon =
+ * favicon/apple-touch). `iconDataUri` is a DISTINCT channel: an inline `data:image/...`
+ * favicon the https-only URL path can't fetch — accepted through a separate server
+ * ingest that rasterizes it to PNG (never stores raw SVG). Preferred order for the icon
+ * slot: an https `iconImageUrl` first, else the inline `iconDataUri`.
+ */
+export type MetaSuggestions = {
+  coverImageUrl?: string;
+  iconImageUrl?: string;
+  iconDataUri?: string;
+};
 
 type AssetKind = 'icon' | 'cover' | 'screenshot';
 
@@ -109,6 +120,8 @@ export function ListingAssetStep({
   allowRemove = false,
   onAssetMutated,
   onCompletenessChange,
+  onRepull,
+  repullLoading = false,
 }: {
   listingId: string;
   contentRating: OffsiteContentRating;
@@ -128,6 +141,13 @@ export function ListingAssetStep({
    *  submit button. `meetsFloor` = icon+cover attached (the publish floor);
    *  `complete` = also has ≥1 screenshot (advisory). */
   onCompletenessChange?: (state: { meetsFloor: boolean; complete: boolean }) => void;
+  /** Re-pull the OG metadata from the app's URL (the shared autofill hook's `repull`).
+   *  When provided, renders a step-level "Re-pull from site" button that refreshes the
+   *  icon/cover suggestion tiles — the manual retry that replaces the removed URL-step
+   *  button. Omit to hide it. */
+  onRepull?: () => void;
+  /** True while a `onRepull()` fetch is in flight (drives the button spinner). */
+  repullLoading?: boolean;
 }) {
   const { uploadToCF } = useCFImageUpload();
   const [icon, setIcon] = useState<AssetState>(() => assetFromInitial(initial?.icon));
@@ -154,6 +174,7 @@ export function ListingAssetStep({
   const utils = trpc.useUtils();
   const persistMutation = trpc.appListings.persistAssetImage.useMutation();
   const ingestMutation = trpc.appListings.ingestAssetFromUrl.useMutation();
+  const ingestDataUriMutation = trpc.appListings.ingestAssetFromDataUri.useMutation();
   const setIconMutation = trpc.appListings.setIcon.useMutation();
   const setCoverMutation = trpc.appListings.setCover.useMutation();
   const addScreenshotMutation = trpc.appListings.addScreenshot.useMutation();
@@ -425,6 +446,37 @@ export function ListingAssetStep({
     }
   }
 
+  /**
+   * Accept an inline `data:image/...` icon suggestion (radio.civitai.com's favicon).
+   * Distinct from `acceptSuggestion`: the server DECODES + RASTERIZES the data URI to
+   * PNG (never storing raw SVG) via `ingestAssetFromDataUri`, then it flows through the
+   * SAME attach + scan-poll path as any other icon. The data URI is itself a usable
+   * preview (a browser renders it in an `<img>` — no HTML injection), shown through the
+   * scan. Only ever an icon.
+   */
+  async function acceptDataUriSuggestion(
+    key: string,
+    dataUri: string,
+    apply: (s: AssetState) => void
+  ) {
+    clearTimer(key);
+    const epoch = bumpEpoch(key);
+    // The data URI renders as a preview in an <img>; it's NOT an object URL, so drop
+    // any prior blob for this key (never track it).
+    revokeObjectUrl(key);
+    apply({ status: 'working', imageId: null, message: null, previewUrl: dataUri });
+    try {
+      const { imageId } = await ingestDataUriMutation.mutateAsync({ dataUri, kind: 'icon' });
+      if (!isCurrentEpoch(key, epoch)) return;
+      await drive(key, 'icon', imageId, 0, epoch, apply);
+    } catch (err) {
+      if (!isCurrentEpoch(key, epoch)) return;
+      clearTimer(key);
+      apply({ status: 'error', imageId: null, message: (err as Error).message });
+      showErrorNotification({ title: 'Could not import icon', error: err as Error });
+    }
+  }
+
   async function retryAttach(
     key: string,
     kind: AssetKind,
@@ -525,6 +577,25 @@ export function ListingAssetStep({
     <Stack gap="md" data-testid="apps-offsite-submit-success">
       {header}
 
+      {onRepull && (
+        <Group gap="xs" align="center" data-testid="apps-offsite-assets-repull-row">
+          <Button
+            variant="light"
+            color="grape"
+            size="compact-sm"
+            leftSection={<IconSparkles size={16} />}
+            onClick={onRepull}
+            loading={repullLoading}
+            data-testid="apps-offsite-assets-repull"
+          >
+            Re-pull from site
+          </Button>
+          <Text size="xs" c="dimmed">
+            Re-scan your link for an icon and cover — only refreshes the suggestions below.
+          </Text>
+        </Group>
+      )}
+
       <AssetRow
         kind="icon"
         label="Icon"
@@ -535,10 +606,14 @@ export function ListingAssetStep({
           if (icon.imageId != null) void retryAttach('icon', 'icon', icon.imageId, applyIcon);
         }}
         onCancel={() => cancelAsset('icon', applyIcon)}
-        suggestionUrl={suggestions.iconImageUrl}
+        suggestionUrl={suggestions.iconImageUrl ?? suggestions.iconDataUri}
         onAcceptSuggestion={() => {
+          // Prefer an https URL (re-fetched SSRF-safe); else the inline data-URI icon
+          // (decoded + rasterized to PNG server-side — the radio.civitai.com case).
           if (suggestions.iconImageUrl)
             void acceptSuggestion('icon', 'icon', suggestions.iconImageUrl, applyIcon);
+          else if (suggestions.iconDataUri)
+            void acceptDataUriSuggestion('icon', suggestions.iconDataUri, applyIcon);
         }}
       />
       <AssetRow

@@ -37,3 +37,26 @@ export const ingestListingAssetFromUrlSchema = z.object({
   kind: z.enum(['icon', 'cover']),
 });
 export type IngestListingAssetFromUrlInput = z.infer<typeof ingestListingAssetFromUrlSchema>;
+
+/**
+ * Max ENCODED (data-URI string) length accepted by the inline-icon ingest — a
+ * coarse first gate before decoding; the SERVICE independently re-caps the DECODED
+ * byte size ({@link INLINE_ICON_MAX_DECODED_BYTES}). base64 inflates ~4/3, so this
+ * comfortably admits a ~2MB decoded image while bounding the request body.
+ */
+export const INLINE_ICON_MAX_DATA_URI_LEN = 3_500_000;
+
+/**
+ * Ingest an accepted INLINE `data:image/...` icon (e.g. a favicon declared as a
+ * data URI) into a scannable Image row. Distinct from the URL path: the bytes are
+ * decoded from the data URI (no outbound fetch — never routed through safeFetch),
+ * RASTERIZED to PNG (SVG is never stored/served raw — XSS vector), then run through
+ * the standard scan pipeline. Only `icon` (the only asset a favicon feeds).
+ */
+export const ingestListingAssetFromDataUriSchema = z.object({
+  dataUri: z.string().min(1).max(INLINE_ICON_MAX_DATA_URI_LEN),
+  kind: z.literal('icon'),
+});
+export type IngestListingAssetFromDataUriInput = z.infer<
+  typeof ingestListingAssetFromDataUriSchema
+>;
