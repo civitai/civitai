@@ -2185,6 +2185,7 @@ export const REDIS_KEYS = {
     // `setUserSetting`; `CacheTTL.md` backstops any other writer. See
     // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
     USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
+    CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
