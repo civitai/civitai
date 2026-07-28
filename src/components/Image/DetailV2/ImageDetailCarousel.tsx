@@ -1,5 +1,5 @@
-import { useHotkeys, useLocalStorage, useOs } from '@mantine/hooks';
-import { useState, useEffect, createContext, useContext } from 'react';
+import { useLocalStorage } from '@mantine/hooks';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -8,7 +8,6 @@ import { ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
-import useIsClient from '~/hooks/useIsClient';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
@@ -55,6 +54,32 @@ export function ImageDetailCarouselProvider<T extends ImageProps>({
   );
 }
 
+const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT'];
+
+function shouldHandleHotkey(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+    return false;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return true;
+  if (target.isContentEditable) return false;
+  if (IGNORED_HOTKEY_TAGS.includes(target.tagName)) return false;
+  // an open popover/menu/modal above the detail view owns its own arrow handling
+  return !target.closest('[role="menu"],[role="listbox"],[role="dialog"][data-nested]');
+}
+
+// Touch and pen drags navigate; mouse drags don't, so click-dragging an image on
+// desktop still does nothing. Declared at module scope because embla compares
+// function options by source, and a new body every render would reInit the engine.
+function watchTouchDrag(
+  _emblaApi: EmblaCarouselType,
+  event: TouchEvent | MouseEvent | PointerEvent
+) {
+  // embla binds touchstart/mousedown today; the pointerType branch keeps this
+  // correct if it ever moves to pointer events
+  if ('pointerType' in event) return event.pointerType !== 'mouse';
+  return event.type.startsWith('touch');
+}
+
 export function ImageDetailCarousel({
   images,
   videoRef,
@@ -62,66 +87,82 @@ export function ImageDetailCarousel({
   index,
   canNavigate,
   navigate,
+  next,
+  previous,
 }: ImageDetailCarouselProps & {
   images: ImageProps[];
   index: number;
   navigate?: (index: number) => void;
+  next: () => void;
+  previous: () => void;
   canNavigate: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
 
-  // const [slidesInView, setSlidesInView] = useState<number[]>([index]);
+  // Embla owns the slide animation, but `index` is the source of truth. Feeding
+  // it back in as `startIndex` would reInit the engine on every navigation,
+  // which tears down the pointer handlers mid-swipe.
+  const startIndexRef = useRef(index);
 
-  // useEffect(() => {
-  //   if (!embla) return;
-  //   const onSelect = () => {
-  //     setSlidesInView([...embla.slidesInView(true)]);
-  //   };
+  const navigationRef = useRef({ next, previous, canNavigate });
+  navigationRef.current = { next, previous, canNavigate };
 
-  //   embla.on('select', onSelect);
-  //   return () => {
-  //     embla.off('select', onSelect);
-  //   };
-  // }, [embla]);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      const { next, previous, canNavigate } = navigationRef.current;
+      if (!canNavigate || !shouldHandleHotkey(event)) return;
+      event.preventDefault();
+      if (event.key === 'ArrowLeft') previous();
+      else next();
+    };
 
-  useHotkeys([
-    ['ArrowLeft', () => embla?.scrollPrev()],
-    ['ArrowRight', () => embla?.scrollNext()],
-  ]);
+    // capture phase so the keypress reaches us regardless of what currently has
+    // focus (reaction buttons, controls) or what stops propagation on the way up
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, []);
+
+  useEffect(() => {
+    if (!embla) return;
+    if (embla.selectedScrollSnap() !== index) embla.scrollTo(index);
+  }, [embla, index]);
 
   const ref = useResizeObserver<HTMLDivElement>(() => {
     embla?.reInit();
   });
-
-  const os = useOs();
-  const isDesktop = os === 'windows' || os === 'linux' || os === 'macos';
-
-  // useEffect(() => {
-  //   if (!slidesInView.includes(index)) {
-  //     embla?.scrollTo(index, true);
-  //   }
-  // }, [index, slidesInView]); // eslint-disable-line
 
   if (!images.length) return null;
 
   return (
     <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
-        key={images.length}
         withControls={canNavigate}
         className="flex-1"
         onSlideChange={navigate}
         setEmbla={setEmbla}
-        startIndex={index}
+        startIndex={startIndexRef.current}
         loop
-        watchDrag={!isDesktop && canNavigate}
+        watchDrag={canNavigate && watchTouchDrag}
         withKeyboardEvents={false}
       >
-        <Embla.Viewport className="h-full">
+        {/* pan-y keeps vertical page scrolling native while horizontal drags go to embla */}
+        <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
             {images.map((image, i) => (
               <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
-                {index === i && <ImageContent image={image} {...connect} videoRef={videoRef} />}
+                {/* function child opts out of Embla's own in-view gating — adjacency
+                    is the gate here, so a neighbor is painted before the drag reveals it */}
+                {() =>
+                  isAdjacent(i, index, images.length) && (
+                    <ImageContent
+                      image={image}
+                      active={index === i}
+                      {...connect}
+                      videoRef={index === i ? videoRef : undefined}
+                    />
+                  )
+                }
               </Embla.Slide>
             ))}
           </Embla.Container>
@@ -131,11 +172,19 @@ export function ImageDetailCarousel({
   );
 }
 
+// the carousel loops, so the neighbors of the first/last slide wrap around
+function isAdjacent(i: number, index: number, length: number) {
+  if (length < 2) return i === index;
+  const distance = Math.abs(i - index);
+  return Math.min(distance, length - distance) <= 1;
+}
+
 function ImageContent({
   image,
   videoRef,
+  active = true,
   ...connect
-}: { image: ImageProps } & ConnectProps & ImageDetailCarouselProps) {
+}: { image: ImageProps; active?: boolean } & ConnectProps & ImageDetailCarouselProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -185,10 +234,12 @@ function ImageContent({
                 },
               }}
               // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
-              anim
+              anim={active}
               quality={90}
-              original={isVideo ? true : undefined}
-              html5Controls={features.nativeVideoControls || shouldDisplayHtmlControls(image)}
+              original={isVideo && active ? true : undefined}
+              html5Controls={
+                active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
+              }
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
                 setDefaultMuted(isMuted);
@@ -204,9 +255,9 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.vimeoVideoId
                   : undefined
               }
-              controls
+              controls={active}
               videoProps={{
-                autoPlay: true,
+                autoPlay: active,
               }}
             />
           )}

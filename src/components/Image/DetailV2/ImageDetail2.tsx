@@ -86,6 +86,8 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 
+const PREFETCH_THRESHOLD = 5;
+
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
   color: 'gray',
@@ -125,6 +127,8 @@ export function ImageDetail2() {
     shareUrl,
     connect,
     navigate,
+    loadMore,
+    hasMore,
     index,
     collection,
     hideReactions,
@@ -141,7 +145,12 @@ export function ImageDetail2() {
   const carouselNavigation = useCarouselNavigation({
     items: images,
     initialIndex: index,
-    onChange: (image) => navigate(image.id),
+    onChange: (image, newIndex) => {
+      navigate(image.id);
+      // keep a runway ahead of the viewer so arrow/swipe navigation doesn't
+      // dead-end (and loop back) at the edge of the loaded page
+      if (hasMore && newIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
+    },
   });
 
   const image = images[carouselNavigation.index];
