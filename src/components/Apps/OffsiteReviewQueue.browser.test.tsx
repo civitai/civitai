@@ -52,6 +52,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
+// The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
+// which reads useCurrentUser — boundary-stub it (null user is fine).
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
@@ -100,6 +103,11 @@ vi.mock('~/utils/trpc', () => {
             mutateAsync: vi.fn(),
             isPending: false,
           }),
+        },
+        // Listing-preview projection — undefined data → the section falls back to the
+        // placeholder-art layout preview (these tests assert checklist/scan behaviour).
+        getListingPreviewForReview: {
+          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
         },
       },
     },
