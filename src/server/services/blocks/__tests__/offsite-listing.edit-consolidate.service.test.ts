@@ -321,4 +321,49 @@ describe('updateRevisionDraft', () => {
       updateRevisionDraft({ shadowId: 'apl_shadow', userId: 7, patch: { name: 'x' } })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
   });
+
+  // #3399 completion: a MOD may edit scopes on a shadow whose linked OAuth client is
+  // owned by someone else (the client owner ≠ the listing/shadow owner). The owner
+  // re-assertion in deriveScopePatch is bypassed for mods only.
+  it('mod scope edit on a shadow linking a FOREIGN client → OK (derived, no FORBIDDEN)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      ownedRow({
+        id: 'apl_shadow',
+        status: 'draft',
+        revisionOfId: 'apl_parent',
+        connectClientId: 'oauth-1',
+      })
+    );
+    // Client owned by someone else (999); the shadow/listing is owned by the mod (7).
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13 });
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      userId: 7,
+      isModerator: true,
+      patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+    });
+    const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.connectRequestedScopes).toBe(13);
+  });
+
+  it('non-mod scope edit on a shadow linking a FOREIGN client → FORBIDDEN, no write', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      ownedRow({
+        id: 'apl_shadow',
+        status: 'draft',
+        revisionOfId: 'apl_parent',
+        connectClientId: 'oauth-1',
+      })
+    );
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13 });
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        userId: 7,
+        isModerator: false,
+        patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
 });

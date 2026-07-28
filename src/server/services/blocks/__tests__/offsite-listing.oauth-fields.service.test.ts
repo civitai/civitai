@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildListingPatchData,
+  deriveScopePatch,
+  loadConnectClientForListing,
   submitExternalListing,
   updateListing,
 } from '~/server/services/blocks/offsite-listing.service';
@@ -376,5 +378,187 @@ describe('updateListing (connect scope edit re-validation)', () => {
     });
     expect(res.requiresReview).toBe(true);
     expect(res.shadowId).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MODERATOR foreign-client support (#3399 completion): the mod-only global client
+// search lets a mod SELECT any (non-App-Block) OAuth client, so the submit/edit
+// ownership check must be relaxed for mods ONLY. The App-Block exclusion + existence
+// checks + the non-mod restriction stay intact.
+// ---------------------------------------------------------------------------
+
+describe('loadConnectClientForListing (moderator ownership relaxation)', () => {
+  it('non-mod + FOREIGN client → FORBIDDEN (regression: owner-only for non-mods)', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    await expect(loadConnectClientForListing(CLIENT_ID, CALLER)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    // Default (undefined) isModerator behaves as non-mod.
+    await expect(loadConnectClientForListing(CLIENT_ID, CALLER, false)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('mod + FOREIGN client → OK (returns the client allowedScopes ceiling)', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    const client = await loadConnectClientForListing(CLIENT_ID, CALLER, true);
+    expect(client).toMatchObject({ id: CLIENT_ID, allowedScopes: CEILING });
+  });
+
+  it('mod + OWN client → OK', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient()); // userId = CALLER
+    const client = await loadConnectClientForListing(CLIENT_ID, CALLER, true);
+    expect(client).toMatchObject({ id: CLIENT_ID, allowedScopes: CEILING });
+  });
+
+  it('mod + App-Block client → still BAD_REQUEST (exclusion holds for mods, no DB lookup)', async () => {
+    await expect(
+      loadConnectClientForListing('appblk-abc123', CALLER, true)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('App Block') });
+    expect(mockRead.oauthClient.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('client not found → NOT_FOUND for BOTH roles', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(null);
+    await expect(loadConnectClientForListing(CLIENT_ID, CALLER, false)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    await expect(loadConnectClientForListing(CLIENT_ID, CALLER, true)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+});
+
+describe('submitExternalListing (moderator foreign client)', () => {
+  it('a MOD submitting with a FOREIGN client → SUCCEEDS (draft + pending request created)', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    const res = await submitExternalListing({
+      input: baseInput,
+      userId: CALLER,
+      isModerator: true,
+    });
+    expect(res.slug).toBe('connect-app');
+    expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
+    // The mod flag threads through: the ownership error is NOT thrown, and the created
+    // listing OWNER is still the submitting caller (not the client's owner).
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as {
+      userId: number;
+      connectClientId: string;
+      connectRequestedScopes: number;
+    };
+    expect(listingData.userId).toBe(CALLER);
+    expect(listingData.connectClientId).toBe(CLIENT_ID);
+    expect(listingData.connectRequestedScopes).toBe(CEILING);
+  });
+
+  it('a NON-MOD with a FOREIGN client → FORBIDDEN, no write (restriction preserved)', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    await expect(
+      submitExternalListing({ input: baseInput, userId: CALLER, isModerator: false })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('a MOD with an App-Block client → still BAD_REQUEST (exclusion holds)', async () => {
+    await expect(
+      submitExternalListing({
+        input: { ...baseInput, connectClientId: 'appblk-abc123' },
+        userId: CALLER,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('App Block') });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('deriveScopePatch (moderator ownership relaxation)', () => {
+  it('a non-scope patch is passed through unchanged, no client lookup (both roles)', async () => {
+    const patch = { name: 'New name' };
+    const res = await deriveScopePatch({ connectClientId: CLIENT_ID, patch, userId: CALLER });
+    expect(res).toEqual({ effectivePatch: patch, connectAllowedScopes: null });
+    expect(mockRead.oauthClient.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('non-mod editing a FOREIGN-client listing scopes → FORBIDDEN', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    await expect(
+      deriveScopePatch({
+        connectClientId: CLIENT_ID,
+        patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: {} },
+        userId: CALLER,
+        isModerator: false,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('mod editing a FOREIGN-client listing scopes → OK (derives from the client current allowedScopes)', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    const res = await deriveScopePatch({
+      connectClientId: CLIENT_ID,
+      // A bogus form mask; the derived snapshot must equal the client's CEILING.
+      patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { ModelsRead: 'r' } },
+      userId: CALLER,
+      isModerator: true,
+    });
+    expect(res.connectAllowedScopes).toBe(CEILING);
+    expect(res.effectivePatch.requestedScopes).toBe(CEILING);
+  });
+});
+
+describe('updateListing (moderator foreign client scope edit)', () => {
+  const approvedForeignListing = {
+    id: 'apl_live',
+    kind: 'offsite',
+    slug: 'connect-app',
+    status: 'approved',
+    // The LISTING is owned by the mod caller (owner-of-listing is unchanged); only the
+    // linked OAuth CLIENT is foreign — exactly the mod-picks-any-client case.
+    userId: CALLER,
+    revisionOfId: null,
+    name: 'Connect App',
+    tagline: null,
+    description: null,
+    category: null,
+    contentRating: 'g',
+    externalUrl: null,
+    connectClientId: CLIENT_ID,
+    connectRequestedScopes: TokenScope.ModelsRead,
+    connectScopeJustifications: { ModelsRead: 'reason' },
+    iconId: 1,
+    coverId: 2,
+  };
+
+  it('mod editing a foreign-client listing scopes → OK (stages a shadow, no FORBIDDEN)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedForeignListing);
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    mockRead.appListing.findFirst.mockResolvedValue(null); // no existing shadow
+    mockWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' }); // winner re-read
+
+    const res = await updateListing({
+      listingId: 'apl_live',
+      userId: CALLER,
+      isModerator: true,
+      patch: {
+        requestedScopes: TokenScope.UserRead | TokenScope.ModelsRead,
+        scopeJustifications: { UserRead: 'profile', ModelsRead: 'reason' },
+      },
+    });
+    expect(res.requiresReview).toBe(true);
+    expect(res.shadowId).toBeTruthy();
+  });
+
+  it('non-mod editing a foreign-client listing scopes → FORBIDDEN, no shadow write', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedForeignListing);
+    mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
+    await expect(
+      updateListing({
+        listingId: 'apl_live',
+        userId: CALLER,
+        isModerator: false,
+        patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: {} },
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
   });
 });

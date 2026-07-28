@@ -127,8 +127,10 @@ export type SubmitExternalListingResult = {
  * Owner-binding (IDOR): both the `AppListing.userId` and the
  * `AppListingPublishRequest.submittedByUserId` are set from the AUTHENTICATED
  * caller (`userId`) — the input carries NO owner field, so a caller can never
- * submit on another user's behalf. The linked OAuth client is ALSO ownership-checked
- * (`loadConnectClientForListing`: exists / owned-by-caller / not an App-Block client).
+ * submit on another user's behalf. The linked OAuth client is ALSO gated
+ * (`loadConnectClientForListing`: exists / not an App-Block client / owned-by-caller —
+ * the owner check is relaxed for a MODERATOR, who may link any non-App-Block client,
+ * mirroring the mod-only global client search).
  *
  * REQUIRES a `connectClientId` (the caller's own OAuth client) + a DISCLOSED
  * `requestedScopes` subset (⊆ the client's `allowedScopes` ceiling) + per-scope
@@ -153,8 +155,15 @@ export type SubmitExternalListingResult = {
 export async function submitExternalListing(opts: {
   input: SubmitExternalListingInput;
   userId: number;
+  /**
+   * The caller's moderator status. When true, `loadConnectClientForListing` skips the
+   * owner-only check so a mod may link ANY (non-App-Block) OAuth client — mirroring the
+   * mod-only global client search that feeds the submit picker. A non-mod stays
+   * restricted to their own clients. The listing OWNER is still the caller (`userId`).
+   */
+  isModerator?: boolean;
 }): Promise<SubmitExternalListingResult> {
-  const { input, userId } = opts;
+  const { input, userId, isModerator = false } = opts;
 
   // Defense-in-depth: re-run the shared URL validator — but ONLY when a URL is
   // provided (externalUrl is now optional; a connect-only listing omits it). This fn
@@ -192,7 +201,7 @@ export async function submitExternalListing(opts: {
   // edit re-enters review). The subset check is trivially satisfied now (the set
   // equals its own ceiling) but kept as a defensive assertion; the per-scope
   // justifications are validated against the derived set.
-  const client = await loadConnectClientForListing(input.connectClientId, userId);
+  const client = await loadConnectClientForListing(input.connectClientId, userId, isModerator);
   const requestedScopes = client.allowedScopes;
   assertConnectScopesValid({
     requestedScopes,
@@ -296,19 +305,26 @@ export async function submitExternalListing(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Load the caller's OWN OAuth client and assert it is eligible to back an external
- * listing: it must EXIST, be OWNED by `userId` (IDOR), and NOT be an App-Block
- * client (`isAppBlockOauthClientId` — those are managed by the App Blocks flow, not
- * hand-listed). Returns the client's `allowedScopes` ceiling. An external listing does
- * NOT require the client to be `isVerified` (decision Q4). All failures are friendly
- * TRPCErrors (parity with `submitExternalListing`'s validation style).
+ * Load an OAuth client and assert it is eligible to back an external listing: it must
+ * EXIST and NOT be an App-Block client (`isAppBlockOauthClientId` — those are managed
+ * by the App Blocks flow, not hand-listed). By default it must also be OWNED by
+ * `userId` (IDOR). Returns the client's `allowedScopes` ceiling. An external listing
+ * does NOT require the client to be `isVerified` (decision Q4). All failures are
+ * friendly TRPCErrors (parity with `submitExternalListing`'s validation style).
+ *
+ * `isModerator`: when true, the owner-only check is BYPASSED — a moderator may link
+ * ANY (non-App-Block) OAuth client, mirroring the mod-only GLOBAL client search that
+ * feeds the external-submit picker (`oauthClient.searchForModerator`). This ONLY
+ * relaxes ownership: the App-Block exclusion (for everyone) and the existence check
+ * still hold. A non-moderator stays restricted to their own clients.
  */
-async function loadConnectClientForListing(
+export async function loadConnectClientForListing(
   connectClientId: string,
-  userId: number
+  userId: number,
+  isModerator = false
 ): Promise<{ id: string; allowedScopes: number }> {
   // App-block clients are excluded up-front (cheap, no DB) — they are never a
-  // hand-authored connect target.
+  // hand-authored connect target. This exclusion holds for EVERYONE, mods included.
   if (isAppBlockOauthClientId(connectClientId)) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
@@ -322,7 +338,9 @@ async function loadConnectClientForListing(
   if (!client) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
   }
-  if (client.userId !== userId) {
+  // Owner-only — BYPASSED for a moderator (who can pick any client via the mod-only
+  // global search). A non-mod picking a client they don't own is still FORBIDDEN.
+  if (!isModerator && client.userId !== userId) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'you can only list an OAuth client you own',
@@ -371,13 +389,20 @@ function assertConnectScopesValid(opts: {
  * the new owner's ceiling. Validates the justifications against the derived set.
  * Shared by `updateListing` (in-place / material-shadow) and `updateRevisionDraft`
  * (approved shadow scalar write) so both snapshot scopes identically.
+ *
+ * `isModerator`: when true, that owner re-assertion is intentionally BYPASSED — a mod
+ * may edit a listing that links a client they don't own (mirroring the mod-only
+ * client search on submit). The existence check + scope-subset / justification
+ * validation (server-authoritative snapshot from the client's CURRENT allowedScopes)
+ * are UNCHANGED. A non-mod is still refused a foreign client.
  */
-async function deriveScopePatch(opts: {
+export async function deriveScopePatch(opts: {
   connectClientId: string | null;
   patch: UpdateListingPatch;
   userId: number;
+  isModerator?: boolean;
 }): Promise<{ effectivePatch: UpdateListingPatch; connectAllowedScopes: number | null }> {
-  const { connectClientId, patch, userId } = opts;
+  const { connectClientId, patch, userId, isModerator = false } = opts;
   const editsScopes =
     patch.requestedScopes !== undefined || patch.scopeJustifications !== undefined;
   if (!editsScopes) return { effectivePatch: patch, connectAllowedScopes: null };
@@ -395,7 +420,9 @@ async function deriveScopePatch(opts: {
   if (!client) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
   }
-  if (client.userId !== userId) {
+  // Owner re-assertion — BYPASSED for a moderator (the post-submit transfer guard is
+  // intentionally skipped for mods, who may link any client). Non-mods still refused.
+  if (!isModerator && client.userId !== userId) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'you can only list an OAuth client you own',
@@ -833,8 +860,15 @@ export async function updateListing(opts: {
   listingId: string;
   patch: UpdateListingPatch;
   userId: number;
+  /**
+   * The caller's moderator status — threaded into `deriveScopePatch` so a mod editing
+   * a listing that links a foreign OAuth client isn't blocked by the owner re-assertion
+   * (mirrors the mod-only client search on submit). Listing OWNERSHIP is unaffected —
+   * `loadOwnedEditableListing` still requires the caller to own the LISTING itself.
+   */
+  isModerator?: boolean;
 }): Promise<UpdateListingResult> {
-  const { listingId, patch, userId } = opts;
+  const { listingId, patch, userId, isModerator = false } = opts;
   const listing = await loadOwnedEditableListing(listingId, userId);
 
   // A shadow is an internal draft — never editable via this top-level path (its
@@ -855,6 +889,7 @@ export async function updateListing(opts: {
     connectClientId: listing.connectClientId,
     patch,
     userId,
+    isModerator,
   });
   const patchOpts = { connectAllowedScopes };
 
@@ -1499,8 +1534,14 @@ export async function updateRevisionDraft(opts: {
   shadowId: string;
   patch: UpdateListingPatch;
   userId: number;
+  /**
+   * The caller's moderator status — threaded into `deriveScopePatch` (same rationale
+   * as `updateListing`): a mod editing a shadow whose parent links a foreign OAuth
+   * client isn't blocked by the owner re-assertion. Listing OWNERSHIP unaffected.
+   */
+  isModerator?: boolean;
 }): Promise<{ shadowId: string }> {
-  const { shadowId, patch, userId } = opts;
+  const { shadowId, patch, userId, isModerator = false } = opts;
   const shadow = await loadOwnedEditableListing(shadowId, userId);
   if (shadow.revisionOfId == null) {
     throw new OffsiteRequestError(
@@ -1522,6 +1563,7 @@ export async function updateRevisionDraft(opts: {
     connectClientId: shadow.connectClientId,
     patch,
     userId,
+    isModerator,
   });
   const data = buildListingPatchData(effectivePatch, { connectAllowedScopes });
   await dbWrite.appListing.update({ where: { id: shadowId }, data });
