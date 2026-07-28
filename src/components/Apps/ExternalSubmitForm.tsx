@@ -137,6 +137,24 @@ function ExternalCreateForm() {
   // meta effect); we never seed this up front so the title can win.
   const hostNameFallbackRef = useRef<string>('');
 
+  // On-demand "Pull from site" (create parity with the edit wizard's "Autofill from
+  // website"): the auto-pull fires ONCE per URL (`appliedMetaRef` guard) and
+  // `staleTime:Infinity` + `retry:false` pin the result, so a first-time
+  // empty / errored / not-ready pull could NEVER be re-surfaced without editing the URL
+  // (and a client-rendered SPA that exposes no server-side OG tags legitimately returns
+  // nothing — #3344). `autofillActive` tracks a button-triggered pull (drives the
+  // loading/note feedback); `autofillTick` forces the apply effect to re-run on a
+  // re-click of the SAME url (unchanged `metaUrl` + a cached `metaQuery.data` reference
+  // otherwise skip it). `autofillNote` reports applied / empty / error near the URL input.
+  const [autofillActive, setAutofillActive] = useState(false);
+  const [autofillTick, setAutofillTick] = useState(0);
+  const [autofillNote, setAutofillNote] = useState<'applied' | 'empty' | 'error' | null>(null);
+  // Latest `values` for the button-note emptiness check — the effect must read current
+  // emptiness WITHOUT depending on `values` (its async `setValues` updater hasn't run
+  // yet when the note is computed), mirroring the edit wizard's `valuesRef`.
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+
   const currentUser = useCurrentUser();
   const isModerator = !!currentUser?.isModerator;
 
@@ -223,6 +241,10 @@ function ExternalCreateForm() {
     if (!settled) return;
     appliedMetaRef.current = metaUrl;
 
+    // Snapshot pre-apply emptiness for the button note (the async `setValues` below
+    // hasn't committed yet, so read what the fields were BEFORE this apply).
+    const before = valuesRef.current;
+
     // Prefer the page <title> (data.name) over the host-derived fallback name.
     const resolvedName = data?.name || hostNameFallbackRef.current;
     setValues((v) => ({
@@ -246,7 +268,31 @@ function ExternalCreateForm() {
     ) {
       setAutofillApplied(true);
     }
-  }, [metaUrl, metaQuery.isFetching, metaQuery.data, metaQuery.isError]);
+
+    // Button-triggered pull → report applied / empty / error near the URL input. Only
+    // what the SITE actually exposed counts as "applied": a fillable text field from
+    // `data.*` (NOT the host-derived name fallback, which is derived from the URL, not
+    // pulled from the site) or an icon/cover suggestion. In CREATE every asset slot
+    // starts empty, so any suggested icon/cover URL is actionable. An error-settled
+    // fetch (or a site that exposed nothing — the #3344 SPA case) reports honestly so
+    // the author knows to upload manually.
+    if (autofillActive) {
+      if (metaQuery.isError && !data) {
+        setAutofillNote('error');
+      } else {
+        const filledAny =
+          (before.name.trim().length === 0 && !!data?.name) ||
+          (before.tagline.trim().length === 0 && !!data?.tagline) ||
+          (before.description.trim().length === 0 && !!data?.description);
+        const hasSuggestion = !!data?.coverImageUrl || !!data?.iconImageUrl;
+        setAutofillNote(filledAny || hasSuggestion ? 'applied' : 'empty');
+      }
+      setAutofillActive(false);
+    }
+    // `autofillTick` is a dep so a same-url re-click (which leaves `metaUrl` + the cached
+    // `metaQuery.data` reference unchanged) still re-runs this effect — the click resets
+    // `appliedMetaRef` so the guard above passes.
+  }, [metaUrl, metaQuery.isFetching, metaQuery.data, metaQuery.isError, autofillTick, autofillActive]);
 
   const submitMutation = trpc.appListings.submitExternalListing.useMutation({
     onSuccess: (res: Submitted) => {
@@ -327,6 +373,37 @@ function ExternalCreateForm() {
     setErrors((prev) => ({ ...prev, externalUrl: undefined }));
   }
 
+  // "Pull from site" — on-demand OG re-pull without leaving the URL step. Reuses the
+  // existing `metaQuery` + fill-if-empty apply effect + ListingAssetStep suggestions, so
+  // it's non-destructive by construction (typed text is never clobbered). This is the
+  // manual retry the auto-pull lacks: the once-per-url `appliedMetaRef` guard +
+  // `staleTime:Infinity` otherwise pin a first-time empty/errored/not-ready pull forever.
+  function handlePullFromSite() {
+    const result = normalizeLinkUrl(values.externalUrl);
+    if (result.error) {
+      // A bad/blank URL never fires a fetch (the button is also disabled in this state).
+      setErrors((prev) => ({ ...prev, externalUrl: result.error }));
+      return;
+    }
+    applyNormalizedUrl(result.url); // canonicalise URL + derive slug + stash host-name fallback
+    setErrors((prev) => ({ ...prev, externalUrl: undefined }));
+    setAutofillNote(null);
+    setAutofillActive(true);
+    appliedMetaRef.current = null; // force the idempotent apply effect to re-run
+    if (result.url === metaUrl) {
+      // SAME url: `setMetaUrl` is a no-op and (staleTime:Infinity + retry:false) the
+      // cached success/error won't re-fetch on its own — so a previously-empty/errored
+      // url could never be retried. `refetch()` re-attempts; on a cached success the
+      // tick below re-applies from data. No loop: `refetch()` synchronously flips
+      // `isFetching` true, so the tick-driven run bails on the isFetching guard and only
+      // applies once the (re)fetch settles.
+      void metaQuery.refetch();
+    } else {
+      setMetaUrl(result.url); // NEW url → the query fires for it
+    }
+    setAutofillTick((t) => t + 1); // re-run the effect even when metaUrl is unchanged
+  }
+
   function handleAdvanceFromUrl() {
     if (values.externalUrl.trim().length === 0) {
       setErrors((prev) => ({ ...prev, externalUrl: 'Enter your app’s URL to continue.' }));
@@ -398,6 +475,9 @@ function ExternalCreateForm() {
   }
 
   const busy = submitMutation.isPending;
+  // Gate the "Pull from site" button on a valid, normalizable URL (empty/invalid →
+  // disabled, no wasted fetch). Cheap enough to derive per render.
+  const pullUrl = normalizeLinkUrl(values.externalUrl);
   const clientOptions = clients.map((c) => ({ value: c.id, label: c.name }));
   const modClientOptions = modOptionClients.map((c) => ({
     value: c.id,
@@ -483,6 +563,53 @@ function ExternalCreateForm() {
                     Looking for a name, description and images from your link…
                   </Text>
                 </Group>
+              )}
+
+              {/* Manual "Pull from site" — an on-demand retry of the OG pull for the
+                  current URL. Fills only-empty name/tagline/description and re-surfaces
+                  the icon/cover suggestions on the Assets step. Non-destructive. */}
+              <Group gap="xs" align="center">
+                <Button
+                  variant="light"
+                  color="grape"
+                  leftSection={<IconSparkles size={16} />}
+                  onClick={handlePullFromSite}
+                  disabled={busy || !!pullUrl.error}
+                  loading={autofillActive && metaQuery.isFetching}
+                  data-testid="apps-offsite-submit-autofill"
+                >
+                  Pull from site
+                </Button>
+                <Text size="xs" c="dimmed">
+                  Pull a name, description, icon and cover from your link — only empty
+                  fields are filled; icon/cover appear on the Assets step.
+                </Text>
+              </Group>
+              {autofillNote === 'error' && (
+                <Text size="xs" c="red" data-testid="apps-offsite-submit-autofill-error">
+                  Couldn’t read that site’s details — check the URL, or add your images and
+                  description manually.
+                </Text>
+              )}
+              {autofillNote === 'empty' && (
+                <Text size="xs" c="dimmed" data-testid="apps-offsite-submit-autofill-empty">
+                  Your site didn’t expose an icon, cover or description to pull (or your
+                  fields are already filled). Add them to the page’s <Code>&lt;head&gt;</Code>,
+                  or upload images manually on the Assets step.
+                </Text>
+              )}
+              {autofillNote === 'applied' && (
+                <Alert
+                  color="grape"
+                  variant="light"
+                  icon={<IconSparkles size={16} />}
+                  data-testid="apps-offsite-submit-autofill-applied"
+                >
+                  <Text size="sm">
+                    Pulled the latest details from your link — check the Details step for the
+                    name and description, and the Assets step for the suggested icon/cover.
+                  </Text>
+                </Alert>
               )}
 
               <Group justify="space-between">
