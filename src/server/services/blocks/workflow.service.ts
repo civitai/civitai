@@ -317,7 +317,7 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
 // Page-LoRA (Increment 1): the model types accepted as a page additional
 // resource. v1 is LoRA-only — the generator's LoRA family is LORA + LoCon +
 // DoRA (the same set the generation resource picker groups as "LoRA"; see
-// base-model.constants supportMap). VAE / embeddings / etc. also flow through
+// basemodel.constants supportMap). VAE / embeddings / etc. also flow through
 // the same `resources` array + belt but are deferred to a later increment.
 export const PAGE_LORA_MODEL_TYPES: ReadonlySet<string> = new Set([
   ModelType.LORA,
