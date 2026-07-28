@@ -73,6 +73,24 @@ jobs:
           echo "added ($(wc -l < added.txt)):"; cat added.txt
           echo "modified ($(wc -l < modified.txt)):"; cat modified.txt
 
+      # BLOCKING. Migrations live next to the schema in packages/civitai-db-schema.
+      # The root prisma/migrations directory predates the monorepo and has no
+      # migration_lock.toml, so Prisma never reads it — 68 migrations were written
+      # there by hand and silently ignored. `pnpm db:migrate:empty` now targets the
+      # right path; this catches the hand-authored case it can't.
+      - name: Migrations are in the schema package
+        run: |
+          set -euo pipefail
+          STRAYS=$(git diff --name-only --diff-filter=A FETCH_HEAD...HEAD -- 'prisma/migrations/**' || true)
+          if [ -n "$STRAYS" ]; then
+            while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              echo "::error file=$f::Migrations belong in packages/civitai-db-schema/prisma/migrations/. Prisma does not read prisma/migrations/ at the repo root. Use: pnpm run db:migrate:empty \"description\""
+            done <<< "$STRAYS"
+            exit 1
+          fi
+          echo "no migrations added outside the schema package"
+
       - name: Register ESLint problem matcher
         run: echo "::add-matcher::.github/problem-matchers/eslint-unix.json"
 
