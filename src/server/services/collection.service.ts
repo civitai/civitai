@@ -85,6 +85,7 @@ import {
   HomeBlockType,
   ImageIngestionStatus,
   MetricTimeframe,
+  ModelStatus,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -2197,16 +2198,31 @@ export const validateContestCollectionEntry = async ({
     }
 
     if (modelIds.length > 0) {
+      // A ported model qualifies on its newest version, not the original model row — an old
+      // model with a version published during the window is a valid entry.
       const models = await dbRead.model.findMany({
         where: {
           id: { in: modelIds },
           createdAt: { lt: new Date(metadata.submissionStartDate) },
+          modelVersions: {
+            none: {
+              status: ModelStatus.Published,
+              OR: [
+                { publishedAt: { gte: new Date(metadata.submissionStartDate) } },
+                {
+                  publishedAt: null,
+                  createdAt: { gte: new Date(metadata.submissionStartDate) },
+                },
+              ],
+            },
+          },
         },
+        select: { id: true },
       });
 
       if (models.length > 0) {
         throw throwBadRequestError(
-          `Some models were created before the submission start date. Please only upload items that were created after the submission period started.`
+          `Some models were created before the submission start date. Please only upload models with a version published after the submission period started.`
         );
       }
     }
