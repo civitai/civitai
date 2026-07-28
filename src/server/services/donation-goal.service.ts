@@ -29,7 +29,7 @@ import { logToAxiom } from '~/server/logging/client';
 export async function getDonationGoals(
   entityType: PaidAccessEntityType,
   ids: number[]
-): Promise<Record<number, DonationGoalWithTotal | null>> {
+): Promise<Partial<Record<number, DonationGoalWithTotal | null>>> {
   if (entityType !== 'ModelVersion' || !ids.length) return {};
   const cached = await modelVersionPublicDonationGoalsCache.fetch(ids);
   const paidAccess = await getPaidAccess('ModelVersion', ids);

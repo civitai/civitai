@@ -120,10 +120,12 @@ import type {
 import {
   Availability,
   CommercialUse,
-  LicensingFeeSettlementCurrency,
-  LicensingFeeType,
   ModelStatus,
   ModelUsageControl,
+} from '~/shared/utils/prisma/enums';
+import type {
+  LicensingFeeSettlementCurrency,
+  LicensingFeeType,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
@@ -2050,7 +2052,7 @@ const getPublicDonationGoal = async (id: number): Promise<DonationGoalWithTotal 
   const goals = await getDonationGoals('ModelVersion', [id]);
   // getDonationGoals omits non-existent versions (existing-but-no-goal → null).
   if (!(id in goals)) throw throwNotFoundError(`No model version with id ${id}`);
-  return goals[id];
+  return goals[id] ?? null;
 };
 
 export const modelVersionDonationGoal = async ({

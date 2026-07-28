@@ -100,7 +100,7 @@ function paidAccessCache(entityType: PaidAccessEntityType) {
 export async function getPaidAccess(
   entityType: PaidAccessEntityType,
   entityIds: number[]
-): Promise<Record<number, PaidAccessRow>> {
+): Promise<Record<number, PaidAccessRow | undefined>> {
   const cached = await paidAccessCache(entityType).fetch(entityIds);
   const out: Record<number, PaidAccessRow> = {};
   for (const key of Object.keys(cached)) {

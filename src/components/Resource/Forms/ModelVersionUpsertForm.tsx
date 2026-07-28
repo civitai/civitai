@@ -561,6 +561,22 @@ export function ModelVersionUpsertForm({
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
     : version?.paidAccess?.timeframeDays ?? 0;
+
+  // Mirror the server-side concurrent-EA cap (assertUserEarlyAccessLimits) so the user sees their
+  // usage and is blocked at the form instead of at submit. Editing a version that already holds a
+  // slot doesn't count against the cap — same carve-out the server applies.
+  const { data: userEarlyAccessVersions } = trpc.modelVersion.getUserEarlyAccessVersions.useQuery(
+    undefined,
+    { enabled: showEarlyAccessInput && !currentUser?.isModerator }
+  );
+  const activeEarlyAccessCount = userEarlyAccessVersions?.length ?? 0;
+  const editingCountsTowardCap =
+    version?.id != null && !!userEarlyAccessVersions?.some((v) => v.id === version.id);
+  const atEarlyAccessModelCap =
+    !currentUser?.isModerator &&
+    maxEarlyAccessModels > 0 &&
+    activeEarlyAccessCount >= maxEarlyAccessModels &&
+    !editingCountsTowardCap;
   const resourceLabel = getDisplayName(model?.type ?? '');
   const modelDownloadEnabled = !usageControl || usageControl === ModelUsageControl.Download;
 
@@ -663,8 +679,12 @@ export function ModelVersionUpsertForm({
                       free.
                     </Text>
                     <Text size="xs">
-                      You can have up to {maxEarlyAccessModels} models in early access at a time.
-                      This will increase as you post more models on the site.
+                      {currentUser?.isModerator
+                        ? `You can have up to ${maxEarlyAccessModels} models in early access at a time.`
+                        : `You have ${activeEarlyAccessCount} of ${maxEarlyAccessModels} early access ${
+                            maxEarlyAccessModels === 1 ? 'slot' : 'slots'
+                          } in use.`}{' '}
+                      This limit increases as you post more models on the site.
                     </Text>
                   </Stack>
                 }
@@ -675,6 +695,15 @@ export function ModelVersionUpsertForm({
                   Early access has ended for this model version. You cannot make changes to early
                   access settings.
                 </Text>
+              )}
+              {atEarlyAccessModelCap && earlyAccessConfig === null && (
+                <Alert color="yellow" icon={<IconAlertTriangle size={18} />} my="sm">
+                  <Text size="xs">
+                    You&apos;ve reached your limit of {maxEarlyAccessModels} concurrent early access{' '}
+                    {maxEarlyAccessModels === 1 ? 'model' : 'models'}. Remove early access from
+                    another model, or wait for one to end, before adding it here.
+                  </Text>
+                </Alert>
               )}
               <Alert color="blue" icon={<IconInfoCircle size={18} />} my="sm">
                 <Text size="xs">
@@ -705,7 +734,7 @@ export function ModelVersionUpsertForm({
                       : null
                   )
                 }
-                disabled={isEarlyAccessOver}
+                disabled={isEarlyAccessOver || (atEarlyAccessModelCap && earlyAccessConfig === null)}
               />
               {earlyAccessConfig && (
                 <Stack>
