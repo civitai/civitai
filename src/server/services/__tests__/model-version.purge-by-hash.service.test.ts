@@ -26,6 +26,7 @@ const { mockDb } = vi.hoisted(() => {
     modelFile: mk(),
     modelFileHash: mk(),
     entityAccess: mk(),
+    paidAccess: mk(),
     post: mk(),
     image: mk(),
     $queryRaw: vi.fn(),
@@ -97,6 +98,16 @@ vi.mock('~/server/services/model-file.service', () => ({
   filesForModelVersionCache: {},
   findOfficialFileByHash: vi.fn(),
   markFileReplaced: vi.fn(),
+}));
+// Keep the real paid-access module (which reads REDIS_KEYS.CACHES.PAID_ACCESS at import) out of the graph.
+vi.mock('~/server/services/paid-access.service', () => ({
+  getPaidAccess: vi.fn(async () => ({})),
+  writePaidAccessForModelVersion: vi.fn(),
+  materializePaidAccessEndsAt: vi.fn(),
+  bustPaidAccessCache: vi.fn(),
+  paidAccessInputFromLegacyConfig: vi.fn(() => null),
+  earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
+  earlyAccessConfigFromPaidAccess: vi.fn(),
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => {

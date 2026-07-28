@@ -43,8 +43,15 @@ export const processScheduledPublishing = createJob(
         m."userId",
         JSON_BUILD_OBJECT(
           'modelId', m.id,
-          'hasEarlyAccess', mv."earlyAccessConfig" IS NOT NULL AND (mv."earlyAccessConfig"->>'timeframe')::int > 0,
-          'earlyAccessEndsAt', mv."earlyAccessEndsAt"
+          'hasEarlyAccess', EXISTS (
+            SELECT 1 FROM "PaidAccess" pa
+            WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+              AND pa."timeframeDays" IS NOT NULL
+          ),
+          'earlyAccessEndsAt', (
+            SELECT pa."endsAt" FROM "PaidAccess" pa
+            WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+          )
         ) as "extras"
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
@@ -240,8 +247,10 @@ export const processScheduledPublishing = createJob(
               UPDATE "Model" mo
               SET "earlyAccessDeadline" = GREATEST(mea."earlyAccessDeadline", mo."earlyAccessDeadline")
               FROM (
-                SELECT mv."modelId", mv."earlyAccessEndsAt" AS "earlyAccessDeadline"
+                SELECT mv."modelId", pa."endsAt" AS "earlyAccessDeadline"
                 FROM "ModelVersion" mv
+                JOIN "PaidAccess" pa
+                  ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
                 WHERE mv.id IN (${Prisma.join(earlyAccess)})
               ) as mea
               WHERE mo."id" = mea."modelId"

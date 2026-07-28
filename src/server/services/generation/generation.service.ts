@@ -1,5 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { isFreeGeneration, paidGenerationGrant } from '@civitai/buzz';
+import {
+  type ModelVersionTerms,
+  isFreeGeneration,
+  isPaidAccessActive,
+  paidGenerationGrant,
+} from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
@@ -24,6 +29,7 @@ import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import type { GenerationAlias, ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -1140,6 +1146,9 @@ export async function getResourceData(
 
     return {
       ...item,
+      // Merged in after the cache read (see mergePaidAccess) from PaidAccess — NOT stored in the 1h
+      // resourceDataCache, whose TTL would serve stale gating terms after a config change.
+      paidAccess: null as { endsAt: Date | null; terms: ModelVersionTerms } | null,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
       strength: settings?.strength ?? 1,
@@ -1183,15 +1192,30 @@ export async function getResourceData(
       .then((data) => data.map((item) => transformGenerationData(item)));
   }
 
+  // Merge paid-access from its OWN cache (busted on change), rather than baking it into the 1h
+  // resourceDataCache where a config change would go unseen until the TTL expires.
+  async function mergePaidAccess(resources: ReturnType<typeof transformGenerationData>[]) {
+    const ids = [...new Set(resources.map((r) => r.id))];
+    if (!ids.length) return;
+    const paidAccess = await getPaidAccess('ModelVersion', ids);
+    for (const r of resources) {
+      const pa = paidAccess[r.id];
+      r.paidAccess =
+        pa && isPaidAccessActive(pa)
+          ? { endsAt: pa.endsAt, terms: pa.terms as ModelVersionTerms }
+          : null;
+    }
+  }
+
   async function getEntityAccess(resources: ReturnType<typeof transformGenerationData>[]) {
     const earlyAccessIds = resources
       .filter(
         (x) =>
           x.covered &&
           !x.hasAccess &&
-          x.paidAccessTerms &&
+          x.paidAccess?.terms &&
           // Free generation will technically bypass access checks, but we still want to show the early access badge
-          !isFreeGeneration(x.paidAccessTerms)
+          !isFreeGeneration(x.paidAccess.terms)
       )
       .map((x) => x.id);
 
@@ -1312,17 +1336,19 @@ export async function getResourceData(
       })
       .then(async (resources) => {
         const substitutes = await getResourceDataSubstitutes(resources);
+        await mergePaidAccess([...resources, ...substitutes]);
         const entityAccess = await getEntityAccess([...resources, ...substitutes]);
 
         for (const resource of [...resources, ...substitutes]) {
           if (!resource.hasAccess) {
             // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
+            // A gate grants generation to a non-buyer when generation is free for everyone
+            // (`{ free: true }`) OR the paid generation tier offers free trial generations. Free
+            // generation must stay generatable — parity with the old default-trialLimit behavior.
+            const terms = resource.paidAccess?.terms;
             resource.hasAccess = !!(
               entityAccess.find((e) => e.entityId === resource.id)?.hasAccess ||
-              !!(
-                resource.paidAccessTerms &&
-                paidGenerationGrant(resource.paidAccessTerms)?.trialLimit
-              )
+              (terms && (isFreeGeneration(terms) || paidGenerationGrant(terms)?.trialLimit))
             );
             resource.canGenerate = resource.hasAccess && resource.canGenerate;
           }

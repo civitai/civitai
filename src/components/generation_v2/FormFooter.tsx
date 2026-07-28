@@ -1203,8 +1203,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     const totalTip = Math.ceil(base * creatorTipRate) + Math.ceil(base * civitaiTipRate);
     const totalCost = (whatIfData?.cost?.total ?? 0) + totalTip;
 
-    // Check if any resources have early access
-    const hasEarlyAccess = resourceData.some((x) => x.paidAccessTerms);
+    // Any resource with an active paid-access gate (paidAccess is set only for live gates upstream).
+    const hasPaidAccess = resourceData.some((x) => x.paidAccess);
 
     // Wrap the mutation call with buzz transaction check
     const performTransaction = async () => {
@@ -1223,7 +1223,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         externalId,
       });
 
-      if (hasEarlyAccess) {
+      if (hasPaidAccess) {
         invalidateWhatIf();
       }
 

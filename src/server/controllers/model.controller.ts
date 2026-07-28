@@ -1,10 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
-import {
-  earlyAccessConfigFromPaidAccess,
-  getPaidAccess,
-} from '~/server/services/paid-access.service';
+import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
@@ -31,16 +28,12 @@ import {
   resolveVersionHiddenMetrics,
   type HiddenModelMetrics,
 } from '~/server/utils/model-metric-privacy';
-import {
-  dataForModelsCache,
-  modelTagCache,
-  modelVersionPublicDonationGoalsCache,
-} from '~/server/redis/caches';
+import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
+import { getOwnerDonationGoals } from '~/server/services/donation-goal.service';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type {
   LinkedComponentSettings,
-  ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
@@ -268,10 +261,14 @@ export const getModelHandler = async ({
       'ModelVersion',
       filteredVersions.map((x) => x.id)
     );
-    // Batched EA donation goals (via cache) for the backward bridge below.
-    const donationGoalsByVersion = await modelVersionPublicDonationGoalsCache.fetch(
-      filteredVersions.map((x) => x.id)
-    );
+    // The DTO donationGoal seeds ONLY the owner's edit form → raw owner read (unfiltered by the
+    // public EA-window/opt-out), and owner/mod only. Public display reads modelVersion.donationGoal.
+    const donationGoalsByVersion = isOwner
+      ? await getOwnerDonationGoals(
+          'ModelVersion',
+          filteredVersions.map((x) => x.id)
+        )
+      : {};
 
     // Only pass non-linked-component resources to getResourceData
     const regularResourceIds =
@@ -351,7 +348,7 @@ export const getModelHandler = async ({
 
     const mappedVersions = filteredVersions.map((version) => {
       const paidAccess = paidAccessByVersion[version.id];
-      const eaDonationGoal = donationGoalsByVersion[version.id]?.goals[0] ?? null;
+      const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
       // Permanent gate => endsAt null => no countdown; a timed gate surfaces its live deadline.
@@ -431,12 +428,8 @@ export const getModelHandler = async ({
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        // Backward bridge: overwrite the `...version` spread's now-null raw columns with values
-        // reconstructed from PaidAccess (+ the EA donation goal from the batched cache).
-        earlyAccessEndsAt: paidAccess?.endsAt ?? null,
-        earlyAccessConfig: paidAccess
-          ? earlyAccessConfigFromPaidAccess(paidAccess, eaDonationGoal)
-          : null,
+        paidAccess: toModelVersionPaidAccessDto(paidAccess),
+        donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,
         // Raw flags are mod-only — they also carry payout/licensing state that

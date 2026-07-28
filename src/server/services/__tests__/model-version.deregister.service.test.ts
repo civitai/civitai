@@ -25,6 +25,7 @@ const { mockDbWrite } = vi.hoisted(() => {
     modelVersion: mk(),
     modelFile: mk(),
     entityAccess: mk(),
+    paidAccess: mk(),
     $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
@@ -67,6 +68,16 @@ vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), create
 vi.mock('~/server/services/model.service', () => ({
   ingestModelById: vi.fn(),
   updateModelLastVersionAt: vi.fn(),
+}));
+// Keep the real paid-access module (which reads REDIS_KEYS.CACHES.PAID_ACCESS at import) out of the graph.
+vi.mock('~/server/services/paid-access.service', () => ({
+  getPaidAccess: vi.fn(async () => ({})),
+  writePaidAccessForModelVersion: vi.fn(),
+  materializePaidAccessEndsAt: vi.fn(),
+  bustPaidAccessCache: vi.fn(),
+  paidAccessInputFromLegacyConfig: vi.fn(() => null),
+  earlyAccessDonationGoalFromLegacyConfig: vi.fn(() => null),
+  earlyAccessConfigFromPaidAccess: vi.fn(),
 }));
 vi.mock('~/server/services/model-file.service', () => ({ filesForModelVersionCache: {} }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));

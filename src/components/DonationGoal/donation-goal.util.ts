@@ -6,32 +6,18 @@ export const useMutateDonationGoal = () => {
 
   const donateMutation = trpc.donationGoal.donate.useMutation({
     async onSuccess(donationGoal, { donationGoalId }) {
-      if (donationGoal && donationGoal.modelVersionId) {
-        await queryUtils.modelVersion.donationGoals.setData(
-          { id: donationGoal.modelVersionId },
-          (data) => {
-            if (!data) return [];
+      const versionId =
+        donationGoal?.entityType === 'ModelVersion' ? donationGoal.entityId : null;
+      if (donationGoal && versionId != null) {
+        await queryUtils.modelVersion.donationGoal.setData({ id: versionId }, (data) => {
+          if (!data || data.id !== donationGoalId) return data ?? null;
+          return { ...data, total: donationGoal.total };
+        });
 
-            const updated = data.map((goal) => {
-              if (goal.id === donationGoalId) {
-                return {
-                  ...goal,
-                  // Update it:
-                  total: donationGoal.total,
-                };
-              }
-
-              return goal;
-            });
-
-            return updated;
-          }
-        );
-
-        if (donationGoal.total >= donationGoal.goalAmount && donationGoal.isEarlyAccess) {
-          // Refresh user's access, as he might have unlocked it.
+        if (donationGoal.total >= donationGoal.goalAmount) {
+          // Goal met → the server may have ended the access gate; refresh entity access.
           await queryUtils.common.getEntityAccess.invalidate({
-            entityId: [donationGoal.modelVersionId],
+            entityId: [versionId],
             entityType: 'ModelVersion',
           });
         }

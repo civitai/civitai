@@ -8,7 +8,7 @@ import {
   getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
   getVersionLicenseHandler,
-  modelVersionDonationGoalsHandler,
+  modelVersionDonationGoalHandler,
   modelVersionEarlyAccessPurchaseHandler,
   modelVersionGeneratedImagesOnTimeframeHandler,
   publishModelVersionHandler,
@@ -215,10 +215,10 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite, blockApiKeys: true })
     .input(modelVersionEarlyAccessPurchase)
     .mutation(modelVersionEarlyAccessPurchaseHandler),
-  donationGoals: publicProcedure
+  donationGoal: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
-    .query(modelVersionDonationGoalsHandler),
+    .query(modelVersionDonationGoalHandler),
   getTrainingDetails: moderatorProcedure
     .input(getByIdSchema)
     .query(getModelVersionForTrainingReviewHandler),

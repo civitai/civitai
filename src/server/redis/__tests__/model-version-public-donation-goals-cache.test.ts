@@ -16,7 +16,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *   - existence: an existing version with zero public goals yields an EMPTY entry (caller → []),
  *     while a genuinely-missing version yields NO entry (caller → 404) and is NOT negatively
  *     cached (re-looked-up next time, per `cacheNotFound: false`);
- *   - the per-version early-access filter and the summed totals shape.
+ *   - the summed totals shape.
+ *
+ * The early-access-window + creator opt-out DISPLAY filters are applied at READ time in
+ * `getDonationGoals` (donation-goals-accessor.test.ts), NOT here.
  */
 
 const store = new Map<string, unknown>();
@@ -53,8 +56,6 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
   const mk = () => ({
     modelVersion: { findMany: vi.fn() },
     donationGoal: { findMany: vi.fn() },
-    user: { findMany: vi.fn() },
-    customerSubscription: { findMany: vi.fn() },
     $queryRaw: vi.fn(),
   });
   return { mockDbRead: mk(), mockDbWrite: mk() };
@@ -64,12 +65,12 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite 
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import {
   publicDonationGoalsLookupFn,
-  type ModelVersionPublicDonationGoalsCacheItem,
+  type ModelVersionPublicDonationGoalCacheItem,
 } from '~/server/redis/donation-goals-cache';
 
 // The REAL lookupFn, wired into createCachedObject exactly as caches.ts does.
 function buildCache() {
-  return createCachedObject<ModelVersionPublicDonationGoalsCacheItem>({
+  return createCachedObject<ModelVersionPublicDonationGoalCacheItem>({
     key: 'test:mv-public-donation-goals' as never,
     idKey: 'modelVersionId',
     ttl: 60,
@@ -84,11 +85,10 @@ const row = (over: Record<string, unknown> = {}) => ({
   goalAmount: 1000,
   title: 'Goal',
   active: true,
-  isEarlyAccess: false,
   userId: 7,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   description: 'desc',
-  modelVersionId: 5,
+  entityId: 5,
   ...over,
 });
 
@@ -100,21 +100,10 @@ beforeEach(() => {
   setNxMock.mockClear().mockResolvedValue(true);
   mockDbRead.modelVersion.findMany.mockReset();
   mockDbRead.donationGoal.findMany.mockReset();
-  mockDbRead.user.findMany.mockReset().mockResolvedValue([]);
-  mockDbRead.customerSubscription.findMany.mockReset().mockResolvedValue([]);
   mockDbRead.$queryRaw.mockReset();
   mockDbWrite.modelVersion.findMany.mockReset();
   mockDbWrite.donationGoal.findMany.mockReset();
-  mockDbWrite.user.findMany.mockReset().mockResolvedValue([]);
-  mockDbWrite.customerSubscription.findMany.mockReset().mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockReset();
-});
-
-// Active CP membership row for `getValidCreatorMembershipMap` (silver tier > free).
-const activeSub = (userId: number) => ({
-  userId,
-  metadata: {},
-  product: { metadata: { tier: 'silver' } },
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -130,7 +119,8 @@ describe('publicDonationGoalsLookupFn — security invariant', () => {
     const call = mockDbRead.donationGoal.findMany.mock.calls[0][0];
     // The one guard that keeps inactive/draft goals out of the shared public key.
     expect(call.where.active).toBe(true);
-    expect(call.where.modelVersionId).toEqual({ in: [5] });
+    expect(call.where.entityType).toBe('ModelVersion');
+    expect(call.where.entityId).toEqual({ in: [5] });
   });
 });
 
@@ -146,20 +136,17 @@ describe('modelVersionPublicDonationGoalsCache', () => {
 
     expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(1);
     expect(mockDbRead.donationGoal.findMany).toHaveBeenCalledTimes(1);
-    expect(first[5].goals).toEqual([
-      {
-        id: 10,
-        goalAmount: 1000,
-        title: 'Goal',
-        active: true,
-        isEarlyAccess: false,
-        userId: 7,
-        createdAt: new Date('2026-01-01T00:00:00.000Z'),
-        description: 'desc',
-        total: 250,
-      },
-    ]);
-    expect(second[5].goals).toEqual(first[5].goals);
+    expect(first[5].goal).toEqual({
+      id: 10,
+      goalAmount: 1000,
+      title: 'Goal',
+      active: true,
+      userId: 7,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      description: 'desc',
+      total: 250,
+    });
+    expect(second[5].goal).toEqual(first[5].goal);
   });
 
   it('caches an EMPTY entry for an existing version with no public goals (returns [], not 404)', async () => {
@@ -170,9 +157,9 @@ describe('modelVersionPublicDonationGoalsCache', () => {
     const first = await cache.fetch([8]);
     const second = await cache.fetch([8]);
 
-    expect(first[8]).toEqual({ modelVersionId: 8, goals: [] });
+    expect(first[8]).toEqual({ modelVersionId: 8, goal: null });
     expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(1); // positive entry cached
-    expect(second[8].goals).toEqual([]);
+    expect(second[8].goal).toBeNull();
   });
 
   it('yields NO entry for a missing version and does not negatively cache it (cacheNotFound: false)', async () => {
@@ -190,75 +177,6 @@ describe('modelVersionPublicDonationGoalsCache', () => {
     expect(second[999]).toBeUndefined();
   });
 
-  it('applies the public early-access filter per version', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([
-      { id: 5, earlyAccessEndsAt: null }, // EA goals hidden
-      { id: 9, earlyAccessEndsAt: new Date('2099-01-01T00:00:00.000Z') }, // EA goals shown
-    ]);
-    mockDbRead.donationGoal.findMany.mockResolvedValue([
-      row({ id: 10, isEarlyAccess: false, modelVersionId: 5 }),
-      row({ id: 11, isEarlyAccess: true, modelVersionId: 5 }),
-      row({ id: 20, isEarlyAccess: false, modelVersionId: 9 }),
-      row({ id: 21, isEarlyAccess: true, modelVersionId: 9 }),
-    ]);
-    mockDbRead.$queryRaw.mockResolvedValue([]); // all totals default to 0
-    const cache = buildCache();
-
-    const res = await cache.fetch([5, 9]);
-
-    expect(res[5].goals.map((g) => g.id)).toEqual([10]); // EA goal 11 excluded
-    expect(res[9].goals.map((g) => g.id).sort((a, b) => a - b)).toEqual([20, 21]); // both shown
-    expect(res[5].goals[0].total).toBe(0); // no donation → 0
-  });
-
-  it('hides an early-access goal once the early-access window has ended (past date)', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([
-      { id: 9, earlyAccessEndsAt: new Date('2000-01-01T00:00:00.000Z') }, // EA already ended
-    ]);
-    mockDbRead.donationGoal.findMany.mockResolvedValue([
-      row({ id: 20, isEarlyAccess: false, modelVersionId: 9 }),
-      row({ id: 21, isEarlyAccess: true, modelVersionId: 9 }),
-    ]);
-    mockDbRead.$queryRaw.mockResolvedValue([]);
-    const cache = buildCache();
-
-    const res = await cache.fetch([9]);
-
-    expect(res[9].goals.map((g) => g.id)).toEqual([20]); // ended EA goal 21 excluded
-  });
-
-  it("hides an opted-out owner's goals ONLY while they are an active CP member", async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
-    mockDbRead.donationGoal.findMany.mockResolvedValue([
-      row({ id: 10, userId: 7, modelVersionId: 5 }),
-    ]);
-    mockDbRead.user.findMany.mockResolvedValue([{ id: 7, settings: { hideDonationGoals: true } }]);
-    mockDbRead.customerSubscription.findMany.mockResolvedValue([activeSub(7)]);
-    mockDbRead.$queryRaw.mockResolvedValue([]);
-    const cache = buildCache();
-
-    const res = await cache.fetch([5]);
-
-    expect(res[5]).toEqual({ modelVersionId: 5, goals: [] }); // active member + opted out → hidden
-  });
-
-  it("shows an opted-out owner's goals again when their CP membership has lapsed", async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
-    mockDbRead.donationGoal.findMany.mockResolvedValue([
-      row({ id: 10, userId: 7, modelVersionId: 5 }),
-    ]);
-    mockDbRead.user.findMany.mockResolvedValue([{ id: 7, settings: { hideDonationGoals: true } }]);
-    // No active subscription → lapsed / never-member → the opt-out silently reverts.
-    mockDbRead.customerSubscription.findMany.mockResolvedValue([]);
-    mockDbRead.$queryRaw.mockResolvedValue([]);
-    const cache = buildCache();
-
-    const res = await cache.fetch([5]);
-
-    expect(res[5].goals.map((g) => g.id)).toEqual([10]); // no stored flip — publicly visible again
-  });
-
-  // Owner/mod bypass is enforced one level up in `modelVersionDonationGoals`, which
-  // skips this shared public cache entirely for privileged viewers — so an owner/mod
-  // never reaches this lookupFn and always sees their own goals regardless of the flag.
+  // The early-access-window + creator opt-out DISPLAY filters live at read time in getDonationGoals
+  // (see donation-goals-accessor.test.ts) — the cache holds only the raw active goal + total.
 });

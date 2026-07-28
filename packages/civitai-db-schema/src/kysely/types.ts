@@ -2028,6 +2028,8 @@ export type DonationGoal = {
   description: string | null;
   goalAmount: number;
   paidAmount: Generated<number>;
+  entityType: PaidAccessEntityType | null;
+  entityId: number | null;
   modelVersionId: number | null;
   createdAt: Generated<Timestamp>;
   isEarlyAccess: Generated<boolean>;

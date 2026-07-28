@@ -15,7 +15,7 @@ export type GenerationResourceBase = {
   trainedWords: string[];
   vaeId?: number;
   baseModel: string;
-  paidAccessTerms?: ModelVersionTerms | null;
+  paidAccess?: { endsAt: Date | null; terms: ModelVersionTerms } | null;
   canGenerate: boolean;
   hasAccess: boolean;
   air?: string;

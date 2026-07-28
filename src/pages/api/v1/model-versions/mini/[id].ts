@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { DEFAULT_GENERATION_TRIAL_LIMIT } from '@civitai/buzz';
 import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
@@ -145,9 +146,12 @@ export default MixedAuthEndpoint(async function handler(
       mv."meta"->'generationAlias' AS "generationAlias",
       (
         CASE
-          WHEN pa."terms"->'generation'->>'price' IS NOT NULL
+          -- A paid generation tier is a generation grant that is NOT free (its price is optional and
+          -- falls back to the download price), mirroring paidGenerationGrant().
+          WHEN pa."terms"->'generation' IS NOT NULL
+            AND COALESCE(pa."terms"->'generation'->>'free', '') <> 'true'
         THEN
-          COALESCE(CAST(pa."terms"->'generation'->>'trialLimit' AS int), 10)
+          COALESCE(CAST(pa."terms"->'generation'->>'trialLimit' AS int), ${DEFAULT_GENERATION_TRIAL_LIMIT})
         ELSE
           NULL
         END

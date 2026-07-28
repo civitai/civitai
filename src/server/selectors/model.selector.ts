@@ -120,8 +120,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       baseModel: true,
       baseModelType: true,
       availability: true,
-      earlyAccessEndsAt: true,
-      earlyAccessConfig: true,
       status: true,
       publishedAt: true,
       meta: true,

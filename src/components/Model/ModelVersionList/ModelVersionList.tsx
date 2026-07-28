@@ -132,7 +132,7 @@ export function ModelVersionList({
           const published = version.status === 'Published';
           const scheduled = version.status === 'Scheduled';
           const isEarlyAccess =
-            version.earlyAccessEndsAt && new Date(version.earlyAccessEndsAt) > new Date();
+            version.paidAccess?.endsAt && new Date(version.paidAccess.endsAt) > new Date();
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
           const earlyAccessButton = (
             <ThemeIcon

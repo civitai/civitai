@@ -54,6 +54,11 @@ export default MixedAuthEndpoint(async function handler(
   const allowedBrowsingLevels = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   try {
+    // NOTE(paid-access): this endpoint no longer returns `earlyAccessEndsAt` / `earlyAccessConfig`
+    // (dropped with the legacy columns). We believe there are no active consumers and that the public
+    // API simply should not surface paid-access models — PENDING confirmation with Justin. If a 3rd-
+    // party consumer turns out to depend on early-access state, reconstruct it from PaidAccess
+    // (endsAt + terms) the way mini/[id].ts does, or filter gated versions out entirely. Circle back.
     const modelVersion = await dbRead.$queryRaw<
       (ModelVersionApiReturn & { vaeId?: number | null })[]
     >`

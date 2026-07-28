@@ -163,7 +163,7 @@ import {
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
 import { isPaidAccessActive } from '@civitai/buzz';
 import { getPaidAccess } from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';

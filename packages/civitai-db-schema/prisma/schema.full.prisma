@@ -5073,6 +5073,10 @@ model DonationGoal {
   description    String?
   goalAmount     Int
   paidAmount     Int           @default(0)
+  // Polymorphic target (mirrors PaidAccess). Nullable in phase 1 while modelVersionId is dual-written;
+  // becomes the sole target when modelVersionId is dropped in phase 2.
+  entityType     PaidAccessEntityType?
+  entityId       Int?
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
@@ -5080,6 +5084,8 @@ model DonationGoal {
   active         Boolean       @default(true)
 
   donations Donation[]
+
+  @@index([entityType, entityId])
 }
 
 model Donation {

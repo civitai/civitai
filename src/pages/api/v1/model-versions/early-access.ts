@@ -1,9 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { updateEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
+import { updateModelVersionPaidAccessSchema } from '~/server/schema/model-version.schema';
 import {
   getUserEarlyAccessModelVersions,
   getVersionById,
-  updateModelVersionEarlyAccessConfig,
+  updateModelVersionPaidAccess,
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -12,15 +12,15 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { env } from '~/env/server';
 import type { SessionUser } from '~/types/session';
 
-// Narrow cross-app write for a model version's early-access config — the creator
+// Narrow cross-app write for a model version's paid-access config — the creator
 // studio (SvelteKit spoke) calls this server-to-server, forwarding the shared
 // .civitai.com session cookie that AuthedEndpoint validates. Body: the
-// updateEarlyAccessConfigSchema shape ({ id, earlyAccessConfig }); a null config
-// clears early access. Version-level rules + config merge live in the service;
-// user-level limits (max days / max concurrent EA models) are enforced here.
+// updateModelVersionPaidAccessSchema shape ({ id, paidAccess, donationGoal }); a null
+// paidAccess clears the gate. Version-level rules live in the service; user-level
+// limits (max days / max concurrent EA models) are enforced here.
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
-    const parsed = updateEarlyAccessConfigSchema.safeParse(req.body);
+    const parsed = updateModelVersionPaidAccessSchema.safeParse(req.body);
     if (!parsed.success) {
       return res
         .status(400)
@@ -38,19 +38,19 @@ export default AuthedEndpoint(
       }
     }
 
-    const { earlyAccessConfig } = input;
+    const { paidAccess } = input;
 
     // Permanent access is set only from the Creator Studio (which enforces the tier cap); require the shared token.
-    if (earlyAccessConfig?.permanent && !user.isModerator && req.query.token !== env.WEBHOOK_TOKEN) {
+    if (paidAccess?.permanent && !user.isModerator && req.query.token !== env.WEBHOOK_TOKEN) {
       return res
         .status(403)
         .json({ error: 'Permanent access can only be set from the Creator Studio.' });
     }
 
-    if (earlyAccessConfig?.timeframe && !user.isModerator) {
+    if (paidAccess?.timeframeDays && !user.isModerator) {
       const features = getFeatureFlags({ user, req });
       const maxDays = getMaxEarlyAccessDays({ userMeta: user.meta, features });
-      if (earlyAccessConfig.timeframe > maxDays) {
+      if (paidAccess.timeframeDays > maxDays) {
         return res.status(400).json({ error: 'Early access days exceeds user limit' });
       }
 
@@ -66,7 +66,7 @@ export default AuthedEndpoint(
     }
 
     try {
-      const updated = await updateModelVersionEarlyAccessConfig(input);
+      const updated = await updateModelVersionPaidAccess(input);
 
       await updateModelEarlyAccessDeadline({ id: updated.modelId }).catch((e) => {
         console.error('Unable to update model early access deadline', e);

@@ -4,16 +4,16 @@ import {
   type PaidAccessEntityType,
   type PaidAccessRow,
   type PaidAccessTerms,
-  isFreeGeneration,
-  isPaidAccessActive,
-  paidGenerationGrant,
 } from '@civitai/buzz';
 import { CacheTTL } from '~/server/common/constants';
+import type {
+  ModelVersionPaidAccessDto,
+  ModelVersionPaidAccessInputSchema,
+} from '~/server/schema/model-version.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { increaseDate } from '~/utils/date-helpers';
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 
 // The config side of the paid-access gate (the purchase side is EntityAccess). Phase 1 of the
 // PaidAccess refactor: behavior-preserving. ModelVersion migrates now; ComicChapter joins in stage 5
@@ -22,22 +22,6 @@ import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-versio
 //
 // Cache the ROW, not the verdict: endsAt is materialized, so active-ness is derived live and the
 // cache never goes stale on time passing — only on config change / removal (see bustPaidAccessCache).
-
-// Domain write input for gating a model version — expressed in PaidAccess terms, NOT the legacy
-// `earlyAccessConfig` form blob. The upcoming client sends this shape directly; the current form
-// payload is mapped in via `paidAccessInputFromLegacyConfig` (a temporary bridge, delete when the
-// new UI lands).
-export type ModelVersionPaidAccessInput = {
-  /** Permanent gate — no timed window (endsAt stays NULL). Takes precedence over timeframeDays. */
-  permanent?: boolean;
-  /** Timed-window length in days; endsAt = publishedAt + this, materialized at publish. */
-  timeframeDays?: number;
-  /** Bundle terms: download / generation tiers + freeGeneration. */
-  terms: ModelVersionTerms;
-};
-
-/** Domain write input for a model version's early-access donation goal. */
-export type EarlyAccessDonationGoalInput = { amount: number } | null;
 
 type PaidAccessCacheRow = {
   entityId: number;
@@ -105,15 +89,16 @@ export async function getPaidAccess(
   return out;
 }
 
-/** True if the entity is gated *right now* (has a PaidAccess row and it's active). */
-export async function isPaidAccessGated(
-  entityType: PaidAccessEntityType,
-  entityId: number,
-  now = new Date()
-): Promise<boolean> {
-  const rows = await getPaidAccess(entityType, [entityId]);
-  const row = rows[entityId];
-  return !!row && isPaidAccessActive(row, now);
+/** Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). */
+export function toModelVersionPaidAccessDto(
+  row: PaidAccessRow | undefined
+): ModelVersionPaidAccessDto | null {
+  if (!row) return null;
+  return {
+    endsAt: row.endsAt,
+    timeframeDays: row.timeframeDays ?? null,
+    terms: row.terms as ModelVersionTerms,
+  };
 }
 
 export async function bustPaidAccessCache(entityType: PaidAccessEntityType, entityIds: number[]) {
@@ -121,9 +106,26 @@ export async function bustPaidAccessCache(entityType: PaidAccessEntityType, enti
 }
 
 /**
- * Native write: reflect a model version's `ModelVersionPaidAccessInput` directly into PaidAccess — no
- * dependency on the trigger-derived columns or the (retired) `earlyAccessConfig` persistence. Call
- * after every gate config write and at publish.
+ * End an active timed gate immediately (endsAt = NOW), keeping the row as a tombstone so downstream
+ * expiry handling treats it uniformly with a natural expiry. The ONLY PaidAccess mutation not tied to a
+ * version write; it lives here so the `::"PaidAccessEntityType"` cast and the table write stay inside
+ * the owning service. A no-op WHERE simply matches nothing for a permanent/absent gate.
+ *
+ * Deliberately does NOT bust — its sole caller (donation-goal completion) busts separately, fail-open,
+ * because it runs post-commit where a throw would refund an already-committed donation. The gate-end
+ * write itself is fail-closed (propagates) at that site; only the bust is swallowed.
+ */
+export async function endPaidAccessNow(entityType: PaidAccessEntityType, entityId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "PaidAccess" SET "endsAt" = NOW()
+    WHERE "entityType" = ${entityType}::"PaidAccessEntityType" AND "entityId" = ${entityId}
+  `;
+}
+
+/**
+ * Native write: reflect a model version's paid-access input directly into PaidAccess — no dependency
+ * on the trigger-derived columns or the (retired) `earlyAccessConfig` persistence. Call after every
+ * gate config write and at publish.
  *   permanent          -> endsAt NULL,             timeframeDays NULL
  *   timed + published  -> endsAt = publishedAt + timeframeDays, timeframeDays kept
  *   timed + unpublished-> endsAt NULL (pending),   timeframeDays kept (materialized at publish)
@@ -132,23 +134,24 @@ export async function bustPaidAccessCache(entityType: PaidAccessEntityType, enti
  */
 export async function writePaidAccessForModelVersion(
   versionId: number,
-  input: ModelVersionPaidAccessInput | null,
-  opts: { publishedAt?: Date | null; ownerId?: number } = {},
-  tx: PrismaClient | Prisma.TransactionClient = dbWrite
+  input: ModelVersionPaidAccessInputSchema | null,
+  opts: { publishedAt?: Date | null; ownerId?: number } = {}
 ) {
   const permanent = !!input?.permanent;
   const timeframe = input?.timeframeDays ?? 0;
   const gated = !!input && (permanent || timeframe > 0);
 
   if (!gated) {
-    await tx.paidAccess.deleteMany({ where: { entityType: 'ModelVersion', entityId: versionId } });
+    await dbWrite.paidAccess.deleteMany({
+      where: { entityType: 'ModelVersion', entityId: versionId },
+    });
     await bustPaidAccessCache('ModelVersion', [versionId]);
     return;
   }
 
   let { publishedAt, ownerId } = opts;
   if (publishedAt === undefined || ownerId === undefined) {
-    const version = await tx.modelVersion.findUnique({
+    const version = await dbWrite.modelVersion.findUnique({
       where: { id: versionId },
       select: { publishedAt: true, model: { select: { userId: true } } },
     });
@@ -165,7 +168,7 @@ export async function writePaidAccessForModelVersion(
     : null; // pending until publish materializes it
   const terms = input.terms;
 
-  await tx.paidAccess.upsert({
+  await dbWrite.paidAccess.upsert({
     where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
     create: {
       entityType: 'ModelVersion',
@@ -204,68 +207,3 @@ export async function materializePaidAccessEndsAt(
   await bustPaidAccessCache('ModelVersion', [versionId]);
 }
 
-// ---------------------------------------------------------------------------
-// TEMP legacy bridge — maps the current `earlyAccessConfig` form payload to the PaidAccess /
-// DonationGoal domain inputs. Delete this block once the client sends `ModelVersionPaidAccessInput`
-// (and the donation-goal input) directly, i.e. when the new UI lands.
-// ---------------------------------------------------------------------------
-
-function legacyTerms(config: ModelVersionEarlyAccessConfig): ModelVersionTerms {
-  const terms: ModelVersionTerms = {};
-  if (config.chargeForDownload && config.downloadPrice != null) {
-    terms.download = { price: config.downloadPrice };
-  }
-  if (config.freeGeneration) {
-    terms.generation = { free: true };
-  } else if (config.chargeForGeneration && config.generationPrice != null) {
-    terms.generation = {
-      price: config.generationPrice,
-      ...(config.generationTrialLimit != null ? { trialLimit: config.generationTrialLimit } : {}),
-    };
-  }
-  return terms;
-}
-
-export function paidAccessInputFromLegacyConfig(
-  config: ModelVersionEarlyAccessConfig | null
-): ModelVersionPaidAccessInput | null {
-  if (!config) return null;
-  const permanent = !!config.permanent;
-  const timeframeDays = config.timeframe ?? 0;
-  if (!permanent && timeframeDays <= 0) return null; // configured but no window => not gated
-  return { permanent, timeframeDays, terms: legacyTerms(config) };
-}
-
-export function earlyAccessDonationGoalFromLegacyConfig(
-  config: ModelVersionEarlyAccessConfig | null
-): EarlyAccessDonationGoalInput {
-  if (!config?.donationGoalEnabled || !config.donationGoal) return null;
-  return { amount: config.donationGoal };
-}
-
-/**
- * BACKWARD legacy bridge: reconstruct the legacy `earlyAccessConfig` shape from a PaidAccess row so
- * DTO consumers that still read the blob (the deferred upsert form, purchase modal, version details)
- * keep working unchanged. Delete alongside the forward bridge when the client reads PaidAccess/terms
- * directly. `donationGoal` comes from the forward DonationGoal relation (the caller fetches it).
- */
-export function earlyAccessConfigFromPaidAccess(
-  row: PaidAccessRow,
-  donationGoal?: { id: number; goalAmount: number } | null
-): ModelVersionEarlyAccessConfig {
-  const terms = row.terms as ModelVersionTerms;
-  const paidGen = paidGenerationGrant(terms);
-  return {
-    timeframe: row.timeframeDays ?? 0,
-    permanent: row.timeframeDays == null,
-    chargeForDownload: !!terms.download,
-    downloadPrice: terms.download?.price,
-    chargeForGeneration: !!paidGen,
-    generationPrice: paidGen?.price,
-    generationTrialLimit: paidGen?.trialLimit ?? 10,
-    freeGeneration: isFreeGeneration(terms),
-    donationGoalEnabled: !!donationGoal,
-    donationGoal: donationGoal?.goalAmount,
-    donationGoalId: donationGoal?.id,
-  };
-}
