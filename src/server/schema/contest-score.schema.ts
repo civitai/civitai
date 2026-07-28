@@ -56,12 +56,18 @@ export const getContestSnapshotSchema = z.object({
 // ---------------------------------------------------------------------------
 
 /**
- * Structural validation only, and deliberately so: a min/max on a weight or a
- * threshold would publish that value's range to anyone who can read this file, and
- * this repo mirrors publicly. Magnitudes are constrained by review, not by zod.
+ * Bounded at zero and nowhere else. A min/max carrying a magnitude would publish that
+ * value's range to anyone reading this file, and the repo mirrors publicly — but zero
+ * is a sign, not a magnitude, and it discloses nothing.
+ *
+ * It is worth having: a negative `ageGateDays` puts the cutoff in the FUTURE, the
+ * `min(id) WHERE createdAt > cutoff` lookup comes back empty, `COALESCE` falls to
+ * `max(id)`, and the threshold admits every account on the site. The age gate switches
+ * itself off with no warning and no `degraded` flag, and the run looks entirely
+ * normal. Negative weights are the same class of silent inversion.
  */
 const weightsSchema = z.object(
-  Object.fromEntries(contestScoreSignals.map((s) => [s, z.number()])) as Record<
+  Object.fromEntries(contestScoreSignals.map((s) => [s, z.number().nonnegative()])) as Record<
     ContestScoreSignal,
     z.ZodNumber
   >
@@ -71,15 +77,15 @@ const weightsSchema = z.object(
 export type ContestScoringConfigValues = z.infer<typeof contestScoringConfigValuesSchema>;
 export const contestScoringConfigValuesSchema = z.object({
   weights: weightsSchema,
-  ageGateDays: z.number(),
+  ageGateDays: z.number().nonnegative(),
   // Floor on each signal's normalization denominator. Where a category's leading
   // qualified count is tiny, plain max-normalization lets one or two users swing a
   // signal from 0 to 0.5 and decide a placement on noise.
   minDenominator: weightsSchema,
   // Ceiling on the engager set resolved against Postgres. Past it the banned/deleted
   // refinement is skipped and the run is flagged degraded rather than run anyway.
-  maxEngagers: z.number(),
-  farmIp: z.object({ minPeers: z.number(), minEntries: z.number() }),
+  maxEngagers: z.number().positive(),
+  farmIp: z.object({ minPeers: z.number().positive(), minEntries: z.number().positive() }),
 });
 
 export type ContestScoringConfig = z.infer<typeof contestScoringConfigSchema>;
@@ -132,6 +138,8 @@ export type ContestScoreRunState = {
   requestedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Refreshed while the run is alive; a state that stops beating is treated as dead. */
+  heartbeatAt?: string | null;
   error: string | null;
   /** `generatedAt` of the result this run produced; the client uses it to tell runs apart. */
   generatedAt: string | null;

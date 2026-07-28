@@ -85,11 +85,24 @@ export const CONTEST_SIGNAL_SOURCES: Record<Signal, string> = {
   collectors: 'Distinct users adding the model to another collection',
 };
 
-const MAX_ENTRIES = 1000;
+// Raised from 1000 after a past contest (collection 3991102) came in at 1138 accepted
+// items — the old ceiling was already reachable, and a category that loses entries has
+// to have its ranks withheld because the normalization maxima come from survivors.
+const MAX_ENTRIES = 5000;
+// Decimal places the UI renders a score to. Scores are carried at 4, so two rows can
+// read identically on screen while holding different ranks; entries that straddle that
+// boundary are flagged rather than silently rounded together.
+const SCORE_DISPLAY_PRECISION = 3;
 // A finished run stays readable for a day so the tab opens on the last result rather
 // than on an empty table waiting for a fresh run.
 const RESULT_TTL = CacheTTL.day;
 const RUN_STATE_TTL = CacheTTL.hour;
+// The lock has to outlast the work it guards: the age-threshold query alone is ~12s
+// and a full run can run for minutes. It is renewed on a timer as well, so this is a
+// backstop for a dead holder rather than a deadline for a live one.
+const RUN_LOCK_TTL = 600;
+const RUN_HEARTBEAT_INTERVAL = 15;
+const RUN_STALE_AFTER = 60;
 // Entities per ClickHouse call. Chunks are cut along ENTRY boundaries, never entity
 // ones: uniqExact cannot be summed across chunks, so every entity belonging to an
 // entry has to be counted in the same call.
@@ -334,6 +347,14 @@ async function resolveWindow(
   const contestStart = metadata.submissionStartDate ?? start;
   const ageCutoff = new Date(contestStart.getTime() - config.ageGateDays * 24 * 60 * 60 * 1000);
 
+  // Belt and braces behind the schema's `nonnegative()`: a row written before that
+  // existed would push the cutoff past the contest start, and the age gate would
+  // admit every account on the site while the run still looked normal.
+  if (ageCutoff > contestStart)
+    throw new ContestScoringError(
+      'The configured age gate resolves to a cutoff after the contest start, which would disable the gate entirely. Fix the scoring config before running.'
+    );
+
   const now = new Date();
   const partial = end > now;
 
@@ -577,6 +598,35 @@ async function loadEntries(input: WindowInput) {
   return { entries: items.slice(0, MAX_ENTRIES), truncated: items.length > MAX_ENTRIES };
 }
 
+/**
+ * True per-category entry counts, unaffected by the cap. `loadEntries` cuts on
+ * `ci.id`, so truncation drops the NEWEST entries and does so unevenly across
+ * categories; without this the surviving rows would render a complete-looking 1..N
+ * ranking whose normalization maxima came from survivors alone. Predicates are kept
+ * in step with `loadEntries` — a divergence here would understate what was lost.
+ */
+async function loadCategoryTotals(input: WindowInput) {
+  const { collectionId, tagIds } = input;
+  const statuses = input.statuses ?? DEFAULT_STATUSES;
+
+  const rows = await withSpan(
+    'contest-score.category-totals',
+    () =>
+      dbRead.$queryRaw<{ tagId: number | null; total: number }[]>`
+      SELECT ci."tagId" AS "tagId", count(*)::int AS "total"
+      FROM "CollectionItem" ci
+      JOIN "Model" m ON m.id = ci."modelId"
+      WHERE ci."collectionId" = ${collectionId}
+        AND ci."modelId" IS NOT NULL
+        AND ci.status = ANY(ARRAY[${Prisma.join(statuses)}]::"CollectionItemStatus"[])
+        ${tagIds?.length ? Prisma.sql`AND ci."tagId" IN (${Prisma.join(tagIds)})` : Prisma.empty}
+      GROUP BY ci."tagId"
+    `
+  );
+
+  return new Map(rows.map((row) => [row.tagId, Number(row.total)]));
+}
+
 /** One representative image per model — the creator's own showcase post, in their order. */
 async function loadEntryImages(modelIds: number[]) {
   const images = new Map<number, EntryImage>();
@@ -794,6 +844,7 @@ async function loadImagePairs(entries: EntryRow[], window: ResolvedWindow) {
         AND p."publishedAt" >= ${utc(window.start)}
         AND p."publishedAt" < ${utc(window.effectiveEnd)}
         AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+      ORDER BY "entryId", "imageId"
     `
   );
 }
@@ -935,6 +986,10 @@ export type ContestScoreEntry = {
   qualifiedTotal: number;
   disqualifiedShare: number;
   score: number;
+  /** Another eligible entry holds this exact score and therefore this exact rank. */
+  sharedRank: boolean;
+  /** An adjacent entry's score differs only below the precision the UI renders. */
+  belowDisplayPrecision: boolean;
 };
 
 export type ContestScoreCategory = {
@@ -946,6 +1001,9 @@ export type ContestScoreCategory = {
   soloEntry: boolean;
   /** Nothing in this category scored: ranks are withheld rather than invented. */
   tied: boolean;
+  /** Entries in this category were lost to the entry cap, so its ranks are withheld. */
+  truncated: boolean;
+  missingCount: number;
   entries: ContestScoreEntry[];
 };
 
@@ -982,14 +1040,29 @@ function emptySignals() {
 /** Filled in during a run for the snapshot's audit trail; never sent to a client. */
 type RunAudit = { engagerCount: number; ageGateBandUsers: number };
 
-async function computeCommunityScore(
-  input: WindowInput,
-  audit?: RunAudit
-): Promise<ContestCommunityScore> {
+/**
+ * What a run actually used, returned rather than re-derived by the caller.
+ *
+ * Callers used to resolve the config themselves and pair it with a score computed
+ * against a SECOND, independent resolution. A config saved while a run waited on the
+ * lock produced a snapshot attesting to weights that never produced its ranking — in
+ * the one row that would defend a disputed prize — and stranded a run's result under
+ * a cache key derived from the wrong version.
+ */
+type RunOutcome = {
+  score: ContestCommunityScore;
+  config: ContestScoringConfig;
+  scope: ContestScoringScope;
+  window: ResolvedWindow;
+  audit: RunAudit;
+};
+
+async function computeCommunityScore(input: WindowInput): Promise<RunOutcome> {
   requireClickhouse();
-  const config = await getContestScoringConfig(input.collectionId);
+  const { config, scope } = await resolveContestScoringConfig(input.collectionId);
   const window = await resolveWindow(input.collectionId, input, config);
   const statuses = input.statuses ?? DEFAULT_STATUSES;
+  const audit: RunAudit = { engagerCount: 0, ageGateBandUsers: 0 };
 
   const base = {
     collectionId: input.collectionId,
@@ -1004,14 +1077,23 @@ async function computeCommunityScore(
     signalSources: CONTEST_SIGNAL_SOURCES,
   };
 
-  const { entries, truncated } = await loadEntries(input);
+  const [{ entries, truncated }, categoryTotals] = await Promise.all([
+    loadEntries(input),
+    loadCategoryTotals(input),
+  ]);
   if (!entries.length)
     return {
-      ...base,
-      entryCount: 0,
-      truncated: { entries: truncated, images: false },
-      degraded: { bannedRefinementSkipped: false },
-      categories: [],
+      score: {
+        ...base,
+        entryCount: 0,
+        truncated: { entries: truncated, images: false },
+        degraded: { bannedRefinementSkipped: false },
+        categories: [],
+      },
+      config,
+      scope,
+      window,
+      audit,
     };
 
   const baseGates = await loadBaseGates(window.ageCutoff);
@@ -1095,10 +1177,8 @@ async function computeCommunityScore(
     engagerCount: engagers.length,
   };
 
-  if (audit) {
-    audit.engagerCount = gates.engagerCount;
-    audit.ageGateBandUsers = gates.ageGateBandUsers;
-  }
+  audit.engagerCount = gates.engagerCount;
+  audit.ageGateBandUsers = gates.ageGateBandUsers;
 
   const [reactors, downloaders, generators] = await Promise.all([
     runChCounts('reactors', imagePairs, gates, chSources.reactors),
@@ -1152,6 +1232,7 @@ async function computeCommunityScore(
       const tagName = entries.find((e) => e.tagId === tagId)?.tagName ?? null;
       const items = scored.filter((e) => e.tagId === tagId);
       const eligible = items.filter((i) => i.eligible);
+      const missingCount = Math.max((categoryTotals.get(tagId) ?? items.length) - items.length, 0);
 
       // Normalized against the leading ELIGIBLE entry per signal, so an entry pulled
       // after accruing engagement cannot set the bar for everyone else.
@@ -1176,15 +1257,54 @@ async function computeCommunityScore(
       });
 
       const tied = withScores.every((item) => item.score === 0);
-      const entriesRanked = withScores
-        .sort(
-          (a, b) =>
-            Number(b.eligible) - Number(a.eligible) ||
-            b.score - a.score ||
-            b.qualifiedTotal - a.qualifiedTotal ||
-            a.modelId - b.modelId
-        )
-        .map((item, index) => ({ ...item, rank: !item.eligible || tied ? null : index + 1 }));
+
+      // Ranks are withheld wholesale when the category lost entries to the cap: the
+      // maxima above are computed from SURVIVORS only, so every score in the category
+      // is wrong by an unknown amount and a 1..N ranking over them would look
+      // complete while being unsound.
+      const rankable = !tied && !missingCount;
+
+      const ordered = withScores.sort(
+        (a, b) =>
+          Number(b.eligible) - Number(a.eligible) ||
+          b.score - a.score ||
+          b.qualifiedTotal - a.qualifiedTotal ||
+          a.modelId - b.modelId
+      );
+
+      // Competition ranking: equal scores take the SAME rank and consume the numbers
+      // after it (1, 2, 2, 4). The secondary sort keys above order the rows for
+      // display, but they must never break a tie into distinct prizes — deciding a
+      // placement by lower model id is arbitrary, and nothing on screen would have
+      // said so.
+      let lastScore: number | null = null;
+      let lastRank = 0;
+      const entriesRanked = ordered.map((item, index) => {
+        if (!item.eligible || !rankable)
+          return { ...item, rank: null, sharedRank: false, belowDisplayPrecision: false };
+        const rank = lastScore !== null && item.score === lastScore ? lastRank : index + 1;
+        lastScore = item.score;
+        lastRank = rank;
+
+        const neighbours = [ordered[index - 1], ordered[index + 1]].filter(
+          (n) => n?.eligible && n.score !== item.score
+        );
+        return {
+          ...item,
+          rank,
+          sharedRank: ordered.some(
+            (other) => other !== item && other.eligible && other.score === item.score
+          ),
+          // Scores are carried at 4dp and rendered at 3dp, so two rows can read
+          // identically on screen and still hold different ranks. Flagged rather than
+          // hidden: the fix is a judgement call, not a rounding one.
+          belowDisplayPrecision: neighbours.some(
+            (n) =>
+              n!.score.toFixed(SCORE_DISPLAY_PRECISION) ===
+              item.score.toFixed(SCORE_DISPLAY_PRECISION)
+          ),
+        };
+      });
 
       return {
         tagId,
@@ -1193,17 +1313,25 @@ async function computeCommunityScore(
         eligibleCount: eligible.length,
         soloEntry: eligible.length === 1,
         tied,
+        truncated: missingCount > 0,
+        missingCount,
         entries: entriesRanked,
       };
     }
   );
 
   return {
-    ...base,
-    entryCount: entries.length,
-    truncated: { entries: truncated, images: truncatedImages },
-    degraded: { bannedRefinementSkipped },
-    categories,
+    score: {
+      ...base,
+      entryCount: entries.length,
+      truncated: { entries: truncated, images: truncatedImages },
+      degraded: { bannedRefinementSkipped },
+      categories,
+    },
+    config,
+    scope,
+    window,
+    audit,
   };
 }
 
@@ -1250,11 +1378,27 @@ async function clearLatestRun(collectionId: number) {
  * state in Redis is the truth, and the read query returns it, so a dropped push
  * costs a refresh rather than a stuck UI.
  */
-async function publishRunState(state: ContestScoreRunState) {
+async function writeRunState(state: ContestScoreRunState) {
+  const current = await redis.packed
+    .get<ContestScoreRunState>(latestRunKey(state.collectionId))
+    .catch(() => null);
+
+  // The pointer is last-write-wins, and two runs can be in flight across pods (the
+  // lock serializes the COMPUTE, not the enqueue). Without this an older run's
+  // terminal write lands after a newer run's `running` and walks the banner backwards.
+  const stale =
+    !!current && current.runId !== state.runId && current.requestedAt > state.requestedAt;
+
   await Promise.all([
     redis.packed.set(runStateKey(state.collectionId, state.runId), state, { EX: RUN_STATE_TTL }),
-    redis.packed.set(latestRunKey(state.collectionId), state, { EX: RUN_STATE_TTL }),
+    stale
+      ? Promise.resolve()
+      : redis.packed.set(latestRunKey(state.collectionId), state, { EX: RUN_STATE_TTL }),
   ]);
+}
+
+async function publishRunState(state: ContestScoreRunState) {
+  await writeRunState(state);
 
   signalClient
     .topicSend({
@@ -1269,44 +1413,86 @@ async function publishRunState(state: ContestScoreRunState) {
     );
 }
 
+/**
+ * A run whose pod died mid-compute leaves `running` behind with nothing to clear it,
+ * and the UI disables its Run button for as long as the state survives. The heartbeat
+ * is what distinguishes a long run from a dead one; a state that stopped beating is
+ * reported as failed so a moderator can start another.
+ */
+function reconcileStaleRun(state: ContestScoreRunState | null) {
+  if (!state || (state.status !== 'running' && state.status !== 'queued')) return state;
+
+  const beat = new Date(state.heartbeatAt ?? state.startedAt ?? state.requestedAt).getTime();
+  if (Date.now() - beat < RUN_STALE_AFTER * 1000) return state;
+
+  return {
+    ...state,
+    status: 'failed' as const,
+    finishedAt: new Date().toISOString(),
+    error: 'The run stopped reporting progress and was abandoned. Start another.',
+  };
+}
+
 async function readRunState(collectionId: number) {
-  return (await redis.packed.get<ContestScoreRunState>(latestRunKey(collectionId))) ?? null;
+  const stored = await redis.packed.get<ContestScoreRunState>(latestRunKey(collectionId));
+  return reconcileStaleRun(stored ?? null);
 }
 
 async function executeRun(input: WindowInput, state: ContestScoreRunState) {
   const startedAt = new Date().toISOString();
-  await publishRunState({ ...state, status: 'running', startedAt });
+  let running: ContestScoreRunState = {
+    ...state,
+    status: 'running',
+    startedAt,
+    heartbeatAt: startedAt,
+  };
+  await publishRunState(running);
+
+  // Redis-only, and deliberately not signalled: the beat is liveness, not news.
+  const heartbeat = setInterval(() => {
+    running = { ...running, heartbeatAt: new Date().toISOString() };
+    writeRunState(running).catch(() => null);
+  }, RUN_HEARTBEAT_INTERVAL * 1000);
 
   try {
-    const { config, scope } = await resolveContestScoringConfig(input.collectionId);
-
     // One run per collection at a time. Nothing is waiting on the response now, so
     // the loser of the race waits for the lock rather than failing the caller.
-    const result = await withDistributedLock(
-      { key: `contest-score:${input.collectionId}`, ttl: 600, retryDelay: 500, maxRetries: 240 },
+    const outcome = await withDistributedLock(
+      {
+        key: `contest-score:${input.collectionId}`,
+        ttl: RUN_LOCK_TTL,
+        retryDelay: 500,
+        maxRetries: 240,
+        autoRenew: true,
+      },
       () => computeCommunityScore(input)
     );
-    if (!result)
+    if (!outcome)
       throw new ContestScoringError(
         'A scoring run for this collection is already in progress. Try again shortly.'
       );
 
-    await redis.packed.set(resultKeyFor(input, config, scope), result, { EX: RESULT_TTL });
+    // Keyed off the config the run ACTUALLY used, not a second resolution taken
+    // before the lock — a config saved while this waited would otherwise strand the
+    // result under a key no reader will look at.
+    await redis.packed.set(resultKeyFor(input, outcome.config, outcome.scope), outcome.score, {
+      EX: RESULT_TTL,
+    });
     await publishRunState({
-      ...state,
+      ...running,
       status: 'done',
-      startedAt,
       finishedAt: new Date().toISOString(),
-      generatedAt: result.generatedAt,
+      generatedAt: outcome.score.generatedAt,
     });
   } catch (e) {
     await publishRunState({
-      ...state,
+      ...running,
       status: 'failed',
-      startedAt,
       finishedAt: new Date().toISOString(),
       error: safeErrorMessage(input.collectionId, e),
     });
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -1586,6 +1772,8 @@ export type ContestSnapshot = {
   note?: string;
   codeVersion: number;
   config: ContestScoringConfig;
+  /** Which row the config came from, so a later reader need not guess. */
+  configScope: ContestScoringScope;
   ageCutoff: string;
   /**
    * Diagnostic only. The threshold is cached for a week, so this can be up to that
@@ -1624,18 +1812,20 @@ export async function createContestSnapshot({
 }): Promise<ContestSnapshotSummary> {
   const { note, ...window } = input;
   try {
-    const config = await getContestScoringConfig(window.collectionId);
-    const resolved = await resolveWindow(window.collectionId, window, config);
-    const audit: RunAudit = { engagerCount: 0, ageGateBandUsers: 0 };
-
-    // Through the same lock the scoring path uses. Snapshotting is a full run, so two
-    // mods clicking the button would otherwise stack exactly what the lock exists to
-    // prevent.
-    const score = await withDistributedLock(
-      { key: `contest-score:${window.collectionId}`, ttl: 120, maxRetries: 60 },
-      () => computeCommunityScore(window, audit)
+    // Through the same lock the scoring path uses, and with the same TTL: at 120s a
+    // snapshot silently lost the lock partway through its own run and a concurrent
+    // run stacked the second aggregation this exists to prevent.
+    const outcome = await withDistributedLock(
+      {
+        key: `contest-score:${window.collectionId}`,
+        ttl: RUN_LOCK_TTL,
+        retryDelay: 500,
+        maxRetries: 240,
+        autoRenew: true,
+      },
+      () => computeCommunityScore(window)
     );
-    if (!score)
+    if (!outcome)
       throw new ContestScoringError(
         'A scoring run for this collection is already in progress. Try again shortly.'
       );
@@ -1643,6 +1833,10 @@ export async function createContestSnapshot({
     const takenAt = new Date().toISOString();
     const source = snapshotSource();
     const key = snapshotKey(window.collectionId, takenAt, source);
+    // Every field here comes from the run that produced `score`, never from a second
+    // resolution taken around it. A config saved while this waited on the lock would
+    // otherwise leave a permanent record attesting to weights that never produced its
+    // ranking — in the one row we would use to defend a disputed prize.
     const snapshot: ContestSnapshot = {
       collectionId: window.collectionId,
       takenAt,
@@ -1651,12 +1845,13 @@ export async function createContestSnapshot({
       source,
       ...(note ? { note } : {}),
       codeVersion: CONTEST_SCORE_CODE_VERSION,
-      config,
-      ageCutoff: resolved.ageCutoff.toISOString(),
-      ageGateBandUsers: audit.ageGateBandUsers,
-      engagerCount: audit.engagerCount,
-      partial: resolved.partial,
-      score,
+      config: outcome.config,
+      configScope: outcome.scope,
+      ageCutoff: outcome.window.ageCutoff.toISOString(),
+      ageGateBandUsers: outcome.audit.ageGateBandUsers,
+      engagerCount: outcome.audit.engagerCount,
+      partial: outcome.window.partial,
+      score: outcome.score,
     };
 
     try {
@@ -1677,14 +1872,22 @@ export async function createContestSnapshot({
   }
 }
 
-export type ContestSnapshotRef = { key: string; source: string | null; takenAt: string };
+export type ContestSnapshotRef = {
+  key: string;
+  source: string | null;
+  takenAt: string;
+  partial: boolean;
+};
 
 /**
  * The key carries everything the list needs, so `takenAt` and the source marker are
  * read back off it: `<prefix>:<collectionId>:[source:]<ISO>`. The ISO timestamp
  * contains colons of its own, hence the leading-year test rather than a field count.
  */
-function parseSnapshotKey(collectionId: number, key: string): ContestSnapshotRef | null {
+function parseSnapshotKey(
+  collectionId: number,
+  key: string
+): Omit<ContestSnapshotRef, 'partial'> | null {
   const prefix = `${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:`;
   if (!key.startsWith(prefix)) return null;
 
@@ -1697,19 +1900,28 @@ function parseSnapshotKey(collectionId: number, key: string): ContestSnapshotRef
 }
 
 /**
- * Keys only. Every snapshot embeds a full scored payload, so deserializing the set
- * just to render a list of dates would grow with entries × snapshots for a list that
- * shows neither. The value is fetched for ONE snapshot, on click.
+ * The key plus one jsonb field. `takenAt` and the source marker come off the key;
+ * `partial` is extracted IN Postgres rather than by shipping the row — a snapshot
+ * embeds a full scored payload, and deserializing the set to render a list of dates
+ * would grow with entries × snapshots for a list that shows neither.
+ *
+ * `partial` earns the exception: without it a mid-contest snapshot is
+ * indistinguishable from a final one in the list, which is the most damaging thing
+ * this screen can get wrong.
  */
 export async function listContestSnapshots({ collectionId }: { collectionId: number }) {
   try {
-    const rows = await dbRead.keyValue.findMany({
-      where: { key: { startsWith: `${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:` } },
-      select: { key: true },
-    });
+    const rows = await dbRead.$queryRaw<{ key: string; partial: boolean | null }[]>`
+      SELECT kv."key" AS "key", (kv."value" ->> 'partial')::boolean AS "partial"
+      FROM "KeyValue" kv
+      WHERE kv."key" LIKE ${`${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:%`}
+    `;
 
     return rows
-      .map(({ key }) => parseSnapshotKey(collectionId, key))
+      .map((row) => {
+        const ref = parseSnapshotKey(collectionId, row.key);
+        return ref ? { ...ref, partial: row.partial ?? false } : null;
+      })
       .filter((ref): ref is ContestSnapshotRef => !!ref)
       .sort((a, b) => b.takenAt.localeCompare(a.takenAt));
   } catch (e) {
