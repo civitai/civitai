@@ -37,6 +37,10 @@ import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
 // appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
 import { sanitizeAppSlug } from '~/server/utils/apps-slug';
+// Pure const (no env/Prisma). THE SAME threshold the owner-facing UI uses to call
+// a deploy "stalled" — shared so the mod retrigger gate and the badge can never
+// disagree about whether a build is stuck.
+import { DEPLOY_STALE_AFTER_MS } from '~/shared/constants/app-block-deploy.constants';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -1836,6 +1840,13 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // Build/deploy lifecycle — additive. The Approved tab is where a moderator
+      // sees that an approved app never actually built (deployState null =
+      // STRANDED) and can re-trigger it; without these three the queue shows a
+      // uniformly-healthy list of approvals regardless of what actually shipped.
+      deployState: true,
+      deployDetail: true,
+      deployUpdatedAt: true,
       submittedBy: { select: { id: true, username: true, image: true } },
       reviewedBy: { select: { id: true, username: true, image: true } },
     },
@@ -2797,6 +2808,259 @@ export async function markRequestDeployState(
       }`
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// MOD-ONLY BUILD RE-TRIGGER — recover an APPROVED request whose build never ran.
+// ---------------------------------------------------------------------------
+
+/** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
+export class RetriggerBuildError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'RetriggerBuildError';
+    this.code = code;
+  }
+}
+
+export type RetriggerBuildParams = {
+  publishRequestId: string;
+  reviewerUserId: number;
+};
+
+export type RetriggerBuildResult = {
+  publishRequestId: string;
+  appBlockId: string;
+  forgejoCommitSha: string;
+};
+
+/**
+ * "APPROVED BUT NOT SUCCESSFULLY BUILT" — the precise, documented definition of a
+ * request this function will re-fire a build for:
+ *
+ *   - `deployState === null`      → the STRANDED case. `approveRequest` made the
+ *                                   approval durable (status='approved' +
+ *                                   forgejo_commit_sha) and then threw inside
+ *                                   `triggerBuild`, so `markRequestDeployState`
+ *                                   was never reached. Nothing is building and
+ *                                   nothing ever will.
+ *   - `deployState === 'failed'`  → the build or the apply ended badly. Re-firing
+ *                                   is exactly the intended recovery (e.g. a
+ *                                   transient registry/cluster failure).
+ *   - `'building' | 'deploying'`  → allowed ONLY once `deployUpdatedAt` is older
+ *                                   than DEPLOY_STALE_AFTER_MS, i.e. the same
+ *                                   "stalled" threshold the owner-facing UI uses.
+ *                                   A genuinely in-flight build is NEVER
+ *                                   re-fired — that would race two PipelineRuns.
+ *
+ * Everything else is refused: `'live'` (already deployed — a rebuild would churn
+ * a serving app for no reason) and any `preview-*` value (the mod review-sandbox
+ * lane, which has its own build/teardown path and must not be driven from here).
+ */
+function assertRetriggerableDeployState(
+  deployState: string | null,
+  deployUpdatedAt: Date | null,
+  now: number
+): void {
+  if (deployState === null) return; // stranded — the whole point
+  if (deployState === 'failed') return;
+  if (deployState === 'live') {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      'This version is already deployed. Submit a new version instead of rebuilding a live one.'
+    );
+  }
+  if (deployState.startsWith('preview-')) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      `Request is in the review-preview lane (${deployState}); use the review preview controls.`
+    );
+  }
+  if (deployState === 'building' || deployState === 'deploying') {
+    const updated = deployUpdatedAt ? deployUpdatedAt.getTime() : null;
+    if (updated == null || now - updated <= DEPLOY_STALE_AFTER_MS) {
+      throw new RetriggerBuildError(
+        'NOT_RETRIGGERABLE',
+        `A build is already ${deployState}. Wait for it to finish or stall before re-triggering.`
+      );
+    }
+    return; // stalled past the shared threshold → recovery is legitimate
+  }
+  throw new RetriggerBuildError(
+    'NOT_RETRIGGERABLE',
+    `Unexpected deploy state "${deployState}"; not re-triggering.`
+  );
+}
+
+/**
+ * Re-fire the Tekton build for an ALREADY-APPROVED publish request, using the sha
+ * that was already committed and reviewed.
+ *
+ * WHY THIS EXISTS — `approveRequest` is not idempotent (`cannot approve a request
+ * in status approved`) and there was no other way to re-run a build, so an
+ * approved request whose `triggerBuild` threw was UNRECOVERABLE: the only fix was
+ * for the developer to resubmit at a brand-new version number. This is that
+ * missing recovery, and nothing more.
+ *
+ * DELIBERATELY NONE OF `approveRequest`'S SIDE EFFECTS: no Forgejo commit, no
+ * AppBlock / OauthClient mutation, no listing / category / storage provisioning,
+ * no approval notification, no supersede-others sweep. It re-runs step (7) of the
+ * approve flow and only step (7).
+ *
+ * MODERATION IS NOT BYPASSED. The sha comes from the DB row a moderator already
+ * approved; the caller cannot name a sha (see `retriggerBuildSchema`), and the
+ * supersede guard below refuses even the stored sha once a NEWER version has been
+ * approved for the app.
+ */
+export async function retriggerBuild(
+  params: RetriggerBuildParams
+): Promise<RetriggerBuildResult> {
+  const [{ dbRead }, { env }] = await Promise.all([
+    import('~/server/db/client'),
+    import('~/env/server'),
+  ]);
+
+  // (1) The request must exist.
+  const request = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: params.publishRequestId },
+    select: {
+      id: true,
+      status: true,
+      slug: true,
+      appBlockId: true,
+      forgejoCommitSha: true,
+      deployState: true,
+      deployUpdatedAt: true,
+      appBlock: { select: { id: true, currentVersionSha: true } },
+    },
+  });
+  if (!request) {
+    throw new RetriggerBuildError(
+      'NOT_FOUND',
+      `publish request ${params.publishRequestId} not found`
+    );
+  }
+
+  // (2) Only an APPROVED request has a reviewed, committed sha to rebuild.
+  if (request.status !== 'approved') {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      `cannot re-trigger a build for a request in status ${request.status}`
+    );
+  }
+
+  // (3) The sha comes from the DB and must look like a real commit. The procedure
+  //     input carries no sha at all, so there is nothing to smuggle in here — this
+  //     is the integrity check on our OWN stored value, not input validation.
+  const sha = request.forgejoCommitSha;
+  if (!sha || !/^[0-9a-f]{40}$/.test(sha)) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      'Request has no valid committed sha to rebuild.'
+    );
+  }
+
+  // (4) An approved request always has a backing block; without it there is
+  //     nothing to build an image for.
+  const appBlockId = request.appBlockId;
+  if (!appBlockId) {
+    throw new RetriggerBuildError('NOT_RETRIGGERABLE', 'Request has no backing app block.');
+  }
+
+  // (5) SUPERSEDED — a newer version has been approved for this app since. The
+  //     app's current sha is what should be serving; rebuilding + deploying this
+  //     OLDER sha would roll the live app backwards. Refuse.
+  const currentSha = request.appBlock?.currentVersionSha ?? null;
+  if (currentSha && currentSha !== sha) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      'A newer version has since been approved for this app — re-triggering this older version would deploy stale code.'
+    );
+  }
+
+  // (6) Deploy-state gate (see assertRetriggerableDeployState for the definition).
+  assertRetriggerableDeployState(request.deployState, request.deployUpdatedAt, Date.now());
+
+  if (!env.FORGEJO_BASE_URL || !env.FORGEJO_ADMIN_TOKEN) {
+    throw new RetriggerBuildError('NOT_RETRIGGERABLE', 'Forgejo not configured');
+  }
+
+  // (7) Abuse controls — redis-backed, because the tRPC `rateLimit` middleware
+  //     short-circuits for moderators and would be a no-op here.
+  const { acquireRetriggerLock, releaseRetriggerLock, checkRetriggerModeratorQuota } = await import(
+    '~/server/utils/blocks-retrigger-rate-limit'
+  );
+  const quota = await checkRetriggerModeratorQuota(params.reviewerUserId);
+  if (!quota.allowed) {
+    throw new RetriggerBuildError(
+      'RATE_LIMITED',
+      `Too many build re-triggers — try again in ${quota.retryAfterSeconds}s.`
+    );
+  }
+  // Single-flight: a double-click must not create two PipelineRuns.
+  if (!(await acquireRetriggerLock(request.id))) {
+    throw new RetriggerBuildError(
+      'RATE_LIMITED',
+      'A re-trigger for this request is already in flight.'
+    );
+  }
+
+  // (8) Fire it — the same step (7) `approveRequest` runs, nothing else.
+  const { triggerBuild } = await import('./apps-pipeline.service');
+  const { setCommitStatus } = await import('./forgejo.service');
+  const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(
+    /\/$/,
+    ''
+  )}/api/internal/blocks/build-callback`;
+
+  await setCommitStatus({
+    slug: request.slug,
+    sha,
+    state: 'pending',
+    context: 'civitai/build',
+    description: 'Build re-queued by a moderator',
+  }).catch(() => undefined);
+
+  try {
+    await triggerBuild({ slug: request.slug, sha, appBlockId, callbackUrl });
+  } catch (err) {
+    // Free the single-flight slot so the moderator can retry immediately rather
+    // than waiting out the TTL after a visible failure.
+    await releaseRetriggerLock(request.id);
+    await setCommitStatus({
+      slug: request.slug,
+      sha,
+      state: 'failure',
+      context: 'civitai/build',
+      description: `Re-trigger failed: ${String(err).slice(0, 80)}`,
+    }).catch(() => undefined);
+    // 🔴 Make the failure VISIBLE. This is the half of the fix that matters most:
+    // a stranded request's whole problem is that it looks healthy while nothing is
+    // happening. Even when the retrigger ITSELF fails, the row now carries a
+    // 'failed' state + a reason instead of reverting to a silent null.
+    await markRequestDeployState(
+      request.slug,
+      sha,
+      'failed',
+      `Re-trigger failed: ${(err as Error).message ?? String(err)}`.slice(0, 500)
+    );
+    throw new RetriggerBuildError(
+      'TRIGGER_FAILED',
+      `The build re-trigger failed: ${(err as Error).message}. The request is now marked failed; try again once the build service is reachable.`
+    );
+  }
+
+  // Build is queued — advance the lifecycle exactly as approveRequest does, with
+  // an attributable detail so the mod queue shows who re-fired it and when.
+  await markRequestDeployState(
+    request.slug,
+    sha,
+    'building',
+    `Build re-triggered by moderator #${params.reviewerUserId} at ${new Date().toISOString()}`
+  );
+
+  return { publishRequestId: request.id, appBlockId, forgejoCommitSha: sha };
 }
 
 // ---------------------------------------------------------------------------
