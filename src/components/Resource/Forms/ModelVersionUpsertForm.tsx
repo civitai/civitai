@@ -678,14 +678,13 @@ export function ModelVersionUpsertForm({
                       the early access period ends, your model will be available to everyone for
                       free.
                     </Text>
-                    <Text size="xs">
-                      {currentUser?.isModerator
-                        ? `You can have up to ${maxEarlyAccessModels} models in early access at a time.`
-                        : `You have ${activeEarlyAccessCount} of ${maxEarlyAccessModels} early access ${
-                            maxEarlyAccessModels === 1 ? 'slot' : 'slots'
-                          } in use.`}{' '}
-                      This limit increases as you post more models on the site.
-                    </Text>
+                    {!currentUser?.isModerator && maxEarlyAccessModels > 0 && (
+                      <Text size="xs">
+                        You have {activeEarlyAccessCount} of {maxEarlyAccessModels} early access{' '}
+                        {maxEarlyAccessModels === 1 ? 'slot' : 'slots'} in use. This limit increases
+                        as you post more models on the site.
+                      </Text>
+                    )}
                   </Stack>
                 }
                 mb="xs"
