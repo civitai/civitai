@@ -2200,6 +2200,54 @@ export const validateContestCollectionEntry = async ({
     }
   }
 
+  const allowedBaseModels = metadata.baseModels?.filter(Boolean) ?? [];
+  const submissionStartDate = metadata.submissionStartDate
+    ? new Date(metadata.submissionStartDate)
+    : undefined;
+
+  if (modelIds.length > 0 && (allowedBaseModels.length > 0 || submissionStartDate)) {
+    // Both contest rules must be met by ONE version, otherwise a stale SDXL model could qualify by
+    // pairing an old allowed-base-model version with a throwaway version pushed during the window.
+    // Keyed on the version's createdAt rather than publishedAt because publishedAt is reset by the
+    // private-model round trip, which would let an untouched old model back in.
+    const qualifyingVersion: Prisma.ModelVersionWhereInput = {
+      status: { notIn: [ModelStatus.Deleted, ModelStatus.UnpublishedViolation] },
+      ...(submissionStartDate ? { createdAt: { gte: submissionStartDate } } : {}),
+      ...(allowedBaseModels.length > 0 ? { baseModel: { in: allowedBaseModels } } : {}),
+    };
+
+    const invalidModels = await dbRead.model.findMany({
+      where: {
+        id: { in: modelIds },
+        // Without base-model gating the version requirement exists only to keep pre-window models
+        // out, so a model created during the window passes on the model row alone.
+        ...(allowedBaseModels.length === 0 && submissionStartDate
+          ? { createdAt: { lt: submissionStartDate } }
+          : {}),
+        modelVersions: { none: qualifyingVersion },
+      },
+      select: { id: true },
+    });
+
+    if (invalidModels.length > 0) {
+      if (allowedBaseModels.length > 0) {
+        throw throwBadRequestError(
+          submissionStartDate
+            ? `Some models have no version added during the submission period on an allowed base model. This contest accepts: ${allowedBaseModels.join(
+                ', '
+              )}.`
+            : `Some models have no version on an allowed base model. This contest accepts: ${allowedBaseModels.join(
+                ', '
+              )}.`
+        );
+      }
+
+      throw throwBadRequestError(
+        `Some models predate the submission start date and have no version added during the submission period. Add a new version to enter an existing model.`
+      );
+    }
+  }
+
   if (metadata.submissionStartDate) {
     // confirm items were created after the start date
     if (articleIds.length > 0) {
@@ -2213,31 +2261,6 @@ export const validateContestCollectionEntry = async ({
       if (articles.length > 0) {
         throw throwBadRequestError(
           `Some articles were created before the submission start date. Please only upload items that were created after the submission period started.`
-        );
-      }
-    }
-
-    if (modelIds.length > 0) {
-      // A ported model qualifies on its version dates, not the original model row. Keyed on the
-      // version's createdAt rather than publishedAt because publishedAt is reset by the
-      // private-model round trip, which would let an untouched old model back in.
-      const models = await dbRead.model.findMany({
-        where: {
-          id: { in: modelIds },
-          createdAt: { lt: new Date(metadata.submissionStartDate) },
-          modelVersions: {
-            none: {
-              status: { notIn: [ModelStatus.Deleted, ModelStatus.UnpublishedViolation] },
-              createdAt: { gte: new Date(metadata.submissionStartDate) },
-            },
-          },
-        },
-        select: { id: true },
-      });
-
-      if (models.length > 0) {
-        throw throwBadRequestError(
-          `Some models predate the submission start date and have no version added during the submission period. Add a new version to enter an existing model.`
         );
       }
     }
