@@ -77,6 +77,18 @@
       font-weight: var(--mantine-h3-font-weight);
     }
 
+    // Same gap for blockquote: StarterKit enables it wherever `formatting` is on,
+    // so `> ` produces one, but preflight zeroes its margins and it renders as a
+    // plain paragraph until published.
+    blockquote {
+      font-size: var(--mantine-font-size-lg);
+      line-height: var(--mantine-line-height);
+      margin: var(--mantine-spacing-md) 0;
+      border-radius: var(--mantine-radius-sm);
+      padding: var(--mantine-spacing-md) var(--mantine-spacing-lg);
+      background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
+    }
+
     // The first block shouldn't be pushed away from the top of the editor.
     > :first-child {
       margin-top: 0;
