@@ -33,6 +33,7 @@ import {
   InputBrowsingLevels,
   InputCheckbox,
   InputDatePicker,
+  InputMultiSelect,
   InputNumber,
   InputSelect,
   InputSimpleImageUpload,
@@ -43,6 +44,7 @@ import {
 } from '~/libs/form';
 import type { UpsertCollectionInput } from '~/server/schema/collection.schema';
 import { upsertCollectionInput } from '~/server/schema/collection.schema';
+import { activeBaseModels } from '~/shared/constants/base-model.constants';
 import { CollectionMode, CollectionType, TagTarget } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -286,6 +288,15 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       name="metadata.maxItemsPerUser"
                       label="Max items per user"
                       placeholder="Leave blank for unlimited"
+                      clearable
+                    />
+                    <InputMultiSelect
+                      name="metadata.baseModels"
+                      label="Allowed base models"
+                      description="Model entries must have a version on one of these base models. Leave empty to allow all base models."
+                      placeholder="Leave empty to allow all base models"
+                      data={activeBaseModels}
+                      searchable
                       clearable
                     />
                     {isImageCollection && (

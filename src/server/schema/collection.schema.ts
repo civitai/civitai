@@ -111,6 +111,8 @@ export const collectionMetadataSchema = z
     endsAt: z.coerce.date().nullish(),
     challengeDate: z.coerce.date().nullish(),
     maxItemsPerUser: z.coerce.number().optional(),
+    // Empty/absent means every base model is allowed.
+    baseModels: z.string().array().optional(),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
     submissionsHiddenUntilEndDate: z.boolean().optional(),
