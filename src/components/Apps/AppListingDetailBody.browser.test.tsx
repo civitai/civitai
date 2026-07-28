@@ -21,11 +21,21 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 }));
 
 // Header-focused: stub the trpc-backed children (reviews/report/comments) so the
-// test needs no tRPC wiring.
-vi.mock('~/components/Apps/ReviewListingButton', () => ({ ReviewListingButton: () => null }));
-vi.mock('~/components/Apps/ReportListingButton', () => ({ ReportListingButton: () => null }));
-vi.mock('~/components/Apps/AppListingReviews', () => ({ AppListingReviews: () => null }));
-vi.mock('~/components/Apps/AppListingComments', () => ({ AppListingComments: () => null }));
+// test needs no tRPC wiring. They render identifiable markers (not null) so the
+// preview-mode tests below can assert they are OMITTED in preview + PRESENT in the
+// live (non-preview) render.
+vi.mock('~/components/Apps/ReviewListingButton', () => ({
+  ReviewListingButton: () => <div data-testid="mock-review-button" />,
+}));
+vi.mock('~/components/Apps/ReportListingButton', () => ({
+  ReportListingButton: () => <div data-testid="mock-report-button" />,
+}));
+vi.mock('~/components/Apps/AppListingReviews', () => ({
+  AppListingReviews: () => <div data-testid="mock-reviews" />,
+}));
+vi.mock('~/components/Apps/AppListingComments', () => ({
+  AppListingComments: () => <div data-testid="mock-comments" />,
+}));
 
 // Import AFTER the mocks are declared (vi.mock is hoisted, imports are not).
 const { AppListingDetailBody } = await import('./AppListingDetailBody');
@@ -111,6 +121,48 @@ describe('AppListingDetailBody', () => {
     mocks.currentUser = null;
     renderWithProviders(<AppListingDetailBody detail={base({})} />);
     await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+  });
+
+  test('preview mode renders presentational parts and OMITS comments/reviews/report/review-button/primary-action', async () => {
+    // Owner viewing — so even the owner Edit affordance must be absent in preview.
+    mocks.currentUser = { id: 5, username: 'alice' };
+    renderWithProviders(
+      <AppListingDetailBody
+        detail={base({
+          description: 'About **this** app.',
+          screenshots: [{ url: 'https://cdn.example/shot-1.png', caption: 'a shot' }],
+        })}
+        preview
+      />
+    );
+
+    // Presentational parts still render: name, content-rating, screenshot gallery,
+    // description body.
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    await expect.element(page.getByText('Screenshots')).toBeInTheDocument();
+    await expect.element(page.getByText('About', { exact: true })).toBeInTheDocument();
+
+    // Interactive / review surfaces are all OMITTED.
+    expect(page.getByTestId('mock-comments').elements().length).toBe(0);
+    expect(page.getByTestId('mock-reviews').elements().length).toBe(0);
+    expect(page.getByTestId('mock-report-button').elements().length).toBe(0);
+    expect(page.getByTestId('mock-review-button').elements().length).toBe(0);
+    expect(page.getByTestId('apps-listing-owner-edit').elements().length).toBe(0);
+    // The primary action (base() = on-site page app → "Open live") is gone too.
+    expect(page.getByText('Open live', { exact: true }).elements().length).toBe(0);
+    // Back-to-store nav is gone.
+    expect(page.getByText('Back to store').elements().length).toBe(0);
+  });
+
+  test('non-preview (live) still renders comments/reviews/report/review-button + primary action (regression)', async () => {
+    renderWithProviders(<AppListingDetailBody detail={base({})} />);
+    // The live surfaces are all present.
+    await expect.element(page.getByTestId('mock-comments')).toBeInTheDocument();
+    await expect.element(page.getByTestId('mock-reviews')).toBeInTheDocument();
+    await expect.element(page.getByTestId('mock-report-button')).toBeInTheDocument();
+    await expect.element(page.getByTestId('mock-review-button')).toBeInTheDocument();
+    // Primary action present (on-site page app, viewer can't open page → "Open live").
+    await expect.element(page.getByText('Open live', { exact: true })).toBeInTheDocument();
   });
 
   test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
