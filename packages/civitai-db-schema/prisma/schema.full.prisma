@@ -877,7 +877,6 @@ model Model {
   uploadType          ModelUploadType @default(Created)
   locked              Boolean         @default(false)
   underAttack         Boolean         @default(false)
-  earlyAccessDeadline DateTime?
   mode                ModelModifier?
   unlisted            Boolean         @default(false)
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
@@ -1042,9 +1041,6 @@ model ModelVersion {
   settings             Json?
   availability         Availability      @default(Public)
   nsfwLevel            Int               @default(0)
-  earlyAccessEndsAt    DateTime?
-  earlyAccessConfig    Json?
-  earlyAccessPermanent Boolean           @default(false)
   uploadType           ModelUploadType   @default(Created)
   usageControl         ModelUsageControl @default(Download)
   earlyAccessTimeFrame Int               @default(0)
@@ -5073,15 +5069,13 @@ model DonationGoal {
   title          String
   description    String?
   goalAmount     Int
-  paidAmount     Int           @default(0)
-  // Polymorphic target (mirrors PaidAccess). Nullable in phase 1 while modelVersionId is dual-written;
-  // becomes the sole target when modelVersionId is dropped in phase 2.
+  // Polymorphic target (mirrors PaidAccess). Nullable while modelVersionId is dual-written;
+  // becomes the sole target when modelVersionId is dropped (re-key migration).
   entityType     PaidAccessEntityType?
   entityId       Int?
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
-  isEarlyAccess  Boolean       @default(false)
   active         Boolean       @default(true)
 
   donations Donation[]

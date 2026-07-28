@@ -2034,12 +2034,10 @@ export type DonationGoal = {
   title: string;
   description: string | null;
   goalAmount: number;
-  paidAmount: Generated<number>;
   entityType: PaidAccessEntityType | null;
   entityId: number | null;
   modelVersionId: number | null;
   createdAt: Generated<Timestamp>;
-  isEarlyAccess: Generated<boolean>;
   active: Generated<boolean>;
 };
 export type DownloadHistory = {
@@ -2396,7 +2394,6 @@ export type Model = {
   uploadType: Generated<ModelUploadType>;
   locked: Generated<boolean>;
   underAttack: Generated<boolean>;
-  earlyAccessDeadline: Timestamp | null;
   mode: ModelModifier | null;
   unlisted: Generated<boolean>;
   gallerySettings: Generated<unknown>;
@@ -2688,9 +2685,6 @@ export type ModelVersion = {
   settings: unknown | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
-  earlyAccessEndsAt: Timestamp | null;
-  earlyAccessConfig: unknown | null;
-  earlyAccessPermanent: Generated<boolean>;
   uploadType: Generated<ModelUploadType>;
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
