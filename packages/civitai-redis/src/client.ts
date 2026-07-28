@@ -2186,6 +2186,10 @@ export const REDIS_KEYS = {
     // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
     USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
     CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
+    // Async contest-scoring runs: per-run state, the per-collection pointer to the
+    // most recent run, and the scored result each run produces. Every key carries a
+    // TTL, so the whole namespace self-cleans and no table backs it.
+    CONTEST_SCORE_RUN: 'packed:caches:contest-score-run',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

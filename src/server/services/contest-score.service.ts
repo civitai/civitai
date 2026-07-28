@@ -21,27 +21,37 @@
 
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
-import * as z from 'zod';
+import { v4 as uuid } from 'uuid';
 import { CacheTTL, CONTEST_SNAPSHOT_KEY_PREFIX, KEY_VALUE_KEYS } from '~/server/common/constants';
+import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { collectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
+  ContestScoreRunState,
+  ContestScoringConfig,
+  ContestScoringScope,
   CreateContestSnapshotInput,
   GetCommunityScoreInput,
   GetContestCandidatesInput,
   ContestScoreSignal,
+  RunCommunityScoreInput,
+  SetContestScoringConfigInput,
 } from '~/server/schema/contest-score.schema';
-import { contestScoreSignals } from '~/server/schema/contest-score.schema';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  contestScoreSignals,
+  contestScoringConfigSchema,
+} from '~/server/schema/contest-score.schema';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { Availability, CollectionItemStatus, CollectionMode } from '~/shared/utils/prisma/enums';
+import { signalClient } from '~/utils/signal-client';
 import { hashifyObject } from '~/utils/string-helpers';
 
 type Signal = ContestScoreSignal;
@@ -76,7 +86,10 @@ export const CONTEST_SIGNAL_SOURCES: Record<Signal, string> = {
 };
 
 const MAX_ENTRIES = 1000;
-const SCORE_CACHE_TTL = 60 * 15;
+// A finished run stays readable for a day so the tab opens on the last result rather
+// than on an empty table waiting for a fresh run.
+const RESULT_TTL = CacheTTL.day;
+const RUN_STATE_TTL = CacheTTL.hour;
 // Entities per ClickHouse call. Chunks are cut along ENTRY boundaries, never entity
 // ones: uniqExact cannot be summed across chunks, so every entity belonging to an
 // entry has to be counted in the same call.
@@ -99,69 +112,172 @@ const DEFAULT_STATUSES: CollectionItemStatus[] = [CollectionItemStatus.ACCEPTED]
  */
 export class ContestScoringError extends Error {}
 
-function sanitizeError(collectionId: number, e: unknown): never {
-  if (e instanceof ContestScoringError) throw throwBadRequestError(e.message);
+function safeErrorMessage(collectionId: number, e: unknown) {
+  if (e instanceof ContestScoringError) return e.message;
   const error = e as Error;
   logToAxiom(
     { name: 'contest-score', type: 'error', collectionId, message: error?.message },
     'civitai-prod'
   ).catch(() => null);
   console.error('[contest-score] failed', collectionId, error?.message);
-  throw new Error('Contest scoring failed. See server logs.');
+  return 'Contest scoring failed. See server logs.';
+}
+
+function sanitizeError(collectionId: number, e: unknown): never {
+  if (e instanceof ContestScoringError) throw throwBadRequestError(e.message);
+  throw new Error(safeErrorMessage(collectionId, e));
 }
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
-// Structural validation only. A bound on a weight or a threshold discloses that
-// value's range, so nothing here constrains magnitude.
-const weightsSchema = z.object(
-  Object.fromEntries(contestScoreSignals.map((s) => [s, z.number()])) as Record<Signal, z.ZodNumber>
-);
-const storedConfigSchema = z.object({
-  version: z.number(),
-  weights: weightsSchema,
-  ageGateDays: z.number(),
-  // Floor on each signal's normalization denominator. Where a category's leading
-  // qualified count is tiny, plain max-normalization lets one or two users swing a
-  // signal from 0 to 0.5 and decide a placement on noise.
-  minDenominator: weightsSchema,
-  // Ceiling on the engager set resolved against Postgres. Past it the banned/deleted
-  // refinement is skipped and the run is flagged degraded rather than run anyway.
-  maxEngagers: z.number(),
-  farmIp: z.object({ minPeers: z.number(), minEntries: z.number() }),
-});
-
-export type ContestScoringConfig = z.infer<typeof storedConfigSchema>;
-
 const configKey = (suffix: number | 'default') => `${KEY_VALUE_KEYS.CONTEST_SCORING}:${suffix}`;
+const scopeSuffix = (scope: ContestScoringScope, collectionId: number) =>
+  scope === 'global' ? ('default' as const) : collectionId;
+
+type ResolvedConfig = { config: ContestScoringConfig; scope: ContestScoringScope };
+
+function parseConfig(collectionId: number, stored: unknown): ContestScoringConfig {
+  const parsed = contestScoringConfigSchema.safeParse(stored);
+  if (!parsed.success)
+    throw new ContestScoringError(
+      `The contest scoring config for collection ${collectionId} is malformed: ${parsed.error.message}`
+    );
+  return parsed.data;
+}
 
 /**
  * Per-collection config with a global fallback. One shared row would let a later
  * edit retroactively change a finished contest's ranking.
+ *
+ * The winning SCOPE travels with the config because it is part of the run's cache
+ * identity: a fresh per-collection row can carry a lower `version` than the global
+ * one it overrides, so version alone would let the collection-scoped run collide with
+ * a stale globally-scoped one.
  */
-export async function getContestScoringConfig(collectionId: number): Promise<ContestScoringConfig> {
+async function resolveContestScoringConfig(collectionId: number): Promise<ResolvedConfig> {
   const [specific, fallback] = await Promise.all([
     dbKV.get<unknown>(configKey(collectionId)),
     dbKV.get<unknown>(configKey('default')),
   ]);
 
-  const stored = specific ?? fallback;
-  if (!stored)
+  if (!specific && !fallback)
     throw new ContestScoringError(
       `Contest scoring is not configured: neither "${configKey(collectionId)}" nor "${configKey(
         'default'
       )}" exists in KeyValue. Weights and thresholds live only in the database — there is no code fallback.`
     );
 
-  const parsed = storedConfigSchema.safeParse(stored);
-  if (!parsed.success)
-    throw new ContestScoringError(
-      `The contest scoring config for collection ${collectionId} is malformed: ${parsed.error.message}`
-    );
+  return specific
+    ? { config: parseConfig(collectionId, specific), scope: 'collection' }
+    : { config: parseConfig(collectionId, fallback), scope: 'global' };
+}
 
-  return parsed.data;
+export async function getContestScoringConfig(collectionId: number): Promise<ContestScoringConfig> {
+  return (await resolveContestScoringConfig(collectionId)).config;
+}
+
+/**
+ * The moderator-facing read. Deliberately a SEPARATE procedure from the scoring
+ * query: the score payload carries no weights, denominators or thresholds, so
+ * relaxing the gate on one endpoint cannot expose the other.
+ */
+export async function getContestScoringConfigForEditor(collectionId: number) {
+  try {
+    const [specific, fallback] = await Promise.all([
+      dbKV.get<unknown>(configKey(collectionId)),
+      dbKV.get<unknown>(configKey('default')),
+    ]);
+
+    return {
+      collectionId,
+      effectiveScope: (specific ? 'collection' : 'global') as ContestScoringScope,
+      collection: specific ? parseConfig(collectionId, specific) : null,
+      global: fallback ? parseConfig(collectionId, fallback) : null,
+    };
+  } catch (e) {
+    return sanitizeError(collectionId, e);
+  }
+}
+
+/**
+ * Append-only audit rows, one per edit:
+ *   contestScoring:audit:<collectionId|default>:<ISO>
+ *
+ * Written with `create` inside the same transaction as the config write, so a
+ * config change that is not accompanied by an audit row cannot exist. `create` and
+ * not `upsert`: colliding on an existing row must fail loudly rather than silently
+ * rewrite history.
+ */
+const auditKey = (suffix: number | 'default', at: string) =>
+  `${KEY_VALUE_KEYS.CONTEST_SCORING}:audit:${suffix}:${at}`;
+
+export async function setContestScoringConfig({
+  input,
+  userId,
+  username,
+}: {
+  input: SetContestScoringConfigInput;
+  userId: number;
+  username?: string | null;
+}) {
+  const { collectionId, scope, config, reason } = input;
+  try {
+    const suffix = scopeSuffix(scope, collectionId);
+    const key = configKey(suffix);
+
+    const [existingRaw, defaultRaw] = await Promise.all([
+      dbKV.get<unknown>(key),
+      dbKV.get<unknown>(configKey('default')),
+    ]);
+    const existing = existingRaw ? parseConfig(collectionId, existingRaw) : null;
+    const globalConfig = defaultRaw ? parseConfig(collectionId, defaultRaw) : null;
+
+    // Above BOTH rows, never just the one being written. A per-collection row that
+    // started below the global version could otherwise mint a cache identity a
+    // previous run already used.
+    const version = Math.max(existing?.version ?? 0, globalConfig?.version ?? 0) + 1;
+    const updatedAt = new Date().toISOString();
+    const next: ContestScoringConfig = {
+      ...config,
+      version,
+      updatedById: userId,
+      updatedByUsername: username ?? null,
+      updatedAt,
+    };
+
+    await dbWrite.$transaction([
+      dbWrite.keyValue.upsert({
+        where: { key },
+        create: { key, value: next as unknown as Prisma.InputJsonValue },
+        update: { value: next as unknown as Prisma.InputJsonValue },
+      }),
+      dbWrite.keyValue.create({
+        data: {
+          key: auditKey(suffix, updatedAt),
+          value: {
+            userId,
+            username: username ?? null,
+            scope,
+            collectionId,
+            ...(reason ? { reason } : {}),
+            before: existing,
+            after: next,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      }),
+    ]);
+
+    // The version bump already orphans every result key this collection had cached
+    // (version is part of the key), so the stale result is unreachable and TTLs out.
+    // Dropping the run pointer is what stops the UI from presenting it as current.
+    await clearLatestRun(collectionId);
+
+    return { scope, version, updatedAt };
+  } catch (e) {
+    return sanitizeError(collectionId, e);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1092,44 +1208,163 @@ async function computeCommunityScore(
 // Public API
 // ---------------------------------------------------------------------------
 
-function cacheKeyFor(input: WindowInput, configVersion: number) {
-  return `${REDIS_KEYS.CACHES.CONTEST_COMMUNITY_SCORE}:${input.collectionId}:${hashifyObject({
+const runNamespace = (collectionId: number) =>
+  `${REDIS_KEYS.CACHES.CONTEST_SCORE_RUN}:${collectionId}`;
+const runStateKey = (collectionId: number, runId: string) =>
+  `${runNamespace(collectionId)}:run:${runId}` as RedisKeyTemplateCache;
+const latestRunKey = (collectionId: number) =>
+  `${runNamespace(collectionId)}:latest` as RedisKeyTemplateCache;
+
+/**
+ * A run's identity: the window, the filters, and the exact config and code that
+ * produced it. A config edit bumps `version`, so the previous result becomes
+ * unreachable at its old key and expires on its own rather than being served as if
+ * the new weights had produced it.
+ */
+function resultKeyFor(
+  input: WindowInput,
+  config: ContestScoringConfig,
+  scope: ContestScoringScope
+) {
+  return `${runNamespace(input.collectionId)}:result:${hashifyObject({
     start: input.start?.toISOString(),
     end: input.end?.toISOString(),
     tagIds: input.tagIds,
     statuses: input.statuses,
-    configVersion,
+    configScope: scope,
+    configVersion: config.version,
     codeVersion: CONTEST_SCORE_CODE_VERSION,
   })}` as RedisKeyTemplateCache;
 }
 
-export async function getCommunityScore(input: GetCommunityScoreInput) {
-  const { refresh, ...window } = input;
-  try {
-    const config = await getContestScoringConfig(window.collectionId);
-    const cacheKey = cacheKeyFor(window, config.version);
+async function clearLatestRun(collectionId: number) {
+  await redis.del(latestRunKey(collectionId)).catch(() => null);
+}
 
-    if (refresh) await bustFetchThroughCache(cacheKey);
+/**
+ * Run state is Redis-only and every key carries a TTL, so the namespace self-cleans
+ * and an abandoned run cannot outlive its usefulness. The signal is best-effort: the
+ * state in Redis is the truth, and the read query returns it, so a dropped push
+ * costs a refresh rather than a stuck UI.
+ */
+async function publishRunState(state: ContestScoreRunState) {
+  await Promise.all([
+    redis.packed.set(runStateKey(state.collectionId, state.runId), state, { EX: RUN_STATE_TTL }),
+    redis.packed.set(latestRunKey(state.collectionId), state, { EX: RUN_STATE_TTL }),
+  ]);
 
-    return await fetchThroughCache(
-      cacheKey,
-      async () => {
-        // One run per collection at a time. A refresh storm would otherwise stack
-        // full cross-store aggregations on top of one another.
-        const result = await withDistributedLock(
-          { key: `contest-score:${window.collectionId}`, ttl: 120, maxRetries: 60 },
-          () => computeCommunityScore(window)
-        );
-        if (!result)
-          throw new ContestScoringError(
-            'A scoring run for this collection is already in progress. Try again shortly.'
-          );
-        return result;
-      },
-      { ttl: SCORE_CACHE_TTL }
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.ContestScore}:${state.collectionId}`,
+      target: SignalMessages.ContestScoreRunUpdate,
+      // Run bookkeeping only. A topic is joinable by any connected client, so no
+      // score and no config value may ride on this payload.
+      data: state,
+    })
+    .catch((error: Error) =>
+      console.error('[contest-score] failed to signal run state', state.runId, error?.message)
     );
+}
+
+async function readRunState(collectionId: number) {
+  return (await redis.packed.get<ContestScoreRunState>(latestRunKey(collectionId))) ?? null;
+}
+
+async function executeRun(input: WindowInput, state: ContestScoreRunState) {
+  const startedAt = new Date().toISOString();
+  await publishRunState({ ...state, status: 'running', startedAt });
+
+  try {
+    const { config, scope } = await resolveContestScoringConfig(input.collectionId);
+
+    // One run per collection at a time. Nothing is waiting on the response now, so
+    // the loser of the race waits for the lock rather than failing the caller.
+    const result = await withDistributedLock(
+      { key: `contest-score:${input.collectionId}`, ttl: 600, retryDelay: 500, maxRetries: 240 },
+      () => computeCommunityScore(input)
+    );
+    if (!result)
+      throw new ContestScoringError(
+        'A scoring run for this collection is already in progress. Try again shortly.'
+      );
+
+    await redis.packed.set(resultKeyFor(input, config, scope), result, { EX: RESULT_TTL });
+    await publishRunState({
+      ...state,
+      status: 'done',
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      generatedAt: result.generatedAt,
+    });
   } catch (e) {
-    return sanitizeError(window.collectionId, e);
+    await publishRunState({
+      ...state,
+      status: 'failed',
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      error: safeErrorMessage(input.collectionId, e),
+    });
+  }
+}
+
+/**
+ * Enqueues a run and returns immediately. The compute is detached on purpose: a full
+ * cross-store aggregation outlives a request timeout on a large contest, and the run
+ * state in Redis — not the HTTP response — is what the UI follows.
+ */
+export async function runCommunityScore({
+  input,
+  userId,
+}: {
+  input: RunCommunityScoreInput;
+  userId: number;
+}): Promise<ContestScoreRunState> {
+  try {
+    // Resolved before enqueueing so a misconfiguration or a non-contest collection
+    // fails the mutation rather than surfacing minutes later as a failed run.
+    requireClickhouse();
+    const { config } = await resolveContestScoringConfig(input.collectionId);
+    await resolveWindow(input.collectionId, input, config);
+
+    const state: ContestScoreRunState = {
+      runId: uuid(),
+      collectionId: input.collectionId,
+      status: 'queued',
+      requestedBy: userId,
+      requestedAt: new Date().toISOString(),
+      startedAt: null,
+      finishedAt: null,
+      error: null,
+      generatedAt: null,
+    };
+    await publishRunState(state);
+
+    void executeRun(input, state).catch((error: Error) =>
+      console.error('[contest-score] run crashed', state.runId, error?.message)
+    );
+
+    return state;
+  } catch (e) {
+    return sanitizeError(input.collectionId, e);
+  }
+}
+
+/**
+ * Read-only. Returns whatever the last completed run produced for this window plus
+ * the current run state; it never computes. The client keeps the previous result on
+ * screen while a run is in flight, so a run starting must not blank the table.
+ */
+export async function getCommunityScore(input: GetCommunityScoreInput) {
+  try {
+    const { config, scope } = await resolveContestScoringConfig(input.collectionId);
+    const [result, run] = await Promise.all([
+      redis.packed.get<ContestCommunityScore>(resultKeyFor(input, config, scope)),
+      readRunState(input.collectionId),
+    ]);
+
+    return { result: result ?? null, run };
+  } catch (e) {
+    return sanitizeError(input.collectionId, e);
   }
 }
 
@@ -1439,16 +1674,67 @@ export async function createContestSnapshot({
   }
 }
 
+export type ContestSnapshotRef = { key: string; source: string | null; takenAt: string };
+
+/**
+ * The key carries everything the list needs, so `takenAt` and the source marker are
+ * read back off it: `<prefix>:<collectionId>:[source:]<ISO>`. The ISO timestamp
+ * contains colons of its own, hence the leading-year test rather than a field count.
+ */
+function parseSnapshotKey(collectionId: number, key: string): ContestSnapshotRef | null {
+  const prefix = `${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:`;
+  if (!key.startsWith(prefix)) return null;
+
+  const rest = key.slice(prefix.length);
+  if (/^\d{4}-/.test(rest)) return { key, source: null, takenAt: rest };
+
+  const split = rest.indexOf(':');
+  if (split < 0) return null;
+  return { key, source: rest.slice(0, split), takenAt: rest.slice(split + 1) };
+}
+
+/**
+ * Keys only. Every snapshot embeds a full scored payload, so deserializing the set
+ * just to render a list of dates would grow with entries × snapshots for a list that
+ * shows neither. The value is fetched for ONE snapshot, on click.
+ */
 export async function listContestSnapshots({ collectionId }: { collectionId: number }) {
   try {
     const rows = await dbRead.keyValue.findMany({
       where: { key: { startsWith: `${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:` } },
-      select: { key: true, value: true },
+      select: { key: true },
     });
 
     return rows
-      .map(({ key, value }) => toSnapshotSummary(key, value as unknown as ContestSnapshot))
+      .map(({ key }) => parseSnapshotKey(collectionId, key))
+      .filter((ref): ref is ContestSnapshotRef => !!ref)
       .sort((a, b) => b.takenAt.localeCompare(a.takenAt));
+  } catch (e) {
+    return sanitizeError(collectionId, e);
+  }
+}
+
+export async function getContestSnapshot({
+  collectionId,
+  key,
+}: {
+  collectionId: number;
+  key: string;
+}) {
+  try {
+    // The key is client-supplied, so it is re-derived against this collection's
+    // prefix before it reaches the query — a KeyValue lookup by arbitrary key would
+    // read any row in the table, config and audit rows included.
+    if (!parseSnapshotKey(collectionId, key))
+      throw new ContestScoringError('That snapshot does not belong to this collection.');
+
+    const row = await dbRead.keyValue.findUnique({ where: { key }, select: { value: true } });
+    if (!row) throw new ContestScoringError('Snapshot not found.');
+
+    const snapshot = row.value as unknown as ContestSnapshot;
+    // `config` — and therefore the weights — is dropped by toSnapshotSummary. It is
+    // stored for audit, never served.
+    return { ...toSnapshotSummary(key, snapshot), score: snapshot.score };
   } catch (e) {
     return sanitizeError(collectionId, e);
   }
