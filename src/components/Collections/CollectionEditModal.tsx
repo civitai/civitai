@@ -293,7 +293,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     <InputMultiSelect
                       name="metadata.baseModels"
                       label="Allowed base models"
-                      description="Model entries must have a version on one of these base models. Leave empty to allow all base models."
+                      description="Model entries need a version on one of these base models. With a submission start date, the same version must also have been added during the submission period. Leave empty to allow all base models."
                       placeholder="Leave empty to allow all base models"
                       data={activeBaseModels}
                       searchable

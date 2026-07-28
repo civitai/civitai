@@ -2221,7 +2221,9 @@ export const validateContestCollectionEntry = async ({
         id: { in: modelIds },
         // Without base-model gating the version requirement exists only to keep pre-window models
         // out, so a model created during the window passes on the model row alone.
-        ...(allowedBaseModels.length > 0 ? {} : { createdAt: { lt: submissionStartDate } }),
+        ...(allowedBaseModels.length === 0 && submissionStartDate
+          ? { createdAt: { lt: submissionStartDate } }
+          : {}),
         modelVersions: { none: qualifyingVersion },
       },
       select: { id: true },
