@@ -16,6 +16,7 @@ const DEFAULT_ALLOWED_TAGS = [
   'img',
   'iframe',
   'div',
+  'blockquote',
   'code',
   'pre',
   'span',
