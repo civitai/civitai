@@ -54,22 +54,27 @@ export function ImageDetailCarouselProvider<T extends ImageProps>({
   );
 }
 
-const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT'];
+// VIDEO is here so arrow keys still seek a focused player with native controls
+const IGNORED_HOTKEY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'];
 
-function shouldHandleHotkey(event: KeyboardEvent) {
+function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | null) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
     return false;
   const target = event.target;
   if (!(target instanceof HTMLElement)) return true;
   if (target.isContentEditable) return false;
   if (IGNORED_HOTKEY_TAGS.includes(target.tagName)) return false;
-  // an open popover/menu/modal above the detail view owns its own arrow handling
-  return !target.closest('[role="menu"],[role="listbox"],[role="dialog"][data-nested]');
+  if (target.closest('[role="menu"],[role="listbox"]')) return false;
+  // A dialog stacked on top of the detail view (report, add-to-collection) owns
+  // its own arrow handling. The detail view's own modal shell is also a dialog,
+  // but it contains the carousel, which is what tells the two apart.
+  const dialog = target.closest('[role="dialog"]');
+  return !dialog || (!!carouselRoot && dialog.contains(carouselRoot));
 }
 
 // Touch and pen drags navigate; mouse drags don't, so click-dragging an image on
-// desktop still does nothing. Declared at module scope because embla compares
-// function options by source, and a new body every render would reInit the engine.
+// desktop still does nothing. At module scope so the body is identical every
+// render — embla compares function options by source string.
 function watchTouchDrag(
   _emblaApi: EmblaCarouselType,
   event: TouchEvent | MouseEvent | PointerEvent
@@ -98,10 +103,19 @@ export function ImageDetailCarousel({
   canNavigate: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
+  const emblaRef = useRef<EmblaCarouselType | null>(null);
+  const handleSetEmbla = (api: EmblaCarouselType) => {
+    emblaRef.current = api;
+    setEmbla(api);
+  };
 
   // Embla owns the slide animation, but `index` is the source of truth. Feeding
   // it back in as `startIndex` would reInit the engine on every navigation,
   // which tears down the pointer handlers mid-swipe.
+  //
+  // Keep every other option static too: embla's `reActivate` merges the options
+  // it is handed OVER the index it just preserved, so a changing option would
+  // snap the carousel back to whichever image was open at mount.
   const startIndexRef = useRef(index);
 
   const navigationRef = useRef({ next, previous, canNavigate });
@@ -111,7 +125,7 @@ export function ImageDetailCarousel({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       const { next, previous, canNavigate } = navigationRef.current;
-      if (!canNavigate || !shouldHandleHotkey(event)) return;
+      if (!canNavigate || !shouldHandleHotkey(event, emblaRef.current?.rootNode() ?? null)) return;
       event.preventDefault();
       if (event.key === 'ArrowLeft') previous();
       else next();
@@ -123,9 +137,18 @@ export function ImageDetailCarousel({
     return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, []);
 
+  // `scrollTo` emits 'select' synchronously, which would echo straight back into
+  // `navigate` and run the whole onChange side-effect chain a second time.
+  const syncingRef = useRef(false);
+  const handleSlideChange = (slideIndex: number) => {
+    if (!syncingRef.current) navigate?.(slideIndex);
+  };
+
   useEffect(() => {
-    if (!embla) return;
-    if (embla.selectedScrollSnap() !== index) embla.scrollTo(index);
+    if (!embla || embla.selectedScrollSnap() === index) return;
+    syncingRef.current = true;
+    embla.scrollTo(index);
+    syncingRef.current = false;
   }, [embla, index]);
 
   const ref = useResizeObserver<HTMLDivElement>(() => {
@@ -139,8 +162,8 @@ export function ImageDetailCarousel({
       <Embla
         withControls={canNavigate}
         className="flex-1"
-        onSlideChange={navigate}
-        setEmbla={setEmbla}
+        onSlideChange={handleSlideChange}
+        setEmbla={handleSetEmbla}
         startIndex={startIndexRef.current}
         loop
         watchDrag={canNavigate && watchTouchDrag}
@@ -234,9 +257,11 @@ function ImageContent({
                 },
               }}
               // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
-              anim={active}
+              // `anim` and `original` feed the CDN URL — an inactive slide has to
+              // request the same URL the active one will, or it warms nothing
+              anim
               quality={90}
-              original={isVideo && active ? true : undefined}
+              original={isVideo ? true : undefined}
               html5Controls={
                 active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
               }
