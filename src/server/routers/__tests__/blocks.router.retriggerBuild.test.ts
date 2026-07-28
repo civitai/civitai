@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+// Type-only imports (erased at runtime, so they are safe above the hoisted
+// `vi.mock` calls) — the lint rule forbids inline `import()` type annotations.
+import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as RedisClient from '@civitai/redis/client';
 
 /**
  * `blocks.retriggerBuild` — router AUTHZ + input surface + error mapping.
@@ -40,7 +44,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorEnabled: vi.fn(async () => true),
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/feature-flags.service')>()),
+  ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ appBlocks: true, appBlocksAuthor: true, appBlocksPages: false }),
 }));
 // The router dynamically imports the whole publish-request service; stub just the
@@ -66,9 +70,7 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ auditPromptSer
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
 vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
-    '@civitai/redis/client'
-  );
+  const actual = await vi.importActual<typeof RedisClient>('@civitai/redis/client');
   return {
     ...actual,
     redis: { get: vi.fn(), set: vi.fn() },

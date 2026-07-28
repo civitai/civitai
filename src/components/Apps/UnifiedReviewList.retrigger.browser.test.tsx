@@ -97,7 +97,9 @@ describe('Approved tab — the Deploy column exposes a stranded approval', () =>
   test('the Deploy column and control are ABSENT when no handler is passed (Rejected tab)', async () => {
     renderApproved({ row: onsiteRow(), onRetrigger: undefined });
     // The row still renders...
-    await expect.element(page.getByTestId('apps-unified-review-row-onsite:req-1')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-unified-review-row-onsite:req-1'))
+      .toBeInTheDocument();
     // ...with no Deploy column and no retrigger control.
     expect(page.getByTestId(DEPLOY_CHIP).elements()).toHaveLength(0);
     expect(page.getByTestId(RETRIGGER).elements()).toHaveLength(0);

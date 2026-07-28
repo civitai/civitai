@@ -117,9 +117,7 @@ describe('A — the real build-failure reason reaches the author', () => {
     // text, but the renderer must ALSO escape — pin that a script-ish payload
     // becomes visible characters and creates no element.
     const hostile = 'error at <script>alert(1)</script> in <b>index.ts</b>';
-    render(
-      makeSubmission({ deployState: 'failed', deployDetail: `Build Failed\n\n${hostile}` })
-    );
+    render(makeSubmission({ deployState: 'failed', deployDetail: `Build Failed\n\n${hostile}` }));
     const block = page.getByTestId('apps-submissions-failure-detail-my-app');
     await expect.element(block).toBeInTheDocument();
     const el = block.element();
@@ -144,7 +142,9 @@ describe('A — the real build-failure reason reaches the author', () => {
   });
 
   test('the excerpt block is height-capped and scrolls — it cannot blow out the row', async () => {
-    const huge = Array.from({ length: 400 }, (_, i) => `line ${i}: something went wrong`).join('\n');
+    const huge = Array.from({ length: 400 }, (_, i) => `line ${i}: something went wrong`).join(
+      '\n'
+    );
     render(makeSubmission({ deployState: 'failed', deployDetail: `Build Failed\n\n${huge}` }));
     const block = page.getByTestId('apps-submissions-failure-detail-my-app');
     await expect.element(block).toBeInTheDocument();
@@ -175,7 +175,9 @@ describe('B — the STRANDED row stops masquerading as healthy', () => {
   test('an approved row with a null deploy state, long past approval, reads as stranded', async () => {
     render(makeSubmission({ deployState: null, deployUpdatedAt: null, reviewedAt: LONG_AGO }));
     // The BADGE text is exactly this — the row no longer wears a green "approved".
-    await expect.element(page.getByText('build never started', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('build never started', { exact: true }))
+      .toBeInTheDocument();
     await expect.element(page.getByTestId('apps-submissions-stranded-my-app')).toBeInTheDocument();
     // And the healthy green badge is gone.
     expect(page.getByText('approved', { exact: true }).elements()).toHaveLength(0);

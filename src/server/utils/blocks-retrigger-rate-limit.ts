@@ -81,7 +81,9 @@ export async function releaseRetriggerLock(publishRequestId: string): Promise<vo
   }
 }
 
-export type RetriggerQuotaResult = { allowed: true } | { allowed: false; retryAfterSeconds: number };
+export type RetriggerQuotaResult =
+  | { allowed: true }
+  | { allowed: false; retryAfterSeconds: number };
 
 /**
  * Record one retrigger attempt against this moderator's fixed window and report

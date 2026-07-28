@@ -100,7 +100,12 @@ async function expectRejectCode(promise: Promise<unknown>, code: string) {
 }
 
 /** The deploy-lifecycle writes `markRequestDeployState` performed, flattened. */
-function deployWrites(): Array<{ slug: string; sha: string; state: string; detail: string | null }> {
+function deployWrites(): Array<{
+  slug: string;
+  sha: string;
+  state: string;
+  detail: string | null;
+}> {
   return mockUpdateMany.mock.calls.map((call) => {
     const arg = call[0] as {
       where: { slug: string; forgejoCommitSha: string };
@@ -296,9 +301,7 @@ describe('retriggerBuild — guard 6: deploy-state gate', () => {
   it.each(['building', 'deploying'])(
     'ALLOWS a %s that has stalled past the shared threshold',
     async (deployState) => {
-      await expect(
-        callRetrigger({ deployState, deployUpdatedAt: stale() })
-      ).resolves.toBeTruthy();
+      await expect(callRetrigger({ deployState, deployUpdatedAt: stale() })).resolves.toBeTruthy();
       expect(mockTriggerBuild).toHaveBeenCalledTimes(1);
     }
   );

@@ -209,7 +209,7 @@ describe('sanitizeBuildFailureReason — adversarial fixture', () => {
     expect(out).not.toContain('[38;5;196m');
   });
 
-  it('PRESERVES HTML-ish and SQL-ish text verbatim — escaping is the renderer\'s job', () => {
+  it("PRESERVES HTML-ish and SQL-ish text verbatim — escaping is the renderer's job", () => {
     // These are legitimate build-log characters. They are safe because the value is
     // only ever rendered through escaping React text nodes / JSON, never HTML.
     const out = sanitizeBuildFailureReason(adversarial) as string;
