@@ -241,9 +241,9 @@ describe('checkMinorHashOnScan', () => {
   it('does not throw when the rejection value is null (property access on a non-Error cast)', async () => {
     mockDbRead.$queryRaw.mockRejectedValue(null);
 
-    await expect(
-      checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' })
-    ).resolves.toBe('skipped');
+    await expect(checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' })).resolves.toBe(
+      'skipped'
+    );
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'null', modelId: 100, userId: 5, sha256: 'ABC' }),
       'webhooks'
