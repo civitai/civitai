@@ -139,7 +139,21 @@ type CustomOpenRouter = OpenRouter & {
   getJsonCompletionWithUsage: <T>(
     params: GetJsonCompletionInput
   ) => Promise<{ content: T; usage: TokenUsage }>;
+  // Free-TEXT sibling of getJsonCompletion — a single non-streaming completion
+  // that returns the assistant's plain text (NOT parsed as JSON). For grounded
+  // Q&A / chat turns where the reply is prose citing evidence, not a JSON object.
+  // Falls back to `message.reasoning` when a reasoning model returns null content.
+  getTextCompletion: (
+    params: GetTextCompletionInput
+  ) => Promise<{ content: string; usage: TokenUsage }>;
   runAgentLoop: (params: RunAgentLoopInput) => Promise<AgentLoopResult>;
+};
+
+type GetTextCompletionInput = {
+  model?: AIModel;
+  messages: SimpleMessage[];
+  temperature?: number;
+  maxTokens?: number;
 };
 
 declare global {
@@ -222,6 +236,29 @@ function createOpenRouterClient() {
   customClient.getJsonCompletion = async <T>(params: GetJsonCompletionInput): Promise<T> => {
     const { content } = await customClient.getJsonCompletionWithUsage<T>(params);
     return content;
+  };
+
+  customClient.getTextCompletion = async ({
+    model = AI_MODELS.GPT_5_NANO,
+    messages,
+    temperature = 1,
+    maxTokens = 1024,
+  }: GetTextCompletionInput): Promise<{ content: string; usage: TokenUsage }> => {
+    const sdkMessages = messages.map(toSDKMessage);
+    const response = await client.chat.send({
+      model,
+      messages: sdkMessages,
+      temperature,
+      maxTokens,
+      provider: { allowFallbacks: true },
+    });
+    const usage = extractUsage(response);
+    const message = response.choices?.[0]?.message as
+      | { content?: unknown; reasoning?: unknown }
+      | undefined;
+    const raw = message?.content ?? message?.reasoning ?? '';
+    const content = typeof raw === 'string' ? raw : String(raw ?? '');
+    return { content, usage };
   };
 
   customClient.runAgentLoop = async ({
