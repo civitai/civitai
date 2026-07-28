@@ -2,8 +2,9 @@ import { Center, Divider, Stack, Title } from '@mantine/core';
 import { Skeleton } from '@mantine/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ReactNode } from 'react';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useScrollMargin } from '~/hooks/useScrollMargin';
 
 const ROW_GAP = 8;
 const SKELETON_HEIGHT = 78;
@@ -62,33 +63,11 @@ export function VirtualRowList<T extends { kind: string }>({
 }) {
   const scrollAreaRef = useScrollAreaRef();
   const listRef = useRef<HTMLDivElement>(null);
-  const [scrollMargin, setScrollMargin] = useState(0);
 
   // Rows are absolutely positioned against the scroll container, so a stale offset
   // shifts every one of them. Anything above the list can resize without touching the
-  // row count — placing a bid expands the panel above it by a couple of rows' worth —
-  // so this watches the scrolled content, not just the (fixed-size) scroll box.
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    const scrollArea = scrollAreaRef?.current;
-    if (!list || !scrollArea) return;
-
-    const measure = () => {
-      let offset = 0;
-      let current: HTMLElement | null = list;
-      while (current && current !== scrollArea) {
-        offset += current.offsetTop;
-        current = current.offsetParent as HTMLElement;
-      }
-      setScrollMargin(offset);
-    };
-
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(scrollArea);
-    for (const child of Array.from(scrollArea.children)) observer.observe(child);
-    return () => observer.disconnect();
-  }, [scrollAreaRef, rows.length]);
+  // row count — placing a bid expands the panel above it by a couple of rows' worth.
+  const scrollMargin = useScrollMargin(listRef);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
