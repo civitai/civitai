@@ -22,14 +22,21 @@ const IMAGE_SCANNING_RETRY_LIMIT = 9;
 // retried on a later run.
 const INGEST_IMAGE_TIMEOUT_MS = 60 * 1000;
 
-// Per-run wall-clock budget. Must stay comfortably under the job lock (lockExpiration
-// defaults to 300s in job.ts): once exceeded we stop STARTING new submits so the run
+// Per-run wall-clock budget. Once exceeded we stop STARTING new submits so the run
 // reaches its metric-recording + prune tail and returns cleanly, instead of being
 // killed mid-send. A killed run recorded NOTHING (absent from job_duration /
 // cron_total, both written at the end) and re-loaded the same oldest-1000 rows every
 // run, so the backlog never drained. Images not reached this run stay in the JobQueue
 // and are picked up next run.
-const INGEST_RUN_BUDGET_MS = 4 * 60 * 1000;
+//
+// Worst case for a run is this budget + one INGEST_IMAGE_TIMEOUT_MS: when the deadline
+// trips, up to INGEST_SUBMIT_CONCURRENCY submits are already in flight and must settle
+// (bounded by the per-image backstop) before limitConcurrency resolves. That total
+// MUST stay under the 300s job lock (lockExpiration in job.ts, also the 5-min cron
+// cadence) — landing on 300s risks a DUPLICATE concurrent run, which is the exact
+// scanner-flood / backlog-re-sweep mode we're fixing. 210s + 60s = 270s leaves a clean
+// 30s margin.
+const INGEST_RUN_BUDGET_MS = 3.5 * 60 * 1000;
 
 // Concurrency for the per-image orchestrator submits. Each submit is bounded to ~15s
 // (createImageIngestionRequest AbortSignal) and backstopped at INGEST_IMAGE_TIMEOUT_MS
