@@ -33,7 +33,6 @@ import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
 import { InsertMarkdownControl } from '~/components/RichTextEditor/InsertMarkdownControl';
-import { MarkdownPaste } from '~/components/RichTextEditor/markdown-paste.extension';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -214,7 +213,6 @@ export function RichTextEditor({
     if (addMentions)
       arr.push(MentionNode.configure({ suggestion: getSuggestions({ defaultSuggestions }) }));
     if (addPolls) arr.push(StrawPollNode);
-    if (addMarkdown) arr.push(MarkdownPaste);
     // Always register the timestamp node so pasting/typing `<t:...>` converts
     // anywhere; the toolbar insert button is gated by the `timestamp` control.
     arr.push(TimestampEditNode);
@@ -231,7 +229,6 @@ export function RichTextEditor({
     addMedia,
     addMentions,
     addPolls,
-    addMarkdown,
     accepts,
   ]);
 

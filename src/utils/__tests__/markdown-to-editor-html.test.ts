@@ -2,52 +2,10 @@ import { generateJSON } from '@tiptap/html/server';
 import { describe, expect, it } from 'vitest';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
-import { looksLikeMarkdown } from '~/utils/markdown-detect';
 import { convertMarkdownForEditor, markdownToEditorHtml } from '~/utils/markdown-to-editor-html';
 
 const tagsIn = (html: string) =>
   new Set(Array.from(html.matchAll(/<([a-z][a-z0-9-]*)/gi), (m) => m[1].toLowerCase()));
-
-describe('looksLikeMarkdown', () => {
-  // A fence or a table delimiter is near-unambiguous, so either alone is enough.
-  it.each([
-    ['fenced code', 'intro\n```\n1girl, solo\n```'],
-    ['table', '| a | b |\n|---|---|\n| 1 | 2 |'],
-    ['heading plus a fence', '# Title\n\n```\n1girl\n```'],
-  ])('detects %s', (_label, input) => {
-    expect(looksLikeMarkdown(input)).toBe(true);
-  });
-
-  // `#` and `>` are ambiguous on their own (comments, quoted replies), so they
-  // only count together.
-  it('detects a heading and a blockquote together', () => {
-    expect(looksLikeMarkdown('# Title\n\n> a note')).toBe(true);
-  });
-
-  it.each([
-    ['plain prose', 'Just a sentence about a model I liked.'],
-    ['emphasis only', 'This is **important** and `inline`.'],
-    ['a bare url', 'https://example.com/some/path'],
-  ])('ignores %s', (_label, input) => {
-    expect(looksLikeMarkdown(input)).toBe(false);
-  });
-
-  // `# ` is a comment in Python/YAML/shell/TOML and `> ` is a quoted email line.
-  // Converting on one of those alone invented headings and reflowed code — worse
-  // than not converting, since the Import button covers whole documents.
-  it.each([
-    [
-      'python with a comment',
-      '# load the pipeline\nimport torch\nfrom diffusers import StableDiffusionPipeline\n\nmodel.__init__()',
-    ],
-    ['shell script', '#!/bin/bash\n# install deps\npnpm install --frozen-lockfile'],
-    ['yaml config', '# generation defaults\nsteps: 30\ncfg: 7.5'],
-    ['a quoted email reply', '> On Tue, someone wrote:\n> please review this'],
-    ['an ini/toml section comment', '# [settings]\nwidth = 832\nheight = 1216'],
-  ])('does not convert %s', (_label, input) => {
-    expect(looksLikeMarkdown(input)).toBe(false);
-  });
-});
 
 describe('convertMarkdownForEditor', () => {
   it('preserves the constructs the editor supports', () => {
