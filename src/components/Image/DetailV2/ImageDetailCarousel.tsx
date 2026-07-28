@@ -72,6 +72,10 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
   return !dialog || (!!carouselRoot && dialog.contains(carouselRoot));
 }
 
+// Comfortably longer than embla's scroll animation (duration 25), so it only
+// ever fires for a 'settle' that was genuinely dropped.
+const SETTLE_FALLBACK_MS = 800;
+
 // Touch and pen drags navigate; mouse drags don't, so click-dragging an image on
 // desktop still does nothing. At module scope so the body is identical every
 // render — embla compares function options by source string.
@@ -153,24 +157,41 @@ export function ImageDetailCarousel({
     syncingRef.current = false;
   }, [embla, index]);
 
-  // Everything expensive hangs off the settled index rather than the live one:
-  // a URL replace, a signal resubscribe and a fresh full-size neighbor decode
-  // all landing mid-transform is what makes the swipe stutter on mobile. Embla
-  // emits 'settle' once the animation is done AND the finger is up.
+  // The URL replace and the incoming neighbor's full-size decode hang off the
+  // settled index rather than the live one — landing either mid-transform is
+  // what makes the swipe stutter on mobile. Embla emits 'settle' once the
+  // animation is done AND the finger is up.
   const [settledIndex, setSettledIndex] = useState(index);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
 
   useEffect(() => {
     if (!embla) return;
-    const handleSettle = () => {
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+
+    const commit = () => {
+      if (fallback) {
+        clearTimeout(fallback);
+        fallback = undefined;
+      }
       const current = embla.selectedScrollSnap();
       setSettledIndex(current);
       onSettleRef.current?.(current);
     };
-    embla.on('settle', handleSettle);
+
+    // 'settle' only fires from the animation loop, so anything that destroys the
+    // engine mid-flight swallows it — including `loadMore` appending slides,
+    // which trips embla's own container MutationObserver into a reInit. Without
+    // a fallback the URL would just silently stop tracking the visible image.
+    const armFallback = () => {
+      if (fallback) clearTimeout(fallback);
+      fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
+    };
+
+    embla.on('settle', commit).on('reInit', commit).on('select', armFallback);
     return () => {
-      embla.off('settle', handleSettle);
+      if (fallback) clearTimeout(fallback);
+      embla.off('settle', commit).off('reInit', commit).off('select', armFallback);
     };
   }, [embla]);
 
@@ -199,9 +220,10 @@ export function ImageDetailCarousel({
               <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
                 {/* function child opts out of Embla's own in-view gating — adjacency
                     is the gate here, so a neighbor is painted before the drag reveals it.
-                    Neighbors are keyed off the settled index so a new full-size decode
-                    never starts mid-swipe; the live slide always renders regardless, so
-                    a missed 'settle' costs preloading rather than a blank frame. */}
+                    Neighbors key off the settled index so a new full-size decode never
+                    starts mid-swipe. While a settle is outstanding the next slide along
+                    isn't mounted yet, so a drag started in that window reveals it late;
+                    the fallback timer above bounds how long that can last. */}
                 {() =>
                   (i === index || isAdjacent(i, settledIndex, images.length)) && (
                     <ImageContent

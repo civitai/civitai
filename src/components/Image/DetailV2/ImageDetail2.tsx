@@ -32,7 +32,7 @@ import {
   IconPhoto,
   IconShare3,
 } from '@tabler/icons-react';
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import clsx from 'clsx';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client';
@@ -147,9 +147,12 @@ export function ImageDetail2() {
   // Deferred to the carousel settling rather than run per slide change: the URL
   // replace pushes a global store update that re-renders every useBrowserRouter
   // consumer, which is too much to do inside an animating frame.
+  const lastSettledIdRef = useRef(images[index]?.id);
   const handleSettle = (settledIndex: number) => {
     const settled = images[settledIndex];
-    if (!settled) return;
+    // a drag that springs back settles on the slide it started from
+    if (!settled || lastSettledIdRef.current === settled.id) return;
+    lastSettledIdRef.current = settled.id;
     navigate(settled.id);
     // keep a runway ahead of the viewer so arrow/swipe navigation doesn't
     // dead-end (and loop back) at the edge of the loaded page
@@ -157,6 +160,14 @@ export function ImageDetail2() {
   };
 
   const image = images[carouselNavigation.index];
+
+  // The address bar trails the carousel until it settles, so share the image
+  // that's actually on screen rather than whatever the URL still says.
+  const imageShareUrl = useMemo(() => {
+    if (!image || images[index]?.id === image.id) return shareUrl;
+    const [, queryString] = shareUrl.split('?');
+    return queryString ? `/images/${image.id}?${queryString}` : `/images/${image.id}`;
+  }, [shareUrl, image, images, index]);
 
   const { collectionItems, post } = useImageContestCollectionDetails(
     { id: image?.id as number },
@@ -401,7 +412,7 @@ export function ImageDetail2() {
                               )}
                             </DownloadImage>
                             <ShareButton
-                              url={shareUrl}
+                              url={imageShareUrl}
                               title={title}
                               collect={{ type: CollectionType.Image, imageId: image.id }}
                             >
