@@ -18,7 +18,7 @@ import '@mantine/notifications/styles.layer.css';
 /**
  * Manual harness for the article editor. Runs the real component with the same
  * `includeControls` the article form passes, with no DB / auth / tRPC — so
- * markdown paste and the Import Markdown button can be tried by hand.
+ * the Import Markdown button can be tried by hand.
  */
 
 const ARTICLE_CONTROLS = [
@@ -44,8 +44,8 @@ function Harness({ controls }: { controls: ControlType[] }) {
         <div>
           <Title order={4}>Article editor</Title>
           <Text size="sm" c="dimmed">
-            Paste markdown source straight in (Cmd/Ctrl+V), or use the last toolbar button to import
-            a .md file.
+            Use the last toolbar button to import a .md file. Pasting markdown source is not
+            converted — a paste can&apos;t be told apart from code or a shell transcript.
           </Text>
         </div>
 
@@ -61,7 +61,7 @@ function Harness({ controls }: { controls: ControlType[] }) {
           onChange={setHtml}
           includeControls={controls}
           editorSize="xl"
-          placeholder="Paste your markdown here…"
+          placeholder="Import a .md file, or write here…"
         />
 
         <Divider label="onChange output (this is what gets submitted)" labelPosition="left" />
@@ -75,5 +75,5 @@ function Harness({ controls }: { controls: ControlType[] }) {
 
 export const ArticleEditor = () => <Harness controls={ARTICLE_CONTROLS} />;
 
-/** The comment/review configuration — markdown paste must NOT trigger here. */
+/** The comment/review configuration — no import button here. */
 export const WithoutMarkdownSupport = () => <Harness controls={['formatting', 'link']} />;
