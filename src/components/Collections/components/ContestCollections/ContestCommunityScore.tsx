@@ -306,7 +306,12 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
                   </Text>
                   {snapshot.partial && (
                     <Badge color="orange" variant="light" size="xs">
-                      Preview
+                      Partial
+                    </Badge>
+                  )}
+                  {snapshot.source && (
+                    <Badge color="grape" variant="light" size="xs">
+                      {snapshot.source}
                     </Badge>
                   )}
                 </Group>

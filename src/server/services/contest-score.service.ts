@@ -80,7 +80,11 @@ const SCORE_CACHE_TTL = 60 * 15;
 // Entities per ClickHouse call. Chunks are cut along ENTRY boundaries, never entity
 // ones: uniqExact cannot be summed across chunks, so every entity belonging to an
 // entry has to be counted in the same call.
-const CH_ENTITY_CHUNK = 20000;
+//
+// The ceiling is the query TEXT, not the row count: `chPairTable` inlines every pair
+// as a tuple literal, and the cluster caps a query at 262,144 bytes / 50,000 AST
+// elements. The measured limit is ~8,000 four-element tuples; 5,000 leaves headroom.
+const CH_ENTITY_CHUNK = 5000;
 // Ceiling on the reactor lookup table, which scales with images published in the
 // window rather than with entry count. Past it the run is flagged truncated.
 const MAX_IMAGE_PAIRS = 200000;
@@ -561,17 +565,10 @@ function chCountQuery({
 }
 
 /**
- * Splits pairs into calls, cutting only between entries, and runs them with bounded
- * concurrency so a large contest cannot open an unbounded fan of CH queries.
+ * Splits pairs into calls, cutting only between ENTRIES. An entry's entities must all
+ * land in one call because uniqExact cannot be summed across chunks.
  */
-async function runChCounts(
-  name: string,
-  pairs: EntryPair[],
-  gates: Gates,
-  source: (entityIds: string) => string
-): Promise<SignalCount[]> {
-  if (!pairs.length) return [];
-
+function chunkPairsByEntry(pairs: EntryPair[]) {
   const byEntry = new Map<number, EntryPair[]>();
   for (const pair of pairs) {
     const existing = byEntry.get(pair.entryId);
@@ -589,6 +586,20 @@ async function runChCounts(
     current.push(...group);
   }
   if (current.length) chunks.push(current);
+
+  return chunks;
+}
+
+/** Runs the chunks with bounded concurrency so a big contest cannot fan out unboundedly. */
+async function runChCounts(
+  name: string,
+  pairs: EntryPair[],
+  gates: Gates,
+  source: (entityIds: string) => string
+): Promise<SignalCount[]> {
+  if (!pairs.length) return [];
+
+  const chunks = chunkPairsByEntry(pairs);
 
   return withSpan(
     `contest-score.${name}`,
@@ -794,6 +805,12 @@ export type ContestScoreEntry = {
   image: EntryImage | null;
   // No `normalized` here: alongside `score`, five normalized values and five scores
   // solve for the five weights. The UI never rendered it.
+  //
+  // ⚠️ Dropping it does NOT make this payload weight-safe. Normalization is
+  // max-within-category, so a caller holding every entry in a category can
+  // reconstruct each maximum from `qualified` and solve for the weights from
+  // `score`. `moderatorProcedure` on every procedure is what actually closes the
+  // oracle. Do not relax that gate on the belief that the payload is safe alone.
   signals: Record<Signal, { raw: number; qualified: number }>;
   rawTotal: number;
   qualifiedTotal: number;
@@ -1120,6 +1137,12 @@ export async function getCommunityScore(input: GetCommunityScoreInput) {
  * Engagers on this contest worth a look: accounts acting from IPs shared by many
  * contest engagers, or whose contest engagement concentrates on a single creator.
  * Evidence only — never an automatic disqualification.
+ *
+ * Unlike the scoring path this legitimately returns user ids — that IS the report —
+ * so it aggregates per (user, creator) in ClickHouse and merges in Node. The
+ * intermediate is bounded by the engager ceiling, and the response by `limit`.
+ * Farm-IP peer counts have to be global, so they are built from the merged set
+ * rather than per chunk, where they would undercount.
  */
 export async function getContestCandidates(input: GetContestCandidatesInput) {
   try {
@@ -1135,102 +1158,155 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
     const imagePairs = toImagePairs(await loadImagePairs(entries, window), entries);
 
     // Reactions and downloads are the engagement events that carry an IP — the same
-    // farm-IP signal `reaction-abuse` uses, scoped to this contest. Everything below
-    // is aggregated in ClickHouse; only the capped candidate rows come back.
-    const imageIds = intList([...new Set(imagePairs.map((p) => p.entityId))]);
-    const modelIds = intList([...new Set(entries.map((e) => e.modelId))]);
+    // farm-IP signal `reaction-abuse` uses, scoped to this contest.
+    const perCreator = (
+      await Promise.all([
+        runChPerCreator(
+          'candidates.downloads',
+          modelPairs(entries),
+          (ids) => `
+          SELECT toInt64(userId) AS userId, toInt64(modelId) AS entityId, ip
+          FROM modelVersionEvents
+          WHERE type = 'Download'
+            AND modelId IN (${ids})
+            AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
+            AND userId != 0
+        `
+        ),
+        runChPerCreator(
+          'candidates.reactions',
+          imagePairs,
+          (ids) => `
+          SELECT toInt64(userId) AS userId, toInt64(entityId) AS entityId, ip
+          FROM reactions
+          WHERE type = 'Image_Create'
+            AND entityId IN (${ids})
+            AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
+            AND userId != 0
+        `
+        ),
+      ])
+    ).flat();
 
-    const downloadEvents = `
-      SELECT s.userId AS userId, p.entryId AS entryId, p.creatorId AS creatorId, s.ip AS ip
-      FROM (
-        SELECT toInt64(userId) AS userId, toInt64(modelId) AS entityId, ip
-        FROM modelVersionEvents
-        WHERE type = 'Download'
-          AND modelId IN (${modelIds || '0'})
-          AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
-          AND userId != 0
-      ) AS s
-      INNER JOIN (${chPairTable(modelPairs(entries))}) AS p ON s.entityId = p.entityId
-    `;
-    const reactionEvents = imagePairs.length
-      ? `
-      SELECT s.userId AS userId, p.entryId AS entryId, p.creatorId AS creatorId, s.ip AS ip
-      FROM (
-        SELECT toInt64(userId) AS userId, toInt64(entityId) AS entityId, ip
-        FROM reactions
-        WHERE type = 'Image_Create'
-          AND entityId IN (${imageIds})
-          AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
-          AND userId != 0
-      ) AS s
-      INNER JOIN (${chPairTable(imagePairs)}) AS p ON s.entityId = p.entityId
-    `
-      : null;
-
-    const events = [downloadEvents, reactionEvents].filter(Boolean).join('\nUNION ALL\n');
-
-    const rows = await withSpan('contest-score.candidates', () =>
-      clickhouse!.$query<{
-        userId: number;
-        events: number;
-        entriesTouched: number;
-        distinctCreators: number;
-        topCreator: number;
-        toTopCreator: number;
-        farmIpsUsed: number;
-      }>(`
-        WITH ev AS (${events}),
-             farm AS (
-               SELECT ip FROM ev WHERE ip != '' GROUP BY ip
-               HAVING uniqExact(userId) >= ${Number(config.farmIp.minPeers)}
-             ),
-             perCreator AS (
-               SELECT
-                 userId,
-                 creatorId,
-                 count() AS creatorEvents,
-                 uniqExact(entryId) AS creatorEntries,
-                 groupUniqArrayIf(ip, ip IN (SELECT ip FROM farm)) AS creatorFarmIps
-               FROM ev
-               GROUP BY userId, creatorId
-             )
-        SELECT
-          userId,
-          sum(creatorEvents) AS events,
-          sum(creatorEntries) AS entriesTouched,
-          count() AS distinctCreators,
-          argMax(creatorId, creatorEvents) AS topCreator,
-          max(creatorEvents) AS toTopCreator,
-          length(arrayDistinct(arrayFlatten(groupArray(creatorFarmIps)))) AS farmIpsUsed
-        FROM perCreator
-        GROUP BY userId
-        HAVING farmIpsUsed > 0
-            OR (entriesTouched >= ${Number(config.farmIp.minEntries)} AND distinctCreators = 1)
-        ORDER BY toTopCreator / events DESC, farmIpsUsed DESC, events DESC
-        LIMIT ${Number(limit)}
-      `)
+    const usersPerIp = new Map<string, Set<number>>();
+    for (const row of perCreator)
+      for (const ip of row.ips) {
+        if (!ip) continue;
+        if (!usersPerIp.has(ip)) usersPerIp.set(ip, new Set());
+        usersPerIp.get(ip)!.add(row.userId);
+      }
+    const farmIps = new Set(
+      [...usersPerIp.entries()]
+        .filter(([, users]) => users.size >= config.farmIp.minPeers)
+        .map(([ip]) => ip)
     );
 
-    return {
-      collectionId: input.collectionId,
-      count: rows.length,
-      candidates: rows.map((row) => ({
-        userId: Number(row.userId),
-        events: Number(row.events),
-        entriesTouched: Number(row.entriesTouched),
-        distinctCreators: Number(row.distinctCreators),
-        topCreator: Number(row.topCreator),
-        toTopCreator: Number(row.toTopCreator),
-        topCreatorConcentration: +(Number(row.toTopCreator) / Number(row.events)).toFixed(2),
-        farmIpsUsed: Number(row.farmIpsUsed),
-        // Reported so a reviewer can tell a too-young account from an excluded one
-        // without re-deriving the threshold themselves.
-        newAccount: Number(row.userId) > baseGates.userIdThreshold,
-      })),
+    type Candidate = {
+      events: number;
+      entriesTouched: number;
+      creators: Map<number, number>;
+      farmIps: Set<string>;
     };
+    const byUser = new Map<number, Candidate>();
+    for (const row of perCreator) {
+      let candidate = byUser.get(row.userId);
+      if (!candidate) {
+        candidate = { events: 0, entriesTouched: 0, creators: new Map(), farmIps: new Set() };
+        byUser.set(row.userId, candidate);
+      }
+      candidate.events += row.events;
+      candidate.entriesTouched += row.entries;
+      candidate.creators.set(
+        row.creatorId,
+        (candidate.creators.get(row.creatorId) ?? 0) + row.events
+      );
+      for (const ip of row.ips) if (farmIps.has(ip)) candidate.farmIps.add(ip);
+    }
+
+    const rows = [...byUser.entries()]
+      .map(([userId, candidate]) => {
+        const [topCreator, toTopCreator] = [...candidate.creators.entries()].sort(
+          (a, b) => b[1] - a[1]
+        )[0] ?? [0, 0];
+        return {
+          userId,
+          events: candidate.events,
+          entriesTouched: candidate.entriesTouched,
+          distinctCreators: candidate.creators.size,
+          topCreator,
+          toTopCreator,
+          topCreatorConcentration: +(toTopCreator / candidate.events).toFixed(2),
+          farmIpsUsed: candidate.farmIps.size,
+          // Reported so a reviewer can tell a too-young account from an excluded one
+          // without re-deriving the threshold themselves.
+          newAccount: userId > baseGates.userIdThreshold,
+        };
+      })
+      .filter(
+        (row) =>
+          row.farmIpsUsed > 0 ||
+          (row.entriesTouched >= config.farmIp.minEntries && row.distinctCreators === 1)
+      )
+      // Concentration on one creator is the discriminating signal; farm IPs alone
+      // catch shared/CGNAT addresses too, so they only break ties.
+      .sort(
+        (a, b) =>
+          b.topCreatorConcentration - a.topCreatorConcentration ||
+          b.farmIpsUsed - a.farmIpsUsed ||
+          b.events - a.events
+      )
+      .slice(0, limit);
+
+    return { collectionId: input.collectionId, count: rows.length, candidates: rows };
   } catch (e) {
     return sanitizeError(input.collectionId, e);
   }
+}
+
+type PerCreatorRow = {
+  userId: number;
+  creatorId: number;
+  events: number;
+  entries: number;
+  ips: string[];
+};
+
+/** Same entry-boundary chunking as the scoring path — the query-text ceiling is identical. */
+async function runChPerCreator(
+  name: string,
+  pairs: EntryPair[],
+  source: (entityIds: string) => string
+): Promise<PerCreatorRow[]> {
+  if (!pairs.length) return [];
+
+  return withSpan(`contest-score.${name}`, { pairs: pairs.length }, async () => {
+    const limit = pLimit(CH_CONCURRENCY);
+    const results = await Promise.all(
+      chunkPairsByEntry(pairs).map((chunk) =>
+        limit(() => {
+          const entityIds = intList([...new Set(chunk.map((p) => p.entityId))]);
+          return clickhouse!.$query<PerCreatorRow>(`
+            SELECT
+              s.userId AS userId,
+              p.creatorId AS creatorId,
+              count() AS events,
+              uniqExact(p.entryId) AS entries,
+              groupUniqArray(s.ip) AS ips
+            FROM (${source(entityIds)}) AS s
+            INNER JOIN (${chPairTable(chunk)}) AS p ON s.entityId = p.entityId
+            GROUP BY userId, creatorId
+          `);
+        })
+      )
+    );
+    return results.flat().map((row) => ({
+      userId: Number(row.userId),
+      creatorId: Number(row.creatorId),
+      events: Number(row.events),
+      entries: Number(row.entries),
+      ips: row.ips ?? [],
+    }));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1238,9 +1314,26 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Which deployment produced a snapshot, derived from the ENVIRONMENT and never from
+ * mutation input — an operator cannot forget it and a client cannot spoof it.
+ * Preview namespaces carry these vars; production carries none of them.
+ */
+function snapshotSource() {
+  if (process.env.IS_PREVIEW !== 'true' && process.env.NEXT_PUBLIC_IS_PR_PREVIEW !== 'true')
+    return null;
+  const pr = process.env.NEXT_PUBLIC_PR_NUMBER;
+  return pr ? `preview-${pr}` : 'preview';
+}
+
+/**
  * The artifact that defends a disputed prize, so it stores the RESOLVED config —
  * weights included — alongside the window, the age cutoff and the code version.
  * Weights are stripped on the wire, never in storage. No userIds are ever stored.
+ *
+ * The source marker is in the KEY as well as the value so preview rows are a prefix
+ * delete rather than a deserialize-and-filter:
+ *   contestSnapshot:<collectionId>:preview-<pr>:<ISO>
+ *   contestSnapshot:<collectionId>:<ISO>
  *
  * KeyValue keeps this migration-free for v1. A dedicated table (indexed by
  * collection, payload out of a jsonb column) is the follow-up once the shape
@@ -1251,10 +1344,15 @@ export type ContestSnapshot = {
   takenAt: string;
   takenById: number;
   takenByUsername: string | null;
+  source: string | null;
   note?: string;
   codeVersion: number;
   config: ContestScoringConfig;
   ageCutoff: string;
+  /**
+   * Diagnostic only. The threshold is cached for a week, so this can be up to that
+   * stale — it is NOT a measurement taken at snapshot time.
+   */
   ageGateBandUsers: number;
   engagerCount: number;
   partial: boolean;
@@ -1267,8 +1365,8 @@ export type ContestSnapshotSummary = Omit<ContestSnapshot, 'config' | 'score'> &
   entryCount: number;
 };
 
-const snapshotKey = (collectionId: number, takenAt: string) =>
-  `${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:${takenAt}`;
+const snapshotKey = (collectionId: number, takenAt: string, source: string | null) =>
+  [CONTEST_SNAPSHOT_KEY_PREFIX, collectionId, ...(source ? [source] : []), takenAt].join(':');
 
 function toSnapshotSummary(key: string, snapshot: ContestSnapshot): ContestSnapshotSummary {
   // `config` — and therefore the weights — is dropped here. It is stored for audit,
@@ -1291,15 +1389,28 @@ export async function createContestSnapshot({
     const config = await getContestScoringConfig(window.collectionId);
     const resolved = await resolveWindow(window.collectionId, window, config);
     const audit: RunAudit = { engagerCount: 0, ageGateBandUsers: 0 };
-    const score = await computeCommunityScore(window, audit);
+
+    // Through the same lock the scoring path uses. Snapshotting is a full run, so two
+    // mods clicking the button would otherwise stack exactly what the lock exists to
+    // prevent.
+    const score = await withDistributedLock(
+      { key: `contest-score:${window.collectionId}`, ttl: 120, maxRetries: 60 },
+      () => computeCommunityScore(window, audit)
+    );
+    if (!score)
+      throw new ContestScoringError(
+        'A scoring run for this collection is already in progress. Try again shortly.'
+      );
 
     const takenAt = new Date().toISOString();
-    const key = snapshotKey(window.collectionId, takenAt);
+    const source = snapshotSource();
+    const key = snapshotKey(window.collectionId, takenAt, source);
     const snapshot: ContestSnapshot = {
       collectionId: window.collectionId,
       takenAt,
       takenById: userId,
       takenByUsername: username ?? null,
+      source,
       ...(note ? { note } : {}),
       codeVersion: CONTEST_SCORE_CODE_VERSION,
       config,
@@ -1310,9 +1421,17 @@ export async function createContestSnapshot({
       score,
     };
 
-    await dbWrite.keyValue.create({
-      data: { key, value: snapshot as unknown as Prisma.InputJsonValue },
-    });
+    try {
+      await dbWrite.keyValue.create({
+        data: { key, value: snapshot as unknown as Prisma.InputJsonValue },
+      });
+    } catch (e) {
+      // Never an upsert: overwriting a judging artifact silently is worse than
+      // failing. Only the message is softened.
+      if ((e as { code?: string }).code === 'P2002')
+        throw new ContestScoringError('A snapshot for this instant already exists.');
+      throw e;
+    }
 
     return toSnapshotSummary(key, snapshot);
   } catch (e) {
@@ -1321,12 +1440,16 @@ export async function createContestSnapshot({
 }
 
 export async function listContestSnapshots({ collectionId }: { collectionId: number }) {
-  const rows = await dbRead.keyValue.findMany({
-    where: { key: { startsWith: `${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:` } },
-    select: { key: true, value: true },
-  });
+  try {
+    const rows = await dbRead.keyValue.findMany({
+      where: { key: { startsWith: `${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:` } },
+      select: { key: true, value: true },
+    });
 
-  return rows
-    .map(({ key, value }) => toSnapshotSummary(key, value as unknown as ContestSnapshot))
-    .sort((a, b) => b.takenAt.localeCompare(a.takenAt));
+    return rows
+      .map(({ key, value }) => toSnapshotSummary(key, value as unknown as ContestSnapshot))
+      .sort((a, b) => b.takenAt.localeCompare(a.takenAt));
+  } catch (e) {
+    return sanitizeError(collectionId, e);
+  }
 }
