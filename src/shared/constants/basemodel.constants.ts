@@ -4424,18 +4424,6 @@ export const DEPRECATED_BASE_MODELS: string[] = baseModelRecords
   .filter((x) => x.disabled)
   .map((x) => x.name);
 
-/**
- * Configuration for base model groups (ecosystems)
- * Maps ecosystem keys to display names and descriptions
- */
-export const baseModelGroupConfig: Record<string, { name: string; description?: string }> =
-  Object.fromEntries(
-    ecosystems.map((eco) => [
-      eco.key,
-      { name: eco.displayName ?? eco.key, description: eco.description },
-    ])
-  );
-
 // -----------------------------------------------------------------------------
 // Helper Functions
 // -----------------------------------------------------------------------------
@@ -4533,59 +4521,14 @@ export function getBaseModelEngine(baseModel: string): string | undefined {
 }
 
 /**
- * Get all base model configs for an ecosystem
- * @param group - Ecosystem key
- * @returns Array of base model records
- */
-export function getBaseModelConfigsByGroup(group: string): BaseModelRecord[] {
-  const ecosystem = ecosystemByKey.get(group);
-  if (!ecosystem) return [];
-  return getBaseModelsByEcosystemId(ecosystem.id, false);
-}
-
-/**
  * Get all base model names for an ecosystem
  * @param group - Ecosystem key
  * @returns Array of base model names
  */
 export function getBaseModelsByGroup(group: string): string[] {
-  return getBaseModelConfigsByGroup(group).map((x) => x.name);
-}
-
-/**
- * Get all base model configs for a media type
- * @param type - Media type ('image' or 'video')
- * @returns Array of base model records
- */
-export function getBaseModelConfigsByMediaType(type: MediaType): BaseModelRecord[] {
-  return baseModelRecords.filter((x) =>
-    Array.isArray(x.type) ? x.type.includes(type) : x.type === type
-  );
-}
-
-/**
- * Get all base model names for a media type
- * @param type - Media type ('image' or 'video')
- * @returns Array of base model names
- */
-export function getBaseModelByMediaType(type: MediaType): string[] {
-  return getBaseModelConfigsByMediaType(type).map((x) => x.name);
-}
-
-/**
- * Get all ecosystem keys for a media type
- * @param type - Media type ('image' or 'video')
- * @returns Array of ecosystem keys
- */
-export function getBaseModelGroupsByMediaType(type: MediaType): string[] {
-  return [
-    ...new Set(
-      getBaseModelConfigsByMediaType(type).map((x) => {
-        const ecosystem = ecosystemById.get(x.ecosystemId);
-        return ecosystem?.key ?? 'Other';
-      })
-    ),
-  ];
+  const ecosystem = ecosystemByKey.get(group);
+  if (!ecosystem) return [];
+  return getBaseModelsByEcosystemId(ecosystem.id, false).map((x) => x.name);
 }
 
 // -----------------------------------------------------------------------------
@@ -4656,58 +4599,6 @@ export const getBaseModelGenerationConfig = lazy(() =>
 );
 
 /**
- * Get ecosystem keys that have generation support
- * @param type - Optional media type filter
- * @returns Array of ecosystem keys with generation support
- */
-export function getGenerationBaseModelConfigs(type?: MediaType): string[] {
-  const result = ecosystems
-    .filter((ecosystem) => {
-      const genSupport = getEcosystemSupport(ecosystem.id, 'generation');
-      if (!genSupport || genSupport.disabled) return false;
-
-      if (type) {
-        const models = getBaseModelsByEcosystemId(ecosystem.id, false);
-        return models.some((m) => m.type === type);
-      }
-
-      return true;
-    })
-    .map((ecosystem) => ecosystem.key);
-
-  // Include ecosystem group IDs when any member ecosystem has generation support
-  for (const group of ecosystemGroups) {
-    if (!result.includes(group.id)) {
-      const hasGenSupport = group.ecosystemIds.some((id) => {
-        const support = getEcosystemSupport(id, 'generation');
-        if (!support || support.disabled) return false;
-        if (type) {
-          const models = getBaseModelsByEcosystemId(id, false);
-          return models.some((m) => m.type === type);
-        }
-        return true;
-      });
-      if (hasGenSupport) result.push(group.id);
-    }
-  }
-
-  return result;
-}
-
-/**
- * Get base model names that support generation for a media type
- * @param type - Media type ('image' or 'video')
- * @returns Array of base model names
- */
-export function getGenerationBaseModelsByMediaType(type: MediaType): string[] {
-  const allModels = getBaseModelByMediaType(type);
-  const generationModels = getBaseModelGenerationConfig().flatMap(({ supportMap }) =>
-    [...supportMap.values()].flatMap((entry) => entry.map((x) => x.baseModel))
-  );
-  return allModels.filter((baseModel) => generationModels.includes(baseModel));
-}
-
-/**
  * Get generation configuration for an ecosystem (by key or base model name)
  * @param baseModel - Ecosystem key or base model name
  * @param missedMatch - Internal flag for recursion
@@ -4770,18 +4661,6 @@ export function getGenerationBaseModels(group: string, modelType: ModelType): st
 }
 
 /**
- * Check if a base model supports generation for a model type
- * @param baseModel - Base model name
- * @param modelType - Model type (e.g., LORA, Checkpoint)
- * @returns True if generation is supported
- */
-export function getBaseModelGenerationSupported(baseModel: string, modelType: ModelType): boolean {
-  const record = baseModelByName.get(baseModel);
-  if (!record) return false;
-  return isModelSupported(record.id, 'generation', modelType);
-}
-
-/**
  * Get associated ecosystem keys for generation
  * @param group - Ecosystem key
  * @param modelType - Model type
@@ -4804,23 +4683,6 @@ export function getGenerationBaseModelAssociatedGroups(
         .filter(isDefined)
     ),
   ];
-}
-
-/**
- * Group base models by model type
- * @param args - Array of {modelType, baseModel} pairs
- * @returns Record mapping model type to base model names
- */
-export function getBaseModelsByModelType(
-  args: { modelType: ModelType; baseModel: string }[]
-): Record<ModelType, string[]> {
-  return args.reduce(
-    (acc, { modelType, baseModel }) => ({
-      ...acc,
-      [modelType]: [...(acc[modelType] ?? []), baseModel],
-    }),
-    {} as Record<ModelType, string[]>
-  );
 }
 
 /**
