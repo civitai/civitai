@@ -870,20 +870,30 @@ export function OffsiteReviewModalBody({
 
 /**
  * Store PREVIEW of the pending listing — the grid CARD + the store DETAIL as a
- * shopper would see them once approved, built from the review row via the pure
- * `reviewListingPreview` builders. `AppListingDetailBody` runs in read-only
- * `preview` mode (no comments / reviews / report / primary-action / owner-edit).
+ * shopper would see them once approved, showing the app's REAL media. It reads the
+ * mod-only `appListings.getListingPreviewForReview` projection (the SHADOW listing's
+ * icon / cover / ordered screenshots + name / tagline / description / category /
+ * content-rating / creator, projected with the SAME image→CDN-URL derivation as the
+ * public store detail). `AppListingDetailBody` runs in read-only `preview` mode (no
+ * comments / reviews / report / primary-action / owner-edit).
  *
- * NOTE (front-end-only scope): the uploaded ART (icon / cover / screenshots) is
- * reviewed via the assets + scan-status panels above. The mod-review data carries
- * image IDs, not CDN `url` keys, so this preview renders the LAYOUT with the store
- * components' built-in placeholder art. A pixel-accurate media preview would need
- * the review query to project image URLs — a server change, deliberately not made
- * here.
+ * GRACEFUL FALLBACK: while the projection query is loading, errors, or the row has
+ * no backing listing id, it renders a placeholder-art LAYOUT preview built from the
+ * row via the pure `reviewListingPreview` builders — so the review surface never
+ * crashes or blanks.
  */
 function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
-  const card = buildListingCardPreview(request);
-  const detail = buildListingDetailPreview(request);
+  const features = useFeatureFlags();
+  // Mod-only projection of the SHADOW listing's real media + scalars. Enabled only
+  // once a row with a backing listing id is open.
+  const previewQuery = trpc.appListings.getListingPreviewForReview.useQuery(
+    { listingId: request.appListingId ?? '' },
+    { enabled: !!features?.appBlocks && !!request.appListingId, retry: false }
+  );
+  // Prefer the real projected media; fall back to the placeholder-art layout preview
+  // from the row while loading / on error / when there's no listing id.
+  const card = previewQuery.data?.card ?? buildListingCardPreview(request);
+  const detail = previewQuery.data?.detail ?? buildListingDetailPreview(request);
   return (
     <Stack gap="xs" data-testid="apps-listing-preview">
       <Divider
@@ -898,9 +908,7 @@ function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
         labelPosition="left"
       />
       <Text size="xs" c="dimmed">
-        Listing preview — how it will appear once approved. Uploaded art is reviewed
-        via the assets + scan status above; this preview uses placeholder art where an
-        image isn’t resolvable on this surface.
+        Listing preview — how it will appear in the store once approved.
       </Text>
       <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
         <AppListingCard card={card} />

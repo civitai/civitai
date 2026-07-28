@@ -5,18 +5,16 @@
  * in the node project (the browser suites are report-only), mirroring
  * `appListingCardView` / `appListingDetailView`.
  *
- * WHY a builder (and its LIMITS): the mod review surface loads an `OffsitePendingRow`
- * (name / category / contentRating / externalUrl / submitter) + the listing's assets
- * via `appListings.getAssets`. But `getAssets` returns image *IDs* + scan status —
- * NOT the CDN image `url` keys, and the row carries no tagline/description. A CDN URL
- * can't be derived from a numeric image id on the client, so a pixel-accurate media
- * preview (icon / cover / screenshots) would need the review query to project image
- * URLs — a SERVER change, out of scope for this front-end-only work. This builder is
- * therefore fed only what's available: it renders a LAYOUT preview (name, category,
- * content-rating, creator chip, kind-aware framing) with the store components'
- * built-in graceful placeholders for the art. If a caller CAN resolve image URLs, it
- * may pass them via `images` and they flow straight through — so the builder is ready
- * for that projection without a rewrite.
+ * ROLE — the graceful FALLBACK. The real preview media now comes from the mod-only
+ * `appListings.getListingPreviewForReview` projection (the SHADOW listing's icon /
+ * cover / screenshots + scalars, projected with the SAME image→CDN-URL derivation as
+ * the public store detail). This builder is what the review section renders WHILE
+ * that query is loading, if it errors, or when the row has no backing listing id: a
+ * placeholder-art LAYOUT preview from the row's already-loaded fields (name, category,
+ * content-rating, creator chip, kind-aware framing) — so the surface never blanks or
+ * crashes. The row carries no CDN image `url` / tagline / description, so those fall
+ * to the store components' built-in placeholders. A caller that already HAS resolved
+ * image URLs may still pass them via `images` and they flow straight through.
  */
 
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';

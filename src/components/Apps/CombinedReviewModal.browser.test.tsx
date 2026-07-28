@@ -88,6 +88,44 @@ const ASSETS = {
   hasPendingScan: false,
 };
 
+// The mod-only listing-preview projection result: the shadow's REAL media + scalars,
+// projected into the store card + detail shapes (the section renders these directly).
+const LISTING_PREVIEW = {
+  card: {
+    id: 'apl_1',
+    slug: 'combo-app',
+    kind: 'onsite' as const,
+    name: 'Combo App',
+    tagline: 'a handy combo',
+    category: 'utility',
+    contentRating: 'PG',
+    iconUrl: 'https://cdn.example/icon.png',
+    coverUrl: 'https://cdn.example/cover.png',
+    creator: { id: 7, username: 'dev-user', image: null },
+    recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+    reviewCount: 0,
+    kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
+  },
+  detail: {
+    id: 'apl_1',
+    serialId: 1,
+    slug: 'combo-app',
+    kind: 'onsite' as const,
+    name: 'Combo App',
+    tagline: 'a handy combo',
+    description: 'About the combo app.',
+    category: 'utility',
+    contentRating: 'PG',
+    iconUrl: 'https://cdn.example/icon.png',
+    coverUrl: 'https://cdn.example/cover.png',
+    creator: { id: 7, username: 'dev-user', image: null },
+    recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+    reviewCount: 0,
+    screenshots: [{ url: 'https://cdn.example/shot-1.png', caption: 'shot one' }],
+    kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
+  },
+};
+
 const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   mutate: vi.fn(),
@@ -172,6 +210,11 @@ vi.mock('~/utils/trpc', () => {
         getAssets: { useQuery: () => ({ data: ASSETS, isLoading: false, error: null }) },
         approveExternalRequest: { useMutation: mutation('appListings.approve') },
         rejectExternalRequest: { useMutation: mutation('appListings.reject') },
+        // The mod-only listing-preview projection — returns the shadow's REAL media
+        // + scalars so the media section renders the actual card + detail preview.
+        getListingPreviewForReview: {
+          useQuery: () => ({ data: LISTING_PREVIEW, isLoading: false, error: null }),
+        },
       },
     },
   };
@@ -203,6 +246,12 @@ describe('CombinedReviewModal', () => {
     await expect.element(page.getByTestId('apps-listing-preview-card')).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-listing-preview-detail')).toBeInTheDocument();
     await expect.element(page.getByText('Content review checklist')).toBeInTheDocument();
+    // The REAL projected data renders — the tagline + description come ONLY from the
+    // proc projection (the placeholder-fallback builder yields null for both), so their
+    // presence proves the preview is showing the real shadow projection, not a fallback.
+    const detailScope = page.getByTestId('apps-listing-preview-detail');
+    await expect.element(detailScope.getByText('a handy combo')).toBeInTheDocument();
+    await expect.element(detailScope.getByText('About the combo app.')).toBeInTheDocument();
   });
 
   test('approving the CODE section fires ONLY blocks.approveRequest with the code request id', async () => {
