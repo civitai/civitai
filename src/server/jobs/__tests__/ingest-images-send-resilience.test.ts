@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // A single ingestImage whose orchestrator submit never resolves must NOT stall the
-// whole run. The sends run sequentially within a chunk, so an unbounded hang there
-// meant the run never completed, got killed, recorded no job metric, and re-loaded
-// the same stuck oldest rows forever (the backlog never drained). This drives the
-// real job with one image whose ingestImage never settles and asserts the run still
-// completes: the hung image is failed (bounded by the per-image timeout) while the
-// others are submitted.
+// whole run. An unbounded hang meant the run never completed, got killed, recorded no
+// job metric, and re-loaded the same stuck oldest rows forever (the backlog never
+// drained). This drives the real job with one image whose ingestImage never settles
+// and asserts the run still completes: the hung image is failed (bounded by the
+// per-image timeout, a SINGLE pass — no in-batch retry) while the others are submitted.
 
 const { mockDbRead, mockDbWrite, mockIngestImage, mockDeleteImages, mockLimitConcurrency } =
   vi.hoisted(() => {
@@ -94,9 +93,10 @@ describe('ingest-images send resilience', () => {
       failedSends: number;
     }>;
 
-    // Advance past the per-image timeout for every in-batch retry of the hung image
-    // (3 retries * 60s) so the run drains to completion instead of hanging.
-    await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
+    // Advance past the per-image timeout (60s) for the hung image so the run drains
+    // to completion instead of hanging. Stay under the per-run budget (4 min) so the
+    // healthy image after it is still reached.
+    await vi.advanceTimersByTimeAsync(61 * 1000);
 
     const result = await p;
 
@@ -104,8 +104,8 @@ describe('ingest-images send resilience', () => {
     // counted as a failed send, not a run-stalling hang.
     expect(result.sentUserPending).toBe(2);
     expect(result.failedSends).toBe(1);
-    // The hung image was attempted and retried in-batch rather than aborting the loop.
+    // The hung image was attempted exactly once — a single pass, no in-batch retry.
     const hungAttempts = mockIngestImage.mock.calls.filter((c) => c[0].image.id === 2).length;
-    expect(hungAttempts).toBeGreaterThan(1);
+    expect(hungAttempts).toBe(1);
   });
 });
