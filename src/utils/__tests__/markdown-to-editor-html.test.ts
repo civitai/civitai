@@ -208,17 +208,68 @@ describe('convertMarkdownForEditor', () => {
     expect(markdownToEditorHtml(input)).toBe('<h1>Body</h1>');
   });
 
-  // GFM ignores body cells past the header width; widening to the longest row
-  // rendered a phantom column, and padding to a uniform width hid it.
-  it('does not invent a column for a ragged table', () => {
-    const result = convertMarkdownForEditor(
-      '| a | b | c |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |'
-    );
-    const code = result.html.match(/<pre><code>([\s\S]*?)<\/code><\/pre>/)?.[1] ?? '';
-    const rows = code.trim().split('\n');
+  // remark keeps body cells past the header width, and this renders to a code
+  // block that is never re-parsed as a table — so clamping to the header would
+  // just delete them.
+  it('keeps every cell of a ragged table', () => {
+    const result = convertMarkdownForEditor('| a | b |\n|---|---|\n| 1 | 2 | 3 | 4 |');
 
-    expect(rows[0].match(/\|/g)).toHaveLength(4); // 3 columns => 4 pipes
-    expect(rows.every((row) => (row.match(/\|/g) ?? []).length === 4)).toBe(true);
+    for (const cell of ['a', 'b', '1', '2', '3', '4']) expect(result.html).toContain(cell);
+  });
+
+  it.each([
+    ['a yaml comment', '---\ntitle: A\n# TODO: update\ndate: 2024-01-01\n---\n\n# Body'],
+    ['a url value', '---\nhome: https://example.com\n---\n\n# Body'],
+    ['an indented block scalar', '---\ntitle: A\nnote: |\n    ---\n    secret\n---\n\n# Body'],
+  ])('strips frontmatter containing %s', (_label, input) => {
+    expect(markdownToEditorHtml(input)).toBe('<h1>Body</h1>');
+  });
+
+  // A `---` rule followed by prose is not frontmatter, even when a line happens
+  // to match `key:` — deleting it silently ate real article content.
+  it.each([
+    ['a Version: line', '---\nVersion: 1.2.0\n\nFixed things.\n\n---\n\nMore stuff'],
+    ['a bare url', '---\nhttps://example.com\n\n---\n\nBody'],
+  ])('does not eat body content after an hr with %s', (_label, input) => {
+    const html = markdownToEditorHtml(input);
+
+    expect(html).toContain('<hr>');
+    expect(html).not.toBe('<h1>Body</h1>');
+  });
+
+  it('drops html comments rather than publishing them as text', () => {
+    expect(markdownToEditorHtml('<!-- private note -->\n\n# Body')).toBe('<h1>Body</h1>');
+  });
+
+  it('drops real html wrappers rather than publishing the markup', () => {
+    const html = markdownToEditorHtml(
+      '<div align="center">\n  <img src="https://evil.example/x.png" />\n</div>\n\n# Body'
+    );
+
+    expect(html).toBe('<h1>Body</h1>');
+  });
+
+  // `br` is allowlisted and in the tiptap schema, so it should stay a break
+  // rather than become the literal text `<br>`.
+  it('keeps <br> as a line break', () => {
+    expect(markdownToEditorHtml('line one<br>line two')).toContain('<br>');
+  });
+
+  // Reference style reaches the same `<img>`, so it must be demoted too or the
+  // whole point of the off-site rule is bypassed.
+  it('demotes a reference-style off-site image', () => {
+    const result = convertMarkdownForEditor('![cat][c]\n\n[c]: https://evil.example/cat.png');
+
+    expect(result.externalImagesLinked).toBe(1);
+    expect(result.html).not.toContain('<img');
+  });
+
+  it('resolves a reference-style Civitai image to a real src', () => {
+    const url = 'https://image.civitai.com/a/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/original';
+    const result = convertMarkdownForEditor(`![ok][c]\n\n[c]: ${url}`);
+
+    expect(result.externalImagesLinked).toBe(0);
+    expect(result.html).toContain(`src="${url}"`);
   });
 
   it('escapes embedded raw html rather than executing it', () => {

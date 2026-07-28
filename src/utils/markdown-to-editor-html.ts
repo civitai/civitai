@@ -15,7 +15,10 @@ const MAX_HEADING_DEPTH = 3;
 const MIN_TABLE_COLUMN_WIDTH = 3;
 
 /** Schemes the sanitizer will keep on an `<a href>`. */
-const WEB_URL = /^(https?:|mailto:|\/|#)/i;
+const WEB_URL = /^(https?:|ftp:|mailto:|\/|#)/i;
+
+/** An HTML comment or a genuine tag, as opposed to `<your-token>`. */
+const HTML_MARKUP = /^<!--|^<\/?[a-z][a-z0-9]*(\s|\/?>)/i;
 
 /**
  * Not `gray-matter`: it needs Node's `Buffer` and this runs in the browser.
@@ -25,15 +28,30 @@ const WEB_URL = /^(https?:|mailto:|\/|#)/i;
 function stripFrontmatter(markdown: string) {
   const text = markdown.replace(/^\uFEFF/, '');
   const lines = text.split(/\r?\n/);
-  if (lines[0]?.trim() !== '---') return text;
+  if (lines[0] !== '---') return text;
 
-  const close = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+  // Column 0 only. `line.trim() === '---'` also matched an indented `---` inside
+  // a block scalar, which ended the fence early and published the rest of the
+  // frontmatter as body content.
+  const close = lines.findIndex((line, index) => index > 0 && line === '---');
   if (close === -1) return text;
 
+  // Every non-blank line must read as YAML \u2014 a `key:`, a list item, or an
+  // indented continuation \u2014 so a `---` horizontal rule followed by prose that
+  // happens to contain a colon isn't mistaken for frontmatter and deleted.
+  // `#` lines are YAML comments here, not markdown headings.
+  const isYamlish = (line: string) =>
+    line.trim() === '' ||
+    /^#/.test(line.trim()) ||
+    /^[ \t]/.test(line) ||
+    /^- /.test(line.trim()) ||
+    // `https://example.com` also matches `key:`, so exclude bare URIs.
+    (/^[\w.$-]+[ \t]*:/.test(line) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(line.trim()));
+
+  // Frontmatter never opens with a blank line, but `---` + blank + prose is a
+  // common horizontal rule, so that alone separates the two.
   const block = lines.slice(1, close);
-  const opensWithKey = /^[\w.-]+[ \t]*:/.test(block[0] ?? '');
-  const hasHeading = block.some((line) => /^#{1,6} /.test(line));
-  if (!opensWithKey || hasHeading) return text;
+  if (!block.length || block[0].trim() === '' || !block.every(isYamlish)) return text;
 
   return lines
     .slice(close + 1)
@@ -46,6 +64,7 @@ type MdNode = {
   value?: string;
   url?: string;
   alt?: string;
+  identifier?: string;
   depth?: number;
   checked?: boolean | null;
   children?: MdNode[];
@@ -74,9 +93,10 @@ function renderTableAsText(table: MdNode): string {
   );
   if (!rows.length) return '';
 
-  // GFM ignores body cells beyond the header's width, so widening to the longest
-  // row would render a phantom column that appears nowhere else.
-  const columnCount = rows[0].length;
+  // Widest row, not the header's width: remark keeps excess body cells, and this
+  // renders to a code block that is never re-parsed as a table, so clamping to
+  // the header would just delete them.
+  const columnCount = Math.max(...rows.map((row) => row.length));
   const widths = Array.from({ length: columnCount }, (_, column) =>
     Math.max(MIN_TABLE_COLUMN_WIDTH, ...rows.map((row) => (row[column] ?? '').length))
   );
@@ -96,7 +116,19 @@ function prefixParagraph(item: MdNode, prefix: string) {
   paragraph.children = [{ type: 'text', value: prefix }, ...(paragraph.children ?? [])];
 }
 
-function fitToEditorSchema(node: MdNode, stats: MarkdownConversionStats) {
+function collectDefinitions(node: MdNode, into: Map<string, string>) {
+  for (const child of node.children ?? []) {
+    if (child.type === 'definition' && child.identifier)
+      into.set(child.identifier.toLowerCase(), child.url ?? '');
+    collectDefinitions(child, into);
+  }
+}
+
+function fitToEditorSchema(
+  node: MdNode,
+  stats: MarkdownConversionStats,
+  definitions: Map<string, string>
+) {
   const children = node.children;
   if (!children) return;
 
@@ -109,10 +141,15 @@ function fitToEditorSchema(node: MdNode, stats: MarkdownConversionStats) {
       continue;
     }
 
-    // remarkRehype drops html nodes *and their text*, losing `<your-token>`.
-    // Keeping the characters is safe: they are escaped on output.
+    // remarkRehype drops html nodes *and their text*, which lost `<your-token>`.
+    // Only rescue the ones that aren't actually markup: a comment or a real tag
+    // should stay dropped, or private notes and `<div>` wrappers get published as
+    // visible text. `<br>` is allowlisted, so keep it as a real break.
     if (child.type === 'html') {
-      children[i] = { type: 'text', value: child.value ?? '' };
+      const raw = child.value ?? '';
+      if (/^<br\s*\/?>$/i.test(raw)) children[i] = { type: 'break' };
+      else if (HTML_MARKUP.test(raw)) children.splice(i--, 1);
+      else children[i] = { type: 'text', value: raw };
       continue;
     }
 
@@ -127,15 +164,21 @@ function fitToEditorSchema(node: MdNode, stats: MarkdownConversionStats) {
     }
 
     // Image scanning only sees Civitai-hosted URLs, so an off-site `<img>` would
-    // publish unscanned and leak reader IPs. Demote rather than embed.
-    if (child.type === 'image' && !extractCloudflareUuid(child.url ?? '')) {
-      const url = child.url ?? '';
-      children[i] = {
-        type: 'link',
-        url,
-        children: [{ type: 'text', value: child.alt?.trim() || url }],
-      };
-      stats.externalImagesLinked++;
+    // publish unscanned and leak reader IPs. Demote rather than embed. Reference
+    // style (`![alt][id]`) counts too — it reaches the same `<img>`.
+    if (child.type === 'image' || child.type === 'imageReference') {
+      const url = child.url ?? definitions.get((child.identifier ?? '').toLowerCase()) ?? '';
+      if (!extractCloudflareUuid(url)) {
+        children[i] = {
+          type: 'link',
+          url,
+          children: [{ type: 'text', value: child.alt?.trim() || url }],
+        };
+        stats.externalImagesLinked++;
+        continue;
+      }
+      // Resolve the reference so the surviving image carries a real src.
+      if (child.type === 'imageReference') children[i] = { type: 'image', url, alt: child.alt };
       continue;
     }
 
@@ -152,7 +195,7 @@ function fitToEditorSchema(node: MdNode, stats: MarkdownConversionStats) {
       stats.taskItemsConverted++;
     }
 
-    fitToEditorSchema(child, stats);
+    fitToEditorSchema(child, stats, definitions);
   }
 }
 
@@ -169,7 +212,9 @@ export function convertMarkdownForEditor(markdown: string): MarkdownConversionRe
     .use(remarkParse)
     .use(remarkGfm)
     .use(() => (tree: unknown) => {
-      fitToEditorSchema(tree as MdNode, stats);
+      const definitions = new Map<string, string>();
+      collectDefinitions(tree as MdNode, definitions);
+      fitToEditorSchema(tree as MdNode, stats, definitions);
     })
     .use(remarkRehype)
     .use(rehypeStringify)
