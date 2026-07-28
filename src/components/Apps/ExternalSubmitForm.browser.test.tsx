@@ -83,6 +83,7 @@ vi.mock('~/utils/trpc', () => {
         },
         persistAssetImage: { useMutation: mutation },
         ingestAssetFromUrl: { useMutation: mutation },
+        ingestAssetFromDataUri: { useMutation: mutation },
         setIcon: { useMutation: mutation },
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
@@ -428,38 +429,33 @@ describe('ExternalSubmitForm — OAuth step: mod global-search + create deeplink
 });
 
 /**
- * "Pull from site" button (create wizard). The auto-pull fires ONCE per URL
- * (`appliedMetaRef` guard) and `staleTime:Infinity` + `retry:false` pin the result, so a
- * first-time empty / errored / not-ready pull (or a client-rendered SPA that exposes no
- * server-side OG tags — #3344) could never be retried without editing the URL. This
- * button re-runs the OG pull on demand for the CURRENT url, applies name/tagline/
- * description fill-if-empty, and re-surfaces the icon/cover suggestions on the Assets
- * step. Mirrors the edit wizard's "Autofill from website".
+ * Auto-trigger + inline status + assets-step "Re-pull from site" (create wizard).
+ * The manual "Pull from site" button was REMOVED: entering a valid https URL now
+ * auto-fires the OG pull (on blur / advance), a subtle inline status reports the
+ * four-state outcome (applied / partial / empty / error), and the assets step carries
+ * the sole manual retry. Also covers the inline data-URI icon suggestion (radio case).
  */
-describe('ExternalSubmitForm — create "Pull from site" button', () => {
-  /** Drive the wizard URL → App → Details → create draft → Assets. */
+describe('ExternalSubmitForm — auto-trigger, status, re-pull, data-URI icon', () => {
+  /** Fill a URL + advance to the App step (blur auto-fires the pull). */
+  async function fillUrlAndAdvance(url: string) {
+    await page.getByTestId('apps-offsite-submit-url').fill(url);
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
+    await page.getByTestId('apps-offsite-wizard-next-url').click();
+  }
+  /** Drive URL → App → Details → create draft → Assets. */
   async function reachAssets() {
     await pickClient();
     await page.getByTestId('apps-offsite-wizard-next-app').click();
     await page.getByRole('button', { name: 'Create draft' }).click();
   }
 
-  test('renders on the URL step (create mode), enabled once a valid https URL is entered', async () => {
+  test('the manual "Pull from site" button is GONE (auto-trigger replaces it)', async () => {
     renderWithProviders(<ExternalSubmitForm />);
-    const btn = page.getByTestId('apps-offsite-submit-autofill');
-    // Blank URL → disabled (no wasted fetch).
-    await expect.element(btn).toBeDisabled();
     await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
-    await expect.element(btn).toBeEnabled();
+    expect(page.getByTestId('apps-offsite-submit-autofill').elements()).toHaveLength(0);
   });
 
-  test('is DISABLED for a non-https URL', async () => {
-    renderWithProviders(<ExternalSubmitForm />);
-    await page.getByTestId('apps-offsite-submit-url').fill('http://insecure.example.com');
-    await expect.element(page.getByTestId('apps-offsite-submit-autofill')).toBeDisabled();
-  });
-
-  test('clicking it pulls meta, applies fill-if-empty name/description, and surfaces the "applied" note', async () => {
+  test('entering a valid URL auto-fires the pull (on blur): fills empty name/description + shows the applied note', async () => {
     mocks.meta = {
       data: {
         name: 'Civitai Cosmetic Studio',
@@ -473,11 +469,11 @@ describe('ExternalSubmitForm — create "Pull from site" button', () => {
     };
     renderWithProviders(<ExternalSubmitForm />);
     await page.getByTestId('apps-offsite-submit-url').fill('https://cosmetic-studio.civitai.com');
-    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
+    // The applied note appears WITHOUT any button click — the pull auto-fired on blur.
     await expect
       .element(page.getByTestId('apps-offsite-submit-autofill-applied'))
       .toBeInTheDocument();
-    // Advance to Details — the pulled title + description filled the empty fields.
     await pickClient();
     await page.getByTestId('apps-offsite-wizard-next-app').click();
     await expect
@@ -488,75 +484,40 @@ describe('ExternalSubmitForm — create "Pull from site" button', () => {
       .toHaveValue('Pulled from the link.');
   });
 
-  test('the pulled icon/cover suggestions flow to the Assets step (Use this previews)', async () => {
+  test('a site exposing SOME channels shows the honest PARTIAL note (radio: title + icon, no cover/description)', async () => {
     mocks.meta = {
       data: {
-        name: 'Vitrine',
-        tagline: undefined,
-        description: undefined,
-        coverImageUrl: 'https://cdn/og-cover.png',
-        iconImageUrl: 'https://cdn/og-icon.png',
+        name: 'AI Radio',
+        iconDataUri: 'data:image/svg+xml,%3Csvg%2F%3E',
       },
       isFetching: false,
       isSuccess: true,
     };
     renderWithProviders(<ExternalSubmitForm />);
-    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
-    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await page.getByTestId('apps-offsite-submit-url').fill('https://radio.example.com');
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
     await expect
-      .element(page.getByTestId('apps-offsite-submit-autofill-applied'))
+      .element(page.getByTestId('apps-offsite-submit-autofill-partial'))
       .toBeInTheDocument();
-    await reachAssets();
-    // The empty icon + cover slots offer the pulled OG suggestion via "Use this".
-    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
-    await expect.element(page.getByTestId('apps-offsite-accept-cover')).toBeInTheDocument();
-    await expect
-      .element(page.getByTestId('apps-offsite-suggested-icon-preview'))
-      .toBeInTheDocument();
+    // NOT a spurious applied/empty.
+    expect(page.getByTestId('apps-offsite-submit-autofill-applied').elements()).toHaveLength(0);
   });
 
-  test('does NOT clobber a name the user already typed', async () => {
-    // Reach Details with no meta applied, type a name, go back, then Pull from site.
-    mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
-    renderWithProviders(<ExternalSubmitForm />);
-    await advanceFromUrl('https://vitrine.civitai.com');
-    await pickClient();
-    await page.getByTestId('apps-offsite-wizard-next-app').click();
-    await page.getByTestId('apps-offsite-submit-name').fill('User Typed Name');
-    // Back to the URL step and pull — the meta now carries a title.
-    await page.getByTestId('apps-offsite-wizard-back-details').click();
-    await page.getByTestId('apps-offsite-wizard-back-app').click();
-    mocks.meta = {
-      data: { name: 'OG Title', tagline: undefined, description: undefined, coverImageUrl: undefined, iconImageUrl: undefined },
-      isFetching: false,
-      isSuccess: true,
-    };
-    await page.getByTestId('apps-offsite-submit-autofill').click();
-    // The typed name is preserved (fill-if-empty).
-    await pickClient();
-    await page.getByTestId('apps-offsite-wizard-next-app').click();
-    await expect
-      .element(page.getByTestId('apps-offsite-submit-name'))
-      .toHaveValue('User Typed Name');
-  });
-
-  test('a site that exposed NOTHING (SPA #3344) shows the honest empty note', async () => {
-    // Empty data — the pull surfaces no icon/cover/description; the host-derived name
-    // fallback is not counted as "pulled from the site", so the note is the honest empty.
+  test('a site that exposed NOTHING (SPA #3344) shows the honest empty note — never "already filled"', async () => {
     mocks.meta = { data: {}, isFetching: false, isSuccess: true };
     renderWithProviders(<ExternalSubmitForm />);
     await page.getByTestId('apps-offsite-submit-url').fill('https://spa.example.com');
-    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
     await expect
       .element(page.getByTestId('apps-offsite-submit-autofill-empty'))
       .toBeInTheDocument();
   });
 
-  test('an ERRORED pull shows the error note (no spurious applied/empty)', async () => {
+  test('an ERRORED pull shows the error note (no spurious applied/empty/partial)', async () => {
     mocks.meta = { data: undefined, isFetching: false, isSuccess: false, isError: true };
     renderWithProviders(<ExternalSubmitForm />);
     await page.getByTestId('apps-offsite-submit-url').fill('https://broken.example.com');
-    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await page.getByTestId('apps-offsite-submit-url').element().blur();
     await expect
       .element(page.getByTestId('apps-offsite-submit-autofill-error'))
       .toBeInTheDocument();
@@ -564,27 +525,86 @@ describe('ExternalSubmitForm — create "Pull from site" button', () => {
     expect(page.getByTestId('apps-offsite-submit-autofill-empty').elements()).toHaveLength(0);
   });
 
-  test('re-clicking with the SAME url bypasses the once-per-url guard via refetch()', async () => {
+  test('the pulled https icon/cover suggestions flow to the Assets step (Use this previews)', async () => {
     mocks.meta = {
-      data: { name: 'Vitrine', tagline: undefined, description: undefined, coverImageUrl: 'https://cdn/og-cover.png', iconImageUrl: 'https://cdn/og-icon.png' },
+      data: {
+        name: 'Vitrine',
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
       isFetching: false,
       isSuccess: true,
     };
     renderWithProviders(<ExternalSubmitForm />);
-    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
-    await page.getByTestId('apps-offsite-submit-url').element().blur(); // sets metaUrl via the auto-pull path
-
-    // FIRST click: metaUrl already set by blur → same-url path → refetch().
-    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await fillUrlAndAdvance('https://vitrine.civitai.com');
+    await reachAssets();
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-accept-cover')).toBeInTheDocument();
     await expect
-      .element(page.getByTestId('apps-offsite-submit-autofill-applied'))
+      .element(page.getByTestId('apps-offsite-suggested-icon-preview'))
       .toBeInTheDocument();
-    await vi.waitFor(() => expect(mocks.refetch).toHaveBeenCalled());
-    const firstCount = mocks.refetch.mock.calls.length;
+  });
 
-    // SECOND click, url UNCHANGED: the once-per-url guard would block a re-apply, so the
-    // retry MUST go through refetch() again — proving the guard is bypassed on a manual pull.
-    await page.getByTestId('apps-offsite-submit-autofill').click();
-    await vi.waitFor(() => expect(mocks.refetch.mock.calls.length).toBeGreaterThan(firstCount));
+  test('an inline data-URI icon (radio) surfaces as an icon "Use this" tile on the Assets step', async () => {
+    mocks.meta = {
+      data: {
+        name: 'AI Radio',
+        iconDataUri: 'data:image/svg+xml,%3Csvg%2F%3E',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await fillUrlAndAdvance('https://radio.example.com');
+    await reachAssets();
+    // The inline data-URI icon offers an accept tile even though there's no https icon URL.
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-offsite-suggested-icon-preview'))
+      .toBeInTheDocument();
+    // No cover suggestion (the site exposed none).
+    expect(page.getByTestId('apps-offsite-accept-cover').elements()).toHaveLength(0);
+  });
+
+  test('the assets-step "Re-pull from site" button invokes repull (refetch of the current url)', async () => {
+    mocks.meta = {
+      data: {
+        name: 'Vitrine',
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await fillUrlAndAdvance('https://vitrine.civitai.com');
+    await reachAssets();
+    const repull = page.getByTestId('apps-offsite-assets-repull');
+    await expect.element(repull).toBeInTheDocument();
+    // The URL was fired via setMetaUrl (new url), so a repull of the SAME url must
+    // refetch — proving the button re-runs the query.
+    mocks.refetch.mockClear();
+    await repull.click();
+    await vi.waitFor(() => expect(mocks.refetch).toHaveBeenCalled());
+  });
+
+  test('does NOT clobber a name the user already typed', async () => {
+    // Reach Details with no meta applied, type a name, then a later settled pull must not clobber.
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://vitrine.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await page.getByTestId('apps-offsite-submit-name').fill('User Typed Name');
+    // A later re-render with settled meta carrying a title must respect the typed name.
+    mocks.meta = {
+      data: { name: 'OG Title' },
+      isFetching: false,
+      isSuccess: true,
+    };
+    await page.getByRole('textbox', { name: /^Tagline/ }).fill('trigger a re-render');
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('User Typed Name');
   });
 });

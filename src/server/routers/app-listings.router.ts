@@ -38,6 +38,7 @@ import {
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
   fetchListingMetaSchema,
+  ingestListingAssetFromDataUriSchema,
   ingestListingAssetFromUrlSchema,
 } from '~/server/schema/blocks/listing-meta.schema';
 import {
@@ -646,6 +647,32 @@ export const appListingsRouter = router({
         '~/server/services/blocks/listing-meta.service'
       );
       return ingestListingAssetFromUrl({ input, userId: ctx.user.id });
+    }),
+
+  /**
+   * AUTHOR: ingest an ACCEPTED inline `data:image/...` icon (a favicon declared as a
+   * data URI — the https-only URL path drops these) into a scannable `Image` row.
+   * The bytes come from the data URI itself (no outbound fetch); the server decodes,
+   * REJECTS any non-image MIME, caps the decoded size, and RASTERIZES to PNG (raw SVG
+   * is never stored/served — XSS vector) before running the STANDARD scan pipeline.
+   * Returns the numeric `imageId` the client then attaches via `setIcon`. Same auth +
+   * rate-limit shape as the URL accept.
+   */
+  ingestAssetFromDataUri: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many image imports — slow down.',
+      })
+    )
+    .input(ingestListingAssetFromDataUriSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { ingestListingAssetFromDataUri } = await import(
+        '~/server/services/blocks/listing-meta.service'
+      );
+      return ingestListingAssetFromDataUri({ input, userId: ctx.user.id });
     }),
 
   /** AUTHOR: the caller's OWN off-site submissions (my-submissions page, PR-c). */
