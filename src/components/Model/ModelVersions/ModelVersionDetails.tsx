@@ -1370,7 +1370,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             {version.hiddenMetrics?.downloads ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
-                              <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
+                              <AnimatedCount
+                                value={liveMetrics.downloadCount}
+                                abbreviate={false}
+                                resetKey={version.id}
+                              />
                             )}
                           </Text>
                         </Group>
@@ -1382,7 +1386,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             {version.hiddenMetrics?.generations ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
-                              <AnimatedCount value={liveMetrics.generationCount} />
+                              <AnimatedCount
+                                value={liveMetrics.generationCount}
+                                resetKey={version.id}
+                              />
                             )}
                           </Text>
                         </Group>
@@ -1394,7 +1401,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             {version.hiddenMetrics?.buzz ? (
                               <HiddenMetricNotice size={16} />
                             ) : (
-                              <AnimatedCount value={liveMetrics.earnedAmount} />
+                              <AnimatedCount
+                                value={liveMetrics.earnedAmount}
+                                resetKey={version.id}
+                              />
                             )}
                           </Text>
                         </Group>

@@ -140,8 +140,14 @@ export function EmblaCarouselProvider({
     );
 
   const setSlidesInView = storeRef.current.getState().setSlidesInView;
+
+  // `onSelect` is registered with embla once, so read the callback through a ref
+  // rather than capturing the first render's closure.
+  const onSlideChangeRef = useRef(onSlideChange);
+  onSlideChangeRef.current = onSlideChange;
+
   const onSelect = useCallback((emblaApi: EmblaCarouselType) => {
-    onSlideChange?.(emblaApi.selectedScrollSnap());
+    onSlideChangeRef.current?.(emblaApi.selectedScrollSnap());
     if (storeRef.current) {
       storeRef.current.setState({
         canScrollNext: emblaApi.canScrollNext(),
