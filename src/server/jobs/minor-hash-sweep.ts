@@ -6,7 +6,7 @@ import { createJob } from './job';
 // at /api/admin/temp/minor-hash-sweep has been verified clean.
 const ENABLED = false;
 
-export const minorHashSweep = createJob('minor-hash-sweep', '17 3 * * *', async () => {
+export const minorHashSweep = createJob('minor-hash-sweep', '45 3 * * *', async () => {
   if (!ENABLED) return;
 
   await sweepMinorHashMatches({ dryRun: false, limit: 500 });
