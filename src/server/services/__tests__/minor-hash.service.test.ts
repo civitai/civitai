@@ -255,6 +255,9 @@ describe('getMinorHashMatchesForReview', () => {
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
     const text = Array.from(strings as TemplateStringsArray).join('?');
     expect(text).toContain(`NOT (m.meta ? 'minorHashDismissed')`);
+    expect(text).toContain('WHERE NOT c."sameUploader"');
+    expect(text).toContain('bool_or(EXISTS (');
+    expect(text).toContain(`s2."userId" <> c."userId"`);
     expect(values).toContain(25); // limit
     expect(values).toContain(50); // offset = (page - 1) * limit
   });
@@ -265,6 +268,10 @@ describe('dismissMinorHashMatch', () => {
     await dismissMinorHashMatch({ modelId: 100, userId: 7 });
 
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('COALESCE(meta');
+    expect(text).toContain('|| jsonb_build_object');
     expect(mockTrackModActivity).toHaveBeenCalledWith(7, {
       entityType: 'model',
       entityId: 100,

@@ -197,8 +197,11 @@ export async function getMinorHashMatchesForReview({
   const items = await dbRead.$queryRaw<MinorHashReviewRow[]>`
     WITH ${minorSrcCte},
     candidates AS (
-      SELECT DISTINCT m.id AS "modelId", m.name AS "modelName", m."userId",
-             m.status::text AS status, mfh.hash
+      SELECT m.id AS "modelId", m.name AS "modelName", m."userId", m.status::text AS status,
+             bool_or(EXISTS (
+               SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
+             )) AS "sameUploader",
+             min(mfh.hash) AS hash
       FROM "ModelFileHash" mfh
       JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = 'Model'
       JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
@@ -208,22 +211,20 @@ export async function getMinorHashMatchesForReview({
         AND NOT m.minor
         AND m.status <> 'Deleted'
         AND NOT (m.meta ? 'minorHashDismissed')
+      GROUP BY m.id, m.name, m."userId", m.status
     )
-    SELECT
-      c."modelId", c."modelName", c."userId", u.username, c.status, c.hash,
-      s."minorModelId", s."userId" AS "minorUserId"
+    SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash,
+           s."minorModelId", s."userId" AS "minorUserId"
     FROM candidates c
     JOIN LATERAL (
-      SELECT s."minorModelId", s."userId"
-      FROM minor_src s
-      WHERE s.hash = c.hash AND s."userId" <> c."userId"
-      ORDER BY s."minorModelId"
+      SELECT s2."minorModelId", s2."userId"
+      FROM minor_src s2
+      WHERE s2.hash = c.hash AND s2."userId" <> c."userId"
+      ORDER BY s2."minorModelId"
       LIMIT 1
     ) s ON TRUE
     LEFT JOIN "User" u ON u.id = c."userId"
-    WHERE NOT EXISTS (
-      SELECT 1 FROM minor_src s2 WHERE s2.hash = c.hash AND s2."userId" = c."userId"
-    )
+    WHERE NOT c."sameUploader"
     ORDER BY c."modelId"
     LIMIT ${limit} OFFSET ${offset}
   `;
