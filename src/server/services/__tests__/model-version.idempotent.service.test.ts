@@ -49,12 +49,18 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
   return { mockDbRead: read, mockDbWrite: write };
 });
 
-const { mockGetOwnerDonationGoals, mockMaterialize } = vi.hoisted(() => ({
+const { mockGetOwnerDonationGoals, mockMaterialize, mockMaxDays, mockMaxModels } = vi.hoisted(() => ({
   mockGetOwnerDonationGoals: vi.fn(),
   mockMaterialize: vi.fn(),
+  mockMaxDays: vi.fn(),
+  mockMaxModels: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+vi.mock('~/server/utils/early-access-helpers', () => ({
+  getMaxEarlyAccessDays: mockMaxDays,
+  getMaxEarlyAccessModels: mockMaxModels,
+}));
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, dbReadFallbackCounter: { inc: vi.fn() } };
@@ -115,6 +121,7 @@ vi.mock('~/server/services/model-file.service', () => ({ filesForModelVersionCac
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 import {
+  assertUserEarlyAccessLimits,
   mergeVersions,
   modelVersionDonationGoal,
   publishModelVersionsWithEarlyAccess,
@@ -279,5 +286,54 @@ describe('publishModelVersionsWithEarlyAccess — endsAt materialization', () =>
 
     expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
     expect(mockMaterialize).toHaveBeenCalledWith(1, publishedAt, mockDbWrite);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assertUserEarlyAccessLimits — the unified user-level EA caps (one enforcement point for both the
+// tRPC upsert and the REST early-access endpoint).
+// ---------------------------------------------------------------------------
+describe('assertUserEarlyAccessLimits', () => {
+  // getUserEarlyAccessModelVersions runs a raw query on the replica.
+  const primeActive = (ids: number[]) =>
+    mockDbRead.$queryRaw.mockResolvedValueOnce(ids.map((id) => ({ id })));
+
+  beforeEach(() => {
+    mockMaxDays.mockReturnValue(30);
+    mockMaxModels.mockReturnValue(2);
+  });
+
+  it('no-op for a moderator or a gate with no timeframeDays (permanent / ungated)', async () => {
+    await assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 9999, isModerator: true });
+    await assertUserEarlyAccessLimits({ userId: 1, timeframeDays: undefined });
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled(); // never even queries active EA
+  });
+
+  it('throws when the requested days exceed the user max', async () => {
+    mockMaxDays.mockReturnValue(7);
+    await expect(assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 14 })).rejects.toThrow(
+      'Early access days exceeds user limit'
+    );
+  });
+
+  it('throws at the concurrent-model cap for a NEW version', async () => {
+    primeActive([10, 11]); // already 2 active, cap is 2
+    await expect(assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7 })).rejects.toThrow(
+      /maximum number of early access models/i
+    );
+  });
+
+  it('EXEMPTS re-saving a version already counted toward the cap', async () => {
+    primeActive([10, 11]); // at cap, but versionId 10 is one of them
+    await expect(
+      assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+    ).resolves.toBeUndefined();
+  });
+
+  it('allows a new version while under the cap', async () => {
+    primeActive([10]); // 1 active, cap is 2
+    await expect(
+      assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7 })
+    ).resolves.toBeUndefined();
   });
 });

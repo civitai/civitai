@@ -136,14 +136,13 @@ The implementation departed from this plan in a few places (all deliberate, all 
   gate is read from the entity's PaidAccess record via `endPaidAccessNow`.
 - **Comics deferred** to stage 5 (see decision 2), so this deploy is model-only despite §1.4/§4 wording.
 
-## Open decisions to circle back on
+## Resolved decisions
 
-- **Public REST `GET /api/v1/model-versions/[id]` dropped `earlyAccessEndsAt` + `earlyAccessConfig`.** The
-  `paid-access-query-sites.md` audit said to *reconstruct* these from PaidAccess (or version the contract),
-  not delete them. We deleted them, on the belief that there are no active consumers and that the public API
-  should not surface paid-access models at all. **PENDING confirmation with Justin.** If a 3rd-party consumer
-  depends on early-access state, either reconstruct from `PaidAccess.endsAt`/`terms` (as `mini/[id].ts` does)
-  or filter gated versions out of the endpoint entirely. (Note left in `src/pages/api/v1/model-versions/[id].ts`.)
+- **Public REST `GET /api/v1/model-versions/[id]` drops `earlyAccessEndsAt` + `earlyAccessConfig`** —
+  **DECIDED (2026-07-28): drop them.** The public v1 API should not surface paid-access gate details, and
+  there are no active consumers. This supersedes the `paid-access-query-sites.md` audit note (which had said
+  to reconstruct, not delete). If it ever needs to change, reconstruct from `PaidAccess.endsAt`/`terms` as
+  `mini/[id].ts` does. (Note in `src/pages/api/v1/model-versions/[id].ts`.)
 
 ## Parity regressions found + fixed (post-review)
 

@@ -151,9 +151,11 @@ every access/money decision is flipped. Findings:
 - `model-version.service.ts:542` — dropped the unused `earlyAccessEndsAt` select (kept `earlyAccessConfig`, still read).
 
 **Must flip in Phase 2 — LIVE references not previously catalogued (would throw at the drop):**
-- `src/pages/api/v1/model-versions/[id].ts:74-75` — the **public v1 API** raw-SQL selects `earlyAccessEndsAt`
-  and `earlyAccessConfig` straight into the `ModelVersionApiReturn` contract. External API: Phase 2 must
-  reconstruct these from `PaidAccess.endsAt` / `terms` (or version the contract), not just delete them.
+- `src/pages/api/v1/model-versions/[id].ts` — the **public v1 API** used to select `earlyAccessEndsAt`
+  and `earlyAccessConfig` into the `ModelVersionApiReturn` contract. **RESOLVED (2026-07-28): dropped, not
+  reconstructed** — the public API should not surface paid-access gate details and has no active consumers
+  of these fields. (See the cutover doc's "Resolved decisions".) Superseded this note's earlier "reconstruct
+  ... not just delete" guidance.
 - `src/server/jobs/process-scheduled-publishing.ts:46` — `hasEarlyAccess` is computed from
   `earlyAccessConfig->>'timeframe' > 0` in the publish job (fires before the row exists). Phase 2: derive from
   terms / the post-publish PaidAccess row.

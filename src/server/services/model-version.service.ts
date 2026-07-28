@@ -76,12 +76,14 @@ import {
 } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
+  assertPaidAccessInput,
   getPaidAccess,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 import {
   type ModelVersionTerms,
+  generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
   paidGenerationGrant,
@@ -377,28 +379,6 @@ export const getLicensingRoots = async ({
   const defaultVersionId = roots.find((r) => r.isDefault)?.id ?? null;
   return { roots, defaultVersionId };
 };
-
-// A gated version must actually charge for something: `download` always carries a price, and a
-// `generation` grant only "charges" when it's the paid tier (not `{ free: true }`). Structural rules
-// (download requires a price, generation union) are enforced by the zod write boundary.
-function assertPaidAccessInput(input: ModelVersionPaidAccessInputSchema | null | undefined) {
-  if (!input) return;
-  const gated = !!input.permanent || (input.timeframeDays ?? 0) > 0;
-  if (!gated) return;
-  const generation = input.terms.generation;
-  const paidGeneration = !!generation && !('free' in generation);
-  if (!input.terms.download && !paidGeneration) {
-    throw throwBadRequestError(
-      'You must charge for downloads or generations if you gate this version behind payment.'
-    );
-  }
-  // A paid generation-only tier with no `price` falls back to the download price — so with no download
-  // tier either, the effective purchase amount is undefined. Reject it (earlyAccessPurchase would
-  // otherwise charge `undefined` Buzz).
-  if (paidGeneration && (generation as { price?: number }).price == null && !input.terms.download) {
-    throw throwBadRequestError('A generation-only paid tier must set a price.');
-  }
-}
 
 // Shared tail of both upsertModelVersion branches: write the gate + (optional) donation goal natively,
 // then invalidate the derived caches. Kept out of the version write's transaction deliberately.
@@ -1854,11 +1834,10 @@ export const earlyAccessPurchase = async ({
   }
 
   let buzzTransactionId: string | undefined;
-  // Generation `price` is optional — it falls back to the download tier's price when unset.
+  // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
+  // unit-tested in @civitai/buzz, so the charged amount stays covered).
   const amount =
-    type === 'download'
-      ? (terms.download?.price as number)
-      : ((generationTier?.price ?? terms.download?.price) as number);
+    type === 'download' ? (terms.download?.price as number) : (generationPrice(terms) as number);
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {

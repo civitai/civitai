@@ -13,7 +13,31 @@ import type {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { increaseDate } from '~/utils/date-helpers';
+
+// A gated version must actually charge for something: `download` always carries a price, and a
+// `generation` grant only "charges" when it's the paid tier (not `{ free: true }`). Structural rules
+// (download requires a price, generation union) are enforced by the zod write boundary; this catches
+// the combinations that pass structurally but leave the effective charge undefined.
+export function assertPaidAccessInput(input: ModelVersionPaidAccessInputSchema | null | undefined) {
+  if (!input) return;
+  const gated = !!input.permanent || (input.timeframeDays ?? 0) > 0;
+  if (!gated) return;
+  const generation = input.terms.generation;
+  const paidGeneration = !!generation && !('free' in generation);
+  if (!input.terms.download && !paidGeneration) {
+    throw throwBadRequestError(
+      'You must charge for downloads or generations if you gate this version behind payment.'
+    );
+  }
+  // A paid generation-only tier with no `price` falls back to the download price — so with no download
+  // tier either, the effective purchase amount is undefined. Reject it (earlyAccessPurchase would
+  // otherwise charge `undefined` Buzz).
+  if (paidGeneration && (generation as { price?: number }).price == null && !input.terms.download) {
+    throw throwBadRequestError('A generation-only paid tier must set a price.');
+  }
+}
 
 // The config side of the paid-access gate (the purchase side is EntityAccess). Phase 1 of the
 // PaidAccess refactor: behavior-preserving. ModelVersion migrates now; ComicChapter joins in stage 5

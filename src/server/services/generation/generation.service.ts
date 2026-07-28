@@ -1,14 +1,8 @@
 import { Prisma } from '@prisma/client';
-import {
-  type ModelVersionTerms,
-  grantsGeneration,
-  isFreeGeneration,
-  isPaidAccessActive,
-} from '@civitai/buzz';
+import { type ModelVersionTerms } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
-import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
@@ -24,12 +18,11 @@ import type {
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
-import { hasEntityAccess } from '~/server/services/common.service';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
-import { getPaidAccess } from '~/server/services/paid-access.service';
+import { applyPaidAccessGating } from '~/server/services/generation/paid-access-gating';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import type { GenerationAlias, ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -1194,64 +1187,6 @@ export async function getResourceData(
 
   // The ids the viewer has actually PURCHASED generation access to (the EntityAccess side of the
   // decision, which the pure gate can't know). One batched lookup; empty for anon.
-  async function getPurchasedGenerationIds(ids: number[]): Promise<Set<number>> {
-    if (!user.id || !ids.length) return new Set();
-    const access = await hasEntityAccess({
-      entityType: 'ModelVersion',
-      entityIds: ids,
-      userId: user.id,
-      isModerator: user.isModerator,
-      permissions: EntityAccessPermission.EarlyAccessGeneration,
-    });
-    return new Set(access.filter((e) => e.hasAccess).map((e) => e.entityId));
-  }
-
-  // Resolve generation access for gated resources. Gating lives in PaidAccess now, but a gated
-  // version's `availability` stays 'Public', so resource-data optimistically set hasAccess=true — here
-  // we replace that with the real decision (owner/mod, purchased, or open to non-buyers). Paid-access
-  // terms are merged from their own cache (not the 1h resourceDataCache, which would serve stale terms).
-  async function applyPaidAccessGating(resources: ReturnType<typeof transformGenerationData>[]) {
-    const ids = [...new Set(resources.map((r) => r.id))];
-    if (!ids.length) return;
-    const paidAccess = await getPaidAccess('ModelVersion', ids);
-    const isOwnerOrMod = (ownerId: number) =>
-      (!!user.id && ownerId === user.id) || !!user.isModerator;
-
-    // Collect the active gates + expose their terms on the wire DTO; ungated resources are untouched.
-    const gated = new Map<
-      number,
-      { resource: (typeof resources)[number]; ownerId: number; terms: ModelVersionTerms }
-    >();
-    for (const r of resources) {
-      const row = paidAccess[r.id];
-      if (row && isPaidAccessActive(row)) {
-        const terms = row.terms as ModelVersionTerms;
-        gated.set(r.id, { resource: r, ownerId: row.ownerId, terms });
-        r.paidAccess = { endsAt: row.endsAt, terms };
-      } else {
-        r.paidAccess = null;
-      }
-    }
-
-    // One purchase lookup, only for gated resources a non-owner must pay for (covered + non-free).
-    const purchased = await getPurchasedGenerationIds(
-      [...gated.values()]
-        .filter(
-          ({ resource, ownerId, terms }) =>
-            resource.covered && !isOwnerOrMod(ownerId) && !isFreeGeneration(terms)
-        )
-        .map(({ resource }) => resource.id)
-    );
-
-    for (const { resource, ownerId, terms } of gated.values()) {
-      resource.hasAccess = grantsGeneration(terms, {
-        isOwnerOrMod: isOwnerOrMod(ownerId),
-        hasBought: purchased.has(resource.id),
-      });
-      resource.canGenerate = resource.hasAccess && resource.canGenerate;
-    }
-  }
-
   async function getModelFiles(resources: ReturnType<typeof transformGenerationData>[]) {
     const versionIds = resources.filter((x) => x.hasAccess).map((x) => x.id);
     return await getFilesForModelVersionCache(versionIds);
@@ -1360,7 +1295,7 @@ export async function getResourceData(
         const substitutes = await getResourceDataSubstitutes(resources);
         const allResources = [...resources, ...substitutes];
         // TODO - surface the number of remaining free trial generations.
-        await applyPaidAccessGating(allResources);
+        await applyPaidAccessGating(allResources, user);
 
         const modelFilesCached = await getModelFiles(allResources);
 
