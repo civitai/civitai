@@ -166,7 +166,19 @@ jobs:
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
     # on purpose: they need Chromium and carry the cold-optimizeDeps flake
     # documented at vitest.config.mts:98-124.
-    timeout-minutes: 20
+    #
+    # REPORT-ONLY to start, deliberately. A full local run passed 8,937/8,943 but
+    # timed out 5 tests under machine load; every one of them passed in isolation
+    # (that file runs in 138ms — the cost is the ~33s import/transform phase, not
+    # the assertions). The per-test timeout is 60s, so a 2-core runner could trip
+    # the same way. Blocking on that from day one would red unrelated PRs and the
+    # job would be switched off within a week — the same reasoning the ESLint and
+    # Prettier modified-file steps are built on.
+    #
+    # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate.
+    # Remove `continue-on-error` and this comment together.
+    continue-on-error: true
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
