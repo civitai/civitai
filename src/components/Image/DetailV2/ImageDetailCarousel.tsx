@@ -94,12 +94,14 @@ export function ImageDetailCarousel({
   navigate,
   next,
   previous,
+  onSettle,
 }: ImageDetailCarouselProps & {
   images: ImageProps[];
   index: number;
   navigate?: (index: number) => void;
   next: () => void;
   previous: () => void;
+  onSettle?: (index: number) => void;
   canNavigate: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
@@ -151,6 +153,27 @@ export function ImageDetailCarousel({
     syncingRef.current = false;
   }, [embla, index]);
 
+  // Everything expensive hangs off the settled index rather than the live one:
+  // a URL replace, a signal resubscribe and a fresh full-size neighbor decode
+  // all landing mid-transform is what makes the swipe stutter on mobile. Embla
+  // emits 'settle' once the animation is done AND the finger is up.
+  const [settledIndex, setSettledIndex] = useState(index);
+  const onSettleRef = useRef(onSettle);
+  onSettleRef.current = onSettle;
+
+  useEffect(() => {
+    if (!embla) return;
+    const handleSettle = () => {
+      const current = embla.selectedScrollSnap();
+      setSettledIndex(current);
+      onSettleRef.current?.(current);
+    };
+    embla.on('settle', handleSettle);
+    return () => {
+      embla.off('settle', handleSettle);
+    };
+  }, [embla]);
+
   const ref = useResizeObserver<HTMLDivElement>(() => {
     embla?.reInit();
   });
@@ -175,9 +198,12 @@ export function ImageDetailCarousel({
             {images.map((image, i) => (
               <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
                 {/* function child opts out of Embla's own in-view gating — adjacency
-                    is the gate here, so a neighbor is painted before the drag reveals it */}
+                    is the gate here, so a neighbor is painted before the drag reveals it.
+                    Neighbors are keyed off the settled index so a new full-size decode
+                    never starts mid-swipe; the live slide always renders regardless, so
+                    a missed 'settle' costs preloading rather than a blank frame. */}
                 {() =>
-                  isAdjacent(i, index, images.length) && (
+                  (i === index || isAdjacent(i, settledIndex, images.length)) && (
                     <ImageContent
                       image={image}
                       active={index === i}

@@ -142,16 +142,19 @@ export function ImageDetail2() {
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const adContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const carouselNavigation = useCarouselNavigation({
-    items: images,
-    initialIndex: index,
-    onChange: (image, newIndex) => {
-      navigate(image.id);
-      // keep a runway ahead of the viewer so arrow/swipe navigation doesn't
-      // dead-end (and loop back) at the edge of the loaded page
-      if (hasMore && newIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
-    },
-  });
+  const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
+
+  // Deferred to the carousel settling rather than run per slide change: the URL
+  // replace pushes a global store update that re-renders every useBrowserRouter
+  // consumer, which is too much to do inside an animating frame.
+  const handleSettle = (settledIndex: number) => {
+    const settled = images[settledIndex];
+    if (!settled) return;
+    navigate(settled.id);
+    // keep a runway ahead of the viewer so arrow/swipe navigation doesn't
+    // dead-end (and loop back) at the edge of the loaded page
+    if (hasMore && settledIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
+  };
 
   const image = images[carouselNavigation.index];
 
@@ -436,6 +439,7 @@ export function ImageDetail2() {
                         images={images}
                         videoRef={videoRef}
                         connect={connect}
+                        onSettle={handleSettle}
                         {...carouselNavigation}
                       />
                       {/* FOOTER */}
