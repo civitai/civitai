@@ -250,12 +250,16 @@ export function severityBreakdown(findings: AgentFinding[]): SeverityBreakdown {
 
 // --- Deep-link to a finding (pure, unit-testable) --------------------------
 
-/** The report renderer's tab identifiers (in display order). */
-export type ReportTabValue = 'summary' | 'code' | 'security' | 'scopes';
+/**
+ * The report renderer's tab identifiers (in display order: Scopes → Security →
+ * Code review). The former `summary` tab was dropped — the agent prose overview
+ * is no longer surfaced in this renderer.
+ */
+export type ReportTabValue = 'scopes' | 'security' | 'code';
 
-const REPORT_TAB_VALUES: readonly ReportTabValue[] = ['summary', 'code', 'security', 'scopes'];
+const REPORT_TAB_VALUES: readonly ReportTabValue[] = ['scopes', 'security', 'code'];
 
-/** The two tabs that carry per-finding anchors (summary/scopes do not). */
+/** The two tabs that carry per-finding anchors (scopes does not). */
 export type FindingTab = 'code' | 'security';
 
 /**
