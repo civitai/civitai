@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
+import { AI_MODELS } from '~/server/services/ai/openrouter';
 import {
   getDp1Target,
   k8sFetch,
@@ -612,8 +613,9 @@ export const AGENT_REVIEW_CHAT_MAX_TOKENS = 1024;
 /** Model civitai calls DIRECTLY (via OpenRouter) to answer mod follow-ups,
  *  grounded on the persisted report. A reliable, cheap instruction-follower for
  *  concise report-grounded Q&A. (Was `openclaw/review-agent`, the in-pod gateway
- *  alias, back when chat proxied to the live pod.) */
-export const AGENT_REVIEW_CHAT_MODEL = 'anthropic/claude-3-5-haiku';
+ *  alias, back when chat proxied to the live pod.) Single-sourced off the shared
+ *  `AI_MODELS` alias table rather than a duplicated string literal. */
+export const AGENT_REVIEW_CHAT_MODEL = AI_MODELS.CLAUDE_HAIKU;
 
 /** Statuses whose PERSISTED report carries groundable content to chat against.
  *  Since chat no longer needs a live pod, a `failed` report (its partial sections
@@ -732,11 +734,15 @@ export async function agentReviewChat(
 
   // Manual timeout race: the completion must not hang the tRPC request. Any
   // rejection (timeout OR LLM error) is caught below and collapsed to BAD_GATEWAY.
+  // On timeout we ALSO abort the controller so the underlying fetch is actually
+  // cancelled — `Promise.race` alone only abandons the slow promise, leaving the
+  // request running (and billable) in the background.
+  const controller = new AbortController();
   const timeout = new Promise<never>((_, reject) => {
-    const t = setTimeout(
-      () => reject(new Error('agent-review chat timed out')),
-      AGENT_REVIEW_CHAT_TIMEOUT_MS
-    );
+    const t = setTimeout(() => {
+      controller.abort();
+      reject(new Error('agent-review chat timed out'));
+    }, AGENT_REVIEW_CHAT_TIMEOUT_MS);
     // Do not keep the event loop alive on the timer alone.
     if (typeof t === 'object' && t && 'unref' in t) (t as { unref: () => void }).unref();
   });
@@ -749,6 +755,7 @@ export async function agentReviewChat(
         messages: chatMessages,
         temperature: 0,
         maxTokens: AGENT_REVIEW_CHAT_MAX_TOKENS,
+        signal: controller.signal,
       }),
       timeout,
     ]);

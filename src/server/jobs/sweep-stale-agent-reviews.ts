@@ -26,8 +26,14 @@ import { createJob } from './job';
  * zero rows — an immediate no-op.
  */
 
-/** A `running` row older than this is definitely dead (Job `activeDeadlineSeconds`
- *  is 30m; add margin for the callback retry window). */
+/**
+ * A `running` row older than this is definitely dead. INVARIANT: this threshold
+ * MUST stay GREATER than the review Job's `activeDeadlineSeconds` (~30m, set in
+ * the infra template) plus the callback retry window — otherwise the sweep reaps
+ * a still-in-flight review mid-run, flipping a live report to `failed` under it.
+ * 60m clears the ~30m deadline with ample margin; if that deadline is ever raised,
+ * raise this too.
+ */
 export const STALE_AGENT_REVIEW_RUNNING_MS = 60 * 60 * 1000;
 
 /**

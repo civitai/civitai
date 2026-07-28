@@ -154,6 +154,9 @@ type GetTextCompletionInput = {
   messages: SimpleMessage[];
   temperature?: number;
   maxTokens?: number;
+  // Optional cancellation. `Promise.race` timeouts abandon the slow promise but
+  // do NOT cancel the underlying fetch; pass a signal to actually abort it.
+  signal?: AbortSignal;
 };
 
 declare global {
@@ -243,15 +246,19 @@ function createOpenRouterClient() {
     messages,
     temperature = 1,
     maxTokens = 1024,
+    signal,
   }: GetTextCompletionInput): Promise<{ content: string; usage: TokenUsage }> => {
     const sdkMessages = messages.map(toSDKMessage);
-    const response = await client.chat.send({
-      model,
-      messages: sdkMessages,
-      temperature,
-      maxTokens,
-      provider: { allowFallbacks: true },
-    });
+    const response = await client.chat.send(
+      {
+        model,
+        messages: sdkMessages,
+        temperature,
+        maxTokens,
+        provider: { allowFallbacks: true },
+      },
+      signal ? { signal } : undefined
+    );
     const usage = extractUsage(response);
     const message = response.choices?.[0]?.message as
       | { content?: unknown; reasoning?: unknown }
