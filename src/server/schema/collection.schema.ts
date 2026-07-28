@@ -8,7 +8,7 @@ import {
 } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,

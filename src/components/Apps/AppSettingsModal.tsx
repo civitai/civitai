@@ -19,7 +19,7 @@ import {
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { baseModels as ALL_BASE_MODELS } from '~/shared/constants/base-model.constants';
+import { baseModels as ALL_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import type {
   AvailableBlock,
   SubscriptionRecord,
@@ -482,8 +482,7 @@ function normalizeManifestSettings(input: unknown): ManifestSettings {
     const def = raw as Record<string, unknown>;
     const type = def.type;
     if (type !== 'number' && type !== 'string' && type !== 'boolean') continue;
-    const scope =
-      def.scope === 'publisher' || def.scope === 'viewer' ? def.scope : 'publisher';
+    const scope = def.scope === 'publisher' || def.scope === 'viewer' ? def.scope : 'publisher';
     const base = {
       ...def,
       scope,

@@ -44,7 +44,7 @@ import {
 } from '~/libs/form';
 import type { UpsertCollectionInput } from '~/server/schema/collection.schema';
 import { upsertCollectionInput } from '~/server/schema/collection.schema';
-import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { CollectionMode, CollectionType, TagTarget } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -295,7 +295,9 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       label="Allowed base models"
                       description="Model entries need a version on one of these base models. With a submission start date, the same version must also have been added during the submission period. Leave empty to allow all base models."
                       placeholder="Leave empty to allow all base models"
-                      data={activeBaseModels}
+                      // Full list, not activeBaseModels — hidden base models are still valid
+                      // contest targets, and this field is moderator-only.
+                      data={baseModels}
                       searchable
                       clearable
                     />
