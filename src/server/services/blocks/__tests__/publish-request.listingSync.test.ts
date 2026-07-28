@@ -203,8 +203,9 @@ describe('approveRequest (3b) — FIRST approve creates the listing (path unchan
     await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
 
     expect(db.write.appListing.create).toHaveBeenCalledTimes(1);
-    const created = (db.write.appListing.create.mock.calls[0][0] as { data: Record<string, unknown> })
-      .data;
+    const created = (
+      db.write.appListing.create.mock.calls[0][0] as { data: Record<string, unknown> }
+    ).data;
     // The full mapper payload — including the newly-mapped tagline (trimmed).
     expect(created).toEqual({
       id: 'apl_fixed',
