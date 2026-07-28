@@ -353,7 +353,14 @@ export const appListingsRouter = router({
       const { submitExternalListing } = await import(
         '~/server/services/blocks/offsite-listing.service'
       );
-      return submitExternalListing({ input, userId: ctx.user.id });
+      // `isModerator` lets a mod link ANY (non-App-Block) OAuth client on submit —
+      // mirroring the mod-only global client search (`oauthClient.searchForModerator`).
+      // A non-mod stays restricted to their own clients (default `false`).
+      return submitExternalListing({
+        input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
     }),
 
   /**
@@ -405,6 +412,9 @@ export const appListingsRouter = router({
           listingId: input.listingId,
           patch: input.patch,
           userId: ctx.user.id,
+          // Mirror the mod-only client search: a mod editing a listing that links a
+          // foreign OAuth client isn't blocked by the owner re-assertion.
+          isModerator: ctx.user.isModerator,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -459,6 +469,8 @@ export const appListingsRouter = router({
           shadowId: input.shadowId,
           patch: input.patch,
           userId: ctx.user.id,
+          // Mirror the mod-only client search (same rationale as `updateListing`).
+          isModerator: ctx.user.isModerator,
         });
       } catch (err) {
         throw mapOffsiteError(err);
