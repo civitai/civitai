@@ -202,7 +202,8 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 
 ### Git Worktrees
 When you create a new worktree (`git worktree add …`), **always initialize the `event-engine-common` submodule
-in it**: `git submodule update --init event-engine-common`. Worktrees don't check out submodules automatically,
+in it**: `git submodule sync --recursive && git submodule update --init event-engine-common`.
+Worktrees don't check out submodules automatically,
 and without it `pnpm typecheck`/`build` fail with a wall of `Cannot find module '.../event-engine-common/...'`
 errors (and the missing types cascade into unrelated `implicitly has an 'any' type` errors) — noise that looks
 like your change broke something when it didn't.

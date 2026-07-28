@@ -151,24 +151,18 @@ jobs:
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
-    # civitai/civitai is public, and a pull_request from a fork gets no secrets.
-    # Typecheck needs the private event-engine-common submodule, which a fork cannot
-    # fetch: ssh-agent would hard-fail on an empty key, and even skipping it just
-    # trades that for a wall of "Cannot find module" errors. Either way an external
-    # contributor gets a red check they have no way to fix, so skip the job entirely.
-    # Do not make this a required check without solving the fork case first.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Runs on forks now. event-engine-common is public and fetched over HTTPS, so
+    # this needs no secret — which is why the ssh-agent step is gone rather than
+    # merely unused. Leaving it in would have kept the fork case broken AND masked
+    # the HTTPS path: webfactory/ssh-agent rewrites
+    # url."git@key-<sha>.github.com:<owner>/<repo>".insteadOf "https://github.com/<owner>/<repo>"
+    # for any loaded key whose comment names a github.com repo, silently sending
+    # the new HTTPS URL back over SSH.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup SSH for submodule
-        uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SUBMODULE_SSH_KEY }}
-
-      - name: Init submodule
-        run: git submodule update --init event-engine-common
+          submodules: true
 
       - uses: pnpm/action-setup@v4
 
@@ -182,3 +176,41 @@ jobs:
 
       - name: Typecheck
         run: pnpm run typecheck
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    # ~8,000 tests that until now only ran on whoever remembered to run them.
+    # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
+    # on purpose: they need Chromium and carry the cold-optimizeDeps flake
+    # documented at vitest.config.mts:98-124.
+    #
+    # REPORT-ONLY to start, deliberately. A full local run passed 8,937/8,943 but
+    # timed out 5 tests under machine load; every one of them passed in isolation
+    # (that file runs in 138ms — the cost is the ~33s import/transform phase, not
+    # the assertions). The per-test timeout is 60s, so a 2-core runner could trip
+    # the same way. Blocking on that from day one would red unrelated PRs and the
+    # job would be switched off within a week — the same reasoning the ESLint and
+    # Prettier modified-file steps are built on.
+    #
+    # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate.
+    # Remove `continue-on-error` and this comment together.
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        run: pnpm run test:unit:run
