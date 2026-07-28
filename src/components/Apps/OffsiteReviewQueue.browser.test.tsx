@@ -52,6 +52,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
+// The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
+// which reads useCurrentUser — boundary-stub it (null user is fine).
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
@@ -100,6 +103,11 @@ vi.mock('~/utils/trpc', () => {
             mutateAsync: vi.fn(),
             isPending: false,
           }),
+        },
+        // Listing-preview projection — undefined data → the section falls back to the
+        // placeholder-art layout preview (these tests assert checklist/scan behaviour).
+        getListingPreviewForReview: {
+          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
         },
       },
     },
@@ -392,10 +400,12 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
   test('flags media rated higher than the app rating as a cap violation (reject reason)', async () => {
     // Assets derive 'r' (screenshot @ level 4) vs the app rating 'g' → cap exceeded.
     renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
-    await expect.element(page.getByTestId('apps-offsite-rating-mismatch')).toBeInTheDocument();
-    await expect
-      .element(page.getByText('must not exceed the app’s rating', { exact: false }))
-      .toBeInTheDocument();
+    const mismatch = page.getByTestId('apps-offsite-rating-mismatch');
+    await expect.element(mismatch).toBeInTheDocument();
+    // The cap-rule phrase now also appears in the on-site explainer note, so a bare
+    // getByText matches two elements (strict-mode violation). Scope the reject-reason
+    // assertion to the mismatch callout itself.
+    await expect.element(mismatch).toHaveTextContent('must not exceed the app’s rating');
   });
 });
 

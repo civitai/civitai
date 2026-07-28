@@ -68,11 +68,10 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
 
-// The Summary tab renders `summaryMd` through `CustomMarkdown`, which reads
-// `useCurrentUser()` (→ CivitaiSessionContext) for its link-rewrite. The
-// network-free scaffold has no session provider, so boundary-stub the hook (the
-// standard pattern in the sibling AgentReviewChat test). Null user is fine —
-// CustomMarkdown only uses `user?.id` (optional-chained).
+// The AgentReviewChat sub-panel reads `useCurrentUser()` (→ CivitaiSessionContext)
+// for its markdown link-rewrite. The network-free scaffold has no session provider,
+// so boundary-stub the hook (the standard pattern in the sibling AgentReviewChat
+// test). Null user is fine — the consumers only use `user?.id` (optional-chained).
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => null,
 }));
@@ -594,7 +593,7 @@ describe('AgentReviewPanel — defensive / empty', () => {
 // ---------------------------------------------------------------------------
 
 describe('AgentReviewPanel — sanitization', () => {
-  test('adversarial HTML/script in finding text + summary renders as inert TEXT (no live DOM)', async () => {
+  test('adversarial HTML/script in finding text renders as inert TEXT (no live DOM)', async () => {
     const imgPayload = '<img src=x onerror="window.__xssFired=true">';
     const scriptPayload = '<script>window.__xssScript=true</script>';
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -602,11 +601,14 @@ describe('AgentReviewPanel — sanitization', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__xssScript = undefined;
 
+    // The former markdown summary surface was removed, so both payloads now live
+    // in structured finding fields (code detail + security detail) — every value
+    // there is rendered as inert React text (keepMounted, so present in the DOM
+    // regardless of the active tab).
     mocks.agentReport = {
       status: 'complete',
-      summaryMd: scriptPayload,
       codeReview: { findings: [{ title: 'XSS attempt', description: imgPayload }] },
-      securityAudit: {},
+      securityAudit: { findings: [{ title: 'Script attempt', detail: scriptPayload }] },
       scopeVerdicts: {},
     };
     renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
@@ -632,40 +634,36 @@ describe('AgentReviewPanel — sanitization', () => {
 // ---------------------------------------------------------------------------
 
 describe('AgentReviewPanel — tabbed report', () => {
-  test('renders the four tabs with finding counts in the labels', async () => {
+  test('renders the three tabs (Scopes, Security, Code review) with finding counts, no Summary tab', async () => {
     mocks.agentReport = MULTI_REPORT;
     renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
 
     // Tab labels carry the counts (3 code findings, 2 security, 2 scopes).
-    await expect.element(page.getByRole('tab', { name: /Summary/ })).toBeInTheDocument();
-    await expect.element(page.getByRole('tab', { name: /Code review.*3/ })).toBeInTheDocument();
-    await expect.element(page.getByRole('tab', { name: /Security audit.*2/ })).toBeInTheDocument();
     await expect.element(page.getByRole('tab', { name: /Scopes.*2/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('tab', { name: /Security audit.*2/ })).toBeInTheDocument();
+    await expect.element(page.getByRole('tab', { name: /Code review.*3/ })).toBeInTheDocument();
 
-    // Summary roll-up shows the severity breakdown for security (1 critical, 1 high).
-    const rollup = page.getByTestId('report-rollup');
-    await expect.element(rollup).toBeVisible();
-    await expect.element(rollup.getByText(/Code 3/)).toBeInTheDocument();
-    await expect.element(rollup.getByText(/Security 2 \(1 critical, 1 high\)/)).toBeInTheDocument();
-    await expect.element(rollup.getByText(/2 scopes/)).toBeInTheDocument();
+    // The former Summary tab + its counts-first roll-up are gone.
+    expect(page.getByRole('tab', { name: /Summary/ }).elements().length).toBe(0);
+    expect(page.getByTestId('report-rollup').elements().length).toBe(0);
   });
 
-  test('switching tabs reveals the right section (one visible at a time)', async () => {
+  test('switching tabs reveals the right section (one visible at a time); Scopes is the default', async () => {
     mocks.agentReport = FULL_REPORT;
     renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
 
-    // Summary is the default active tab; its markdown panel is visible.
-    await expect.element(page.getByTestId('report-summary-md')).toBeVisible();
+    // Scopes is now the default active tab; its verdicts table is visible.
+    await expect.element(page.getByTestId('scope-verdicts-table')).toBeVisible();
     // Code-review-only content exists (keepMounted) but is NOT visible yet.
     await expect.element(page.getByText('Prior-version reconciliation')).not.toBeVisible();
 
-    // Activate the Code review tab → its content becomes visible, Summary hides.
+    // Activate the Code review tab → its content becomes visible, Scopes hides.
     await page.getByRole('tab', { name: /Code review/ }).click();
     await expect.element(page.getByText('Prior-version reconciliation')).toBeVisible();
     await expect.element(page.getByText('Hardcoded secret')).toBeVisible();
-    await expect.element(page.getByTestId('report-summary-md')).not.toBeVisible();
+    await expect.element(page.getByTestId('scope-verdicts-table')).not.toBeVisible();
 
-    // Activate the Scopes tab → the verdicts table becomes visible.
+    // Back to the Scopes tab → the verdicts table becomes visible again.
     await page.getByRole('tab', { name: /Scopes/ }).click();
     await expect.element(page.getByTestId('scope-verdicts-table')).toBeVisible();
     await expect.element(page.getByText('Prior-version reconciliation')).not.toBeVisible();
@@ -689,21 +687,6 @@ describe('AgentReviewPanel — tabbed report', () => {
     expect(texts[0]).toContain('Critical finding');
     expect(texts[1]).toContain('Medium finding');
     expect(texts[2]).toContain('Low finding');
-  });
-
-  test('summaryMd renders as markdown, and a markdown image is dropped (no <img>)', async () => {
-    mocks.agentReport = {
-      ...FULL_REPORT,
-      summaryMd: '# Heading one\n\n**bolded** text with an ![alt](https://evil.example/pixel.png)',
-    };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
-
-    // Markdown formatting is applied (heading + strong become real elements).
-    await expect.element(page.getByRole('heading', { name: 'Heading one' })).toBeInTheDocument();
-    expect(document.querySelector('.markdown-content strong')?.textContent).toBe('bolded');
-    // 🔴 img-guard (mirrors the Phase-0 chat guard): the markdown image produces
-    // NO <img> — an <img> would fire an external fetch from the moderator's browser.
-    expect(document.querySelectorAll('img').length).toBe(0);
   });
 
   test('an errored analysis section shows the failure state, not a crash', async () => {
@@ -743,7 +726,5 @@ describe('AgentReviewPanel — tabbed report', () => {
     await expect.element(page.getByText('No code-review findings.')).toBeInTheDocument();
     await expect.element(page.getByText('No security-audit findings.')).toBeInTheDocument();
     await expect.element(page.getByText('No scopes assessed.')).toBeInTheDocument();
-    // Summary tab with no summaryMd shows its own empty state.
-    await expect.element(page.getByText('No summary was provided.')).toBeInTheDocument();
   });
 });

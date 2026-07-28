@@ -322,6 +322,33 @@ function galleryScreenshots(row: HydratedListing): ListingGalleryScreenshot[] {
   return out;
 }
 
+/**
+ * MOD-ONLY review preview: project a SHADOW / pending listing (by its own id — the
+ * review row's `appListingId`) into the SAME `ListingCard` + `ListingDetail` store
+ * shapes the public `getAppDetail` read serves, so the moderator sees the app's
+ * REAL media (icon / cover / ordered screenshots) + scalars (name / tagline /
+ * description / category / contentRating / creator) laid out as the store card +
+ * detail — before approval.
+ *
+ * Reuses `listingHydrateSelect` + `projectListingCard` / `projectListingDetail`
+ * verbatim (the SAME image→CDN-URL derivation as the approved-listing read), so the
+ * preview can never drift from the live store projection and there is NO second
+ * image-URL builder. UNLIKE the public read it is NOT status-filtered (a mod may
+ * preview a draft / pending / shadow listing); the caller (`moderatorProcedure`) is
+ * the authz gate. Read-only — no listing mutation. Returns `null` when the id has no
+ * listing row (the client then falls back to a placeholder-art layout preview).
+ */
+export async function getListingPreviewForReview(args: {
+  listingId: string;
+}): Promise<{ card: ListingCard; detail: ListingDetail } | null> {
+  const row = await dbRead.appListing.findUnique({
+    where: { id: args.listingId },
+    select: listingHydrateSelect,
+  });
+  if (!row) return null;
+  return { card: projectListingCard(row), detail: projectListingDetail(row) };
+}
+
 /** Project a hydrated listing row → the PUBLIC detail DTO (allowlist). */
 export function projectListingDetail(row: HydratedListing): ListingDetail {
   const recommend = recommendRollup(row.metric);

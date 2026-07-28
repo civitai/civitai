@@ -3,30 +3,21 @@ import type { Context, ProtectedContext } from '../createContext';
 import type { GetByIdInput } from '../schema/base.schema';
 import {
   addBenefactorUnitAmount,
-  createBounty,
   deleteBountyById,
   getAllBounties,
   getBountyById,
   getBountyImages,
   getImagesForBounties,
   refundBounty,
-  updateBountyById,
   upsertBounty,
 } from '../services/bounty.service';
-import {
-  throwAuthorizationError,
-  throwBadRequestError,
-  throwDbError,
-  throwNotFoundError,
-} from '../utils/errorHandling';
+import { throwAuthorizationError, throwDbError, throwNotFoundError } from '../utils/errorHandling';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import type {
   AddBenefactorUnitAmountInputSchema,
   BountyDetailsSchema,
-  CreateBountyInput,
   GetBountyEntriesInputSchema,
   GetInfiniteBountySchema,
-  UpdateBountyInput,
   UpsertBountyInput,
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
@@ -324,57 +315,6 @@ export const getBountyBenefactorsHandler = async ({
     });
 
     return benefactors;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    throw throwDbError(error);
-  }
-};
-
-export const createBountyHandler = async ({
-  input,
-  ctx,
-}: {
-  input: CreateBountyInput;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const { nsfw, poi } = input;
-
-    if (nsfw && poi)
-      throw throwBadRequestError('Mature content depicting actual people is not permitted.');
-
-    const bounty = await createBounty({ ...input, userId });
-
-    // Let it run in the background
-    ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
-
-    return bounty;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    throw throwDbError(error);
-  }
-};
-
-export const updateBountyHandler = async ({
-  input,
-  ctx,
-}: {
-  input: UpdateBountyInput;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    const updated = await updateBountyById({
-      ...input,
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator ?? false,
-    });
-    if (!updated) throw throwNotFoundError(`No bounty with id ${input.id}`);
-
-    // Let it run in the background
-    ctx.track.bounty({ type: 'Update', bountyId: updated.id }).catch(handleLogError);
-
-    return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

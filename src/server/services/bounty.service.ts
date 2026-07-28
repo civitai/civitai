@@ -173,9 +173,13 @@ export const createBounty = async ({
   startsAt: incomingStartsAt,
   expiresAt: incomingExpiresAt,
   buzzType,
-
+  addLockedProperties,
   ...data
-}: CreateBountyInput & { userId: number }) => {
+}: CreateBountyInput & {
+  userId: number;
+  /** Locks added by the server itself (the profanity filter), not by the caller. */
+  addLockedProperties?: string[];
+}) => {
   const { userId } = data;
   switch (currency) {
     case Currency.BUZZ:
@@ -195,6 +199,12 @@ export const createBounty = async ({
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
+  // Green buzz can never be spent on NSFW, so the flag is locked for the bounty's lifetime.
+  const lockedProperties = uniq([
+    ...(buzzType === 'green' ? ['nsfw'] : []),
+    ...(addLockedProperties ?? []),
+  ]);
+
   let imagesToIngest: IngestImageInput[] = [];
 
   const bounty = await dbWrite.$transaction(
@@ -202,8 +212,7 @@ export const createBounty = async ({
       const bounty = await tx.bounty.create({
         data: {
           ...data,
-          // Ensure we block NSFW after a bounty's been paid in green buzz.
-          lockedProperties: buzzType === 'green' ? ['nsfw'] : undefined,
+          lockedProperties: lockedProperties.length ? lockedProperties : undefined,
           startsAt,
           expiresAt,
           // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
@@ -341,8 +350,8 @@ export const updateBountyById = async ({
         },
       });
 
-      // Enforced here rather than only in upsertBounty: bounty.update reaches this
-      // function directly, so the upsert path is not the only way in.
+      // Duplicated from upsertBounty on purpose: this is an exported service function, so
+      // enforcement must not depend on every future caller remembering to do it first.
       enforceLockedProperties({
         data,
         storedLockedProperties: existing.lockedProperties,
@@ -450,7 +459,7 @@ export const upsertBounty = async ({
   isModerator,
   buzzType,
   ...data
-}: UpsertBountyInput & { userId: number; isModerator: boolean; buzzType?: BuzzSpendType }) => {
+}: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
   await throwOnBlockedLinkDomain(data.description);
 
   const stored = id
@@ -494,14 +503,14 @@ export const upsertBounty = async ({
       addLockedProperties,
     });
   } else {
-    if (data.poi || (data.poi && data.nsfw)) {
+    if (data.poi) {
       throw throwBadRequestError(
         'The creation of bounties intended to depict an actual person is prohibited.'
       );
     }
 
-    const createInput = await createBountyInputSchema.parseAsync({ ...data });
-    return createBounty({ ...createInput, userId });
+    const createInput = await createBountyInputSchema.parseAsync({ ...data, buzzType });
+    return createBounty({ ...createInput, userId, addLockedProperties });
   }
 };
 

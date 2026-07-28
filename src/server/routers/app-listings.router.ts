@@ -226,6 +226,27 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * MOD-ONLY: project a SHADOW / pending listing (by its `appListingId` — carried on
+   * the review row) into the SAME `ListingCard` + `ListingDetail` store shapes the
+   * public `getAppDetail` serves, so the moderator review surface can render the app's
+   * REAL media (icon / cover / screenshots) + scalars in store layout BEFORE approval.
+   * Read-only, `moderatorProcedure`-gated (the whole review surface is mod-only), NOT
+   * status-filtered (unlike the public approved-only read). Returns `null` for an
+   * unknown id → the client falls back to a placeholder-art layout preview.
+   */
+  getListingPreviewForReview: moderatorProcedure
+    .input(listingAssetsQuerySchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Listing review preview is restricted to civitai team');
+      }
+      const { getListingPreviewForReview } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      return getListingPreviewForReview({ listingId: input.listingId });
+    }),
+
+  /**
    * Poll the scan status of freshly-attached asset images. The listing-media step
    * attaches an in-flight image IMMEDIATELY (the server stores the pending id), then
    * polls THIS to flip a per-asset "Scanning…" badge to "Scanned" / "Blocked". Owner-
@@ -353,7 +374,14 @@ export const appListingsRouter = router({
       const { submitExternalListing } = await import(
         '~/server/services/blocks/offsite-listing.service'
       );
-      return submitExternalListing({ input, userId: ctx.user.id });
+      // `isModerator` lets a mod link ANY (non-App-Block) OAuth client on submit —
+      // mirroring the mod-only global client search (`oauthClient.searchForModerator`).
+      // A non-mod stays restricted to their own clients (default `false`).
+      return submitExternalListing({
+        input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
     }),
 
   /**
@@ -405,6 +433,9 @@ export const appListingsRouter = router({
           listingId: input.listingId,
           patch: input.patch,
           userId: ctx.user.id,
+          // Mirror the mod-only client search: a mod editing a listing that links a
+          // foreign OAuth client isn't blocked by the owner re-assertion.
+          isModerator: ctx.user.isModerator,
         });
       } catch (err) {
         throw mapOffsiteError(err);
@@ -459,6 +490,8 @@ export const appListingsRouter = router({
           shadowId: input.shadowId,
           patch: input.patch,
           userId: ctx.user.id,
+          // Mirror the mod-only client search (same rationale as `updateListing`).
+          isModerator: ctx.user.isModerator,
         });
       } catch (err) {
         throw mapOffsiteError(err);

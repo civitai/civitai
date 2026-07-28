@@ -6,6 +6,7 @@ import {
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
+  type CombinedReviewPayload,
   type OffsiteReviewRequest,
   type OnsiteReviewRequest,
   type UnifiedReviewRow,
@@ -28,6 +29,7 @@ export function UnifiedReviewList({
   direction,
   openOnsiteReview,
   openOffsiteReview,
+  openCombinedReview,
   isLoading,
   errorMessage,
   emptyLabel,
@@ -45,6 +47,10 @@ export function UnifiedReviewList({
   openOnsiteReview: (req: OnsiteReviewRequest) => void;
   /** Opens the OFF-SITE modal for an off-site row (page-owned). */
   openOffsiteReview: (row: OffsitePendingRow) => void;
+  /** Opens the COMBINED code+media surface (page-owned). When provided, an app with
+   *  BOTH a pending code request AND a pending listing-media revision collapses into
+   *  ONE combined row (PENDING tab only). Omitted on history tabs → no combining. */
+  openCombinedReview?: (payload: CombinedReviewPayload) => void;
   isLoading: boolean;
   /** Non-empty when EITHER source query errored transiently — surfaced as an Alert
    *  rather than silently blanking the list. */
@@ -62,8 +68,8 @@ export function UnifiedReviewList({
   const rows = useMemo(() => {
     const onsiteRows = onsiteItems.map((r) => onsiteRequestToUnifiedRow(r, openOnsiteReview));
     const offsiteRows = offsiteItems.map((r) => offsiteRequestToUnifiedRow(r, openOffsiteReview));
-    return mergeReviewRows(onsiteRows, offsiteRows, direction);
-  }, [onsiteItems, offsiteItems, direction, openOnsiteReview, openOffsiteReview]);
+    return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview);
+  }, [onsiteItems, offsiteItems, direction, openOnsiteReview, openOffsiteReview, openCombinedReview]);
 
   return (
     <Stack gap="md">

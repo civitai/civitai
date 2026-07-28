@@ -18,6 +18,9 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
+// The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
+// which reads useCurrentUser — boundary-stub it (null user is fine).
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
@@ -50,6 +53,11 @@ vi.mock('~/utils/trpc', () => {
         },
         approveExternalRequest: { useMutation: mutation },
         rejectExternalRequest: { useMutation: mutation },
+        // Listing-preview projection — undefined data → the section falls back to
+        // the placeholder-art layout preview (fine for these connect-panel tests).
+        getListingPreviewForReview: {
+          useQuery: () => ({ data: undefined, isLoading: false, error: null }),
+        },
       },
     },
   };

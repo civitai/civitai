@@ -27,8 +27,13 @@ import {
   type AnyRequest,
   type OnsiteReviewMode,
 } from '~/components/Apps/OnsiteReviewModal';
+import {
+  CombinedReviewModal,
+  type CombinedReviewSelection,
+} from '~/components/Apps/CombinedReviewModal';
 import { UnifiedReviewList } from '~/components/Apps/UnifiedReviewList';
 import type {
+  CombinedReviewPayload,
   OffsiteReviewRequest,
   OnsiteReviewRequest,
 } from '~/components/Apps/unifiedReviewRow';
@@ -145,6 +150,10 @@ export default function ReviewQueuePage() {
     onActioned?: () => void | Promise<void>;
     readOnly?: boolean;
   } | null>(null);
+  // Combined code+media review surface — opened when a PENDING row is an app that has
+  // BOTH a pending code request AND a pending listing-media revision (page-owned, one
+  // instance). Each stacked section keeps its own independent approve/reject.
+  const [combinedReview, setCombinedReview] = useState<CombinedReviewSelection>(null);
 
   // DUAL-PATH on-site row selection: under the `appReviewPage` flag a row NAVIGATES
   // to the deep-linkable detail page `/apps/review/<id>`; with the flag off it opens
@@ -165,6 +174,13 @@ export default function ReviewQueuePage() {
   const openOffsiteReview = useCallback(
     (row: OffsitePendingRow, onActioned?: () => void | Promise<void>, readOnly = false) => {
       setOffsiteReview({ row, onActioned, readOnly });
+    },
+    []
+  );
+
+  const openCombinedReview = useCallback(
+    (payload: CombinedReviewPayload, onActioned?: () => void | Promise<void>) => {
+      setCombinedReview({ ...payload, onActioned });
     },
     []
   );
@@ -211,6 +227,7 @@ export default function ReviewQueuePage() {
             <UnifiedPendingTab
               openOnsiteReview={openOnsiteReview}
               openOffsiteReview={openOffsiteReview}
+              openCombinedReview={openCombinedReview}
             />
           </Tabs.Panel>
 
@@ -255,6 +272,7 @@ export default function ReviewQueuePage() {
         onActioned={offsiteReview?.onActioned}
         readOnly={offsiteReview?.readOnly}
       />
+      <CombinedReviewModal selection={combinedReview} onClose={() => setCombinedReview(null)} />
     </>
   );
 }
@@ -271,6 +289,7 @@ export default function ReviewQueuePage() {
 function UnifiedPendingTab({
   openOnsiteReview,
   openOffsiteReview,
+  openCombinedReview,
 }: {
   openOnsiteReview: (
     req: AnyRequest,
@@ -281,6 +300,10 @@ function UnifiedPendingTab({
     row: OffsitePendingRow,
     onActioned?: () => void | Promise<void>,
     readOnly?: boolean
+  ) => void;
+  openCombinedReview: (
+    payload: CombinedReviewPayload,
+    onActioned?: () => void | Promise<void>
   ) => void;
 }) {
   const features = useFeatureFlags();
@@ -333,6 +356,10 @@ function UnifiedPendingTab({
     (row: OffsitePendingRow) => openOffsiteReview(row, resetPaging),
     [openOffsiteReview, resetPaging]
   );
+  const boundCombined = useCallback(
+    (payload: CombinedReviewPayload) => openCombinedReview(payload, resetPaging),
+    [openCombinedReview, resetPaging]
+  );
 
   const onLoadMore = () => {
     if (onsiteNext != null) {
@@ -352,6 +379,7 @@ function UnifiedPendingTab({
       direction="asc"
       openOnsiteReview={boundOnsite}
       openOffsiteReview={boundOffsite}
+      openCombinedReview={boundCombined}
       isLoading={onsiteQuery.isLoading || offsiteQuery.isLoading}
       errorMessage={onsiteQuery.error?.message ?? offsiteQuery.error?.message}
       emptyLabel="Queue is empty. Nothing waiting for review."

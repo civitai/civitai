@@ -24,6 +24,7 @@ import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
 import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
+import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
@@ -169,6 +170,7 @@ export const jobs: Job[] = [
   confirmPendingBlockAttributions,
   bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
+  sweepStaleAgentReviewsJob,
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,

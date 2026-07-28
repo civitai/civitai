@@ -71,6 +71,7 @@ import { lensGraph } from './lens-graph';
 import { krea2Graph } from './krea2-graph';
 import { maiGraph } from './mai-graph';
 import { reveGraph } from './reve-graph';
+import { mageFlowGraph } from './mage-flow-graph';
 import { seedanceGraph } from './seedance-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
@@ -387,6 +388,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Krea2'] as const, graph: krea2Graph },
     { values: ['MAI'] as const, graph: maiGraph },
     { values: ['Reve'] as const, graph: reveGraph },
+    { values: ['MageFlow'] as const, graph: mageFlowGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {

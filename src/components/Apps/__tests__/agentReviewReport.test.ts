@@ -261,7 +261,6 @@ describe('parseReportHash', () => {
   });
 
   it('parses a bare tab hash', () => {
-    expect(parseReportHash('#summary')).toEqual({ tab: 'summary' });
     expect(parseReportHash('#code')).toEqual({ tab: 'code' });
     expect(parseReportHash('#security')).toEqual({ tab: 'security' });
     expect(parseReportHash('#scopes')).toEqual({ tab: 'scopes' });
@@ -271,6 +270,8 @@ describe('parseReportHash', () => {
     expect(parseReportHash('')).toEqual({});
     expect(parseReportHash('#')).toEqual({});
     expect(parseReportHash('#unknown')).toEqual({});
+    // `summary` is no longer a tab (the Summary tab was dropped) → not recognized.
+    expect(parseReportHash('#summary')).toEqual({});
     // A tab value outside the union is ignored (not a finding tab, not a bare tab).
     expect(parseReportHash('#finding-scopes-2')).toEqual({});
     expect(parseReportHash('#finding-summary-0')).toEqual({});

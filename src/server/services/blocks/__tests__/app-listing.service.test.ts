@@ -18,6 +18,7 @@ const { mockDbRead } = vi.hoisted(() => ({
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
   },
 }));
@@ -39,6 +40,7 @@ import {
   decodeListingCursor,
   encodeListingCursor,
   getListingDetail,
+  getListingPreviewForReview,
   listAvailableListings,
   moderationStatusWhere,
   projectListingCard,
@@ -794,5 +796,49 @@ describe('moderationStatusWhere', () => {
 
   it('removed → an exact status match', () => {
     expect(moderationStatusWhere('removed')).toEqual({ status: 'removed' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getListingPreviewForReview — mod-only shadow-listing preview projection.
+// Reuses listingHydrateSelect + projectListingCard/Detail (the SAME image→URL
+// derivation as the public read); NOT status-filtered (a mod previews a draft/
+// shadow). getEdgeUrl is mocked to identity, so URL fields echo the stored key.
+// ---------------------------------------------------------------------------
+
+describe('getListingPreviewForReview', () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findUnique.mockReset();
+  });
+
+  it('projects the shadow listing into REAL card + detail (icon/cover/screenshots + scalars)', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValueOnce(hydratedRow());
+    const res = await getListingPreviewForReview({ listingId: 'apl_1' });
+    expect(res).not.toBeNull();
+    // Looked the row up by id (not a status-filtered read).
+    const arg = mockDbRead.appListing.findUnique.mock.calls[0][0] as { where: { id: string } };
+    expect(arg.where).toEqual({ id: 'apl_1' });
+    // Card + detail carry the REAL derived image URLs (getEdgeUrl mocked to identity).
+    expect(res!.card.iconUrl).toBe('icon-key');
+    expect(res!.card.coverUrl).toBe('cover-key');
+    expect(res!.card.name).toBe('Cool App');
+    expect(res!.detail.iconUrl).toBe('icon-key');
+    expect(res!.detail.coverUrl).toBe('cover-key');
+    expect(res!.detail.description).toBe('# Cool app\n\nbody');
+    expect(res!.detail.screenshots).toEqual([{ url: 'shot-0', caption: 'first shot' }]);
+    expect(res!.detail.creator).toEqual({ id: 7, username: 'dev', image: 'avatar-key' });
+  });
+
+  it('returns null when no listing row exists for the id', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValueOnce(null);
+    expect(await getListingPreviewForReview({ listingId: 'missing' })).toBeNull();
+  });
+
+  it('projects partial media correctly (icon+cover, no screenshots → empty gallery, cover from cover)', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValueOnce(hydratedRow({ screenshots: [] }));
+    const res = await getListingPreviewForReview({ listingId: 'apl_1' });
+    expect(res!.detail.screenshots).toEqual([]);
+    // Cover still resolves from the cover image (not the absent first screenshot).
+    expect(res!.detail.coverUrl).toBe('cover-key');
   });
 });

@@ -89,6 +89,11 @@ describe('UnifiedReviewList — renders both kinds with correct badges', () => {
 
   test('oldest-first order under direction="asc" (on-site row precedes off-site)', async () => {
     renderList();
+    // Wait for the async render to commit before the synchronous `.elements()`
+    // read — reading immediately after renderList() races the mount and returns 0.
+    await expect
+      .element(page.getByTestId('apps-unified-review-row-onsite:or1'))
+      .toBeInTheDocument();
     const rows = page.getByTestId(/^apps-unified-review-row-/).elements();
     expect(rows).toHaveLength(2);
     expect(rows[0].getAttribute('data-testid')).toBe('apps-unified-review-row-onsite:or1');

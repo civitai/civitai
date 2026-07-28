@@ -387,3 +387,111 @@ describe('mergeReviewRows', () => {
     expect(on.map((r) => r.key)).toEqual(snapshot);
   });
 });
+
+// ---------------------------------------------------------------------------
+// mergeReviewRows — COMBINED code + listing-media collapse (Item 4).
+//
+// When `openCombined` is provided (the PENDING queue) an app with BOTH a pending
+// on-site CODE row AND a pending on-site listing-MEDIA row collapses into ONE
+// combined row carrying both ids + payloads. ONLY these two kinds combine; external
+// listings + apps with just one of the two are untouched. Without the opener (the
+// HISTORY tabs) nothing combines. Rows are built through the real adapters so they
+// carry the payloads (onsiteRequest / offsiteRow) the collapse needs.
+// ---------------------------------------------------------------------------
+
+describe('mergeReviewRows — combined code + listing-media', () => {
+  /** A code row + a listing-media row for the same app (paired by slug). */
+  function pairFor(app: string, opts?: { codeAt?: string; mediaAt?: string }) {
+    const code = onsiteRequestToUnifiedRow(
+      onsite({ id: `code-${app}`, slug: app, appBlockId: `blk-${app}`, submittedAt: opts?.codeAt ?? '2026-01-01T00:00:00Z' }),
+      vi.fn()
+    );
+    const media = offsiteRequestToUnifiedRow(
+      offsite({ id: `media-${app}`, slug: app, kind: 'onsite', submittedAt: opts?.mediaAt ?? '2026-01-02T00:00:00Z' }),
+      vi.fn()
+    );
+    return { code, media };
+  }
+
+  it('collapses a code + listing-media pair (same slug) into ONE combined row carrying both ids', () => {
+    const { code, media } = pairFor('app-x');
+    const merged = mergeReviewRows([code], [media], 'asc', vi.fn());
+    expect(merged).toHaveLength(1);
+    const combined = merged[0];
+    expect(combined.kind).toBe('combined');
+    expect(combined.combined?.onsiteRequestId).toBe('code-app-x');
+    expect(combined.combined?.listingRequestId).toBe('media-app-x');
+    // Both raw payloads are carried so the combined surface can open both sections.
+    expect(combined.combined?.onsiteRequest.id).toBe('code-app-x');
+    expect(combined.combined?.listingRow.id).toBe('media-app-x');
+    expect(combined.badge).toBe('App + media');
+  });
+
+  it('onReview opens the combined surface with the pair payload', () => {
+    const openCombined = vi.fn();
+    const { code, media } = pairFor('app-x');
+    const merged = mergeReviewRows([code], [media], 'asc', openCombined);
+    merged[0].onReview();
+    expect(openCombined).toHaveBeenCalledTimes(1);
+    const payload = openCombined.mock.calls[0][0];
+    expect(payload.onsiteRequestId).toBe('code-app-x');
+    expect(payload.listingRequestId).toBe('media-app-x');
+  });
+
+  it('an app with ONLY a code row stays a single on-site row (unchanged)', () => {
+    const code = onsiteRequestToUnifiedRow(onsite({ id: 'c1', slug: 'only-code' }), vi.fn());
+    const merged = mergeReviewRows([code], [], 'asc', vi.fn());
+    expect(merged).toHaveLength(1);
+    expect(merged[0].kind).toBe('onsite');
+    expect(merged[0].key).toBe('onsite:c1');
+  });
+
+  it('an app with ONLY a listing-media row stays a single row (unchanged)', () => {
+    const media = offsiteRequestToUnifiedRow(offsite({ id: 'm1', slug: 'only-media', kind: 'onsite' }), vi.fn());
+    const merged = mergeReviewRows([], [media], 'asc', vi.fn());
+    expect(merged).toHaveLength(1);
+    expect(merged[0].kind).toBe('offsite');
+    expect(merged[0].key).toBe('onsite-listing:m1');
+  });
+
+  it('an EXTERNAL off-site listing never combines (no code request)', () => {
+    const code = onsiteRequestToUnifiedRow(onsite({ id: 'c1', slug: 'app-x', appBlockId: 'blk-x' }), vi.fn());
+    const external = offsiteRequestToUnifiedRow(offsite({ id: 'e1', slug: 'app-x' }), vi.fn()); // kind absent → external
+    const merged = mergeReviewRows([code], [external], 'asc', vi.fn());
+    // No listing-MEDIA row → the external listing + the code row stay separate.
+    expect(merged).toHaveLength(2);
+    expect(merged.map((r) => r.kind).sort()).toEqual(['offsite', 'onsite']);
+    expect(merged.some((r) => r.kind === 'combined')).toBe(false);
+  });
+
+  it('two apps each with both → TWO combined rows', () => {
+    const a = pairFor('app-a', { codeAt: '2026-01-01T00:00:00Z' });
+    const b = pairFor('app-b', { codeAt: '2026-01-03T00:00:00Z' });
+    const merged = mergeReviewRows([a.code, b.code], [a.media, b.media], 'asc', vi.fn());
+    expect(merged).toHaveLength(2);
+    expect(merged.every((r) => r.kind === 'combined')).toBe(true);
+    // Sort preserved: app-a (earlier) before app-b.
+    expect(merged.map((r) => r.slug)).toEqual(['app-a', 'app-b']);
+  });
+
+  it('WITHOUT an opener (history tabs) nothing combines — the pair stays two rows', () => {
+    const { code, media } = pairFor('app-x');
+    const merged = mergeReviewRows([code], [media], 'desc');
+    expect(merged).toHaveLength(2);
+    expect(merged.some((r) => r.kind === 'combined')).toBe(false);
+  });
+
+  it('sorts the combined row by the EARLIER of the pair; interleaves with a single row', () => {
+    const { code, media } = pairFor('app-x', {
+      codeAt: '2026-01-05T00:00:00Z',
+      mediaAt: '2026-01-02T00:00:00Z', // earlier → combined sorts at 01-02
+    });
+    const external = offsiteRequestToUnifiedRow(
+      offsite({ id: 'e1', slug: 'ext', submittedAt: '2026-01-03T00:00:00Z' }),
+      vi.fn()
+    );
+    const merged = mergeReviewRows([code], [media, external], 'asc', vi.fn());
+    // combined@01-02, external@01-03.
+    expect(merged.map((r) => r.kind)).toEqual(['combined', 'offsite']);
+  });
+});

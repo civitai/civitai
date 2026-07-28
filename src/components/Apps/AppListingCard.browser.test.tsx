@@ -200,8 +200,14 @@ describe('AppListingCard', () => {
 
   test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
     const longName = 'a-really-long-creator-username-that-will-definitely-overflow-the-card-column';
+    // The tooltip is overflow-GATED (TruncatedText disables it unless the label
+    // actually clips — a runtime scrollWidth/scrollHeight measurement). Constrain
+    // the card to a narrow column so the long username really overflows; without a
+    // width bound the label never clips and the tooltip stays disabled.
     renderWithProviders(
-      <AppListingCard card={base({ creator: { id: 5, username: longName, image: null } })} canOpenPage />
+      <div style={{ width: 200 }}>
+        <AppListingCard card={base({ creator: { id: 5, username: longName, image: null } })} canOpenPage />
+      </div>
     );
     const label = page.getByText(`by ${longName}`);
     await expect.element(label).toBeInTheDocument();

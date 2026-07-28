@@ -631,7 +631,7 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.MageFlow,
     key: 'MageFlow',
-    displayName: 'Mage-Flow',
+    displayName: 'Mage Flow',
     familyId: 21,
     sortOrder: 161,
   },
@@ -1043,6 +1043,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
   { ecosystemId: ECO.Reve, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // MageFlow - checkpoint only (Microsoft Mage Flow, six official builds, no community LoRAs yet)
+  { ecosystemId: ECO.MageFlow, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1543,6 +1546,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Reve,
     defaults: {
       model: { id: 3133202 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MageFlow,
+    defaults: {
+      model: { id: 3172038 },
       modelLocked: true,
     },
   },
@@ -2704,6 +2714,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 13,
   },
 
+  // MageFlow
+  {
+    id: BM.MageFlow,
+    name: 'MageFlow',
+    description: "Microsoft's native-resolution image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MageFlow,
+    licenseId: 19,
+  },
+
   // MAI
   {
     id: BM.MAI,
@@ -2712,16 +2732,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.MAI,
     licenseId: 36,
-  },
-
-  // Mage-Flow
-  {
-    id: BM.MageFlow,
-    name: 'MageFlow',
-    description: "Microsoft's 4B native-resolution image generation and editing model",
-    type: 'image',
-    ecosystemId: ECO.MageFlow,
-    licenseId: 19,
   },
 
   // Mochi
