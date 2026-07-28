@@ -248,6 +248,7 @@ export const getServerSideProps = createServerSideProps({
     // }
 
     let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+    let suppressAds = false;
 
     if (ssg) {
       // Fetch the model first so we can short-circuit on slug mismatch before
@@ -257,11 +258,13 @@ export const getServerSideProps = createServerSideProps({
         .fetch({ id, excludeTrainingData: true })
         .catch(() => null);
 
-      if (model)
+      if (model) {
         gating = {
           contentNsfwLevel: model.nsfwLevel,
           nsfw: model.nsfw,
         };
+        suppressAds = model.status !== ModelStatus.Published;
+      }
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (model) {
@@ -381,6 +384,7 @@ export const getServerSideProps = createServerSideProps({
     return {
       props: { id },
       gating,
+      suppressAds,
     };
   },
 });
@@ -814,6 +818,7 @@ export default function ModelDetailsV2({
       contentNsfwLevel={model.nsfwLevel}
       nsfw={model.nsfw}
       bypassRating={isOwner}
+      suppressAds={!published}
       meta={{
         title: `${model.name}${
           selectedVersion ? ' - ' + selectedVersion.name : ''

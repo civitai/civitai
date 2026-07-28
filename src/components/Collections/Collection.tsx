@@ -570,6 +570,7 @@ export function Collection({
             currentUser?.id === collection.user.id ||
             (currentUser?.isModerator ?? false)
           }
+          suppressAds={collection.read !== 'Public'}
           meta={{
             title: `${collection.name}${
               collection.user.username ? ` - collection posted by ${collection.user.username}` : ''

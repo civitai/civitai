@@ -62,6 +62,7 @@ export const getServerSideProps = createServerSideProps({
           contentNsfwLevel: post.nsfwLevel,
           nsfw: post.nsfw,
         },
+        suppressAds: !post.publishedAt,
       };
     } catch (error) {
       console.error('Error fetching post detail:', error);

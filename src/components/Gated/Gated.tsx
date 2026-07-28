@@ -131,6 +131,9 @@ type GatedProps<TImage extends { nsfwLevel: number; url: string; type?: MediaTyp
   contentNsfwLevel: number;
   nsfw?: boolean;
   bypassRating?: boolean;
+  /** Suppress ads for a reason unrelated to content rating — e.g. an unpublished model,
+   *  visible only to its owner and moderators, so there is no audience to monetize. */
+  suppressAds?: boolean;
   /**
    * Meta props for `<head>` tags. Required so the schema (when augmented
    * with paywall properties for verified bots) and the `.paywalled-content`
@@ -158,6 +161,7 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   contentNsfwLevel,
   nsfw,
   bypassRating,
+  suppressAds,
   meta,
   children,
 }: GatedProps<TImage>) {
@@ -165,7 +169,7 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   const { allowMatureContent } = useAppContext();
 
   // Rating, not `state` — a PG13 page still serves ads while showing a login gate.
-  useAdGate(isAdGatedContent({ contentNsfwLevel, nsfw }));
+  useAdGate(!!suppressAds || isAdGatedContent({ contentNsfwLevel, nsfw }));
 
   // Whether the content is canonically SFW for the purpose of the deindex
   // decision. Some entities (e.g. `Model`) carry a coarse `nsfw` boolean

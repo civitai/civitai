@@ -117,6 +117,7 @@ export const getServerSideProps = createServerSideProps({
     return {
       props: removeEmpty(result.data),
       gating: model3d ? { contentNsfwLevel: model3d.nsfwLevel ?? 0 } : undefined,
+      suppressAds: !!model3d && model3d.status !== Model3DStatus.Published,
     };
   },
 });
@@ -349,6 +350,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     // contract intact for verified-bot rendering.
     <Gated
       contentNsfwLevel={model3d.nsfwLevel ?? 0}
+      suppressAds={model3d.status !== Model3DStatus.Published}
       meta={{
         title: `${model3d.name} | 3D Models | Civitai`,
         description: model3d.description?.slice(0, 200) ?? '3D model on Civitai',
