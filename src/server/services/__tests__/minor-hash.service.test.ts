@@ -23,6 +23,9 @@ import {
   sweepMinorHashMatches,
   getMinorHashMatchesForReview,
   dismissMinorHashMatch,
+  minorSrcCte,
+  minorHashCandidatesCte,
+  MINOR_HASH_FILE_TYPE,
 } from '~/server/services/minor-hash.service';
 
 beforeEach(() => {
@@ -56,7 +59,7 @@ describe('findMinorHashMatches', () => {
     expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it('queries with the SHA256 + lockedProperties gate', async () => {
+  it('queries with the SHA256 + minor + lockedProperties gate', async () => {
     await findMinorHashMatches('ABC123');
 
     // $queryRaw is called as a tagged template, so the mock receives
@@ -64,9 +67,42 @@ describe('findMinorHashMatches', () => {
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
     const text = Array.from(strings as TemplateStringsArray).join('?');
     expect(text).toContain(`'SHA256'`);
+    expect(text).toContain('m.minor');
     expect(text).toContain(`'minor' = ANY(m."lockedProperties")`);
-    expect(text).toContain(`mf.type = 'Model'`);
+    expect(text).toContain('mf.type =');
+    expect(values).toContain(MINOR_HASH_FILE_TYPE);
     expect(values).toContain('ABC123');
+  });
+
+  it('uppercases the hash — stored hashes are uppercase hex', async () => {
+    await findMinorHashMatches('abc123');
+
+    const [, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    expect(values).toContain('ABC123');
+    expect(values).not.toContain('abc123');
+  });
+});
+
+// The CTEs are interpolated into $queryRaw as Prisma.Sql VALUES, so their bodies
+// land in `values` and never appear in the `strings` the query-text tests above
+// inspect. Deleting a predicate here would widen the seed set with every other
+// test still green, so assert on the CTE text directly.
+describe('minor-hash CTE predicates', () => {
+  it('restricts the seed set to moderator-locked minor models', () => {
+    expect(minorSrcCte.sql).toContain('m.minor');
+    expect(minorSrcCte.sql).toContain(`'minor' = ANY(m."lockedProperties")`);
+    expect(minorSrcCte.sql).toContain(`mfh.type = 'SHA256'`);
+    expect(minorSrcCte.sql).toContain('mf.type =');
+    expect(minorSrcCte.values).toContain(MINOR_HASH_FILE_TYPE);
+  });
+
+  it('restricts candidates to non-minor, non-deleted models of the gated file type', () => {
+    expect(minorHashCandidatesCte.sql).toContain('NOT m.minor');
+    expect(minorHashCandidatesCte.sql).toContain(`m.status <> 'Deleted'`);
+    expect(minorHashCandidatesCte.sql).toContain(`mfh.type = 'SHA256'`);
+    expect(minorHashCandidatesCte.sql).toContain('bool_or(EXISTS (');
+    expect(minorHashCandidatesCte.sql).toContain('mf.type =');
+    expect(minorHashCandidatesCte.values).toContain(MINOR_HASH_FILE_TYPE);
   });
 });
 
@@ -96,6 +132,27 @@ describe('applyMinorHashMatch', () => {
 
     expect(result).toBe('queued');
     expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+
+  it('flags when only one of several matches shares the uploader', async () => {
+    // Guards the `.some` in applyMinorHashMatch: `.every` would silently turn a
+    // real same-uploader hit into an un-actioned queue entry.
+    const result = await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      matches: [
+        { modelId: 50, userId: 9 },
+        { modelId: 51, userId: 5 },
+      ],
+    });
+
+    expect(result).toBe('flagged');
+    expect(mockSetModelMinor).toHaveBeenCalledWith({
+      id: 100,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+    });
   });
 
   it('skips when there are no matches', async () => {
@@ -128,6 +185,26 @@ describe('checkMinorHashOnScan', () => {
 
     expect(result).toBe('flagged');
     expect(mockSetModelMinor).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs auto-flags so they are countable without querying ModActivity', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 5 }]);
+
+    await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'minor-hash-scan-check', message: 'flagged', modelId: 100 }),
+      'webhooks'
+    );
+  });
+
+  it('does not log when the outcome is only queued', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 9 }]);
+
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+
+    expect(result).toBe('queued');
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 
   it('swallows and logs a lookup failure instead of throwing', async () => {
@@ -174,15 +251,22 @@ describe('checkMinorHashOnScan', () => {
   });
 });
 
+// The SQL now filters to same-uploader rows, so the limited select only ever
+// returns actionable candidates; the totals come from the separate count query.
+const sweepTotals = [{ candidates: 3, sameUploader: 2 }];
 const sweepRows = [
   { modelId: 101, userId: 5, sameUploader: true },
   { modelId: 102, userId: 6, sameUploader: true },
-  { modelId: 103, userId: 7, sameUploader: false },
 ];
+
+// call 0 = uncapped totals, call 1 = the limited actionable rows
+function mockSweepQueries(totals = sweepTotals, rows = sweepRows) {
+  mockDbRead.$queryRaw.mockResolvedValueOnce(totals).mockResolvedValueOnce(rows);
+}
 
 describe('sweepMinorHashMatches', () => {
   it('writes nothing on a dry run but reports the split', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue(sweepRows);
+    mockSweepQueries();
 
     const report = await sweepMinorHashMatches({ dryRun: true, limit: 100 });
 
@@ -197,8 +281,46 @@ describe('sweepMinorHashMatches', () => {
     expect(report.sample.length).toBeGreaterThan(0);
   });
 
-  it('flags only the same-uploader candidates when applying', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue(sweepRows);
+  it('reports the full population, not the limited window', async () => {
+    // A dry run at limit 1 must still describe all 714/301/413-style totals —
+    // the operator sizes the backfill from these numbers.
+    mockSweepQueries([{ candidates: 714, sameUploader: 301 }], [sweepRows[0]]);
+
+    const report = await sweepMinorHashMatches({ dryRun: true, limit: 1 });
+
+    expect(report).toMatchObject({
+      candidates: 714,
+      sameUploader: 301,
+      differentUploader: 413,
+    });
+    expect(report.sample).toHaveLength(1);
+  });
+
+  it('still reports the different-uploader backlog when nothing is actionable', async () => {
+    // Steady state after the backfill: 0 same-uploader rows returned, but the
+    // queue awaiting human review must not read as empty.
+    mockSweepQueries([{ candidates: 413, sameUploader: 0 }], []);
+
+    const report = await sweepMinorHashMatches({ dryRun: true, limit: 500 });
+
+    expect(report).toMatchObject({ candidates: 413, sameUploader: 0, differentUploader: 413 });
+  });
+
+  it('caps the sample at 20 rows', async () => {
+    const many = Array.from({ length: 50 }, (_, i) => ({
+      modelId: i,
+      userId: 1,
+      sameUploader: true,
+    }));
+    mockSweepQueries([{ candidates: 50, sameUploader: 50 }], many);
+
+    const report = await sweepMinorHashMatches({ dryRun: true, limit: 500 });
+
+    expect(report.sample).toHaveLength(20);
+  });
+
+  it('flags every returned candidate when applying', async () => {
+    mockSweepQueries();
 
     const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
 
@@ -213,7 +335,7 @@ describe('sweepMinorHashMatches', () => {
   });
 
   it('reports a per-model failure without aborting the batch', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue(sweepRows);
+    mockSweepQueries();
     mockSetModelMinor.mockRejectedValueOnce(new Error('boom'));
 
     const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
@@ -223,7 +345,7 @@ describe('sweepMinorHashMatches', () => {
   });
 
   it('does not abort the batch when setModelMinor rejects with a non-Error value', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue(sweepRows);
+    mockSweepQueries();
     mockSetModelMinor.mockRejectedValueOnce(null);
 
     const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
@@ -232,17 +354,54 @@ describe('sweepMinorHashMatches', () => {
     expect(mockLogToAxiom).toHaveBeenCalled();
   });
 
-  it('queries excluding already-minor and deleted models, with limit passed through', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue([]);
+  it('logs the report on a real run so a timeout cannot lose it', async () => {
+    mockSweepQueries();
+
+    await sweepMinorHashMatches({ dryRun: false, limit: 100 });
+
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'minor-hash-sweep',
+        candidates: 3,
+        sameUploader: 2,
+        differentUploader: 1,
+        flagged: 2,
+        failed: 0,
+      }),
+      'webhooks'
+    );
+  });
+
+  it('does not log a dry run', async () => {
+    mockSweepQueries();
+
+    await sweepMinorHashMatches({ dryRun: true, limit: 100 });
+
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('pushes the same-uploader filter into SQL so limit caps writes', async () => {
+    mockSweepQueries([{ candidates: 0, sameUploader: 0 }], []);
+
+    await sweepMinorHashMatches({ dryRun: true, limit: 250 });
+
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[1];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('WHERE c."sameUploader"');
+    expect(text).toContain('LIMIT');
+    expect(values).toContain(250);
+  });
+
+  it('counts the population without a LIMIT', async () => {
+    mockSweepQueries([{ candidates: 0, sameUploader: 0 }], []);
 
     await sweepMinorHashMatches({ dryRun: true, limit: 250 });
 
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
     const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('NOT m.minor');
-    expect(text).toContain(`m.status <> 'Deleted'`);
-    expect(text).toContain('LIMIT');
-    expect(values).toContain(250);
+    expect(text).toContain('count(*)');
+    expect(text).not.toContain('LIMIT');
+    expect(values).not.toContain(250);
   });
 });
 

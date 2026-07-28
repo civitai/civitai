@@ -135,6 +135,7 @@ vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: 
 
 vi.mock('~/server/services/minor-hash.service', () => ({
   checkMinorHashOnScan: mockCheckMinorHashOnScan,
+  MINOR_HASH_FILE_TYPE: 'Model',
 }));
 
 import {
@@ -1324,6 +1325,28 @@ describe('model-file-scan.service', () => {
         userId: 777,
         sha256: 'deadbeef',
       });
+    });
+
+    it('does not call checkMinorHashOnScan for a non-Model file type', async () => {
+      // The sweep and the review queue both only cover MINOR_HASH_FILE_TYPE, so a
+      // match here would auto-flag off-sweep or queue somewhere unreachable. Every
+      // other test in this block mocks type: 'Model', which hid the gap.
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 702,
+        type: 'Training Data',
+        modelVersionId: 32,
+        modelVersion: { modelId: 57, model: { userId: 779 } },
+      });
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.$transaction.mockResolvedValue([]);
+
+      await applyScanOutcome({
+        fileId: 702,
+        hashes: { SHA256: 'deadbeef' },
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
     });
 
     it('does not call checkMinorHashOnScan when the outcome carries no hashes', async () => {

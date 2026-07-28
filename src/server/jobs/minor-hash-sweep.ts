@@ -9,5 +9,5 @@ const ENABLED = false;
 export const minorHashSweep = createJob('minor-hash-sweep', '45 3 * * *', async () => {
   if (!ENABLED) return;
 
-  await sweepMinorHashMatches({ dryRun: false, limit: 500 });
+  return await sweepMinorHashMatches({ dryRun: false, limit: 500 });
 });

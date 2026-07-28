@@ -13,7 +13,10 @@ import {
   findOfficialFileByHash,
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
-import { checkMinorHashOnScan } from '~/server/services/minor-hash.service';
+import {
+  checkMinorHashOnScan,
+  MINOR_HASH_FILE_TYPE,
+} from '~/server/services/minor-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   createModelFileScanRequest,
@@ -215,7 +218,16 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     const scannedSha256 = outcome.hashes.SHA256;
     const scannedModelId = file.modelVersion?.modelId;
     const scannedUserId = file.modelVersion?.model?.userId;
-    if (scannedSha256 && scannedModelId && scannedUserId) {
+    // Scan requests aren't type-filtered, but the sweep and the review queue
+    // both only cover MINOR_HASH_FILE_TYPE. Without this gate a Training
+    // Data/VAE/Config match would auto-flag on a path no sweep reaches, or
+    // queue for a review page that can never surface it.
+    if (
+      scannedSha256 &&
+      scannedModelId &&
+      scannedUserId &&
+      file.type === MINOR_HASH_FILE_TYPE
+    ) {
       await checkMinorHashOnScan({
         modelId: scannedModelId,
         userId: scannedUserId,

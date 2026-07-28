@@ -11,10 +11,15 @@
  * Params:
  *   dryRun  - default true. When true, nothing is written; the report shows
  *             the candidate split and a 20-row sample.
- *   limit   - default 100, max 1000. Caps candidates examined per call.
+ *   limit   - default 100, max 1000. Caps models FLAGGED per call, not the
+ *             candidate set — the reported split always covers the full
+ *             population, so a dry run at any limit shows the real totals.
  *
  * Only same-uploader matches are ever flagged. Different-uploader matches are
  * reported as a count and reviewed at /moderator/minor-hash-matches.
+ *
+ * A run that writes is logged to Axiom (`minor-hash-sweep`) before responding,
+ * so a gateway timeout still leaves a record of what committed.
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -30,10 +35,18 @@ const schema = z.object({
 export default WebhookEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-  const parsed = schema.safeParse(req.body ?? {});
+  // Next leaves req.body as '' when there's no content-type, and '' is not
+  // nullish — `?? {}` would hand an empty string to safeParse.
+  const body = typeof req.body === 'object' && req.body ? req.body : {};
+  const parsed = schema.safeParse(body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const report = await sweepMinorHashMatches(parsed.data);
-
-  return res.status(200).json(report);
+  try {
+    const report = await sweepMinorHashMatches(parsed.data);
+    return res.status(200).json(report);
+  } catch (error) {
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 });

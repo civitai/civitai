@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { setModelMinor } from '~/server/services/model.service';
@@ -7,6 +8,12 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
+// Deliberately the main weights only, not the broader `primaryModelFileTypes`
+// list: widening adds a single minor-locked model in prod, and this drives an
+// irreversible auto-flag. Shared by the scan-hook gate and every query below so
+// the three entry points cannot select different populations.
+export const MINOR_HASH_FILE_TYPE = 'Model';
+
 // Seed set: only moderator-applied minor flags. A creator self-declaring their
 // model minor must not cause other people's uploads to be flagged.
 export const minorSrcCte = Prisma.sql`
@@ -14,9 +21,29 @@ export const minorSrcCte = Prisma.sql`
     SELECT DISTINCT mfh.hash, m."userId", m.id AS "minorModelId"
     FROM "Model" m
     JOIN "ModelVersion" mv ON mv."modelId" = m.id
-    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Model'
+    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = ${MINOR_HASH_FILE_TYPE}
     JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id AND mfh.type = 'SHA256'
     WHERE m.minor AND 'minor' = ANY(m."lockedProperties")
+  )
+`;
+
+// Shared by the sweep's count and its limited select so the totals always
+// describe the same population the writes are drawn from.
+export const minorHashCandidatesCte = Prisma.sql`
+  candidates AS (
+    SELECT m.id AS "modelId", m."userId",
+           bool_or(EXISTS (
+             SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
+           )) AS "sameUploader"
+    FROM "ModelFileHash" mfh
+    JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mfh.type = 'SHA256'
+      AND mfh.hash IN (SELECT hash FROM minor_src)
+      AND NOT m.minor
+      AND m.status <> 'Deleted'
+    GROUP BY m.id, m."userId"
   )
 `;
 
@@ -26,17 +53,17 @@ export async function findMinorHashMatches(sha256: string): Promise<MinorHashMat
   const rows = await dbRead.$queryRaw<{ id: number; userId: number }[]>`
     SELECT DISTINCT m.id, m."userId"
     FROM "ModelFileHash" mfh
-    JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = 'Model'
+    JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
     JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mfh.type = 'SHA256' AND mfh.hash = ${sha256}
+    WHERE mfh.type = 'SHA256' AND mfh.hash = ${sha256.toUpperCase()}
       AND m.minor AND 'minor' = ANY(m."lockedProperties")
   `;
 
   return rows.map(({ id, userId }) => ({ modelId: id, userId }));
 }
 
-const SYSTEM_USER_ID = -1;
+const SYSTEM_USER_ID = constants.system.user.id;
 
 export type MinorHashOutcome = 'flagged' | 'queued' | 'skipped';
 
@@ -76,7 +103,23 @@ export async function checkMinorHashOnScan({
 }): Promise<MinorHashOutcome> {
   try {
     const matches = await findMinorHashMatches(sha256);
-    return await applyMinorHashMatch({ modelId, userId, matches });
+    const outcome = await applyMinorHashMatch({ modelId, userId, matches });
+
+    if (outcome === 'flagged') {
+      logToAxiom(
+        {
+          type: 'info',
+          name: 'minor-hash-scan-check',
+          message: 'flagged',
+          modelId,
+          userId,
+          sha256,
+        },
+        'webhooks'
+      ).catch(() => null);
+    }
+
+    return outcome;
   } catch (error) {
     logToAxiom(
       {
@@ -111,34 +154,31 @@ export async function sweepMinorHashMatches({
   dryRun: boolean;
   limit: number;
 }): Promise<SweepReport> {
+  // `limit` caps writes, so the returned slice is same-uploader rows only. The
+  // report's totals therefore come from a separate uncapped count — otherwise a
+  // dry run would describe its own window instead of the real population.
+  const [totals] = await dbRead.$queryRaw<{ candidates: number; sameUploader: number }[]>`
+    WITH ${minorSrcCte},
+    ${minorHashCandidatesCte}
+    SELECT count(*)::int AS "candidates",
+           count(*) FILTER (WHERE c."sameUploader")::int AS "sameUploader"
+    FROM candidates c
+  `;
+
   const rows = await dbRead.$queryRaw<SweepCandidate[]>`
     WITH ${minorSrcCte},
-    candidates AS (
-      SELECT m.id AS "modelId", m."userId",
-             bool_or(EXISTS (
-               SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
-             )) AS "sameUploader"
-      FROM "ModelFileHash" mfh
-      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = 'Model'
-      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mfh.type = 'SHA256'
-        AND mfh.hash IN (SELECT hash FROM minor_src)
-        AND NOT m.minor
-        AND m.status <> 'Deleted'
-      GROUP BY m.id, m."userId"
-    )
+    ${minorHashCandidatesCte}
     SELECT c."modelId", c."userId", c."sameUploader"
     FROM candidates c
+    WHERE c."sameUploader"
     ORDER BY c."modelId"
     LIMIT ${limit}
   `;
 
-  const sameUploader = rows.filter((row) => row.sameUploader);
   const report: SweepReport = {
-    candidates: rows.length,
-    sameUploader: sameUploader.length,
-    differentUploader: rows.length - sameUploader.length,
+    candidates: totals?.candidates ?? 0,
+    sameUploader: totals?.sameUploader ?? 0,
+    differentUploader: (totals?.candidates ?? 0) - (totals?.sameUploader ?? 0),
     flagged: 0,
     failed: 0,
     sample: rows.slice(0, 20),
@@ -146,7 +186,7 @@ export async function sweepMinorHashMatches({
 
   if (dryRun) return report;
 
-  const tasks = sameUploader.map((row) => async () => {
+  const tasks = rows.map((row) => async () => {
     try {
       await setModelMinor({
         id: row.modelId,
@@ -170,6 +210,22 @@ export async function sweepMinorHashMatches({
   });
 
   await limitConcurrency(tasks, 5);
+
+  // Logged here rather than by the caller so an HTTP timeout on a long backfill
+  // cannot lose the record of writes that already committed.
+  await logToAxiom(
+    {
+      type: 'info',
+      name: 'minor-hash-sweep',
+      message: 'sweep complete',
+      candidates: report.candidates,
+      sameUploader: report.sameUploader,
+      differentUploader: report.differentUploader,
+      flagged: report.flagged,
+      failed: report.failed,
+    },
+    'webhooks'
+  ).catch(() => null);
 
   return report;
 }
@@ -203,7 +259,7 @@ export async function getMinorHashMatchesForReview({
              )) AS "sameUploader",
              min(mfh.hash) AS hash
       FROM "ModelFileHash" mfh
-      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = 'Model'
+      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
       JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE mfh.type = 'SHA256'
