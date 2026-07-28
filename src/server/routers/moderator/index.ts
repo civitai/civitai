@@ -18,6 +18,7 @@ import {
   getTrainingModerationFeedSchema,
   transferModelOwnershipSchema,
 } from '~/server/schema/model.schema';
+import { getMinorHashMatchesSchema } from '~/server/schema/minor-hash.schema';
 import { getModeratorArticles } from '~/server/services/article.service';
 import {
   getCash,
@@ -33,6 +34,10 @@ import {
   getTrainingModelsForModerators,
   transferModelOwnership,
 } from '~/server/services/model.service';
+import {
+  dismissMinorHashMatch,
+  getMinorHashMatchesForReview,
+} from '~/server/services/minor-hash.service';
 import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
 import { throwDbError } from '~/server/utils/errorHandling';
 import type { ModerationRule } from '~/shared/utils/prisma/models';
@@ -61,6 +66,14 @@ export const modRouter = router({
     getModerationDetail: moderatorProcedure
       .input(getByIdSchema)
       .query(({ input }) => getModelModerationDetail(input)),
+    queryMinorHashMatches: moderatorProcedure
+      .input(getMinorHashMatchesSchema)
+      .query(({ input }) => getMinorHashMatchesForReview(input)),
+    dismissMinorHashMatch: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        dismissMinorHashMatch({ modelId: input.id, userId: ctx.user.id })
+      ),
   }),
   modelVersions: router({
     query: moderatorProcedure
