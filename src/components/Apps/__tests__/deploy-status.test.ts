@@ -10,6 +10,11 @@ import {
   isStrandedDeploy,
   type DeployLifecycleRow,
 } from '../deploy-status';
+import {
+  DEPLOY_STATE_TRACKING_EPOCH_MS,
+  isApprovedAndServing,
+  isStrandedApprovedDeploy,
+} from '~/shared/constants/app-block-deploy.constants';
 
 const NOW = 1_700_000_000_000;
 const fresh = new Date(NOW - 60_000); // 1 min ago
@@ -204,7 +209,32 @@ describe('isAwaitingDeployState', () => {
  * refuse, so its truth table is pinned against the same shared threshold.
  */
 describe('canRetriggerBuild', () => {
-  it('allows the STRANDED case (null state)', () => {
+  it('allows the STRANDED case (null state) once past the approval grace window', () => {
+    expect(canRetriggerBuild({ state: null, updatedAt: null, reviewedAt: stale }, NOW)).toBe(true);
+  });
+
+  it('refuses a JUST-approved null state — its first build may still be starting', () => {
+    // Mirrors the server: approveRequest awaits triggerBuild BEFORE writing
+    // 'building', so a null state inside the grace window is not evidence of a
+    // stranded row — re-firing there races a second PipelineRun.
+    expect(
+      canRetriggerBuild({ state: null, updatedAt: null, reviewedAt: new Date(NOW - 1_000) }, NOW)
+    ).toBe(false);
+    expect(
+      canRetriggerBuild(
+        { state: null, updatedAt: null, reviewedAt: new Date(NOW - DEPLOY_PENDING_GRACE_MS) },
+        NOW
+      )
+    ).toBe(false);
+    expect(
+      canRetriggerBuild(
+        { state: null, updatedAt: null, reviewedAt: new Date(NOW - DEPLOY_PENDING_GRACE_MS - 1) },
+        NOW
+      )
+    ).toBe(true);
+  });
+
+  it('stays permissive with NO anchor — the server is the authority, not this hint', () => {
     expect(canRetriggerBuild({ state: null, updatedAt: null }, NOW)).toBe(true);
   });
 
@@ -242,5 +272,118 @@ describe('canRetriggerBuild', () => {
 
   it('refuses an unrecognized state rather than guessing', () => {
     expect(canRetriggerBuild({ state: 'something-new', updatedAt: stale }, NOW)).toBe(false);
+  });
+});
+
+/**
+ * `isApprovedAndServing` — the predicate behind `liveUrl` on the CLI-facing
+ * `/api/v1/blocks/submissions`.
+ *
+ * The whole difficulty is that `deployState === null` covers TWO opposite
+ * realities. Reporting a STRANDED approval as live re-creates the invisible
+ * failure this feature exists to remove; refusing a LEGACY pre-tracking row its
+ * URL regresses apps that genuinely deployed. Both directions are pinned below.
+ */
+describe('isApprovedAndServing', () => {
+  const AFTER_EPOCH = DEPLOY_STATE_TRACKING_EPOCH_MS + 30 * 24 * 60 * 60 * 1000;
+  const BEFORE_EPOCH = DEPLOY_STATE_TRACKING_EPOCH_MS - 30 * 24 * 60 * 60 * 1000;
+
+  const approved = (over: Record<string, unknown> = {}) => ({
+    status: 'approved',
+    deployState: null as string | null,
+    deployUpdatedAt: null as Date | null,
+    reviewedAt: new Date(AFTER_EPOCH),
+    ...over,
+  });
+
+  it("only 'live' is a positive deploy state", () => {
+    expect(isApprovedAndServing(approved({ deployState: 'live' }))).toBe(true);
+    for (const s of ['building', 'deploying', 'failed', 'preview-live']) {
+      expect(isApprovedAndServing(approved({ deployState: s }))).toBe(false);
+    }
+  });
+
+  it('false for any non-approved status, however it deployed', () => {
+    for (const st of ['pending', 'rejected', 'withdrawn']) {
+      expect(isApprovedAndServing(approved({ status: st, deployState: 'live' }))).toBe(
+        false
+      );
+    }
+  });
+
+  it('STRANDED null (tracked era, nothing ever transitioned) is NOT serving', () => {
+    expect(isApprovedAndServing(approved())).toBe(false);
+  });
+
+  it('LEGACY null (approved before tracking began) IS serving', () => {
+    expect(isApprovedAndServing(approved({ reviewedAt: new Date(BEFORE_EPOCH) }))).toBe(
+      true
+    );
+  });
+
+  it('is EXCLUSIVE at the epoch instant itself', () => {
+    // Approved exactly at the epoch counts as tracked (>= epoch → not legacy).
+    expect(
+      isApprovedAndServing(approved({ reviewedAt: new Date(DEPLOY_STATE_TRACKING_EPOCH_MS) }))
+    ).toBe(false);
+    expect(
+      isApprovedAndServing(approved({ reviewedAt: new Date(DEPLOY_STATE_TRACKING_EPOCH_MS - 1) }))
+    ).toBe(true);
+  });
+
+  it('a recorded transition means the lifecycle ran — serving, whatever the date', () => {
+    expect(
+      isApprovedAndServing(approved({ deployUpdatedAt: new Date(AFTER_EPOCH + 1000) }))
+    ).toBe(true);
+  });
+
+  it('fails toward SERVING when there is no anchor at all (never removes a right URL)', () => {
+    expect(isApprovedAndServing(approved({ reviewedAt: null }))).toBe(true);
+  });
+
+  it('accepts ISO strings as well as Dates (the REST/JSON path)', () => {
+    expect(
+      isApprovedAndServing(approved({ reviewedAt: new Date(BEFORE_EPOCH).toISOString() }))
+    ).toBe(true);
+    expect(
+      isApprovedAndServing(approved({ reviewedAt: new Date(AFTER_EPOCH).toISOString() }))
+    ).toBe(false);
+  });
+});
+
+describe('isStrandedApprovedDeploy', () => {
+  const AFTER_EPOCH = DEPLOY_STATE_TRACKING_EPOCH_MS + 30 * 24 * 60 * 60 * 1000;
+  const BEFORE_EPOCH = DEPLOY_STATE_TRACKING_EPOCH_MS - 30 * 24 * 60 * 60 * 1000;
+  const base = (over: Record<string, unknown> = {}) => ({
+    status: 'approved',
+    deployState: null as string | null,
+    deployUpdatedAt: null as Date | null,
+    reviewedAt: new Date(AFTER_EPOCH),
+    ...over,
+  });
+
+  it('true past the stale threshold in the tracked era', () => {
+    expect(isStrandedApprovedDeploy(base(), AFTER_EPOCH + DEPLOY_STALE_AFTER_MS + 1)).toBe(true);
+  });
+
+  it('false while still inside the stale window (may yet transition)', () => {
+    expect(isStrandedApprovedDeploy(base(), AFTER_EPOCH + DEPLOY_STALE_AFTER_MS)).toBe(false);
+  });
+
+  it('NEVER flags a LEGACY pre-tracking approval, however old', () => {
+    expect(
+      isStrandedApprovedDeploy(
+        base({ reviewedAt: new Date(BEFORE_EPOCH) }),
+        AFTER_EPOCH + DEPLOY_STALE_AFTER_MS * 100
+      )
+    ).toBe(false);
+  });
+
+  it('false once any deploy state exists', () => {
+    for (const s of ['building', 'live', 'failed']) {
+      expect(
+        isStrandedApprovedDeploy(base({ deployState: s }), AFTER_EPOCH + DEPLOY_STALE_AFTER_MS + 1)
+      ).toBe(false);
+    }
   });
 });

@@ -18,7 +18,9 @@ import type * as RedisClient from '@civitai/redis/client';
  *      caller cannot name a commit to build. This makes "rebuild an arbitrary,
  *      unreviewed sha" structurally impossible rather than merely guarded.
  *   3. TYPED ERROR MAPPING. NOT_FOUND -> NOT_FOUND, RATE_LIMITED ->
- *      TOO_MANY_REQUESTS, everything else -> BAD_REQUEST.
+ *      TOO_MANY_REQUESTS, TRIGGER_FAILED -> INTERNAL_SERVER_ERROR (a build-service
+ *      outage is a server fault, not a malformed request), everything else ->
+ *      BAD_REQUEST.
  *
  * Heavy-mock skeleton copied from `blocks.router.listMyPublishRequests.test.ts` so
  * importing the router doesn't drag in the generated Prisma client.
@@ -241,6 +243,29 @@ describe('blocks.retriggerBuild — typed error mapping', () => {
     await expect(caller.retriggerBuild({ publishRequestId: REQ_ID })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'This version is already deployed.',
+    });
+  });
+
+  it('TRIGGER_FAILED maps to INTERNAL_SERVER_ERROR, not a 400', async () => {
+    // A build-service outage is OUR fault. Reporting it as BAD_REQUEST told the
+    // moderator they had sent a malformed request and kept a real incident off
+    // the server-fault error board.
+    mockRetrigger.mockRejectedValue(
+      retriggerErr('TRIGGER_FAILED', 'The build re-trigger could not be sent to the build service.')
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.retriggerBuild({ publishRequestId: REQ_ID })).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+    });
+  });
+
+  it('INVALID_STORED_SHA maps to BAD_REQUEST', async () => {
+    mockRetrigger.mockRejectedValue(
+      retriggerErr('INVALID_STORED_SHA', 'Request has no valid committed sha to rebuild.')
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.retriggerBuild({ publishRequestId: REQ_ID })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
     });
   });
 

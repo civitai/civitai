@@ -1952,11 +1952,17 @@ export const blocksRouter = router({
         });
       } catch (err) {
         if (err instanceof TRPCError) throw err;
+        const serviceCode = err instanceof Error ? (err as { code?: unknown }).code : undefined;
         const code =
-          err instanceof Error && (err as { code?: unknown }).code === 'NOT_FOUND'
+          serviceCode === 'NOT_FOUND'
             ? 'NOT_FOUND'
-            : err instanceof Error && (err as { code?: unknown }).code === 'RATE_LIMITED'
+            : serviceCode === 'RATE_LIMITED'
             ? 'TOO_MANY_REQUESTS'
+            : // A build-service outage is OUR fault, not a malformed request —
+              // reporting it as a 400 mislabels an incident as user error (and
+              // keeps it off the server-fault error board).
+            serviceCode === 'TRIGGER_FAILED'
+            ? 'INTERNAL_SERVER_ERROR'
             : 'BAD_REQUEST';
         throw new TRPCError({ code, message: (err as Error).message });
       }

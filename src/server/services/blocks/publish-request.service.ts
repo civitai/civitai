@@ -40,7 +40,15 @@ import { sanitizeAppSlug } from '~/server/utils/apps-slug';
 // Pure const (no env/Prisma). THE SAME threshold the owner-facing UI uses to call
 // a deploy "stalled" — shared so the mod retrigger gate and the badge can never
 // disagree about whether a build is stuck.
-import { DEPLOY_STALE_AFTER_MS } from '~/shared/constants/app-block-deploy.constants';
+import {
+  DEPLOY_PENDING_GRACE_MS,
+  DEPLOY_STALE_AFTER_MS,
+} from '~/shared/constants/app-block-deploy.constants';
+// Pure, dependency-free sanitizer. Applied to EVERY value written to the
+// owner-visible `deploy_detail`, so the "guaranteed printable, bounded text"
+// invariant that module documents holds on all write paths — not just the
+// build-callback's.
+import { sanitizeBuildFailureReason } from './build-failure-reason';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -2814,6 +2822,24 @@ export async function markRequestDeployState(
 // MOD-ONLY BUILD RE-TRIGGER — recover an APPROVED request whose build never ran.
 // ---------------------------------------------------------------------------
 
+/**
+ * The EXACT `deploy_detail` an app author sees when the moderator's re-trigger
+ * could not be handed to the build service.
+ *
+ * 🔴 FIXED STRING, never derived from the thrown error. `deploy_detail` is
+ * owner-visible on both `blocks.listMyPublishRequests` and
+ * `GET /api/v1/blocks/submissions`, and the errors `triggerBuild` throws carry
+ * infrastructure detail (the trigger receiver's raw response body, the names of
+ * the trigger env vars). Those go to the server log instead.
+ *
+ * It says what the author actually needs: this is our failure, not their code, and
+ * they should not resubmit.
+ */
+export const RETRIGGER_FAILED_AUTHOR_DETAIL =
+  'Build re-trigger failed: Civitai could not reach the build service. ' +
+  'This is a problem on our side, not with your app — a moderator has to retry it. ' +
+  'No new version submission is needed.';
+
 /** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
 export class RetriggerBuildError extends Error {
   code: string;
@@ -2844,7 +2870,9 @@ export type RetriggerBuildResult = {
  *                                   forgejo_commit_sha) and then threw inside
  *                                   `triggerBuild`, so `markRequestDeployState`
  *                                   was never reached. Nothing is building and
- *                                   nothing ever will.
+ *                                   nothing ever will. 🔴 Allowed ONLY once the
+ *                                   approval is older than
+ *                                   DEPLOY_PENDING_GRACE_MS — see below.
  *   - `deployState === 'failed'`  → the build or the apply ended badly. Re-firing
  *                                   is exactly the intended recovery (e.g. a
  *                                   transient registry/cluster failure).
@@ -2857,13 +2885,43 @@ export type RetriggerBuildResult = {
  * Everything else is refused: `'live'` (already deployed — a rebuild would churn
  * a serving app for no reason) and any `preview-*` value (the mod review-sandbox
  * lane, which has its own build/teardown path and must not be driven from here).
+ *
+ * 🔴 WHY THE NULL BRANCH IS TIME-BOUNDED. `approveRequest` writes the approval,
+ * then `await`s `triggerBuild` (up to a 30s network timeout), and only THEN writes
+ * `deploy_state='building'`. In that window the row legitimately reads null on the
+ * PRIMARY while a PipelineRun is already being created — reading the primary
+ * (which this function's caller now does) cannot close it, because the gap is in
+ * WALL TIME, not replica lag. An unbounded null branch therefore let a second
+ * moderator race a second PipelineRun onto the same sha. The bound is
+ * DEPLOY_PENDING_GRACE_MS — the SHARED constant the owner UI already uses for
+ * exactly this approve→mark window, and comfortably above triggerBuild's own
+ * timeout. It is deliberately NOT DEPLOY_STALE_AFTER_MS: making a moderator wait
+ * 45 minutes to recover a request that is already provably stranded would defeat
+ * the recovery this whole procedure exists to provide.
+ *
+ * With NO anchor at all (`reviewedAt` and `deployUpdatedAt` both null) the window
+ * cannot be measured, so the null branch FAILS CLOSED — matching the in-flight
+ * branch's "no timestamp → refuse". `approveRequest` always stamps `reviewedAt`,
+ * so a real approved row always has an anchor.
  */
 function assertRetriggerableDeployState(
   deployState: string | null,
   deployUpdatedAt: Date | null,
+  reviewedAt: Date | null,
   now: number
 ): void {
-  if (deployState === null) return; // stranded — the whole point
+  if (deployState === null) {
+    // Anchor: the approval time (the null case has no transition by definition;
+    // deployUpdatedAt is only a fallback for an odd null-state-with-transition row).
+    const anchor = reviewedAt?.getTime() ?? deployUpdatedAt?.getTime() ?? null;
+    if (anchor == null || now - anchor <= DEPLOY_PENDING_GRACE_MS) {
+      throw new RetriggerBuildError(
+        'NOT_RETRIGGERABLE',
+        'This request was just approved — its first build may still be starting. Wait a moment and retry.'
+      );
+    }
+    return; // stranded — the whole point
+  }
   if (deployState === 'failed') return;
   if (deployState === 'live') {
     throw new RetriggerBuildError(
@@ -2916,13 +2974,24 @@ function assertRetriggerableDeployState(
 export async function retriggerBuild(
   params: RetriggerBuildParams
 ): Promise<RetriggerBuildResult> {
-  const [{ dbRead }, { env }] = await Promise.all([
+  const [{ dbWrite }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/env/server'),
   ]);
 
   // (1) The request must exist.
-  const request = await dbRead.appBlockPublishRequest.findUnique({
+  //
+  // 🔴 READ THE PRIMARY (`dbWrite`), NOT the replica. Every value below is a
+  // GUARD, and `dbRead` is a separate readonly client that can lag. Concretely:
+  // a moderator approves v2 (primary now has AppBlock.currentVersionSha = B) and
+  // within the lag window another moderator hits "Retrigger" on v1 — a replica
+  // still serving currentVersionSha = A lets the supersede guard (5) pass, and
+  // v1's older reviewed sha gets rebuilt and deployed OVER the newer approval.
+  // The same lag re-opens the deploy-state gate (6): a fresh `deploy_state =
+  // 'building'` can read back as null, so a second PipelineRun races the first.
+  // The redis NX lock does not help — `approveRequest` never takes it. This is a
+  // once-per-click moderator action, so the primary read costs nothing.
+  const request = await dbWrite.appBlockPublishRequest.findUnique({
     where: { id: params.publishRequestId },
     select: {
       id: true,
@@ -2932,6 +3001,9 @@ export async function retriggerBuild(
       forgejoCommitSha: true,
       deployState: true,
       deployUpdatedAt: true,
+      // Anchor for the null-deploy-state grace window (see
+      // assertRetriggerableDeployState).
+      reviewedAt: true,
       appBlock: { select: { id: true, currentVersionSha: true } },
     },
   });
@@ -2953,10 +3025,16 @@ export async function retriggerBuild(
   // (3) The sha comes from the DB and must look like a real commit. The procedure
   //     input carries no sha at all, so there is nothing to smuggle in here — this
   //     is the integrity check on our OWN stored value, not input validation.
+  //
+  //     🔴 DISTINCT ERROR CODE, deliberately. Sharing NOT_RETRIGGERABLE with the
+  //     supersede guard (5) made this guard untestable: the stranded fixture also
+  //     trips (5), so a test asserting "malformed sha is refused" passed even with
+  //     this check deleted. A code only this guard can produce makes the assertion
+  //     load-bearing (see the mutation note in the retriggerBuild test suite).
   const sha = request.forgejoCommitSha;
   if (!sha || !/^[0-9a-f]{40}$/.test(sha)) {
     throw new RetriggerBuildError(
-      'NOT_RETRIGGERABLE',
+      'INVALID_STORED_SHA',
       'Request has no valid committed sha to rebuild.'
     );
   }
@@ -2980,7 +3058,12 @@ export async function retriggerBuild(
   }
 
   // (6) Deploy-state gate (see assertRetriggerableDeployState for the definition).
-  assertRetriggerableDeployState(request.deployState, request.deployUpdatedAt, Date.now());
+  assertRetriggerableDeployState(
+    request.deployState,
+    request.deployUpdatedAt,
+    request.reviewedAt,
+    Date.now()
+  );
 
   if (!env.FORGEJO_BASE_URL || !env.FORGEJO_ADMIN_TOKEN) {
     throw new RetriggerBuildError('NOT_RETRIGGERABLE', 'Forgejo not configured');
@@ -3028,26 +3111,62 @@ export async function retriggerBuild(
     // Free the single-flight slot so the moderator can retry immediately rather
     // than waiting out the TTL after a visible failure.
     await releaseRetriggerLock(request.id);
+    const internalDetail = err instanceof Error ? err.message : String(err);
+    // 🔴 The INTERNAL detail goes to the server log ONLY. `triggerBuild` throws
+    // `trigger <status> <statusText>: <first 240 bytes of the receiver's response
+    // body>`, or a message naming the trigger env vars — infrastructure detail
+    // that must never reach a third-party app author.
+    void import('~/server/logging/client')
+      .then(({ logToAxiom }) =>
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'app-block-retrigger-failed',
+            message: 'retriggerBuild: the build trigger call failed',
+            details: {
+              publishRequestId: request.id,
+              slug: request.slug,
+              appBlockId,
+              reviewerUserId: params.reviewerUserId,
+              error: internalDetail,
+            },
+          },
+          'app-blocks'
+        )
+      )
+      .catch(() => undefined);
     await setCommitStatus({
       slug: request.slug,
       sha,
       state: 'failure',
       context: 'civitai/build',
-      description: `Re-trigger failed: ${String(err).slice(0, 80)}`,
+      // The author can see their own repo's commit statuses, so this stays
+      // generic too — the detail is in the server log above.
+      description: 'Build re-trigger failed; see Civitai for details',
     }).catch(() => undefined);
-    // 🔴 Make the failure VISIBLE. This is the half of the fix that matters most:
+    // 🔴 Make the failure VISIBLE — this is the half of the fix that matters most:
     // a stranded request's whole problem is that it looks healthy while nothing is
     // happening. Even when the retrigger ITSELF fails, the row now carries a
     // 'failed' state + a reason instead of reverting to a silent null.
+    //
+    // 🔴 …but the reason stored here is OWNER-VISIBLE (`deploy_detail` is returned
+    // by BOTH `blocks.listMyPublishRequests` and GET /api/v1/blocks/submissions),
+    // so it is a FIXED, GENERIC, author-actionable string — never the thrown
+    // error. It still goes through `sanitizeBuildFailureReason` so the stored
+    // value keeps that module's "guaranteed printable, bounded text" invariant on
+    // every write path, not just the build-callback one.
     await markRequestDeployState(
       request.slug,
       sha,
       'failed',
-      `Re-trigger failed: ${(err as Error).message ?? String(err)}`.slice(0, 500)
+      sanitizeBuildFailureReason(RETRIGGER_FAILED_AUTHOR_DETAIL) ?? null
     );
     throw new RetriggerBuildError(
       'TRIGGER_FAILED',
-      `The build re-trigger failed: ${(err as Error).message}. The request is now marked failed; try again once the build service is reachable.`
+      // Moderator-facing (a `moderatorProcedure` response), and deliberately also
+      // generic: the actionable internal detail is in the server log, keyed by the
+      // publish-request id above.
+      'The build re-trigger could not be sent to the build service. The request is now marked failed; try again once the build service is reachable.'
     );
   }
 

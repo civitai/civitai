@@ -99,7 +99,15 @@ export function isAwaitingDeployState(s: DeployLifecycleRow, now: number = Date.
 }
 
 /** The deploy projection a moderator-queue row carries (see `unifiedReviewRow`). */
-export type ModDeployRow = { state: string | null; updatedAt: Date | string | null };
+export type ModDeployRow = {
+  state: string | null;
+  updatedAt: Date | string | null;
+  /** Approval time — the anchor for the null-state grace window (a null state has
+   *  no transition of its own to measure from). Optional so older callers/fixtures
+   *  keep compiling; absent means "cannot measure", which stays permissive here
+   *  because the SERVER is the authority. */
+  reviewedAt?: Date | string | null;
+};
 
 /**
  * CLIENT MIRROR of the server's "approved but not successfully built" gate — the
@@ -112,13 +120,25 @@ export type ModDeployRow = { state: string | null; updatedAt: Date | string | nu
  * cannot see from here). Both read `DEPLOY_STALE_AFTER_MS` from the same shared
  * constant, so the "stalled" cut-off can never drift apart.
  *
- * Allowed: `null` (STRANDED — the build never started) and `'failed'`.
- * Allowed only once stalled: `'building'` / `'deploying'` past
- * `DEPLOY_STALE_AFTER_MS`. Refused: `'live'` and any `preview-*` value.
+ * Allowed: `null` (STRANDED — the build never started) once past
+ * `DEPLOY_PENDING_GRACE_MS`, and `'failed'`. Allowed only once stalled:
+ * `'building'` / `'deploying'` past `DEPLOY_STALE_AFTER_MS`. Refused: `'live'` and
+ * any `preview-*` value.
+ *
+ * The grace bound on the null branch mirrors the server's: inside the
+ * approve→`markRequestDeployState` window a build IS already being triggered, and
+ * re-firing would race a second PipelineRun. With no `reviewedAt` anchor to
+ * measure that window, this stays permissive (offer the button, let the server
+ * decide) — the asymmetry with the server's fail-closed branch is deliberate,
+ * since this side is a hint and that side is the guard.
  */
 export function canRetriggerBuild(deploy: ModDeployRow, now: number = Date.now()): boolean {
   const state = deploy.state;
-  if (state === null || state === undefined) return true;
+  if (state === null || state === undefined) {
+    const anchor = toMs(deploy.reviewedAt) ?? toMs(deploy.updatedAt);
+    if (anchor == null) return true;
+    return now - anchor > DEPLOY_PENDING_GRACE_MS;
+  }
   if (state === 'failed') return true;
   if (state === 'live') return false;
   if (state.startsWith('preview-')) return false;

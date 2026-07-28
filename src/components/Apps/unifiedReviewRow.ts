@@ -94,11 +94,19 @@ export type UnifiedReviewRow = {
 export type ReviewRowDeploy = {
   /** `null` = never transitioned: a legacy pre-feature row, OR the STRANDED case. */
   state: string | null;
-  detail: string | null;
   updatedAt: Date | null;
+  /** Approval time — the anchor `canRetriggerBuild` measures the post-approval
+   *  grace window from (a null state has no transition of its own). */
+  reviewedAt: Date | null;
   /** The publish-request id — the ONLY argument `blocks.retriggerBuild` takes. */
   publishRequestId: string;
 };
+// NOTE: `deployDetail` is deliberately NOT projected here. It carries the
+// TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes) and
+// the moderator queue never renders it — carrying it into this payload would be
+// dead data on a surface where a future renderer would have to re-derive the
+// escaping guarantees. The owner-facing /apps/my-submissions row is where the
+// excerpt is shown, and it reads it straight from its own query.
 
 function toDate(d: string | Date): Date {
   return typeof d === 'string' ? new Date(d) : d;
@@ -136,8 +144,8 @@ export function onsiteRequestToUnifiedRow(
     'deployState' in req
       ? {
           state: (req as { deployState?: string | null }).deployState ?? null,
-          detail: (req as { deployDetail?: string | null }).deployDetail ?? null,
           updatedAt: toOptionalDate((req as { deployUpdatedAt?: string | Date | null }).deployUpdatedAt),
+          reviewedAt: toOptionalDate(reviewedAt),
           publishRequestId: req.id,
         }
       : undefined;

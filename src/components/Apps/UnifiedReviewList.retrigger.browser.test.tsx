@@ -115,6 +115,16 @@ describe('Approved tab — the Retrigger control follows the server gate', () =>
     expect((btn.element() as HTMLButtonElement).disabled).toBe(false);
   });
 
+  test('DISABLED for a JUST-approved null state — the first build may still be starting', async () => {
+    // Mirrors the server's grace bound: approveRequest awaits triggerBuild BEFORE
+    // writing 'building', so a null state moments after approval is not evidence
+    // of a stranded row and re-firing would race a second PipelineRun.
+    renderApproved({ row: onsiteRow({ reviewedAt: JUST_NOW }), onRetrigger: vi.fn() });
+    const btn = page.getByTestId(RETRIGGER);
+    await expect.element(btn).toBeInTheDocument();
+    expect((btn.element() as HTMLButtonElement).disabled).toBe(true);
+  });
+
   test('ENABLED for a failed build', async () => {
     renderApproved({
       row: onsiteRow({ deployState: 'failed', deployUpdatedAt: JUST_NOW }),
