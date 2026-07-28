@@ -1676,18 +1676,18 @@ export const blocksRouter = router({
     }),
 
   /**
-   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT proxy. A moderator
-   * viewing a live/complete report can ask the SAME ephemeral agent pod follow-up
-   * questions ("why did you flag scope X", "show the call site"). Non-streaming
-   * request/response (v1); streaming SSE is a follow-up.
+   * AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal CHAT. A moderator viewing a
+   * report can ask follow-up questions ("why did you flag scope X", "show the call
+   * site"). Non-streaming request/response (v1); streaming SSE is a follow-up.
    *
    * Gated IDENTICALLY to startAgentReview / getAgentReview (moderatorProcedure +
    * the isModerator belt + enforceAppBlocksFlag + the dedicated mod-only
    * `app-blocks-agentic-review` flag) so it ships DARK — the flag does not exist
    * in Flipt yet, so isAppBlocksAgenticReviewEnabled fail-closes to false and this
-   * rejects. The service loads the report, requires the pod to be up
-   * (running|complete|cost-capped → else PRECONDITION_FAILED), proxies to the
-   * pod's in-cluster gateway with the DERIVED bearer, and returns `{ reply }`.
+   * rejects. The service loads the PERSISTED report and answers as a STATELESS
+   * civitai→LLM completion grounded on that report (no live agent — a `failed`
+   * report is still chattable; only a missing/torn-down review → PRECONDITION_FAILED),
+   * returning `{ reply }`.
    */
   agentReviewChat: moderatorProcedure
     .use(enforceAppBlocksFlag)
