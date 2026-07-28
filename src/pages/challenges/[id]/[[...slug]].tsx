@@ -39,6 +39,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
+import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -191,9 +192,17 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
       // Fetch challenge to check slug and prefetch for client hydration
       const challenge = await ssg.challenge.getById.fetch({ id: result.data.id }).catch(() => null);
+
+      if (challenge)
+        gating = {
+          contentNsfwLevel: challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0),
+          nsfw: challenge.source === ChallengeSource.User && challenge.buzzType === 'yellow',
+        };
 
       if (challenge) {
         const destination = getCanonicalSlugDestination({
@@ -207,7 +216,7 @@ export const getServerSideProps = createServerSideProps({
       }
     }
 
-    return { props: removeEmpty(result.data) };
+    return { props: removeEmpty(result.data), gating };
   },
 });
 
@@ -437,10 +446,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   // Delete stays available after a moderator voids the challenge (Cancelled) so the owner can clear
   // a dead challenge off their list; edit remains Scheduled-only (canManageOwn).
   const canDeleteOwn =
-    features.userChallenges &&
-    isOwner &&
-    !currentUser?.isModerator &&
-    (isScheduled || isCancelled);
+    features.userChallenges && isOwner && !currentUser?.isModerator && (isScheduled || isCancelled);
 
   const handleOwnerDelete = () => {
     openConfirmModal({
@@ -502,6 +508,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               {challenge.title}
             </Title>
             <Group gap={4} wrap="nowrap" className="shrink-0">
+              <ChallengeNotifyToggle challenge={{ id: challenge.id, status: challenge.status }} />
               <ShareButton url={router.asPath} title={challenge.title}>
                 <ActionIcon variant="light" size="lg" color="gray">
                   <IconShare3 size={20} />
@@ -711,9 +718,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>
           <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
             <Stack gap="md">
-              {/* Cover Image */}
+              {/* w-full is load-bearing: `mx-auto` cancels the parent Stack's cross-axis stretch,
+                  so without a definite width the box is fit-content — and the blurred branch's only
+                  content is MediaHash's absolutely-positioned canvas, collapsing the cover to 0x0. */}
               {challenge.coverImage && (
-                <div className="relative mx-auto max-w-2xl overflow-hidden rounded-lg">
+                <div className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-lg">
                   <ImageGuard2 image={challenge.coverImage}>
                     {(safe) => (
                       <>
@@ -924,15 +933,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const challengeDetails: DescriptionTableProps['items'] = [
     {
       label: 'Starts',
-      value: (
-        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Ends',
-      value: (
-        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Max Entries',
@@ -1324,7 +1329,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   Generate
                 </Button>
                 {challenge.collectionId && (
-                  <SubmitEntryButton isOwner={isOwner} onClick={handleOpenSubmitModal} label="Submit" fullWidth />
+                  <SubmitEntryButton
+                    isOwner={isOwner}
+                    onClick={handleOpenSubmitModal}
+                    label="Submit"
+                    fullWidth
+                  />
                 )}
               </Group>
             </div>
@@ -1347,7 +1357,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                 Generate
               </Button>
               {challenge.collectionId && (
-                <SubmitEntryButton isOwner={isOwner} onClick={handleOpenSubmitModal} label="Submit" fullWidth />
+                <SubmitEntryButton
+                  isOwner={isOwner}
+                  onClick={handleOpenSubmitModal}
+                  label="Submit"
+                  fullWidth
+                />
               )}
             </>
           ) : challenge.status === ChallengeStatus.Completed ? (

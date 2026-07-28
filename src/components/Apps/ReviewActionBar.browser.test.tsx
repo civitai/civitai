@@ -105,6 +105,28 @@ describe('ReviewActionBar — approve', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  test('fires onActioned after a successful approve, before onClose (paging-reset symmetry)', async () => {
+    const order: string[] = [];
+    const onActioned = vi.fn(() => {
+      order.push('actioned');
+    });
+    const onClose = vi.fn(() => {
+      order.push('close');
+    });
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: PENDING, mode: 'pending' }}
+        onClose={onClose}
+        onActioned={onActioned}
+      />
+    );
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(onActioned).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // onActioned runs BEFORE the modal close so the queue is reset while still open.
+    expect(order).toEqual(['actioned', 'close']);
+  });
+
   test('an approve error surfaces via showErrorNotification and does NOT close', async () => {
     mocks.errorMode = true;
     const onClose = vi.fn();
@@ -142,6 +164,35 @@ describe('ReviewActionBar — reject reason gate', () => {
       publishRequestId: 'req-1',
       rejectionReason: 'needs changes',
     });
+  });
+
+  test('a successful reject also fires onActioned', async () => {
+    const onActioned = vi.fn();
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+        onActioned={onActioned}
+      />
+    );
+    await page.getByRole('button', { name: 'Reject…' }).click();
+    await page.getByTestId('apps-review-reject-reason').fill('needs changes');
+    await page.getByTestId('apps-review-reject-confirm').click();
+    expect(onActioned).toHaveBeenCalledTimes(1);
+  });
+
+  test('a FAILED approve does NOT fire onActioned (no stale paging reset on error)', async () => {
+    mocks.errorMode = true;
+    const onActioned = vi.fn();
+    renderWithProviders(
+      <ReviewActionBar
+        selection={{ request: PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+        onActioned={onActioned}
+      />
+    );
+    await page.getByRole('button', { name: 'Approve + build' }).click();
+    expect(onActioned).not.toHaveBeenCalled();
   });
 });
 

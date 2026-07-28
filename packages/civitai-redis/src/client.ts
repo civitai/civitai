@@ -1675,6 +1675,16 @@ export const REDIS_SYS_KEYS = {
      */
     SUBMISSIONS_RATE_LIMIT: 'system:blocks:submissions-rate-limit',
     /**
+     * Per-user (fallback per-IP) rate-limit counter for the PUBLIC app-catalog
+     * read (`/api/v1/apps` list + `/api/v1/apps/{slug}` detail). Same
+     * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
+     * created with its TTL), on `sysRedis`. Mirrors the 60/60 limit the tRPC
+     * marketplace procs carry, keyed on the authenticated user when a bearer is
+     * present and the client IP otherwise. Bounds a scripted crawler of the
+     * published-apps listing.
+     */
+    APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -1718,6 +1728,20 @@ export const REDIS_SYS_KEYS = {
      * absent for them (synthetic appBlockId), matching the txt2img caps.
      */
     CUSTOM_COMFY_SETTLE: 'system:blocks:custom-comfy-settle',
+    /**
+     * MOD REVIEW SANDBOX "run for real" (#2831) — AGGREGATE Buzz-spend ceiling
+     * for a moderator opting IN to run an UNAPPROVED review app for real against
+     * their OWN account. Keyed `${REVIEW_RUN_FOR_REAL_BUZZ_CAP}:<modUserId>:<publishRequestId>`
+     * so ALL run-for-real generations by one mod against one pending request
+     * accumulate against a SINGLE tight session ceiling (REVIEW_RUN_FOR_REAL_BUZZ_CAP)
+     * — a per-call budget alone can't bound a hostile app looping sub-budget calls
+     * (blocks.router.ts §aggregate-cap). The key intentionally binds to
+     * (mod, publishRequestId) NOT the token jti, so re-minting/re-confirming the
+     * consent CANNOT reset the ceiling within the window. Same atomic INCRBY
+     * reserve-and-refund + hard-TTL EX shape as the sibling BLOCKS caps, on
+     * `sysRedis`.
+     */
+    REVIEW_RUN_FOR_REAL_BUZZ_CAP: 'system:blocks:review-run-for-real-buzz-cap',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',

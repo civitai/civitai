@@ -21,6 +21,7 @@ import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconArchive,
   IconArrowsLeftRight,
+  IconBabyCarriage,
   IconBan,
   IconBolt,
   IconBookmark,
@@ -92,11 +93,9 @@ import { Gated } from '~/components/Gated/Gated';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
+import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
-import {
-  HIDDEN_METRIC_MESSAGE,
-  HiddenMetricNotice,
-} from '~/components/Model/HiddenMetricNotice';
+import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -249,6 +248,8 @@ export const getServerSideProps = createServerSideProps({
     //   }
     // }
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
       // Fetch the model first so we can short-circuit on slug mismatch before
       // doing any other prefetch work. Stale links from search results /
@@ -256,6 +257,12 @@ export const getServerSideProps = createServerSideProps({
       const model = await ssg.model.getById
         .fetch({ id, excludeTrainingData: true })
         .catch(() => null);
+
+      if (model)
+        gating = {
+          contentNsfwLevel: model.nsfwLevel,
+          nsfw: model.nsfw,
+        };
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (model) {
@@ -374,6 +381,7 @@ export const getServerSideProps = createServerSideProps({
 
     return {
       props: { id },
+      gating,
     };
   },
 });
@@ -1195,6 +1203,16 @@ export default function ModelDetailsV2({
                                     </Menu.Item>
                                   )}
                                 </ToggleLockModel>
+                                <ToggleMinorModel modelId={model.id} minor={model.minor}>
+                                  {({ onClick }) => (
+                                    <Menu.Item
+                                      leftSection={<IconBabyCarriage size={14} stroke={1.5} />}
+                                      onClick={onClick}
+                                    >
+                                      {model.minor ? 'Unset as Minor' : 'Set as Minor'}
+                                    </Menu.Item>
+                                  )}
+                                </ToggleMinorModel>
                                 <ToggleLockModelComments
                                   modelId={model.id}
                                   locked={model.meta?.commentsLocked}

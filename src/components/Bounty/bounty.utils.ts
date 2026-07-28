@@ -7,9 +7,7 @@ import * as z from 'zod';
 
 import { Currency, BountyEngagementType, BountyType } from '~/shared/utils/prisma/enums';
 import type {
-  CreateBountyInput,
   GetInfiniteBountySchema,
-  UpdateBountyInput,
   UpsertBountyInput,
 } from '~/server/schema/bounty.schema';
 import { trpc } from '~/utils/trpc';
@@ -262,41 +260,6 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
 
   const { toggle } = useBountyEngagement();
 
-  const createBountyMutation = trpc.bounty.create.useMutation({
-    async onSuccess({ id }) {
-      await toggle({ type: BountyEngagementType.Track, bountyId: id });
-      await queryUtils.bounty.getInfinite.invalidate();
-    },
-    onError(error) {
-      try {
-        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
-        const parsedError = JSON.parse(error.message);
-        showErrorNotification({
-          title: 'Failed to create bounty',
-          error: parsedError,
-        });
-      } catch (e) {
-        // Report old error as is:
-        showErrorNotification({
-          title: 'Failed to create bounty',
-          error: new Error(error.message),
-        });
-      }
-    },
-  });
-
-  const updateBountyMutation = trpc.bounty.update.useMutation({
-    async onSuccess(_, { id }) {
-      await queryUtils.bounty.getById.invalidate({ id });
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Failed to update bounty',
-        error: new Error(error.message),
-      });
-    },
-  });
-
   const upsertBountyMutation = trpc.bounty.upsert.useMutation({
     async onSuccess(result, payload) {
       if (payload.id) await queryUtils.bounty.getById.invalidate({ id: payload.id });
@@ -360,15 +323,6 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
     },
   });
 
-  const handleCreateBounty = (data: CreateBountyInput) => {
-    return createBountyMutation.mutateAsync(data);
-  };
-
-  const handleUpdateBounty = (data: UpdateBountyInput) => {
-    if (!bountyId) return;
-    return updateBountyMutation.mutateAsync({ ...data, id: bountyId });
-  };
-
   const handleDeleteBounty = () => {
     if (!bountyId) return;
     return deleteBountyMutation.mutateAsync({ id: bountyId });
@@ -384,10 +338,6 @@ export const useMutateBounty = (opts?: { bountyId?: number }) => {
   };
 
   return {
-    createBounty: handleCreateBounty,
-    creating: createBountyMutation.isPending,
-    updateBounty: handleUpdateBounty,
-    updating: updateBountyMutation.isPending,
     deleteBounty: handleDeleteBounty,
     deleting: deleteBountyMutation.isPending,
     refundBounty: handleRefundBounty,

@@ -198,6 +198,8 @@ export type ChallengeReviewCostType = "None" | "PerEntry" | "Flat";
 
 export type ChallengeIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
 
+export type ChallengeEngagementType = "Notify";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -608,6 +610,7 @@ export interface User {
   challengeWins?: ChallengeWinner[];
   challengeJudges?: ChallengeJudge[];
   challengeEventsCreated?: ChallengeEvent[];
+  challengeEngagements?: ChallengeEngagement[];
   rewardsBonusEventsCreated?: RewardsBonusEvent[];
   strikes?: UserStrike[];
   issuedStrikes?: UserStrike[];
@@ -3698,6 +3701,7 @@ export interface Challenge {
   winners?: ChallengeWinner[];
   threads?: Thread[];
   reports?: ChallengeReport[];
+  engagements?: ChallengeEngagement[];
   eventId: number | null;
   event?: ChallengeEvent | null;
 }
@@ -3740,6 +3744,15 @@ export interface ChallengeCategory {
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ChallengeEngagement {
+  userId: number;
+  user?: User;
+  challengeId: number;
+  challenge?: Challenge;
+  type: ChallengeEngagementType;
+  createdAt: Date;
 }
 
 export interface ChallengeWinner {

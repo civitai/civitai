@@ -8,7 +8,7 @@ import { getSupportUsImage } from '~/components/Ads/ads.utils';
 export function SupportUs({
   maxWidth = 300,
   maxHeight = 600,
-  className = 'flex',
+  className = 'flex justify-center',
 }: {
   maxWidth?: number;
   maxHeight?: number;

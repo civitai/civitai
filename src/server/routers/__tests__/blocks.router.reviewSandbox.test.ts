@@ -174,9 +174,19 @@ beforeEach(() => {
   mockTeardownPreview.mockResolvedValue({ publishRequestId: PUBREQ, tornDown: true });
   mockListActivePreviews.mockReset();
   mockListActivePreviews.mockResolvedValue({ cap: 5, active: [] });
+  // sysRedis powers the run-for-real mint rate limiter — reset call history + a
+  // benign default so per-test call-count assertions are deterministic.
+  mockSysRedis.incrBy.mockReset();
+  mockSysRedis.incrBy.mockResolvedValue(1);
+  mockSysRedis.expire.mockReset();
+  mockSysRedis.expire.mockResolvedValue(true);
+  mockSysRedis.ttl.mockReset();
+  mockSysRedis.ttl.mockResolvedValue(-1);
   mockMintReviewBlockToken.mockReset();
   mockMintReviewBlockToken.mockResolvedValue({
     token: 'review.jwt',
+    runForReal: false,
+    buzzCap: null,
     expiresAt: '2099-01-01T00:00:00Z',
     scopes: ['models:read:self', 'user:read:self'],
     domain: null,
@@ -259,7 +269,7 @@ describe('blocks.getReviewStatus', () => {
 });
 
 describe('blocks.mintReviewBlockToken', () => {
-  it('moderator + flags on: mints with the SERVER-derived mod id (self-bound)', async () => {
+  it('moderator + flags on: mints render-only (runForReal defaults false) with the SERVER-derived mod id (self-bound)', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const res = await caller.mintReviewBlockToken({ publishRequestId: PUBREQ });
     expect(res.token).toBe('review.jwt');
@@ -267,7 +277,58 @@ describe('blocks.mintReviewBlockToken', () => {
     expect(mockMintReviewBlockToken).toHaveBeenCalledWith({
       publishRequestId: PUBREQ,
       modUserId: 1, // SERVER-derived, never client-supplied
+      runForReal: false, // schema default — render-only
     });
+    // The render-only mint is NOT rate-limited (only the run-for-real opt-in is).
+    expect(mockSysRedis.incrBy).not.toHaveBeenCalled();
+  });
+
+  it('runForReal:true passes the flag through + rate-limit ALLOWS under the window', async () => {
+    mockSysRedis.incrBy.mockResolvedValue(1); // first mint in the window
+    mockMintReviewBlockToken.mockResolvedValue({
+      token: 'review.rfr.jwt',
+      expiresAt: '2099-01-01T00:00:00Z',
+      scopes: ['ai:write:budgeted', 'user:read:self'],
+      domain: null,
+      maxBrowsingLevel: 1,
+      blockId: 'my-app',
+      appId: `pending-${PUBREQ}`,
+      appBlockId: PUBREQ,
+      blockInstanceId: `page_${PUBREQ}`,
+      appName: 'My App',
+      sandbox: 'allow-scripts',
+      runForReal: true,
+      buzzCap: 5000,
+    });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const res = await caller.mintReviewBlockToken({ publishRequestId: PUBREQ, runForReal: true });
+    expect(res.token).toBe('review.rfr.jwt');
+    expect(res.runForReal).toBe(true);
+    expect(res.buzzCap).toBe(5000);
+    expect(mockMintReviewBlockToken).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1,
+      runForReal: true,
+    });
+    // The run-for-real opt-in IS rate-limited (one reservation counted).
+    expect(mockSysRedis.incrBy).toHaveBeenCalledTimes(1);
+  });
+
+  it('runForReal:true is REJECTED (TOO_MANY_REQUESTS) once the mint rate limit is exceeded — service NOT reached', async () => {
+    mockSysRedis.incrBy.mockResolvedValue(999); // over the per-mod window cap
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(
+      caller.mintReviewBlockToken({ publishRequestId: PUBREQ, runForReal: true })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockMintReviewBlockToken).not.toHaveBeenCalled();
+  });
+
+  it('non-moderator with runForReal:true: UNAUTHORIZED, never rate-limited, service NOT reached', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
+    await expect(
+      caller.mintReviewBlockToken({ publishRequestId: PUBREQ, runForReal: true })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockMintReviewBlockToken).not.toHaveBeenCalled();
   });
 
   it('non-moderator: UNAUTHORIZED, service NOT reached', async () => {

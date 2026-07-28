@@ -19,7 +19,11 @@ const { mockDbRead, mockDbWrite, mockValidator } = vi.hoisted(() => {
   const dbWrite = {
     appBlock: { upsert: vi.fn() },
   };
-  const validator = { validate: vi.fn(() => ({ valid: true })) };
+  // The handler now calls the async submission gate (validate + settings-pattern
+  // ReDoS check). Point validateSubmission at the SAME fn as validate so existing
+  // `mockValidator.validate.mockReturnValue(...)` overrides drive both.
+  const validate = vi.fn(() => ({ valid: true }));
+  const validator = { validate, validateSubmission: validate };
   return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockValidator: validator };
 });
 

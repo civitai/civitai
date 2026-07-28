@@ -716,8 +716,10 @@ export function filterPreferences<
         const isOwner = challenge.createdById === currentUser?.id;
         if (isOwner || isModerator) return true;
 
-        // Content allowed by the challenge must intersect the user's browsing level
-        if (!Flags.intersects(challenge.allowedNsfwLevel, browsingLevel)) {
+        // The challenge's own rating — the highest level its `allowedNsfwLevel` permits — must
+        // intersect the user's browsing level. Intersecting `allowedNsfwLevel` itself is too loose:
+        // it's a multi-bit mask, so an R challenge that also allows PG would pass for a PG viewer.
+        if (!Flags.intersects(challenge.nsfwLevel, browsingLevel)) {
           hidden.browsingLevel++;
           return false;
         }

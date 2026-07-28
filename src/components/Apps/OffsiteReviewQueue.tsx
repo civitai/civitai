@@ -18,6 +18,7 @@ import {
   Text,
   Textarea,
   ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -26,10 +27,17 @@ import {
   IconExternalLink,
   IconFlag,
   IconHistory,
+  IconInfoCircle,
   IconQuestionMark,
   IconX,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
+import {
+  buildListingCardPreview,
+  buildListingDetailPreview,
+} from '~/components/Apps/reviewListingPreview';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import {
   ReasonGatedActionModal,
@@ -78,6 +86,12 @@ type OffsiteUser = { id: number; username: string | null; image: string | null }
 
 export type OffsitePendingRow = {
   id: string;
+  /** Listing-revision SOURCE kind. `'offsite'` (default) = an external-link/connect
+   *  listing revision; `'onsite'` = an on-site listing-MEDIA revision (shadow assets
+   *  changed on a first-class on-site app). The modal renders kind-aware: an on-site
+   *  row shows a "listing media" header + a cap-at-app-rating content review (media
+   *  must NOT exceed the app's rating) instead of the offsite auto-derive floor. */
+  kind?: 'onsite' | 'offsite';
   appListingId: string | null;
   slug: string;
   status: string;
@@ -240,16 +254,98 @@ export function OffsiteReviewQueue() {
   );
 }
 
+/**
+ * Thin outer shell — owns the Mantine `<Modal>` (kept mounted + `opened`-toggled so
+ * open/close animates) + the static per-request title, and derives the in-flight
+ * close-guard from a `busyRef` the body writes. The interactive body is a SEPARATE
+ * component keyed on `request.id` so it REMOUNTS per request (deterministically
+ * resetting its approve/reject UI state — mirrors `OnsiteReviewModal`). The body is
+ * exported so the combined code+media review surface can re-host it WITHOUT this
+ * `<Modal>` shell.
+ */
 export function OffsiteReviewModal({
   request,
   onClose,
   onActioned,
+  readOnly = false,
+}: {
+  request: OffsitePendingRow | null;
+  onClose: () => void;
+  onActioned?: () => void | Promise<void>;
+  readOnly?: boolean;
+}) {
+  const busyRef = useRef(false);
+  const isOnsite = request?.kind === 'onsite';
+  return (
+    <Modal
+      opened={!!request}
+      onClose={() => {
+        if (busyRef.current) return;
+        onClose();
+      }}
+      title={
+        request ? (
+          <Group gap={6}>
+            <Text fw={600}>{request.slug}</Text>
+            <Badge
+              color={isOnsite ? 'teal' : 'grape'}
+              size="sm"
+              variant="light"
+              data-testid="apps-offsite-kind-badge"
+            >
+              {isOnsite ? 'listing media' : 'external'}
+            </Badge>
+          </Group>
+        ) : null
+      }
+      size="lg"
+      centered
+    >
+      {request && (
+        <OffsiteReviewModalBody
+          key={request.id}
+          request={request}
+          onClose={onClose}
+          onActioned={onActioned}
+          readOnly={readOnly}
+          busyRef={busyRef}
+        />
+      )}
+    </Modal>
+  );
+}
+
+/**
+ * Interactive off-site / listing-media review BODY (icon/cover/screenshot assets +
+ * scan status + content review + the listing PREVIEW + approve/reject). Extracted
+ * from the modal shell so BOTH the standalone modal and the combined code+media
+ * review surface render the exact same controls + mutations from one source. Keyed
+ * by its callers on `request.id` so its transient state resets per request.
+ *
+ * `busyRef` (optional) is written each render so a hosting modal shell can refuse an
+ * in-flight close (the pre-split close-guard); the combined surface uses it too.
+ */
+export function OffsiteReviewModalBody({
+  request,
+  onClose,
+  onActioned,
+  readOnly = false,
+  busyRef,
 }: {
   request: OffsitePendingRow | null;
   onClose: () => void;
   /** Fired after a successful approve/reject — lets a host (e.g. the mod
    *  management table) invalidate its own query in addition to the review queues. */
   onActioned?: () => void | Promise<void>;
+  /** History-tab (Approved/Rejected) posture: HIDE the Approve.../Reject... action
+   *  buttons so the body is a read-only detail view (an already-decided request
+   *  errors `NOT_PENDING` server-side — the buttons are misleading). Matches the
+   *  on-site history read-only view. Purely presentational: it only conditionally
+   *  RENDERS the buttons; the approve/reject handlers are unchanged. Default false so
+   *  the Pending tab + the mgmt table's pending Review keep full actions. */
+  readOnly?: boolean;
+  /** Modal-shell close-guard ref, written each render with the in-flight state. */
+  busyRef?: { current: boolean };
 }) {
   const utils = trpc.useUtils();
   const features = useFeatureFlags();
@@ -328,11 +424,31 @@ export function OffsiteReviewModal({
   const derivedRating = deriveContentRatingFromAssets(
     assetLevels.map((nsfwLevel) => ({ nsfwLevel: nsfwLevel ?? null }))
   );
+  // On-site listing-MEDIA revision: reviewed by this same shadow-asset + content
+  // modal, but the rating discipline INVERTS. For an offsite listing the declared
+  // rating is a FLOOR the assets must meet (rate UP; the server floors an under-
+  // rating to the derived value). For an on-site revision the app's rating is a CAP
+  // the media must NOT EXCEED — assets more mature than the app's rating are a
+  // mod-REJECT reason, not an auto-derive. Both surface the same `ratingExceeds`
+  // comparison; only the copy + the approve default differ.
+  const isOnsite = request.kind === 'onsite';
   const declaredRating = request.appListing?.contentRating ?? null;
-  const ratingMismatch =
+  // The app's rating (the CAP for an on-site media revision), narrowed to a valid
+  // enum value; null when unknown/invalid.
+  const appRating: OffsiteContentRating | null =
+    declaredRating != null &&
+    (OFFSITE_CONTENT_RATINGS as readonly string[]).includes(declaredRating)
+      ? (declaredRating as OffsiteContentRating)
+      : null;
+  const ratingExceeds =
     !assetsQuery.isLoading &&
     nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(declaredRating);
-  const selectedRating: OffsiteContentRating = ratingOverride ?? derivedRating;
+  // Keep the offsite name for the unchanged offsite paths below.
+  const ratingMismatch = ratingExceeds;
+  // Onsite approve defaults to the app's rating (the cap — media inherits it); the
+  // offsite approve defaults to the derived floor. Either way the mod may override.
+  const defaultRating: OffsiteContentRating = isOnsite ? appRating ?? derivedRating : derivedRating;
+  const selectedRating: OffsiteContentRating = ratingOverride ?? defaultRating;
 
   // OAuth-CONNECT sub-kind (PR3): render the requested-scope panel + the sensitive-
   // justification checklist item only when the listing is a connect listing.
@@ -341,6 +457,9 @@ export function OffsiteReviewModal({
 
   const checklist = getOffsiteReviewChecklist({
     name: request.appListing?.name,
+    // On-site listing-media revisions have no external URL by design — thread the
+    // row's kind so the checklist omits the `url-https` item (no false warn).
+    kind: request.kind,
     externalUrl: request.appListing?.externalUrl,
     hasIcon,
     hasCover,
@@ -352,27 +471,56 @@ export function OffsiteReviewModal({
     connectScopeJustifications: request.appListing?.connectScopeJustifications ?? null,
   });
 
-  const assetsIncomplete = !assetsQuery.isLoading && (!hasIcon || !hasCover || screenshotCount < 1);
+  // Publish FLOOR = icon + cover (screenshots optional). Below-floor BLOCKS approve
+  // (the server floor gate rejects it); missing screenshots is only ADVISORY — the
+  // mod can approve, screenshots can be added later. Surface WHICH assets are
+  // missing so the mod approves with eyes open.
+  const missingFloor = !assetsQuery.isLoading
+    ? [!hasIcon ? 'icon' : null, !hasCover ? 'cover' : null].filter((v): v is string => v != null)
+    : [];
+  const belowFloor = missingFloor.length > 0;
+  const missingScreenshotsOnly =
+    !assetsQuery.isLoading && !belowFloor && screenshotCount < 1;
+
+  // Scan-clean dimension (Item 1): the go-live `assertAssetsScanClean` gate refuses
+  // to approve until EVERY attached asset is terminally `Scanned` (none pending, none
+  // `Blocked`). Surface per-asset scan status + WHY approve is blocked so the mod
+  // isn't left guessing when the server rejects an approve. Read from the extended
+  // getAssets projection.
+  const assetsData = assetsQuery.data as
+    | {
+        iconScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
+        coverScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
+        screenshots?: { scanStatus?: 'scanned' | 'pending' | 'blocked' | null }[];
+        hasBlockedAsset?: boolean;
+        hasPendingScan?: boolean;
+      }
+    | undefined;
+  const blockedScanKinds = [
+    assetsData?.iconScanStatus === 'blocked' ? 'icon' : null,
+    assetsData?.coverScanStatus === 'blocked' ? 'cover' : null,
+    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'blocked') ? 'screenshots' : null,
+  ].filter((v): v is string => v != null);
+  const pendingScanKinds = [
+    assetsData?.iconScanStatus === 'pending' ? 'icon' : null,
+    assetsData?.coverScanStatus === 'pending' ? 'cover' : null,
+    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'pending') ? 'screenshots' : null,
+  ].filter((v): v is string => v != null);
+  const hasBlockedAsset = !assetsQuery.isLoading && (assetsData?.hasBlockedAsset ?? false);
+  const hasPendingScan = !assetsQuery.isLoading && (assetsData?.hasPendingScan ?? false);
+
+  // Publish the in-flight state to a hosting modal shell so its onClose can guard
+  // on it (written during render so it is current by the time a close fires).
+  if (busyRef) busyRef.current = busy;
 
   return (
-    <Modal
-      opened={!!request}
-      onClose={() => {
-        if (busy) return;
-        close();
-      }}
-      title={
-        <Group gap={6}>
-          <Text fw={600}>{request.slug}</Text>
-          <Badge color="grape" size="sm" variant="light">
-            external
-          </Badge>
-        </Group>
-      }
-      size="lg"
-      centered
-    >
-      <Stack gap="md">
+    <Stack gap="md">
+        {isOnsite && (
+          <Text size="xs" c="dimmed" data-testid="apps-offsite-onsite-note">
+            Listing media update — the on-site app’s media (icon / cover / screenshots)
+            changed. Content-only review; the media must not exceed the app’s rating.
+          </Text>
+        )}
         <Group gap="xs">
           <Text size="xs" c="dimmed">
             Submitter:
@@ -436,7 +584,7 @@ export function OffsiteReviewModal({
                     {request.appListing.contentRating}
                   </Badge>
                   <Text size="xs" c="dimmed">
-                    declared
+                    {isOnsite ? 'app rating (cap)' : 'declared'}
                   </Text>
                 </Group>
               )}
@@ -468,6 +616,8 @@ export function OffsiteReviewModal({
             )}
           </Stack>
         </Card>
+
+        <ListingPreviewSection request={request} />
 
         {isConnect && (
           <ConnectScopesPanel
@@ -511,11 +661,62 @@ export function OffsiteReviewModal({
           </List>
         </Stack>
 
-        {assetsIncomplete && (
-          <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={16} />}>
+        {belowFloor && (
+          <Alert
+            color="red"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            data-testid="apps-offsite-assets-below-floor"
+          >
             <Text size="sm">
-              Assets are incomplete — approve will be rejected by the server until an icon, a cover
-              and ≥1 screenshot are attached.
+              Missing: {missingFloor.join(', ')}. Approve will be rejected by the server until an
+              icon and cover are attached (screenshots are optional).
+            </Text>
+          </Alert>
+        )}
+
+        {missingScreenshotsOnly && (
+          <Alert
+            color="blue"
+            variant="light"
+            icon={<IconInfoCircle size={16} />}
+            data-testid="apps-offsite-assets-missing-screenshots"
+          >
+            <Text size="sm">
+              Missing: screenshots. This is optional — you can approve now; the author can add
+              screenshots later.
+            </Text>
+          </Alert>
+        )}
+
+        {hasBlockedAsset && (
+          <Alert
+            color="red"
+            variant="light"
+            icon={<IconAlertTriangle size={16} />}
+            data-testid="apps-offsite-assets-scan-blocked"
+          >
+            <Text size="sm">
+              Blocked media: {blockedScanKinds.join(', ')}. This media was rejected during scanning
+              (prohibited content). Approve will be rejected by the server until the author replaces
+              it — reject this submission and ask them to swap the blocked {blockedScanKinds.join(
+                ', '
+              )}
+              .
+            </Text>
+          </Alert>
+        )}
+
+        {!hasBlockedAsset && hasPendingScan && (
+          <Alert
+            color="yellow"
+            variant="light"
+            icon={<IconInfoCircle size={16} />}
+            data-testid="apps-offsite-assets-scan-pending"
+          >
+            <Text size="sm">
+              Still scanning: {pendingScanKinds.join(', ')}. Approve will be rejected by the server
+              until every asset finishes scanning cleanly — wait a moment and retry.
             </Text>
           </Alert>
         )}
@@ -527,15 +728,24 @@ export function OffsiteReviewModal({
             icon={<IconAlertTriangle size={16} />}
             data-testid="apps-offsite-rating-mismatch"
           >
-            <Text size="sm">
-              Assets contain higher-maturity content ({derivedRating}) than the declared rating (
-              {declaredRating ?? '—'}). The final rating defaults to the detected value; rate it at
-              least that high.
-            </Text>
+            {isOnsite ? (
+              <Text size="sm">
+                Media assets are rated higher ({derivedRating}) than the app’s rating (
+                {declaredRating ?? '—'}). Listing media must not exceed the app’s rating — reject
+                this revision or ask the author to trim the over-rated assets.
+              </Text>
+            ) : (
+              <Text size="sm">
+                Assets contain higher-maturity content ({derivedRating}) than the declared rating (
+                {declaredRating ?? '—'}). The final rating defaults to the detected value; rate it at
+                least that high.
+              </Text>
+            )}
           </Alert>
         )}
 
-        {actionMode === 'reject' ? (
+        {!readOnly &&
+          (actionMode === 'reject' ? (
           <Stack gap="xs">
             <ReasonGatedField
               value={rejectionReason}
@@ -571,7 +781,11 @@ export function OffsiteReviewModal({
           <Stack gap="xs">
             <Select
               label="Final content rating"
-              description="Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save."
+              description={
+                isOnsite
+                  ? 'Defaults to the app’s rating (the cap). Listing media must not exceed the app’s rating; assets rated higher are a reject reason.'
+                  : 'Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save.'
+              }
               data={OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r }))}
               value={selectedRating}
               onChange={(v) => setRatingOverride((v as OffsiteContentRating) ?? null)}
@@ -626,19 +840,83 @@ export function OffsiteReviewModal({
             >
               Reject…
             </Button>
-            <Button
-              color="green"
-              leftSection={<IconCheck size={14} />}
-              onClick={() => setActionMode('approve')}
-              disabled={busy}
-              data-testid="apps-offsite-approve-open"
+            <Tooltip
+              label={
+                hasBlockedAsset
+                  ? 'Blocked media must be replaced before this can be approved.'
+                  : 'Media is still scanning — approve once every asset finishes scanning.'
+              }
+              disabled={!hasBlockedAsset && !hasPendingScan}
+              withArrow
             >
-              Approve…
-            </Button>
+              {/* Disable Approve when the go-live scan-clean gate would reject it, so a
+                  mod click doesn't just eat a server BAD_REQUEST. The server gate stays
+                  authoritative — this is UX only. */}
+              <Button
+                color="green"
+                leftSection={<IconCheck size={14} />}
+                onClick={() => setActionMode('approve')}
+                disabled={busy || hasBlockedAsset || hasPendingScan}
+                data-testid="apps-offsite-approve-open"
+              >
+                Approve…
+              </Button>
+            </Tooltip>
           </Group>
-        )}
+          ))}
       </Stack>
-    </Modal>
+  );
+}
+
+/**
+ * Store PREVIEW of the pending listing — the grid CARD + the store DETAIL as a
+ * shopper would see them once approved, showing the app's REAL media. It reads the
+ * mod-only `appListings.getListingPreviewForReview` projection (the SHADOW listing's
+ * icon / cover / ordered screenshots + name / tagline / description / category /
+ * content-rating / creator, projected with the SAME image→CDN-URL derivation as the
+ * public store detail). `AppListingDetailBody` runs in read-only `preview` mode (no
+ * comments / reviews / report / primary-action / owner-edit).
+ *
+ * GRACEFUL FALLBACK: while the projection query is loading, errors, or the row has
+ * no backing listing id, it renders a placeholder-art LAYOUT preview built from the
+ * row via the pure `reviewListingPreview` builders — so the review surface never
+ * crashes or blanks.
+ */
+function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
+  const features = useFeatureFlags();
+  // Mod-only projection of the SHADOW listing's real media + scalars. Enabled only
+  // once a row with a backing listing id is open.
+  const previewQuery = trpc.appListings.getListingPreviewForReview.useQuery(
+    { listingId: request.appListingId ?? '' },
+    { enabled: !!features?.appBlocks && !!request.appListingId, retry: false }
+  );
+  // Prefer the real projected media; fall back to the placeholder-art layout preview
+  // from the row while loading / on error / when there's no listing id.
+  const card = previewQuery.data?.card ?? buildListingCardPreview(request);
+  const detail = previewQuery.data?.detail ?? buildListingDetailPreview(request);
+  return (
+    <Stack gap="xs" data-testid="apps-listing-preview">
+      <Divider
+        label={
+          <Group gap={6}>
+            <IconInfoCircle size={14} />
+            <Text size="sm" fw={600}>
+              Listing preview
+            </Text>
+          </Group>
+        }
+        labelPosition="left"
+      />
+      <Text size="xs" c="dimmed">
+        Listing preview — how it will appear in the store once approved.
+      </Text>
+      <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
+        <AppListingCard card={card} />
+      </div>
+      <Card withBorder p="md" data-testid="apps-listing-preview-detail">
+        <AppListingDetailBody detail={detail} preview />
+      </Card>
+    </Stack>
   );
 }
 

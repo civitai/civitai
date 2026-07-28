@@ -277,17 +277,71 @@ describe('manifestSettingsSchema — string cross-field', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts valid RegExp pattern', () => {
+  it('accepts valid RegExp pattern (with max_length)', () => {
     const result = manifestSettingsSchema.safeParse({
       s: {
         scope: 'publisher',
         type: 'string',
         label: 'L',
         description: 'D',
-        pattern: '^[a-z]+$',
+        pattern: '^[a-z0-9-]+$',
+        max_length: 64,
       },
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('manifestSettingsSchema — pattern is COMPILE-CHECK ONLY at this layer (F3 fail-open guard)', () => {
+  // This meta-schema is consumed via `.safeParse()` on the install/save paths,
+  // and a `success:false` there SKIPS all field validation
+  // (`parsed.success ? validateBlockSettings(...) : rawInput`). So it must NOT
+  // reject on pattern SHAPE beyond "does it compile" — the ReDoS + max_length
+  // gate lives at submission time (BlockManifestValidator.validateSubmission).
+  // These assertions lock that in: over-rejecting here would silently disable
+  // type/enum/range validation for previously-accepted manifests.
+
+  it('ACCEPTS a patterned field with NO max_length (does not fail-open)', () => {
+    const result = manifestSettingsSchema.safeParse({
+      s: { scope: 'publisher', type: 'string', label: 'L', description: 'D', pattern: '^[a-z]+$' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it.each([
+    ['^[a-z0-9]+(-[a-z0-9]+)*$', 'canonical slug'],
+    ['^\\d{1,4}(\\.\\d{1,2})?$', 'decimal'],
+    ['^[a-z0-9]+(_[a-z0-9]+)*$', 'snake_case'],
+    ['(a+)+$', 'an exponential pattern (submission gate rejects it, not this schema)'],
+  ])('ACCEPTS the compiling pattern %s (%s) so field validation still runs', (pattern) => {
+    const result = manifestSettingsSchema.safeParse({
+      s: {
+        scope: 'publisher',
+        type: 'string',
+        label: 'L',
+        description: 'D',
+        pattern,
+        max_length: 64,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('still rejects a non-compiling pattern (unchanged behavior)', () => {
+    const result = manifestSettingsSchema.safeParse({
+      s: {
+        scope: 'publisher',
+        type: 'string',
+        label: 'L',
+        description: 'D',
+        pattern: '(unclosed',
+        max_length: 64,
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toMatch(/not a valid RegExp source/);
+    }
   });
 });
 

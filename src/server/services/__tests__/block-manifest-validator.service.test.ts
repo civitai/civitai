@@ -757,4 +757,67 @@ describe('BlockManifestValidator', () => {
       }
     });
   });
+
+  // SUBMISSION gate: validateSubmission = the synchronous shape/security checks
+  // PLUS the accurate ReDoS + input-bound gate on settings-field patterns. This
+  // is what every manifest-SUBMISSION path calls (git-push webhook, developer
+  // API, blocks.updateManifest, publish-request approve).
+  describe('validateSubmission — settings pattern ReDoS gate', () => {
+    const withSettings = (settings: Record<string, unknown>) => ({ ...VALID_MANIFEST, settings });
+    const stringField = (extra: Record<string, unknown>) => ({
+      scope: 'publisher',
+      type: 'string',
+      widget: 'text',
+      label: 'L',
+      description: 'D',
+      ...extra,
+    });
+
+    it('accepts a normal manifest with no settings', async () => {
+      expect(await BlockManifestValidator.validateSubmission(VALID_MANIFEST, APP_CTX)).toEqual({
+        valid: true,
+      });
+    });
+
+    it.each([
+      ['^[a-z0-9]+(-[a-z0-9]+)*$', 'slug'],
+      ['^\\d{1,4}(\\.\\d{1,2})?$', 'decimal'],
+      ['^[a-z0-9]+(_[a-z0-9]+)*$', 'snake_case'],
+    ])('accepts a safe patterned field (%s)', async (pattern) => {
+      const manifest = withSettings({ f: stringField({ pattern, max_length: 64 }) });
+      expect(await BlockManifestValidator.validateSubmission(manifest, APP_CTX)).toEqual({
+        valid: true,
+      });
+    });
+
+    it('rejects an exponential (ReDoS) pattern with a dev-facing error', async () => {
+      const manifest = withSettings({ evil: stringField({ pattern: '(a+)+$', max_length: 64 }) });
+      const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => /settings\.evil.*ReDoS/i.test(e))).toBe(true);
+      }
+    });
+
+    it('rejects a patterned field that omits max_length', async () => {
+      const manifest = withSettings({ code: stringField({ pattern: '^[a-z]+$' }) });
+      const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => /must also declare "max_length"/.test(e))).toBe(true);
+      }
+    });
+
+    it('merges base (shape) errors with settings-pattern errors', async () => {
+      // bad blockId (base error) AND a ReDoS pattern (settings error) at once.
+      const manifest = withSettings({ evil: stringField({ pattern: '(a+)+$', max_length: 64 }) });
+      manifest.blockId = 'Bad_Id';
+      const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('blockId'))).toBe(true);
+        expect(result.errors.some((e) => /settings\.evil.*ReDoS/i.test(e))).toBe(true);
+      }
+    });
+  });
 });

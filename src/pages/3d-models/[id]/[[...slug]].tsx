@@ -79,9 +79,7 @@ import { trpc } from '~/utils/trpc';
 // Dynamic, ssr-disabled import — three.js needs WebGL which only exists in the browser.
 const Model3DVariantViewer = dynamic(
   () =>
-    import('~/components/Model3D/Viewer/Model3DVariantViewer').then(
-      (m) => m.Model3DVariantViewer
-    ),
+    import('~/components/Model3D/Viewer/Model3DVariantViewer').then((m) => m.Model3DVariantViewer),
   {
     ssr: false,
     loading: () => (
@@ -103,14 +101,23 @@ const querySchema = z.object({
 });
 
 export const getServerSideProps = createServerSideProps({
+  useSSG: true,
   useSession: true,
-  resolver: async ({ ctx, features }) => {
+  resolver: async ({ ctx, ssg, features }) => {
     // Gate at SSR — avoids a flash of <NotFound /> while FeatureFlagsProvider's
     // user-features tRPC query is still in flight on the client.
     if (!features?.model3dFeed) return { notFound: true };
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
-    return { props: removeEmpty(result.data) };
+
+    // Client-fetched previously; without this the page SSRs a loader with no <Gated> mounted,
+    // shipping an ad slot in the HTML.
+    const model3d = await ssg?.model3d.getById.fetch({ id: result.data.id }).catch(() => null);
+
+    return {
+      props: removeEmpty(result.data),
+      gating: model3d ? { contentNsfwLevel: model3d.nsfwLevel ?? 0 } : undefined,
+    };
   },
 });
 
@@ -186,8 +193,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     if (primaryFile && !selectedFileKey) setSelectedFileKey(getFileKey(primaryFile));
   }, [primaryFile, selectedFileKey]);
 
-  const selectedFile =
-    files.find((f) => getFileKey(f) === selectedFileKey) ?? primaryFile ?? null;
+  const selectedFile = files.find((f) => getFileKey(f) === selectedFileKey) ?? primaryFile ?? null;
 
   const handleDownload = () => {
     if (!selectedFile?.downloadUrl) {
@@ -314,8 +320,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   // on walking/running play automatically via the viewer's AnimationMixer.
   const viewableVariants: Model3DViewableVariant[] = files
     .filter(
-      (f) =>
-        f.format.toLowerCase() === 'glb' && !(f.variant ?? 'primary').endsWith('-armature')
+      (f) => f.format.toLowerCase() === 'glb' && !(f.variant ?? 'primary').endsWith('-armature')
     )
     .map((f) => ({
       key: getFileKey(f),
@@ -568,167 +573,159 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </Card>
             );
 
-            const detailsBlock = (hasGenerationData || reviewSummary) ? (
-                  <Accordion
-                    variant="separated"
-                    multiple
-                    defaultValue={['details']}
-                    styles={(t) => ({
-                      content: { padding: 0 },
-                      label: { padding: 0 },
-                      item: {
-                        overflow: 'hidden',
-                        borderColor:
-                          colorScheme === 'dark' ? t.colors.dark[4] : t.colors.gray[3],
-                        boxShadow: t.shadows.sm,
-                      },
-                      control: {
-                        padding: t.spacing.sm,
-                        gap: t.spacing.md,
-                      },
-                    })}
-                  >
-                    <Accordion.Item value="details">
-                      <Accordion.Control>
-                        <Group justify="space-between">
-                          Details
-                          <Button
-                            size="compact-xs"
-                            variant="light"
-                            leftSection={<IconWand size={12} />}
-                            onClick={(e: React.MouseEvent) => {
-                              e.stopPropagation();
-                              openReviewModal();
-                            }}
-                          >
-                            Write a review
-                          </Button>
-                        </Group>
-                      </Accordion.Control>
-                      <Accordion.Panel p={0}>
-                        <Stack
-                          gap={0}
-                          style={{
-                            backgroundColor:
-                              colorScheme === 'dark' ? '#1f2023' : theme.colors.gray[0],
+            const detailsBlock =
+              hasGenerationData || reviewSummary ? (
+                <Accordion
+                  variant="separated"
+                  multiple
+                  defaultValue={['details']}
+                  styles={(t) => ({
+                    content: { padding: 0 },
+                    label: { padding: 0 },
+                    item: {
+                      overflow: 'hidden',
+                      borderColor: colorScheme === 'dark' ? t.colors.dark[4] : t.colors.gray[3],
+                      boxShadow: t.shadows.sm,
+                    },
+                    control: {
+                      padding: t.spacing.sm,
+                      gap: t.spacing.md,
+                    },
+                  })}
+                >
+                  <Accordion.Item value="details">
+                    <Accordion.Control>
+                      <Group justify="space-between">
+                        Details
+                        <Button
+                          size="compact-xs"
+                          variant="light"
+                          leftSection={<IconWand size={12} />}
+                          onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation();
+                            openReviewModal();
                           }}
                         >
-                          {/* Reviews row */}
+                          Write a review
+                        </Button>
+                      </Group>
+                    </Accordion.Control>
+                    <Accordion.Panel p={0}>
+                      <Stack
+                        gap={0}
+                        style={{
+                          backgroundColor:
+                            colorScheme === 'dark' ? '#1f2023' : theme.colors.gray[0],
+                        }}
+                      >
+                        {/* Reviews row */}
+                        <Group
+                          justify="space-between"
+                          px="md"
+                          py={10}
+                          style={{
+                            borderBottom: `1px solid ${
+                              colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+                            }`,
+                          }}
+                        >
+                          <Text size="sm" c="dimmed">
+                            Reviews
+                          </Text>
+                          {recommendPct !== null ? (
+                            <Anchor
+                              component={Link}
+                              href={`/3d-models/${id}/reviews`}
+                              underline="hover"
+                            >
+                              <Group gap={6} wrap="nowrap" align="center">
+                                {recommendPct >= 50 ? (
+                                  <IconThumbUp size={14} />
+                                ) : (
+                                  <IconThumbDown size={14} />
+                                )}
+                                <Text size="sm" fw={500}>
+                                  {sentimentLabel(recommendPct, ratingCount)}
+                                </Text>
+                                <Badge size="sm" variant="light" color="gray">
+                                  {recommendPct}% · {abbreviateNumber(ratingCount)}
+                                </Badge>
+                              </Group>
+                            </Anchor>
+                          ) : (
+                            <Anchor component={Link} href={`/3d-models/${id}/reviews`} size="sm">
+                              No reviews yet
+                            </Anchor>
+                          )}
+                        </Group>
+
+                        {model3d.sourceImage && (
                           <Group
+                            align="flex-start"
                             justify="space-between"
                             px="md"
                             py={10}
                             style={{
                               borderBottom: `1px solid ${
-                                colorScheme === 'dark'
-                                  ? theme.colors.dark[4]
-                                  : theme.colors.gray[3]
+                                colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
                               }`,
                             }}
                           >
                             <Text size="sm" c="dimmed">
-                              Reviews
+                              Source image
                             </Text>
-                            {recommendPct !== null ? (
-                              <Anchor
-                                component={Link}
-                                href={`/3d-models/${id}/reviews`}
-                                underline="hover"
-                              >
-                                <Group gap={6} wrap="nowrap" align="center">
-                                  {recommendPct >= 50 ? (
-                                    <IconThumbUp size={14} />
-                                  ) : (
-                                    <IconThumbDown size={14} />
-                                  )}
-                                  <Text size="sm" fw={500}>
-                                    {sentimentLabel(recommendPct, ratingCount)}
-                                  </Text>
-                                  <Badge size="sm" variant="light" color="gray">
-                                    {recommendPct}% · {abbreviateNumber(ratingCount)}
-                                  </Badge>
-                                </Group>
-                              </Anchor>
-                            ) : (
-                              <Anchor
-                                component={Link}
-                                href={`/3d-models/${id}/reviews`}
-                                size="sm"
-                              >
-                                No reviews yet
-                              </Anchor>
-                            )}
+                            <Link
+                              href={`/images/${model3d.sourceImage.id}`}
+                              className="block w-[120px] overflow-hidden rounded-md border border-solid border-dark-4"
+                            >
+                              <EdgeMedia
+                                src={model3d.sourceImage.url}
+                                name={model3d.sourceImage.name ?? undefined}
+                                type={
+                                  (model3d.sourceImage.type as
+                                    | 'image'
+                                    | 'video'
+                                    | 'audio'
+                                    | undefined) ?? undefined
+                                }
+                                width={240}
+                                anim={false}
+                                className="size-full object-cover"
+                              />
+                            </Link>
                           </Group>
+                        )}
 
-                          {model3d.sourceImage && (
-                            <Group
-                              align="flex-start"
-                              justify="space-between"
-                              px="md"
-                              py={10}
-                              style={{
-                                borderBottom: `1px solid ${
-                                  colorScheme === 'dark'
-                                    ? theme.colors.dark[4]
-                                    : theme.colors.gray[3]
-                                }`,
-                              }}
-                            >
-                              <Text size="sm" c="dimmed">
-                                Source image
-                              </Text>
-                              <Link
-                                href={`/images/${model3d.sourceImage.id}`}
-                                className="block w-[120px] overflow-hidden rounded-md border border-solid border-dark-4"
-                              >
-                                <EdgeMedia
-                                  src={model3d.sourceImage.url}
-                                  name={model3d.sourceImage.name ?? undefined}
-                                  type={
-                                    (model3d.sourceImage.type as
-                                      | 'image'
-                                      | 'video'
-                                      | 'audio'
-                                      | undefined) ?? undefined
-                                  }
-                                  width={240}
-                                  anim={false}
-                                  className="size-full object-cover"
-                                />
-                              </Link>
-                            </Group>
-                          )}
-
-                          {generationDetailItems.map(([label, value], i) => (
-                            <Group
-                              key={label}
-                              justify="space-between"
-                              px="md"
-                              py={10}
-                              style={{
-                                borderBottom:
-                                  i === generationDetailItems.length - 1
-                                    ? 'none'
-                                    : `1px solid ${
-                                        colorScheme === 'dark'
-                                          ? theme.colors.dark[4]
-                                          : theme.colors.gray[3]
-                                      }`,
-                              }}
-                            >
-                              <Text size="sm" c="dimmed">
-                                {label}
-                              </Text>
-                              <Text size="sm" ta="right" style={{ wordBreak: 'break-word' }}>
-                                {value}
-                              </Text>
-                            </Group>
-                          ))}
-                        </Stack>
-                      </Accordion.Panel>
-                    </Accordion.Item>
-                  </Accordion>
-            ) : null;
+                        {generationDetailItems.map(([label, value], i) => (
+                          <Group
+                            key={label}
+                            justify="space-between"
+                            px="md"
+                            py={10}
+                            style={{
+                              borderBottom:
+                                i === generationDetailItems.length - 1
+                                  ? 'none'
+                                  : `1px solid ${
+                                      colorScheme === 'dark'
+                                        ? theme.colors.dark[4]
+                                        : theme.colors.gray[3]
+                                    }`,
+                            }}
+                          >
+                            <Text size="sm" c="dimmed">
+                              {label}
+                            </Text>
+                            <Text size="sm" ta="right" style={{ wordBreak: 'break-word' }}>
+                              {value}
+                            </Text>
+                          </Group>
+                        ))}
+                      </Stack>
+                    </Accordion.Panel>
+                  </Accordion.Item>
+                </Accordion>
+              ) : null;
 
             const descriptionBlock = model3d.description ? (
               <ContentClamp maxHeight={460}>
@@ -815,16 +812,13 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               </ContainerGrid2>
             );
           })()}
-
         </Stack>
       </Container>
       {/* Community gallery — rendered OUTSIDE the size="xl" Container so the
           masonry can claim the full page width and pack 6–7 cards across on
           wide screens (matching the model-detail page bottom gallery). */}
       <Box id="gallery" mt="md">
-        <Model3DGallery
-          model3d={{ id, userId: model3d.userId, minor: model3d.minor }}
-        />
+        <Model3DGallery model3d={{ id, userId: model3d.userId, minor: model3d.minor }} />
       </Box>
     </Gated>
   );

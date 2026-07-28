@@ -47,18 +47,4 @@ else
   echo "DEBUG: No ToS files found, skipping lastmod update"
 fi
 
-#branch="$(git rev-parse --abbrev-ref HEAD)"
-#if [ "$branch" != "main" ]; then
-#	exit 0
-#fi
-
-# NOTE: apparently tsc-files just doesn't work on windows. at all.
-
-#echo "Running typecheck for staged files"
-#
-#npx lint-staged
-#
-#echo "Typecheck successful"
-
-# Explicitly exit successfully
 exit 0

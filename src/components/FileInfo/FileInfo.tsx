@@ -5,6 +5,7 @@ import { startCase } from 'lodash-es';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import type { ModelById } from '~/types/router';
+import { formatQuantType } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 
 // Component type display names for user-friendly labels
@@ -39,9 +40,8 @@ export function FileInfo({ file }: Props) {
     items.push({ label: 'Format', value: file.metadata.format });
   if (file.metadata?.size)
     items.push({ label: 'Model Size', value: startCase(file.metadata.size) });
-  // Show quantType for GGUF files
   if (isGGUF && file.metadata?.quantType)
-    items.push({ label: 'Quant Type', value: file.metadata.quantType });
+    items.push({ label: 'Quant Type', value: formatQuantType(file.metadata.quantType) });
   // Show component type label for component files (derived from file type)
   if (isComponentFile && file.type) {
     const displayName = componentTypeDisplayNames[file.type as ModelFileComponentType];

@@ -33,6 +33,17 @@ import { safeExternalHref } from '~/components/Apps/appListingCardView';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
+ * Owner "Edit" deep-link gating + href builders are shared with the store card,
+ * so they live in the base card view-model. Re-exported here so the detail body
+ * (and its unit test) import the owner-edit logic from the DETAIL view-model.
+ */
+export {
+  canOwnerEditListing,
+  getOwnerEditHref,
+  isEditableListingStatus,
+} from '~/components/Apps/appListingCardView';
+
+/**
  * Primary-action mode:
  *   - `open`    → internal nav to the in-host page runner.
  *   - `visit`   → external new-tab anchor (Visit / Open live).

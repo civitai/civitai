@@ -8,7 +8,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
-import { groupBy } from 'lodash-es';
+import { groupBy, uniq } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
@@ -45,6 +45,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '../utils/errorHandling';
+import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { IngestImageInput } from '~/server/schema/image.schema';
@@ -172,9 +173,13 @@ export const createBounty = async ({
   startsAt: incomingStartsAt,
   expiresAt: incomingExpiresAt,
   buzzType,
-
+  addLockedProperties,
   ...data
-}: CreateBountyInput & { userId: number }) => {
+}: CreateBountyInput & {
+  userId: number;
+  /** Locks added by the server itself (the profanity filter), not by the caller. */
+  addLockedProperties?: string[];
+}) => {
   const { userId } = data;
   switch (currency) {
     case Currency.BUZZ:
@@ -194,6 +199,12 @@ export const createBounty = async ({
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
+  // Green buzz can never be spent on NSFW, so the flag is locked for the bounty's lifetime.
+  const lockedProperties = uniq([
+    ...(buzzType === 'green' ? ['nsfw'] : []),
+    ...(addLockedProperties ?? []),
+  ]);
+
   let imagesToIngest: IngestImageInput[] = [];
 
   const bounty = await dbWrite.$transaction(
@@ -201,8 +212,7 @@ export const createBounty = async ({
       const bounty = await tx.bounty.create({
         data: {
           ...data,
-          // Ensure we block NSFW after a bounty's been paid in green buzz.
-          lockedProperties: buzzType === 'green' ? ['nsfw'] : undefined,
+          lockedProperties: lockedProperties.length ? lockedProperties : undefined,
           startsAt,
           expiresAt,
           // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
@@ -312,8 +322,15 @@ export const updateBountyById = async ({
   images,
   userId,
   entryLimit,
+  isModerator,
+  addLockedProperties,
   ...data
-}: UpdateBountyInput & { userId: number }) => {
+}: UpdateBountyInput & {
+  userId: number;
+  isModerator?: boolean;
+  /** Locks added by the server itself (the profanity filter), not by the caller. */
+  addLockedProperties?: string[];
+}) => {
   // Convert dates to UTC for storing
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
@@ -328,9 +345,25 @@ export const updateBountyById = async ({
           id: true,
           entryLimit: true,
           complete: true,
+          lockedProperties: true,
           _count: { select: { entries: true } },
         },
       });
+
+      // Duplicated from upsertBounty on purpose: this is an exported service function, so
+      // enforcement must not depend on every future caller remembering to do it first.
+      enforceLockedProperties({
+        data,
+        storedLockedProperties: existing.lockedProperties,
+        isModerator,
+      });
+      // Applied after enforcement, which drops every caller-supplied lock — these come from
+      // the server, so they must survive it.
+      if (addLockedProperties?.length)
+        data.lockedProperties = uniq([
+          ...(existing.lockedProperties ?? []),
+          ...addLockedProperties,
+        ]);
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
 
@@ -426,12 +459,17 @@ export const upsertBounty = async ({
   isModerator,
   buzzType,
   ...data
-}: UpsertBountyInput & { userId: number; isModerator: boolean; buzzType?: BuzzSpendType }) => {
+}: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
   await throwOnBlockedLinkDomain(data.description);
-  if (!isModerator) {
-    // don't allow updating of locked properties
-    for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
 
+  const stored = id
+    ? await dbRead.bounty.findUnique({ where: { id }, select: { lockedProperties: true } })
+    : null;
+  const storedLockedProperties = stored?.lockedProperties ?? [];
+  enforceLockedProperties({ data, storedLockedProperties, isModerator });
+
+  const addLockedProperties: string[] = [];
+  if (!isModerator) {
     // Check bounty name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
@@ -447,11 +485,12 @@ export const upsertBounty = async ({
           metrics: evaluation.metrics,
         },
       };
-      data.nsfw = true;
-      data.lockedProperties =
-        data.lockedProperties && !data.lockedProperties.includes('nsfw')
-          ? [...data.lockedProperties, 'nsfw']
-          : ['nsfw'];
+      // A stored nsfw lock is a moderator's call: keep the detection for review, but
+      // never let the filter overturn it.
+      if (!storedLockedProperties.includes('nsfw')) {
+        data.nsfw = true;
+        addLockedProperties.push('nsfw');
+      }
     }
   }
 
@@ -460,16 +499,18 @@ export const upsertBounty = async ({
     return updateBountyById({
       ...updateInput,
       userId,
+      isModerator,
+      addLockedProperties,
     });
   } else {
-    if (data.poi || (data.poi && data.nsfw)) {
+    if (data.poi) {
       throw throwBadRequestError(
         'The creation of bounties intended to depict an actual person is prohibited.'
       );
     }
 
-    const createInput = await createBountyInputSchema.parseAsync({ ...data });
-    return createBounty({ ...createInput, userId });
+    const createInput = await createBountyInputSchema.parseAsync({ ...data, buzzType });
+    return createBounty({ ...createInput, userId, addLockedProperties });
   }
 };
 

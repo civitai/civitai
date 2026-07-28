@@ -41,6 +41,7 @@ import {
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsLtx2,
   trainingDetailsBaseModelsLtx23,
+  trainingDetailsBaseModelsMageFlow,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
@@ -491,6 +492,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsKrea2 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelMageFlow =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsMageFlow as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelAcestep15 =
     !!formBaseModel &&
     (trainingDetailsBaseModelsAcestep15 as ReadonlyArray<string>).includes(formBaseModel)
@@ -680,6 +686,17 @@ export const ModelSelect = ({
                       isNew={new Date() < new Date('2026-07-24')}
                     />
                   )}
+                  {features.mageflowTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="lime"
+                      name="Mage-Flow"
+                      value={baseModelMageFlow}
+                      baseType="mageflow"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2026-08-27')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'audio' && (
@@ -819,6 +836,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'anima' ||
                   selectedRun.baseType === 'boogu' ||
                   selectedRun.baseType === 'krea2' ||
+                  selectedRun.baseType === 'mageflow' ||
                   selectedRun.baseType === 'acestep15' ||
                   selectedRun.baseType === 'acestep15xl' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">

@@ -287,6 +287,22 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     expect(await verifyBlockToken(await signRaw({ domain: 123 }))).toBeNull();
   });
 
+  it('accepts + round-trips a boolean reviewRunForReal claim (#2831); absent is fine', async () => {
+    const withTrue = await verifyBlockToken(await signRaw({ reviewRunForReal: true, dev: true }));
+    expect(withTrue).not.toBeNull();
+    expect(withTrue?.reviewRunForReal).toBe(true);
+    const absent = await verifyBlockToken(await signRaw({}));
+    expect(absent).not.toBeNull();
+    expect(absent?.reviewRunForReal).toBeUndefined();
+  });
+
+  it('rejects a token whose reviewRunForReal claim is non-boolean (forged)', async () => {
+    // A forged run-for-real marker must be rejected outright so the runtime
+    // aggregate-cap selector can trust the boolean.
+    expect(await verifyBlockToken(await signRaw({ reviewRunForReal: 'true' }))).toBeNull();
+    expect(await verifyBlockToken(await signRaw({ reviewRunForReal: 1 }))).toBeNull();
+  });
+
   // ---- Maturity claim shape guard (from #2670, redundant cross-check) -----
   // The maxBrowsingLevel claim is optional (absent on legacy tokens), but if
   // PRESENT it must be a finite number — a forged non-numeric value is rejected

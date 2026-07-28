@@ -193,6 +193,7 @@ const featureFlags = createFeatureFlags({
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   booguTraining: { availability: ['mod'], fliptKey: 'boogu-training' },
   krea2Training: { availability: ['mod'], fliptKey: 'krea2-training' },
+  mageflowTraining: { availability: ['mod'], fliptKey: 'mageflow-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.

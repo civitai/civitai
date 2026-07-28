@@ -82,12 +82,6 @@ import {
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
-import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
-import {
-  BlockedByUsers,
-  BlockedUsers,
-  HiddenUsers,
-} from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import { getUserSelectableJudges } from '~/server/services/challenge-judge.service';
@@ -103,6 +97,10 @@ import {
   isChallengeHiddenByPoiCover,
   isImageHiddenFromGreenViewer,
 } from '~/server/games/daily-challenge/challenge-visibility';
+import {
+  getChallengeExcludedUserIds,
+  challengeCreatorBlockSql,
+} from '~/server/services/challenge-block.service';
 import {
   buildWinnerPayoutTransactions,
   chargeInitialPrize,
@@ -158,6 +156,7 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
+import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { withRetries } from '~/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { AIModel } from '~/server/services/ai/openrouter';
@@ -399,31 +398,6 @@ type MyChallengeRow = ChallengeCardRow & {
   isCreator: boolean;
 };
 
-// The viewer's bounded block/hide exclusion set (hidden ∪ blocked-by ∪ blocked), used to drop
-// user challenges whose creator is on it — parity with comment/review feeds. Empty for anon.
-// Ordering into boundExcludedUserIds is load-bearing (see its doc): hidden, blockedBy, blocked.
-async function getChallengeExcludedUserIds(viewerId?: number): Promise<number[]> {
-  if (!viewerId) return [];
-  const [hidden, blockedBy, blocked] = await Promise.all([
-    HiddenUsers.getCached({ userId: viewerId }),
-    BlockedByUsers.getCached({ userId: viewerId }),
-    BlockedUsers.getCached({ userId: viewerId }),
-  ]);
-  return boundExcludedUserIds(
-    hidden.map((u) => u.id),
-    blockedBy.map((u) => u.id),
-    blocked.map((u) => u.id)
-  );
-}
-
-// Raw-SQL predicate (aliased `c`) dropping user challenges whose creator is in the viewer's
-// exclusion set; System/mod rows always pass via the source guard. Returns null when the set is
-// empty so callers can skip pushing it. Shared by the three raw feeds to keep the scoping in sync.
-function challengeCreatorBlockSql(excludedUserIds: number[]): Prisma.Sql | null {
-  if (excludedUserIds.length === 0) return null;
-  return Prisma.sql`(c.source <> ${ChallengeSource.User}::"ChallengeSource" OR c."createdById" != ALL(${excludedUserIds}::int[]))`;
-}
-
 /**
  * The viewer's own challenges: ones they entered (CollectionItem) and ones they created,
  * most-recent-activity first. One row per challenge.
@@ -483,7 +457,7 @@ export async function getMyChallenges({
       ${blockSql ? Prisma.sql`AND ${blockSql}` : Prisma.empty}
       ${
         effectiveBrowsingLevel > 0
-          ? Prisma.sql`AND (c."createdById" = ${userId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
+          ? Prisma.sql`AND (c."createdById" = ${userId} OR ((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)))`
           : Prisma.empty
       }
     ORDER BY COALESCE(my."myEnteredAt", c."createdAt") DESC
@@ -650,9 +624,10 @@ export async function getInfiniteChallenges(
     conditions.push(Prisma.sql`c."eventId" = ${challengeEventId}`);
   }
 
-  // Content level filter — models-style: exclude a challenge outright when its REAL cover image
-  // level doesn't intersect the viewer's effective browsing level, rather than trusting the
-  // challenge's declared `allowedNsfwLevel`. On green the level is capped server-side (see
+  // Content level filter — the challenge's own rating (`nsfwLevel`, the highest level its
+  // `allowedNsfwLevel` permits) must intersect the viewer's effective browsing level. The REAL
+  // cover level is required to intersect too, so a challenge that under-declares its rating can't
+  // leak an NSFW cover into an SFW feed. On green the level is capped server-side (see
   // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
   // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
   // above.
@@ -662,10 +637,9 @@ export async function getInfiniteChallenges(
     requested: browsingLevel,
   });
   if (effectiveBrowsingLevel > 0) {
+    const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
     conditions.push(
-      currentUserId
-        ? Prisma.sql`(c."createdById" = ${currentUserId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
-        : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)`
+      currentUserId ? Prisma.sql`(c."createdById" = ${currentUserId} OR ${levelSql})` : levelSql
     );
   }
 
@@ -703,6 +677,16 @@ export async function getInfiniteChallenges(
         break;
       case ChallengeParticipation.Created:
         conditions.push(Prisma.sql`c."createdById" = ${currentUserId}`);
+        break;
+      case ChallengeParticipation.Tracking:
+        conditions.push(
+          Prisma.sql`EXISTS (
+            SELECT 1 FROM "ChallengeEngagement" ce
+            WHERE ce."challengeId" = c.id
+              AND ce.type = 'Notify'
+              AND ce."userId" = ${currentUserId}
+          )`
+        );
         break;
     }
   }
@@ -1860,7 +1844,7 @@ export async function upsertUserChallenge({
       },
     });
 
-    return tx.challenge.create({
+    const created = await tx.challenge.create({
       data: {
         ...commonData,
         collectionId: collection.id,
@@ -1874,6 +1858,14 @@ export async function upsertUserChallenge({
         ...(themeEls && { metadata: { themeElements: themeEls } }),
       },
     });
+
+    // Creator auto-tracks their own challenge so they get ending-soon/results notifications
+    // without opting in; same txn so a failed write rolls the challenge back.
+    await tx.challengeEngagement.create({
+      data: { type: 'Notify', challengeId: created.id, userId },
+    });
+
+    return created;
   });
 
   // Escrow the creator's initial prize (if any). On failure, roll back the unfunded
@@ -2624,6 +2616,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
 
     // Send entry participation prizes to all eligible users
+    // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
+    // even though it's only populated inside the conditional (participation prizes are optional).
+    const participationUserIds: number[] = [];
     if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
       const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
         SELECT DISTINCT i."userId"
@@ -2639,6 +2634,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         const winnerUserIds = winningEntries.map((e) => e.userId);
         // Exclude winners from entry prizes (they get winner prizes instead)
         const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
+        participationUserIds.push(...entryPrizeUsers.map((e) => e.userId));
 
         if (entryPrizeUsers.length > 0) {
           // Note: externalTransactionId uses challengeId-userId pattern for idempotency
@@ -2727,6 +2723,14 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         },
       });
     }
+
+    await sendChallengeResultsNotification({
+      challengeId,
+      challengeTitle: challenge.title,
+      excludeUserIds: [
+        ...new Set([...winningEntries.map((e) => e.userId), ...participationUserIds]),
+      ],
+    });
     log('Winners notified');
 
     recordChallengeCompleted({ source: challenge.source });
@@ -3675,19 +3679,18 @@ export async function getCompletedChallengesWithWinners(
   const blockSql = challengeCreatorBlockSql(await getChallengeExcludedUserIds(currentUserId));
   if (blockSql) conditions.push(blockSql);
 
-  // Content level filter — parity with the feed: exclude a challenge whose REAL cover image level
-  // doesn't intersect the viewer's effective (green-capped) browsing level, rather than trusting
-  // the declared allowedNsfwLevel. Creator sees their own.
+  // Content level filter — parity with the feed: the challenge's own rating and its REAL cover
+  // level must both intersect the viewer's effective (green-capped) browsing level. Creator sees
+  // their own.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen: isGreen ?? false,
     isLoggedIn: currentUserId != null,
     requested: browsingLevel,
   });
   if (effectiveBrowsingLevel > 0) {
+    const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
     conditions.push(
-      currentUserId
-        ? Prisma.sql`(c."createdById" = ${currentUserId} OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`
-        : Prisma.sql`EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0)`
+      currentUserId ? Prisma.sql`(c."createdById" = ${currentUserId} OR ${levelSql})` : levelSql
     );
   }
 

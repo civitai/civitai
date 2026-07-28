@@ -23,7 +23,10 @@ import { registerCounterWithLabels } from '@civitai/telemetry/client';
 // ---------------------------------------------------------------------------
 // Label normalization (enum-bound — never emit raw/free-text)
 // ---------------------------------------------------------------------------
-const SOURCES = new Set(['System', 'Mod', 'User']);
+// The `ChallengeSource` DB enum, in full. Also the zero-emit key set for the single-label state
+// gauges below — keep it and `normSource` sharing one array so the two can never drift.
+export const SOURCE_VALUES = ['System', 'Mod', 'User'] as const;
+const SOURCES = new Set<string>(SOURCE_VALUES);
 const BUZZ_TYPES = new Set(['green', 'yellow']);
 const SCAN_RESULTS = new Set(['scanned', 'blocked', 'error']);
 const STATUSES = new Set(['Scheduled', 'Active', 'Completing', 'Completed', 'Cancelled']);
@@ -403,6 +406,37 @@ function maybeRefreshChallengeGauges() {
   if (Date.now() - challengeGaugeFetchedAt > CHALLENGE_GAUGE_TTL_MS) void refreshChallengeGauges();
 }
 
+/**
+ * ZERO-EMIT — why the single-label gauges pre-seed every known source with 0.
+ *
+ * A `GROUP BY` returns NO ROW for a count of zero, so a gauge that only `.set()`s the returned rows
+ * emits NO SERIES while everything is healthy. That is indistinguishable from "the instrumentation
+ * died": every alert on such a gauge fails open, and a dashboard reading it over different windows
+ * reports different answers (absent over 1h, `1` over 12h) purely because the series only exists for
+ * the ~1min the count was non-zero.
+ *
+ * So: seed `0` for every `ChallengeSource` FIRST, then overlay the query rows (a real row wins).
+ * Applied to the three single-label gauges — `ingestion_pending`, `completing_stuck`,
+ * `operation_budget_used_ratio` — which are precisely the "should be zero" health signals where
+ * healthy-zero vs no-data is the distinction that matters.
+ *
+ * DELIBERATELY NOT applied to `challenge_by_status`: it is a descriptive inventory gauge, not an
+ * alert source, and zero-filling it means the full source×status cross-product — 15 series/pod
+ * instead of the ~7 actually populated, on the one gauge that is ALREADY this module's cardinality
+ * problem (these gauges run on every web pod behind the 45s memo; see the GATING note above). A
+ * dashboard for it aggregates with `sum()`, which handles an absent zero-count bucket correctly.
+ * Cost of the choice made here: 3 sources × 3 gauges = 9 series/pod. The cross-product option would
+ * have added 15 more on top of that, per pod.
+ *
+ * `unknown` is not pre-seeded — it only exists if the DB hands back a value outside the enum, and a
+ * permanent `unknown=0` on every pod would be pure noise.
+ */
+function zeroFillKnownSources(gauge: {
+  set(labels: Record<string, string>, value: number): void;
+}): void {
+  for (const source of SOURCE_VALUES) gauge.set({ source }, 0);
+}
+
 declare global {
   // eslint-disable-next-line no-var
   var challengeGaugesInitialized: boolean | undefined;
@@ -427,6 +461,7 @@ if (!globalThis.challengeGaugesInitialized) {
     collect() {
       maybeRefreshChallengeGauges();
       this.reset();
+      zeroFillKnownSources(this);
       for (const row of challengeGaugeCache.ingestionPending)
         this.set({ source: normSource(row.source) }, row.count);
     },
@@ -438,17 +473,30 @@ if (!globalThis.challengeGaugesInitialized) {
     collect() {
       maybeRefreshChallengeGauges();
       this.reset();
+      zeroFillKnownSources(this);
       for (const row of challengeGaugeCache.completingStuck)
         this.set({ source: normSource(row.source) }, row.count);
     },
   });
+  // 🔴 READ BEFORE ALERTING ON THIS GAUGE. `operationBudget` is `Int @default(0)` and NOTHING in
+  // the product sets it today — every Challenge row carries budget 0, while `operationSpent` is
+  // genuinely non-zero. The query's `NULLIF(SUM("operationBudget"), 0)` therefore yields NULL, the
+  // row is dropped, and before the zero-emit below this gauge produced no series at all. That was
+  // never an emit bug — it is faithfully reporting "there is no budget to be a ratio of".
+  //
+  // Consequence: a `0` here means "no budget configured", NOT "budget healthy". A cost-control
+  // alert of the shape `ratio > 0.8` can never fire while budgets are unset, so it would fail open
+  // exactly like the missing series did. Gate any such alert on budgets actually being set (or
+  // alert on absolute `challenge_operation_spent_buzz_total` instead) until the product writes a
+  // non-zero `operationBudget`.
   new client.Gauge({
     name: 'civitai_app_challenge_operation_budget_used_ratio',
-    help: 'SUM(operationSpent)/SUM(operationBudget) over Active+Completing challenges, by source',
+    help: 'SUM(operationSpent)/SUM(operationBudget) over Active+Completing challenges, by source (0 also means "no operationBudget set" — see the note in challenge.metrics.ts)',
     labelNames: ['source'],
     collect() {
       maybeRefreshChallengeGauges();
       this.reset();
+      zeroFillKnownSources(this);
       for (const row of challengeGaugeCache.budgetRatio)
         this.set({ source: normSource(row.source) }, row.ratio);
     },

@@ -107,6 +107,49 @@ describe('getOffsiteReviewChecklist — auto-derived statuses', () => {
   });
 });
 
+describe('getOffsiteReviewChecklist — kind-aware url item (onsite media revision)', () => {
+  it("kind='onsite' (URL-less media revision) OMITS the url-https item entirely", () => {
+    const ids = getOffsiteReviewChecklist({
+      ...complete,
+      kind: 'onsite',
+      externalUrl: null,
+    }).map((i) => i.id);
+    expect(ids).not.toContain('url-https');
+    // The rest of the content checklist is unchanged.
+    expect(ids).toContain('name');
+    expect(ids).toContain('icon');
+    expect(ids).toContain('cover');
+    expect(ids).toContain('screenshots');
+    expect(ids).toContain('description');
+    expect(ids).toContain('category');
+  });
+
+  it("offsite (kind omitted) with a bad/http URL STILL warns on url-https", () => {
+    const item = getOffsiteReviewChecklist({
+      ...complete,
+      externalUrl: 'http://insecure.example.com',
+    }).find((i) => i.id === 'url-https');
+    expect(item?.status).toBe('warn');
+  });
+
+  it("kind='offsite' with a bad/http URL STILL warns on url-https (explicit)", () => {
+    const item = getOffsiteReviewChecklist({
+      ...complete,
+      kind: 'offsite',
+      externalUrl: 'http://insecure.example.com',
+    }).find((i) => i.id === 'url-https');
+    expect(item?.status).toBe('warn');
+  });
+
+  it("kind='offsite' with a valid https URL keeps the item ok (behaviour unchanged)", () => {
+    const item = getOffsiteReviewChecklist({
+      ...complete,
+      kind: 'offsite',
+    }).find((i) => i.id === 'url-https');
+    expect(item?.status).toBe('ok');
+  });
+});
+
 describe('getOffsiteReviewChecklist — connect sensitive-scope item (PR3)', () => {
   const connectBase: OffsiteChecklistData = {
     ...complete,

@@ -579,7 +579,7 @@ export async function handleUnblockImages({
 
     const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
-      updateNsfwLevel(ids),
+      resetBlockedNsfwLevel(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
@@ -738,6 +738,24 @@ export async function updateNsfwLevel(ids: number | number[]) {
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
   await thumbnailCache.refresh(ids);
+}
+
+// Single source of truth for restoring an image's rating after it's unblocked.
+// Blocking force-sets nsfwLevel=Blocked and may leave the rating lock on; the recompute
+// (update_nsfw_levels_new) skips locked rows, so a Blocked-locked row can never be restored
+// by updateNsfwLevel alone. Reset+unlock only the Blocked rows (never-corrupted locks are
+// preserved), then recompute — untagged rows fall to Unrated and re-derive on rescan.
+// Used by both unblock paths (handleUnblockImages and report.service resolveEntityAppeal).
+export async function resetBlockedNsfwLevel(ids: number | number[]) {
+  if (!Array.isArray(ids)) ids = [ids];
+  ids = [...new Set(ids)];
+  if (!ids.length) return;
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "nsfwLevel" = 0, "nsfwLevelLocked" = FALSE
+    WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked};
+  `;
+  await updateNsfwLevel(ids);
 }
 
 export const updateImageReportStatusByReason = ({

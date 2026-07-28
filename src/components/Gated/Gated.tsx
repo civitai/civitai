@@ -26,7 +26,9 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { Meta, type MetaProps } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
+import { useAdGate } from '~/components/Ads/AdsProvider';
 import { useAppContext, useServerDomains } from '~/providers/AppProvider';
+import { isAdGatedContent } from '~/shared/utils/ad-gating';
 import { syncAccount } from '~/utils/sync-account';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
@@ -161,6 +163,9 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
 }: GatedProps<TImage>) {
   const { state, isPaywalled } = useGated({ contentNsfwLevel, nsfw, bypassRating });
   const { allowMatureContent } = useAppContext();
+
+  // Rating, not `state` — a PG13 page still serves ads while showing a login gate.
+  useAdGate(isAdGatedContent({ contentNsfwLevel, nsfw }));
 
   // Whether the content is canonically SFW for the purpose of the deindex
   // decision. Some entities (e.g. `Model`) carry a coarse `nsfw` boolean

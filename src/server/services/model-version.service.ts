@@ -107,6 +107,7 @@ import { bustOrchestratorModelCache } from '~/server/services/orchestrator/model
 import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
+  sleep,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
@@ -1770,6 +1771,7 @@ export const earlyAccessPurchase = async ({
       id: true,
       status: true,
       name: true,
+      meta: true,
       model: {
         select: {
           id: true,
@@ -1866,78 +1868,58 @@ export const earlyAccessPurchase = async ({
 
     buzzTransactionId = externalTransactionIdPrefix;
 
-    await dbWrite.$transaction(
-      async (tx) => {
-        if (accessRecord) {
-          // Should only happen if the user purchased Generation but NOT download.
-          // Update entity access:
-          await tx.entityAccess.update({
-            where: {
-              accessToId_accessToType_accessorId_accessorType: {
-                accessToId: modelVersionId,
-                accessToType: 'ModelVersion',
-                accessorId: userId,
-                accessorType: 'User',
-              },
-            },
-            data: {
-              permissions: Math.max(
-                EntityAccessPermission.EarlyAccessDownload +
-                  EntityAccessPermission.EarlyAccessGeneration,
-                access.permissions ?? 0
-              ),
-              meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
-            },
-          });
-        } else {
-          // Grant entity access:
-          await tx.entityAccess.create({
-            data: {
-              accessToId: modelVersionId,
-              accessToType: 'ModelVersion',
-              accessorId: userId,
-              accessorType: 'User',
-              permissions:
-                type === 'generation'
-                  ? EntityAccessPermission.EarlyAccessGeneration
-                  : EntityAccessPermission.EarlyAccessGeneration +
-                    EntityAccessPermission.EarlyAccessDownload,
-              meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
-              addedById: userId, // Since it's a purchase
-            },
-          });
-        }
-
-        if (earlyAccessDonationGoal) {
-          // Create a donation record:
-          await tx.donation.create({
-            data: {
-              amount,
-              donationGoalId: earlyAccessDonationGoal.id,
-              userId,
-              buzzTransactionId: buzzTransactionId as string,
-            },
-          });
-        }
-
-        // Set model version early access purchase as true:
-        await tx.$queryRaw`
-        UPDATE "ModelVersion"
-        SET meta = jsonb_set(
-          COALESCE(meta, '{}'::jsonb),
-          '{hadEarlyAccessPurchase}',
-          to_jsonb(${true})
-        )
-        WHERE "id" = ${modelVersionId}; -- Your conditions here
-      `;
+    // The grant is the only write whose failure warrants a refund, and it's a single
+    // statement on purpose: the previous interactive transaction's client-side timeout
+    // could fire while the COMMIT was still in flight on the server, so the catch
+    // refunded buyers who ended up keeping access (see ClickUp 868k97v07).
+    await dbWrite.entityAccess.upsert({
+      where: {
+        accessToId_accessToType_accessorId_accessorType: {
+          accessToId: modelVersionId,
+          accessToType: 'ModelVersion',
+          accessorId: userId,
+          accessorType: 'User',
+        },
       },
-      { timeout: 10000 }
-    ); // Doubled timeout since this transaction involves multiple steps and external calls.
+      create: {
+        accessToId: modelVersionId,
+        accessToType: 'ModelVersion',
+        accessorId: userId,
+        accessorType: 'User',
+        permissions:
+          type === 'generation'
+            ? EntityAccessPermission.EarlyAccessGeneration
+            : EntityAccessPermission.EarlyAccessGeneration +
+              EntityAccessPermission.EarlyAccessDownload,
+        meta: { [buzzTransactionKey]: buzzTransactionId },
+        addedById: userId, // Since it's a purchase
+      },
+      // An existing row means the user previously acquired partial access
+      // (e.g. generation-only) and is now upgrading.
+      update: {
+        permissions: Math.max(
+          EntityAccessPermission.EarlyAccessDownload + EntityAccessPermission.EarlyAccessGeneration,
+          accessRecord?.permissions ?? 0
+        ),
+        meta: {
+          ...((accessRecord?.meta as Prisma.JsonObject | null) ?? {}),
+          [buzzTransactionKey]: buzzTransactionId,
+        },
+      },
+    });
 
-    // Post-transaction side effects: failures here must not trigger a refund,
-    // since the purchase itself already succeeded.
+    // Post-grant side effects: failures here must not trigger a refund,
+    // since the purchase itself (charge + grant) already succeeded.
     if (earlyAccessDonationGoal) {
       try {
+        await dbWrite.donation.create({
+          data: {
+            amount,
+            donationGoalId: earlyAccessDonationGoal.id,
+            userId,
+            buzzTransactionId,
+          },
+        });
         await checkDonationGoalComplete({ entityType: 'ModelVersion', entityId: modelVersionId });
       } catch (error) {
         logToAxiom({
@@ -1946,6 +1928,25 @@ export const earlyAccessPurchase = async ({
           error,
           modelVersionId,
           donationGoalId: earlyAccessDonationGoal.id,
+          buzzTransactionId,
+        });
+      }
+    }
+
+    if (!(modelVersion.meta as ModelVersionMeta | null)?.hadEarlyAccessPurchase) {
+      try {
+        await dbWrite.$queryRaw`
+          UPDATE "ModelVersion"
+          SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{hadEarlyAccessPurchase}', to_jsonb(${true}))
+          WHERE "id" = ${modelVersionId}
+            AND COALESCE((meta->>'hadEarlyAccessPurchase')::boolean, false) = false;
+        `;
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-had-purchase-flag',
+          error,
+          modelVersionId,
         });
       }
     }
@@ -1966,30 +1967,76 @@ export const earlyAccessPurchase = async ({
     return true;
   } catch (error) {
     if (buzzTransactionId) {
-      await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: buzzTransactionId,
-        description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
-      });
-
-      if (!accessRecord) {
-        // Remove the entity access record if it was created during this transaction.
-        await dbWrite.entityAccess.deleteMany({
-          where: {
-            accessorId: userId,
-            accessorType: 'User',
-            accessToId: modelVersionId,
-            accessToType: 'ModelVersion',
-          },
-        });
+      // A thrown error does NOT prove the grant didn't commit — a timeout can fire
+      // while the write is still in flight. Refunding blindly here is exactly how
+      // buyers got refunded while keeping access. Verify the final DB state first,
+      // re-checking to let any in-flight write land.
+      let grantCommitted: boolean | undefined;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt > 0) await sleep(2000);
+        try {
+          const grant = await dbWrite.entityAccess.findUnique({
+            where: {
+              accessToId_accessToType_accessorId_accessorType: {
+                accessToId: modelVersionId,
+                accessToType: 'ModelVersion',
+                accessorId: userId,
+                accessorType: 'User',
+              },
+            },
+            select: { meta: true },
+          });
+          grantCommitted =
+            (grant?.meta as Record<string, unknown> | null)?.[buzzTransactionKey] ===
+            buzzTransactionId;
+          if (grantCommitted) break;
+        } catch {
+          grantCommitted = undefined;
+        }
       }
 
-      logToAxiom({
-        type: 'error',
-        name: 'early-access-purchase-refund',
-        error,
-        modelVersionId,
-        buzzTransactionId,
-      });
+      if (grantCommitted) {
+        // The purchase actually went through — recover instead of refunding.
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-purchase-recovered',
+          error,
+          modelVersionId,
+          userId,
+          buzzTransactionId,
+        });
+        try {
+          await bustMvCache(modelVersionId, modelVersion.model.id, userId);
+        } catch {}
+        return true;
+      }
+
+      if (grantCommitted === false) {
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: buzzTransactionId,
+          description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+        });
+
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-purchase-refund',
+          error,
+          modelVersionId,
+          buzzTransactionId,
+        });
+      } else {
+        // Verification itself failed, so the grant state is unknown. Do NOT refund:
+        // an unrefunded charge is recoverable by support via the buzz transaction id,
+        // while an erroneous refund with access kept is the ongoing incident.
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-purchase-unverified',
+          error,
+          modelVersionId,
+          userId,
+          buzzTransactionId,
+        });
+      }
     }
     throw throwDbError(error);
   }

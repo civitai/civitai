@@ -213,6 +213,8 @@ const schema = modelVersionUpsertSchema2
   );
 type Schema = z.infer<typeof schema>;
 
+// Unfiltered on purpose: a legacy value must always be present in the options or
+// the Select renders blank.
 const baseModelTypeOptions = constants.baseModelTypes.map((x) => ({ label: x, value: x }));
 const capitalizeFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const licensingOptionLabel = (versionName: string, fee: number | null) =>
@@ -258,7 +260,11 @@ export function ModelVersionUpsertForm({
     'Wildcards',
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
-  const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
+  // Retired field: only surfaced for legacy versions already carrying a non-default
+  // value, so they stay editable/clearable without letting anyone newly opt in.
+  // Read from the saved version, not form state, so picking 'Standard' doesn't rip
+  // the control out mid-edit.
+  const showBaseModelType = !!version?.baseModelType && version.baseModelType !== 'Standard';
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
   const isEarlyAccessOver =
     version?.status === 'Published' &&
@@ -272,7 +278,7 @@ export function ModelVersionUpsertForm({
     ...version,
     name: version?.name ?? 'v1.0',
     baseModel: initialBaseModel,
-    baseModelType: hasBaseModelType ? version?.baseModelType ?? 'Standard' : undefined,
+    baseModelType: version?.baseModelType ?? undefined,
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
       ? version?.trainedWords
@@ -472,7 +478,7 @@ export function ModelVersionUpsertForm({
         paidAccess: toPaidAccessInput(gatedConfig),
         donationGoal: toDonationGoalInput(gatedConfig),
         trainedWords: skipTrainedWords ? [] : trainedWords,
-        baseModelType: hasBaseModelType ? data.baseModelType : undefined,
+        baseModelType: data.baseModelType,
         monetization: data.monetization,
         recommendedResources,
         templateId,
@@ -944,7 +950,7 @@ export function ModelVersionUpsertForm({
               // type to filter (e.g. "wan") instead of clearing the field first.
               onFocus={(e) => e.currentTarget.select()}
             />
-            {hasBaseModelType && (
+            {showBaseModelType && (
               <InputSelect
                 name="baseModelType"
                 label="Base Model Type"

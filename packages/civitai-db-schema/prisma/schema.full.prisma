@@ -544,6 +544,7 @@ model User {
   challengeWins              ChallengeWinner[]
   challengeJudges            ChallengeJudge[]
   challengeEventsCreated     ChallengeEvent[]
+  challengeEngagements       ChallengeEngagement[]
   rewardsBonusEventsCreated  RewardsBonusEvent[]             @relation("RewardsBonusEventCreator")
   strikes                     UserStrike[]                    @relation("userStrikes")
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
@@ -5476,9 +5477,10 @@ model Challenge {
   updatedAt DateTime @updatedAt
 
   // Relations
-  winners ChallengeWinner[]
-  threads Thread[]
-  reports ChallengeReport[]
+  winners     ChallengeWinner[]
+  threads     Thread[]
+  reports     ChallengeReport[]
+  engagements ChallengeEngagement[]
 
   // Event grouping
   eventId Int?
@@ -5547,6 +5549,23 @@ model ChallengeCategory {
   updatedAt DateTime @updatedAt
 
   @@index([active])
+}
+
+enum ChallengeEngagementType {
+  Notify
+}
+
+model ChallengeEngagement {
+  userId      Int
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeId Int
+  challenge   Challenge               @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  type        ChallengeEngagementType
+  createdAt   DateTime                @default(now())
+
+  @@id([type, challengeId, userId])
+  @@index([challengeId])
+  @@index([userId], type: Hash)
 }
 
 model ChallengeWinner {

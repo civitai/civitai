@@ -86,17 +86,22 @@ function createPaidAccessCache(entityType: PaidAccessEntityType) {
   });
 }
 
-const paidAccessCaches: Record<PaidAccessEntityType, ReturnType<typeof createPaidAccessCache>> = {
-  ModelVersion: createPaidAccessCache('ModelVersion'),
-  ComicChapter: createPaidAccessCache('ComicChapter'),
-};
+// Lazily created per-entityType (on first use) rather than at module load — a top-level
+// createCachedObject() call would break any test that partially mocks `cache-helpers` and merely
+// transitively imports this service (e.g. via common.service → getPaidAccess).
+const paidAccessCaches: Partial<
+  Record<PaidAccessEntityType, ReturnType<typeof createPaidAccessCache>>
+> = {};
+function paidAccessCache(entityType: PaidAccessEntityType) {
+  return (paidAccessCaches[entityType] ??= createPaidAccessCache(entityType));
+}
 
 /** Decorate a bounded set of entity ids with their PaidAccess row (absent = free). */
 export async function getPaidAccess(
   entityType: PaidAccessEntityType,
   entityIds: number[]
 ): Promise<Record<number, PaidAccessRow>> {
-  const cached = await paidAccessCaches[entityType].fetch(entityIds);
+  const cached = await paidAccessCache(entityType).fetch(entityIds);
   const out: Record<number, PaidAccessRow> = {};
   for (const key of Object.keys(cached)) {
     const c = cached[key];
@@ -126,7 +131,7 @@ export function toModelVersionPaidAccessDto(
 }
 
 export async function bustPaidAccessCache(entityType: PaidAccessEntityType, entityIds: number[]) {
-  if (entityIds.length) await paidAccessCaches[entityType].bust(entityIds);
+  if (entityIds.length) await paidAccessCache(entityType).bust(entityIds);
 }
 
 /**

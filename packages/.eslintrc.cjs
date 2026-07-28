@@ -1,7 +1,7 @@
 /**
  * ESLint config for the @civitai/* workspace packages.
  *
- * `root: true` so the packages do NOT inherit the main app's React/Next/Tailwind/airbnb
+ * `root: true` so the packages do NOT inherit the main app's React/Next/Tailwind
  * config (they're plain TS infra, not app code). It enforces two boundary guarantees:
  *
  *   1. import/no-extraneous-dependencies — every runtime import must be a declared

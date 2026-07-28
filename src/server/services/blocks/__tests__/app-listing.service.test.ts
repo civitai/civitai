@@ -18,6 +18,7 @@ const { mockDbRead } = vi.hoisted(() => ({
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
   },
 }));
@@ -39,7 +40,9 @@ import {
   decodeListingCursor,
   encodeListingCursor,
   getListingDetail,
+  getListingPreviewForReview,
   listAvailableListings,
+  moderationStatusWhere,
   projectListingCard,
   projectListingDetail,
   recommendRollup,
@@ -234,15 +237,43 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     expect(card.reviewCount).toBe(10);
   });
 
-  it('onsite kindData carries appBlockId + hasPage (Open) when the manifest declares a page', () => {
+  it('onsite kindData carries appBlockId + hasPage (Open) + the computed liveUrl when the manifest declares a page', () => {
     const card = projectListingCard(hydratedRow() as never);
-    expect(card.kindData).toEqual({ kind: 'onsite', appBlockId: 'ab_1', hasPage: true });
+    expect(card.kindData).toEqual({
+      kind: 'onsite',
+      appBlockId: 'ab_1',
+      hasPage: true,
+      liveUrl: 'https://cool-app.civit.ai',
+    });
   });
 
-  it('onsite hasPage=false (Install) when the manifest declares no page', () => {
+  it('onsite hasPage=false (Install) when the manifest declares no page (liveUrl still present)', () => {
     const row = hydratedRow({ appBlock: { manifest: { name: 'X', targets: [] } } });
     const card = projectListingCard(row as never);
-    expect(card.kindData).toEqual({ kind: 'onsite', appBlockId: 'ab_1', hasPage: false });
+    expect(card.kindData).toEqual({
+      kind: 'onsite',
+      appBlockId: 'ab_1',
+      hasPage: false,
+      liveUrl: 'https://cool-app.civit.ai',
+    });
+  });
+
+  it('onsite card liveUrl is `https://<slug>.<APPS_DOMAIN>` for the seeded slug', () => {
+    const row = hydratedRow({ slug: 'my-neat-app' });
+    const card = projectListingCard(row as never);
+    expect(card.kindData).toMatchObject({ kind: 'onsite', liveUrl: 'https://my-neat-app.civit.ai' });
+  });
+
+  it('PARITY GUARD: onsite card liveUrl === detail liveUrl for the same listing (anti-drift)', () => {
+    // Both projections must compose liveUrl the SAME way (shared helper). If a
+    // future change alters one derivation and not the other, this fails.
+    const row = hydratedRow({ slug: 'parity-app' });
+    const card = projectListingCard(row as never);
+    const detail = projectListingDetail(row as never);
+    const cardKind = card.kindData as { kind: 'onsite'; liveUrl: string };
+    const detailKind = detail.kindData as { kind: 'onsite'; liveUrl: string };
+    expect(cardKind.liveUrl).toBe('https://parity-app.civit.ai');
+    expect(cardKind.liveUrl).toBe(detailKind.liveUrl);
   });
 
   it('coverUrl falls back to the first screenshot when there is no cover', () => {
@@ -730,5 +761,84 @@ describe('getListingDetail — approved-only + maturity gate', () => {
     });
     const detail = await getListingDetail({ slug: 'cool-app' }, { redCapable: true });
     expect(detail?.contentRating).toBe('x');
+  });
+});
+
+/**
+ * The mod-table status filter, made EFFECTIVE-STATUS-AWARE: a draft external
+ * listing that has a live pending publish request is "awaiting first review", so
+ * the "Pending" filter must surface it and the "Draft" filter must exclude it.
+ */
+describe('moderationStatusWhere', () => {
+  it('undefined (all) → no status constraint', () => {
+    expect(moderationStatusWhere(undefined)).toEqual({});
+  });
+
+  it('pending → real-pending OR draft-with-a-live-pending-request', () => {
+    expect(moderationStatusWhere('pending')).toEqual({
+      OR: [
+        { status: 'pending' },
+        { status: 'draft', publishRequests: { some: { status: 'pending' } } },
+      ],
+    });
+  });
+
+  it('draft → only TRUE orphan drafts (no live pending request)', () => {
+    expect(moderationStatusWhere('draft')).toEqual({
+      status: 'draft',
+      publishRequests: { none: { status: 'pending' } },
+    });
+  });
+
+  it('approved → an exact status match', () => {
+    expect(moderationStatusWhere('approved')).toEqual({ status: 'approved' });
+  });
+
+  it('removed → an exact status match', () => {
+    expect(moderationStatusWhere('removed')).toEqual({ status: 'removed' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getListingPreviewForReview — mod-only shadow-listing preview projection.
+// Reuses listingHydrateSelect + projectListingCard/Detail (the SAME image→URL
+// derivation as the public read); NOT status-filtered (a mod previews a draft/
+// shadow). getEdgeUrl is mocked to identity, so URL fields echo the stored key.
+// ---------------------------------------------------------------------------
+
+describe('getListingPreviewForReview', () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findUnique.mockReset();
+  });
+
+  it('projects the shadow listing into REAL card + detail (icon/cover/screenshots + scalars)', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValueOnce(hydratedRow());
+    const res = await getListingPreviewForReview({ listingId: 'apl_1' });
+    expect(res).not.toBeNull();
+    // Looked the row up by id (not a status-filtered read).
+    const arg = mockDbRead.appListing.findUnique.mock.calls[0][0] as { where: { id: string } };
+    expect(arg.where).toEqual({ id: 'apl_1' });
+    // Card + detail carry the REAL derived image URLs (getEdgeUrl mocked to identity).
+    expect(res!.card.iconUrl).toBe('icon-key');
+    expect(res!.card.coverUrl).toBe('cover-key');
+    expect(res!.card.name).toBe('Cool App');
+    expect(res!.detail.iconUrl).toBe('icon-key');
+    expect(res!.detail.coverUrl).toBe('cover-key');
+    expect(res!.detail.description).toBe('# Cool app\n\nbody');
+    expect(res!.detail.screenshots).toEqual([{ url: 'shot-0', caption: 'first shot' }]);
+    expect(res!.detail.creator).toEqual({ id: 7, username: 'dev', image: 'avatar-key' });
+  });
+
+  it('returns null when no listing row exists for the id', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValueOnce(null);
+    expect(await getListingPreviewForReview({ listingId: 'missing' })).toBeNull();
+  });
+
+  it('projects partial media correctly (icon+cover, no screenshots → empty gallery, cover from cover)', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValueOnce(hydratedRow({ screenshots: [] }));
+    const res = await getListingPreviewForReview({ listingId: 'apl_1' });
+    expect(res!.detail.screenshots).toEqual([]);
+    // Cover still resolves from the cover image (not the absent first screenshot).
+    expect(res!.detail.coverUrl).toBe('cover-key');
   });
 });

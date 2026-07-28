@@ -281,6 +281,7 @@ export const ChallengeParticipation = {
   NotEntered: 'not_entered',
   Won: 'won',
   Created: 'created',
+  Tracking: 'tracking',
 } as const;
 export type ChallengeParticipation =
   (typeof ChallengeParticipation)[keyof typeof ChallengeParticipation];
@@ -311,6 +312,7 @@ export const getInfiniteChallengesSchema = z.object({
       ChallengeParticipation.NotEntered,
       ChallengeParticipation.Won,
       ChallengeParticipation.Created,
+      ChallengeParticipation.Tracking,
     ])
     .optional(),
   includeEnded: z.boolean().default(false),
@@ -334,6 +336,13 @@ export type GetUserEntryCountInput = z.infer<typeof getUserEntryCountSchema>;
 export const getUserEntryCountSchema = z.object({
   challengeId: z.number(),
 });
+
+// Toggle "notify me" tracking on a challenge
+export const toggleChallengeNotifySchema = z.object({
+  challengeId: z.number(),
+  setTo: z.boolean().optional(),
+});
+export type ToggleChallengeNotifyInput = z.infer<typeof toggleChallengeNotifySchema>;
 
 // Moderator: Get all challenges (including drafts and hidden)
 export type GetModeratorChallengesInput = z.infer<typeof getModeratorChallengesSchema>;

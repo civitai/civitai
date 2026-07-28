@@ -22,9 +22,11 @@ import { trpc } from '~/utils/trpc';
  * empty/loading states. Mirrors the structure of the live `MarketplaceBody` so
  * the two feel identical.
  *
- * DARK / parallel-run: mounted only by the mod-only `/apps/store-preview`
- * surface. The default `/apps` render (MarketplaceBody → AppBlockCard) is
- * untouched; the cutover is a later PR (P2d).
+ * LIVE (P2d cut over): this is now the DEFAULT `/apps` store grid (see
+ * `src/pages/apps/index.tsx`), replacing the legacy `MarketplaceBody` →
+ * `AppBlockCard` path (retained in the tree as a one-line rollback). The page is
+ * still flag-gated (the App Blocks Flipt segment + `deIndex`) — no longer
+ * "store-preview only".
  *
  * ⚠️ Search gap: the P2a `listAvailable` input has NO `query` field (kind /
  * category / sort / cursor / limit only). Server-side search would need a P2a
@@ -209,7 +211,7 @@ export function AppListingsMarketplaceBody() {
         <>
           <Grid gutter="md">
             {filteredItems.map((card) => (
-              <Grid.Col key={card.id} span={{ base: 12, sm: 6, md: 4, lg: 3 }}>
+              <Grid.Col key={card.id} span={{ base: 12, sm: 6, md: 4, lg: 3, xl: 2.4 }}>
                 <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
               </Grid.Col>
             ))}

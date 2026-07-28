@@ -29,38 +29,79 @@ const mocks = vi.hoisted(() => ({
     isSuccess: boolean;
     isError?: boolean;
   },
+  // The meta query's `refetch` — a same-url "Pull from site" re-click calls it
+  // (staleTime:Infinity + retry:false makes `setMetaUrl(sameUrl)` a no-op), so we assert
+  // it fired on re-click to prove the once-per-url guard is bypassed on a manual retry.
+  refetch: vi.fn(),
   clients: {
     data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: 4 | 32 }] as unknown,
     isLoading: false,
   },
+  // Mod-only global-search result (App-Blocks mod picker). Empty by default; the mod
+  // tests set foreign clients here. `useCurrentUser` drives which picker renders.
+  search: { data: { items: [] as unknown[], nextCursor: undefined }, isFetching: false } as {
+    data: { items: unknown[]; nextCursor?: string };
+    isFetching: boolean;
+  },
+  currentUser: null as null | { id: number; username: string; isModerator?: boolean },
 }));
 
 vi.mock('~/utils/trpc', () => {
   const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   return {
     trpc: {
+      // ListingAssetStep (reached on the Assets step) calls `trpc.useUtils()` and
+      // `utils.appListings.getAssetScanStatuses.fetch` on an accept — stub both.
+      useUtils: () => ({
+        appListings: {
+          getAssetScanStatuses: { fetch: vi.fn().mockResolvedValue([]) },
+        },
+      }),
       appListings: {
         submitExternalListing: {
-          useMutation: (opts?: unknown) => {
+          useMutation: (opts?: { onSuccess?: (r: unknown) => void }) => {
             mocks.submit(opts);
-            return { mutate: mocks.mutate, mutateAsync: vi.fn(), isPending: false };
+            return {
+              // On mutate, fire the caller's onSuccess so the wizard transitions to the
+              // Assets step (setSubmitted + STEP_ASSETS) — the only place the captured
+              // `suggestions` render. Existing tests assert the call count, unaffected.
+              mutate: (vars: unknown) => {
+                mocks.mutate(vars);
+                opts?.onSuccess?.({
+                  listingId: 'apl_new',
+                  publishRequestId: 'apr_new',
+                  slug: 'vitrine',
+                });
+              },
+              mutateAsync: vi.fn(),
+              isPending: false,
+            };
           },
         },
         fetchListingMetaFromUrl: {
-          useQuery: () => mocks.meta,
+          useQuery: () => ({ ...mocks.meta, refetch: mocks.refetch }),
         },
         persistAssetImage: { useMutation: mutation },
         ingestAssetFromUrl: { useMutation: mutation },
         setIcon: { useMutation: mutation },
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
+        removeScreenshot: { useMutation: mutation },
       },
       oauthClient: {
         getAll: { useQuery: () => mocks.clients },
+        searchForModerator: { useQuery: () => mocks.search },
       },
     },
   };
 });
+
+// The OAuth picker is role-aware: mods get the async global-search control, non-mods
+// the own-clients dropdown. Drive the role via a mocked `useCurrentUser` (the harness
+// provides no session context, so this hook must be mocked here).
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => mocks.currentUser,
+}));
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
   useCFImageUpload: () => ({
@@ -81,11 +122,15 @@ const { ExternalSubmitForm } = await import('./ExternalSubmitForm');
 beforeEach(() => {
   mocks.submit.mockClear();
   mocks.mutate.mockClear();
+  mocks.refetch.mockClear();
   mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
   mocks.clients = {
     data: [{ id: 'oauth-client-1', name: 'My OAuth App', allowedScopes: READONLY_SCOPES }],
     isLoading: false,
   };
+  mocks.search = { data: { items: [], nextCursor: undefined }, isFetching: false };
+  // Default caller: NOT a moderator → own-clients dropdown (existing tests unchanged).
+  mocks.currentUser = null;
 });
 
 /** Fill a valid App URL on step 0 and advance to the App & scopes step. */
@@ -312,5 +357,234 @@ describe('ExternalSubmitForm — redesigned wizard', () => {
     await page.getByTestId('apps-offsite-wizard-next-app').click();
     await page.getByRole('button', { name: 'Create draft' }).click();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ExternalSubmitForm — OAuth step: mod global-search + create deeplink', () => {
+  test('a NON-moderator sees the own-clients dropdown (unchanged), not the search control', async () => {
+    mocks.currentUser = { id: 5, username: 'dev' }; // no isModerator
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await expect.element(page.getByTestId('apps-offsite-client-select')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-client-search').elements()).toHaveLength(0);
+  });
+
+  test('a MODERATOR sees the async global-search control, not the own-clients dropdown', async () => {
+    mocks.currentUser = { id: 1, username: 'mod', isModerator: true };
+    mocks.search = {
+      data: { items: [], nextCursor: undefined },
+      isFetching: false,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await expect.element(page.getByTestId('apps-offsite-client-search')).toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-client-select').elements()).toHaveLength(0);
+  });
+
+  test('a mod selecting a searched FOREIGN client derives the requested scopes from THAT client', async () => {
+    // The foreign client is NOT in the caller's own list; its allowedScopes must still
+    // flow into deriveScopesFromClient. UserRead=1 is SENSITIVE → its justification
+    // input appearing proves the derived requestedScopes came from the foreign client.
+    mocks.currentUser = { id: 1, username: 'mod', isModerator: true };
+    mocks.search = {
+      data: {
+        items: [
+          { id: 'foreign-1', name: 'Bobs App', allowedScopes: 1, user: { id: 9, username: 'bob' } },
+        ],
+        nextCursor: undefined,
+      },
+      isFetching: false,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    await page.getByTestId('apps-offsite-client-search').click();
+    await page.getByRole('option', { name: /Bobs App/ }).click();
+    // Derived from allowedScopes=1 (UserRead, sensitive) → required justification input.
+    await expect.element(page.getByTestId('apps-offsite-justification-1')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-scope-readonly')).toBeInTheDocument();
+  });
+
+  test('the "Create an OAuth client" deeplink renders for a NON-mod → /user/account in a new tab', async () => {
+    mocks.currentUser = { id: 5, username: 'dev' };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    const link = page.getByTestId('apps-offsite-create-client-link');
+    await expect.element(link).toBeInTheDocument();
+    await expect.element(link).toHaveAttribute('href', '/user/account');
+    await expect.element(link).toHaveAttribute('target', '_blank');
+    await expect.element(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+
+  test('the "Create an OAuth client" deeplink renders for a MODERATOR → /user/account in a new tab', async () => {
+    mocks.currentUser = { id: 1, username: 'mod', isModerator: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+    const link = page.getByTestId('apps-offsite-create-client-link');
+    await expect.element(link).toBeInTheDocument();
+    await expect.element(link).toHaveAttribute('href', '/user/account');
+    await expect.element(link).toHaveAttribute('target', '_blank');
+    await expect.element(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
+  });
+});
+
+/**
+ * "Pull from site" button (create wizard). The auto-pull fires ONCE per URL
+ * (`appliedMetaRef` guard) and `staleTime:Infinity` + `retry:false` pin the result, so a
+ * first-time empty / errored / not-ready pull (or a client-rendered SPA that exposes no
+ * server-side OG tags — #3344) could never be retried without editing the URL. This
+ * button re-runs the OG pull on demand for the CURRENT url, applies name/tagline/
+ * description fill-if-empty, and re-surfaces the icon/cover suggestions on the Assets
+ * step. Mirrors the edit wizard's "Autofill from website".
+ */
+describe('ExternalSubmitForm — create "Pull from site" button', () => {
+  /** Drive the wizard URL → App → Details → create draft → Assets. */
+  async function reachAssets() {
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await page.getByRole('button', { name: 'Create draft' }).click();
+  }
+
+  test('renders on the URL step (create mode), enabled once a valid https URL is entered', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    const btn = page.getByTestId('apps-offsite-submit-autofill');
+    // Blank URL → disabled (no wasted fetch).
+    await expect.element(btn).toBeDisabled();
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+    await expect.element(btn).toBeEnabled();
+  });
+
+  test('is DISABLED for a non-https URL', async () => {
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('http://insecure.example.com');
+    await expect.element(page.getByTestId('apps-offsite-submit-autofill')).toBeDisabled();
+  });
+
+  test('clicking it pulls meta, applies fill-if-empty name/description, and surfaces the "applied" note', async () => {
+    mocks.meta = {
+      data: {
+        name: 'Civitai Cosmetic Studio',
+        tagline: 'short',
+        description: 'Pulled from the link.',
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://cosmetic-studio.civitai.com');
+    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-applied'))
+      .toBeInTheDocument();
+    // Advance to Details — the pulled title + description filled the empty fields.
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('Civitai Cosmetic Studio');
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-description'))
+      .toHaveValue('Pulled from the link.');
+  });
+
+  test('the pulled icon/cover suggestions flow to the Assets step (Use this previews)', async () => {
+    mocks.meta = {
+      data: {
+        name: 'Vitrine',
+        tagline: undefined,
+        description: undefined,
+        coverImageUrl: 'https://cdn/og-cover.png',
+        iconImageUrl: 'https://cdn/og-icon.png',
+      },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-applied'))
+      .toBeInTheDocument();
+    await reachAssets();
+    // The empty icon + cover slots offer the pulled OG suggestion via "Use this".
+    await expect.element(page.getByTestId('apps-offsite-accept-icon')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-accept-cover')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-offsite-suggested-icon-preview'))
+      .toBeInTheDocument();
+  });
+
+  test('does NOT clobber a name the user already typed', async () => {
+    // Reach Details with no meta applied, type a name, go back, then Pull from site.
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl('https://vitrine.civitai.com');
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await page.getByTestId('apps-offsite-submit-name').fill('User Typed Name');
+    // Back to the URL step and pull — the meta now carries a title.
+    await page.getByTestId('apps-offsite-wizard-back-details').click();
+    await page.getByTestId('apps-offsite-wizard-back-app').click();
+    mocks.meta = {
+      data: { name: 'OG Title', tagline: undefined, description: undefined, coverImageUrl: undefined, iconImageUrl: undefined },
+      isFetching: false,
+      isSuccess: true,
+    };
+    await page.getByTestId('apps-offsite-submit-autofill').click();
+    // The typed name is preserved (fill-if-empty).
+    await pickClient();
+    await page.getByTestId('apps-offsite-wizard-next-app').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-name'))
+      .toHaveValue('User Typed Name');
+  });
+
+  test('a site that exposed NOTHING (SPA #3344) shows the honest empty note', async () => {
+    // Empty data — the pull surfaces no icon/cover/description; the host-derived name
+    // fallback is not counted as "pulled from the site", so the note is the honest empty.
+    mocks.meta = { data: {}, isFetching: false, isSuccess: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://spa.example.com');
+    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-empty'))
+      .toBeInTheDocument();
+  });
+
+  test('an ERRORED pull shows the error note (no spurious applied/empty)', async () => {
+    mocks.meta = { data: undefined, isFetching: false, isSuccess: false, isError: true };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://broken.example.com');
+    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-error'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-offsite-submit-autofill-applied').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-offsite-submit-autofill-empty').elements()).toHaveLength(0);
+  });
+
+  test('re-clicking with the SAME url bypasses the once-per-url guard via refetch()', async () => {
+    mocks.meta = {
+      data: { name: 'Vitrine', tagline: undefined, description: undefined, coverImageUrl: 'https://cdn/og-cover.png', iconImageUrl: 'https://cdn/og-icon.png' },
+      isFetching: false,
+      isSuccess: true,
+    };
+    renderWithProviders(<ExternalSubmitForm />);
+    await page.getByTestId('apps-offsite-submit-url').fill('https://vitrine.civitai.com');
+    await page.getByTestId('apps-offsite-submit-url').element().blur(); // sets metaUrl via the auto-pull path
+
+    // FIRST click: metaUrl already set by blur → same-url path → refetch().
+    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await expect
+      .element(page.getByTestId('apps-offsite-submit-autofill-applied'))
+      .toBeInTheDocument();
+    await vi.waitFor(() => expect(mocks.refetch).toHaveBeenCalled());
+    const firstCount = mocks.refetch.mock.calls.length;
+
+    // SECOND click, url UNCHANGED: the once-per-url guard would block a re-apply, so the
+    // retry MUST go through refetch() again — proving the guard is bypassed on a manual pull.
+    await page.getByTestId('apps-offsite-submit-autofill').click();
+    await vi.waitFor(() => expect(mocks.refetch.mock.calls.length).toBeGreaterThan(firstCount));
   });
 });

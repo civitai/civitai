@@ -104,6 +104,7 @@ import type {
   PoolTrigger,
   ChallengeReviewCostType,
   ChallengeIngestionStatus,
+  ChallengeEngagementType,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   ComicProjectStatus,
@@ -1399,6 +1400,12 @@ export type ChallengeCategory = {
   active: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type ChallengeEngagement = {
+  userId: number;
+  challengeId: number;
+  type: ChallengeEngagementType;
+  createdAt: Generated<Timestamp>;
 };
 export type ChallengeEvent = {
   id: Generated<number>;
@@ -3946,6 +3953,7 @@ export type DB = {
   CashWithdrawal: CashWithdrawal;
   Challenge: Challenge;
   ChallengeCategory: ChallengeCategory;
+  ChallengeEngagement: ChallengeEngagement;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
   ChallengeReport: ChallengeReport;

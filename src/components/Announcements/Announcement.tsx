@@ -9,6 +9,7 @@ import {
   dismissAnnouncements,
   useAnnouncementsStore,
 } from '~/components/Announcements/announcements.utils';
+import { ANNOUNCEMENT_IMAGE_WIDTH } from '~/components/Announcements/announcement-image';
 import clsx from 'clsx';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -61,7 +62,9 @@ export function Announcement({
         <div className="relative min-h-40 w-40 @max-md:hidden">
           <EdgeMedia
             src={image}
-            width={200}
+            // Shared with `announcement-media-check` so the monitored variant stays the
+            // variant users actually load. See announcement-image.ts.
+            width={ANNOUNCEMENT_IMAGE_WIDTH}
             alt="Announcement banner image"
             className="absolute inset-0 size-full object-cover"
           />

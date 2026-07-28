@@ -80,7 +80,7 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   if (input.types && input.types.length) cosmeticWhere.type = { in: input.types };
   if (input.resellable) {
     where.status = CosmeticShopItemStatus.Published;
-    where.addedById = { not: null };
+    cosmeticWhere.createdById = { not: null };
     where.meta = { path: ['sellableByOthers'], equals: true };
   }
 
@@ -308,7 +308,7 @@ export const upsertCosmeticShopSection = async ({
     const ineligible = await dbWrite.cosmeticShopItem.findMany({
       where: {
         id: { in: items },
-        addedById: { not: null },
+        cosmetic: { createdById: { not: null } },
         OR: [
           { status: { not: CosmeticShopItemStatus.Published } },
           { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
@@ -476,15 +476,19 @@ export const getShopSectionsWithItems = async ({
         },
         where: {
           shopItem: {
-            cosmetic: (cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {},
+            cosmetic: {
+              ...((cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {}),
+              // Creator-made cosmetics (createdById set — official items also
+              // have an addedById, the mod who listed them) are gated behind
+              // the creatorShop feature flag; a section of only creator items
+              // disappears entirely for unflagged viewers via the
+              // empty-section filter below.
+              ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+            },
             archivedAt: null,
             // Creator items in official sections can lose their Published
             // status after being featured (revert/reject) — hide those.
             ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published }),
-            // Creator-listed items are gated behind the creatorShop feature
-            // flag; a section of only creator items disappears entirely for
-            // unflagged viewers via the empty-section filter below.
-            ...(isModerator || creatorShopEnabled ? {} : { addedById: null }),
             OR: isModerator
               ? undefined
               : [{ availableTo: { gte: new Date() } }, { availableTo: null }],

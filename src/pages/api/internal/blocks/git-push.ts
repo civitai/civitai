@@ -321,7 +321,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     allowedScopes: appBlock.app.allowedScopes ?? 0,
     allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
   };
-  const validation = BlockManifestValidator.validate(manifest, appContext);
+  const validation = await BlockManifestValidator.validateSubmission(manifest, appContext);
   if (!validation.valid) {
     await setCommitStatusSafe({
       slug,

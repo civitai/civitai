@@ -136,7 +136,7 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
       },
     ]);
     mockDbRead.appListing.findMany.mockResolvedValue([
-      { id: 'l-a', appBlockId: 'block-a', status: 'approved' },
+      { id: 'l-a', appBlockId: 'block-a', status: 'approved', _count: { screenshots: 3 } },
     ]);
 
     const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
@@ -191,8 +191,8 @@ describe('listMyPublishRequests — P4 owner-control augmentation', () => {
       },
     ]);
     mockDbRead.appListing.findMany.mockResolvedValue([
-      { id: 'l-h', appBlockId: 'block-h', status: 'removed' },
-      { id: 'l-m', appBlockId: 'block-m', status: 'removed' },
+      { id: 'l-h', appBlockId: 'block-h', status: 'removed', _count: { screenshots: 3 } },
+      { id: 'l-m', appBlockId: 'block-m', status: 'removed', _count: { screenshots: 3 } },
     ]);
     mockDbRead.appListingModerationEvent.findMany.mockResolvedValue([
       { appListingId: 'l-h', action: 'owner-unpublish' },
