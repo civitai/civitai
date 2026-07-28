@@ -530,15 +530,17 @@ describe('dismissMinorHashMatch', () => {
   });
 });
 
-function rollbackRow(overrides: Partial<{
-  modelId: number;
-  prevNsfw: boolean;
-  prevSfwOnly: boolean;
-  prevGalleryLevel: number | null;
-  prevLockedProperties: string[];
-  prevMinorImageIds: number[];
-  humanConfirmed: boolean;
-}> = {}) {
+function rollbackRow(
+  overrides: Partial<{
+    modelId: number;
+    prevNsfw: boolean;
+    prevSfwOnly: boolean;
+    prevGalleryLevel: number | null;
+    prevLockedProperties: string[];
+    prevMinorImageIds: number[];
+    humanConfirmed: boolean;
+  }> = {}
+) {
   return {
     modelId: 200,
     prevNsfw: false,
@@ -565,7 +567,9 @@ describe('rollbackMinorHashAutoFlags', () => {
     });
 
     const restoreCall = mockDbWrite.$executeRaw.mock.calls.find((call) =>
-      Array.from(call[0] as TemplateStringsArray).join('?').includes('SET nsfw')
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('SET nsfw')
     );
     expect(restoreCall).toBeDefined();
     const [strings, ...values] = restoreCall!;
@@ -586,7 +590,9 @@ describe('rollbackMinorHashAutoFlags', () => {
     await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
 
     const imageCall = mockDbWrite.$executeRaw.mock.calls.find((call) =>
-      Array.from(call[0] as TemplateStringsArray).join('?').includes('UPDATE "Image"')
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('UPDATE "Image"')
     );
     expect(imageCall).toBeDefined();
     const text = Array.from(imageCall![0] as TemplateStringsArray).join('?');
@@ -604,7 +610,9 @@ describe('rollbackMinorHashAutoFlags', () => {
     await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
 
     const imageCall = mockDbWrite.$executeRaw.mock.calls.find((call) =>
-      Array.from(call[0] as TemplateStringsArray).join('?').includes('UPDATE "Image"')
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('UPDATE "Image"')
     );
     expect(imageCall).toBeUndefined();
     expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
