@@ -136,6 +136,13 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
         </Group>
       </Stack>
 
+      {data?.partial && (
+        <Alert color="orange" title="Preview — the contest is still open">
+          Scored up to {formatDate(data.window.effectiveEnd, 'MMM D, YYYY h:mm A')}. These standings
+          are not a final result.
+        </Alert>
+      )}
+
       {data?.truncated && (
         <Alert color="yellow">
           Showing the first {data.entryCount} entries only. Narrow the category or status filter to
@@ -156,9 +163,21 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
               <Group justify="space-between">
                 <Title order={4}>{category.tagName ?? 'Uncategorized'}</Title>
                 <Text size="sm" c="dimmed">
-                  {category.entryCount} entries
+                  {category.eligibleCount} eligible of {category.entryCount}
                 </Text>
               </Group>
+              {category.soloEntry && (
+                <Alert color="yellow">
+                  Only one eligible entry in this category. A lone entrant tops every signal by
+                  definition, so its score is not comparable to any other category.
+                </Alert>
+              )}
+              {category.tied && (
+                <Alert color="gray">
+                  No qualified engagement in this category — every entry is tied, so no ranking is
+                  shown.
+                </Alert>
+              )}
               <Table.ScrollContainer minWidth={900}>
                 <Table striped highlightOnHover verticalSpacing="xs">
                   <Table.Thead>
@@ -179,8 +198,8 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
                   </Table.Thead>
                   <Table.Tbody>
                     {category.entries.map((entry) => (
-                      <Table.Tr key={entry.collectionItemId}>
-                        <Table.Td>{entry.rank}</Table.Td>
+                      <Table.Tr key={entry.collectionItemId} opacity={entry.eligible ? 1 : 0.55}>
+                        <Table.Td>{entry.rank ?? '—'}</Table.Td>
                         <Table.Td>
                           <Group gap="xs" wrap="nowrap">
                             {entry.image && (
@@ -203,6 +222,11 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
                                 <Text size="xs" c="dimmed">
                                   by {entry.creatorUsername}
                                 </Text>
+                              )}
+                              {entry.ineligibleReason && (
+                                <Badge color="red" variant="light" size="xs">
+                                  {entry.ineligibleReason}
+                                </Badge>
                               )}
                             </Stack>
                           </Group>
@@ -238,7 +262,7 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
                           </Tooltip>
                         </Table.Td>
                         <Table.Td>
-                          <Text fw={600}>{entry.score.toFixed(3)}</Text>
+                          <Text fw={600}>{entry.eligible ? entry.score.toFixed(3) : '—'}</Text>
                         </Table.Td>
                       </Table.Tr>
                     ))}
@@ -260,13 +284,20 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
           ) : (
             snapshots.map((snapshot) => (
               <Group key={snapshot.key} gap="xs" justify="space-between">
-                <Text size="sm">
-                  {formatDate(snapshot.takenAt, 'MMM D, YYYY h:mm A')} &middot;{' '}
-                  {snapshot.takenByUsername ?? `user ${snapshot.takenById}`}
-                </Text>
+                <Group gap="xs">
+                  <Text size="sm">
+                    {formatDate(snapshot.takenAt, 'MMM D, YYYY h:mm A')} &middot;{' '}
+                    {snapshot.takenByUsername ?? `user ${snapshot.takenById}`}
+                  </Text>
+                  {snapshot.partial && (
+                    <Badge color="orange" variant="light" size="xs">
+                      Preview
+                    </Badge>
+                  )}
+                </Group>
                 <Text size="xs" c="dimmed">
                   {snapshot.entryCount} entries &middot; {formatDate(snapshot.window.start)} –{' '}
-                  {formatDate(snapshot.window.end)}
+                  {formatDate(snapshot.window.effectiveEnd)}
                 </Text>
               </Group>
             ))

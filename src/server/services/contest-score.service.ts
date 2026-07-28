@@ -9,19 +9,27 @@
  * Categories are separate contests — normalization and ranking never cross a
  * category boundary, so raw volume is never compared across them.
  *
- * Weights and anti-cheat thresholds are NOT in this file and have no code default.
- * They live in the `contestScoring` KeyValue row; this module fails loudly when it
- * is missing. Nothing derived from them is ever returned to the client.
+ * Every count is computed IN the database. No user-id array ever crosses into
+ * Node: the age gate becomes a `userId <= threshold` pushdown, and the (small)
+ * disqualified set is pushed into each query as a literal id list.
+ *
+ * Weights and thresholds are NOT in this file and have no code default. They live
+ * in `contestScoring:<collectionId>` (falling back to `contestScoring:default`);
+ * this module fails loudly when neither row exists. They are recorded in every
+ * snapshot and stripped from every response.
  */
 
 import { Prisma } from '@prisma/client';
+import pLimit from 'p-limit';
 import * as z from 'zod';
 import { CONTEST_SNAPSHOT_KEY_PREFIX, KEY_VALUE_KEYS } from '~/server/common/constants';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { collectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
   CreateContestSnapshotInput,
   GetCommunityScoreInput,
@@ -29,14 +37,20 @@ import type {
   ContestScoreSignal,
 } from '~/server/schema/contest-score.schema';
 import { contestScoreSignals } from '~/server/schema/contest-score.schema';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { Availability, CollectionItemStatus, CollectionMode } from '~/shared/utils/prisma/enums';
 import { hashifyObject } from '~/utils/string-helpers';
 
 type Signal = ContestScoreSignal;
+
+/**
+ * Bumped whenever a change here could move a ranking. Recorded in every snapshot so
+ * a disputed result can be traced to the code that produced it.
+ */
+export const CONTEST_SCORE_CODE_VERSION = 2;
 
 /**
  * Comments and tips are deliberately unweighted: both are trivially launderable
@@ -50,84 +64,226 @@ export const CONTEST_SIGNAL_SOURCES: Record<Signal, string> = {
   collectors: 'Distinct users adding the model to another collection',
 };
 
-// A ClickHouse `IN` list is materialized in the query string; chunk to keep it sane.
-const CH_IN_CHUNK = 25000;
 const MAX_ENTRIES = 1000;
 const SCORE_CACHE_TTL = 60 * 15;
+// Entities per ClickHouse call. Chunks are cut along ENTRY boundaries, never entity
+// ones: uniqExact cannot be summed across chunks, so every entity belonging to an
+// entry has to be counted in the same call.
+const CH_ENTITY_CHUNK = 20000;
+const CH_CONCURRENCY = 4;
 const DEFAULT_STATUSES: CollectionItemStatus[] = [CollectionItemStatus.ACCEPTED];
 
+/**
+ * An error whose message is safe to show the caller — a misconfiguration or a bad
+ * request, never a query failure. Everything else is logged and replaced with a
+ * generic message, because the ClickHouse `$query` wrapper appends the generated
+ * SQL (id lists included) to the errors it throws.
+ */
+export class ContestScoringError extends Error {}
+
+function sanitizeError(collectionId: number, e: unknown): never {
+  if (e instanceof ContestScoringError) throw throwBadRequestError(e.message);
+  const error = e as Error;
+  logToAxiom(
+    { name: 'contest-score', type: 'error', collectionId, message: error?.message },
+    'civitai-prod'
+  ).catch(() => null);
+  console.error('[contest-score] failed', collectionId, error?.message);
+  throw new Error('Contest scoring failed. See server logs.');
+}
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+// Structural validation only. A bound on a weight or a threshold discloses that
+// value's range, so nothing here constrains magnitude.
 const weightsSchema = z.object(
-  Object.fromEntries(contestScoreSignals.map((s) => [s, z.number().min(0)])) as Record<
-    Signal,
-    z.ZodNumber
-  >
+  Object.fromEntries(contestScoreSignals.map((s) => [s, z.number()])) as Record<Signal, z.ZodNumber>
 );
-const settingsSchema = z.object({
-  weights: weightsSchema,
-  ageGateDays: z.number().min(0),
-  farmIp: z.object({ minPeers: z.number().int().min(1), minEntries: z.number().int().min(1) }),
-});
-const settingsOverrideSchema = z.object({
-  weights: weightsSchema.partial().optional(),
-  ageGateDays: z.number().min(0).optional(),
-  farmIp: z
-    .object({ minPeers: z.number().int().min(1), minEntries: z.number().int().min(1) })
-    .partial()
-    .optional(),
-});
 const storedConfigSchema = z.object({
-  version: z.number().int().min(1),
-  default: settingsSchema,
-  collections: z.record(z.string(), settingsOverrideSchema).optional(),
+  version: z.number(),
+  weights: weightsSchema,
+  ageGateDays: z.number(),
+  farmIp: z.object({ minPeers: z.number(), minEntries: z.number() }),
 });
 
-type ContestScoringSettings = z.infer<typeof settingsSchema>;
-type ContestScoringConfig = ContestScoringSettings & { version: number };
+export type ContestScoringConfig = z.infer<typeof storedConfigSchema>;
 
+const configKey = (suffix: number | 'default') => `${KEY_VALUE_KEYS.CONTEST_SCORING}:${suffix}`;
+
+/**
+ * Per-collection config with a global fallback. One shared row would let a later
+ * edit retroactively change a finished contest's ranking.
+ */
 export async function getContestScoringConfig(collectionId: number): Promise<ContestScoringConfig> {
-  const stored = await dbKV.get<unknown>(KEY_VALUE_KEYS.CONTEST_SCORING);
+  const [specific, fallback] = await Promise.all([
+    dbKV.get<unknown>(configKey(collectionId)),
+    dbKV.get<unknown>(configKey('default')),
+  ]);
+
+  const stored = specific ?? fallback;
   if (!stored)
-    throw new Error(
-      `Contest scoring is not configured: the "${KEY_VALUE_KEYS.CONTEST_SCORING}" KeyValue row is missing. Weights and thresholds live only in the database — there is no code fallback.`
+    throw new ContestScoringError(
+      `Contest scoring is not configured: neither "${configKey(collectionId)}" nor "${configKey(
+        'default'
+      )}" exists in KeyValue. Weights and thresholds live only in the database — there is no code fallback.`
     );
 
   const parsed = storedConfigSchema.safeParse(stored);
   if (!parsed.success)
-    throw new Error(
-      `The "${KEY_VALUE_KEYS.CONTEST_SCORING}" KeyValue row is malformed: ${parsed.error.message}`
+    throw new ContestScoringError(
+      `The contest scoring config for collection ${collectionId} is malformed: ${parsed.error.message}`
     );
 
-  const { version, default: base, collections } = parsed.data;
-  const override = collections?.[String(collectionId)];
+  return parsed.data;
+}
+
+// ---------------------------------------------------------------------------
+// Window
+// ---------------------------------------------------------------------------
+
+export type ResolvedWindow = {
+  start: Date;
+  end: Date;
+  /** `end` clamped to now. A contest still running is scored up to this instant. */
+  effectiveEnd: Date;
+  /** True while the contest is still open — the run is a preview, not a result. */
+  partial: boolean;
+  ageCutoff: Date;
+};
+
+/**
+ * Derived from the collection's own contest metadata, never defaulted. An absent
+ * window silently becoming "all time" would switch the age gate off, which is the
+ * worst way for this to fail.
+ */
+async function resolveWindow(
+  collectionId: number,
+  input: { start?: Date; end?: Date },
+  config: ContestScoringConfig
+): Promise<ResolvedWindow> {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, mode: true, metadata: true },
+  });
+  if (!collection) throw new ContestScoringError(`Collection ${collectionId} not found`);
+  if (collection.mode !== CollectionMode.Contest)
+    throw new ContestScoringError(`Collection ${collectionId} is not a contest collection`);
+
+  const parsed = collectionMetadataSchema.safeParse(collection.metadata ?? {});
+  const metadata = parsed.success ? parsed.data : {};
+
+  const start = input.start ?? metadata.submissionStartDate;
+  const end = input.end ?? metadata.submissionEndDate ?? metadata.endsAt;
+  if (!start)
+    throw new ContestScoringError(
+      `Collection ${collectionId} has no submissionStartDate and no explicit window start was given.`
+    );
+  if (!end)
+    throw new ContestScoringError(
+      `Collection ${collectionId} has neither submissionEndDate nor endsAt, and no explicit window end was given.`
+    );
+
+  // Always the contest's own start, never a narrowed display window — otherwise
+  // zooming the view would drag the age gate along with it.
+  const contestStart = metadata.submissionStartDate ?? start;
+  const ageCutoff = new Date(contestStart.getTime() - config.ageGateDays * 24 * 60 * 60 * 1000);
+
+  const now = new Date();
+  const partial = end > now;
+
+  return { start, end, effectiveEnd: partial ? now : end, partial, ageCutoff };
+}
+
+// ---------------------------------------------------------------------------
+// Gates
+// ---------------------------------------------------------------------------
+
+type Gates = {
+  /** An account with an id above this registered after the cutoff. */
+  userIdThreshold: number;
+  /**
+   * Users wrongly caught by the id threshold: registered before the cutoff but
+   * holding an id above it. Recorded so a snapshot can be audited.
+   */
+  ageGateBandUsers: number;
+  disqualifiedIds: number[];
+};
+
+async function loadGates(window: ResolvedWindow): Promise<Gates> {
+  // `User.id` is autoincrement but NOT strictly monotonic with `createdAt` — at
+  // least one backdated system account exists. `max(id) WHERE createdAt <= cutoff`
+  // would let that single row drag the threshold up and wave through every account
+  // registered since. `min(id) WHERE createdAt > cutoff` minus one can only ever be
+  // too strict, which is the safe direction for an anti-cheat gate.
+  const [threshold] = await withSpan(
+    'contest-score.age-threshold',
+    () =>
+      dbRead.$queryRaw<{ threshold: number; bandUsers: number }[]>`
+      WITH t AS (
+        SELECT COALESCE(
+          (SELECT min(id) FROM "User" WHERE "createdAt" > ${window.ageCutoff}) - 1,
+          (SELECT max(id) FROM "User")
+        ) AS threshold
+      )
+      SELECT
+        t.threshold::int AS "threshold",
+        (
+          SELECT count(*)::int FROM "User" u
+          WHERE u."createdAt" <= ${window.ageCutoff} AND u.id > t.threshold
+        ) AS "bandUsers"
+      FROM t
+    `
+  );
+
+  if (threshold?.bandUsers)
+    console.warn(
+      `[contest-score] age gate band holds ${threshold.bandUsers} user(s) registered before the cutoff but carrying an id above the threshold; they are disqualified.`
+    );
+
+  // Only accounts banned or deleted ON OR AFTER the window start can have engaged
+  // during it — every signal here requires an authenticated action and a banned or
+  // deleted account cannot perform one. That turns a 1.35M-row set into a few
+  // thousand, small enough to push into ClickHouse. Contest bans are unconditional
+  // (a scoring sanction, not an access one) and number in the dozens.
+  const banned = await withSpan(
+    'contest-score.banned',
+    () =>
+      dbRead.$queryRaw<{ id: number }[]>`
+      SELECT u.id
+      FROM "User" u
+      WHERE u.id <= ${threshold.threshold}
+        AND (
+          u."bannedAt" >= ${window.start}
+          OR u."deletedAt" >= ${window.start}
+          OR u.meta ->> 'contestBanDetails' IS NOT NULL
+        )
+    `
+  );
+
+  const excluded = await withSpan('contest-score.excluded-users', () =>
+    clickhouse!.$query<{ userId: number }>(`
+      SELECT userId FROM metricExcludedUsers FINAL WHERE active = 1
+    `)
+  );
+
+  const disqualifiedIds = [
+    ...new Set([...banned.map((b) => b.id), ...excluded.map((e) => Number(e.userId))]),
+  ].sort((a, b) => a - b);
 
   return {
-    version,
-    weights: { ...base.weights, ...override?.weights },
-    ageGateDays: override?.ageGateDays ?? base.ageGateDays,
-    farmIp: { ...base.farmIp, ...override?.farmIp },
+    userIdThreshold: threshold.threshold,
+    ageGateBandUsers: threshold.bandUsers,
+    disqualifiedIds,
   };
 }
 
-export async function assertCanScoreContest({
-  collectionId,
-  userId,
-  isModerator,
-}: {
-  collectionId: number;
-  userId: number;
-  isModerator?: boolean;
-}) {
-  const permissions = await getUserCollectionPermissionsById({
-    id: collectionId,
-    userId,
-    isModerator,
-  });
-  if (!permissions.manage)
-    throw throwAuthorizationError('You do not have permission to score this collection');
-  return permissions;
-}
+// ---------------------------------------------------------------------------
+// Entries
+// ---------------------------------------------------------------------------
 
-type Entry = {
+type EntryRow = {
   collectionItemId: number;
   modelId: number;
   modelName: string;
@@ -137,8 +293,9 @@ type Entry = {
   tagId: number | null;
   tagName: string | null;
   status: string;
-  versionIds: number[];
-  signals: Record<Signal, Set<number>>;
+  modelStatus: string;
+  modelDeleted: boolean;
+  modelAvailability: string;
 };
 
 type EntryImage = {
@@ -150,29 +307,18 @@ type EntryImage = {
   height: number | null;
 };
 
-const chDateTime = (d: Date) => `toDateTime('${d.toISOString().slice(0, 19).replace('T', ' ')}')`;
-
-function chunk<T>(items: T[], size: number) {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
+/** Every id reaching raw SQL passes through here, so nothing downstream has to trust a caller. */
+function intList(values: number[]) {
+  for (const value of values)
+    if (!Number.isInteger(value)) throw new ContestScoringError('Expected integer identifiers');
+  return values.join(',');
 }
 
-/** Runs `build` once per chunk of ids and concatenates the rows. */
-async function chQueryChunked<T extends object>(
-  name: string,
-  ids: number[],
-  build: (idList: string) => string
-) {
-  if (!ids.length) return [] as T[];
-  return withSpan(`contest-score.${name}`, { ids: ids.length }, async () => {
-    const results: T[] = [];
-    for (const part of chunk(ids, CH_IN_CHUNK)) {
-      const rows = await clickhouse!.$query<T>(build(part.join(',')));
-      results.push(...rows);
-    }
-    return results;
-  });
+function ineligibilityReason(entry: EntryRow) {
+  if (entry.modelDeleted) return 'Model deleted';
+  if (entry.modelStatus !== 'Published') return `Model ${entry.modelStatus.toLowerCase()}`;
+  if (entry.modelAvailability === Availability.Private) return 'Model is private';
+  return null;
 }
 
 type WindowInput = {
@@ -190,17 +336,20 @@ async function loadEntries(input: WindowInput) {
   const items = await withSpan(
     'contest-score.entries',
     () =>
-      dbRead.$queryRaw<Omit<Entry, 'versionIds' | 'signals'>[]>`
+      dbRead.$queryRaw<EntryRow[]>`
       SELECT
-        ci.id           AS "collectionItemId",
-        ci."modelId"    AS "modelId",
-        m.name          AS "modelName",
-        m."userId"      AS "creatorId",
-        u.username      AS "creatorUsername",
-        ci."addedById"  AS "addedById",
-        ci."tagId"      AS "tagId",
-        t.name          AS "tagName",
-        ci.status::text AS "status"
+        ci.id                     AS "collectionItemId",
+        ci."modelId"              AS "modelId",
+        m.name                    AS "modelName",
+        m."userId"                AS "creatorId",
+        u.username                AS "creatorUsername",
+        ci."addedById"            AS "addedById",
+        ci."tagId"                AS "tagId",
+        t.name                    AS "tagName",
+        ci.status::text           AS "status",
+        m.status::text            AS "modelStatus",
+        m."deletedAt" IS NOT NULL AS "modelDeleted",
+        m.availability::text      AS "modelAvailability"
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
       LEFT JOIN "User" u ON u.id = m."userId"
@@ -214,27 +363,7 @@ async function loadEntries(input: WindowInput) {
     `
   );
 
-  const truncated = items.length > MAX_ENTRIES;
-  const entries: Entry[] = items.slice(0, MAX_ENTRIES).map((item) => ({
-    ...item,
-    versionIds: [],
-    signals: Object.fromEntries(contestScoreSignals.map((s) => [s, new Set<number>()])) as Record<
-      Signal,
-      Set<number>
-    >,
-  }));
-
-  if (entries.length) {
-    const modelIds = entries.map((e) => e.modelId);
-    const versions = await dbRead.$queryRaw<{ id: number; modelId: number }[]>`
-      SELECT id, "modelId" FROM "ModelVersion"
-      WHERE "modelId" IN (${Prisma.join(modelIds)})
-    `;
-    const byModel = new Map(entries.map((e) => [e.modelId, e]));
-    for (const v of versions) byModel.get(v.modelId)?.versionIds.push(v.id);
-  }
-
-  return { entries, truncated };
+  return { entries: items.slice(0, MAX_ENTRIES), truncated: items.length > MAX_ENTRIES };
 }
 
 /** One representative image per model — the creator's own showcase post, in their order. */
@@ -242,214 +371,326 @@ async function loadEntryImages(modelIds: number[]) {
   const images = new Map<number, EntryImage>();
   if (!modelIds.length) return images;
 
-  const rows = await dbRead.$queryRaw<({ modelId: number } & EntryImage)[]>`
-    SELECT DISTINCT ON (mv."modelId")
-      mv."modelId"  AS "modelId",
-      i.id          AS "id",
-      i.url         AS "url",
-      i."nsfwLevel" AS "nsfwLevel",
-      i.type::text  AS "type",
-      i.width       AS "width",
-      i.height      AS "height"
-    FROM "ModelVersion" mv
-    JOIN "Model" m ON m.id = mv."modelId"
-    JOIN "Post" p ON p."modelVersionId" = mv.id AND p."userId" = m."userId"
-    JOIN "Image" i ON i."postId" = p.id
-    WHERE mv."modelId" IN (${Prisma.join(modelIds)})
-      AND p."publishedAt" IS NOT NULL
-      AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
-    ORDER BY mv."modelId", mv."index", p.id, i."index"
-  `;
+  const rows = await withSpan(
+    'contest-score.entry-images',
+    () =>
+      dbRead.$queryRaw<({ modelId: number } & EntryImage)[]>`
+      SELECT DISTINCT ON (mv."modelId")
+        mv."modelId"  AS "modelId",
+        i.id          AS "id",
+        i.url         AS "url",
+        i."nsfwLevel" AS "nsfwLevel",
+        i.type::text  AS "type",
+        i.width       AS "width",
+        i.height      AS "height"
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
+      JOIN "Post" p ON p."modelVersionId" = mv.id AND p."userId" = m."userId"
+      JOIN "Image" i ON i."postId" = p.id
+      WHERE mv."modelId" IN (${Prisma.join(modelIds)})
+        AND p."publishedAt" IS NOT NULL
+        AND p."publishedAt" <= NOW()
+        AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+      ORDER BY mv."modelId", mv."index", p.id, i."index"
+    `
+  );
   for (const { modelId, ...image } of rows) images.set(modelId, image);
 
   return images;
 }
 
+// ---------------------------------------------------------------------------
+// Signals
+// ---------------------------------------------------------------------------
+
+type SignalCount = { collectionItemId: number; rawUsers: number; qualifiedUsers: number };
+
 /**
- * Fills each entry's per-signal distinct-user sets and returns the imageId ->
- * modelId map (the reactor signal is keyed off the entry's on-site images).
+ * (entity, entry) pairs for the ClickHouse joins. Deliberately many-to-many in both
+ * directions: one image can credit several entered models (stacked LoRAs), and one
+ * model can be entered more than once (two categories, a resubmission,
+ * maxItemsPerUser > 1). Collapsing either direction silently zeroes an entry.
  */
-async function collectSignals(entries: Entry[], start: Date, end: Date) {
-  const byModel = new Map(entries.map((e) => [e.modelId, e]));
-  const byVersion = new Map<number, Entry>();
-  for (const entry of entries) for (const id of entry.versionIds) byVersion.set(id, entry);
+type EntryPair = { entityId: number; entryId: number; creatorId: number; addedById: number };
 
-  const modelIds = [...byModel.keys()];
-  const versionIds = [...byVersion.keys()];
-  const imageToModel = new Map<number, number>();
-
-  // Reactors are keyed off the entries' on-site images, so that pair runs as one
-  // chain; the other three are independent.
-  const imagesThenReactors = async () => {
-    const images = await withSpan(
-      'contest-score.images',
-      () =>
-        dbRead.$queryRaw<{ modelId: number; imageId: number; userId: number }[]>`
-        SELECT DISTINCT mv."modelId" AS "modelId", i.id AS "imageId", i."userId" AS "userId"
-        FROM "ImageResourceNew" ir
-        JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-        JOIN "Image" i ON i.id = ir."imageId"
-        JOIN "Post" p ON p.id = i."postId"
-        WHERE mv."modelId" IN (${Prisma.join(modelIds)})
-          AND i."createdAt" >= ${start}
-          AND i."createdAt" < ${end}
-          AND p."publishedAt" IS NOT NULL
-          AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
-      `
-    );
-    for (const row of images) {
-      imageToModel.set(row.imageId, row.modelId);
-      byModel.get(row.modelId)?.signals.imageAuthors.add(row.userId);
-    }
-
-    const reactions = await chQueryChunked<{ entityId: number; userId: number }>(
-      'reactors',
-      [...imageToModel.keys()],
-      (ids) => `
-        SELECT entityId, userId
-        FROM reactions
-        WHERE type = 'Image_Create'
-          AND entityId IN (${ids})
-          AND time >= ${chDateTime(start)} AND time < ${chDateTime(end)}
-          AND userId != 0
-        GROUP BY entityId, userId
-      `
-    );
-    for (const row of reactions) {
-      const modelId = imageToModel.get(row.entityId);
-      if (modelId) byModel.get(modelId)?.signals.reactors.add(row.userId);
-    }
-  };
-
-  const loadCollectors = async () => {
-    const collectors = await withSpan(
-      'contest-score.collectors',
-      () =>
-        dbRead.$queryRaw<{ modelId: number; userId: number }[]>`
-        SELECT DISTINCT ci."modelId" AS "modelId", ci."addedById" AS "userId"
-        FROM "CollectionItem" ci
-        WHERE ci."modelId" IN (${Prisma.join(modelIds)})
-          AND ci."addedById" IS NOT NULL
-          AND ci."createdAt" >= ${start}
-          AND ci."createdAt" < ${end}
-      `
-    );
-    for (const row of collectors) byModel.get(row.modelId)?.signals.collectors.add(row.userId);
-  };
-
-  const loadDownloaders = async () => {
-    const downloads = await chQueryChunked<{ modelId: number; userId: number }>(
-      'downloaders',
-      modelIds,
-      (ids) => `
-        SELECT modelId, userId
-        FROM modelVersionEvents
-        WHERE type = 'Download'
-          AND modelId IN (${ids})
-          AND time >= ${chDateTime(start)} AND time < ${chDateTime(end)}
-          AND userId != 0
-        GROUP BY modelId, userId
-      `
-    );
-    for (const row of downloads) byModel.get(row.modelId)?.signals.downloaders.add(row.userId);
-  };
-
-  // Straight off orchestration.jobs, NOT default.daily_user_resource: that view
-  // only ingests jobType IN ('TextToImage','TextToImageV2','Comfy'), so every
-  // newer engine (ComfyImageGen, AnimaComfy, StableDiffusionCpp, …) is missing
-  // from it and whole ecosystems read as zero generations.
-  const loadGenerators = async () => {
-    const generations = await chQueryChunked<{ modelVersionId: number; userId: number }>(
-      'generators',
-      versionIds,
-      (ids) => `
-        SELECT resource AS modelVersionId, userId
-        FROM orchestration.jobs
-        ARRAY JOIN resourcesUsed AS resource
-        WHERE resource IN (${ids})
-          AND createdAt >= ${chDateTime(start)} AND createdAt < ${chDateTime(end)}
-          AND userId != 0
-        GROUP BY resource, userId
-      `
-    );
-    for (const row of generations)
-      byVersion.get(row.modelVersionId)?.signals.generators.add(row.userId);
-  };
-
-  await Promise.all([imagesThenReactors(), loadCollectors(), loadDownloaders(), loadGenerators()]);
-
-  return { imageToModel };
+/**
+ * A ClickHouse-side lookup table built from a tuple literal. `values()` would read
+ * better but is not available on every deployment; arrayJoin over a tuple array is.
+ */
+function chPairTable(pairs: EntryPair[]) {
+  const tuples = pairs
+    .map((p) => `(${intList([p.entityId, p.entryId, p.creatorId, p.addedById])})`)
+    .join(',');
+  return `
+    SELECT
+      toUInt64(p.1) AS entityId,
+      toUInt64(p.2) AS entryId,
+      toUInt64(p.3) AS creatorId,
+      toUInt64(p.4) AS addedById
+    FROM (SELECT arrayJoin([${tuples}]) AS p)
+  `;
 }
 
-type Disqualification = {
-  excluded: boolean;
-  contestBanned: boolean;
-  banned: boolean;
-  tooNew: boolean;
-};
+const chDateTime = (d: Date) => `toDateTime('${d.toISOString().slice(0, 19).replace('T', ' ')}')`;
 
-async function loadDisqualifications(userIds: number[], ageCutoff: Date) {
-  const disqualified = new Map<number, Disqualification>();
-  if (!userIds.length) return disqualified;
+/**
+ * Counts distinct users per ENTRY inside ClickHouse. `source` projects `userId` and
+ * `entityId`; the qualification gates are applied there too, so only two integers
+ * per entry come back.
+ */
+function chCountQuery({
+  source,
+  pairs,
+  gates,
+}: {
+  source: (entityIds: string) => string;
+  pairs: EntryPair[];
+  gates: Gates;
+}) {
+  const disqualified = gates.disqualifiedIds.length ? intList(gates.disqualifiedIds) : '0';
+  const entityIds = intList([...new Set(pairs.map((p) => p.entityId))]);
 
-  const users = await withSpan(
-    'contest-score.disqualifications',
+  return `
+    SELECT
+      p.entryId AS entryId,
+      uniqExact(s.userId) AS rawUsers,
+      uniqExactIf(
+        s.userId,
+        s.userId <= ${gates.userIdThreshold}
+          AND s.userId != p.creatorId
+          AND (p.addedById = 0 OR s.userId != p.addedById)
+          AND s.userId NOT IN (${disqualified})
+      ) AS qualifiedUsers
+    FROM (${source(entityIds)}) AS s
+    INNER JOIN (${chPairTable(pairs)}) AS p ON s.entityId = p.entityId
+    GROUP BY entryId
+  `;
+}
+
+/**
+ * Splits pairs into calls, cutting only between entries, and runs them with bounded
+ * concurrency so a large contest cannot open an unbounded fan of CH queries.
+ */
+async function runChCounts(
+  name: string,
+  pairs: EntryPair[],
+  gates: Gates,
+  source: (entityIds: string) => string
+): Promise<SignalCount[]> {
+  if (!pairs.length) return [];
+
+  const byEntry = new Map<number, EntryPair[]>();
+  for (const pair of pairs) {
+    const existing = byEntry.get(pair.entryId);
+    if (existing) existing.push(pair);
+    else byEntry.set(pair.entryId, [pair]);
+  }
+
+  const chunks: EntryPair[][] = [];
+  let current: EntryPair[] = [];
+  for (const group of byEntry.values()) {
+    if (current.length && current.length + group.length > CH_ENTITY_CHUNK) {
+      chunks.push(current);
+      current = [];
+    }
+    current.push(...group);
+  }
+  if (current.length) chunks.push(current);
+
+  return withSpan(
+    `contest-score.${name}`,
+    { pairs: pairs.length, chunks: chunks.length },
+    async () => {
+      const limit = pLimit(CH_CONCURRENCY);
+      const results = await Promise.all(
+        chunks.map((chunk) =>
+          limit(() =>
+            clickhouse!.$query<{ entryId: number; rawUsers: number; qualifiedUsers: number }>(
+              chCountQuery({ source, pairs: chunk, gates })
+            )
+          )
+        )
+      );
+      return results.flat().map((row) => ({
+        collectionItemId: Number(row.entryId),
+        rawUsers: Number(row.rawUsers),
+        qualifiedUsers: Number(row.qualifiedUsers),
+      }));
+    }
+  );
+}
+
+/** The entries as a Postgres lookup table, keyed by collectionItemId. */
+function pgEntryTable(entries: EntryRow[]) {
+  const values = entries
+    .map(
+      (e) =>
+        `(${intList([e.collectionItemId, e.modelId, e.creatorId])},${
+          e.addedById === null ? 'NULL' : intList([e.addedById])
+        })`
+    )
+    .join(',');
+  return Prisma.raw(`(VALUES ${values}) AS e("entryId", "modelId", "creatorId", "addedById")`);
+}
+
+/** The qualification gate, identical across every signal. */
+function pgQualified(userColumn: string, gates: Gates) {
+  const disqualified = gates.disqualifiedIds.length ? intList(gates.disqualifiedIds) : '-1';
+  return Prisma.raw(`
+    ${userColumn} <> e."creatorId"
+    AND (e."addedById" IS NULL OR ${userColumn} <> e."addedById")
+    AND ${userColumn} <= ${gates.userIdThreshold}
+    AND NOT (${userColumn} = ANY(ARRAY[${disqualified}]::int[]))
+  `);
+}
+
+/**
+ * The entries' on-site images, windowed on PUBLICATION. Publication is the
+ * contest-meaningful event — an already-existing model can be entered, so filtering
+ * on image creation would credit or drop the wrong work. Scheduled posts carry a
+ * future `publishedAt` and are visible to nobody, hence the `<= NOW()`.
+ */
+async function loadImagePairs(entries: EntryRow[], window: ResolvedWindow) {
+  return withSpan(
+    'contest-score.image-pairs',
     () =>
-      dbRead.$queryRaw<{ id: number; contestBanned: boolean; banned: boolean; tooNew: boolean }[]>`
-      SELECT
-        u.id,
-        (u.meta -> 'contestBanDetails') IS NOT NULL             AS "contestBanned",
-        (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL) AS "banned",
-        u."createdAt" > ${ageCutoff}                            AS "tooNew"
-      FROM "User" u
-      WHERE u.id IN (${Prisma.join(userIds)})
+      dbRead.$queryRaw<{ entryId: number; imageId: number }[]>`
+      SELECT DISTINCT e."entryId" AS "entryId", i.id AS "imageId"
+      FROM ${pgEntryTable(entries)}
+      JOIN "ModelVersion" mv ON mv."modelId" = e."modelId"
+      JOIN "ImageResourceNew" ir ON ir."modelVersionId" = mv.id
+      JOIN "Image" i ON i.id = ir."imageId"
+      JOIN "Post" p ON p.id = i."postId"
+      WHERE p."publishedAt" IS NOT NULL
+        AND p."publishedAt" <= NOW()
+        AND p."publishedAt" >= ${window.start}
+        AND p."publishedAt" < ${window.effectiveEnd}
+        AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
     `
   );
-  const known = new Set(users.map((u) => u.id));
-  for (const user of users) {
-    if (!user.contestBanned && !user.banned && !user.tooNew) continue;
-    disqualified.set(user.id, { excluded: false, ...user });
-  }
-
-  const excludedRows = await chQueryChunked<{ userId: number }>(
-    'excluded-users',
-    userIds,
-    (ids) => `
-      SELECT userId FROM metricExcludedUsers FINAL
-      WHERE active = 1 AND userId IN (${ids})
-    `
-  );
-  for (const row of excludedRows) {
-    const existing = disqualified.get(row.userId);
-    if (existing) existing.excluded = true;
-    else
-      disqualified.set(row.userId, {
-        excluded: true,
-        contestBanned: false,
-        banned: false,
-        tooNew: false,
-      });
-  }
-
-  // A userId with no User row is a deleted account: never counts.
-  for (const id of userIds) {
-    if (known.has(id) || disqualified.has(id)) continue;
-    disqualified.set(id, { excluded: false, contestBanned: false, banned: true, tooNew: false });
-  }
-
-  return disqualified;
 }
+
+async function countImageAuthors(entries: EntryRow[], window: ResolvedWindow, gates: Gates) {
+  return withSpan(
+    'contest-score.image-authors',
+    () =>
+      dbRead.$queryRaw<SignalCount[]>`
+      SELECT
+        e."entryId"                     AS "collectionItemId",
+        count(DISTINCT i."userId")::int AS "rawUsers",
+        count(DISTINCT i."userId") FILTER (WHERE ${pgQualified('i."userId"', gates)})::int
+                                        AS "qualifiedUsers"
+      FROM ${pgEntryTable(entries)}
+      JOIN "ModelVersion" mv ON mv."modelId" = e."modelId"
+      JOIN "ImageResourceNew" ir ON ir."modelVersionId" = mv.id
+      JOIN "Image" i ON i.id = ir."imageId"
+      JOIN "Post" p ON p.id = i."postId"
+      WHERE p."publishedAt" IS NOT NULL
+        AND p."publishedAt" <= NOW()
+        AND p."publishedAt" >= ${window.start}
+        AND p."publishedAt" < ${window.effectiveEnd}
+        AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+      GROUP BY e."entryId"
+    `
+  );
+}
+
+async function countCollectors(
+  entries: EntryRow[],
+  window: ResolvedWindow,
+  gates: Gates,
+  collectionId: number
+) {
+  return withSpan(
+    'contest-score.collectors',
+    () =>
+      dbRead.$queryRaw<SignalCount[]>`
+      SELECT
+        e."entryId"                         AS "collectionItemId",
+        count(DISTINCT ci."addedById")::int AS "rawUsers",
+        count(DISTINCT ci."addedById") FILTER (WHERE ${pgQualified('ci."addedById"', gates)})::int
+                                            AS "qualifiedUsers"
+      FROM ${pgEntryTable(entries)}
+      JOIN "CollectionItem" ci ON ci."modelId" = e."modelId"
+      WHERE ci."collectionId" <> ${collectionId}
+        AND ci."addedById" IS NOT NULL
+        AND ci."createdAt" >= ${window.start}
+        AND ci."createdAt" < ${window.effectiveEnd}
+      GROUP BY e."entryId"
+    `
+  );
+}
+
+async function loadVersionPairs(entries: EntryRow[]) {
+  const versions = await dbRead.$queryRaw<{ id: number; modelId: number }[]>`
+    SELECT id, "modelId" FROM "ModelVersion"
+    WHERE "modelId" IN (${Prisma.join(entries.map((e) => e.modelId))})
+  `;
+
+  const byModel = new Map<number, EntryRow[]>();
+  for (const entry of entries) {
+    const existing = byModel.get(entry.modelId);
+    if (existing) existing.push(entry);
+    else byModel.set(entry.modelId, [entry]);
+  }
+
+  const pairs: EntryPair[] = [];
+  for (const version of versions)
+    for (const entry of byModel.get(version.modelId) ?? [])
+      pairs.push({
+        entityId: version.id,
+        entryId: entry.collectionItemId,
+        creatorId: entry.creatorId,
+        addedById: entry.addedById ?? 0,
+      });
+
+  return pairs;
+}
+
+function modelPairs(entries: EntryRow[]): EntryPair[] {
+  return entries.map((entry) => ({
+    entityId: entry.modelId,
+    entryId: entry.collectionItemId,
+    creatorId: entry.creatorId,
+    addedById: entry.addedById ?? 0,
+  }));
+}
+
+function toImagePairs(rows: { entryId: number; imageId: number }[], entries: EntryRow[]) {
+  const byEntry = new Map(entries.map((e) => [e.collectionItemId, e]));
+  const pairs: EntryPair[] = [];
+  for (const row of rows) {
+    const entry = byEntry.get(Number(row.entryId));
+    if (!entry) continue;
+    pairs.push({
+      entityId: Number(row.imageId),
+      entryId: entry.collectionItemId,
+      creatorId: entry.creatorId,
+      addedById: entry.addedById ?? 0,
+    });
+  }
+  return pairs;
+}
+
+// ---------------------------------------------------------------------------
+// Scoring
+// ---------------------------------------------------------------------------
 
 export type ContestScoreEntry = {
-  rank: number;
+  /** Null when the entry is ineligible, or when its whole category is tied at zero. */
+  rank: number | null;
   collectionItemId: number;
   modelId: number;
   modelName: string;
   creatorId: number;
   creatorUsername: string | null;
   status: string;
+  eligible: boolean;
+  ineligibleReason: string | null;
   image: EntryImage | null;
-  signals: Record<Signal, { raw: number; qualified: number; normalized: number }>;
+  // No `normalized` here: alongside `score`, five normalized values and five scores
+  // solve for the five weights. The UI never rendered it.
+  signals: Record<Signal, { raw: number; qualified: number }>;
   rawTotal: number;
   qualifiedTotal: number;
   disqualifiedShare: number;
@@ -460,75 +701,138 @@ export type ContestScoreCategory = {
   tagId: number | null;
   tagName: string | null;
   entryCount: number;
+  eligibleCount: number;
+  /** A lone entrant normalizes to 1.0 on every non-zero signal — not a comparable score. */
+  soloEntry: boolean;
+  /** Nothing in this category scored: ranks are withheld rather than invented. */
+  tied: boolean;
   entries: ContestScoreEntry[];
 };
 
 export type ContestCommunityScore = {
   collectionId: number;
   generatedAt: string;
-  window: { start: string; end: string };
+  window: { start: string; end: string; effectiveEnd: string };
+  partial: boolean;
   statuses: CollectionItemStatus[];
   entryCount: number;
   truncated: boolean;
   signalSources: Record<Signal, string>;
-  engagers: { total: number; disqualified: number };
   categories: ContestScoreCategory[];
 };
 
-function resolveWindow(input: WindowInput) {
-  return { start: input.start ?? new Date(0), end: input.end ?? new Date() };
+function requireClickhouse() {
+  if (!clickhouse)
+    throw new ContestScoringError('ClickHouse is not configured in this environment');
+  return clickhouse;
 }
 
-function requireClickhouse() {
-  if (!clickhouse) throw throwBadRequestError('ClickHouse is not configured in this environment');
-  return clickhouse;
+function emptySignals() {
+  return Object.fromEntries(
+    contestScoreSignals.map((s) => [s, { raw: 0, qualified: 0 }])
+  ) as ContestScoreEntry['signals'];
 }
 
 async function computeCommunityScore(input: WindowInput): Promise<ContestCommunityScore> {
   requireClickhouse();
   const config = await getContestScoringConfig(input.collectionId);
-  const { start, end } = resolveWindow(input);
+  const window = await resolveWindow(input.collectionId, input, config);
   const statuses = input.statuses ?? DEFAULT_STATUSES;
 
+  const base = {
+    collectionId: input.collectionId,
+    generatedAt: new Date().toISOString(),
+    window: {
+      start: window.start.toISOString(),
+      end: window.end.toISOString(),
+      effectiveEnd: window.effectiveEnd.toISOString(),
+    },
+    partial: window.partial,
+    statuses,
+    signalSources: CONTEST_SIGNAL_SOURCES,
+  };
+
   const { entries, truncated } = await loadEntries(input);
-  if (!entries.length)
-    return {
-      collectionId: input.collectionId,
-      generatedAt: new Date().toISOString(),
-      window: { start: start.toISOString(), end: end.toISOString() },
-      statuses,
-      entryCount: 0,
-      truncated,
-      signalSources: CONTEST_SIGNAL_SOURCES,
-      engagers: { total: 0, disqualified: 0 },
-      categories: [],
-    };
+  if (!entries.length) return { ...base, entryCount: 0, truncated, categories: [] };
 
-  const ageCutoff = new Date(start.getTime() - config.ageGateDays * 24 * 60 * 60 * 1000);
+  const gates = await loadGates(window);
 
-  const [, images] = await Promise.all([
-    collectSignals(entries, start, end),
+  const [imageAuthors, collectors, imageRows, versionPairs, images] = await Promise.all([
+    countImageAuthors(entries, window, gates),
+    countCollectors(entries, window, gates, input.collectionId),
+    loadImagePairs(entries, window),
+    loadVersionPairs(entries),
     loadEntryImages(entries.map((e) => e.modelId)),
   ]);
 
-  const engagers = new Set<number>();
-  for (const entry of entries)
-    for (const signal of contestScoreSignals)
-      for (const id of entry.signals[signal]) engagers.add(id);
-  const disqualified = await loadDisqualifications([...engagers], ageCutoff);
+  const [reactors, downloaders, generators] = await Promise.all([
+    runChCounts(
+      'reactors',
+      toImagePairs(imageRows, entries),
+      gates,
+      (ids) => `
+        SELECT userId, entityId
+        FROM reactions
+        WHERE type = 'Image_Create'
+          AND entityId IN (${ids})
+          AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
+          AND userId != 0
+      `
+    ),
+    runChCounts(
+      'downloaders',
+      modelPairs(entries),
+      gates,
+      (ids) => `
+        SELECT userId, modelId AS entityId
+        FROM modelVersionEvents
+        WHERE type = 'Download'
+          AND modelId IN (${ids})
+          AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
+          AND userId != 0
+      `
+    ),
+    // Straight off orchestration.jobs, NOT default.daily_user_resource: that view
+    // only ingests jobType IN ('TextToImage','TextToImageV2','Comfy'), so every
+    // newer engine (ComfyImageGen, AnimaComfy, StableDiffusionCpp, …) is missing
+    // from it and whole ecosystems read as zero generations.
+    runChCounts(
+      'generators',
+      versionPairs,
+      gates,
+      (ids) => `
+        SELECT userId, resource AS entityId
+        FROM orchestration.jobs
+        ARRAY JOIN resourcesUsed AS resource
+        WHERE resource IN (${ids})
+          AND createdAt >= ${chDateTime(window.start)}
+          AND createdAt < ${chDateTime(window.effectiveEnd)}
+          AND userId != 0
+      `
+    ),
+  ]);
+
+  const counts = new Map<number, ContestScoreEntry['signals']>(
+    entries.map((e) => [e.collectionItemId, emptySignals()])
+  );
+  const apply = (signal: Signal, rows: SignalCount[]) => {
+    for (const row of rows) {
+      const bucket = counts.get(Number(row.collectionItemId));
+      if (!bucket) continue;
+      bucket[signal] = { raw: Number(row.rawUsers), qualified: Number(row.qualifiedUsers) };
+    }
+  };
+  apply('imageAuthors', imageAuthors);
+  apply('collectors', collectors);
+  apply('reactors', reactors);
+  apply('downloaders', downloaders);
+  apply('generators', generators);
 
   const scored = entries.map((entry) => {
-    const isQualified = (userId: number) =>
-      userId !== entry.creatorId && userId !== entry.addedById && !disqualified.has(userId);
-
-    const signals = {} as Record<Signal, { raw: number; qualified: number }>;
-    for (const signal of contestScoreSignals) {
-      const users = [...entry.signals[signal]];
-      signals[signal] = { raw: users.length, qualified: users.filter(isQualified).length };
-    }
-
+    const signals = counts.get(entry.collectionItemId) ?? emptySignals();
     const rawTotal = contestScoreSignals.reduce((sum, s) => sum + signals[s].raw, 0);
     const qualifiedTotal = contestScoreSignals.reduce((sum, s) => sum + signals[s].qualified, 0);
+    const reason = ineligibilityReason(entry);
 
     return {
       collectionItemId: entry.collectionItemId,
@@ -537,6 +841,8 @@ async function computeCommunityScore(input: WindowInput): Promise<ContestCommuni
       creatorId: entry.creatorId,
       creatorUsername: entry.creatorUsername,
       status: entry.status,
+      eligible: !reason,
+      ineligibleReason: reason,
       tagId: entry.tagId,
       image: images.get(entry.modelId) ?? null,
       signals,
@@ -547,66 +853,99 @@ async function computeCommunityScore(input: WindowInput): Promise<ContestCommuni
     };
   });
 
-  const categories = [...new Set(entries.map((e) => e.tagId))].map((tagId) => {
-    const tagName = entries.find((e) => e.tagId === tagId)?.tagName ?? null;
-    const items = scored.filter((e) => e.tagId === tagId);
+  const categories = [...new Set(entries.map((e) => e.tagId))].map(
+    (tagId): ContestScoreCategory => {
+      const tagName = entries.find((e) => e.tagId === tagId)?.tagName ?? null;
+      const items = scored.filter((e) => e.tagId === tagId);
+      const eligible = items.filter((i) => i.eligible);
 
-    // Normalize within category against that category's leader per signal, so a
-    // category with fewer entrants can't be compared against a busier one.
-    const maxima = Object.fromEntries(
-      contestScoreSignals.map((s) => [s, Math.max(...items.map((i) => i.signals[s].qualified), 0)])
-    ) as Record<Signal, number>;
+      // Normalized against the leading ELIGIBLE entry per signal, so an entry pulled
+      // after accruing engagement cannot set the bar for everyone else.
+      const maxima = Object.fromEntries(
+        contestScoreSignals.map((s) => [
+          s,
+          Math.max(...eligible.map((i) => i.signals[s].qualified), 0),
+        ])
+      ) as Record<Signal, number>;
 
-    const ranked = items
-      .map(({ tagId: _tagId, signals, ...item }) => {
-        const withNormalized = {} as ContestScoreEntry['signals'];
+      const withScores = items.map(({ tagId: _tagId, ...item }) => {
         let total = 0;
-        for (const s of contestScoreSignals) {
-          const normalized = maxima[s] > 0 ? +(signals[s].qualified / maxima[s]).toFixed(4) : 0;
-          withNormalized[s] = { ...signals[s], normalized };
-          total += normalized * config.weights[s];
+        for (const signal of contestScoreSignals) {
+          const max = maxima[signal];
+          if (max > 0) total += (item.signals[signal].qualified / max) * config.weights[signal];
         }
-        return { ...item, signals: withNormalized, score: +total.toFixed(4) };
-      })
-      .sort(
-        (a, b) => b.score - a.score || b.qualifiedTotal - a.qualifiedTotal || a.modelId - b.modelId
-      )
-      .map((item, index): ContestScoreEntry => ({ rank: index + 1, ...item }));
+        return { ...item, score: item.eligible ? +total.toFixed(4) : 0 };
+      });
 
-    return { tagId, tagName, entryCount: ranked.length, entries: ranked };
-  });
+      const tied = withScores.every((item) => item.score === 0);
+      const entriesRanked = withScores
+        .sort(
+          (a, b) =>
+            Number(b.eligible) - Number(a.eligible) ||
+            b.score - a.score ||
+            b.qualifiedTotal - a.qualifiedTotal ||
+            a.modelId - b.modelId
+        )
+        .map((item, index) => ({ ...item, rank: !item.eligible || tied ? null : index + 1 }));
 
-  return {
-    collectionId: input.collectionId,
-    generatedAt: new Date().toISOString(),
-    window: { start: start.toISOString(), end: end.toISOString() },
-    statuses,
-    entryCount: entries.length,
-    truncated,
-    signalSources: CONTEST_SIGNAL_SOURCES,
-    engagers: { total: engagers.size, disqualified: disqualified.size },
-    categories,
-  };
+      return {
+        tagId,
+        tagName,
+        entryCount: items.length,
+        eligibleCount: eligible.length,
+        soloEntry: eligible.length === 1,
+        tied,
+        entries: entriesRanked,
+      };
+    }
+  );
+
+  return { ...base, entryCount: entries.length, truncated, categories };
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+function cacheKeyFor(input: WindowInput, configVersion: number) {
+  return `${REDIS_KEYS.CACHES.CONTEST_COMMUNITY_SCORE}:${input.collectionId}:${hashifyObject({
+    start: input.start?.toISOString(),
+    end: input.end?.toISOString(),
+    tagIds: input.tagIds,
+    statuses: input.statuses,
+    configVersion,
+    codeVersion: CONTEST_SCORE_CODE_VERSION,
+  })}` as RedisKeyTemplateCache;
 }
 
 export async function getCommunityScore(input: GetCommunityScoreInput) {
   const { refresh, ...window } = input;
-  const config = await getContestScoringConfig(window.collectionId);
-  const cacheKey = `${REDIS_KEYS.CACHES.CONTEST_COMMUNITY_SCORE}:${
-    window.collectionId
-  }:${hashifyObject({
-    start: window.start?.toISOString(),
-    end: window.end?.toISOString(),
-    tagIds: window.tagIds,
-    statuses: window.statuses,
-    configVersion: config.version,
-  })}` as RedisKeyTemplateCache;
+  try {
+    const config = await getContestScoringConfig(window.collectionId);
+    const cacheKey = cacheKeyFor(window, config.version);
 
-  if (refresh) await bustFetchThroughCache(cacheKey);
+    if (refresh) await bustFetchThroughCache(cacheKey);
 
-  return fetchThroughCache(cacheKey, () => computeCommunityScore(window), {
-    ttl: SCORE_CACHE_TTL,
-  });
+    return await fetchThroughCache(
+      cacheKey,
+      async () => {
+        // One run per collection at a time. A refresh storm would otherwise stack
+        // full cross-store aggregations on top of one another.
+        const result = await withDistributedLock(
+          { key: `contest-score:${window.collectionId}`, ttl: 120, maxRetries: 60 },
+          () => computeCommunityScore(window)
+        );
+        if (!result)
+          throw new ContestScoringError(
+            'A scoring run for this collection is already in progress. Try again shortly.'
+          );
+        return result;
+      },
+      { ttl: SCORE_CACHE_TTL }
+    );
+  } catch (e) {
+    return sanitizeError(window.collectionId, e);
+  }
 }
 
 /**
@@ -615,146 +954,159 @@ export async function getCommunityScore(input: GetCommunityScoreInput) {
  * Evidence only — never an automatic disqualification.
  */
 export async function getContestCandidates(input: GetContestCandidatesInput) {
-  requireClickhouse();
-  const config = await getContestScoringConfig(input.collectionId);
-  const { start, end } = resolveWindow(input);
-  const limit = input.limit ?? 200;
+  try {
+    requireClickhouse();
+    const config = await getContestScoringConfig(input.collectionId);
+    const window = await resolveWindow(input.collectionId, input, config);
+    const limit = input.limit ?? 200;
 
-  const { entries } = await loadEntries(input);
-  if (!entries.length) return { collectionId: input.collectionId, count: 0, candidates: [] };
+    const { entries } = await loadEntries(input);
+    if (!entries.length) return { collectionId: input.collectionId, count: 0, candidates: [] };
 
-  const { imageToModel } = await collectSignals(entries, start, end);
-  const creatorByModel = new Map(entries.map((e) => [e.modelId, e.creatorId]));
+    const gates = await loadGates(window);
+    const imagePairs = toImagePairs(await loadImagePairs(entries, window), entries);
 
-  // Engagement events carrying an IP: reactions on the entries' images and
-  // downloads of the entries' models — the same farm-IP signal `reaction-abuse`
-  // uses, scoped to this contest.
-  const [reactionRows, downloadRows] = await Promise.all([
-    chQueryChunked<{ userId: number; entityId: number; ip: string }>(
-      'candidates.reactions',
-      [...imageToModel.keys()],
-      (ids) => `
+    // Reactions and downloads are the engagement events that carry an IP — the same
+    // farm-IP signal `reaction-abuse` uses, scoped to this contest. Everything below
+    // is aggregated in ClickHouse; only the capped candidate rows come back.
+    const imageIds = intList([...new Set(imagePairs.map((p) => p.entityId))]);
+    const modelIds = intList([...new Set(entries.map((e) => e.modelId))]);
+
+    const downloadEvents = `
+      SELECT s.userId AS userId, p.entryId AS entryId, p.creatorId AS creatorId, s.ip AS ip
+      FROM (
+        SELECT userId, modelId AS entityId, ip
+        FROM modelVersionEvents
+        WHERE type = 'Download'
+          AND modelId IN (${modelIds || '0'})
+          AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
+          AND userId != 0
+      ) AS s
+      INNER JOIN (${chPairTable(modelPairs(entries))}) AS p ON s.entityId = p.entityId
+    `;
+    const reactionEvents = imagePairs.length
+      ? `
+      SELECT s.userId AS userId, p.entryId AS entryId, p.creatorId AS creatorId, s.ip AS ip
+      FROM (
         SELECT userId, entityId, ip
         FROM reactions
         WHERE type = 'Image_Create'
-          AND entityId IN (${ids})
-          AND time >= ${chDateTime(start)} AND time < ${chDateTime(end)}
+          AND entityId IN (${imageIds})
+          AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
           AND userId != 0
-        GROUP BY userId, entityId, ip
-      `
-    ),
-    chQueryChunked<{ userId: number; modelId: number; ip: string }>(
-      'candidates.downloads',
-      entries.map((e) => e.modelId),
-      (ids) => `
-        SELECT userId, modelId, ip
-        FROM modelVersionEvents
-        WHERE type = 'Download'
-          AND modelId IN (${ids})
-          AND time >= ${chDateTime(start)} AND time < ${chDateTime(end)}
-          AND userId != 0
-        GROUP BY userId, modelId, ip
-      `
-    ),
-  ]);
+      ) AS s
+      INNER JOIN (${chPairTable(imagePairs)}) AS p ON s.entityId = p.entityId
+    `
+      : null;
 
-  const events = [
-    ...reactionRows.map((r) => ({
-      userId: r.userId,
-      modelId: imageToModel.get(r.entityId),
-      ip: r.ip,
-    })),
-    ...downloadRows.map((r) => ({ userId: r.userId, modelId: r.modelId, ip: r.ip })),
-  ].filter((e): e is { userId: number; modelId: number; ip: string } => !!e.modelId);
+    const events = [downloadEvents, reactionEvents].filter(Boolean).join('\nUNION ALL\n');
 
-  const usersPerIp = new Map<string, Set<number>>();
-  for (const event of events) {
-    if (!event.ip) continue;
-    if (!usersPerIp.has(event.ip)) usersPerIp.set(event.ip, new Set());
-    usersPerIp.get(event.ip)!.add(event.userId);
+    const rows = await withSpan('contest-score.candidates', () =>
+      clickhouse!.$query<{
+        userId: number;
+        events: number;
+        entriesTouched: number;
+        distinctCreators: number;
+        topCreator: number;
+        toTopCreator: number;
+        farmIpsUsed: number;
+      }>(`
+        WITH ev AS (${events}),
+             farm AS (
+               SELECT ip FROM ev WHERE ip != '' GROUP BY ip
+               HAVING uniqExact(userId) >= ${Number(config.farmIp.minPeers)}
+             ),
+             perCreator AS (
+               SELECT
+                 userId,
+                 creatorId,
+                 count() AS creatorEvents,
+                 uniqExact(entryId) AS creatorEntries,
+                 groupUniqArrayIf(ip, ip IN (SELECT ip FROM farm)) AS creatorFarmIps
+               FROM ev
+               GROUP BY userId, creatorId
+             )
+        SELECT
+          userId,
+          sum(creatorEvents) AS events,
+          sum(creatorEntries) AS entriesTouched,
+          count() AS distinctCreators,
+          argMax(creatorId, creatorEvents) AS topCreator,
+          max(creatorEvents) AS toTopCreator,
+          length(arrayDistinct(arrayFlatten(groupArray(creatorFarmIps)))) AS farmIpsUsed
+        FROM perCreator
+        GROUP BY userId
+        HAVING farmIpsUsed > 0
+            OR (entriesTouched >= ${Number(config.farmIp.minEntries)} AND distinctCreators = 1)
+        ORDER BY toTopCreator / events DESC, farmIpsUsed DESC, events DESC
+        LIMIT ${Number(limit)}
+      `)
+    );
+
+    return {
+      collectionId: input.collectionId,
+      count: rows.length,
+      candidates: rows.map((row) => ({
+        userId: Number(row.userId),
+        events: Number(row.events),
+        entriesTouched: Number(row.entriesTouched),
+        distinctCreators: Number(row.distinctCreators),
+        topCreator: Number(row.topCreator),
+        toTopCreator: Number(row.toTopCreator),
+        topCreatorConcentration: +(Number(row.toTopCreator) / Number(row.events)).toFixed(2),
+        farmIpsUsed: Number(row.farmIpsUsed),
+        // Reported so a reviewer can tell a too-young account from an excluded one
+        // without re-deriving the threshold themselves.
+        newAccount: Number(row.userId) > gates.userIdThreshold,
+      })),
+    };
+  } catch (e) {
+    return sanitizeError(input.collectionId, e);
   }
-  const farmIps = new Set(
-    [...usersPerIp.entries()]
-      .filter(([, users]) => users.size >= config.farmIp.minPeers)
-      .map(([ip]) => ip)
-  );
-
-  type Candidate = {
-    userId: number;
-    entriesTouched: Set<number>;
-    creators: Map<number, number>;
-    farmIps: Set<string>;
-    maxIpPeers: number;
-    events: number;
-  };
-  const byUser = new Map<number, Candidate>();
-  for (const event of events) {
-    let candidate = byUser.get(event.userId);
-    if (!candidate) {
-      candidate = {
-        userId: event.userId,
-        entriesTouched: new Set(),
-        creators: new Map(),
-        farmIps: new Set(),
-        maxIpPeers: 0,
-        events: 0,
-      };
-      byUser.set(event.userId, candidate);
-    }
-    candidate.events++;
-    candidate.entriesTouched.add(event.modelId);
-    const creatorId = creatorByModel.get(event.modelId);
-    if (creatorId) candidate.creators.set(creatorId, (candidate.creators.get(creatorId) ?? 0) + 1);
-    if (farmIps.has(event.ip)) candidate.farmIps.add(event.ip);
-    candidate.maxIpPeers = Math.max(candidate.maxIpPeers, usersPerIp.get(event.ip)?.size ?? 0);
-  }
-
-  const rows = [...byUser.values()]
-    .map((candidate) => {
-      const [topCreator, toTopCreator] = [...candidate.creators.entries()].sort(
-        (a, b) => b[1] - a[1]
-      )[0] ?? [0, 0];
-      return {
-        userId: candidate.userId,
-        events: candidate.events,
-        entriesTouched: candidate.entriesTouched.size,
-        distinctCreators: candidate.creators.size,
-        topCreator,
-        toTopCreator,
-        topCreatorConcentration: +(toTopCreator / candidate.events).toFixed(2),
-        farmIpsUsed: candidate.farmIps.size,
-        maxIpPeers: candidate.maxIpPeers,
-      };
-    })
-    .filter(
-      (row) =>
-        row.farmIpsUsed > 0 ||
-        (row.entriesTouched >= config.farmIp.minEntries && row.distinctCreators === 1)
-    )
-    // Concentration on one creator is the discriminating signal; farm IPs alone
-    // catch shared/CGNAT addresses too, so they only break ties.
-    .sort(
-      (a, b) =>
-        b.topCreatorConcentration - a.topCreatorConcentration ||
-        b.farmIpsUsed - a.farmIpsUsed ||
-        b.events - a.events
-    )
-    .slice(0, limit);
-
-  return { collectionId: input.collectionId, count: rows.length, candidates: rows };
 }
 
+// ---------------------------------------------------------------------------
+// Snapshots
+// ---------------------------------------------------------------------------
+
+/**
+ * The artifact that defends a disputed prize, so it stores the RESOLVED config —
+ * weights included — alongside the window, the age cutoff and the code version.
+ * Weights are stripped on the wire, never in storage. No userIds are ever stored.
+ *
+ * KeyValue keeps this migration-free for v1. A dedicated table (indexed by
+ * collection, payload out of a jsonb column) is the follow-up once the shape
+ * settles.
+ */
 export type ContestSnapshot = {
   collectionId: number;
   takenAt: string;
   takenById: number;
   takenByUsername: string | null;
   note?: string;
+  codeVersion: number;
+  config: ContestScoringConfig;
+  ageCutoff: string;
+  ageGateBandUsers: number;
+  partial: boolean;
   score: ContestCommunityScore;
+};
+
+export type ContestSnapshotSummary = Omit<ContestSnapshot, 'config' | 'score'> & {
+  key: string;
+  window: ContestCommunityScore['window'];
+  entryCount: number;
 };
 
 const snapshotKey = (collectionId: number, takenAt: string) =>
   `${CONTEST_SNAPSHOT_KEY_PREFIX}:${collectionId}:${takenAt}`;
+
+function toSnapshotSummary(key: string, snapshot: ContestSnapshot): ContestSnapshotSummary {
+  // `config` — and therefore the weights — is dropped here. It is stored for audit,
+  // never served.
+  const { config: _config, score, ...rest } = snapshot;
+  return { key, ...rest, window: score.window, entryCount: score.entryCount };
+}
 
 export async function createContestSnapshot({
   input,
@@ -764,27 +1116,38 @@ export async function createContestSnapshot({
   input: CreateContestSnapshotInput;
   userId: number;
   username?: string | null;
-}) {
+}): Promise<ContestSnapshotSummary> {
   const { note, ...window } = input;
-  const score = await computeCommunityScore(window);
-  const takenAt = new Date().toISOString();
-  const snapshot: ContestSnapshot = {
-    collectionId: window.collectionId,
-    takenAt,
-    takenById: userId,
-    takenByUsername: username ?? null,
-    ...(note ? { note } : {}),
-    score,
-  };
+  try {
+    const config = await getContestScoringConfig(window.collectionId);
+    const resolved = await resolveWindow(window.collectionId, window, config);
+    const gates = await loadGates(resolved);
+    const score = await computeCommunityScore(window);
 
-  await dbWrite.keyValue.create({
-    data: {
-      key: snapshotKey(window.collectionId, takenAt),
-      value: snapshot as unknown as Prisma.InputJsonValue,
-    },
-  });
+    const takenAt = new Date().toISOString();
+    const key = snapshotKey(window.collectionId, takenAt);
+    const snapshot: ContestSnapshot = {
+      collectionId: window.collectionId,
+      takenAt,
+      takenById: userId,
+      takenByUsername: username ?? null,
+      ...(note ? { note } : {}),
+      codeVersion: CONTEST_SCORE_CODE_VERSION,
+      config,
+      ageCutoff: resolved.ageCutoff.toISOString(),
+      ageGateBandUsers: gates.ageGateBandUsers,
+      partial: resolved.partial,
+      score,
+    };
 
-  return snapshot;
+    await dbWrite.keyValue.create({
+      data: { key, value: snapshot as unknown as Prisma.InputJsonValue },
+    });
+
+    return toSnapshotSummary(key, snapshot);
+  } catch (e) {
+    return sanitizeError(window.collectionId, e);
+  }
 }
 
 export async function listContestSnapshots({ collectionId }: { collectionId: number }) {
@@ -794,23 +1157,6 @@ export async function listContestSnapshots({ collectionId }: { collectionId: num
   });
 
   return rows
-    .map(({ key, value }) => {
-      const snapshot = value as unknown as ContestSnapshot;
-      return {
-        key,
-        takenAt: snapshot.takenAt,
-        takenById: snapshot.takenById,
-        takenByUsername: snapshot.takenByUsername,
-        note: snapshot.note,
-        window: snapshot.score.window,
-        entryCount: snapshot.score.entryCount,
-      };
-    })
+    .map(({ key, value }) => toSnapshotSummary(key, value as unknown as ContestSnapshot))
     .sort((a, b) => b.takenAt.localeCompare(a.takenAt));
-}
-
-export async function getContestSnapshot({ key }: { key: string }) {
-  const row = await dbRead.keyValue.findUnique({ where: { key } });
-  if (!row) throw throwBadRequestError('Snapshot not found');
-  return row.value as unknown as ContestSnapshot;
 }

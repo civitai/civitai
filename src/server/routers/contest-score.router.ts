@@ -5,42 +5,30 @@ import {
   listContestSnapshotsSchema,
 } from '~/server/schema/contest-score.schema';
 import {
-  assertCanScoreContest,
   createContestSnapshot,
   getCommunityScore,
   getContestCandidates,
   listContestSnapshots,
 } from '~/server/services/contest-score.service';
-import { protectedProcedure, router } from '~/server/trpc';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { moderatorProcedure, router } from '~/server/trpc';
 
-// Runs ahead of input validation, so the collectionId is still raw here.
-const isCollectionManager = protectedProcedure.use(async ({ ctx, next, getRawInput }) => {
-  const { collectionId } = ((await getRawInput()) ?? {}) as { collectionId?: unknown };
-  if (typeof collectionId !== 'number' || !Number.isInteger(collectionId) || collectionId <= 0)
-    throw throwBadRequestError('A valid collectionId is required');
-
-  await assertCanScoreContest({
-    collectionId,
-    userId: ctx.user.id,
-    isModerator: ctx.user.isModerator,
-  });
-  return next();
-});
-
+// Moderators only. Collection MANAGE is deliberately NOT accepted: every collection
+// OWNER holds it, so honouring it would let any user point the scorer at any
+// collection — a weight oracle and an unbounded load path in one. The service
+// additionally refuses any collection that is not `mode = Contest`.
 export const contestScoreRouter = router({
-  getCommunityScore: isCollectionManager
+  getCommunityScore: moderatorProcedure
     .input(getCommunityScoreSchema)
     .query(({ input }) => getCommunityScore(input)),
-  getCandidates: isCollectionManager
+  getCandidates: moderatorProcedure
     .input(getContestCandidatesSchema)
     .query(({ input }) => getContestCandidates(input)),
-  snapshot: isCollectionManager
+  snapshot: moderatorProcedure
     .input(createContestSnapshotSchema)
     .mutation(({ input, ctx }) =>
       createContestSnapshot({ input, userId: ctx.user.id, username: ctx.user.username })
     ),
-  listSnapshots: isCollectionManager
+  listSnapshots: moderatorProcedure
     .input(listContestSnapshotsSchema)
     .query(({ input }) => listContestSnapshots(input)),
 });

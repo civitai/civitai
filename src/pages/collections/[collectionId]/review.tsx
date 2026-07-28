@@ -113,6 +113,7 @@ const ReviewCollection = () => {
   const { collectionId: collectionIdString } = router.query;
   const collectionId = Number(collectionIdString);
 
+  const user = useCurrentUser();
   const deselectAll = useStore((state) => state.deselectAll);
   const [statuses, setStatuses] = useState<CollectionItemStatus[]>([CollectionItemStatus.REVIEW]);
   const [sort, setSort] = useState<CollectionReviewSort>(CollectionReviewSort.Newest);
@@ -164,6 +165,9 @@ const ReviewCollection = () => {
   if ((!loadingCollection && !collection) || (permissions && !permissions.manage))
     return <NotFound />;
 
+  // Moderators only — the scoring procedures are moderator-gated server-side, and a
+  // collection owner holds `manage` on their own collection.
+  const showCommunityTab = collection?.mode === CollectionMode.Contest && !!user?.isModerator;
   const isContestCollection = collection?.mode === CollectionMode.Contest;
 
   const reviewPanel = (
@@ -268,7 +272,7 @@ const ReviewCollection = () => {
               <BackButton url={`/collections/${collectionId}`} />
               <Title order={1}>Collection items that need review</Title>
             </Group>
-            {!isContestCollection ? (
+            {!showCommunityTab ? (
               reviewPanel
             ) : (
               // keepMounted={false} so the community score is only requested once the
