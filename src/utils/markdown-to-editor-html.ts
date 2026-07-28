@@ -118,12 +118,18 @@ function renderTableAsList(table: MdNode): MdNode {
 
   // Every cell keeps its column name, including the first — dropping that header
   // silently lost what the row label meant.
-  const labelled = (name: string | undefined, inline: MdNode[]): MdNode => ({
-    type: 'paragraph',
-    children: name
-      ? [{ type: 'strong', children: [{ type: 'text', value: `${name}: ` }] }, ...inline]
-      : inline,
-  });
+  const labelled = (name: string | undefined, cell: MdNode[]): MdNode => {
+    // A wholly-bold cell would otherwise sit next to the bold label and render as
+    // one run of bold text, losing the label/value distinction.
+    const inline = cell.length === 1 && cell[0].type === 'strong' ? cell[0].children ?? [] : cell;
+
+    return {
+      type: 'paragraph',
+      children: name
+        ? [{ type: 'strong', children: [{ type: 'text', value: `${name}: ` }] }, ...inline]
+        : inline,
+    };
+  };
 
   return bullets(
     body.map((row) => {

@@ -36,6 +36,11 @@ export function InsertMarkdownControl(props: Props) {
       );
       const { html, ...stats } = convertMarkdownForEditor(await file.text());
 
+      // Two awaits happened above, so the editor may be gone. tiptap currently
+      // swallows commands on a destroyed instance rather than throwing, which is
+      // version-dependent luck.
+      if (editor.isDestroyed) return;
+
       if (!html.trim()) {
         showWarningNotification({ message: 'That file appears to be empty.' });
         return;
