@@ -2198,22 +2198,17 @@ export const validateContestCollectionEntry = async ({
     }
 
     if (modelIds.length > 0) {
-      // A ported model qualifies on its newest version, not the original model row — an old
-      // model with a version published during the window is a valid entry.
+      // A ported model qualifies on its version dates, not the original model row. Keyed on the
+      // version's createdAt rather than publishedAt because publishedAt is reset by the
+      // private-model round trip, which would let an untouched old model back in.
       const models = await dbRead.model.findMany({
         where: {
           id: { in: modelIds },
           createdAt: { lt: new Date(metadata.submissionStartDate) },
           modelVersions: {
             none: {
-              status: ModelStatus.Published,
-              OR: [
-                { publishedAt: { gte: new Date(metadata.submissionStartDate) } },
-                {
-                  publishedAt: null,
-                  createdAt: { gte: new Date(metadata.submissionStartDate) },
-                },
-              ],
+              status: { notIn: [ModelStatus.Deleted, ModelStatus.UnpublishedViolation] },
+              createdAt: { gte: new Date(metadata.submissionStartDate) },
             },
           },
         },
@@ -2222,7 +2217,7 @@ export const validateContestCollectionEntry = async ({
 
       if (models.length > 0) {
         throw throwBadRequestError(
-          `Some models were created before the submission start date. Please only upload models with a version published after the submission period started.`
+          `Some models predate the submission start date and have no version added during the submission period. Add a new version to enter an existing model.`
         );
       }
     }
