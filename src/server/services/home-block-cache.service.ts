@@ -28,14 +28,15 @@ const log = createLogger('home-block-cache', 'green');
 function getHomeBlockIdentifier(homeBlock: HomeBlockForCache) {
   switch (homeBlock.type) {
     case HomeBlockType.Collection:
-      // Clones read content through to their source block, so a content-id key would store
-      // source data under the clone's stale snapshot id and poison sibling blocks genuinely
-      // featuring that content. Bucket clones per-block instead.
-      return homeBlock.sourceId ? homeBlock.id : homeBlock.metadata.collection?.id;
+      // Keyed by collection id so the ~110k clones of a system block share one entry and stay
+      // reachable by homeBlockCacheBust(Collection, collectionId) when the collection changes.
+      return homeBlock.metadata.collection?.id;
     case HomeBlockType.Leaderboard:
     case HomeBlockType.Announcement:
       return homeBlock.id;
     case HomeBlockType.CosmeticShop:
+      // Clones read the section through to their source, so a section-id key would store source
+      // data under the clone's stale snapshot id and poison blocks genuinely on that section.
       return homeBlock.sourceId ? homeBlock.id : homeBlock.metadata.cosmeticShopSection?.id;
     case HomeBlockType.FeaturedModelVersion:
       return 'default';

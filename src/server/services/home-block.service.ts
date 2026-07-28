@@ -191,6 +191,12 @@ export type HomeBlockWithData = {
   pickedCollections?: PickedFeaturedCollection[];
 };
 
+const readThroughTypes: HomeBlockType[] = [
+  HomeBlockType.Leaderboard,
+  HomeBlockType.CosmeticShop,
+  HomeBlockType.FeaturedCollections,
+];
+
 export const getHomeBlockData = async ({
   user,
   input,
@@ -211,10 +217,11 @@ export const getHomeBlockData = async ({
   const metadata: HomeBlockMetaSchema = (homeBlock.metadata || {}) as HomeBlockMetaSchema;
 
   // System block is source of truth for content selection; cloned user blocks read through to
-  // source so mods only update the singleton and clones stay in sync. Fetched once here so each
-  // case can reuse it rather than fetch the source per block type.
+  // source so mods only update the singleton and clones stay in sync. Only the types below drift
+  // in practice — upsertHomeBlock already propagates metadata to clones, so this covers system
+  // blocks edited out-of-band (direct SQL/Retool).
   let sourceMetadata: HomeBlockMetaSchema | undefined;
-  if (homeBlock.sourceId) {
+  if (homeBlock.sourceId && readThroughTypes.includes(homeBlock.type)) {
     const source = await dbRead.homeBlock.findUnique({
       where: { id: homeBlock.sourceId },
       select: { metadata: true },
@@ -224,13 +231,12 @@ export const getHomeBlockData = async ({
 
   switch (homeBlock.type) {
     case HomeBlockType.Collection: {
-      const collectionMeta = sourceMetadata?.collection ?? metadata.collection;
-      if (!collectionMeta || !collectionMeta.id) {
+      if (!metadata.collection || !metadata.collection.id) {
         return null;
       }
 
       const collection = await getCollectionById({
-        input: { id: collectionMeta.id },
+        input: { id: metadata.collection.id },
       });
 
       if (!collection) {
@@ -243,9 +249,9 @@ export const getHomeBlockData = async ({
             user,
             input: {
               collectionId: collection.id,
-              limit: input.limit || collectionMeta.limit,
+              limit: input.limit || metadata.collection.limit,
               browsingLevel: sfwBrowsingLevelsFlag,
-              collectionTagId: collectionMeta.tagId,
+              collectionTagId: metadata.collection.tagId,
             },
           });
 
