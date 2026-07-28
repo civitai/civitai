@@ -20,10 +20,14 @@ import {
   findMinorHashMatches,
   applyMinorHashMatch,
   checkMinorHashOnScan,
+  sweepMinorHashMatches,
 } from '~/server/services/minor-hash.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // mockRejectedValue in later checkMinorHashOnScan tests otherwise persists past clearAllMocks
+  // (which only clears call history, not implementations) and leaks into sweepMinorHashMatches.
+  mockSetModelMinor.mockReset();
   mockDbRead.$queryRaw.mockResolvedValue([]);
   mockLogToAxiom.mockResolvedValue(undefined);
 });
@@ -165,5 +169,54 @@ describe('checkMinorHashOnScan', () => {
       expect.objectContaining({ message: 'null', modelId: 100, userId: 5, sha256: 'ABC' }),
       'webhooks'
     );
+  });
+});
+
+const sweepRows = [
+  { modelId: 101, userId: 5, sameUploader: true },
+  { modelId: 102, userId: 6, sameUploader: true },
+  { modelId: 103, userId: 7, sameUploader: false },
+];
+
+describe('sweepMinorHashMatches', () => {
+  it('writes nothing on a dry run but reports the split', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue(sweepRows);
+
+    const report = await sweepMinorHashMatches({ dryRun: true, limit: 100 });
+
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(report).toMatchObject({
+      candidates: 3,
+      sameUploader: 2,
+      differentUploader: 1,
+      flagged: 0,
+      failed: 0,
+    });
+    expect(report.sample.length).toBeGreaterThan(0);
+  });
+
+  it('flags only the same-uploader candidates when applying', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue(sweepRows);
+
+    const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
+
+    expect(mockSetModelMinor).toHaveBeenCalledTimes(2);
+    expect(mockSetModelMinor).toHaveBeenCalledWith({
+      id: 101,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+    });
+    expect(report).toMatchObject({ flagged: 2, failed: 0 });
+  });
+
+  it('reports a per-model failure without aborting the batch', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue(sweepRows);
+    mockSetModelMinor.mockRejectedValueOnce(new Error('boom'));
+
+    const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
+
+    expect(report).toMatchObject({ flagged: 1, failed: 1 });
+    expect(mockLogToAxiom).toHaveBeenCalled();
   });
 });

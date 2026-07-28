@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { setModelMinor } from '~/server/services/model.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -89,4 +90,86 @@ export async function checkMinorHashOnScan({
     ).catch(() => null);
     return 'skipped';
   }
+}
+
+export type SweepCandidate = { modelId: number; userId: number; sameUploader: boolean };
+
+export type SweepReport = {
+  candidates: number;
+  sameUploader: number;
+  differentUploader: number;
+  flagged: number;
+  failed: number;
+  sample: SweepCandidate[];
+};
+
+export async function sweepMinorHashMatches({
+  dryRun,
+  limit,
+}: {
+  dryRun: boolean;
+  limit: number;
+}): Promise<SweepReport> {
+  const rows = await dbRead.$queryRaw<SweepCandidate[]>`
+    WITH ${minorSrcCte},
+    candidates AS (
+      SELECT DISTINCT m.id AS "modelId", m."userId", mfh.hash
+      FROM "ModelFileHash" mfh
+      JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = 'Model'
+      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE mfh.type = 'SHA256'
+        AND mfh.hash IN (SELECT hash FROM minor_src)
+        AND NOT m.minor
+        AND m.status <> 'Deleted'
+    )
+    SELECT
+      c."modelId",
+      c."userId",
+      EXISTS (
+        SELECT 1 FROM minor_src s WHERE s.hash = c.hash AND s."userId" = c."userId"
+      ) AS "sameUploader"
+    FROM candidates c
+    ORDER BY c."modelId"
+    LIMIT ${limit}
+  `;
+
+  const sameUploader = rows.filter((row) => row.sameUploader);
+  const report: SweepReport = {
+    candidates: rows.length,
+    sameUploader: sameUploader.length,
+    differentUploader: rows.length - sameUploader.length,
+    flagged: 0,
+    failed: 0,
+    sample: rows.slice(0, 20),
+  };
+
+  if (dryRun) return report;
+
+  const tasks = sameUploader.map((row) => async () => {
+    try {
+      await setModelMinor({
+        id: row.modelId,
+        minor: true,
+        userId: SYSTEM_USER_ID,
+        activity: 'setMinorAutoHash',
+      });
+      report.flagged++;
+    } catch (error) {
+      report.failed++;
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'minor-hash-sweep',
+          message: (error as Error).message,
+          modelId: row.modelId,
+        },
+        'webhooks'
+      ).catch(() => null);
+    }
+  });
+
+  await limitConcurrency(tasks, 5);
+
+  return report;
 }
