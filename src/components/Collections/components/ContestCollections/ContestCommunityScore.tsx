@@ -143,10 +143,25 @@ export function ContestCommunityScore({ collectionId }: { collectionId: number }
         </Alert>
       )}
 
-      {data?.truncated && (
+      {data?.truncated.entries && (
         <Alert color="yellow">
           Showing the first {data.entryCount} entries only. Narrow the category or status filter to
           score the rest.
+        </Alert>
+      )}
+
+      {data?.truncated.images && (
+        <Alert color="yellow" title="Image set truncated">
+          This contest published more images in the window than a single run counts, so reaction
+          counts are incomplete. Narrow the window.
+        </Alert>
+      )}
+
+      {data?.degraded.bannedRefinementSkipped && (
+        <Alert color="red" title="Banned-account filtering was skipped">
+          Too many distinct engagers to resolve account status for this run. Counts still exclude
+          new, excluded and contest-banned accounts, but not banned or deleted ones. Do not decide a
+          prize on this run.
         </Alert>
       )}
 

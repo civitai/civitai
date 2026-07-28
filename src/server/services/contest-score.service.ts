@@ -47,6 +47,17 @@ import { hashifyObject } from '~/utils/string-helpers';
 type Signal = ContestScoreSignal;
 
 /**
+ * Every timestamp column this service compares against — `User.createdAt`,
+ * `Post.publishedAt`, `CollectionItem.createdAt`, `bannedAt`, `deletedAt` — is
+ * `timestamp WITHOUT time zone` holding UTC. A bound `Date` arrives as `timestamptz`
+ * and Postgres coerces it using the SESSION timezone, so the comparison is only
+ * correct while that session happens to be UTC. Converting explicitly makes it
+ * correct under any session timezone.
+ */
+const utc = (d: Date) => Prisma.sql`(${d}::timestamptz AT TIME ZONE 'UTC')`;
+const nowUtc = Prisma.raw(`(NOW() AT TIME ZONE 'UTC')`);
+
+/**
  * Bumped whenever a change here could move a ranking. Recorded in every snapshot so
  * a disputed result can be traced to the code that produced it.
  */
@@ -70,6 +81,9 @@ const SCORE_CACHE_TTL = 60 * 15;
 // ones: uniqExact cannot be summed across chunks, so every entity belonging to an
 // entry has to be counted in the same call.
 const CH_ENTITY_CHUNK = 20000;
+// Ceiling on the reactor lookup table, which scales with images published in the
+// window rather than with entry count. Past it the run is flagged truncated.
+const MAX_IMAGE_PAIRS = 200000;
 const CH_CONCURRENCY = 4;
 const DEFAULT_STATUSES: CollectionItemStatus[] = [CollectionItemStatus.ACCEPTED];
 
@@ -105,6 +119,13 @@ const storedConfigSchema = z.object({
   version: z.number(),
   weights: weightsSchema,
   ageGateDays: z.number(),
+  // Floor on each signal's normalization denominator. Where a category's leading
+  // qualified count is tiny, plain max-normalization lets one or two users swing a
+  // signal from 0 to 0.5 and decide a placement on noise.
+  minDenominator: weightsSchema,
+  // Ceiling on the engager set resolved against Postgres. Past it the banned/deleted
+  // refinement is skipped and the run is flagged degraded rather than run anyway.
+  maxEngagers: z.number(),
   farmIp: z.object({ minPeers: z.number(), minEntries: z.number() }),
 });
 
@@ -200,15 +221,18 @@ async function resolveWindow(
 // Gates
 // ---------------------------------------------------------------------------
 
-type Gates = {
-  /** An account with an id above this registered after the cutoff. */
+type BaseGates = {
   userIdThreshold: number;
-  /**
-   * Users wrongly caught by the id threshold: registered before the cutoff but
-   * holding an id above it. Recorded so a snapshot can be audited.
-   */
   ageGateBandUsers: number;
+  baseDisqualifiedIds: number[];
+};
+
+type Gates = BaseGates & {
+  /** Base list plus the banned/deleted engagers resolved for THIS contest. */
   disqualifiedIds: number[];
+  /** Set when the engager set blew the cap and the ban refinement was skipped. */
+  bannedRefinementSkipped: boolean;
+  engagerCount: number;
 };
 
 /**
@@ -237,14 +261,14 @@ async function loadAgeThreshold(ageCutoff: Date) {
         // count against an unknown threshold and the query takes ~50s instead of ~12s.
         const [{ threshold }] = await dbRead.$queryRaw<{ threshold: number }[]>`
           SELECT COALESCE(
-            (SELECT min(id) FROM "User" WHERE "createdAt" > ${ageCutoff}) - 1,
+            (SELECT min(id) FROM "User" WHERE "createdAt" > ${utc(ageCutoff)}) - 1,
             (SELECT max(id) FROM "User")
           )::int AS "threshold"
         `;
         const [{ bandUsers }] = await dbRead.$queryRaw<{ bandUsers: number }[]>`
           SELECT count(*)::int AS "bandUsers"
           FROM "User" u
-          WHERE u."createdAt" <= ${ageCutoff} AND u.id > ${threshold}
+          WHERE u."createdAt" <= ${utc(ageCutoff)} AND u.id > ${threshold}
         `;
         return { threshold, bandUsers };
       }),
@@ -252,49 +276,95 @@ async function loadAgeThreshold(ageCutoff: Date) {
   );
 }
 
-async function loadGates(window: ResolvedWindow): Promise<Gates> {
-  const threshold = await loadAgeThreshold(window.ageCutoff);
+/** The always-on gates: cheap, bounded, and enough to bound the engager set. */
+async function loadBaseGates(ageCutoff: Date) {
+  const threshold = await loadAgeThreshold(ageCutoff);
 
   if (threshold.bandUsers)
     console.warn(
       `[contest-score] age gate band holds ${threshold.bandUsers} user(s) registered before the cutoff but carrying an id above the threshold; they are disqualified.`
     );
 
-  // Only accounts banned or deleted ON OR AFTER the window start can have engaged
-  // during it — every signal here requires an authenticated action and a banned or
-  // deleted account cannot perform one. That turns a 1.35M-row set into a few
-  // thousand, small enough to push into ClickHouse. Contest bans are unconditional
-  // (a scoring sanction, not an access one) and number in the dozens.
-  const banned = await withSpan(
-    'contest-score.banned',
-    () =>
-      dbRead.$queryRaw<{ id: number }[]>`
-      SELECT u.id
-      FROM "User" u
-      WHERE u.id <= ${threshold.threshold}
-        AND (
-          u."bannedAt" >= ${window.start}
-          OR u."deletedAt" >= ${window.start}
-          OR u.meta ->> 'contestBanDetails' IS NOT NULL
-        )
-    `
-  );
-
-  const excluded = await withSpan('contest-score.excluded-users', () =>
-    clickhouse!.$query<{ userId: number }>(`
-      SELECT userId FROM metricExcludedUsers FINAL WHERE active = 1
-    `)
-  );
-
-  const disqualifiedIds = [
-    ...new Set([...banned.map((b) => b.id), ...excluded.map((e) => Number(e.userId))]),
-  ].sort((a, b) => a - b);
+  const [excluded, contestBanned] = await Promise.all([
+    withSpan('contest-score.excluded-users', () =>
+      clickhouse!.$query<{ userId: number }>(`
+        SELECT userId FROM metricExcludedUsers FINAL WHERE active = 1
+      `)
+    ),
+    withSpan(
+      'contest-score.contest-banned',
+      () =>
+        dbRead.$queryRaw<{ id: number }[]>`
+        SELECT u.id FROM "User" u WHERE u.meta ->> 'contestBanDetails' IS NOT NULL
+      `
+    ),
+  ]);
 
   return {
     userIdThreshold: threshold.threshold,
     ageGateBandUsers: threshold.bandUsers,
-    disqualifiedIds,
+    baseDisqualifiedIds: [
+      ...new Set([...excluded.map((e) => Number(e.userId)), ...contestBanned.map((u) => u.id)]),
+    ].sort((a, b) => a - b),
   };
+}
+
+// Postgres caps a statement at 65,535 bind parameters. Chunked well under it so this
+// is a bounded loop rather than a cliff a big contest walks off.
+const PG_ID_CHUNK = 10000;
+
+/**
+ * Resolves banned / deleted / vanished accounts against the ENGAGER set rather than
+ * the other way round. The banned-or-deleted population is ~1.35M rows and must
+ * never be pushed into ClickHouse; the engagers on a contest number in the
+ * thousands, so the small side is the one that travels.
+ *
+ * An id with no `User` row at all is a hard-deleted account and never counts.
+ */
+async function resolveBannedEngagers(engagerIds: number[]) {
+  if (!engagerIds.length) return [] as number[];
+
+  const disqualified: number[] = [];
+  for (let i = 0; i < engagerIds.length; i += PG_ID_CHUNK) {
+    const chunk = engagerIds.slice(i, i + PG_ID_CHUNK);
+    const rows = await dbRead.$queryRaw<{ id: number; gone: boolean }[]>`
+      SELECT ids.id, (u.id IS NULL OR u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL) AS "gone"
+      FROM unnest(ARRAY[${Prisma.join(chunk)}]::int[]) AS ids(id)
+      LEFT JOIN "User" u ON u.id = ids.id
+    `;
+    for (const row of rows) if (row.gone) disqualified.push(row.id);
+  }
+
+  return disqualified;
+}
+
+/**
+ * Distinct users who engaged through a ClickHouse signal, already narrowed by the
+ * age gate and the base exclusions. Postgres signals do not need this — they join
+ * `User` inline — so only the three ClickHouse signals pay the round trip.
+ */
+async function collectChEngagers(
+  sources: string[],
+  base: { userIdThreshold: number; baseDisqualifiedIds: number[] }
+) {
+  const disqualified = base.baseDisqualifiedIds.length ? intList(base.baseDisqualifiedIds) : '0';
+
+  const results = await withSpan('contest-score.engagers', () => {
+    const limit = pLimit(CH_CONCURRENCY);
+    return Promise.all(
+      sources.map((source) =>
+        limit(() =>
+          clickhouse!.$query<{ userId: number }>(`
+            SELECT DISTINCT userId
+            FROM (${source}) AS s
+            WHERE userId <= ${base.userIdThreshold} AND userId NOT IN (${disqualified})
+          `)
+        )
+      )
+    );
+  });
+
+  return [...new Set(results.flat().map((r) => Number(r.userId)))];
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +477,7 @@ async function loadEntryImages(modelIds: number[]) {
       JOIN "Image" i ON i."postId" = p.id
       WHERE mv."modelId" IN (${Prisma.join(modelIds)})
         AND p."publishedAt" IS NOT NULL
-        AND p."publishedAt" <= NOW()
+        AND p."publishedAt" <= ${nowUtc}
         AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
       ORDER BY mv."modelId", mv."index", p.id, i."index"
     `
@@ -449,7 +519,12 @@ function chPairTable(pairs: EntryPair[]) {
   `;
 }
 
-const chDateTime = (d: Date) => `toDateTime('${d.toISOString().slice(0, 19).replace('T', ' ')}')`;
+/**
+ * Seconds since the epoch, never a formatted string. `toDateTime('2026-07-24
+ * 00:00:00')` is parsed in the ClickHouse SERVER timezone, so a literal silently
+ * shifts the window; an integer is an absolute instant.
+ */
+const chDateTime = (d: Date) => `toDateTime(${Math.floor(d.getTime() / 1000)})`;
 
 /**
  * Counts distinct users per ENTRY inside ClickHouse. `source` projects `userId` and
@@ -552,13 +627,18 @@ function pgEntryTable(entries: EntryRow[]) {
 }
 
 /** The qualification gate, identical across every signal. */
-function pgQualified(userColumn: string, gates: Gates) {
-  const disqualified = gates.disqualifiedIds.length ? intList(gates.disqualifiedIds) : '-1';
+function pgQualified(userColumn: string, userAlias: string, gates: BaseGates) {
+  const disqualified = gates.baseDisqualifiedIds.length ? intList(gates.baseDisqualifiedIds) : '-1';
+  // Postgres can see the ban columns directly, so the engager round trip the
+  // ClickHouse signals need is unnecessary here — the predicate is the same one.
   return Prisma.raw(`
     ${userColumn} <> e."creatorId"
     AND (e."addedById" IS NULL OR ${userColumn} <> e."addedById")
     AND ${userColumn} <= ${gates.userIdThreshold}
     AND NOT (${userColumn} = ANY(ARRAY[${disqualified}]::int[]))
+    AND ${userAlias}.id IS NOT NULL
+    AND ${userAlias}."bannedAt" IS NULL
+    AND ${userAlias}."deletedAt" IS NULL
   `);
 }
 
@@ -580,15 +660,15 @@ async function loadImagePairs(entries: EntryRow[], window: ResolvedWindow) {
       JOIN "Image" i ON i.id = ir."imageId"
       JOIN "Post" p ON p.id = i."postId"
       WHERE p."publishedAt" IS NOT NULL
-        AND p."publishedAt" <= NOW()
-        AND p."publishedAt" >= ${window.start}
-        AND p."publishedAt" < ${window.effectiveEnd}
+        AND p."publishedAt" <= ${nowUtc}
+        AND p."publishedAt" >= ${utc(window.start)}
+        AND p."publishedAt" < ${utc(window.effectiveEnd)}
         AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
     `
   );
 }
 
-async function countImageAuthors(entries: EntryRow[], window: ResolvedWindow, gates: Gates) {
+async function countImageAuthors(entries: EntryRow[], window: ResolvedWindow, gates: BaseGates) {
   return withSpan(
     'contest-score.image-authors',
     () =>
@@ -596,17 +676,18 @@ async function countImageAuthors(entries: EntryRow[], window: ResolvedWindow, ga
       SELECT
         e."entryId"                     AS "collectionItemId",
         count(DISTINCT i."userId")::int AS "rawUsers",
-        count(DISTINCT i."userId") FILTER (WHERE ${pgQualified('i."userId"', gates)})::int
+        count(DISTINCT i."userId") FILTER (WHERE ${pgQualified('i."userId"', 'au', gates)})::int
                                         AS "qualifiedUsers"
       FROM ${pgEntryTable(entries)}
       JOIN "ModelVersion" mv ON mv."modelId" = e."modelId"
       JOIN "ImageResourceNew" ir ON ir."modelVersionId" = mv.id
       JOIN "Image" i ON i.id = ir."imageId"
       JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN "User" au ON au.id = i."userId"
       WHERE p."publishedAt" IS NOT NULL
-        AND p."publishedAt" <= NOW()
-        AND p."publishedAt" >= ${window.start}
-        AND p."publishedAt" < ${window.effectiveEnd}
+        AND p."publishedAt" <= ${nowUtc}
+        AND p."publishedAt" >= ${utc(window.start)}
+        AND p."publishedAt" < ${utc(window.effectiveEnd)}
         AND i.ingestion <> 'Blocked'::"ImageIngestionStatus"
       GROUP BY e."entryId"
     `
@@ -616,7 +697,7 @@ async function countImageAuthors(entries: EntryRow[], window: ResolvedWindow, ga
 async function countCollectors(
   entries: EntryRow[],
   window: ResolvedWindow,
-  gates: Gates,
+  gates: BaseGates,
   collectionId: number
 ) {
   return withSpan(
@@ -626,14 +707,19 @@ async function countCollectors(
       SELECT
         e."entryId"                         AS "collectionItemId",
         count(DISTINCT ci."addedById")::int AS "rawUsers",
-        count(DISTINCT ci."addedById") FILTER (WHERE ${pgQualified('ci."addedById"', gates)})::int
+        count(DISTINCT ci."addedById") FILTER (WHERE ${pgQualified(
+          'ci."addedById"',
+          'cu',
+          gates
+        )})::int
                                             AS "qualifiedUsers"
       FROM ${pgEntryTable(entries)}
       JOIN "CollectionItem" ci ON ci."modelId" = e."modelId"
+      LEFT JOIN "User" cu ON cu.id = ci."addedById"
       WHERE ci."collectionId" <> ${collectionId}
         AND ci."addedById" IS NOT NULL
-        AND ci."createdAt" >= ${window.start}
-        AND ci."createdAt" < ${window.effectiveEnd}
+        AND ci."createdAt" >= ${utc(window.start)}
+        AND ci."createdAt" < ${utc(window.effectiveEnd)}
       GROUP BY e."entryId"
     `
   );
@@ -734,7 +820,13 @@ export type ContestCommunityScore = {
   partial: boolean;
   statuses: CollectionItemStatus[];
   entryCount: number;
-  truncated: boolean;
+  truncated: { entries: boolean; images: boolean };
+  /**
+   * Set when a bound was hit and part of the qualification was skipped. Degrading
+   * loudly matters more than degrading gracefully for an artifact that decides a
+   * prize.
+   */
+  degraded: { bannedRefinementSkipped: boolean };
   signalSources: Record<Signal, string>;
   categories: ContestScoreCategory[];
 };
@@ -751,7 +843,13 @@ function emptySignals() {
   ) as ContestScoreEntry['signals'];
 }
 
-async function computeCommunityScore(input: WindowInput): Promise<ContestCommunityScore> {
+/** Filled in during a run for the snapshot's audit trail; never sent to a client. */
+type RunAudit = { engagerCount: number; ageGateBandUsers: number };
+
+async function computeCommunityScore(
+  input: WindowInput,
+  audit?: RunAudit
+): Promise<ContestCommunityScore> {
   requireClickhouse();
   const config = await getContestScoringConfig(input.collectionId);
   const window = await resolveWindow(input.collectionId, input, config);
@@ -771,63 +869,105 @@ async function computeCommunityScore(input: WindowInput): Promise<ContestCommuni
   };
 
   const { entries, truncated } = await loadEntries(input);
-  if (!entries.length) return { ...base, entryCount: 0, truncated, categories: [] };
+  if (!entries.length)
+    return {
+      ...base,
+      entryCount: 0,
+      truncated: { entries: truncated, images: false },
+      degraded: { bannedRefinementSkipped: false },
+      categories: [],
+    };
 
-  const gates = await loadGates(window);
+  const baseGates = await loadBaseGates(window.ageCutoff);
 
-  const [imageAuthors, collectors, imageRows, versionPairs, images] = await Promise.all([
-    countImageAuthors(entries, window, gates),
-    countCollectors(entries, window, gates, input.collectionId),
+  const [imageAuthors, collectors, imageRowsRaw, versionPairs, images] = await Promise.all([
+    countImageAuthors(entries, window, baseGates),
+    countCollectors(entries, window, baseGates, input.collectionId),
     loadImagePairs(entries, window),
     loadVersionPairs(entries),
     loadEntryImages(entries.map((e) => e.modelId)),
   ]);
 
-  const [reactors, downloaders, generators] = await Promise.all([
-    runChCounts(
-      'reactors',
-      toImagePairs(imageRows, entries),
-      gates,
-      (ids) => `
-        SELECT toInt64(userId) AS userId, toInt64(entityId) AS entityId
-        FROM reactions
-        WHERE type = 'Image_Create'
-          AND entityId IN (${ids})
-          AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
-          AND userId != 0
-      `
-    ),
-    runChCounts(
-      'downloaders',
-      modelPairs(entries),
-      gates,
-      (ids) => `
-        SELECT toInt64(userId) AS userId, toInt64(modelId) AS entityId
-        FROM modelVersionEvents
-        WHERE type = 'Download'
-          AND modelId IN (${ids})
-          AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
-          AND userId != 0
-      `
-    ),
+  const truncatedImages = imageRowsRaw.length > MAX_IMAGE_PAIRS;
+  const imageRows = truncatedImages ? imageRowsRaw.slice(0, MAX_IMAGE_PAIRS) : imageRowsRaw;
+  const imagePairs = toImagePairs(imageRows, entries);
+
+  const chSources = {
+    reactors: (ids: string) => `
+      SELECT toInt64(userId) AS userId, toInt64(entityId) AS entityId
+      FROM reactions
+      WHERE type = 'Image_Create'
+        AND entityId IN (${ids})
+        AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
+        AND userId != 0
+    `,
+    downloaders: (ids: string) => `
+      SELECT toInt64(userId) AS userId, toInt64(modelId) AS entityId
+      FROM modelVersionEvents
+      WHERE type = 'Download'
+        AND modelId IN (${ids})
+        AND time >= ${chDateTime(window.start)} AND time < ${chDateTime(window.effectiveEnd)}
+        AND userId != 0
+    `,
     // Straight off orchestration.jobs, NOT default.daily_user_resource: that view
     // only ingests jobType IN ('TextToImage','TextToImageV2','Comfy'), so every
     // newer engine (ComfyImageGen, AnimaComfy, StableDiffusionCpp, …) is missing
     // from it and whole ecosystems read as zero generations.
-    runChCounts(
-      'generators',
-      versionPairs,
-      gates,
-      (ids) => `
-        SELECT toInt64(userId) AS userId, toInt64(resource) AS entityId
-        FROM orchestration.jobs
-        ARRAY JOIN resourcesUsed AS resource
-        WHERE resource IN (${ids})
-          AND createdAt >= ${chDateTime(window.start)}
-          AND createdAt < ${chDateTime(window.effectiveEnd)}
-          AND userId != 0
-      `
-    ),
+    generators: (ids: string) => `
+      SELECT toInt64(userId) AS userId, toInt64(resource) AS entityId
+      FROM orchestration.jobs
+      ARRAY JOIN resourcesUsed AS resource
+      WHERE resource IN (${ids})
+        AND createdAt >= ${chDateTime(window.start)}
+        AND createdAt < ${chDateTime(window.effectiveEnd)}
+        AND userId != 0
+    `,
+  };
+
+  const imageIds = intList([...new Set(imagePairs.map((p) => p.entityId))]) || '0';
+  const modelIds = intList([...new Set(entries.map((e) => e.modelId))]) || '0';
+  const versionIds = intList([...new Set(versionPairs.map((p) => p.entityId))]) || '0';
+
+  // Resolve banned/deleted against the ENGAGERS, not the other way round: the
+  // banned-or-deleted population is ~1.35M rows and must never reach ClickHouse.
+  const engagers = await collectChEngagers(
+    [
+      chSources.reactors(imageIds),
+      chSources.downloaders(modelIds),
+      chSources.generators(versionIds),
+    ],
+    baseGates
+  );
+
+  const bannedRefinementSkipped = engagers.length > config.maxEngagers;
+  if (bannedRefinementSkipped)
+    console.warn(
+      `[contest-score] collection ${input.collectionId} has ${engagers.length} engagers, above the configured ceiling; the banned/deleted refinement was skipped and the run is flagged degraded.`
+    );
+
+  const gates: Gates = {
+    ...baseGates,
+    disqualifiedIds: bannedRefinementSkipped
+      ? baseGates.baseDisqualifiedIds
+      : [
+          ...new Set([
+            ...baseGates.baseDisqualifiedIds,
+            ...(await resolveBannedEngagers(engagers)),
+          ]),
+        ].sort((a, b) => a - b),
+    bannedRefinementSkipped,
+    engagerCount: engagers.length,
+  };
+
+  if (audit) {
+    audit.engagerCount = gates.engagerCount;
+    audit.ageGateBandUsers = gates.ageGateBandUsers;
+  }
+
+  const [reactors, downloaders, generators] = await Promise.all([
+    runChCounts('reactors', imagePairs, gates, chSources.reactors),
+    runChCounts('downloaders', modelPairs(entries), gates, chSources.downloaders),
+    runChCounts('generators', versionPairs, gates, chSources.generators),
   ]);
 
   const counts = new Map<number, ContestScoreEntry['signals']>(
@@ -879,10 +1019,14 @@ async function computeCommunityScore(input: WindowInput): Promise<ContestCommuni
 
       // Normalized against the leading ELIGIBLE entry per signal, so an entry pulled
       // after accruing engagement cannot set the bar for everyone else.
+      //
+      // Floored at the configured minDenominator: where a category's leading count is
+      // tiny, a bare maximum lets one or two users swing a signal from 0 to 0.5 and
+      // decide a placement on noise.
       const maxima = Object.fromEntries(
         contestScoreSignals.map((s) => [
           s,
-          Math.max(...eligible.map((i) => i.signals[s].qualified), 0),
+          Math.max(...eligible.map((i) => i.signals[s].qualified), 0, config.minDenominator[s]),
         ])
       ) as Record<Signal, number>;
 
@@ -918,7 +1062,13 @@ async function computeCommunityScore(input: WindowInput): Promise<ContestCommuni
     }
   );
 
-  return { ...base, entryCount: entries.length, truncated, categories };
+  return {
+    ...base,
+    entryCount: entries.length,
+    truncated: { entries: truncated, images: truncatedImages },
+    degraded: { bannedRefinementSkipped },
+    categories,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -981,7 +1131,7 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
     const { entries } = await loadEntries(input);
     if (!entries.length) return { collectionId: input.collectionId, count: 0, candidates: [] };
 
-    const gates = await loadGates(window);
+    const baseGates = await loadBaseGates(window.ageCutoff);
     const imagePairs = toImagePairs(await loadImagePairs(entries, window), entries);
 
     // Reactions and downloads are the engagement events that carry an IP — the same
@@ -1075,7 +1225,7 @@ export async function getContestCandidates(input: GetContestCandidatesInput) {
         farmIpsUsed: Number(row.farmIpsUsed),
         // Reported so a reviewer can tell a too-young account from an excluded one
         // without re-deriving the threshold themselves.
-        newAccount: Number(row.userId) > gates.userIdThreshold,
+        newAccount: Number(row.userId) > baseGates.userIdThreshold,
       })),
     };
   } catch (e) {
@@ -1106,6 +1256,7 @@ export type ContestSnapshot = {
   config: ContestScoringConfig;
   ageCutoff: string;
   ageGateBandUsers: number;
+  engagerCount: number;
   partial: boolean;
   score: ContestCommunityScore;
 };
@@ -1139,8 +1290,8 @@ export async function createContestSnapshot({
   try {
     const config = await getContestScoringConfig(window.collectionId);
     const resolved = await resolveWindow(window.collectionId, window, config);
-    const gates = await loadGates(resolved);
-    const score = await computeCommunityScore(window);
+    const audit: RunAudit = { engagerCount: 0, ageGateBandUsers: 0 };
+    const score = await computeCommunityScore(window, audit);
 
     const takenAt = new Date().toISOString();
     const key = snapshotKey(window.collectionId, takenAt);
@@ -1153,7 +1304,8 @@ export async function createContestSnapshot({
       codeVersion: CONTEST_SCORE_CODE_VERSION,
       config,
       ageCutoff: resolved.ageCutoff.toISOString(),
-      ageGateBandUsers: gates.ageGateBandUsers,
+      ageGateBandUsers: audit.ageGateBandUsers,
+      engagerCount: audit.engagerCount,
       partial: resolved.partial,
       score,
     };
