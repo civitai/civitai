@@ -15,16 +15,23 @@ consequences:
 - **Workflows don't start on their own.** A fork PR parks at `action_required`
   until a maintainer clicks *Approve and run workflows*. If your PR looks like
   nothing is happening, that's why — please just ping in the PR.
-- **Only one thing is blocking.** ESLint (errors only) and Prettier on files your
-  PR **adds**. New files start clean, so holding them to the rules is free.
+- **Two things block.** Typecheck (full repo), and ESLint errors + Prettier on
+  files your PR **adds**. New files start clean, so holding them to the rules is
+  free. Typecheck runs on fork PRs too — it needs no secret, because the
+  `event-engine-common` submodule is public and fetched over HTTPS.
 - **Everything else is report-only.** ESLint and Prettier on files you *modify*
   run with `continue-on-error`, because a formatter has no changed-line
   granularity — 789 of 4,116 `src` files fail `prettier --check` today, so
   blocking on them would turn a three-line bugfix into a 200-line reformat. You
   will see a failed-but-ignored marker in the checks list. That's expected.
-- **There is no test job.** The repo has ~870 unit test files and ~106 component
-  test files, and CI runs none of them. They only execute when someone runs
-  vitest locally. Please run them (below) — nothing else will.
+- **Unit tests run but don't block yet.** CI runs the unit suite (676 files,
+  ~8,900 tests) report-only while we establish its pass rate on a CI runner — a
+  handful of tests are slow enough to trip the 60s per-test timeout under load,
+  though they pass in isolation. So a red unit job is a signal to look, not proof
+  you broke something, and a green overall check doesn't mean the tests passed.
+  Read the job output.
+- **Component tests don't run in CI at all.** The 106 `*.browser.test.tsx` files
+  need real Chromium and only execute when someone runs them locally.
 
 A green check on a fork PR therefore means much less than it looks like. Verify
 locally.
@@ -65,7 +72,7 @@ every existing and future worktree of that clone inherits it until you sync.
 
 ```bash
 pnpm typecheck                 # full repo
-pnpm test:unit:run             # ~8,000 unit tests, node env, fast
+pnpm test:unit:run             # ~8,900 unit tests, node env
 pnpm test:component            # ~860 component tests in real Chromium, slower
 pnpm exec prettier --check <files you added>
 pnpm exec eslint <files you added>
