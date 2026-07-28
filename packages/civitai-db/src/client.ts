@@ -12,6 +12,26 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
 };
 
 /**
+ * Prisma's default `errorFormat` ('colorless') makes the client construct a `new Error`
+ * on EVERY model-method invocation (`prisma.x.findMany(...)`) purely to capture a callsite
+ * for pretty error rendering. Capturing that stack is not free: it was the single largest
+ * allocation source in a production V8 allocation-sampling profile of our SSR tier
+ * (~15% of all bytes allocated) and ~2.3% of on-CPU JS time.
+ *
+ * That work is entirely wasted in production: the client's error renderer early-returns
+ * before ever reading the callsite when `process.env.NODE_ENV === 'production'`, so the
+ * captured stack is allocated and immediately discarded. `errorFormat: 'minimal'` swaps the
+ * stack-capturing callsite for a no-op one. Error `code`, `meta` and `message` are unchanged;
+ * only the (already-unused-in-prod) source-location decoration is dropped.
+ *
+ * Kept as the rich default outside production so local/dev error output still shows the
+ * offending source line.
+ */
+export function buildErrorFormatOption(isProd: boolean): { errorFormat?: 'minimal' } {
+  return isProd ? { errorFormat: 'minimal' } : {};
+}
+
+/**
  * Build the Prisma read/write clients. Connection config defaults come from the
  * package env schema (./env, overridable via options); app behavior (logger, slow-query
  * sink) is injected. HMR/global caching and the Next build guard live in the app shim
@@ -53,6 +73,7 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
     const dbUrl = readonly ? config.replicaUrl : config.databaseUrl;
     const clientOptions = {
       log: logDef,
+      ...buildErrorFormatOption(config.isProd),
       datasources: { db: { url: dbUrl } },
     } as Prisma.PrismaClientOptions;
     const prisma = new PrismaClient(clientOptions);
