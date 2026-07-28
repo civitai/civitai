@@ -59,6 +59,17 @@ const FORMAT_TO_MIME: Record<string, string> = {
  */
 export const INLINE_ICON_MAX_DECODED_BYTES = 2 * 1024 * 1024;
 const INLINE_ICON_RASTER_MAX_PX = 1024;
+/**
+ * 🔴 EXPLICIT input-pixel cap for the inline-icon rasterizer — do NOT rely on
+ * librsvg's implicit default policy (a sharp/libvips/librsvg bump could silently
+ * change it). The output is always clamped to ≤{@link INLINE_ICON_RASTER_MAX_PX}px
+ * (~1MP), so 16MP (4096×4096) is ample headroom while bounding librsvg allocation:
+ * a VALID sub-268MP SVG with a huge intrinsic viewBox (e.g. 15000×15000 ≈ 225MP,
+ * which librsvg would render at ~900MB BEFORE the downscale clamps it) is instead
+ * rejected at decode with a clean BAD_REQUEST — nothing is allocated at full size
+ * and nothing is stored. Applies to the raster (png/jpeg/webp/gif) path too.
+ */
+const INLINE_ICON_MAX_INPUT_PIXELS = 16 * 1024 * 1024; // 16,777,216 px = 4096×4096
 /** MIME types accepted for an inline-icon data URI (mirrors the extractor allowlist). */
 const INLINE_ICON_ALLOWED_MIME = new Set([
   'image/svg+xml',
@@ -302,7 +313,14 @@ export async function ingestListingAssetFromDataUri(opts: {
   let width: number | undefined;
   let height: number | undefined;
   try {
-    png = await sharp(parsed.bytes, { density: 96 })
+    png = await sharp(parsed.bytes, {
+      density: 96,
+      // 🔴 Explicit input-pixel cap (see INLINE_ICON_MAX_INPUT_PIXELS) — reject an
+      // oversized SVG viewBox / raster canvas at DECODE with a clean BAD_REQUEST,
+      // rather than trusting librsvg's implicit default. Bounds allocation before the
+      // downscale.
+      limitInputPixels: INLINE_ICON_MAX_INPUT_PIXELS,
+    })
       .resize({
         width: INLINE_ICON_RASTER_MAX_PX,
         height: INLINE_ICON_RASTER_MAX_PX,
