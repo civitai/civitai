@@ -33,7 +33,9 @@ export const EDIT_LOADER_CEILING_MS = 15_000;
  * state, never an infinite spinner: any settled outcome (thrown error, a settled
  * query with no data, or the loader ceiling elapsing) renders the "Can't edit this
  * listing" alert with a retry, so the user is never stuck. The spinner shows ONLY
- * while a first load is genuinely in flight AND under the ceiling.
+ * while a first load is genuinely in flight AND under the ceiling. The alert's
+ * "Try again" gives its own in-flight feedback (a disabled "Retrying…" state keyed
+ * off `isFetching`) so a retry after an error never looks inert.
  */
 export function AppsSubmitEditView({
   listingId,
@@ -67,6 +69,15 @@ export function AppsSubmitEditView({
   }, [editQuery.isLoading, loaderCeilingMs, retryNonce]);
 
   const showLoader = editQuery.isLoading && !loaderExpired;
+
+  // Progress feedback for the alert's "Try again". After a React-Query *error*,
+  // a `refetch()` leaves `status: 'error'` (so `isLoading` stays false) and only
+  // flips `fetchStatus` to `'fetching'` — `isFetching` is the signal that catches
+  // an in-flight retry, `isLoading` does NOT. We AND out `isLoading` so this only
+  // covers a background refetch (the settled-error retry), never the initial /
+  // never-settled first load — that path is owned by `showLoader` above and its
+  // button must stay clickable so a stuck query can still re-arm the ceiling.
+  const retryPending = editQuery.isFetching && !editQuery.isLoading;
 
   const handleRetry = () => {
     setLoaderExpired(false);
@@ -109,9 +120,11 @@ export function AppsSubmitEditView({
                 variant="light"
                 color="red"
                 data-testid="apps-offsite-edit-retry"
+                loading={retryPending}
+                disabled={retryPending}
                 onClick={handleRetry}
               >
-                Try again
+                {retryPending ? 'Retrying…' : 'Try again'}
               </Button>
             </Stack>
           </Alert>
