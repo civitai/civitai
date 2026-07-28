@@ -219,4 +219,27 @@ describe('sweepMinorHashMatches', () => {
     expect(report).toMatchObject({ flagged: 1, failed: 1 });
     expect(mockLogToAxiom).toHaveBeenCalled();
   });
+
+  it('does not abort the batch when setModelMinor rejects with a non-Error value', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue(sweepRows);
+    mockSetModelMinor.mockRejectedValueOnce(null);
+
+    const report = await sweepMinorHashMatches({ dryRun: false, limit: 100 });
+
+    expect(report).toMatchObject({ flagged: 1, failed: 1 });
+    expect(mockLogToAxiom).toHaveBeenCalled();
+  });
+
+  it('queries excluding already-minor and deleted models, with limit passed through', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await sweepMinorHashMatches({ dryRun: true, limit: 250 });
+
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('NOT m.minor');
+    expect(text).toContain(`m.status <> 'Deleted'`);
+    expect(text).toContain('LIMIT');
+    expect(values).toContain(250);
+  });
 });

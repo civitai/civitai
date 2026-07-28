@@ -113,7 +113,10 @@ export async function sweepMinorHashMatches({
   const rows = await dbRead.$queryRaw<SweepCandidate[]>`
     WITH ${minorSrcCte},
     candidates AS (
-      SELECT DISTINCT m.id AS "modelId", m."userId", mfh.hash
+      SELECT m.id AS "modelId", m."userId",
+             bool_or(EXISTS (
+               SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
+             )) AS "sameUploader"
       FROM "ModelFileHash" mfh
       JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = 'Model'
       JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
@@ -122,13 +125,9 @@ export async function sweepMinorHashMatches({
         AND mfh.hash IN (SELECT hash FROM minor_src)
         AND NOT m.minor
         AND m.status <> 'Deleted'
+      GROUP BY m.id, m."userId"
     )
-    SELECT
-      c."modelId",
-      c."userId",
-      EXISTS (
-        SELECT 1 FROM minor_src s WHERE s.hash = c.hash AND s."userId" = c."userId"
-      ) AS "sameUploader"
+    SELECT c."modelId", c."userId", c."sameUploader"
     FROM candidates c
     ORDER BY c."modelId"
     LIMIT ${limit}
@@ -161,7 +160,7 @@ export async function sweepMinorHashMatches({
         {
           type: 'error',
           name: 'minor-hash-sweep',
-          message: (error as Error).message,
+          message: error instanceof Error ? error.message : String(error),
           modelId: row.modelId,
         },
         'webhooks'
