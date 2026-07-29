@@ -69,7 +69,7 @@
   function feeChip(fee: number | null): { label: string; cls: string } {
     if (fee == null) return { label: 'Fee off', cls: 'border-dark-4 text-dark-3' };
     const { buzz, images } = feeToRatio(fee);
-    const label = images === 1 ? `${buzz} ⚡ / img` : `${buzz} ⚡ / ${images}`;
+    const label = images === 1 ? `${buzz} ⚡ / gen` : `${buzz} ⚡ / ${images}`;
     return data.canSetFee
       ? { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' }
       : { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' };
@@ -818,7 +818,7 @@
               <span class="text-xs text-dark-3">⚡ per</span>
               <input type="hidden" name="images" value={feeImages} />
               <Select.Root type="single" value={feeImages} onValueChange={(v: string) => { if (v) feeImages = v; }}>
-                <Select.Trigger size="default" class="w-16 text-white" aria-label="Images for {editing.name}">
+                <Select.Trigger size="default" class="w-16 text-white" aria-label="Generations for {editing.name}">
                   {feeImages}
                 </Select.Trigger>
                 <Select.Content>
@@ -827,12 +827,12 @@
                   {/each}
                 </Select.Content>
               </Select.Root>
-              <span class="text-xs text-dark-3">images</span>
+              <span class="text-xs text-dark-3">generations</span>
               <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
               <p class="w-full text-xs text-dark-3">
                 Suggested for {editingType}: {suggested.buzz} ⚡ / {suggested.images === 1
-                  ? 'image'
-                  : `${suggested.images} images`}
+                  ? 'generation'
+                  : `${suggested.images} generations`}
                 <button
                   type="button"
                   class="ml-1 text-blue-4 hover:underline"

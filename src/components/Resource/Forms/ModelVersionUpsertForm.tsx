@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   Input,
+  NumberInput,
   Popover,
   SegmentedControl,
   Select,
@@ -18,7 +19,7 @@ import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -75,7 +76,12 @@ import {
 import {
   type ModelVersionTerms,
   DEFAULT_GENERATION_TRIAL_LIMIT,
+  DEFAULT_FEE_IMAGES,
+  FEE_IMAGE_OPTIONS,
   buildModelVersionTerms,
+  feeToRatio,
+  ratioToFee,
+  suggestedFeePerImage,
 } from '@civitai/buzz';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import {
@@ -297,6 +303,15 @@ export function ModelVersionUpsertForm({
 
   const MAX_EARLY_ACCCESS = 30;
 
+  // A NEW version seeds the type-based suggested licensing fee (non-checkpoints = 1 ⚡ per 10 images), but only
+  // when the fee editor is actually shown — never seed a fee the creator can't see. Existing versions keep their
+  // stored value (0 = off).
+  const initialLicensingFee = version?.id
+    ? Number(version.licensingFee ?? 0)
+    : features.licensingFee
+    ? suggestedFeePerImage(model?.type)
+    : 0;
+
   const defaultValues: Schema = {
     ...version,
     name: version?.name ?? 'v1.0',
@@ -318,7 +333,7 @@ export function ModelVersionUpsertForm({
     clipSkip: version?.clipSkip ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
-    licensingFee: Number(version?.licensingFee ?? 0),
+    licensingFee: initialLicensingFee,
     licensingFeeType: version?.licensingFeeType ?? null,
     licensingFeeSettlementCurrency: version?.licensingFeeSettlementCurrency ?? null,
     licensingSourceVersionId: version?.licensingSourceVersionId ?? null,
@@ -359,6 +374,15 @@ export function ModelVersionUpsertForm({
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = Number(version?.licensingFee ?? 0) > 0;
+  // The fee is edited as a whole-number "buzz per N images" ratio; the stored `licensingFee` stays per-image.
+  const [feeRatio, setFeeRatio] = useState(() => feeToRatio(initialLicensingFee));
+  const applyFeeRatio = (next: { buzz: number; images: number }) => {
+    setFeeRatio(next);
+    form.setValue('licensingFee', ratioToFee(next.buzz, next.images), {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
+  };
   const showLicensingFeeBlock =
     !isNonCommercial &&
     (!!features.licensingFee ||
@@ -430,7 +454,10 @@ export function ModelVersionUpsertForm({
   // when switching to such a base model so the form can save.
   useEffect(() => {
     if (!isNonCommercial) return;
-    if ((form.getValues('licensingFee') ?? 0) > 0) form.setValue('licensingFee', 0);
+    if ((form.getValues('licensingFee') ?? 0) > 0) {
+      form.setValue('licensingFee', 0);
+      setFeeRatio((r) => ({ buzz: 0, images: r.images }));
+    }
     if (form.getValues('monetization')) form.setValue('monetization', null);
     if (form.getValues('earlyAccessConfig')) form.setValue('earlyAccessConfig', null);
     if (form.getValues('useMonetization')) form.setValue('useMonetization', false);
@@ -1018,16 +1045,42 @@ export function ModelVersionUpsertForm({
           )}
           {showLicensingFeeBlock && (
             <Stack gap="xs">
-              <InputNumber
-                name="licensingFee"
-                label="License Fee per Image"
-                description={`Charge a per-image fee for generations using this version. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
-                min={0}
-                max={MAX_LICENSING_FEE}
-                step={0.01}
-                decimalScale={2}
-                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-              />
+              <Input.Wrapper
+                label="License Fee"
+                description={`Charge for generations using this version, as Buzz per number of generations. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per generation.`}
+              >
+                <Group gap="xs" wrap="nowrap" mt={4}>
+                  <NumberInput
+                    aria-label="Licensing fee (Buzz)"
+                    value={feeRatio.buzz}
+                    onChange={(v) =>
+                      applyFeeRatio({ buzz: typeof v === 'number' ? v : 0, images: feeRatio.images })
+                    }
+                    min={0}
+                    max={MAX_LICENSING_FEE * feeRatio.images}
+                    step={1}
+                    allowDecimal={false}
+                    leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                    w={140}
+                  />
+                  <Text size="sm" c="dimmed">
+                    per
+                  </Text>
+                  <Select
+                    aria-label="Number of generations"
+                    value={String(feeRatio.images)}
+                    onChange={(v) =>
+                      applyFeeRatio({ buzz: feeRatio.buzz, images: Number(v) || DEFAULT_FEE_IMAGES })
+                    }
+                    data={FEE_IMAGE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
+                    allowDeselect={false}
+                    w={90}
+                  />
+                  <Text size="sm" c="dimmed">
+                    {feeRatio.images === 1 ? 'generation' : 'generations'}
+                  </Text>
+                </Group>
+              </Input.Wrapper>
               {showLicensingFeeSettlementCurrency && (
                 <InputSelect
                   name="licensingFeeSettlementCurrency"

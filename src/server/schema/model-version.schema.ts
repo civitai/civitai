@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms } from '@civitai/buzz';
+import { MAX_LICENSING_FEE } from '@civitai/buzz';
 import * as z from 'zod';
 import {
   MAX_DONATION_GOAL,
@@ -361,7 +362,8 @@ const recommendedResourceSchema = z.object({
 
 export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 
-export const MAX_LICENSING_FEE = 100;
+// Single-sourced in @civitai/buzz (the shared licensing-fee module); re-exported here for existing importers.
+export { MAX_LICENSING_FEE };
 
 // Paid-access write boundary — the zod contract the client sends (mirrors the @civitai/buzz domain
 // types). `terms` is bundle semantics: buying `download` grants generation too; `generation`

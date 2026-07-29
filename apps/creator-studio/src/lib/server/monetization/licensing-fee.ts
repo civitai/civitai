@@ -29,14 +29,14 @@ export const licensingFeeRatioSchema = z
     if (perImage <= 0) {
       ctx.addIssue({
         code: 'custom',
-        message: 'That fee rounds to nothing — the smallest is 1 ⚡ per 100 images.',
+        message: 'That fee rounds to nothing — the smallest is 1 ⚡ per 100 generations.',
       });
       return z.NEVER;
     }
     if (perImage > MAX_LICENSING_FEE) {
       ctx.addIssue({
         code: 'custom',
-        message: `That fee is too high — the maximum is ${MAX_LICENSING_FEE} ⚡ per image.`,
+        message: `That fee is too high — the maximum is ${MAX_LICENSING_FEE} ⚡ per generation.`,
       });
       return z.NEVER;
     }

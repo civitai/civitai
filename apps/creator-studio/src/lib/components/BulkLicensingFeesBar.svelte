@@ -85,7 +85,7 @@
     <span class="text-sm text-dark-1">⚡ per</span>
     <input type="hidden" name="images" value={bulkImages} />
     <Select.Root type="single" value={bulkImages} onValueChange={(v: string) => { if (v) bulkImages = v; }}>
-      <Select.Trigger size="sm" class="w-16 text-white" aria-label="Images">
+      <Select.Trigger size="sm" class="w-16 text-white" aria-label="Generations">
         {bulkImages}
       </Select.Trigger>
       <Select.Content>
@@ -94,7 +94,7 @@
         {/each}
       </Select.Content>
     </Select.Root>
-    <span class="text-sm text-dark-1">images</span>
+    <span class="text-sm text-dark-1">generations</span>
     <Button size="sm" disabled={selected.size === 0} onclick={() => (showConfirm = true)}>
       Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
     </Button>

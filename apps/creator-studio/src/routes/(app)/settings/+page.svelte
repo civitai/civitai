@@ -128,8 +128,8 @@
     <CardContent>
       <p class="text-sm text-dark-2">
         Licensing fees stay off until you set one. We suggest a fee by model type — Checkpoints
-        <strong>1</strong> ⚡ / image, LoRAs <strong>1</strong> ⚡ / 10 images — which you can apply or override
-        per version on <a href="/models" class="underline">Models</a>.
+        <strong>1</strong> ⚡ / generation, LoRAs <strong>1</strong> ⚡ / 10 generations — which you can apply or
+        override per version on <a href="/models" class="underline">Models</a>.
       </p>
     </CardContent>
   </Card>

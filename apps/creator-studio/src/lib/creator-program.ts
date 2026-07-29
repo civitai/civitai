@@ -21,7 +21,7 @@ export const CREATOR_PROGRAM_PERKS = [
   },
   {
     title: 'Set licensing fees',
-    body: 'Charge a per-image fee when others generate with your models.',
+    body: 'Charge a fee when others generate with your models.',
   },
   { title: 'Sell access indefinitely', body: 'Offer your versions for sale with no time limit.' },
   {
@@ -35,7 +35,7 @@ export const CREATOR_PROGRAM_PERKS = [
 export const CREATOR_PROGRAM_CAPABILITIES = [
   { label: 'Browse your models & versions', everyone: true, member: true },
   { label: 'Set up timed early / paid access', everyone: true, member: true },
-  { label: 'Set per-image licensing fees', everyone: false, member: true },
+  { label: 'Set per-generation licensing fees', everyone: false, member: true },
   { label: 'Sell access to versions indefinitely', everyone: false, member: true },
 ];
 
