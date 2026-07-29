@@ -197,7 +197,12 @@ export default function MinorHashMatches() {
         size: 170,
         filterVariant: 'multi-select',
         Cell: ({ row: { original } }) => (
-          <Badge size="sm" tt="none" color={statusColors[original.status] ?? 'gray'} variant="light">
+          <Badge
+            size="sm"
+            tt="none"
+            color={statusColors[original.status] ?? 'gray'}
+            variant="light"
+          >
             {original.status}
           </Badge>
         ),
