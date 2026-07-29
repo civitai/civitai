@@ -232,8 +232,6 @@ export function RichTextEditor({
     accepts,
   ]);
 
-  const editorRef = useRef<Editor>();
-
   const editor = useEditor({
     extensions,
     content: value?.startsWith('{') ? JSON.parse(value) : value,
@@ -243,6 +241,8 @@ export function RichTextEditor({
     // onDelete: (props) => console.log(props), // TODO - handle image/video delete from s3 bucket
     shouldRerenderOnTransaction: true,
   });
+
+  const editorRef = useRef<Editor>();
 
   // Sync `value` -> editor content on prop changes. Three cases:
   //   1. `value` cleared (e.g. after a form submission) -> wipe editor.

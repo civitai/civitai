@@ -77,6 +77,7 @@ type MarkdownConversionResult = {
   headingsClamped: number;
   taskItemsConverted: number;
   externalImagesLinked: number;
+  htmlBlocksDropped: number;
 };
 
 export type MarkdownConversionStats = Omit<MarkdownConversionResult, 'html'>;
@@ -183,8 +184,13 @@ function fitToEditorSchema(
     if (child.type === 'html') {
       const raw = child.value ?? '';
       if (/^<br\s*\/?>$/i.test(raw)) children[i] = { type: 'break' };
-      else if (HTML_MARKUP.test(raw)) children.splice(i--, 1);
-      else children[i] = { type: 'text', value: raw };
+      else if (HTML_MARKUP.test(raw)) {
+        // A `<div align="center">…</div>` wrapper is one html node; dropping it
+        // whole is safe but silent, so it has to be reported like any other
+        // lowering or the author loses content without being told.
+        children.splice(i--, 1);
+        stats.htmlBlocksDropped++;
+      } else children[i] = { type: 'text', value: raw };
       continue;
     }
 
@@ -241,6 +247,7 @@ export function convertMarkdownForEditor(markdown: string): MarkdownConversionRe
     headingsClamped: 0,
     taskItemsConverted: 0,
     externalImagesLinked: 0,
+    htmlBlocksDropped: 0,
   };
 
   const file = unified()
@@ -271,6 +278,7 @@ export function describeMarkdownConversion({
   headingsClamped,
   taskItemsConverted,
   externalImagesLinked,
+  htmlBlocksDropped,
 }: MarkdownConversionStats) {
   const plural = (count: number, noun: string) => `${count} ${noun}${count > 1 ? 's' : ''}`;
   const notes: string[] = [];
@@ -278,6 +286,7 @@ export function describeMarkdownConversion({
   if (tablesConverted) notes.push(`${plural(tablesConverted, 'table')} converted to lists`);
   if (headingsClamped) notes.push(`${plural(headingsClamped, 'heading')} lowered to H3`);
   if (taskItemsConverted) notes.push(`${plural(taskItemsConverted, 'checklist item')} flattened`);
+  if (htmlBlocksDropped) notes.push(`${plural(htmlBlocksDropped, 'raw HTML block')} removed`);
   if (externalImagesLinked)
     notes.push(
       `${plural(

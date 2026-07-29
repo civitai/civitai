@@ -68,13 +68,18 @@ export function InsertMarkdownControl(props: Props) {
   };
 
   return (
-    <RichTextEditor.Control
-      {...props}
-      onClick={() => inputRef.current?.click()}
-      aria-label="Import Markdown"
-      title="Import Markdown file"
-    >
-      <IconMarkdown size={16} stroke={1.5} />
+    <>
+      <RichTextEditor.Control
+        {...props}
+        onClick={() => inputRef.current?.click()}
+        aria-label="Import Markdown"
+        title="Import Markdown file"
+      >
+        <IconMarkdown size={16} stroke={1.5} />
+      </RichTextEditor.Control>
+      {/* Sibling, not a child: RichTextEditor.Control renders a <button>, and
+          interactive content inside a button is invalid HTML — the input's click
+          would also bubble back to the button that opened it. */}
       <input
         type="file"
         accept={[...ACCEPTED_EXTENSIONS, 'text/markdown'].join(',')}
@@ -87,6 +92,6 @@ export function InsertMarkdownControl(props: Props) {
         }}
         hidden
       />
-    </RichTextEditor.Control>
+    </>
   );
 }

@@ -2,7 +2,11 @@ import { generateJSON } from '@tiptap/html/server';
 import { describe, expect, it } from 'vitest';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
-import { convertMarkdownForEditor, markdownToEditorHtml } from '~/utils/markdown-to-editor-html';
+import {
+  convertMarkdownForEditor,
+  describeMarkdownConversion,
+  markdownToEditorHtml,
+} from '~/utils/markdown-to-editor-html';
 
 const tagsIn = (html: string) =>
   new Set(Array.from(html.matchAll(/<([a-z][a-z0-9-]*)/gi), (m) => m[1].toLowerCase()));
@@ -221,12 +225,23 @@ describe('convertMarkdownForEditor', () => {
     expect(markdownToEditorHtml('<!-- private note -->\n\n# Body')).toBe('<h1>Body</h1>');
   });
 
-  it('drops real html wrappers rather than publishing the markup', () => {
-    const html = markdownToEditorHtml(
+  // Dropping is right, but silently dropping isn't — a README's `<div align>`
+  // wrapper is one html node and the author needs telling it went.
+  it('drops real html wrappers and reports them', () => {
+    const result = convertMarkdownForEditor(
       '<div align="center">\n  <img src="https://evil.example/x.png" />\n</div>\n\n# Body'
     );
 
-    expect(html).toBe('<h1>Body</h1>');
+    expect(result.html).toBe('<h1>Body</h1>');
+    expect(result.htmlBlocksDropped).toBe(1);
+    expect(describeMarkdownConversion(result)).toContain('raw HTML block');
+  });
+
+  it('does not report a dropped block when there is no raw html', () => {
+    const result = convertMarkdownForEditor('# Body\n\nJust prose.');
+
+    expect(result.htmlBlocksDropped).toBe(0);
+    expect(describeMarkdownConversion(result)).toBeUndefined();
   });
 
   // `br` is allowlisted and in the tiptap schema, so it should stay a break
