@@ -87,7 +87,11 @@ vi.mock('~/utils/trpc', () => ({
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
         },
-        storage: { get: { fetch: vi.fn() }, list: { fetch: vi.fn() }, getQuota: { fetch: vi.fn() } },
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
       },
     }),
   },
@@ -125,7 +129,11 @@ function postFromBlock(type: string, payload?: unknown) {
   const cw = iframeEl.contentWindow;
   if (!cw) throw new Error('iframe contentWindow missing');
   window.dispatchEvent(
-    new MessageEvent('message', { data: { type, payload }, origin: window.location.origin, source: cw })
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
   );
 }
 
@@ -171,7 +179,9 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     // including the VISIBLE "Starting …" line and the avatar initial — goes
     // through sanitizeAppChromeName.
     const spoofed = 'Evil' + String.fromCharCode(0x09) + String.fromCharCode(0x202e) + 'App';
-    renderWithProviders(<PageBlockHost {...baseProps} appName={spoofed} onConsentGranted={vi.fn()} />);
+    renderWithProviders(
+      <PageBlockHost {...baseProps} appName={spoofed} onConsentGranted={vi.fn()} />
+    );
     await expect.element(page.getByText('Starting Evil App…')).toBeInTheDocument();
   });
 });
@@ -291,44 +301,36 @@ describe('PageBlockHost launch reveal — the reveal must NOT gate the error pat
     expect(page.getByTestId('app-page-loading').query()).toBeNull();
   });
 
-  test(
-    'the `timeout` terminal (block never acks BLOCK_READY) renders the fallback inside the chrome',
-    async () => {
-      // Token present so the init controller arms its readiness timeout, but we
-      // never ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS the host goes
-      // terminal. The branded launch state must NOT survive it.
-      renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+  test('the `timeout` terminal (block never acks BLOCK_READY) renders the fallback inside the chrome', async () => {
+    // Token present so the init controller arms its readiness timeout, but we
+    // never ack BLOCK_READY → after BLOCK_READY_TIMEOUT_MS the host goes
+    // terminal. The branded launch state must NOT survive it.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 14_000, interval: 250 }
-      );
-      await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
-      expect(page.getByTestId('app-page-loading').query()).toBeNull();
-    },
-    20_000
-  );
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 14_000, interval: 250 }
+    );
+    await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  }, 20_000);
 
-  test(
-    'the `no_token` terminal (token never arrives) renders the fallback inside the chrome',
-    async () => {
-      renderWithProviders(
-        <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
-      );
-      await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+  test('the `no_token` terminal (token never arrives) renders the fallback inside the chrome', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} token={null} tokenError={false} onConsentGranted={vi.fn()} />
+    );
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
 
-      await vi.waitFor(
-        () => {
-          expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
-        },
-        { timeout: 19_000, interval: 250 }
-      );
-      await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
-      expect(page.getByTestId('app-page-loading').query()).toBeNull();
-    },
-    26_000
-  );
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 19_000, interval: 250 }
+    );
+    await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+  }, 26_000);
 });

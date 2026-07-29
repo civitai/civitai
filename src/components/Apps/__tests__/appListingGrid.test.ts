@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import {
-  LISTING_GRID_SPAN,
-  LISTING_STORE_CONTAINER_SIZE,
-} from '~/components/Apps/appListingGrid';
+import { LISTING_GRID_SPAN, LISTING_STORE_CONTAINER_SIZE } from '~/components/Apps/appListingGrid';
 
 /**
  * `/apps` store GEOMETRY pins (blocking `unit` project).
