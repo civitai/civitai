@@ -95,8 +95,7 @@ async function isVideoFile(file: Blob): Promise<boolean> {
 
 export function MetadataExtractionPanel() {
   const theme = useMantineTheme();
-  const [file, setFile] = useState<File>();
-  const [isLocalVideo, setIsLocalVideo] = useState(false);
+  const [localMedia, setLocalMedia] = useState<{ file: File; isVideo: boolean }>();
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   // When an on-site media is dropped, we extract its DB id and type to fetch metadata server-side
   const [droppedMedia, setDroppedMedia] = useState<{ id: number; type: 'image' | 'video' }>();
@@ -104,15 +103,22 @@ export function MetadataExtractionPanel() {
   const [selectedResourceIds, setSelectedResourceIds] = useState<Set<number>>(new Set());
 
   const store = useMetadataExtractionStore();
+  const file = localMedia?.file;
+  const isLocalVideo = localMedia?.isVideo ?? false;
 
   // Handle file drop — read locally only, no upload
   const handleDrop = useCallback(
-    (files: File[]) => {
+    async (files: File[]) => {
       setDroppedMedia(undefined);
       store.clear();
       const nextFile = files[0];
-      setIsLocalVideo(nextFile?.type.startsWith('video/') ?? false);
-      setFile(nextFile);
+      if (!nextFile) {
+        setLocalMedia(undefined);
+        return;
+      }
+      const isVideo = await isVideoFile(nextFile);
+      setLocalMedia({ file: nextFile, isVideo });
+      store.setIsVideo(isVideo);
     },
     [store]
   );
@@ -133,14 +139,14 @@ export function MetadataExtractionPanel() {
       const mediaInfo = getDroppedMediaInfo(event);
 
       store.clear();
-      setFile(undefined);
-      setIsLocalVideo(false);
+      setLocalMedia(undefined);
       setDroppedMedia(undefined);
       setIsFetchingUrl(true);
       try {
         if (mediaInfo) {
           // On-site media: metadata comes from the server
           setDroppedMedia(mediaInfo);
+          store.setIsVideo(mediaInfo.type === 'video');
           if (mediaInfo.type === 'video') {
             // Videos: use CDN URL directly for EdgeVideo preview
             store.setFileUrl(url);
@@ -157,8 +163,9 @@ export function MetadataExtractionPanel() {
         } else {
           // External media: fetch as a local file for metadata extraction
           const mediaFile = await fetchMediaAsFile(url);
-          setIsLocalVideo(await isVideoFile(mediaFile));
-          setFile(mediaFile);
+          const isVideo = await isVideoFile(mediaFile);
+          setLocalMedia({ file: mediaFile, isVideo });
+          store.setIsVideo(isVideo);
         }
       } catch (e) {
         console.error('Failed to load dropped media URL:', e);
@@ -170,8 +177,7 @@ export function MetadataExtractionPanel() {
   );
 
   const handleClear = useCallback(() => {
-    setFile(undefined);
-    setIsLocalVideo(false);
+    setLocalMedia(undefined);
     setDroppedMedia(undefined);
     setSelectedResourceIds(new Set());
     store.clear();
@@ -193,34 +199,27 @@ export function MetadataExtractionPanel() {
   useEffect(() => {
     if (droppedMedia) return;
     if (!file) {
-      setIsLocalVideo(false);
       store.setFileUrl(undefined);
       return;
     }
     let cancelled = false;
     let objectUrl: string | undefined;
-    void (async () => {
-      const video = await isVideoFile(file);
-      if (cancelled) return;
-      setIsLocalVideo(video);
-      if (video) {
-        objectUrl = URL.createObjectURL(file);
-        store.setFileUrl(objectUrl);
-        return;
-      }
-
+    if (isLocalVideo) {
+      objectUrl = URL.createObjectURL(file);
+      store.setFileUrl(objectUrl);
+    } else {
       const reader = new FileReader();
       reader.onload = () => {
         if (!cancelled) store.setFileUrl(reader.result as string);
       };
       reader.readAsDataURL(file);
-    })();
+    }
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file]);
+  }, [file, isLocalVideo]);
 
   // Extract metadata when a local file changes.
   useEffect(() => {
@@ -234,9 +233,7 @@ export function MetadataExtractionPanel() {
 
     (async () => {
       try {
-        const parser = (await isVideoFile(file))
-          ? await VideoMetadataParser(file)
-          : await ExifParser(file);
+        const parser = isLocalVideo ? await VideoMetadataParser(file) : await ExifParser(file);
         const { extra } = parser.parse() ?? {};
         const meta = { ...(await parser.getMetadata()), ...extra };
         delete meta.extra;
@@ -253,7 +250,7 @@ export function MetadataExtractionPanel() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file]);
+  }, [file, isLocalVideo]);
 
   // --- Server-side path: fetch generation data by media ID (on-site drops) ---
   const { data: serverData, isFetching: isFetchingServerData } =

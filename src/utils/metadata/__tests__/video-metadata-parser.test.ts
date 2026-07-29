@@ -43,7 +43,12 @@ function mp4Box(
 
 function mp4Fixture(
   metadata: Record<string, string>,
-  options: { extended?: boolean; mediaFirst?: boolean } = {}
+  options: {
+    dataTypes?: number[];
+    extended?: boolean;
+    mediaFirst?: boolean;
+    trailingMalformedMeta?: boolean;
+  } = {}
 ): Blob {
   const entries = Object.entries(metadata);
   const keyEntries = entries.map(([key]) =>
@@ -57,14 +62,19 @@ function mp4Fixture(
   const items = entries.map(([, value], index) => {
     const data = mp4Box(
       'data',
-      concat(new Uint8Array([0, 0, 0, 1]), new Uint8Array(4), encoder.encode(value)),
+      concat(uint32(options.dataTypes?.[index] ?? 1), new Uint8Array(4), encoder.encode(value)),
       options.extended
     );
     return mp4Box(uint32(index + 1), data, options.extended);
   });
   const ilst = mp4Box('ilst', concat(...items), options.extended);
   const meta = mp4Box('meta', concat(new Uint8Array(4), keys, ilst), options.extended);
-  const moov = mp4Box('moov', mp4Box('udta', meta, options.extended), options.extended);
+  const malformedMeta = mp4Box(
+    'meta',
+    concat(new Uint8Array(4), concat(uint32(4), encoder.encode('keys')))
+  );
+  const udta = options.trailingMalformedMeta ? concat(meta, malformedMeta) : meta;
+  const moov = mp4Box('moov', mp4Box('udta', udta, options.extended), options.extended);
   const ftyp = mp4Box('ftyp', concat(encoder.encode('isom'), uint32(0), encoder.encode('isom')));
   const mdat = mp4Box('mdat', new Uint8Array([1, 2, 3, 4]));
   return new Blob(options.mediaFirst ? [ftyp, mdat, moov] : [ftyp, moov, mdat], {
@@ -113,7 +123,7 @@ function simpleTag(name: string, value: string, nested?: Uint8Array): Uint8Array
 
 function webmFixture(
   metadata: Record<string, string>,
-  options: { unknownSegment?: boolean; nested?: boolean } = {}
+  options: { unknownSegment?: boolean; nested?: boolean; trailingMalformedElement?: boolean } = {}
 ): Blob {
   let tags = Object.entries(metadata).map(([name, value]) => simpleTag(name, value));
   if (options.nested && tags[0]) {
@@ -127,13 +137,16 @@ function webmFixture(
   }
   const tag = ebmlElement(ebmlIds.tag, concat(...tags));
   const tagsElement = ebmlElement(ebmlIds.tags, tag);
+  const segmentPayload = options.trailingMalformedElement
+    ? concat(tagsElement, new Uint8Array([0]))
+    : tagsElement;
   const segment = options.unknownSegment
     ? concat(
         ebmlIds.segment,
         new Uint8Array([0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
-        tagsElement
+        segmentPayload
       )
-    : ebmlElement(ebmlIds.segment, tagsElement, 4);
+    : ebmlElement(ebmlIds.segment, segmentPayload, 4);
   return new Blob([ebmlElement(ebmlIds.header), segment], { type: 'video/webm' });
 }
 
@@ -233,6 +246,22 @@ describe('VideoMetadataParser MP4', () => {
     });
   });
 
+  it('skips unsupported data values without discarding supported metadata', async () => {
+    const parser = await VideoMetadataParser(
+      mp4Fixture({ prompt, workflow }, { dataTypes: [1, 21] })
+    );
+
+    expect(parser.exif).toEqual({ prompt });
+  });
+
+  it('preserves metadata parsed before a malformed box', async () => {
+    const parser = await VideoMetadataParser(
+      mp4Fixture({ parameters: 'kept prompt\nSteps: 8' }, { trailingMalformedMeta: true })
+    );
+
+    expect(parser.exif).toEqual({ parameters: 'kept prompt\nSteps: 8' });
+  });
+
   it('returns no metadata for missing tags or malformed box sizes', async () => {
     const missing = await VideoMetadataParser(mp4Fixture({ title: 'not generation metadata' }));
     expect(await missing.getMetadata()).toEqual({});
@@ -256,7 +285,7 @@ describe('VideoMetadataParser MP4', () => {
     const combined = await VideoMetadataParser(
       mp4Fixture({ prompt: chunk, workflow: chunk, parameters: chunk, extraMetadata: chunk })
     );
-    expect(combined.exif).toEqual({});
+    expect(combined.exif).toEqual({ prompt: chunk, workflow: chunk, parameters: chunk });
   });
 });
 
@@ -278,6 +307,14 @@ describe('VideoMetadataParser WebM', () => {
       })
     );
     expect(parser.parse()).toMatchObject({ prompt: 'a webm prompt', steps: '8', sampler: 'Euler' });
+  });
+
+  it('preserves metadata parsed before a malformed element', async () => {
+    const parser = await VideoMetadataParser(
+      webmFixture({ PARAMETERS: 'kept prompt\nSteps: 8' }, { trailingMalformedElement: true })
+    );
+
+    expect(parser.exif).toEqual({ parameters: 'kept prompt\nSteps: 8' });
   });
 
   it('returns no metadata for malformed input and payload limit violations', async () => {

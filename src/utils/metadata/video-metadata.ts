@@ -183,7 +183,7 @@ async function readMp4DataValue(blob: Blob, item: Mp4Box): Promise<Uint8Array | 
 
   const dataHeader = await readBytes(blob, data.payloadStart, 8);
   const dataType = readUint32(dataHeader) & 0x00ffffff;
-  if (dataType !== 1) throw new InvalidVideoMetadata();
+  if (dataType !== 1) return undefined;
   const valueLength = data.end - data.payloadStart - 8;
   if (valueLength > MAX_VALUE_BYTES) throw new InvalidVideoMetadata();
   return readBytes(blob, data.payloadStart + 8, valueLength);
@@ -192,18 +192,18 @@ async function readMp4DataValue(blob: Blob, item: Mp4Box): Promise<Uint8Array | 
 async function parseMp4Meta(
   blob: Blob,
   meta: Mp4Box,
+  values: Map<string, string>,
   budget: { totalBytes: number }
-): Promise<Map<string, string>> {
+): Promise<void> {
   if (meta.end - meta.payloadStart < 4) throw new InvalidVideoMetadata();
   const children = await getMp4Children(blob, meta.payloadStart + 4, meta.end);
   const keysBox = children.find((box) => box.type === 'keys');
   const ilstBox = children.find((box) => box.type === 'ilst');
-  if (!keysBox || !ilstBox) return new Map();
+  if (!keysBox || !ilstBox) return;
 
   const keys = await parseMp4Keys(blob, keysBox);
-  if (keys.size === 0) return new Map();
+  if (keys.size === 0) return;
 
-  const values = new Map<string, string>();
   for (const item of await getMp4Children(blob, ilstBox.payloadStart, ilstBox.end)) {
     const key = keys.get(readUint32(item.typeBytes));
     if (!key) continue;
@@ -213,11 +213,9 @@ async function parseMp4Meta(
     if (budget.totalBytes > MAX_TOTAL_METADATA_BYTES) throw new InvalidVideoMetadata();
     values.set(key, decodeUtf8(bytes));
   }
-  return values;
 }
 
-async function parseMp4Metadata(blob: Blob): Promise<Record<string, MetadataValue>> {
-  const values = new Map<string, string>();
+async function parseMp4Metadata(blob: Blob, values: Map<string, string>): Promise<void> {
   const budget = { totalBytes: 0 };
   let visited = 0;
   for (const topLevel of await getMp4Children(blob, 0, blob.size)) {
@@ -229,12 +227,10 @@ async function parseMp4Metadata(blob: Blob): Promise<Record<string, MetadataValu
       for (const udtaChild of await getMp4Children(blob, moovChild.payloadStart, moovChild.end)) {
         if (++visited > MAX_ELEMENTS) throw new InvalidVideoMetadata();
         if (udtaChild.type !== 'meta') continue;
-        const parsed = await parseMp4Meta(blob, udtaChild, budget);
-        for (const [key, value] of parsed) values.set(key, value);
+        await parseMp4Meta(blob, udtaChild, values, budget);
       }
     }
   }
-  return normalizeMetadataValues(values);
 }
 
 function parseEbmlVint(
@@ -342,7 +338,7 @@ async function parseWebmTags(
   }
 }
 
-async function parseWebmMetadata(blob: Blob): Promise<Record<string, MetadataValue>> {
+async function parseWebmMetadata(blob: Blob, values: Map<string, string>): Promise<void> {
   let offset = 0;
   let segment: EbmlElement | undefined;
   let elementCount = 0;
@@ -356,9 +352,8 @@ async function parseWebmMetadata(blob: Blob): Promise<Record<string, MetadataVal
     if (element.unknownSize) throw new InvalidVideoMetadata();
     offset = element.end;
   }
-  if (!segment) return {};
+  if (!segment) return;
 
-  const values = new Map<string, string>();
   const budget = { totalBytes: 0 };
   offset = segment.dataStart;
   while (offset < segment.end) {
@@ -368,14 +363,14 @@ async function parseWebmMetadata(blob: Blob): Promise<Record<string, MetadataVal
     if (child.id === EBML_TAGS_ID) await parseWebmTags(blob, child, values, budget);
     offset = child.end;
   }
-  return normalizeMetadataValues(values);
 }
 
 export async function readVideoMetadata(blob: Blob): Promise<Record<string, MetadataValue>> {
+  const values = new Map<string, string>();
   try {
     const container = await detectVideoContainer(blob);
-    if (container === 'mp4') return await parseMp4Metadata(blob);
-    if (container === 'webm') return await parseWebmMetadata(blob);
+    if (container === 'mp4') await parseMp4Metadata(blob, values);
+    if (container === 'webm') await parseWebmMetadata(blob, values);
   } catch {}
-  return {};
+  return normalizeMetadataValues(values);
 }

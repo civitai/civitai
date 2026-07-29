@@ -63,11 +63,13 @@ const makeStore = (over: Partial<Record<string, unknown>> = {}) =>
     resolvedResources: [],
     params: undefined,
     fileUrl: undefined,
+    isVideo: false,
     isExtracting: false,
     isResolving: false,
     setMetadata: vi.fn(),
     setResolved: vi.fn(),
     setFileUrl: vi.fn(),
+    setIsVideo: vi.fn(),
     setIsExtracting: vi.fn(),
     setIsResolving: vi.fn(),
     clear: vi.fn(),
@@ -157,6 +159,8 @@ describe('MetadataExtractionPanel (store + multi-query / tRPC-backed)', () => {
       await selectFile(file);
 
       await vi.waitFor(() => expect(videoMetadataParserMock).toHaveBeenCalledWith(file));
+      expect(store.setIsVideo).toHaveBeenCalledTimes(1);
+      expect(store.setIsVideo).toHaveBeenCalledWith(true);
       await vi.waitFor(() =>
         expect(store.setMetadata).toHaveBeenCalledWith({
           prompt: `${type} prompt`,
