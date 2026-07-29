@@ -133,6 +133,17 @@ export default PublicEndpoint(
           });
         else return res.redirect(`/model-versions/${modelVersionId}`);
       }
+      if (fileResult.status === 'no-access') {
+        if (!isBrowser)
+          return res.status(403).json({
+            error: 'Forbidden',
+            message: 'You do not have access to download this file',
+          });
+        else return res.redirect(`/model-versions/${modelVersionId}`);
+      }
+      // Only reachable without a session — `getFileForModelVersion` reports a signed-in user's
+      // missing grant as `no-access`, so sending someone to /login here can no longer loop them
+      // back to the page they started on.
       if (fileResult.status === 'unauthorized') {
         if (!isBrowser)
           return res.status(401).json({
