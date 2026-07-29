@@ -64,6 +64,10 @@ import {
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  recordChallengeCompleted,
+  recordChallengePrizePaidBuzz,
+} from '~/server/prom/challenge.metrics';
+import {
   challengeJudgingCategoriesSchema,
   parseChallengeMetadata,
   type ChallengeJudgingCategory,
@@ -1341,6 +1345,13 @@ export async function pickWinnersForChallenge(
         }
         await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
         log('Challenge marked as completed (no entries)');
+        // Telemetry: emit AFTER the Completed write, never before. `claimChallengeForCompletion`
+        // above only flips Active -> Completing, so a re-run over an already-Completed challenge
+        // fails the claim and returns early; a run that crashes before this write is reset
+        // Completing -> Active by resetStuckCompletingChallenges and retried, and it never got
+        // here to emit. Emitting post-write is therefore exactly-once per real completion.
+        // `source` reuses the already-fetched judge row — no extra (throwable) query.
+        recordChallengeCompleted({ source: challengeJudgeRow?.source });
         const freshChallenge = await getChallengeById(currentChallenge.challengeId);
         if (freshChallenge) await logChallengeSpendMetric(freshChallenge);
         return;
@@ -1514,6 +1525,25 @@ export async function pickWinnersForChallenge(
       },
     });
     log('Challenge status updated to Completed');
+
+    // Telemetry: emitted AFTER the Completed write, deliberately NOT next to the payout above.
+    // The payout is retry-safe by deterministic externalTransactionId, so a run that pays prizes
+    // and then crashes before this write is reset Completing -> Active and re-enters via the
+    // `existingWinners` branch, which re-issues the same (already-settled) payout. An emit at the
+    // payout site would count that Buzz twice; only this write happens exactly once per challenge
+    // (the claim above requires status=Active, which a Completed challenge can never satisfy).
+    // Amount mirrors endChallengeAndPickWinners: the sum of the prizes actually awarded to the
+    // winners paid on this completion (equal to each ChallengeWinner.buzzAwarded), not the
+    // configured prize table — a partial-winner completion pays less and must report less.
+    // `winnerBuzzType` is the currency buildWinnerPayoutTransactions actually paid in, and
+    // `challengeRecord` is already in scope — neither needs a new query.
+    recordChallengeCompleted({ source: challengeRecord?.source });
+    recordChallengePrizePaidBuzz({
+      source: challengeRecord?.source,
+      buzzType: winnerBuzzType,
+      amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
+    });
+
     if (challengeRecord) await logChallengeSpendMetric(challengeRecord);
 
     // 8. Send notifications to winners (non-critical, last)
