@@ -87,6 +87,10 @@ export function AnnouncementEditModal({
     schema,
     defaultValues: {
       ...announcement,
+      // The form field is a text blob, not the server's number[] — the current target
+      // set streams in via getAnnouncementTargets and form.setValue below.
+      targetUserIds: undefined,
+      notifyTargetedUsers: false,
       domain: announcement?.domain ?? [DomainColor.all],
       startsAt: announcement?.startsAt
         ? isToday
