@@ -8,7 +8,11 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { hSetWithTTL, zAddWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
-import { handleLogError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  isClickHouseConnectionError,
+  throwServiceUnavailableError,
+} from '~/server/utils/errorHandling';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 type NewOrderRedisKeyString = Values<typeof REDIS_SYS_KEYS.NEW_ORDER>;
@@ -130,8 +134,20 @@ function createCounter<TId extends number | string = number | string>({
       return Number(countStr);
     }
 
-    // Cache miss - fetch and populate
-    const fetched = await fetchCount([id]);
+    // Cache miss - fetch and populate. A transient ClickHouse connection blip in
+    // fetchCount (e.g. `socket hang up`) is a retryable dependency outage, not a
+    // 500 — map it to a 503 so the client backs off + retries instead of the whole
+    // New Order rating mutation failing. A real query/schema fault (non-connection
+    // CH error) still surfaces raw. Covers every counter routed through
+    // createCounter (image-ratings + all player-stat counters).
+    let fetched: Map<TId, number>;
+    try {
+      fetched = await fetchCount([id]);
+    } catch (e) {
+      if (isClickHouseConnectionError(e))
+        throwServiceUnavailableError('New Order is temporarily busy, please retry.', e);
+      throw e;
+    }
     const count = fetched.get(id) ?? 0;
     await setCacheValue(id, count);
     return count;
@@ -182,9 +198,18 @@ function createCounter<TId extends number | string = number | string>({
       }
     }
 
-    // Fetch all cache misses in one call
+    // Fetch all cache misses in one call. Same transient-CH → 503 mapping as
+    // getCount (see note there): a `socket hang up` / connection brownout is
+    // retryable, a real query fault still surfaces raw.
     if (cacheMisses.length > 0) {
-      const fetchedCounts = await fetchCount(cacheMisses);
+      let fetchedCounts: Map<TId, number>;
+      try {
+        fetchedCounts = await fetchCount(cacheMisses);
+      } catch (e) {
+        if (isClickHouseConnectionError(e))
+          throwServiceUnavailableError('New Order is temporarily busy, please retry.', e);
+        throw e;
+      }
 
       // Populate cache and result
       const cachePromises: Promise<void>[] = [];

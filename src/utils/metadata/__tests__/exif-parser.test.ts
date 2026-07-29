@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ExifParser } from '~/utils/metadata';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
+import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
 import { decodeUserComment } from '~/utils/encoding-helpers';
 
 // TODO - create a suite of tests that uses images from civitai to test the different metadata parsers
@@ -149,7 +150,9 @@ describe('automaticMetadataProcessor - single-line and delimited metadata parsin
     expect(automaticMetadataProcessor.canParse(exif)).toBe(true);
 
     const result = automaticMetadataProcessor.parse(exif);
-    expect(result.prompt).toBe('<lora:generic_lora_a:1> generic prompt text <lora:generic_lora_b:1> more prompt text');
+    expect(result.prompt).toBe(
+      '<lora:generic_lora_a:1> generic prompt text <lora:generic_lora_b:1> more prompt text'
+    );
     expect(result.negativePrompt).toBe('negative prompt text, low quality');
     expect(result.steps).toBe('24');
     expect(result.sampler).toBe('Euler a');
@@ -176,9 +179,7 @@ describe('automaticMetadataProcessor - single-line and delimited metadata parsin
     expect(result.width).toBe(1088);
     expect(result.height).toBe(1920);
     expect(result.Model).toBe('generic_model_v1');
-    expect(result.civitaiResources).toEqual([
-      { modelVersionId: 0, type: 'model' }
-    ]);
+    expect(result.civitaiResources).toEqual([{ modelVersionId: 0, type: 'model' }]);
   });
 
   it('parses metadata with triple-dot before Negative prompt and dot before Steps', () => {
@@ -199,7 +200,7 @@ describe('automaticMetadataProcessor - single-line and delimited metadata parsin
     expect(result.Model).toBe('generic_model_v2');
     expect(result.civitaiResources).toEqual([
       { modelVersionId: 0, type: 'model' },
-      { modelVersionId: 0, type: 'model', weight: 1.0 }
+      { modelVersionId: 0, type: 'model', weight: 1.0 },
     ]);
   });
 
@@ -251,5 +252,115 @@ Steps: 25, Sampler: Euler, CFG scale: 7`;
     const result = automaticMetadataProcessor.parse(exif);
     expect(Date.now() - start).toBeLessThan(1000);
     expect(result.steps).toBe('5');
+  });
+});
+
+describe('comfyMetadataProcessor - resource names supplied via node links', () => {
+  // Real failing workflow from the "Image upload fails to parse metadata" ticket: the
+  // CheckpointLoaderSimple's ckpt_name is a link to a CivitaiModelSelector node rather than a
+  // literal string. Before the fix this threw "TypeError: e.startsWith is not a function" at the
+  // AIR filter and the AIR never populated.
+  const civitaiSelectorPrompt = {
+    '3': {
+      class_type: 'KSampler',
+      inputs: {
+        seed: 996478046243637,
+        steps: 20,
+        cfg: 8,
+        sampler_name: 'euler',
+        scheduler: 'normal',
+        denoise: 1,
+        model: ['4', 0],
+        positive: ['6', 0],
+        negative: ['7', 0],
+        latent_image: ['5', 0],
+      },
+    },
+    '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: ['17', 1] } },
+    '5': { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512, batch_size: 1 } },
+    '6': {
+      class_type: 'CLIPTextEncode',
+      inputs: {
+        text: 'beautiful scenery nature glass bottle landscape, purple galaxy bottle,',
+        clip: ['4', 1],
+      },
+    },
+    '7': { class_type: 'CLIPTextEncode', inputs: { text: 'text, watermark', clip: ['4', 1] } },
+    '8': { class_type: 'VAEDecode', inputs: { samples: ['3', 0], vae: ['4', 2] } },
+    '17': {
+      class_type: 'CivitaiModelSelector',
+      inputs: {
+        air: 'urn:air:sd1:checkpoint:civitai:43331@176425',
+        resources_json:
+          '{"bySlot":{"1":"urn:air:sd1:checkpoint:civitai:43331@176425"},"all":["urn:air:sd1:checkpoint:civitai:43331@176425"]}',
+        '🔍 Browse Civitai': null,
+      },
+    },
+  };
+
+  it('resolves the AIR from a CivitaiModelSelector link and populates resources', () => {
+    const exif = { prompt: JSON.stringify(civitaiSelectorPrompt), workflow: '{}' };
+
+    expect(comfyMetadataProcessor.canParse(exif)).toBe(true);
+    const result = comfyMetadataProcessor.parse(exif);
+
+    expect(result.models).toEqual(['urn:air:sd1:checkpoint:civitai:43331@176425']);
+    expect(result.civitaiResources).toHaveLength(1);
+    expect(result.prompt).toContain('purple galaxy bottle');
+  });
+
+  it('resolves each loader to its own slot on a multi-resource selector', () => {
+    const ckptAir = 'urn:air:sd1:checkpoint:civitai:43331@176425';
+    const upscalerAir = 'urn:air:other:upscaler:civitai:147759@164821';
+    // One CivitaiModelSelector feeds two loaders from different output slots. The resolver must
+    // honor the output slot (value[1]) — grabbing the node's primary `air` would give both
+    // loaders the checkpoint. (models/upscalers hold the raw AIR string, so this is independent
+    // of @civitai/client's Air.parse, which is stubbed under vitest.)
+    const prompt = {
+      '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: ['20', 1] } },
+      '10': { class_type: 'UpscaleModelLoader', inputs: { model_name: ['20', 2] } },
+      '20': {
+        class_type: 'CivitaiModelSelector',
+        inputs: {
+          air: ckptAir,
+          resources_json: JSON.stringify({
+            bySlot: { '1': ckptAir, '2': upscalerAir },
+            all: [ckptAir, upscalerAir],
+          }),
+        },
+      },
+    };
+    const exif = { prompt: JSON.stringify(prompt), workflow: '{}' };
+
+    const result = comfyMetadataProcessor.parse(exif);
+
+    expect(result.models).toEqual([ckptAir]);
+    expect(result.upscalers).toEqual([upscalerAir]);
+  });
+
+  it('captures a non-AIR name from a primitive link but does not surface it as a resource', () => {
+    // Name routed through a primitive node — a plain filename, not an AIR. We still want to
+    // capture it (in `models`), we just can't surface it as a recognizable civitaiResource.
+    const prompt = {
+      '4': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: ['9', 0] } },
+      '9': { class_type: 'PrimitiveNode', inputs: { value: 'coolmodel.safetensors' } },
+    };
+    const exif = { prompt: JSON.stringify(prompt), workflow: '{}' };
+
+    const result = comfyMetadataProcessor.parse(exif);
+    expect(result.models).toEqual(['coolmodel.safetensors']);
+    expect(result.civitaiResources ?? []).toEqual([]);
+  });
+
+  it('skips a linked name with no resolvable string without throwing', () => {
+    const prompt = {
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: ['2', 0] } },
+      // upstream node exposes no string name (e.g. it outputs a MODEL, not a filename/AIR)
+      '2': { class_type: 'SomeModelPatcher', inputs: { model: ['1', 0], multiplier: 1 } },
+    };
+    const exif = { prompt: JSON.stringify(prompt), workflow: '{}' };
+
+    const result = comfyMetadataProcessor.parse(exif);
+    expect(result.models ?? []).toEqual([]);
   });
 });

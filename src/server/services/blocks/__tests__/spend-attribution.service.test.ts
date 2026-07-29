@@ -30,20 +30,31 @@ class FakePrismaKnownError extends Error {
   }
 }
 
-const { mockDbRead, mockDbWrite, mockLog } = vi.hoisted(() => ({
+const { mockDbRead, mockDbWrite, mockLog, mockAppsQuery, mockRequireAppsDb } = vi.hoisted(() => ({
   mockDbRead: {
     oauthClient: { findUnique: vi.fn() },
     blockSpendAttribution: { findUnique: vi.fn() },
+    // G5 content-author resolution reads AppBlock.blockId to derive the app's
+    // shared-storage schema slug (server-side, from the appBlockId).
+    appBlock: { findUnique: vi.fn() },
   },
   mockDbWrite: {
     blockSpendAttribution: { create: vi.fn() },
   },
   mockLog: vi.fn(),
+  // G5: the app-shared datastore pool (`app_<slug>.shared_kv` lookup).
+  mockAppsQuery: vi.fn(),
+  mockRequireAppsDb: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: mockDbWrite,
+}));
+// G5: mock the app-shared datastore. `apps-slug` (sanitizeAppSlug/appSchemaIdent)
+// runs REAL — it's a pure, deterministic string helper.
+vi.mock('~/server/db/appsDb', () => ({
+  requireAppsDb: (...args: unknown[]) => mockRequireAppsDb(...args),
 }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (...args: unknown[]) => {
@@ -143,18 +154,30 @@ function createEchoesData() {
 beforeEach(() => {
   mockDbRead.oauthClient.findUnique.mockReset();
   mockDbRead.blockSpendAttribution.findUnique.mockReset();
+  mockDbRead.appBlock.findUnique.mockReset();
   mockDbWrite.blockSpendAttribution.create.mockReset();
   mockLog.mockReset();
   computeSpendShareSpy.mockReset();
   reserveAppBountySpy.mockReset();
   refundAppBountySpy.mockReset();
+  mockAppsQuery.mockReset();
+  mockRequireAppsDb.mockReset();
   // Default: app exists, owned by a different user than the spender.
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
     id: APP_ID,
     userId: APP_OWNER_USER_ID,
   });
+  // G5 defaults: the AppBlock resolves to a valid slug; the shared datastore is
+  // available but returns NO row (so an unset key path is a clean no-author).
+  mockDbRead.appBlock.findUnique.mockResolvedValue({ blockId: 'blk_test' });
+  mockRequireAppsDb.mockReturnValue({ query: mockAppsQuery });
+  mockAppsQuery.mockResolvedValue({ rows: [] });
   createEchoesData();
 });
+
+// G5 shared_kv author fixtures.
+const CONTENT_KEY = 'k_content_01ABC';
+const CONTENT_AUTHOR_ID = 777; // distinct from spender + app owner
 
 describe('buzzSpendToUsdCents', () => {
   it('converts Buzz to USD cents at the 1000:1 ratio, floored', () => {
@@ -345,5 +368,166 @@ describe('recordSpendAttribution', () => {
     });
     // Did NOT fall through to the idempotent lookup.
     expect(mockDbRead.blockSpendAttribution.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * G5 — GENERIC published-content-author attribution. When the app supplies an
+ * opaque `sharedContentKey`, the CONTENT AUTHOR is resolved SERVER-SIDE from the
+ * app's own shared storage (`app_<slug>.shared_kv`) and recorded as the
+ * future-payout basis. Track-only; the existing app-owner attribution is
+ * unchanged in every case. FULLY GENERIC — not tied to any one app kind.
+ */
+describe('recordSpendAttribution — content-author basis (G5)', () => {
+  it('valid key → records content_author_user_id = the shared_kv row author, + the key', async () => {
+    mockAppsQuery.mockResolvedValueOnce({ rows: [{ author_user_id: CONTENT_AUTHOR_ID }] });
+
+    const res = await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+
+    // The content author is the shared_kv row's author_user_id — server-resolved.
+    expect(data.contentAuthorUserId).toBe(CONTENT_AUTHOR_ID);
+    // The opaque key is recorded verbatim as audit context.
+    expect(data.sharedContentKey).toBe(CONTENT_KEY);
+    // App-owner attribution is UNCHANGED (still the OauthClient owner, share 0).
+    expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
+    expect(data.appOwnerShareCents).toBe(0);
+    expect(res.written).toBe(true);
+
+    // FORGE-SAFETY: the schema is derived from the SERVER `appBlockId`
+    // (AppBlock.blockId 'blk_test' → schema "app_blk_test") and the ONLY bound
+    // param is the supplied key — the author is read from the DB, never input.
+    expect(mockDbRead.appBlock.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: APP_BLOCK_ID } })
+    );
+    const [sql, params] = mockAppsQuery.mock.calls[0];
+    expect(sql).toContain('"app_blk_test".shared_kv');
+    expect(sql).toContain('hidden_at IS NULL');
+    expect(params).toEqual([CONTENT_KEY]);
+  });
+
+  it('absent key → content_author NULL, key NULL, shared datastore NOT queried', async () => {
+    const res = await recordSpendAttribution(fakeInput()); // no sharedContentKey
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.contentAuthorUserId).toBeNull();
+    expect(data.sharedContentKey).toBeNull();
+    // No key → no lookup work at all (unchanged behaviour, zero extra DB work).
+    expect(mockRequireAppsDb).not.toHaveBeenCalled();
+    expect(mockAppsQuery).not.toHaveBeenCalled();
+    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+    // App-owner attribution unchanged.
+    expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
+    expect(res.written).toBe(true);
+  });
+
+  it('non-existent key (no row) → content_author NULL; app-owner attribution unchanged', async () => {
+    mockAppsQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await recordSpendAttribution(fakeInput({ sharedContentKey: 'k_missing' }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.contentAuthorUserId).toBeNull();
+    // The supplied key is still recorded (opaque audit context).
+    expect(data.sharedContentKey).toBe('k_missing');
+    expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
+    expect(res.written).toBe(true);
+  });
+
+  it('hidden row → excluded by the query (hidden_at IS NULL) → content_author NULL', async () => {
+    // A hidden row returns no result from the `hidden_at IS NULL` filter.
+    mockAppsQuery.mockResolvedValueOnce({ rows: [] });
+    await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.contentAuthorUserId).toBeNull();
+    expect(mockAppsQuery.mock.calls[0][0]).toContain('hidden_at IS NULL');
+  });
+
+  it('self-author (content author == spender) → content_author NULL', async () => {
+    mockAppsQuery.mockResolvedValueOnce({ rows: [{ author_user_id: SPENDER_ID }] });
+    const res = await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.contentAuthorUserId).toBeNull();
+    expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
+    expect(res.written).toBe(true);
+  });
+
+  it('owner-author (content author == app owner) → content_author NULL (already app-owner-attributed)', async () => {
+    mockAppsQuery.mockResolvedValueOnce({ rows: [{ author_user_id: APP_OWNER_USER_ID }] });
+    const res = await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(data.contentAuthorUserId).toBeNull();
+    expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
+    expect(res.written).toBe(true);
+  });
+
+  it('FORGE-SAFETY: a client cannot influence the recorded author — it is read from the key, not the body', async () => {
+    // The input carries NO author field; even a hostile body pointing the key at
+    // a valuable account only credits whoever the DB row says authored it.
+    mockAppsQuery.mockResolvedValueOnce({ rows: [{ author_user_id: CONTENT_AUTHOR_ID }] });
+    // Sneak an extra (ignored) property onto the input — it must NOT leak through.
+    const hostile = {
+      ...fakeInput({ sharedContentKey: CONTENT_KEY }),
+      contentAuthorUserId: 4242, // attacker-chosen; not part of the input contract
+    } as RecordSpendAttributionInput;
+    await recordSpendAttribution(hostile);
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    // Recorded author is the DB row's author (777), NOT the injected 4242.
+    expect(data.contentAuthorUserId).toBe(CONTENT_AUTHOR_ID);
+    expect(data.contentAuthorUserId).not.toBe(4242);
+  });
+
+  it('a shared-datastore lookup FAILURE degrades to NULL — never throws into the write', async () => {
+    mockAppsQuery.mockRejectedValueOnce(new Error('apps db down'));
+    // The write must still succeed with a NULL content author.
+    const res = await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.contentAuthorUserId).toBeNull();
+    expect(data.appOwnerUserId).toBe(APP_OWNER_USER_ID);
+  });
+
+  it('shared datastore unavailable (requireAppsDb throws) → NULL, still writes', async () => {
+    mockRequireAppsDb.mockImplementationOnce(() => {
+      throw new Error('APPS_DATABASE_URL is not configured');
+    });
+    const res = await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.contentAuthorUserId).toBeNull();
+  });
+
+  it('appBlock/slug unresolvable → NULL, still writes', async () => {
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce(null);
+    const res = await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
+    expect(res.written).toBe(true);
+    expect(data.contentAuthorUserId).toBeNull();
+    // Never reached the datastore query.
+    expect(mockAppsQuery).not.toHaveBeenCalled();
+  });
+
+  it('idempotency preserved with a key: a duplicate returns the existing row, no second write', async () => {
+    mockAppsQuery.mockResolvedValue({ rows: [{ author_user_id: CONTENT_AUTHOR_ID }] });
+    const first = await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    expect(first.written).toBe(true);
+
+    mockDbWrite.blockSpendAttribution.create.mockRejectedValueOnce(
+      new FakePrismaKnownError('dup', 'P2002')
+    );
+    mockDbRead.blockSpendAttribution.findUnique.mockResolvedValueOnce({
+      id: 'bsa_existing',
+      status: 'tracked',
+      appOwnerShareCents: 0,
+      spendSharePct: 0,
+      grossValueCents: 500,
+      rateCardVersion: 'unrated',
+      voidedReason: null,
+    });
+    const second = await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
+    expect(second.written).toBe(false);
+    expect(second.row.id).toBe('bsa_existing');
+    expect(mockDbRead.blockSpendAttribution.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workflowId_appBlockId: { workflowId: WORKFLOW_ID, appBlockId: APP_BLOCK_ID } },
+      })
+    );
   });
 });

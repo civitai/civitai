@@ -448,7 +448,16 @@ export const useS3UploadStore = create<StoreProps>()(
           });
           if (!completeResult.ok) return;
 
-          updateFile(pendingItem.uuid, { status: 'success' });
+          // The final part's bytes land on 'loadend', which doesn't schedule a
+          // progress frame — without this the row would settle on the last
+          // rendered percentage (e.g. 87%) instead of a finished bar.
+          updateFile(pendingItem.uuid, {
+            status: 'success',
+            progress: 100,
+            uploaded: size,
+            speed: 0,
+            timeRemaining: 0,
+          });
 
           const url = urls[0].url.split('?')[0];
           const payload = preparePayload(pendingItem.uuid, { url, bucket, key, backend });

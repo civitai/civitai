@@ -28,6 +28,8 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import {
   bustFetchThroughCache,
@@ -204,7 +206,9 @@ export async function flushBankedCache() {
 }
 
 export async function getCreatorRequirements(userId: number) {
-  const [status] = await dbWrite.$queryRaw<{ score: number; membership: UserTier }[]>`
+  const [status] = await dbWrite.$queryRaw<
+    { score: number; membership: UserTier; onboarding: number }[]
+  >`
     SELECT
     -- We are doing greatest in case the meta->'scores'->'total' is not properly computated.
     -- Noticed a few cases where it was different than the total sum (lower). Safeguard here.
@@ -223,10 +227,17 @@ export async function getCreatorRequirements(userId: number) {
       JOIN "Product" p ON p.id = cs."productId"
       WHERE status IN ('incomplete', 'active') AND cs."userId" = u.id
       LIMIT 1
-    ) as membership
+    ) as membership,
+    u.onboarding as onboarding
     FROM "User" u
     WHERE id = ${userId};
   `;
+
+  // A member whose subscription lapsed keeps the onboarding flag (we don't strip
+  // it), so surface a lapsed signal for the UI. Uses the same gate as the shop /
+  // banking so all three agree on what "active" means.
+  const joined = Flags.hasFlag(status.onboarding, OnboardingSteps.CreatorProgram);
+  const membershipLapsed = joined && !(await hasValidCreatorMembership(userId));
 
   return {
     score: {
@@ -237,8 +248,32 @@ export async function getCreatorRequirements(userId: number) {
     validMembership:
       // We will not support founder tier.
       status.membership !== 'free' && status.membership !== 'founder' ? status.membership : false,
+    membershipLapsed,
   };
 }
+
+// Whether a user currently holds a valid Creator Program membership — an active,
+// good-standing subscription on a supported tier. Uses getHighestTierSubscription
+// so it honors membership on ANY buzzType (yellow/green/blue paid + referral
+// grants), matching how session-user resolves tier. Checking a single buzzType
+// here would lock out .green/.red members and referral-granted members whose paid
+// sub isn't yellow.
+export async function hasValidCreatorMembership(userId: number) {
+  const subscription = await getHighestTierSubscription(userId);
+  const tier = subscription?.tier;
+  return !!tier && tier !== 'free' && tier !== 'founder';
+}
+
+// Batched read-time membership gate lives in a dependency-light module so the
+// donation-goals lookup can reuse it without pulling this heavy graph. Re-exported
+// here for the existing metric-privacy callers. `hasValidCreatorMembershipCached` is
+// the single-user, cache-backed variant for read-time display gating (byte-identical
+// validity to `hasValidCreatorMembership`, served from the shared read-through cache).
+export {
+  getValidCreatorMembershipMap,
+  hasValidCreatorMembershipCached,
+  getUserMetricPrivacyDefaultsMap,
+} from '~/server/services/creator-membership.service';
 
 export async function joinCreatorsProgram(userId: number) {
   const requirements = await getCreatorRequirements(userId);
@@ -397,20 +432,22 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
     throw throwBadRequestError('User is banned from the Creator Program');
   }
 
-  // Check if user has active membership for this buzzType
+  // Banking claims real pool money, so it requires a confirmed, unexpired paid
+  // membership — stricter than the shop's hasValidCreatorMembership, which also
+  // accepts incomplete/renewing subs. Like the shop gate it is buzzType-agnostic
+  // (any buzzType) but rejects free/founder tiers.
   const activeMembership = await dbWrite.customerSubscription.findFirst({
-    where: {
-      userId,
-      status: 'active',
-      currentPeriodEnd: {
-        gt: new Date(),
-      },
-    },
+    where: { userId, status: 'active', currentPeriodEnd: { gt: new Date() } },
+    select: { product: { select: { metadata: true } } },
   });
-
-  if (!activeMembership) {
-    throw throwBadRequestError(`Active membership required to bank ${buzzType} buzz`);
-  }
+  // safeParse: malformed/missing product metadata falls through to the clean 400
+  // below instead of throwing an uncaught ZodError (500).
+  const parsedMeta = activeMembership
+    ? subscriptionProductMetadataSchema.safeParse(activeMembership.product.metadata)
+    : undefined;
+  const membershipTier = parsedMeta?.success ? parsedMeta.data[env.TIER_METADATA_KEY] : undefined;
+  if (!membershipTier || membershipTier === 'free' || membershipTier === 'founder')
+    throw throwBadRequestError('An active Creator Program membership is required to bank Buzz.');
 
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
@@ -883,7 +920,19 @@ export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts
     limit: 10000,
     all: true,
   });
-  const participants = data[`${monthAccount}`];
+  // A creator who banked from more than one source account type (e.g. green + yellow) is returned
+  // as one contributor row per source type. Sum them per userId so each creator is a single
+  // participant and receives a single compensation grant — otherwise the distribute loop emits two
+  // grants sharing one externalTransactionId and the second is silently dropped as a conflict,
+  // paying the creator for only one buzz type. A Map preserves the upstream contributor order that
+  // the distribute loop's pool-depletion cutoff depends on (Object.values would reorder by userId).
+  const summed = new Map<number, { userId: number; amount: number }>();
+  for (const p of data[`${monthAccount}`] ?? []) {
+    const existing = summed.get(p.userId);
+    if (existing) existing.amount += p.amount;
+    else summed.set(p.userId, { userId: p.userId, amount: p.amount });
+  }
+  const participants = [...summed.values()];
   let bannedParticipants: { userId: number }[] = [];
 
   if (participants.length > 0) {

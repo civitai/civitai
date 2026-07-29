@@ -1,5 +1,8 @@
-import produce from 'immer';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import {
+  applyOptimisticHiddenToggle,
+  applyServerHiddenToggle,
+} from '~/shared/hidden-preferences/compact';
 import { trpc } from '~/utils/trpc';
 
 const kindMap = {
@@ -10,6 +13,19 @@ const kindMap = {
   user: 'hiddenUsers',
   blockedUser: 'blockedUsers',
 } as const;
+
+// Legacy (object-wrapped) empty cache — used only when the query cache is empty
+// during an optimistic write (rare; getHidden is prefetched). A real fetch
+// overwrites this, and `expandHiddenPreferences` reads the legacy shape fine.
+const emptyLegacy = {
+  hiddenImages: [],
+  hiddenModels: [],
+  hiddenModel3Ds: [],
+  hiddenUsers: [],
+  hiddenTags: [],
+  blockedUsers: [],
+  blockedByUsers: [],
+};
 
 export const useToggleHiddenPreferences = () => {
   const queryUtils = trpc.useUtils();
@@ -27,30 +43,10 @@ export const useToggleHiddenPreferences = () => {
     },
     onSuccess: async ({ added, removed }, { kind }) => {
       const key = kindMap[kind];
-      queryUtils.hiddenPreferences.getHidden.setData(
-        undefined,
-        (
-          old = {
-            hiddenImages: [],
-            hiddenModels: [],
-            hiddenModel3Ds: [],
-            hiddenUsers: [],
-            hiddenTags: [],
-            blockedUsers: [],
-            blockedByUsers: [],
-          }
-        ) =>
-          produce(old, (draft) => {
-            for (const { kind, id, ...props } of added) {
-              const index = draft[key].findIndex((x) => x.id === id && x.hidden);
-              if (index === -1) draft[key].push({ id, ...props } as any);
-              else draft[key][index] = { id, ...props };
-            }
-            for (const { kind, id, ...props } of removed) {
-              const index = draft[key].findIndex((x) => x.id === id && x.hidden);
-              if (index > -1) draft[key].splice(index, 1);
-            }
-          })
+      // Shape-aware: `applyServerHiddenToggle` writes bare ids for the compact
+      // id-only sets and `{ id, hidden }` objects for the legacy / object sets.
+      queryUtils.hiddenPreferences.getHidden.setData(undefined, (old = emptyLegacy as any) =>
+        applyServerHiddenToggle(old, key, added, removed)
       );
 
       // Invalidate user lists when user or blockedUser preferences change
@@ -70,30 +66,8 @@ export const useUpdateHiddenPreferences = () => {
   const queryUtils = trpc.useUtils();
   const updateHiddenPreferences = ({ kind, data, hidden }: ToggleHiddenSchemaOutput) => {
     const key = kindMap[kind];
-    queryUtils.hiddenPreferences.getHidden.setData(
-      undefined,
-      (
-        old = {
-          hiddenImages: [],
-          hiddenModels: [],
-          hiddenModel3Ds: [],
-          hiddenUsers: [],
-          hiddenTags: [],
-          blockedUsers: [],
-          blockedByUsers: [],
-        }
-      ) =>
-        produce(old, (draft) => {
-          for (const item of data) {
-            const index = draft[key].findIndex((x) => x.id === item.id && x.hidden);
-            if (hidden === true && index === -1) draft[key].push({ ...item, hidden: true } as any);
-            else if (hidden === false && index > -1) draft[key].splice(index, 1);
-            else if (hidden === undefined) {
-              if (index > -1) draft[key].splice(index, 1);
-              else draft[key].push({ ...item, hidden: true } as any);
-            }
-          }
-        })
+    queryUtils.hiddenPreferences.getHidden.setData(undefined, (old = emptyLegacy as any) =>
+      applyOptimisticHiddenToggle(old, key, data, hidden)
     );
   };
 

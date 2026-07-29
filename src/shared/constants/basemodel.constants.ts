@@ -195,6 +195,8 @@ export const ECO = {
   //   (main-line); bumped again to 73 to dodge Ideogram (main-line, also
   //   landed on 72). Same renumber-cascade as BM.PolyGen (see BM block).
   PolyGen: 73,
+  Tripo: 75,
+  Hunyuan3D: 76,
 
   // Utility ecosystems
   Upscaler: 66,
@@ -207,12 +209,16 @@ export const ECO = {
 
   // Microsoft
   MAI: 71,
+  MageFlow: 78,
 
   // Ideogram
   Ideogram: 72,
 
   // Boogu
   Boogu: 74,
+
+  // Reve AI
+  Reve: 77,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -622,6 +628,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 21,
     sortOrder: 160,
   },
+  {
+    id: ECO.MageFlow,
+    key: 'MageFlow',
+    displayName: 'Mage Flow',
+    familyId: 21,
+    sortOrder: 161,
+  },
 
   // Ideogram Family (familyId: 22)
   {
@@ -639,6 +652,15 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Boogu',
     familyId: 23,
     sortOrder: 180,
+  },
+
+  // Reve AI Family (familyId: 24)
+  {
+    id: ECO.Reve,
+    key: 'Reve',
+    displayName: 'Reve',
+    familyId: 24,
+    sortOrder: 190,
   },
 
   // HiDream Family (familyId: 19)
@@ -778,10 +800,36 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'PolyGen (Meshy)',
     sortOrder: 301,
   },
+  {
+    id: ECO.Tripo,
+    key: 'Tripo',
+    displayName: 'Tripo',
+    sortOrder: 302,
+  },
+  {
+    id: ECO.Hunyuan3D,
+    key: 'Hunyuan3D',
+    displayName: 'Hunyuan3D',
+    sortOrder: 303,
+  },
 ];
 
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
 export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
+
+/**
+ * Ecosystems whose generation output is a 3D model (`polyGen` step). These
+ * share the `model3d` output type, are resource-less, and are enumerated
+ * explicitly because the Prisma `MediaType` enum has no `model3d` variant
+ * (their `BaseModelRecord`s register as `type: 'image'`). Single source of
+ * truth for the 3D ecosystem picker filter in `getEcosystemDisplayItems`.
+ */
+export const MODEL3D_ECOSYSTEM_IDS = new Set<number>([ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D]);
+
+/** Ecosystem keys for the 3D-model ecosystems (`model3d` output). */
+export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
+  [...MODEL3D_ECOSYSTEM_IDS].map((id) => ecosystemById.get(id)?.key).filter((k): k is string => !!k)
+);
 
 /**
  * Ecosystem keys whose generation routes to Civitai-hosted GPUs/workers rather
@@ -834,6 +882,8 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'LTXV23',
   // AceStepAudioInput
   'Ace',
+  // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
+  'Hunyuan3D',
 ] as const;
 
 const selfHostedEcosystemKeySet = new Set<string>(SELF_HOSTED_ECOSYSTEM_KEYS);
@@ -981,11 +1031,21 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
   // Krea 2 - checkpoint locked, but base/turbo comfy variants support LoRA (medium/large FAL tiers do not); LoRA training via AI-Toolkit
-  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointAndLora },
+  {
+    ecosystemId: ECO.Krea2,
+    supportType: 'generation',
+    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.VAE],
+  },
   { ecosystemId: ECO.Krea2, supportType: 'training', modelTypes: loraOnly },
 
   // MAI - checkpoint only (Microsoft MAI-Image-2.5, locked, no LoRA support)
   { ecosystemId: ECO.MAI, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
+  { ecosystemId: ECO.Reve, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // MageFlow - checkpoint only (Microsoft Mage Flow, six official builds, no community LoRAs yet)
+  { ecosystemId: ECO.MageFlow, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1008,16 +1068,19 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // HappyHorse - checkpoint only
   { ecosystemId: ECO.HappyHorse, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Anima - checkpoint, LORA and DoRA generation, LORA training
+  // Anima - checkpoint, LORA, DoRA and VAE generation, LORA training
   {
     ecosystemId: ECO.Anima,
     supportType: 'generation',
-    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.DoRA],
+    modelTypes: [ModelType.Checkpoint, ModelType.LORA, ModelType.DoRA, ModelType.VAE],
   },
   { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: loraOnly },
 
   // Boogu - LORA training (AI Toolkit only)
   { ecosystemId: ECO.Boogu, supportType: 'training', modelTypes: loraOnly },
+
+  // Mage-Flow - LORA training (AI Toolkit only)
+  { ecosystemId: ECO.MageFlow, supportType: 'training', modelTypes: loraOnly },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1051,6 +1114,12 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // entry exists so the unified generator picker can route 3D-Models workflows
   // and the dev-time `getEcosystemSupport` audit in workflows.ts stays clean.
   { ecosystemId: ECO.PolyGen, supportType: 'generation', modelTypes: [] },
+
+  // Tripo / Hunyuan3D - remote 3D generators (Fal / Comfy). Like PolyGen, no
+  // Civitai checkpoint/LoRA; entries exist so the unified generator picker can
+  // route the img2model3d workflow to these ecosystems.
+  { ecosystemId: ECO.Tripo, supportType: 'generation', modelTypes: [] },
+  { ecosystemId: ECO.Hunyuan3D, supportType: 'generation', modelTypes: [] },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
@@ -1364,7 +1433,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Seedream,
     defaults: {
-      model: { id: 2208278 },
+      model: { id: 3110984 },
       modelLocked: true,
     },
   },
@@ -1470,6 +1539,20 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Lens,
     defaults: {
       model: { id: 2982236 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Reve,
+    defaults: {
+      model: { id: 3133202 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.MageFlow,
+    defaults: {
+      model: { id: 3172038 },
       modelLocked: true,
     },
   },
@@ -1936,6 +2019,10 @@ export const BM = {
   // MAI (main-line), then bumped again to 92 on the main merge to dodge
   // Ideogram (also main-line).
   PolyGen: 92,
+  Tripo: 94,
+  Hunyuan3D: 95,
+  Reve: 96,
+  MageFlow: 97,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2195,6 +2282,11 @@ export const licenses: LicenseRecord[] = [
     disableMature: true,
     nonCommercial: true,
   },
+  {
+    id: 38,
+    name: 'Reve AI Terms of Service',
+    url: 'https://app.reve.com/terms',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2307,7 +2399,7 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
   {
     id: 21,
     name: 'Microsoft',
-    description: "Microsoft AI's MAI family of image generation and editing models",
+    description: "Microsoft's image generation and editing models",
   },
   {
     id: 22,
@@ -2318,6 +2410,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 23,
     name: 'Boogu',
     description: "Boogu's unified multimodal image generation and editing models",
+  },
+  {
+    id: 24,
+    name: 'Reve AI',
+    description: "Reve AI's controllable 4K text-to-image generation and editing models",
   },
 ];
 
@@ -2529,7 +2626,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Boogu,
     licenseId: 13,
-    experimental: true, // show "Experimental Build" alert in the generator while Boogu rolls out
   },
 
   // Illustrious
@@ -2616,6 +2712,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Lumina,
     licenseId: 13,
+  },
+
+  // MageFlow
+  {
+    id: BM.MageFlow,
+    name: 'MageFlow',
+    description: "Microsoft's native-resolution image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MageFlow,
+    licenseId: 19,
   },
 
   // MAI
@@ -2974,6 +3080,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 3,
   },
 
+  // Reve
+  {
+    id: BM.Reve,
+    name: 'Reve',
+    description: "Reve AI's controllable 4K text-to-image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.Reve,
+    licenseId: 38,
+  },
+
   // Seedream
   {
     id: BM.Seedream,
@@ -3214,6 +3330,24 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.PolyGen,
     hidden: true,
   },
+  // Tripo / Hunyuan3D — remote image-to-3D generators. Same `type: 'image'`,
+  // resource-less, hidden-from-picker convention as PolyGen above.
+  {
+    id: BM.Tripo,
+    name: 'Tripo',
+    description: 'Tripo image-to-3D generation (via Fal)',
+    type: 'image',
+    ecosystemId: ECO.Tripo,
+    hidden: true,
+  },
+  {
+    id: BM.Hunyuan3D,
+    name: 'Hunyuan3D',
+    description: 'Hunyuan3D image-to-3D generation (via Comfy)',
+    type: 'image',
+    ecosystemId: ECO.Hunyuan3D,
+    hidden: true,
+  },
 ];
 
 export const baseModelById = new Map(baseModelRecords.map((m) => [m.id, m]));
@@ -3239,6 +3373,19 @@ export const baseModelSelectData = (() => {
 export function getEcosystem(baseModel: string) {
   const model = baseModelByName.get(baseModel);
   if (model) return ecosystemById.get(model.ecosystemId);
+}
+
+const fileSizeEcosystemKeys: readonly string[] = ['SD1'];
+
+/**
+ * Whether a base model still distinguishes full vs pruned checkpoint weights.
+ * Retired everywhere except SD 1.x, which is where nearly every real
+ * full/pruned file pair lives — SD 2.x and later are a negligible long tail.
+ */
+export function baseModelHasFileSize(baseModel?: string | null): boolean {
+  if (!baseModel) return false;
+  const ecosystem = getEcosystem(baseModel);
+  return !!ecosystem && fileSizeEcosystemKeys.includes(ecosystem.key);
 }
 
 /**
@@ -3942,7 +4089,7 @@ export function getEcosystemDisplayItems(
   const outputTypeEcosystems = !outputType
     ? null
     : outputType === 'model3d'
-    ? new Set(ecosystems.filter((e) => e.id === ECO.PolyGen).map((e) => e.key))
+    ? new Set(ecosystems.filter((e) => MODEL3D_ECOSYSTEM_IDS.has(e.id)).map((e) => e.key))
     : new Set(getGenerationEcosystemsForMediaType(outputType));
 
   const groupedEcosystemIds = new Set(ecosystemGroups.flatMap((g) => g.ecosystemIds));
@@ -4259,6 +4406,12 @@ export const baseModelGroups: string[] = [...new Set(ecosystems.map((x) => x.key
  */
 export const activeBaseModels: string[] = getActiveBaseModels().map((x) => x.name);
 
+/**
+ * Default base model for brand-new models/versions that have no prior context
+ * (no previous version, no remembered last-used selection).
+ */
+export const defaultBaseModel: BaseModel = 'Anima';
+
 // -----------------------------------------------------------------------------
 // Constant Exports
 // -----------------------------------------------------------------------------
@@ -4270,18 +4423,6 @@ export const activeBaseModels: string[] = getActiveBaseModels().map((x) => x.nam
 export const DEPRECATED_BASE_MODELS: string[] = baseModelRecords
   .filter((x) => x.disabled)
   .map((x) => x.name);
-
-/**
- * Configuration for base model groups (ecosystems)
- * Maps ecosystem keys to display names and descriptions
- */
-export const baseModelGroupConfig: Record<string, { name: string; description?: string }> =
-  Object.fromEntries(
-    ecosystems.map((eco) => [
-      eco.key,
-      { name: eco.displayName ?? eco.key, description: eco.description },
-    ])
-  );
 
 // -----------------------------------------------------------------------------
 // Helper Functions
@@ -4380,59 +4521,14 @@ export function getBaseModelEngine(baseModel: string): string | undefined {
 }
 
 /**
- * Get all base model configs for an ecosystem
- * @param group - Ecosystem key
- * @returns Array of base model records
- */
-export function getBaseModelConfigsByGroup(group: string): BaseModelRecord[] {
-  const ecosystem = ecosystemByKey.get(group);
-  if (!ecosystem) return [];
-  return getBaseModelsByEcosystemId(ecosystem.id, false);
-}
-
-/**
  * Get all base model names for an ecosystem
  * @param group - Ecosystem key
  * @returns Array of base model names
  */
 export function getBaseModelsByGroup(group: string): string[] {
-  return getBaseModelConfigsByGroup(group).map((x) => x.name);
-}
-
-/**
- * Get all base model configs for a media type
- * @param type - Media type ('image' or 'video')
- * @returns Array of base model records
- */
-export function getBaseModelConfigsByMediaType(type: MediaType): BaseModelRecord[] {
-  return baseModelRecords.filter((x) =>
-    Array.isArray(x.type) ? x.type.includes(type) : x.type === type
-  );
-}
-
-/**
- * Get all base model names for a media type
- * @param type - Media type ('image' or 'video')
- * @returns Array of base model names
- */
-export function getBaseModelByMediaType(type: MediaType): string[] {
-  return getBaseModelConfigsByMediaType(type).map((x) => x.name);
-}
-
-/**
- * Get all ecosystem keys for a media type
- * @param type - Media type ('image' or 'video')
- * @returns Array of ecosystem keys
- */
-export function getBaseModelGroupsByMediaType(type: MediaType): string[] {
-  return [
-    ...new Set(
-      getBaseModelConfigsByMediaType(type).map((x) => {
-        const ecosystem = ecosystemById.get(x.ecosystemId);
-        return ecosystem?.key ?? 'Other';
-      })
-    ),
-  ];
+  const ecosystem = ecosystemByKey.get(group);
+  if (!ecosystem) return [];
+  return getBaseModelsByEcosystemId(ecosystem.id, false).map((x) => x.name);
 }
 
 // -----------------------------------------------------------------------------
@@ -4503,58 +4599,6 @@ export const getBaseModelGenerationConfig = lazy(() =>
 );
 
 /**
- * Get ecosystem keys that have generation support
- * @param type - Optional media type filter
- * @returns Array of ecosystem keys with generation support
- */
-export function getGenerationBaseModelConfigs(type?: MediaType): string[] {
-  const result = ecosystems
-    .filter((ecosystem) => {
-      const genSupport = getEcosystemSupport(ecosystem.id, 'generation');
-      if (!genSupport || genSupport.disabled) return false;
-
-      if (type) {
-        const models = getBaseModelsByEcosystemId(ecosystem.id, false);
-        return models.some((m) => m.type === type);
-      }
-
-      return true;
-    })
-    .map((ecosystem) => ecosystem.key);
-
-  // Include ecosystem group IDs when any member ecosystem has generation support
-  for (const group of ecosystemGroups) {
-    if (!result.includes(group.id)) {
-      const hasGenSupport = group.ecosystemIds.some((id) => {
-        const support = getEcosystemSupport(id, 'generation');
-        if (!support || support.disabled) return false;
-        if (type) {
-          const models = getBaseModelsByEcosystemId(id, false);
-          return models.some((m) => m.type === type);
-        }
-        return true;
-      });
-      if (hasGenSupport) result.push(group.id);
-    }
-  }
-
-  return result;
-}
-
-/**
- * Get base model names that support generation for a media type
- * @param type - Media type ('image' or 'video')
- * @returns Array of base model names
- */
-export function getGenerationBaseModelsByMediaType(type: MediaType): string[] {
-  const allModels = getBaseModelByMediaType(type);
-  const generationModels = getBaseModelGenerationConfig().flatMap(({ supportMap }) =>
-    [...supportMap.values()].flatMap((entry) => entry.map((x) => x.baseModel))
-  );
-  return allModels.filter((baseModel) => generationModels.includes(baseModel));
-}
-
-/**
  * Get generation configuration for an ecosystem (by key or base model name)
  * @param baseModel - Ecosystem key or base model name
  * @param missedMatch - Internal flag for recursion
@@ -4617,18 +4661,6 @@ export function getGenerationBaseModels(group: string, modelType: ModelType): st
 }
 
 /**
- * Check if a base model supports generation for a model type
- * @param baseModel - Base model name
- * @param modelType - Model type (e.g., LORA, Checkpoint)
- * @returns True if generation is supported
- */
-export function getBaseModelGenerationSupported(baseModel: string, modelType: ModelType): boolean {
-  const record = baseModelByName.get(baseModel);
-  if (!record) return false;
-  return isModelSupported(record.id, 'generation', modelType);
-}
-
-/**
  * Get associated ecosystem keys for generation
  * @param group - Ecosystem key
  * @param modelType - Model type
@@ -4651,23 +4683,6 @@ export function getGenerationBaseModelAssociatedGroups(
         .filter(isDefined)
     ),
   ];
-}
-
-/**
- * Group base models by model type
- * @param args - Array of {modelType, baseModel} pairs
- * @returns Record mapping model type to base model names
- */
-export function getBaseModelsByModelType(
-  args: { modelType: ModelType; baseModel: string }[]
-): Record<ModelType, string[]> {
-  return args.reduce(
-    (acc, { modelType, baseModel }) => ({
-      ...acc,
-      [modelType]: [...(acc[modelType] ?? []), baseModel],
-    }),
-    {} as Record<ModelType, string[]>
-  );
 }
 
 /**

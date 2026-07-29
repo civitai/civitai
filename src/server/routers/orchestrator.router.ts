@@ -16,6 +16,7 @@ import {
   logToAxiom,
   classifyErrorFault,
   buildServerFaultErrorLog,
+  markServerFaultLogged,
 } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
@@ -58,6 +59,7 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import {
   getPresetModelConfig,
@@ -70,7 +72,7 @@ import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
@@ -134,7 +136,9 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   // the rest of the generation-path fail-open coverage in this PR.
   let genClient: Record<string, string>;
   try {
-    genClient = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT);
+    // Wall-clock deadline so a silent sysRedis half-open can't park every gen
+    // tRPC call ~11min (a fast DOWN already rejects into the catch below).
+    genClient = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'enforceGenerationVersion', err);
     return result;
@@ -152,11 +156,13 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
 
 const orchestratorProcedure = protectedProcedure
   .use(orchestratorMiddleware)
-  .use(enforceGenerationVersion);
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 const orchestratorGuardedProcedure = guardedProcedure
   .use(orchestratorMiddleware)
   .use(experimentalMiddleware)
-  .use(enforceGenerationVersion);
+  .use(enforceGenerationVersion)
+  .use(regionProxyMiddleware);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
 
 // The iterative editor's default preset model. The model registry itself lives
@@ -474,8 +480,7 @@ export const orchestratorRouter = router({
             name: 'what-if-from-graph',
             type: 'info',
             payload: input,
-            error:
-              e instanceof TRPCError ? { code: e.code, name: e.name, message: e.message } : e,
+            error: e instanceof TRPCError ? { code: e.code, name: e.name, message: e.message } : e,
           }).catch();
         } else {
           logToAxiom({
@@ -485,6 +490,10 @@ export const orchestratorRouter = router({
             error: buildServerFaultErrorLog(e),
           }).catch();
         }
+        // Mark so the central chokepoint (tRPC onError) doesn't log this same fault
+        // a second time — this router already emitted the un-masked structured log
+        // (with the extra `payload: input` context) above.
+        markServerFaultLogged(e);
         throw e;
       }
     }),

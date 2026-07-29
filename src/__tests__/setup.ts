@@ -84,9 +84,16 @@ const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   // an undefined value makes p-limit throw "Expected concurrency to be a number".
   // Mirror the production default (server-schema.ts: .default(50)).
   MEILI_CALL_CONCURRENCY: 50,
+  // Same module-load pLimit() trap for the resource-select limiter (server-schema.ts: .default(500)).
+  MEILI_RESOURCE_SELECT_CONCURRENCY: 500,
   // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
   SIGNALS_CALL_CONCURRENCY: 30,
   LOGGING: '',
+  // App-blocks (git-push / forgejo / manifest) surfaces read these at module
+  // load. Live here so blocks-router tests don't each override the whole env
+  // mock (which drops the S3/MEILI defaults and crashes at import).
+  FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
+  APPS_DOMAIN: 'civit.ai',
   BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
   BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
   DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
@@ -204,6 +211,12 @@ vi.mock('~/server/prom/client', () => ({
   // sysRedis sentinel observability counters (PR #2331 round-3).
   sysredisSentinelTopologyChangesCounter: promMetricStub(),
   sysredisSentinelClientErrorsCounter: promMetricStub(),
+  // Cron runner + image-ingestion cron metrics (job.ts / image-ingestion.ts).
+  jobDurationHistogram: promMetricStub(),
+  jobErrorsCounter: promMetricStub(),
+  imageIngestCronCounter: promMetricStub(),
+  imageIngestCronQueueDepth: promMetricStub(),
+  imageScanWebhookCounter: promMetricStub(),
 }));
 
 // Mock logging

@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { isPaidAccessActive } from '@civitai/buzz';
+import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
@@ -11,13 +13,28 @@ import {
 } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
+import {
+  getValidCreatorMembershipMap,
+  hasValidCreatorMembershipCached,
+  getUserMetricPrivacyDefaultsMap,
+} from '~/server/services/creator-program.service';
+import {
+  anyMetricHidden,
+  gateHiddenMetrics,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveModelHiddenMetrics,
+  resolveVersionHiddenMetrics,
+  type HiddenModelMetrics,
+} from '~/server/utils/model-metric-privacy';
 import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
+import { getOwnerDonationGoals } from '~/server/services/donation-goal.service';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type {
   LinkedComponentSettings,
-  ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
@@ -44,6 +61,7 @@ import type {
   PublishPrivateModelInput,
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
+  SetModelMinorInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
@@ -64,6 +82,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
+import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 import {
   copyGallerySettingsToAllModelsByUser,
   deleteModelById,
@@ -82,12 +101,13 @@ import {
   publishModelById,
   publishPrivateModel,
   restoreModelById,
+  setModelMinor,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
   toggleLockModel,
   unpublishModelById,
   updateModelById,
-  updateModelEarlyAccessDeadline,
+  queueModelEarlyAccessReindex,
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -110,7 +130,11 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
+import {
+  GET_ALL_IMAGES_PER_MODEL,
+  GET_ALL_IMAGES_PER_MODEL_SLIM,
+} from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
@@ -138,7 +162,6 @@ import { redis, REDIS_KEYS } from '../redis/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   getResourceData,
-  getUnavailableResources,
   resolveCanGenerateForVersions,
 } from '../services/generation/generation.service';
 
@@ -150,7 +173,6 @@ import {
   4  don't check for entity access on each version. Doesn't need to happen for versions that are already available
   5. ensure that we aren't fetching vae files when `!vadIds.length`
   6. get suggested resources in another api call
-  7. getUnavailableResources needs to go. We can't have another source of truth for generation coverage
 */
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({
@@ -208,7 +230,6 @@ export const getModelHandler = async ({
     });
 
     const modelCategories = await getCategoryTags('model');
-    const unavailableGenResources = await getUnavailableResources();
 
     const sfwOnly = !!features.isGreen;
     const versionGenStates = await resolveCanGenerateForVersions(
@@ -221,6 +242,7 @@ export const getModelHandler = async ({
         covered: v.generationCoverage?.covered ?? false,
         modelUserId: model.user.id,
         modelType: model.type,
+        flags: v.flags,
         modelVersionAlias: (v.meta as ModelVersionMeta | null)?.generationAlias,
       })),
       {
@@ -238,6 +260,19 @@ export const getModelHandler = async ({
       isModerator: ctx.user?.isModerator,
       userId: ctx.user?.id,
     });
+
+    const paidAccessByVersion = await getPaidAccess(
+      'ModelVersion',
+      filteredVersions.map((x) => x.id)
+    );
+    // The DTO donationGoal seeds ONLY the owner's edit form → raw owner read (unfiltered by the
+    // public EA-window/opt-out), and owner/mod only. Public display reads modelVersion.donationGoal.
+    const donationGoalsByVersion = isOwner
+      ? await getOwnerDonationGoals(
+          'ModelVersion',
+          filteredVersions.map((x) => x.id)
+        )
+      : {};
 
     // Only pass non-linked-component resources to getResourceData
     const regularResourceIds =
@@ -279,9 +314,49 @@ export const getModelHandler = async ({
         });
     }
 
+    // Creator Controls metric privacy: resolve once per request. Owners/mods bypass;
+    // otherwise flags apply only while the owner holds a valid CP membership.
+    // Flag-gated (#3266 A/B): when `modelMetricPrivacyReadtime` is OFF, skip the
+    // owner-settings + membership lookups AND the resolvers entirely and emit raw
+    // metrics. Evaluated ONCE per request off the memoized per-request flag object.
+    const metricPrivacyEnabled = !!features.modelMetricPrivacyReadtime;
+    let ownerSettings: unknown = null;
+    let ownerHasMembership = false;
+    if (metricPrivacyEnabled && !isOwner) {
+      const owner = await dbRead.user.findUnique({
+        where: { id: model.user.id },
+        select: { settings: true },
+      });
+      ownerSettings = owner?.settings ?? null;
+      // Only resolve CP membership when the owner actually hides something (model meta,
+      // any version meta, or a user default). When nothing is hidden, resolveModel/Version
+      // return NONE regardless of membership, so the cached membership read (and the
+      // resolvers themselves) can be skipped — byte-identical raw metrics. The membership
+      // check, when needed, is served from the shared read-through cache.
+      const ownerHidesAnything =
+        anyMetricHidden(getMetaMetricPrivacy(model.meta)) ||
+        anyMetricHidden(getUserMetricPrivacyDefaults(ownerSettings)) ||
+        filteredVersions.some((v) => anyMetricHidden(getMetaMetricPrivacy(v.meta)));
+      if (ownerHidesAnything)
+        ownerHasMembership = await hasValidCreatorMembershipCached(model.user.id);
+    }
+    const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
+      resolveModelHiddenMetrics({
+        modelMeta: model.meta,
+        userSettings: ownerSettings,
+        isOwnerOrModerator: isOwner,
+        hasValidMembership: ownerHasMembership,
+      })
+    );
+    const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
+
     const mappedVersions = filteredVersions.map((version) => {
-      let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
-      if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
+      const paidAccess = paidAccessByVersion[version.id];
+      const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
+      const paidAccessGated =
+        features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
+      // Permanent gate => endsAt null => no countdown; a timed gate surfaces its live deadline.
+      const earlyAccessDeadline = paidAccessGated ? paidAccess?.endsAt ?? undefined : undefined;
 
       const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
       const isDownloadable = version.usageControl === ModelUsageControl.Download || isOwner;
@@ -289,7 +364,7 @@ export const getModelHandler = async ({
         isDownloadable &&
         model.mode !== ModelModifier.Archived &&
         entityAccessForVersion?.hasAccess &&
-        (!earlyAccessDeadline ||
+        (!paidAccessGated ||
           (entityAccessForVersion?.permissions ?? 0) >= EntityAccessPermission.EarlyAccessDownload);
 
       const versionState = versionGenStates.get(version.id);
@@ -329,22 +404,42 @@ export const getModelHandler = async ({
 
       const versionMetrics = version.metrics[0];
 
+      const versionHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
+        resolveVersionHiddenMetrics({
+          versionMeta: version.meta,
+          modelMeta: model.meta,
+          userSettings: ownerSettings,
+          isOwnerOrModerator: isOwner,
+          hasValidMembership: ownerHasMembership,
+        })
+      );
+
       return {
         ...version,
+        licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
         metrics: undefined,
+        hiddenMetrics: versionHidden,
         rank: {
-          generationCountAllTime: versionMetrics?.generationCount ?? 0,
-          downloadCountAllTime: versionMetrics?.downloadCount ?? 0,
+          generationCountAllTime: hideIf(
+            versionHidden.generations,
+            versionMetrics?.generationCount ?? 0
+          ),
+          downloadCountAllTime: hideIf(versionHidden.downloads, versionMetrics?.downloadCount ?? 0),
           thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
           thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
-          earnedAmountAllTime: versionMetrics?.earnedAmount ?? 0,
+          earnedAmountAllTime: hideIf(versionHidden.buzz, versionMetrics?.earnedAmount ?? 0),
         },
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
+        paidAccess: toModelVersionPaidAccessDto(paidAccess),
+        donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,
+        // Raw flags are mod-only — they also carry payout/licensing state that
+        // isn't public. `...version` spreads the real value in, so overwrite it
+        // for everyone else.
+        flags: ctx.user?.isModerator ? version.flags : undefined,
         wildcardSetId,
         files: files as Array<
           Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
@@ -364,43 +459,47 @@ export const getModelHandler = async ({
             return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
           })
           .filter(isDefined),
-        linkedComponents: version.recommendedResources
-          .filter((r) => isLinkedComponent(r.settings))
-          .map((r) => {
-            const s = r.settings as LinkedComponentSettings;
-            const fileData = linkedFileDataMap.get(s.fileId);
-            return {
-              recommendedResourceId: r.id,
-              componentType: s.componentType as ModelFileComponentType,
-              modelId: s.modelId,
-              modelName: s.modelName,
-              versionId: r.resource?.id ?? 0,
-              versionName: s.versionName,
-              fileId: s.fileId,
-              fileName: fileData?.name ?? s.fileName,
-              sizeKB: fileData?.sizeKB,
-              fileType: fileData?.type,
-              fileMetadata: fileData?.metadata as
-                | { format?: string | null; size?: string | null; fp?: string | null }
-                | undefined,
-              isRequired: s.isRequired,
-            };
-          }),
+        linkedComponents: selectLiveLinkedComponents(
+          version.recommendedResources
+            .filter((r) => isLinkedComponent(r.settings))
+            .map((r) => {
+              const s = r.settings as LinkedComponentSettings;
+              const fileData = linkedFileDataMap.get(s.fileId);
+              return {
+                recommendedResourceId: r.id,
+                componentType: s.componentType as ModelFileComponentType,
+                modelId: s.modelId,
+                modelName: s.modelName,
+                versionId: r.resource?.id ?? 0,
+                versionName: s.versionName,
+                fileId: s.fileId,
+                fileName: fileData?.name ?? s.fileName,
+                sizeKB: fileData?.sizeKB,
+                fileType: fileData?.type,
+                fileMetadata: fileData?.metadata as
+                  | { format?: string | null; size?: string | null; fp?: string | null }
+                  | undefined,
+                isRequired: s.isRequired,
+              };
+            }),
+          new Set(linkedFileDataMap.keys())
+        ),
       };
     });
 
     return {
       ...model,
       metrics: undefined,
+      hiddenMetrics: modelHidden,
       rank: {
-        downloadCountAllTime: metrics?.downloadCount ?? 0,
+        downloadCountAllTime: hideIf(modelHidden.downloads, metrics?.downloadCount ?? 0),
         thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,
         thumbsDownCountAllTime: metrics?.thumbsDownCount ?? 0,
         commentCountAllTime: metrics?.commentCount ?? 0,
-        tippedAmountCountAllTime: metrics?.tippedAmountCount ?? 0,
+        tippedAmountCountAllTime: hideIf(modelHidden.buzz, metrics?.tippedAmountCount ?? 0),
         imageCountAllTime: metrics?.imageCount ?? 0,
         collectedCountAllTime: metrics?.collectedCount ?? 0,
-        generationCountAllTime: metrics?.generationCount ?? 0,
+        generationCountAllTime: hideIf(modelHidden.generations, metrics?.generationCount ?? 0),
       },
       canGenerate: mappedVersions.some((v) => v.canGenerate),
       hasSuggestedResources: suggestedResources > 0,
@@ -438,11 +537,25 @@ export const getModelsInfiniteHandler = async ({
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
+    // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
+    // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
+    // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
+    // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
+    // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
+    // applies either way (see model-getall-images).
+    const slim = ctx.features.getAllModelImagesSlim;
+    const imagesPerModel = slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL;
+    // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
+    // value so the feed-hydration path skips the metric-privacy resolution when OFF.
+    const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
+        imagesPerModel,
+        biasImageSlice: slim,
+        metricPrivacyEnabled,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
@@ -641,7 +754,7 @@ export const publishModelHandler = async ({
       modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
-    await updateModelEarlyAccessDeadline({ id: updatedModel.id }).catch((e) => {
+    await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });
@@ -813,6 +926,15 @@ export const getModelsWithVersionsHandler = async ({
           }
           return {
             ...modelVersion,
+            // `getModelVersionDetailsSelect` carries a raw Prisma `Decimal`
+            // `licensingFee`; convert it to a number so the `...modelVersion`
+            // spread never puts a Decimal on a tRPC response. superjson tolerates
+            // a raw Decimal (silent string-coerce), but the phased devalue
+            // migration would throw on it — this keeps the (currently unwired)
+            // handler safe if it's ever re-attached to a router. Mirrors the
+            // conversion in getModelHandler (model.controller.ts).
+            licensingFee:
+              modelVersion.licensingFee != null ? Number(modelVersion.licensingFee) : null,
             files,
             stats: {
               downloadCount: metrics[0]?.downloadCount ?? 0,
@@ -1103,6 +1225,14 @@ export const getMyDraftModelsHandler = async ({
     const results = await getDraftModelsByUserId({
       ...input,
       userId,
+      // NOTE: `_count: { select: { modelVersions: true } }` is intentionally NOT
+      // selected here. Prisma compiles that per-row aggregate into a LEFT JOIN
+      // against a subquery that GROUPs the ENTIRE ModelVersion table (Postgres
+      // does not push the `Model.id IN (...)` filter into the grouped derived
+      // table) — ~1.17M rows -> ~909k groups -> ~1344ms just to attach a version
+      // count to the ~20 requested models. We instead derive the count below from
+      // the length of the FULL `modelVersions` array already selected here (no
+      // `where`/`take`), so it equals the total version count at zero DB cost.
       select: {
         id: true,
         name: true,
@@ -1117,11 +1247,21 @@ export const getMyDraftModelsHandler = async ({
             },
           },
         },
-        _count: { select: { modelVersions: true } },
       },
     });
 
-    return results;
+    return {
+      ...results,
+      items: results.items.map((model) => ({
+        ...model,
+        // The FULL (unfiltered, no `where`/`take`) `modelVersions` array is
+        // already selected above for the frontend's `.some(...)` checks, so its
+        // length IS the total version count — no extra DB round-trip. (The
+        // training handler DOES need the helper: its versions array is
+        // status-filtered, so `.length` there would undercount.)
+        _count: { modelVersions: model.modelVersions.length },
+      })),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1136,7 +1276,7 @@ export const getMyTrainingModelsHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    return await getTrainingModelsByUserId({
+    const results = await getTrainingModelsByUserId({
       ...input,
       userId,
       select: {
@@ -1153,11 +1293,10 @@ export const getMyTrainingModelsHandler = async ({
             id: true,
             name: true,
             status: true,
-            _count: {
-              select: {
-                modelVersions: true,
-              },
-            },
+            // `_count: { select: { modelVersions: true } }` intentionally
+            // omitted — see getMyDraftModelsHandler: Prisma compiles it to a
+            // full-table grouped subquery (~1344ms) instead of pushing the id
+            // filter down. Attached below via a batched, index-only groupBy.
           },
         },
 
@@ -1174,6 +1313,34 @@ export const getMyTrainingModelsHandler = async ({
         },
       },
     });
+
+    // Batched, pushed-down replacement for the per-row `model._count.modelVersions`.
+    // Multiple returned training versions can share a model — the helper dedupes.
+    //
+    // Route the count through the SAME db handle the list read used:
+    // getTrainingModelsByUserId reads its list via getDbWithoutLag(
+    // 'userTrainingModels', userId), which returns the PRIMARY during the
+    // post-write no-lag window. Calling it here with identical args yields that
+    // same handle in-request, so the count and the list are read from one source.
+    // A lagged-replica count that disagreed with a primary list read would
+    // mislead UserTrainingModels.tsx, which gates a DESTRUCTIVE delete (whole
+    // model vs. a single version) on `_count.modelVersions > 1`.
+    const db = await getDbWithoutLag('userTrainingModels', userId);
+    const versionCountByModelId = await getModelVersionCountsByModelId(
+      results.items.map((item) => item.model.id),
+      db
+    );
+
+    return {
+      ...results,
+      items: results.items.map((item) => ({
+        ...item,
+        model: {
+          ...item.model,
+          _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
+        },
+      })),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1255,6 +1422,21 @@ export const toggleModelLockHandler = async ({ input }: { input: ToggleModelLock
   }
 };
 
+export const setModelMinorHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetModelMinorInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await setModelMinor({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
     const model = await dbRead.model.findUnique({
@@ -1276,9 +1458,12 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
       );
 
     const meta = (model.meta as ModelMeta | null) || {};
-    const updatedModel = await upsertModel({
-      ...model,
-      meta: { ...meta, needsReview: true },
+    // Deliberately not upsertModel: this only sets meta, and routing it through the full
+    // upsert ran the non-moderator profanity filter over the model name and re-triggered
+    // ingestModel (the select omits `description`, so descriptionChanged was always true).
+    const updatedModel = await updateModelById({
+      id: model.id,
+      data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },
     });
 
     return updatedModel;
@@ -1318,13 +1503,15 @@ export const declineReviewHandler = async ({
         'Cannot decline a review for this model because it is not in the correct status'
       );
 
-    const updatedModel = await upsertModel({
-      ...model,
-      meta: {
-        ...meta,
-        declinedReason: input.reason,
-        declinedAt: new Date().toISOString(),
-        needsReview: false,
+    const updatedModel = await updateModelById({
+      id: model.id,
+      data: {
+        meta: {
+          ...meta,
+          declinedReason: input.reason,
+          declinedAt: new Date().toISOString(),
+          needsReview: false,
+        } as Prisma.JsonObject,
       },
     });
     await trackModActivity(ctx.user.id, {
@@ -1498,8 +1685,6 @@ export const getAssociatedResourcesCardDataHandler = async ({
         })
       : [];
 
-    const unavailableGenResources = await getUnavailableResources();
-
     const associatedSfwOnly = !!ctx.features.isGreen;
     // `modelVersionAlias` is omitted here: these versions come from
     // `dataForModelsCache`, which doesn't carry `meta`. An aliased cover version
@@ -1518,6 +1703,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                 covered: v.covered,
                 modelUserId: m.user.id,
                 modelType: m.type,
+                flags: v.flags,
               },
             ]
           : [];
@@ -1529,8 +1715,31 @@ export const getAssociatedResourcesCardDataHandler = async ({
       }
     );
 
+    // Flag-gated (#3266 A/B): when `modelMetricPrivacyReadtime` is OFF, skip the
+    // batched owner-settings query + `getValidCreatorMembershipMap` and emit raw
+    // metrics. Evaluated once per request off the memoized per-request flag object.
+    const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
+    const assocIsMod = !!user?.isModerator;
+    let assocOwnerSettingsMap = new Map<number, unknown>();
+    let assocMembershipMap = new Map<number, boolean>();
+    if (metricPrivacyEnabled) {
+      const assocOwnerIds = [...new Set(models.map((m) => m.user.id))];
+      // Cache-backed per-owner metric-privacy DEFAULT flags — see the feed path in
+      // getModelsRaw; avoids deserializing every owner's full `settings` blob per request.
+      assocOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(assocOwnerIds);
+      const assocMembershipCandidates = new Set<number>();
+      for (const m of models) {
+        const ownerId = m.user.id;
+        if (assocIsMod || ownerId === user?.id) continue;
+        const defHidden = getUserMetricPrivacyDefaults(assocOwnerSettingsMap.get(ownerId));
+        if (anyMetricHidden(m.metricPrivacy) || anyMetricHidden(defHidden))
+          assocMembershipCandidates.add(ownerId);
+      }
+      assocMembershipMap = await getValidCreatorMembershipMap([...assocMembershipCandidates]);
+    }
+
     const completeModels = models
-      .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
+      .map(({ hashes, modelVersions, rank, tagsOnModels, metricPrivacy, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
         const versionImages = images.filter((i) => i.modelVersionId === version.id);
@@ -1540,17 +1749,32 @@ export const getAssociatedResourcesCardDataHandler = async ({
         if (!versionImages.length && !showImageless) return null;
         const canGenerate = associatedGenStates.get(version.id)?.canGenerate ?? false;
 
+        const isOwner = assocIsMod || model.user.id === user?.id;
+        const hiddenMetrics = gateHiddenMetrics(metricPrivacyEnabled, () =>
+          resolveModelHiddenMetrics({
+            modelMeta: {
+              hideBuzz: metricPrivacy.buzz,
+              hideDownloads: metricPrivacy.downloads,
+              hideGenerations: metricPrivacy.generations,
+            },
+            userSettings: assocOwnerSettingsMap.get(model.user.id),
+            isOwnerOrModerator: isOwner,
+            hasValidMembership: assocMembershipMap.get(model.user.id) ?? false,
+          })
+        );
+
         return {
           ...model,
           tags: tagsOnModels.map(({ tagId }) => tagId),
           hashes: hashes.map((h) => h.toLowerCase()),
+          hiddenMetrics,
           rank: {
-            downloadCount: rank?.downloadCountAllTime ?? 0,
+            downloadCount: hiddenMetrics.downloads ? null : rank?.downloadCountAllTime ?? 0,
             thumbsUpCount: rank?.thumbsUpCountAllTime ?? 0,
             thumbsDownCount: rank?.thumbsDownCountAllTime ?? 0,
             commentCount: rank?.commentCountAllTime ?? 0,
             collectedCount: rank?.collectedCountAllTime ?? 0,
-            tippedAmountCount: rank?.tippedAmountCountAllTime ?? 0,
+            tippedAmountCount: hiddenMetrics.buzz ? null : rank?.tippedAmountCountAllTime ?? 0,
           },
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
@@ -1785,16 +2009,23 @@ export const updateGallerySettingsHandler = async ({
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
 
-    const model = await getModel({ id, select: { id: true, userId: true } });
+    const model = await getModel({
+      id,
+      select: { id: true, userId: true, minor: true, sfwOnly: true },
+    });
     if (!model || (model.userId !== sessionUser.id && !sessionUser.isModerator))
       throw throwNotFoundError(`No model with id ${id}`);
+
+    // A minor/sfwOnly flag is a moderator decision; an owner must not be able to raise the
+    // gallery back above SFW from here. Moderators keep full control.
+    const sfwLocked = !sessionUser.isModerator && (model.minor || model.sfwOnly);
 
     const updatedSettings = gallerySettings
       ? {
           hiddenImages: gallerySettings.hiddenImages,
           users: gallerySettings.hiddenUsers.map(({ id }) => id),
           tags: gallerySettings.hiddenTags.map(({ id }) => id),
-          level: gallerySettings.level,
+          level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
           pinnedPosts: gallerySettings.pinnedPosts,
         }
       : null;

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   assertNoOnPlatformSurface,
   MAX_EXTERNAL_URL_LENGTH,
-  registerExternalAppSchema,
   validateExternalUrl,
 } from '~/server/schema/blocks/external-app.schema';
 
@@ -59,6 +58,18 @@ describe('validateExternalUrl', () => {
     }
   });
 
+  it('REJECTS malformed https-prefixed values the loose `^https://` regex accepts (anchor-guard unification)', () => {
+    // The mod/author anchors previously gated on a loose `^https://` regex while the
+    // review checklist used this URL-parse guard. These values match the regex (so the
+    // old anchor rendered them CLICKABLE) but have no parseable host (so the checklist
+    // warned) — the exact disagreement. Both anchors now gate on `validateExternalUrl`,
+    // so a malformed-but-https-prefixed value renders as INERT text everywhere.
+    for (const url of ['https://', 'https:///', 'https://[bad', 'https://%', 'https:// nohost', 'https://a b']) {
+      const r = validateExternalUrl(url);
+      expect(r.ok, `"${url}" must be rejected (no parseable host)`).toBe(false);
+    }
+  });
+
   it('REJECTS a non-string / empty input', () => {
     expect(validateExternalUrl(undefined).ok).toBe(false);
     expect(validateExternalUrl(null).ok).toBe(false);
@@ -70,6 +81,26 @@ describe('validateExternalUrl', () => {
   it('REJECTS an over-long URL', () => {
     const long = 'https://example.com/' + 'a'.repeat(MAX_EXTERNAL_URL_LENGTH);
     expect(validateExternalUrl(long).ok).toBe(false);
+  });
+
+  it('REJECTS a URL with embedded credentials (userinfo phishing vector)', () => {
+    // `https://example.com@evil.com` DISPLAYS as example.com but the real host is
+    // evil.com — a display-vs-real-host phishing vector; reject it outright.
+    for (const url of [
+      'https://example.com@evil.com',
+      'https://user:pass@evil.com',
+      'https://user@example.com/app',
+      'https://:pass@example.com',
+    ]) {
+      const r = validateExternalUrl(url);
+      expect(r.ok, `"${url}" must be rejected`).toBe(false);
+      if (!r.ok) expect(r.error).toMatch(/credential/i);
+    }
+  });
+
+  it('accepts a normal https URL that merely CONTAINS an @ in the path/query (not userinfo)', () => {
+    const r = validateExternalUrl('https://example.com/u/@handle?to=a@b.com');
+    expect(r.ok).toBe(true);
   });
 });
 
@@ -99,47 +130,5 @@ describe('assertNoOnPlatformSurface (external ⟂ on-platform)', () => {
 
   it('an EMPTY targets array is allowed (declares nothing)', () => {
     expect(assertNoOnPlatformSurface({ name: 'X', targets: [] }).ok).toBe(true);
-  });
-});
-
-describe('registerExternalAppSchema', () => {
-  it('accepts a valid registration input', () => {
-    const parsed = registerExternalAppSchema.safeParse({
-      slug: 'cool-app',
-      name: 'Cool App',
-      description: 'A cool off-site app',
-      externalUrl: 'https://cool.example.com',
-      category: 'utility',
-    });
-    expect(parsed.success).toBe(true);
-  });
-
-  it('accepts without optional description/category', () => {
-    const parsed = registerExternalAppSchema.safeParse({
-      slug: 'cool-app',
-      name: 'Cool App',
-      externalUrl: 'https://cool.example.com',
-    });
-    expect(parsed.success).toBe(true);
-  });
-
-  it('rejects a malformed slug (uppercase / leading digit / too short)', () => {
-    for (const slug of ['Cool', '1app', 'ab', 'a_b', '-app']) {
-      const parsed = registerExternalAppSchema.safeParse({
-        slug,
-        name: 'X',
-        externalUrl: 'https://x.com',
-      });
-      expect(parsed.success, `slug "${slug}" should fail`).toBe(false);
-    }
-  });
-
-  it('rejects an empty name', () => {
-    const parsed = registerExternalAppSchema.safeParse({
-      slug: 'cool-app',
-      name: '',
-      externalUrl: 'https://x.com',
-    });
-    expect(parsed.success).toBe(false);
   });
 });

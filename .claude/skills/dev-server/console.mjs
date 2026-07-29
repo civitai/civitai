@@ -199,6 +199,7 @@ async function cmdDashboard(initialWorktree) {
   let logLines = [];        // all log entries (raw from daemon)
   let lastSession = null;
   let lastRgb = null;
+  let lastAuth = null;
   let running = true;
   let actionMsg = null;
   let actionTimer = null;
@@ -350,6 +351,24 @@ async function cmdDashboard(initialWorktree) {
         break;
       }
 
+      case 'A': {
+        const isRunning = lastAuth?.status === 'running';
+        flash(isRunning ? 'Stopping auth hub...' : 'Starting auth hub...');
+        try {
+          const result = await daemonRequest(
+            isRunning ? '/auth/stop' : '/auth/start',
+            { method: 'POST' }
+          );
+          if (result.ok) {
+            lastAuth = result.data;
+            flash(result.data.lastError || `Auth hub: ${result.data.status}`);
+          } else {
+            flash(`Auth toggle failed: ${result.error || result.data?.error}`);
+          }
+        } catch (e) { flash(`Auth toggle failed: ${e.message}`); }
+        break;
+      }
+
       default: {
         // Check preset keys
         const preset = PRESETS.find(p => p.key === key);
@@ -487,7 +506,14 @@ async function cmdDashboard(initialWorktree) {
         else if (st === 'error' || st === 'crashed') rgbStr = `  ${C.dim}RGB:${C.r} ${C.red}${st}${C.r}`;
         else if (lastRgb.enabled) rgbStr = `  ${C.dim}RGB:${C.r} ${C.ylw}${st}${C.r}`;
       }
-      buf.push(CLR_LINE + `  ${C.dim}URL:${C.r} ${url}  ${C.dim}Session:${C.r} ${s.id}  ${C.dim}${logCount}${C.r}${rgbStr}\n`);
+      let authStr = '';
+      if (lastAuth) {
+        const st = lastAuth.status;
+        if (st === 'running') authStr = `  ${C.dim}AUTH:${C.r} ${lastAuth.ready ? C.grn + 'ready' : C.ylw + 'starting'}${C.r}`;
+        else if (st === 'error' || st === 'crashed') authStr = `  ${C.dim}AUTH:${C.r} ${C.red}${st}${C.r}`;
+        else if (lastAuth.enabled) authStr = `  ${C.dim}AUTH:${C.r} ${C.ylw}${st}${C.r}`;
+      }
+      buf.push(CLR_LINE + `  ${C.dim}URL:${C.r} ${url}  ${C.dim}Session:${C.r} ${s.id}  ${C.dim}${logCount}${C.r}${rgbStr}${authStr}\n`);
     } else {
       buf.push(CLR_LINE + '\n');
     }
@@ -575,10 +601,12 @@ async function cmdDashboard(initialWorktree) {
         if (logLines.length > 5000) logLines = logLines.slice(-3000);
       }
 
-      // Fetch RGB status every ~2s
+      // Fetch RGB + auth hub status every ~2s
       if (rgbPollCounter++ % 4 === 0) {
         const rgbResult = await daemonRequest('/rgb');
         if (rgbResult.ok) lastRgb = rgbResult.data;
+        const authResult = await daemonRequest('/auth');
+        if (authResult.ok) lastAuth = authResult.data;
       }
     } catch {
       lastSession = null;
@@ -660,7 +688,7 @@ Usage:
 
 ${C.b}Dashboard Keys:${C.r}
   ${C.b}1${C.r} errors   ${C.b}2${C.r} bitdex   ${C.b}3${C.r} trpc   ${C.b}4${C.r} api   ${C.b}5${C.r} prisma   ${C.b}6${C.r} stdout   ${C.b}7${C.r} stderr   ${C.b}8${C.r} info
-  ${C.b}/${C.r} search   ${C.b}a${C.r} all   ${C.b}r${C.r} restart   ${C.b}c${C.r} clear logs   ${C.b}x${C.r} stop   ${C.b}R${C.r} RGB toggle   ${C.b}q${C.r} quit   ${C.b}K${C.r} kill daemon
+  ${C.b}/${C.r} search   ${C.b}a${C.r} all   ${C.b}r${C.r} restart   ${C.b}c${C.r} clear logs   ${C.b}x${C.r} stop   ${C.b}R${C.r} RGB toggle   ${C.b}A${C.r} auth toggle   ${C.b}q${C.r} quit   ${C.b}K${C.r} kill daemon
 `);
 } else {
   // Default: launch dashboard

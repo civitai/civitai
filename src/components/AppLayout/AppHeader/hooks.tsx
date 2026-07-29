@@ -10,7 +10,6 @@ import {
   IconCloudLock,
   IconCode,
   IconCube,
-  // IconClubs,
   IconCrown,
   IconGift,
   IconGavel,
@@ -22,7 +21,9 @@ import {
   IconPlugConnected,
   IconProgressBolt,
   IconSword,
+  IconShoppingBag,
   IconThumbUp,
+  IconTrophy,
   IconUpload,
   IconUser,
   IconUserCircle,
@@ -36,6 +37,8 @@ import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisib
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import type { CollectionType } from '~/shared/utils/prisma/enums';
@@ -93,6 +96,16 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Your Profile',
         },
         {
+          href: `/user/${currentUser?.username as string}/shop`,
+          // Only Creator Program members qualify to run a shop.
+          visible:
+            features.creatorShop &&
+            Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram),
+          icon: IconShoppingBag,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'My Shop',
+        },
+        {
           href: `/user/${currentUser?.username as string}/models?section=training`,
           visible: !!currentUser && features.imageTrainingResults,
           icon: IconBarbell,
@@ -126,14 +139,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'My Bounties',
         },
-        // {
-        //   href: '/clubs?engagement=engaged',
-        //   as: '/clubs',
-        //   visible: features.clubs,
-        //   icon: IconClubs,
-        //   color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-        //   label: 'My Clubs',
-        // },
+        {
+          href: '/challenges?engagement=created',
+          visible: features.challengePlatform && features.userChallenges,
+          icon: IconTrophy,
+          color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Your Challenges',
+          newUntil: new Date('2026-08-15'),
+        },
         {
           href: '/user/buzz-dashboard',
           visible: features.buzz,
@@ -173,13 +186,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           // Mod-only App Blocks marketplace + in-page AppsSubNav hub (installed,
           // submit, my-submissions, revenue, review). Stays gated on `appBlocks`
-          // (mod-only today). Relabeled "Apps Marketplace" so it reads distinctly
-          // from the public "Build apps" entry above.
+          // (mod-only today). Labeled "Apps" so it reads distinctly from the
+          // public "Build apps" entry above.
           href: '/apps',
           visible: appsNav.marketplace,
           icon: IconPlugConnected,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Apps Marketplace',
+          label: 'Apps',
           newUntil: new Date('2026-07-01'),
         },
       ],
@@ -364,15 +377,16 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Create a Bounty',
       currency: true,
     },
-    // {
-    //   href: '/clubs/create',
-    //   visible: !isMuted && canCreate && features.clubs,
-    //   redirectReason: 'create-club',
-    //   rel: 'nofollow',
-    //   icon: IconClubs,
-    //   color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-    //   label: 'Create a Club',
-    // },
+    {
+      href: '/challenges/create',
+      visible: !isMuted && canCreate && features.challengePlatform && features.userChallenges,
+      redirectReason: 'create-challenge',
+      rel: 'nofollow',
+      icon: IconTrophy,
+      color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
+      label: 'Create a Challenge',
+      newUntil: new Date('2026-08-15'),
+    },
   ];
 }
 

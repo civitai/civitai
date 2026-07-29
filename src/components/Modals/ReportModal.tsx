@@ -79,6 +79,7 @@ const reports = [
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
+      ReportEntity.Challenge,
     ],
   },
   {
@@ -101,6 +102,7 @@ const reports = [
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
+      ReportEntity.Challenge,
     ],
   },
   {
@@ -113,7 +115,7 @@ const reports = [
     reason: ReportReason.Ownership,
     label: 'This uses my art',
     Element: OwnershipForm,
-    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry],
+    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry, ReportEntity.Challenge],
   },
   {
     reason: ReportReason.Spam,
@@ -135,6 +137,7 @@ const reports = [
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
+      ReportEntity.Challenge,
     ],
   },
 ];

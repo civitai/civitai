@@ -28,6 +28,7 @@ import {
   toMeshyPolyGenInput,
   type Model3DGenerationSchema,
 } from '~/server/orchestrator/polygen/polygen.schema';
+import { buildModel3DPreviewStep } from './model3d-preview';
 
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 type PolyGenCtx = EcosystemGraphOutput & { ecosystem: 'PolyGen' };
@@ -40,26 +41,35 @@ type PolyGenCtx = EcosystemGraphOutput & { ecosystem: 'PolyGen' };
  * standard `mode` Controller in GenerationForm.tsx) — we map it back to
  * `mode` here before handing off to the shared input builder.
  */
-export const createPolyGenInput = defineHandler<PolyGenCtx, StepInput[]>((data) => {
+export const createPolyGenInput = defineHandler<PolyGenCtx, StepInput[]>((data, ctx) => {
   const { polygenMode, ...rest } = data as PolyGenCtx & { polygenMode?: 'preview' | 'full' };
 
-  // Synthesize the schema shape `toMeshyPolyGenInput` expects.
+  // The orchestrator schema discriminates on `process` and speaks `sourceImage`;
+  // derive both from `workflow` + `images[0]` (the graph carries neither).
+  const process = data.workflow.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
+  const sourceImage = process === 'imageTo3D' ? data.images?.[0] : undefined;
   const schemaShape = {
     ...rest,
+    process,
     ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
+    ...(sourceImage ? { sourceImage } : {}),
   } as unknown as Model3DGenerationSchema;
 
   const input = toMeshyPolyGenInput(schemaShape) as
     | MeshyTextTo3dFalPolyGenInput
     | MeshyImageTo3dFalPolyGenInput;
 
-  const step: PolyGenStepTemplate = {
+  const polyGenStep: PolyGenStepTemplate = {
     $type: 'polyGen',
     input,
   };
 
-  // Cast to StepInput[] — the shared `StepInput` union doesn't list
-  // `PolyGenStepTemplate` (it's the union of the V2 ecosystems' canonical
-  // step types), but the orchestrator queue accepts polyGen steps natively.
-  return [step as unknown as StepInput];
+  // Chain a `model3DPreview` step that renders a single controllable 2D
+  // preview of the generated mesh (see `buildModel3DPreviewStep`).
+  const previewStep = buildModel3DPreviewStep(ctx.baseStepIndex);
+
+  // Cast to StepInput[] — the shared `StepInput` union lists neither
+  // `PolyGenStepTemplate` nor the (client-untyped) `model3DPreview` step,
+  // but the orchestrator queue accepts both natively.
+  return [polyGenStep, previewStep] as unknown as StepInput[];
 });

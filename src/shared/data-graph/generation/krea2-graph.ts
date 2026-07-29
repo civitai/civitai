@@ -6,9 +6,10 @@
  * engines:
  *
  * FAL engine (Krea2FalImageGenInput) — size tiers, no LoRA:
- * - medium: lower-resolution tier
- * - large:  higher-resolution tier
- *   Controls: aspectRatio / creativity / styleReferences / seed.
+ * - medium: smaller/faster model
+ * - large:  larger, higher-quality model
+ *   Both render at the same ~1K resolution (the tier is model size, not image
+ *   size). Controls: aspectRatio / creativity / styleReferences / seed.
  *
  * Comfy engine (ComfyKrea2Raw/TurboCreateImageGenInput) — LoRA support:
  * - raw:   full-step variant
@@ -35,9 +36,9 @@ import {
   snippetsGraph,
   triggerWordsGraph,
 } from './common';
-import {
-  type GenerationAspectRatio,
-  getAspectRatioOptions,
+import type {
+  AspectRatioDimensions,
+  GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 
 // =============================================================================
@@ -92,24 +93,39 @@ const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
 // =============================================================================
 
 /**
- * Krea 2's supported aspect ratios, restricted to the standard codebase set
- * defined by GenerationAspectRatio. The orchestrator picks actual output
- * dimensions based on the selected `size` tier, so display dimensions come
- * from the shared 1080p table for consistency with other ecosystems.
+ * Display dimensions for Krea 2's FAL size tiers, restricted to the standard
+ * codebase set defined by GenerationAspectRatio (and their listed order in the
+ * form). Both the medium and large tiers output the same size — "large" is a
+ * bigger model, not a bigger image. The FAL API takes only `size` +
+ * `aspectRatio` (no width/height), so these values are display-only; the
+ * orchestrator derives the real output.
+ *
+ * Krea renders ~1MP area buckets (each side divisible by 32), not a fixed
+ * short-side, so the shared 1080p table was doubly wrong. The 16:9 / 4:3 / 3:2
+ * / 1:1 / 4:5 values are measured from real generations; 2:3 and 9:16 are the
+ * transposes of 3:2 and 16:9 (Krea doesn't expose them in the size-tier form to
+ * measure directly, but the bucket set is symmetric).
  *
  * (Krea's API also accepts '2.35:1', but it's a non-standard cinematic ratio
  * not part of GenerationAspectRatio — omitted to stay aligned with the rest of
  * the form.)
  */
-const krea2AspectRatioList: GenerationAspectRatio[] = [
-  '16:9',
-  '4:3',
-  '3:2',
-  '1:1',
-  '4:5',
-  '2:3',
-  '9:16',
-];
+const krea2AspectRatioDimensions = {
+  '16:9': { width: 1376, height: 768 },
+  '4:3': { width: 1184, height: 896 },
+  '3:2': { width: 1248, height: 832 },
+  '1:1': { width: 1024, height: 1024 },
+  '4:5': { width: 928, height: 1152 },
+  '2:3': { width: 832, height: 1248 },
+  '9:16': { width: 768, height: 1376 },
+} satisfies Partial<Record<GenerationAspectRatio, AspectRatioDimensions>>;
+
+const krea2AspectRatioOptions = (
+  Object.keys(krea2AspectRatioDimensions) as (keyof typeof krea2AspectRatioDimensions)[]
+).map((ratio) => {
+  const { width, height } = krea2AspectRatioDimensions[ratio];
+  return { label: ratio, value: ratio, width, height };
+});
 
 /** Standard preferred ratios — substitute 4:5 for 3:4 since Krea lacks 3:4. */
 const krea2PriorityRatios = ['16:9', '4:3', '1:1', '4:5', '9:16'];
@@ -266,7 +282,7 @@ export const krea2Graph = new DataGraph<
   .node(
     'aspectRatio',
     aspectRatioNode({
-      options: getAspectRatioOptions('1080p', krea2AspectRatioList),
+      options: krea2AspectRatioOptions,
       defaultValue: '1:1',
       priorityOptions: krea2PriorityRatios,
     })

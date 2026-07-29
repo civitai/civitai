@@ -20,6 +20,7 @@ import {
   IconArrowLeft,
   IconExternalLink,
   IconInfoCircle,
+  IconPencil,
   IconPlugConnected,
   IconThumbUp,
 } from '@tabler/icons-react';
@@ -27,21 +28,24 @@ import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getRecommendLabel } from '~/components/Apps/appListingCardView';
 import {
-  getListingBadge,
-  getRecommendLabel,
-  type ListingBadgeKind,
-} from '~/components/Apps/appListingCardView';
-import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
+  canOwnerEditListing,
+  getDetailPrimaryAction,
+  getOwnerEditHref,
+} from '~/components/Apps/appListingDetailView';
+import { TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { AppListingComments } from '~/components/Apps/AppListingComments';
+import { ReportListingButton } from '~/components/Apps/ReportListingButton';
+import { ReviewListingButton } from '~/components/Apps/ReviewListingButton';
+import { AppListingReviews } from '~/components/Apps/AppListingReviews';
 import {
   CATEGORY_ICONS,
   FALLBACK_CATEGORY_ICON,
 } from '~/components/Apps/marketplaceCategoryIcons';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import {
-  isMarketplaceCategory,
-  MARKETPLACE_CATEGORY_LABELS,
-} from '~/server/services/blocks/marketplace-categories.constants';
+import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type {
   ListingDetail,
   ListingGalleryScreenshot,
@@ -58,9 +62,11 @@ import type {
  * — same screenshot-grid + description + external-link discipline — so listings
  * feel native.
  *
- * DARK / parallel-run: rendered only by the mod-only `/apps/store-preview/<slug>`
- * surface. The live `/apps/[appBlockId]` detail + `AppDetailsModal` + default
- * `/apps` are byte-unchanged; the canonical `/apps/[slug]` cutover is P2d.
+ * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>`
+ * surface AND, in read-only `preview` mode (see props), by the moderator
+ * listing-media review as a store preview of an unapproved shadow listing. The
+ * live `/apps/[appBlockId]` detail + `AppDetailsModal` + default `/apps` are
+ * byte-unchanged; the canonical `/apps/[slug]` cutover is P2d.
  *
  * XSS / encoding discipline (mirrors P2b): external hrefs are https-guarded in
  * the pure view-model (`safeExternalHref`) + rendered with rel="noopener
@@ -76,22 +82,6 @@ import type {
  *     so we render a plain cover with the category-glyph placeholder fallback
  *     (same as the card). Feeding those would be a P2a schema addition.
  */
-
-const KIND_BADGE_ICON: Record<ListingBadgeKind, Icon> = {
-  onsite: IconApps,
-  connect: IconPlugConnected,
-  'external-link': IconExternalLink,
-};
-
-const KIND_BADGE_COLOR: Record<ListingBadgeKind, string> = {
-  onsite: 'blue',
-  connect: 'teal',
-  'external-link': 'blue',
-};
-
-function categoryLabel(category: string): string {
-  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
-}
 
 function categoryIcon(category: string): Icon {
   return isMarketplaceCategory(category) ? CATEGORY_ICONS[category] : FALLBACK_CATEGORY_ICON;
@@ -157,13 +147,20 @@ function CreatorChip({ creator }: { creator: ListingDetail['creator'] }) {
       underline="hover"
       c="dimmed"
     >
-      <Group gap={6} wrap="nowrap">
-        <Avatar src={avatarSrc} alt="" radius="xl" size={24}>
+      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+        <Avatar src={avatarSrc} alt="" radius="xl" size={24} style={{ flexShrink: 0 }}>
           {creator.username.charAt(0).toUpperCase()}
         </Avatar>
-        <Text size="sm" c="dimmed" lineClamp={1}>
-          by {creator.username}
-        </Text>
+        {/* Tuned to fit; Tooltip reveals a long username only when it still clips. */}
+        <TruncatedText
+          size="sm"
+          c="dimmed"
+          lineClamp={1}
+          tooltipLabel={creator.username}
+          style={{ minWidth: 0 }}
+        >
+          {`by ${creator.username}`}
+        </TruncatedText>
       </Group>
     </Anchor>
   );
@@ -285,26 +282,50 @@ export interface AppListingDetailBodyProps {
   detail: ListingDetail;
   /** Whether the viewer can launch an in-host page app (the `appBlocksPages` flag). */
   canOpenPage?: boolean;
+  /**
+   * READ-ONLY preview posture. When set, render ONLY the presentational parts —
+   * hero cover, icon, name, tagline, creator chip, content-rating badge, screenshot
+   * gallery, description markdown — and OMIT every LIVE/interactive surface: the
+   * comments + recommend reviews, the report / review / primary-action / owner-edit
+   * buttons, and the recommend roll-up. Used by the moderator listing-media review
+   * to render an unapproved SHADOW listing as a store preview WITHOUT loading its
+   * comments/reviews (which don't exist yet) or exposing user actions on an
+   * un-approved listing. When NOT set, behaviour is byte-identical to before.
+   */
+  preview?: boolean;
 }
 
-export function AppListingDetailBody({ detail, canOpenPage = false }: AppListingDetailBodyProps) {
-  const badge = getListingBadge(detail);
-  const BadgeIcon = KIND_BADGE_ICON[badge.kind];
+export function AppListingDetailBody({
+  detail,
+  canOpenPage = false,
+  preview = false,
+}: AppListingDetailBodyProps) {
+  const currentUser = useCurrentUser();
   const recommendLabel = getRecommendLabel(detail.recommend, detail.reviewCount);
   const hasRecommend = detail.recommend.recommendPct != null;
 
+  // Owner "Edit" deep-link (Item 2) — owner + editable status (approved-only read
+  // path carries no status → editable); the href builder returns null when there
+  // is no editable target (on-site listing with no backing appBlockId).
+  const isOwner = !!currentUser?.id && currentUser.id === detail.creator?.id;
+  const editHref = getOwnerEditHref(detail.kindData, detail.id);
+  const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
+
   return (
     <Stack gap="lg">
-      <Anchor component={Link} href="/apps/store-preview" size="sm">
-        <Group gap={4}>
-          <IconArrowLeft size={14} />
-          Back to store
-        </Group>
-      </Anchor>
+      {/* Back-to-store nav is a live-surface affordance — omitted in preview. */}
+      {!preview && (
+        <Anchor component={Link} href="/apps/store-preview" size="sm">
+          <Group gap={4}>
+            <IconArrowLeft size={14} />
+            Back to store
+          </Group>
+        </Anchor>
+      )}
 
       <HeroCover coverUrl={detail.coverUrl} category={detail.category} name={detail.name} />
 
-      {/* Header: icon + name + tagline + creator + kind/category badges + action. */}
+      {/* Header: icon + name + tagline + creator + content-rating badge + action. */}
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <Group gap="md" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
           <Avatar src={detail.iconUrl ?? undefined} alt="" radius="md" size={64}>
@@ -320,51 +341,72 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
               </Text>
             )}
             <CreatorChip creator={detail.creator} />
-            <Group gap="xs" mt={2}>
-              <Badge
-                variant="light"
-                color={KIND_BADGE_COLOR[badge.kind]}
-                size="sm"
-                leftSection={<BadgeIcon size={12} />}
-              >
-                {badge.label}
-              </Badge>
-              {detail.category && (() => {
-                const CategoryIcon = categoryIcon(detail.category);
-                return (
-                  <Badge variant="light" color="grape" size="sm" leftSection={<CategoryIcon size={12} />}>
-                    {categoryLabel(detail.category)}
-                  </Badge>
-                );
-              })()}
-              {detail.contentRating && (
+            {detail.contentRating && (
+              <Group gap="xs" mt={2}>
                 <Badge variant="light" color="gray" size="sm">
                   {detail.contentRating}
                 </Badge>
-              )}
-            </Group>
+              </Group>
+            )}
           </Stack>
         </Group>
+        {/* Action column (primary action + owner edit + review/report) — every
+            item here is a LIVE interactive affordance, so the whole column is
+            omitted in read-only preview. */}
+        {!preview && (
         <Box style={{ flexShrink: 0 }}>
-          <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+          <Stack gap="xs" align="flex-end">
+            <PrimaryAction detail={detail} canOpenPage={canOpenPage} />
+            {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
+                owner + editable status (mod-removed listings hide it). Routes by
+                kind (manifest editor for on-site, submit editor for off-site). */}
+            {showEdit && editHref && (
+              <Button
+                component={Link}
+                href={editHref}
+                variant="default"
+                leftSection={<IconPencil size={16} />}
+                data-testid="apps-listing-owner-edit"
+              >
+                Edit
+              </Button>
+            )}
+            {/* Review affordance (thumbs/recommend) — hidden for the owner + signed-out
+                viewers; the write proc is protected + flag-gated + self-review-blocked
+                server-side. Feeds the recommend metric below SYNCHRONOUSLY. */}
+            <ReviewListingButton appListingId={detail.id} ownerUserId={detail.creator?.id ?? null} />
+            {/* Report affordance — dark behind the mod-only store surface; the
+                proc is protected + rate-limited + reporter-bound server-side. */}
+            <ReportListingButton appListingId={detail.id} />
+          </Stack>
         </Box>
-      </Group>
-
-      {/* Recommend rollup — Steam-style "N% recommend (M)" or "No reviews yet". */}
-      <Group gap="md" wrap="wrap">
-        <Group gap={6} wrap="nowrap">
-          <IconThumbUp size={16} className={hasRecommend ? 'text-green-500' : 'text-gray-500'} />
-          <Text size="sm" fw={500}>
-            {recommendLabel}
-          </Text>
-        </Group>
-        {hasRecommend && (
-          <Text size="xs" c="dimmed">
-            {detail.recommend.recommendedCount.toLocaleString()} recommend ·{' '}
-            {detail.recommend.notRecommendedCount.toLocaleString()} don&apos;t
-          </Text>
         )}
       </Group>
+
+      {/* Recommend rollup + recent reviews are review AGGREGATES — omitted in
+          preview (a shadow listing has none, and we must not query them). */}
+      {!preview && (
+        <>
+          {/* Recommend rollup — Steam-style "N% recommend (M)" or "No reviews yet". */}
+          <Group gap="md" wrap="wrap">
+            <Group gap={6} wrap="nowrap">
+              <IconThumbUp size={16} className={hasRecommend ? 'text-green-500' : 'text-gray-500'} />
+              <Text size="sm" fw={500}>
+                {recommendLabel}
+              </Text>
+            </Group>
+            {hasRecommend && (
+              <Text size="xs" c="dimmed">
+                {detail.recommend.recommendedCount.toLocaleString()} recommend ·{' '}
+                {detail.recommend.notRecommendedCount.toLocaleString()} don&apos;t
+              </Text>
+            )}
+          </Group>
+
+          {/* Recent reviews — thumbs/recommend list (mod-filtered, escaped plain text). */}
+          <AppListingReviews appListingId={detail.id} />
+        </>
+      )}
 
       <ScreenshotGallery screenshots={detail.screenshots} name={detail.name} />
 
@@ -390,6 +432,15 @@ export function AppListingDetailBody({ detail, canOpenPage = false }: AppListing
             permissions.
           </Alert>
         )}
+
+      {/* CommentsV2 discussion — reuses the shared comment + moderation stack keyed
+          on the listing's Thread (`entityType="appListing"`, integer surrogate).
+          Additive + separate from the recommend-style reviews above. Only reached
+          for an APPROVED listing (getListingDetail is approved-only) — omitted in
+          preview (a shadow listing has no thread; loading it would 404/N+1). */}
+      {!preview && (
+        <AppListingComments serialId={detail.serialId} ownerUserId={detail.creator?.id ?? null} />
+      )}
     </Stack>
   );
 }

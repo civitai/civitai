@@ -6,6 +6,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import { extractStepErrors, sanitizeProviderError } from './provider-errors';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -43,8 +44,7 @@ async function downloadAndUploadImage(
 ): Promise<{ s3Key: string; imageId: number } | null> {
   try {
     const imageResponse = await fetch(imageUrl);
-    if (!imageResponse.ok)
-      throw new Error(`Failed to download: ${imageResponse.status}`);
+    if (!imageResponse.ok) throw new Error(`Failed to download: ${imageResponse.status}`);
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
     const s3Key = randomUUID();
@@ -166,6 +166,15 @@ export async function pollIterationWorkflow({
     };
   }
 
+  // Prefer a blockedReason message; otherwise surface the sanitized provider error
+  // (external-provider failures land in step.jobs[].reason, previously dropped).
+  const engine =
+    (firstStep?.metadata?.params as { engine?: string })?.engine ?? firstStep?.input?.engine;
+  const providerErrors = extractStepErrors(firstStep).map((msg) =>
+    sanitizeProviderError(msg, engine)
+  );
+  const providerErrorMessage = providerErrors.length > 0 ? providerErrors.join('\n') : undefined;
+
   // Hard failure: workflow itself terminated without success.
   if (
     workflowStatus === 'failed' ||
@@ -176,7 +185,7 @@ export async function pollIterationWorkflow({
       status: 'failed' as const,
       imageUrl: null,
       images: [],
-      errorMessage: blockedReasonToMessage(blockedReason),
+      errorMessage: blockedReasonToMessage(blockedReason) ?? providerErrorMessage,
     };
   }
 
@@ -189,7 +198,7 @@ export async function pollIterationWorkflow({
       status: 'failed' as const,
       imageUrl: null,
       images: [],
-      errorMessage: blockedReasonToMessage(blockedReason),
+      errorMessage: blockedReasonToMessage(blockedReason) ?? providerErrorMessage,
     };
   }
 

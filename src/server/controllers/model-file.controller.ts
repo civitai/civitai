@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
+  HasOfficialFileOfSizeInput,
   ModelFileCreateInput,
   ModelFileUpdateInput,
   ModelFileUpsertInput,
@@ -10,6 +11,8 @@ import {
   createFile,
   deleteFile,
   getFilesForModelVersionCache,
+  hasOfficialFileOfSize,
+  restoreReplacedFile,
   updateFile,
 } from '~/server/services/model-file.service';
 import {
@@ -21,6 +24,7 @@ import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils
 import { isB2Url, parseB2Url, parseKey } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
+import { bytesToKB } from '~/utils/number-helpers';
 
 type ResolverBackend = 'backblaze' | 'cloudflare';
 
@@ -318,5 +322,29 @@ export const deleteFileHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const restoreReplacedFileHandler = async ({ input }: { input: GetByIdInput }) => {
+  try {
+    return await restoreReplacedFile({ id: input.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+// Client sends bytes (file.size); convert with the same bytesToKB createFile uses so
+// the stored sizeKB and this size gate agree exactly.
+export const hasOfficialFileOfSizeHandler = async ({
+  input,
+}: {
+  input: HasOfficialFileOfSizeInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await hasOfficialFileOfSize(bytesToKB(input.size));
+  } catch (error) {
+    throw throwDbError(error);
   }
 };

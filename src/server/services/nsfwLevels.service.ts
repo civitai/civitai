@@ -11,40 +11,61 @@ import {
   comicsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { enqueueJobs } from '~/server/services/job-queue.service';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { CollectionItemStatus, EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+
+// Postgres caps a prepared statement at 32767 bind variables, and an `in` list
+// spends one per id. A backlogged JobQueue easily exceeds that, which fails the
+// whole run with P2035 and leaves the backlog to grow. (Bit us 2026-07-24.)
+const ID_QUERY_BATCH_SIZE = 5000;
+const idQueryLimiter = () => Limiter({ batchSize: ID_QUERY_BATCH_SIZE, limit: 2 });
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
-  const [images, connections, articles, collectionItems] = await Promise.all([
-    dbRead.image.findMany({
-      where: { id: { in: imageIds } },
-      select: { postId: true },
-    }),
-    dbRead.imageConnection.findMany({
-      where: { imageId: { in: imageIds } },
-      select: { entityType: true, entityId: true },
-    }),
-    dbRead.article.findMany({
-      where: { coverId: { in: imageIds } },
-      select: { id: true },
-    }),
-    dbRead.collectionItem.findMany({
-      where: { imageId: { in: imageIds }, status: CollectionItemStatus.ACCEPTED },
-      select: { collectionId: true },
-    }),
+  const [images, connections, articles, collectionItems, model3ds] = await Promise.all([
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.image.findMany({
+        where: { id: { in: ids } },
+        select: { postId: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.imageConnection.findMany({
+        where: { imageId: { in: ids } },
+        select: { entityType: true, entityId: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.article.findMany({
+        where: { coverId: { in: ids } },
+        select: { id: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.collectionItem.findMany({
+        where: { imageId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+        select: { collectionId: true },
+      })
+    ),
+    idQueryLimiter().process(imageIds, (ids) =>
+      dbRead.model3D.findMany({
+        where: { thumbnailImageId: { in: ids } },
+        select: { id: true },
+      })
+    ),
   ]);
 
-  const comicPanels = await dbRead.comicPanel.findMany({
-    where: { imageId: { in: imageIds } },
-    select: { projectId: true },
-  });
+  const comicPanels = await idQueryLimiter().process(imageIds, (ids) =>
+    dbRead.comicPanel.findMany({
+      where: { imageId: { in: ids } },
+      select: { projectId: true },
+    })
+  );
 
   return {
     postIds: images.map((x) => x.postId).filter(isDefined),
@@ -64,19 +85,24 @@ async function getImageConnectedEntities(imageIds: number[]) {
       .map((x) => x.entityId),
     comicProjectIds: comicPanels.map((x) => x.projectId),
     collectionIds: collectionItems.map((x) => x.collectionId),
+    model3dIds: model3ds.map((x) => x.id),
   };
 }
 
 async function getPostConnectedEntities(postIds: number[]) {
   const [posts, collectionItems] = await Promise.all([
-    dbRead.post.findMany({
-      where: { id: { in: postIds } },
-      select: { modelVersionId: true },
-    }),
-    dbRead.collectionItem.findMany({
-      where: { postId: { in: postIds }, status: CollectionItemStatus.ACCEPTED },
-      select: { collectionId: true },
-    }),
+    idQueryLimiter().process(postIds, (ids) =>
+      dbRead.post.findMany({
+        where: { id: { in: ids } },
+        select: { modelVersionId: true },
+      })
+    ),
+    idQueryLimiter().process(postIds, (ids) =>
+      dbRead.collectionItem.findMany({
+        where: { postId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+        select: { collectionId: true },
+      })
+    ),
   ]);
 
   return {
@@ -86,10 +112,12 @@ async function getPostConnectedEntities(postIds: number[]) {
 }
 
 async function getModelVersionConnectedEntities(modelVersionIds: number[]) {
-  const modelVersions = await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: { modelId: true },
-  });
+  const modelVersions = await idQueryLimiter().process(modelVersionIds, (ids) =>
+    dbRead.modelVersion.findMany({
+      where: { id: { in: ids } },
+      select: { modelId: true },
+    })
+  );
 
   return {
     modelIds: modelVersions.map((x) => x.modelId),
@@ -97,10 +125,12 @@ async function getModelVersionConnectedEntities(modelVersionIds: number[]) {
 }
 
 async function getModelConnectedEntities(modelIds: number[]) {
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { modelId: { in: modelIds }, status: CollectionItemStatus.ACCEPTED },
-    select: { collectionId: true },
-  });
+  const collectionItems = await idQueryLimiter().process(modelIds, (ids) =>
+    dbRead.collectionItem.findMany({
+      where: { modelId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+      select: { collectionId: true },
+    })
+  );
 
   return {
     collectionIds: collectionItems.map((x) => x.collectionId),
@@ -108,10 +138,12 @@ async function getModelConnectedEntities(modelIds: number[]) {
 }
 
 async function getArticleConnectedEntities(articleIds: number[]) {
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { articleId: { in: articleIds }, status: CollectionItemStatus.ACCEPTED },
-    select: { collectionId: true },
-  });
+  const collectionItems = await idQueryLimiter().process(articleIds, (ids) =>
+    dbRead.collectionItem.findMany({
+      where: { articleId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+      select: { collectionId: true },
+    })
+  );
 
   return {
     collectionIds: collectionItems.map((x) => x.collectionId),
@@ -137,6 +169,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   let modelIds: number[] = [];
   let modelVersionIds: number[] = [];
   let comicProjectIds: number[] = [];
+  let model3dIds: number[] = [];
 
   function mergeRelated(
     data: Partial<{
@@ -148,6 +181,7 @@ export async function getNsfwLevelRelatedEntities(source: {
       modelIds: number[];
       modelVersionIds: number[];
       comicProjectIds: number[];
+      model3dIds: number[];
     }>
   ) {
     if (data.postIds) postIds = uniq(postIds.concat(data.postIds));
@@ -158,6 +192,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     if (data.modelIds) modelIds = uniq(modelIds.concat(data.modelIds));
     if (data.modelVersionIds) modelVersionIds = uniq(modelVersionIds.concat(data.modelVersionIds));
     if (data.comicProjectIds) comicProjectIds = uniq(comicProjectIds.concat(data.comicProjectIds));
+    if (data.model3dIds) model3dIds = uniq(model3dIds.concat(data.model3dIds));
   }
 
   if (source.imageIds?.length) {
@@ -203,6 +238,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     modelIds,
     modelVersionIds,
     comicProjectIds: uniq([...(source.comicProjectIds ?? []), ...comicProjectIds]),
+    model3dIds,
   };
 }
 
@@ -754,56 +790,31 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
 }
 
 /**
- * Enqueue the Model3D row(s) whose `thumbnailImageId === imageId` for an
- * `UpdateNsfwLevel` job. Called by the image-scan side-effects path so a
- * fresh thumbnail nsfwLevel propagates up to `Model3D.nsfwLevel` /
- * `Model3DMetric.nsfwLevel` on the next `update-nsfw-levels` cron tick
- * (`src/server/jobs/job-queue.ts`).
+ * Prompt inline recompute of a Model3D's nsfwLevel from its thumbnail Image,
+ * for the image scan/mod paths. Call it unconditionally with the image's
+ * `postId` — a Model3D thumbnail is always a standalone image (no post — see
+ * `ingestThumbnailImage`), so a posted image provably isn't a thumbnail and
+ * short-circuits before the lookup. Keeping that gate here (not at each call
+ * site) lets callers treat it as a plain fire-and-forget side effect. The
+ * `update-nsfw-levels` cron independently re-derives Model3Ds from changed
+ * images (`getImageConnectedEntities`), so a rare replica-lag miss here still
+ * heals on the next tick — no `dbWrite` needed.
  *
- * Cheap single-row read — the FK is `@unique`, so this matches at most one
- * Model3D row. We still loop in case the lookup widens in the future.
- * Safe to fire-and-forget — no-op when the image isn't a Model3D thumbnail.
+ * NB: the `postId` short-circuit is specific to Model3D. Do NOT copy it to the
+ * comic-panel lookups nearby — a comic panel's image CAN be posted (import mode
+ * links an existing image), so gating those on `!postId` would skip real work.
  */
-export async function queueModel3DForThumbnailImage(imageId: number) {
-  // Use the primary, NOT the read replica: the polyGen handler creates the
-  // Image row first (which kicks off scanning) and the Model3D row a few ms
-  // later. Replica lag can make the freshly-created Model3D invisible to
-  // this lookup at the moment the scan webhook fires, which silently drops
-  // the enqueue and leaves `Model3D.nsfwLevel = 0` for a thumbnail that
-  // actually got rated (the bug surfaced in prod: image PG13, model3d 0).
-  // The query is a single `thumbnailImageId` index hit, so the primary load
-  // is negligible.
-  const model3ds = await dbWrite.model3D.findMany({
+export async function updateModel3DNsfwLevelForThumbnailImage({
+  imageId,
+  postId,
+}: {
+  imageId: number;
+  postId: number | null;
+}) {
+  if (postId != null) return;
+  const model3ds = await dbRead.model3D.findMany({
     where: { thumbnailImageId: imageId },
     select: { id: true },
   });
-  if (!model3ds.length) return;
-  await enqueueJobs(
-    model3ds.map((m) => ({
-      entityId: m.id,
-      entityType: EntityType.Model3D,
-      type: JobQueueType.UpdateNsfwLevel,
-    }))
-  );
-}
-
-/**
- * Batched variant of {@link queueModel3DForThumbnailImage}. Used by
- * moderator bulk paths (block/unblock/appeal) that touch many images at once.
- */
-export async function queueModel3DsForThumbnailImages(imageIds: number[]) {
-  if (!imageIds.length) return;
-  // Same replica-lag hazard as `queueModel3DForThumbnailImage` — see there.
-  const model3ds = await dbWrite.model3D.findMany({
-    where: { thumbnailImageId: { in: imageIds } },
-    select: { id: true },
-  });
-  if (!model3ds.length) return;
-  await enqueueJobs(
-    model3ds.map((m) => ({
-      entityId: m.id,
-      entityType: EntityType.Model3D,
-      type: JobQueueType.UpdateNsfwLevel,
-    }))
-  );
+  if (model3ds.length) await updateModel3DNsfwLevels(model3ds.map((m) => m.id));
 }

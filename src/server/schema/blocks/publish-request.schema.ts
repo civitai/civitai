@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -96,12 +97,39 @@ export const approveRequestSchema = z.object({
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;
 
+/**
+ * On-site reject-reason floor, unified with the shared moderator-reason minimum
+ * (`OFFSITE_MOD_REASON_MIN`, 3) so it matches every other mod-reason field on
+ * /apps/review and the client gate agrees with the server schema (was a magic 10).
+ */
+export const PUBLISH_REJECTION_REASON_MIN = OFFSITE_MOD_REASON_MIN;
+export const PUBLISH_REJECTION_REASON_MAX = 2000;
+
 export const rejectRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
-  rejectionReason: z.string().min(10).max(2000),
+  rejectionReason: z
+    .string()
+    .min(PUBLISH_REJECTION_REASON_MIN)
+    .max(PUBLISH_REJECTION_REASON_MAX),
 });
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
+
+/**
+ * Input for the MOD-ONLY `blocks.retriggerBuild` — re-fire the Tekton build for
+ * an ALREADY-APPROVED request whose build never started (or failed).
+ *
+ * `publishRequestId` is the ONLY field, and that is load-bearing: the commit sha
+ * to rebuild is read from the DB row, NEVER supplied by the caller. Accepting a
+ * sha here would let a moderator rebuild + deploy an ARBITRARY commit that was
+ * never reviewed. Keeping the sha off the wire makes that structurally
+ * impossible rather than merely validated-against.
+ */
+export const retriggerBuildSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type RetriggerBuildInput = z.infer<typeof retriggerBuildSchema>;
 
 /** Input for the MOD-ONLY `blocks.getPublishRequestScreenshots` (F-E E5 review). */
 export const getPublishRequestScreenshotsSchema = z.object({
@@ -119,6 +147,14 @@ export const getPublishRequestDiffSchema = z.object({
 
 export type GetPublishRequestDiffInput = z.infer<typeof getPublishRequestDiffSchema>;
 
+/** Input for the MOD-ONLY `blocks.getPublishRequest` — single-request fetch that
+ *  powers the per-submission review PAGE (`/apps/review/<publishRequestId>`). */
+export const getPublishRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type GetPublishRequestInput = z.infer<typeof getPublishRequestSchema>;
+
 /** Input for the MOD-ONLY review-sandbox `blocks.previewRequest` /
  *  `blocks.getReviewStatus` (#2831). */
 export const previewRequestSchema = z.object({
@@ -132,6 +168,62 @@ export const getReviewStatusSchema = z.object({
 });
 
 export type GetReviewStatusInput = z.infer<typeof getReviewStatusSchema>;
+
+/** Input for the MOD-ONLY review-sandbox `blocks.mintReviewBlockToken` (#2831) —
+ *  mints the self-bound, scope-stripped block token the on-site review preview
+ *  host handshakes with. Same shape as previewRequest (the pending request id). */
+export const mintReviewBlockTokenSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  /**
+   * MOD REVIEW SANDBOX "run for real" (#2831). Default false → the render-only
+   * sandbox (byte-identical to today). When true, the mod has EXPLICITLY opted in
+   * (behind a loud client consent gate) to run the unapproved app for real against
+   * their OWN account; the server re-mints a wider, still-clamped, still-self-bound,
+   * still-forced-SFW token with a per-call budget + an aggregate session Buzz cap.
+   * The opt-in is authorized + rate-limited server-side regardless of this flag.
+   */
+  runForReal: z.boolean().optional().default(false),
+});
+
+export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
+
+/** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
+ *  dispatches an ephemeral review agent for a PENDING request. Same shape as
+ *  previewRequest (the pending request id). */
+export const startAgentReviewSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
+
+/** Input for the MOD-ONLY agentic code-review READ path `blocks.getAgentReview`
+ *  (P2) — the poll + render source for the report of a PENDING request. Same
+ *  shape as previewRequest (the pending request id). */
+export const getAgentReviewSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+});
+
+export type GetAgentReviewInput = z.infer<typeof getAgentReviewSchema>;
+
+/** One turn of the MOD-ONLY in-modal agent chat (P3). The CLIENT sends the
+ *  running conversation; the server prepends its own grounding system context. */
+export const agentReviewChatMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1).max(4000),
+});
+
+export type AgentReviewChatMessage = z.infer<typeof agentReviewChatMessageSchema>;
+
+/** Input for the MOD-ONLY in-modal agent chat proxy `blocks.agentReviewChat`
+ *  (P3). The client sends the pending request id + the running conversation
+ *  (bounded); the server prepends a grounding system message and proxies to the
+ *  review agent pod's in-cluster gateway. */
+export const agentReviewChatSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  messages: z.array(agentReviewChatMessageSchema).min(1).max(20),
+});
+
+export type AgentReviewChatInput = z.infer<typeof agentReviewChatSchema>;
 
 export const teardownPreviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),

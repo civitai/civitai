@@ -29,8 +29,6 @@ export const loginRedirectReasons = {
   'image-gen':
     'Before you can generate, you need to create an account. Choose your preferred sign-in method below.',
   'blur-toggle': 'Displaying NSFW content requires you to be logged in',
-  'create-club': 'You need to be logged in to create a club',
-  'join-club': 'You need to be logged in to join a club',
   'civitai-vault': 'You need to be logged in to access your Civitai Vault',
   'favorite-model': 'You need to be logged in to favorite a model',
   rater: 'You need to be logged in to play the rating game',
@@ -38,6 +36,7 @@ export const loginRedirectReasons = {
   shop: 'You need to be logged in to preview and purchase cosmetics',
   'knights-new-order': 'You need to be logged in to join Knights of the New Order',
   'report-comic': 'You need to be logged in to report this comic',
+  'create-challenge': 'You need to be logged in to create a challenge',
   'submit-challenge': 'You need to be logged in to submit entries to a challenge',
   'view-content': 'You need to log in to view this content',
 };

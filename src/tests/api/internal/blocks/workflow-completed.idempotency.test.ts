@@ -33,13 +33,14 @@ const BLOCK_INSTANCE_ID = 'bki_0123456789ABCDEFGHJKMNPQRS';
 const WORKFLOW_ID = 'wf_test_123';
 const DEDUP_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-const { mockEnvStore, mockFindUnique, mockIncrBy, mockExpire } = vi.hoisted(() => ({
+const { mockEnvStore, mockFindUnique, mockIncrBy, mockExpire, mockExecuteRaw } = vi.hoisted(() => ({
   // Inlined literal: vi.hoisted() runs before the top-level `const JOB_TOKEN`,
   // so it can't reference that binding (keep this in sync with JOB_TOKEN below).
   mockEnvStore: { JOB_TOKEN: 'test-job-token' } as Record<string, unknown>,
   mockFindUnique: vi.fn(),
   mockIncrBy: vi.fn(),
   mockExpire: vi.fn(),
+  mockExecuteRaw: vi.fn(),
 }));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
@@ -58,6 +59,8 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: { blockUserSubscription: { findUnique: mockFindUnique } },
+  // G6: the handler persists the queue read-model status on first delivery.
+  dbWrite: { $executeRaw: (...a: unknown[]) => mockExecuteRaw(...a) },
 }));
 vi.mock('~/server/redis/client', () => ({
   redis: { incrBy: mockIncrBy, expire: mockExpire },
@@ -104,6 +107,7 @@ beforeEach(() => {
   mockFindUnique.mockResolvedValue({ id: 'sub_1', targetModelIds: [7], appBlockId: 'apb_1' });
   mockIncrBy.mockResolvedValue(1);
   mockExpire.mockResolvedValue(1);
+  mockExecuteRaw.mockResolvedValue(1);
 });
 
 afterEach(() => {

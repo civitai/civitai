@@ -5,6 +5,24 @@ import { buildFliptContext } from '~/server/services/feature-flags.service';
 const APP_BLOCKS_FLAG = 'app-blocks-enabled';
 
 /**
+ * Dedicated App Store VISIBILITY flag (W13 — PR-W1a / D8).
+ *
+ * DECOUPLES the App Store *catalog visibility* from `app-blocks-enabled`, which
+ * doubles as the BLOCK-RUNTIME kill-switch. The store-visibility surfaces (the
+ * `/apps` store SSR gate + landing, the store DETAIL page, the store grid query,
+ * and the PUBLIC store read procs) key off THIS flag so the catalog can widen to
+ * `public` INDEPENDENTLY of the deliberately-held block-runtime GA — a future
+ * true-public flip widens ONLY `app-listings`, while `app-blocks-enabled` (the
+ * runtime gate) stays mod-segmented.
+ *
+ * Mirrors the `appListings` entry in feature-flags.service.ts
+ * (`availability: ['mod']`, `fliptKey: 'app-listings'`). The flag does NOT exist
+ * in Flipt at merge time — it is created AFTER (a companion `flipt-state` PR)
+ * with the SAME mods + `app-dev-testers` segment `app-blocks-enabled` uses.
+ */
+export const APP_LISTINGS_FLAG = 'app-listings';
+
+/**
  * Dedicated flag for the App Blocks AUTHOR capability (developer soft-launch,
  * Phase B). Grants the right to SUBMIT apps + use `dev:live` (mint a dev token,
  * generate/spend from your own block) to a curated cohort — INDEPENDENT of the
@@ -179,6 +197,59 @@ export async function isAppBlocksEnabled(opts?: { user?: SessionUser }): Promise
 }
 
 /**
+ * Server-side check for the App Store VISIBILITY flag (W13 — PR-W1a / D8).
+ *
+ * Gates the STORE-VISIBILITY surfaces only — the public store read procs
+ * (`appListings.listAvailable` / `getAppDetail`), reached via the
+ * `enforceAppListingsReadFlag` middleware. This DECOUPLES store catalog
+ * visibility from `app-blocks-enabled`, which doubles as the block-runtime
+ * kill-switch, so the catalog can widen to public independently of the held
+ * block-runtime GA.
+ *
+ * ## Eval shape mirrors `isAppBlocksEnabled`, WITH an OR-fallback (load-bearing)
+ *
+ * Same per-user Flipt eval as `isAppBlocksEnabled` (entityId = user id, context
+ * from `buildFliptContext`) against the dedicated `app-listings` flag. The ONE
+ * difference: if `app-listings` resolves `false`, this FALLS BACK to
+ * `isAppBlocksEnabled(opts)`. That fallback is the whole point of the dark
+ * decoupling:
+ *   - The `app-listings` flag does NOT exist in Flipt at merge time (created
+ *     AFTER, as a companion `flipt-state` PR). A bare eval of an absent flag
+ *     resolves `false` for EVERYONE — which would REGRESS the currently-visible
+ *     cohort (mods + the `app-dev-testers` segment of `app-blocks-enabled`) the
+ *     instant this merges. The OR-fallback to `app-blocks-enabled` preserves
+ *     their store access verbatim through the transition window.
+ *   - Because `app-blocks-enabled` already grants the mods + app-dev-testers
+ *     cohort today, `isAppListingsEnabled` grants EXACTLY that same set until the
+ *     `app-listings` flag is created and later widened — so the as-merged change
+ *     is a NO-OP on visibility (zero behavior change today).
+ *
+ * Remove the `|| isAppBlocksEnabled` fallback ONLY after the store widens past
+ * the `app-blocks-enabled` cohort (i.e. once `app-listings` is the sole, wider
+ * source of truth); until then the fallback is what keeps existing viewers in.
+ *
+ * No user → preserve a global eval of `app-listings` that can never match a
+ * segment, then fall through to the no-arg `isAppBlocksEnabled()` global eval —
+ * fail-closed, identical to today's no-arg store-read behaviour.
+ */
+export async function isAppListingsEnabled(opts?: { user?: SessionUser }): Promise<boolean> {
+  const user = opts?.user;
+  // Per-user eval of the dedicated visibility flag — same entityId + context
+  // shape as isAppBlocksEnabled, so the `app-listings` segment resolves
+  // identically to the client/hasFeature gate. No user → global eval (never
+  // matches a segment).
+  const listingsOn = user
+    ? await isFlipt(APP_LISTINGS_FLAG, String(user.id), buildFliptContext(user))
+    : await isFlipt(APP_LISTINGS_FLAG);
+  if (listingsOn) return true;
+  // OR-fallback: the `app-listings` flag doesn't exist yet (dark window) / hasn't
+  // been widened, so defer to `app-blocks-enabled` to keep the existing
+  // mods + app-dev-testers cohort's store access intact. Same opts (per-user or
+  // no-user global) so the fallback eval matches the primary eval's shape.
+  return isAppBlocksEnabled(opts);
+}
+
+/**
  * AUTHZ check for the App Blocks AUTHOR capability (developer soft-launch).
  *
  * Governs who may SUBMIT apps + use `dev:live` (mint a dev token, generate +
@@ -280,6 +351,103 @@ export async function isAppBlocksRuntimeEnabled(): Promise<boolean> {
 }
 
 /**
+ * Dedicated mod+cohort-segmented flag for the APP DEV TUNNEL (on-site dev via a
+ * hardened sish tunnel — the `dev-<random16>.<APPS_DOMAIN>` generalization of the
+ * mod review sandbox).
+ *
+ * When ON for the caller, an approved app developer may mint a tunnel credential
+ * (`blocks.startDevTunnel`), get an ephemeral `dev-<random16>.<APPS_DOMAIN>` host
+ * wired to their LOCAL dev server, and open `civitai.com/apps/dev/<blockId>` to
+ * see their local code rendered inside the real production `PageBlockHost`. The
+ * whole feature is DORMANT until this flag is on for the caller, so it ships dark
+ * and enables per-cohort without touching the user-facing `app-blocks-enabled`
+ * rollout or the build pipeline.
+ *
+ * This is a USER-VISIBILITY / capability gate (the `startDevTunnel` / `stop` /
+ * `status` tRPC procedures + the `/apps/dev` SSR route + the entry-token mint), so
+ * — exactly like `app-blocks-review-sandbox-enabled` — it is segment-gated and
+ * MUST be evaluated WITH the caller's context. Create it in Flipt as base
+ * `enabled: false` with the `moderators` segment PLUS the `app-dev-testers` cohort
+ * segment (mirror `app-blocks-pages-enabled` / `app-blocks-review-sandbox-enabled`
+ * exactly) so mods + the dev-testers cohort resolve `true` and everyone else
+ * `false`.
+ *
+ * NB: this flag gates only the CONTROL PLANE (mint / route / entry-token). The
+ * public SSH exposure of the sish tunnel is a separate, deliberately-windowed
+ * infra change (P3) — enabling this flag alone can never expose a dev's machine,
+ * because with no public `ssh -R` reachability there is no tunnel to serve.
+ *
+ * Fail-safe: the flag does NOT exist in Flipt yet (created only AFTER this merges)
+ * → `isFlipt` returns `false` → `startDevTunnel` throws FORBIDDEN and the
+ * `/apps/dev` route 404s. So the as-merged behaviour is fully dark and cannot
+ * regress the gate open.
+ */
+export const APP_BLOCKS_DEV_TUNNEL_FLAG = 'app-blocks-dev-tunnel';
+
+/**
+ * Segment-gated gate for the APP DEV TUNNEL. Evaluated WITH the caller's context
+ * (entityId = user id, context carries server-side `isModerator`) so the
+ * `moderators` / `app-dev-testers` segments can match — identical eval shape to
+ * `isAppBlocksReviewSandboxEnabled`. No user → preserves a global eval that can
+ * never match a segment (fail-closed). See APP_BLOCKS_DEV_TUNNEL_FLAG.
+ *
+ * NOTE: unlike `isAppBlocksAuthorEnabled`, there is NO moderator static floor —
+ * the flag is created as the rollout, so an absent flag resolves `false` for
+ * EVERYONE (mods included). That is intentional and load-bearing: the dev tunnel
+ * is a brand-new surface (no existing mod access to preserve), so fail-closed for
+ * all until the flag exists is the safe posture.
+ */
+export async function isAppBlocksDevTunnelEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_DEV_TUNNEL_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * DEDICATED kill-switch for the HIGHEST-risk dev-tunnel surface: granting REAL
+ * (self-capped) Buzz-spend (`ai:write:budgeted`) to an UNSUBMITTED app — one that
+ * has NEVER been through review (no publish request). Deliberately SEPARATE from
+ * `app-blocks-dev-tunnel` so ops can kill "real Buzz on an unreviewed app" WITHOUT
+ * disabling all tunnel dev (render/HMR/pending-app testing stay up). When OFF, the
+ * brand-new (no-pending-row) dev-tunnel mint + SSR strip `ai:write:budgeted` from
+ * the granted set → the app resolves READ-ONLY (still renders, just can't spend).
+ * The PENDING (submitted-but-unapproved) and APPROVED tunnel paths are unaffected.
+ *
+ * Evaluated WITH the caller's context (mod/cohort segments), identical eval shape
+ * to `isAppBlocksDevTunnelEnabled`. Fail-closed: absent flag / Flipt-down → `false`
+ * → no unsubmitted spend for anyone (mods included), so the as-merged posture is
+ * dark until the flag is created in Flipt.
+ *
+ * SCOPE OF THE KILL (by design — kills NEW grants, not in-flight tokens): this is
+ * checked at MINT time (block-token mint + `/apps/dev` SSR), NOT re-checked per
+ * spend at `submitWorkflow`. A dev token minted while this flag was ON therefore
+ * retains `ai:write:budgeted` for its ≤4h `dev` TTL after a flip to OFF. That window
+ * is bounded by the self-bound spend (author's OWN Buzz only) + the per-call
+ * (DEV_BUZZ_BUDGET_CAP) / per-session (DEV_TUNNEL_SESSION_BUZZ_CAP) / per-user-daily
+ * caps, and `app-blocks-author` provides a RUNTIME full-kill for a bad actor (its
+ * re-check runs at submit). If instant SURGICAL revocation of just this surface is
+ * ever needed, add a per-spend re-check here in the `claims.dev` branch of
+ * `submitWorkflow` (gated on a brand-new discriminator so pending/approved spend is
+ * untouched). Accepted trade at ship: the caps + 4h TTL + author-flag kill suffice.
+ */
+export const APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG =
+  'app-blocks-dev-tunnel-unsubmitted-spend';
+
+export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG);
+  const user = opts.user;
+  return isFlipt(
+    APP_BLOCKS_DEV_TUNNEL_UNSUBMITTED_SPEND_FLAG,
+    String(user.id),
+    buildFliptContext(user)
+  );
+}
+
+/**
  * Dedicated GLOBAL fail-closed flag for the attribution BACKPAY reader
  * (W3 attribution back-half — Slice 4 read leg, see backpay.service.ts).
  *
@@ -362,4 +530,155 @@ export async function isAppBlocksReviewSandboxEnabled(opts?: {
   if (!opts?.user) return isFlipt(APP_BLOCKS_REVIEW_SANDBOX_FLAG);
   const user = opts.user;
   return isFlipt(APP_BLOCKS_REVIEW_SANDBOX_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Dedicated mod-segmented flag for the AGENTIC MOD CODE-REVIEW (App Blocks P1).
+ *
+ * When a moderator reviews a PENDING publish request they can dispatch an
+ * ephemeral, sandboxed review agent that pulls the reviewed bundle, produces a
+ * structured code-review / security-audit / scope-verdict report, and reports it
+ * back — decision-support for the mod, torn down on the approve/reject decision.
+ *
+ * This is a USER-VISIBILITY gate (the `startAgentReview` tRPC procedure — the
+ * modal button + report rendering + chat are later phases), so — exactly like
+ * `app-blocks-review-sandbox-enabled` — it is mod-segmented and MUST be evaluated
+ * WITH the moderator's context. Create it in Flipt as base `enabled: false` with
+ * the SAME `moderators` segment the user-facing flag uses (`isModerator ==
+ * "true"`), so it can be scoped to a subset of mods during early dogfood.
+ *
+ * The machine-to-machine half (the report callback) has NO user context and
+ * additionally gates on the existing GLOBAL `app-blocks-pipeline-enabled`
+ * kill-switch — the same fail-safe as the review-sandbox build path.
+ *
+ * Fail-safe: the flag does NOT exist in Flipt yet (created only AFTER this
+ * merges) → `isFlipt` returns `false` → `startAgentReview` returns UNAUTHORIZED
+ * and no provisioning ever runs. So the as-merged behaviour is fully dark and
+ * cannot regress the gate open.
+ */
+export const APP_BLOCKS_AGENTIC_REVIEW_FLAG = 'app-blocks-agentic-review';
+
+/**
+ * Mod-segmented gate for the AGENTIC MOD CODE-REVIEW (App Blocks P1). Evaluated
+ * WITH the moderator's context (entityId = user id, context carries server-side
+ * `isModerator`) so the `moderators` segment can match — identical eval shape to
+ * `isAppBlocksReviewSandboxEnabled({ user })`. No user → preserves a global eval
+ * that can never match the segment (fail-closed), and an absent flag also
+ * evaluates false (fail-closed). See APP_BLOCKS_AGENTIC_REVIEW_FLAG.
+ */
+export async function isAppBlocksAgenticReviewEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_AGENTIC_REVIEW_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Dedicated fail-closed flag for App Blocks SHARED (app-global / cross-user)
+ * storage — the FIRST surface that opens the per-app datastore to PUBLIC
+ * cross-user writes (previously mod + app-dev-tester only). Mirrors
+ * `app-blocks-dev-tunnel`: a brand-new surface with NO existing access to
+ * preserve, so there is deliberately NO moderator static floor — an absent flag
+ * resolves `false` for EVERYONE (mods included). This is the cluster-wide
+ * kill-switch: flip it off and every shared read/write/vote refuses immediately
+ * (the `resolveSharedContext` gate), independent of the block-runtime rollout.
+ *
+ * Evaluated WITH the caller's context (entityId = user id, context carries
+ * server-side `isModerator`) so the `moderators` / community segments can match.
+ * On the block-token path the "caller" is the HYDRATED TOKEN SUBJECT
+ * (`getSessionUserById`), not a session — anon reads pass no user → global eval
+ * that can never match a segment → fail-closed (anon shared access is a GA-only
+ * widening, safe to stay dark until a base-`enabled` flip).
+ *
+ * Create it in Flipt as base `enabled: false` with the `moderators` segment (+
+ * any community-cohort segment) exactly like `app-blocks-dev-tunnel`. The flag
+ * does NOT exist in Flipt at merge time — the companion `flipt-state` entry is a
+ * SEPARATE follow-up PR — so the as-merged posture is fully dark and cannot
+ * regress the gate open.
+ */
+export const APP_BLOCKS_SHARED_STORAGE_FLAG = 'app-blocks-shared-storage';
+
+export async function isAppBlocksSharedStorageEnabled(opts?: {
+  user?: SessionUser;
+}): Promise<boolean> {
+  if (!opts?.user) return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG);
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_SHARED_STORAGE_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
+ * Dedicated GLOBAL flag for the PUBLIC EXTERNAL App-store read GA — the mechanism
+ * that lets the store serve `kind='offsite'` (external app) listings to the
+ * ANONYMOUS public while `kind='onsite'` App Blocks stay gated to the existing
+ * mods + app-dev-testers cohort. This is a SEPARATE, ORTHOGONAL axis from the
+ * `app-listings` catalog-visibility flag: `app-listings` gates WHO sees the FULL
+ * catalog (all kinds); this flag opens ONLY the offsite subset to EVERYONE.
+ *
+ * ## Why a GLOBAL boolean (not segmented)
+ *
+ * The audience is the anonymous public — an anon viewer carries NO user context,
+ * so a segment could never match and the flag would silently stay dark. It is
+ * therefore evaluated globally (entityId='global', empty context), mirroring
+ * `isAppBlocksPipelineEnabled` / `isAppBlocksRuntimeEnabled` exactly, and MUST be
+ * created in Flipt as a PLAIN base-`enabled` boolean (NO segment).
+ *
+ * ## Fail-closed / dark posture
+ *
+ * The flag does NOT exist in Flipt at merge time (it is created in a LATER phase,
+ * base `enabled: false`, only when the offsite store is ready to go public) or if
+ * Flipt is unreachable → `isFlipt` returns `false` → `resolveStoreVisibilityScope`
+ * returns `none` for a non-privileged viewer and `full` for a mod/tester — i.e.
+ * BYTE-IDENTICAL to today. This flag NEVER upgrades a mod/tester away from `full`;
+ * it only ever moves a non-privileged viewer from `none` → `public-external`.
+ */
+export const APP_LISTINGS_PUBLIC_EXTERNAL_FLAG = 'app-listings-public-external';
+
+/**
+ * GLOBAL gate for the PUBLIC EXTERNAL App-store read GA. Evaluates the dedicated
+ * `app-listings-public-external` flag with no user context (entityId='global',
+ * empty context), mirroring `isAppBlocksPipelineEnabled`. Fail-closed: absent flag
+ * / Flipt-down → `false`. See APP_LISTINGS_PUBLIC_EXTERNAL_FLAG.
+ */
+export async function isExternalListingsPublicEnabled(): Promise<boolean> {
+  return isFlipt(APP_LISTINGS_PUBLIC_EXTERNAL_FLAG);
+}
+
+/**
+ * The store read-path VISIBILITY SCOPE resolved once per request, then threaded
+ * into every store read proc + the data-layer kind predicate:
+ *   - `full`            — the caller sees ALL kinds (today's mod/tester gate).
+ *   - `public-external` — the caller sees ONLY `kind='offsite'` approved listings
+ *     (both `connect` and `external-link` sub-kinds); onsite is excluded.
+ *   - `none`            — the caller sees NOTHING (dark; today's public default).
+ */
+export type StoreVisibilityScope = 'full' | 'public-external' | 'none';
+
+/**
+ * Resolve the {@link StoreVisibilityScope} for a store read request. The two flags
+ * are INDEPENDENT axes and are checked in priority order so the mod/tester path is
+ * NEVER narrowed by the public flag:
+ *   1. `isAppListingsEnabled({ user })` (mods + app-dev-testers, OR-falling-back to
+ *      `app-blocks-enabled`) → `full` — sees every kind, byte-identical to today.
+ *   2. else `isExternalListingsPublicEnabled()` (the global public flag) →
+ *      `public-external` — sees only offsite listings.
+ *   3. else → `none` — dark.
+ *
+ * 🔴 DARK-by-default invariant: with `app-listings-public-external` ABSENT in Flipt
+ * (its as-merged state), a mod/tester still resolves `full` and everyone else
+ * resolves `none` — ZERO observable change until the public flag is created +
+ * enabled in a later phase.
+ */
+export async function resolveStoreVisibilityScope(opts?: {
+  user?: SessionUser;
+}): Promise<StoreVisibilityScope> {
+  // Axis 1 — the existing catalog-visibility gate (mods + app-dev-testers). MUST be
+  // checked FIRST so a privileged viewer always gets `full`, never `public-external`
+  // (the public flag can only ever LIFT a non-privileged viewer, never narrow a mod).
+  if (await isAppListingsEnabled(opts)) return 'full';
+  // Axis 2 — the global public-external flag (anon + everyone). Global eval; a
+  // non-privileged viewer sees ONLY offsite listings.
+  if (await isExternalListingsPublicEnabled()) return 'public-external';
+  // Fail-closed: neither flag → dark.
+  return 'none';
 }

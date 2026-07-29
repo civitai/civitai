@@ -1,0 +1,219 @@
+{
+  "metrics": {
+    "handlers": 24,
+    "handlersWithDebug": 19,
+    "metrics": 77
+  },
+  "entityTypes": {
+    "Article": {
+      "Cry": "articleReactionHandler",
+      "Dislike": "articleReactionHandler",
+      "Heart": "articleReactionHandler",
+      "Laugh": "articleReactionHandler",
+      "Like": "articleReactionHandler",
+      "collectedCount": "collectionItemHandler",
+      "commentCount": "commentV2Handler",
+      "tippedAmount": "buzzTipHandler",
+      "tippedCount": "buzzTipHandler"
+    },
+    "Bounty": {
+      "benefactorCount": "bountyBenefactorHandler",
+      "commentCount": "commentV2Handler",
+      "entryCount": "bountyEntryHandler",
+      "favoriteCount": "bountyEngagementHandler",
+      "trackCount": "bountyEngagementHandler",
+      "unitAmount": "bountyBenefactorHandler"
+    },
+    "BountyEntry": {
+      "Cry": "bountyEntryReactionHandler",
+      "Dislike": "bountyEntryReactionHandler",
+      "Heart": "bountyEntryReactionHandler",
+      "Laugh": "bountyEntryReactionHandler",
+      "Like": "bountyEntryReactionHandler",
+      "unitAmount": "bountyBenefactorHandler"
+    },
+    "Collection": {
+      "contributorCount": "collectionContributorHandler",
+      "followerCount": "collectionContributorHandler",
+      "itemCount": "collectionItemHandler"
+    },
+    "Comic": {
+      "chapterReadCount": "comicEngagementHandler",
+      "followerCount": "comicEngagementHandler",
+      "hiddenCount": "comicEngagementHandler",
+      "readerCount": "comicEngagementHandler",
+      "tippedAmount": "buzzTipHandler",
+      "tippedCount": "buzzTipHandler"
+    },
+    "Image": {
+      "Collection": "collectionItemHandler",
+      "Cry": "imageReactionHandler",
+      "Dislike": "imageReactionHandler",
+      "Heart": "imageReactionHandler",
+      "Laugh": "imageReactionHandler",
+      "Like": "imageReactionHandler",
+      "commentCount": "commentV2Handler",
+      "tippedAmount": "buzzTipHandler",
+      "tippedCount": "buzzTipHandler"
+    },
+    "Model": {
+      "collectedCount": "collectionItemHandler",
+      "commentCount": "commentHandler",
+      "earnedAmount": "updateCompensation",
+      "imageCount": "imageResourceHandler",
+      "ratingCount": "resourceReviewHandler",
+      "thumbsDownCount": "resourceReviewHandler",
+      "thumbsUpCount": "resourceReviewHandler",
+      "tippedAmount": "buzzTipHandler",
+      "tippedCount": "buzzTipHandler"
+    },
+    "ModelVersion": {
+      "earnedAmount": "updateCompensation",
+      "imageCount": "imageResourceHandler",
+      "ratingCount": "resourceReviewHandler",
+      "thumbsDownCount": "resourceReviewHandler",
+      "thumbsUpCount": "resourceReviewHandler"
+    },
+    "Post": {
+      "Cry": "imageReactionHandler",
+      "Dislike": "imageReactionHandler",
+      "Heart": "imageReactionHandler",
+      "Laugh": "imageReactionHandler",
+      "Like": "imageReactionHandler",
+      "collectedCount": "collectionItemHandler",
+      "commentCount": "commentV2Handler",
+      "reactionCount": "imageReactionHandler",
+      "tippedAmount": "buzzTipHandler",
+      "tippedCount": "buzzTipHandler"
+    },
+    "Tag": {
+      "followerCount": "tagEngagementHandler",
+      "hiddenCount": "tagEngagementHandler"
+    },
+    "User": {
+      "articleCount": "articleHandler",
+      "bountyCount": "bountyHandler",
+      "followerCount": "userEngagementHandler",
+      "followingCount": "userEngagementHandler",
+      "hiddenCount": "userEngagementHandler",
+      "reactionCount": "bountyEntryReactionHandler",
+      "tippedAmount": "buzzTipHandler",
+      "tippedCount": "buzzTipHandler",
+      "tipsGivenAmount": "buzzTipHandler",
+      "tipsGivenCount": "buzzTipHandler"
+    }
+  },
+  "tables": {
+    "UserEngagement": [
+      "User.followerCount",
+      "User.followingCount",
+      "User.hiddenCount"
+    ],
+    "ImageReaction": [
+      "Image.Cry",
+      "Image.Dislike",
+      "Image.Heart",
+      "Image.Laugh",
+      "Image.Like",
+      "Post.Cry",
+      "Post.Dislike",
+      "Post.Heart",
+      "Post.Laugh",
+      "Post.Like",
+      "Post.reactionCount",
+      "User.reactionCount"
+    ],
+    "ArticleReaction": [
+      "Article.Cry",
+      "Article.Dislike",
+      "Article.Heart",
+      "Article.Laugh",
+      "Article.Like",
+      "User.reactionCount"
+    ],
+    "BountyEntryReaction": [
+      "BountyEntry.Cry",
+      "BountyEntry.Dislike",
+      "BountyEntry.Heart",
+      "BountyEntry.Laugh",
+      "BountyEntry.Like",
+      "User.reactionCount"
+    ],
+    "Article": [
+      "User.articleCount"
+    ],
+    "ResourceReview": [
+      "Model.ratingCount",
+      "Model.thumbsDownCount",
+      "Model.thumbsUpCount",
+      "ModelVersion.ratingCount",
+      "ModelVersion.thumbsDownCount",
+      "ModelVersion.thumbsUpCount"
+    ],
+    "CollectionItem": [
+      "Article.collectedCount",
+      "Collection.itemCount",
+      "Image.Collection",
+      "Model.collectedCount",
+      "Post.collectedCount"
+    ],
+    "CollectionContributor": [
+      "Collection.contributorCount",
+      "Collection.followerCount"
+    ],
+    "Comment": [
+      "Model.commentCount"
+    ],
+    "CommentV2": [
+      "Article.commentCount",
+      "Bounty.commentCount",
+      "Image.commentCount",
+      "Post.commentCount"
+    ],
+    "ImageResourceNew": [
+      "Model.imageCount",
+      "ModelVersion.imageCount"
+    ],
+    "BuzzTip": [
+      "Article.tippedAmount",
+      "Article.tippedCount",
+      "Comic.tippedAmount",
+      "Comic.tippedCount",
+      "Image.tippedAmount",
+      "Image.tippedCount",
+      "Model.tippedAmount",
+      "Model.tippedCount",
+      "Post.tippedAmount",
+      "Post.tippedCount",
+      "User.tippedAmount",
+      "User.tippedCount",
+      "User.tipsGivenAmount",
+      "User.tipsGivenCount"
+    ],
+    "TagEngagement": [
+      "Tag.followerCount",
+      "Tag.hiddenCount"
+    ],
+    "BountyEngagement": [
+      "Bounty.favoriteCount",
+      "Bounty.trackCount"
+    ],
+    "ComicProjectEngagement": [
+      "Comic.chapterReadCount",
+      "Comic.followerCount",
+      "Comic.hiddenCount",
+      "Comic.readerCount"
+    ],
+    "Bounty": [
+      "User.bountyCount"
+    ],
+    "BountyEntry": [
+      "Bounty.entryCount"
+    ],
+    "BountyBenefactor": [
+      "Bounty.benefactorCount",
+      "Bounty.unitAmount",
+      "BountyEntry.unitAmount"
+    ]
+  }
+}

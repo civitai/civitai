@@ -19,3 +19,62 @@
     margin: var(--mantine-spacing-sm) 0;
   }
 }
+
+// --- Details metadata table -------------------------------------------------
+// Static replacements for the per-render Mantine style-props + inline-style
+// objects on the ~10 near-identical rows of the "Details" accordion panel.
+// Each declaration mirrors the exact computed style of the primitive it
+// replaces so the rendered output is pixel-identical:
+//   <Group justify="space-between" px="md" py={10}> = the flex block below
+//   (Group defaults: display:flex; row; wrap; align-items:center; gap:md)
+//   border color ternary  ->  native light-dark(<light>, <dark>)
+//   <Text size="sm" c="dimmed">  ->  .detailLabel span
+
+%detailRowBase {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--mantine-spacing-md);
+  padding-inline: var(--mantine-spacing-md);
+  padding-block: 10px;
+}
+
+// colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+.detailRow {
+  @extend %detailRowBase;
+  border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+}
+
+// Same as .detailRow but the border is on top (Trigger Words / AIR rows).
+.detailRowTop {
+  @extend %detailRowBase;
+  border-top: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+}
+
+// Borderless variant (Hash row).
+.detailRowPlain {
+  @extend %detailRowBase;
+}
+
+// <Box p="sm" style={{ borderBottom: dark[5] / gray[2] }}> file/linked rows
+// colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+.fileRow {
+  padding: var(--mantine-spacing-sm);
+  border-bottom: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+}
+
+// <Text size="sm" c="dimmed"> dimmed metadata label
+.detailLabel {
+  font-size: var(--mantine-font-size-sm);
+  line-height: var(--mantine-line-height-sm);
+  font-weight: normal;
+  color: var(--mantine-color-dimmed);
+}
+
+// container <Stack> backgroundColor (colorScheme-only)
+// colorScheme === 'dark' ? '#1f2023' : theme.colors.gray[0]
+.detailsPanel {
+  background-color: light-dark(var(--mantine-color-gray-0), #1f2023);
+}

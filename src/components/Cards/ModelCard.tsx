@@ -29,12 +29,14 @@ import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImag
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { AnimatedCount, Metrics } from '~/components/Metrics';
+import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
+import type { HiddenModelMetrics } from '~/server/utils/model-metric-privacy';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useReviewedModelIds } from '~/hooks/useReviewedModelIds';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { constants } from '~/server/common/constants';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { aDayAgo } from '~/utils/date-helpers';
@@ -96,7 +98,10 @@ function ModelCardContent({ data }: Props) {
   );
 
   const { useModelVersionRedirect, activeBaseModels } = useModelCardContext();
-  const cardBaseModels = getCardBaseModels(data as Parameters<typeof getCardBaseModels>[0], activeBaseModels);
+  const cardBaseModels = getCardBaseModels(
+    data as Parameters<typeof getCardBaseModels>[0],
+    activeBaseModels
+  );
   // In search, data.version is the primary version; data.versions[] carries all of
   // them, so link to the version that matched the active base-model filter. The feed
   // has no versions[] (data.version is already the matched one), so it falls back.
@@ -116,16 +121,27 @@ function ModelCardContent({ data }: Props) {
     [data.id, data.name, targetVersionId, useModelVersionRedirect]
   );
 
+  // The search doc carries images for the newest version of each base model, but
+  // images[0] is always the latest version's cover — show the matched version's
+  // cover instead when a base-model filter is active. The feed type omits
+  // modelVersionId (its images are already the matched version's), so it falls back.
+  const image =
+    (activeBaseModels?.length
+      ? data.images.find(
+          (i) => (i as { modelVersionId?: number }).modelVersionId === targetVersionId
+        )
+      : undefined) ?? data.images[0];
+
   return (
     <AspectRatioImageCard
       href={href}
       cosmetic={data.cosmetic?.data}
       contentType="model"
       contentId={data.id}
-      image={data.images[0]}
+      image={image}
       alt={data.name}
       onSite={!!data.version.trainingStatus}
-      isRemix={!!data.images[0]?.remixOfId}
+      isRemix={!!image?.remixOfId}
       header={
         <div className="flex w-full items-start justify-between">
           <div className="flex flex-wrap gap-1">
@@ -218,9 +234,10 @@ function ModelCardContent({ data }: Props) {
 function ModelCardStats({ data }: { data: Props['data'] }) {
   const inView = useElementInView();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
-  const reviewedModelIds = useReviewedModelIds();
-  const hasReview = reviewedModelIds.has(data.id);
+  const { isEngaged } = useEngagedModelMembership(data.id);
+  const hasReview = isEngaged('Recommended');
   const isPOI = data.poi;
+  const hiddenMetrics = (data as { hiddenMetrics?: HiddenModelMetrics }).hiddenMetrics;
 
   const baseMetrics = useMemo(
     () => ({
@@ -235,12 +252,7 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
   );
 
   return (
-    <Metrics
-      entityType="Model"
-      entityId={data.id}
-      initial={baseMetrics}
-      useLive={inView !== false}
-    >
+    <Metrics entityType="Model" entityId={data.id} initial={baseMetrics} useLive={inView !== false}>
       {(m) => {
         const totalCount = m.thumbsUpCount + m.thumbsDownCount;
         const positiveRating = totalCount > 0 ? m.thumbsUpCount / totalCount : 0;
@@ -256,7 +268,11 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
                 <div className="flex items-center gap-0.5">
                   <IconDownload size={14} strokeWidth={2.5} />
                   <Text size="xs" lh={1} fw="bold">
-                    <AnimatedCount value={m.downloadCount} />
+                    {hiddenMetrics?.downloads ? (
+                      <HiddenMetricNotice size={12} />
+                    ) : (
+                      <AnimatedCount value={m.downloadCount} />
+                    )}
                   </Text>
                 </div>
                 <div className="flex items-center gap-0.5">
@@ -280,7 +296,11 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
                     <div className="flex items-center gap-0.5">
                       <IconBolt size={14} strokeWidth={2.5} />
                       <Text size="xs" lh={1} fw="bold">
-                        <AnimatedCount value={m.tippedAmountCount + tippedAmount} />
+                        {hiddenMetrics?.buzz ? (
+                          <HiddenMetricNotice size={12} />
+                        ) : (
+                          <AnimatedCount value={m.tippedAmountCount + tippedAmount} />
+                        )}
                       </Text>
                     </div>
                   </InteractiveTipBuzzButton>

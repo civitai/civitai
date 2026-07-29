@@ -9,6 +9,7 @@ import {
   Group,
   Indicator,
   Loader,
+  type MantineSize,
   Menu,
   Paper,
   type PaperProps,
@@ -20,10 +21,13 @@ import {
   Progress,
   ThemeIcon,
   Title,
+  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
+import type { MouseEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
@@ -35,8 +39,10 @@ import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
+import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -45,10 +51,13 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import {
   ChallengeReviewCostType,
   Currency,
+  ChallengeSource,
   ChallengeStatus,
   PrizeMode,
   PoolTrigger,
 } from '~/shared/utils/prisma/enums';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   IconBrush,
@@ -58,9 +67,11 @@ import {
   IconCube,
   IconDotsVertical,
   IconFilter,
+  IconFlag,
   IconGift,
   IconPencil,
   IconPhoto,
+  IconRefresh,
   IconShare3,
   IconSparkles,
   IconLock,
@@ -71,11 +82,19 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { useQueryChallenge } from '~/components/Challenge/challenge.utils';
+import {
+  getChallengeDisplayUser,
+  useDeleteUserChallenge,
+  useIsChallengeOwner,
+  useQueryChallenge,
+} from '~/components/Challenge/challenge.utils';
 import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
-import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import {
+  DescriptionTable,
+  type Props as DescriptionTableProps,
+} from '~/components/DescriptionTable/DescriptionTable';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
+import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -110,6 +129,7 @@ import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import {
   getBorder,
   getBackground,
@@ -118,6 +138,7 @@ import {
 } from '~/components/Challenge/DynamicPrizeCard/constants';
 import { ProgressLegendDot } from '~/components/Challenge/DynamicPrizeCard/ProgressLegendDot';
 import { GlowDivider } from '~/components/Challenge/DynamicPrizeCard/GlowDivider';
+import { distributePrizes } from '~/server/games/daily-challenge/challenge-pool';
 
 function useInjectKeyframes() {
   useEffect(() => {
@@ -171,40 +192,76 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
+    let gating: { contentNsfwLevel: number; nsfw?: boolean } | undefined;
+
     if (ssg) {
       // Fetch challenge to check slug and prefetch for client hydration
       const challenge = await ssg.challenge.getById.fetch({ id: result.data.id }).catch(() => null);
 
-      // Redirect to canonical slug URL if slug is missing or incorrect
+      if (challenge)
+        gating = {
+          contentNsfwLevel: challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0),
+          nsfw: challenge.source === ChallengeSource.User && challenge.buzzType === 'yellow',
+        };
+
       if (challenge) {
-        const correctSlug = slugit(challenge.title);
-        const currentSlug = result.data.slug?.join('/');
-        // Skip the redirect when the canonical slug is empty — slugit() strips
-        // all non-Latin-alphanumeric chars (strict mode), so CJK/Cyrillic/emoji/
-        // dots-only titles slugify to ''. Redirecting to /challenges/<id>/ (empty
-        // slug) gets trailing-slash-normalized back to /challenges/<id>, which
-        // never matches '' and loops forever (ERR_TOO_MANY_REDIRECTS).
-        if (correctSlug && currentSlug !== correctSlug) {
-          const queryString = buildPassthroughQuery(ctx.query);
-          return {
-            redirect: {
-              destination: `/challenges/${result.data.id}/${correctSlug}${queryString}`,
-              permanent: false,
-            },
-          };
-        }
+        const destination = getCanonicalSlugDestination({
+          basePath: '/challenges',
+          id: result.data.id,
+          title: challenge.title,
+          currentSlug: result.data.slug?.join('/'),
+          queryString: buildPassthroughQuery(ctx.query),
+        });
+        if (destination) return { redirect: { destination, permanent: false } };
       }
     }
 
-    return { props: removeEmpty(result.data) };
+    return { props: removeEmpty(result.data), gating };
   },
 });
+
+// The hero, prize and judge panels above the target section keep resolving after the challenge
+// query does, so a single scroll lands short. Re-pin on a short interval to the first of `ids`
+// present in the DOM (winners → entries fallback, since a completed challenge that never picked
+// winners has no podium), and stop the moment the reader takes over. Returns an abort fn so the
+// caller can cancel on unmount; the AbortController's signal also tears down all three listeners
+// in one shot on any exit path.
+function scrollToHash(ids: string[]) {
+  const deadline = Date.now() + 1500;
+  const controller = new AbortController();
+  const { signal } = controller;
+  const events = ['wheel', 'touchmove', 'keydown'] as const;
+  events.forEach((e) =>
+    window.addEventListener(e, () => controller.abort(), { passive: true, signal })
+  );
+
+  const pin = () => {
+    if (signal.aborted) return;
+    const target = ids.map((id) => document.getElementById(id)).find(Boolean);
+    target?.scrollIntoView();
+    if (Date.now() < deadline) setTimeout(pin, 250);
+    else controller.abort();
+  };
+  requestAnimationFrame(pin);
+  return () => controller.abort();
+}
+
+// Deep-link anchors → ordered scroll targets (first present wins).
+const DEEP_LINK_TARGETS: Record<string, string[]> = {
+  entries: ['entries'],
+  winners: ['winners', 'entries'],
+};
 
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
+  const { deleteChallenge: deleteOwnChallenge, deleting: deletingOwn } = useDeleteUserChallenge();
+  const deletingOwnRef = useRef(false);
+  const deepLinkHandledFor = useRef<number>();
+  const isOwner = useIsChallengeOwner(challenge);
 
   const handleMutationError = (error: { message: string }) => {
     showErrorNotification({ error: new Error(error.message) });
@@ -224,6 +281,15 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     onSuccess: () => {
       queryUtils.challenge.getById.invalidate({ id });
       showSuccessNotification({ message: 'Challenge cancelled' });
+    },
+    onError: handleMutationError,
+  });
+
+  const rescanMutation = trpc.challenge.rescan.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        message: 'Rescan queued. The verdict will apply once the scan completes.',
+      });
     },
     onError: handleMutationError,
   });
@@ -283,6 +349,42 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     });
   };
 
+  const handleRescan = () => {
+    if (!challenge) return;
+    // Only a live green user challenge is cancelled outright on an NSFW verdict
+    // (computeNsfwEscalation); everything else is just raised to R in place.
+    const warnOnNsfw =
+      challenge.status === ChallengeStatus.Active &&
+      challenge.source === ChallengeSource.User &&
+      challenge.buzzType === 'green';
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Rescan Content',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Re-run the content scan for <strong>&ldquo;{challenge.title}&rdquo;</strong>?
+            </Text>
+            <Text size="sm" c="dimmed">
+              Resubmits the challenge text and re-queues the cover image, ignoring the previous
+              verdict. The challenge stays visible while the scan runs.
+            </Text>
+            {warnOnNsfw && (
+              <Text size="sm" c="yellow.6">
+                This challenge is live. If the rescan comes back NSFW, it will be cancelled and
+                hidden — entrants are refunded their prize-pool contribution and notified, and the
+                creator&apos;s escrowed prize is returned.
+              </Text>
+            )}
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Rescan' },
+        onConfirm: () => rescanMutation.mutateAsync({ id }),
+      },
+    });
+  };
+
   const handleDelete = () => {
     dialogStore.trigger({
       component: ConfirmDialog,
@@ -296,17 +398,100 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     });
   };
 
+  // Deep links from the "Your Challenges" cards: `#entries`/`#winners` scroll to that section,
+  // `?submit=1` opens the submit modal. All wait on `challenge` — the target section mounts with
+  // the query, long after the browser would have tried its own hash scroll (and it scrolls an
+  // inner `.scroll-area` container, not the window). `submit` is stripped before the modal opens
+  // so a refresh or back-nav doesn't re-trigger it.
+  useEffect(() => {
+    // Scoped to the loaded challenge id, not a one-shot bool: Next reuses this component across
+    // detail→detail navigations, so a boolean guard would swallow a deep link on the second one.
+    if (!challenge || deepLinkHandledFor.current === challenge.id) return;
+    deepLinkHandledFor.current = challenge.id;
+
+    const wantsSubmit = !!router.query.submit;
+    if (wantsSubmit) {
+      const { submit, ...query } = router.query;
+      router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    }
+
+    const targets = DEEP_LINK_TARGETS[router.asPath.split('#')[1]];
+    const abortScroll = targets ? scrollToHash(targets) : undefined;
+
+    const canSubmit =
+      challenge.status === ChallengeStatus.Active &&
+      !!challenge.collectionId &&
+      !currentUser?.muted;
+    if (wantsSubmit && canSubmit && challenge.collectionId)
+      dialogStore.trigger({
+        component: ChallengeSubmitModal,
+        props: { challengeId: challenge.id, collectionId: challenge.collectionId },
+      });
+
+    return abortScroll;
+  }, [challenge, router, currentUser?.muted]);
+
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
 
   const isActive = challenge.status === ChallengeStatus.Active;
   const isCompleted = challenge.status === ChallengeStatus.Completed;
   const isScheduled = challenge.status === ChallengeStatus.Scheduled;
+  // Only User-source challenges carry user-authored text worth reporting
+  const canReport = !!currentUser && challenge.source === ChallengeSource.User;
+
+  const isCancelled = challenge.status === ChallengeStatus.Cancelled;
+  const canManageOwn =
+    features.userChallenges && isOwner && !currentUser?.isModerator && isScheduled;
+  // Delete stays available after a moderator voids the challenge (Cancelled) so the owner can clear
+  // a dead challenge off their list; edit remains Scheduled-only (canManageOwn).
+  const canDeleteOwn =
+    features.userChallenges && isOwner && !currentUser?.isModerator && (isScheduled || isCancelled);
+
+  const handleOwnerDelete = () => {
+    openConfirmModal({
+      title: 'Delete challenge',
+      // A Cancelled challenge was already refunded by the void, so don't promise another refund.
+      children: isCancelled
+        ? 'Delete this cancelled challenge? This cannot be undone.'
+        : 'Delete this challenge? Your escrowed prize Buzz will be refunded. This cannot be undone.',
+      centered: true,
+      closeOnConfirm: false,
+      labels: { cancel: 'No, keep it', confirm: 'Delete challenge' },
+      confirmProps: { color: 'red' },
+      onConfirm: async () => {
+        if (deletingOwnRef.current) return;
+        deletingOwnRef.current = true;
+        try {
+          await deleteOwnChallenge(challenge.id);
+          closeAllModals();
+          await router.push('/challenges');
+        } catch {
+          // notification surfaced by the mutation
+        } finally {
+          deletingOwnRef.current = false;
+        }
+      },
+    });
+  };
 
   return (
     <Gated
-      contentNsfwLevel={challenge.allowedNsfwLevel}
-      bypassRating={currentUser?.isModerator ?? false}
+      // Gate on the challenge's allowed rating combined with the cover image's REAL level, so a
+      // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
+      // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
+      contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
+      // Yellow user challenges live on civitai.red regardless of rating — the server returns
+      // them on green so this renders the redirect card instead of a 404 (inert on red).
+      // Owner/mods keep detail access on green for SFW yellow challenges, mirroring the
+      // server-side preview exemption; NSFW ones still redirect via contentNsfwLevel.
+      nsfw={
+        challenge.source === ChallengeSource.User &&
+        challenge.buzzType === 'yellow' &&
+        !isOwner &&
+        !currentUser?.isModerator
+      }
+      bypassRating={isOwner || (currentUser?.isModerator ?? false)}
       meta={{
         title: `${challenge.title} | Civitai Challenges`,
         description:
@@ -323,12 +508,13 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               {challenge.title}
             </Title>
             <Group gap={4} wrap="nowrap" className="shrink-0">
+              <ChallengeNotifyToggle challenge={{ id: challenge.id, status: challenge.status }} />
               <ShareButton url={router.asPath} title={challenge.title}>
                 <ActionIcon variant="light" size="lg" color="gray">
                   <IconShare3 size={20} />
                 </ActionIcon>
               </ShareButton>
-              {currentUser?.isModerator && (
+              {(currentUser?.isModerator || canReport || canDeleteOwn) && (
                 <Menu position="bottom-end" withArrow>
                   <Menu.Target>
                     <ActionIcon variant="light" size="lg">
@@ -336,71 +522,137 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
-                    <Menu.Label>Actions</Menu.Label>
-                    <Menu.Item
-                      leftSection={<IconPencil size={14} stroke={1.5} />}
-                      component={Link}
-                      href={`/moderator/challenges/${challenge.id}/edit`}
-                    >
-                      Edit Challenge
-                    </Menu.Item>
-                    <ToggleLockComments entityId={challenge.id} entityType="challenge">
-                      {({ toggle, locked, isLoading }) => (
+                    {currentUser?.isModerator && (
+                      <>
+                        <Menu.Label>Actions</Menu.Label>
+                        <Menu.Item
+                          leftSection={<IconPencil size={14} stroke={1.5} />}
+                          component={Link}
+                          // User challenges use the user form (entry fee / judging categories);
+                          // the moderator form's prize model doesn't apply to them.
+                          href={
+                            challenge.source === ChallengeSource.User
+                              ? `/challenges/${challenge.id}/edit`
+                              : `/moderator/challenges/${challenge.id}/edit`
+                          }
+                        >
+                          Edit Challenge
+                        </Menu.Item>
+                        <ToggleLockComments entityId={challenge.id} entityType="challenge">
+                          {({ toggle, locked, isLoading }) => (
+                            <Menu.Item
+                              leftSection={
+                                isLoading ? (
+                                  <Loader size={14} />
+                                ) : (
+                                  <IconLock size={14} stroke={1.5} />
+                                )
+                              }
+                              onClick={toggle}
+                              disabled={isLoading}
+                              closeMenuOnClick={false}
+                            >
+                              {locked ? 'Unlock' : 'Lock'} Comments
+                            </Menu.Item>
+                          )}
+                        </ToggleLockComments>
                         <Menu.Item
                           leftSection={
-                            isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                            rescanMutation.isPending ? (
+                              <Loader size={14} />
+                            ) : (
+                              <IconRefresh size={14} stroke={1.5} />
+                            )
                           }
-                          onClick={toggle}
-                          disabled={isLoading}
-                          closeMenuOnClick={false}
+                          onClick={handleRescan}
+                          disabled={rescanMutation.isPending}
                         >
-                          {locked ? 'Unlock' : 'Lock'} Comments
+                          Rescan Content
                         </Menu.Item>
-                      )}
-                    </ToggleLockComments>
 
-                    {isActive && (
-                      <>
+                        {isActive && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Label>Quick Actions</Menu.Label>
+                            <Menu.Item
+                              leftSection={<IconTrophy size={14} />}
+                              onClick={handleEndAndPickWinners}
+                            >
+                              End & Pick Winners
+                            </Menu.Item>
+                            <Menu.Item
+                              leftSection={<IconX size={14} />}
+                              color="red"
+                              onClick={handleVoidChallenge}
+                            >
+                              Void Challenge
+                            </Menu.Item>
+                          </>
+                        )}
+
+                        {isScheduled && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Label>Quick Actions</Menu.Label>
+                            <Menu.Item
+                              leftSection={<IconX size={14} />}
+                              color="red"
+                              onClick={handleVoidChallenge}
+                            >
+                              Cancel Challenge
+                            </Menu.Item>
+                          </>
+                        )}
+
                         <Menu.Divider />
-                        <Menu.Label>Quick Actions</Menu.Label>
                         <Menu.Item
-                          leftSection={<IconTrophy size={14} />}
-                          onClick={handleEndAndPickWinners}
-                        >
-                          End & Pick Winners
-                        </Menu.Item>
-                        <Menu.Item
-                          leftSection={<IconX size={14} />}
+                          leftSection={<IconTrash size={14} />}
                           color="red"
-                          onClick={handleVoidChallenge}
+                          onClick={handleDelete}
                         >
-                          Void Challenge
+                          Delete
                         </Menu.Item>
                       </>
                     )}
-
-                    {isScheduled && (
+                    {canDeleteOwn && (
                       <>
-                        <Menu.Divider />
-                        <Menu.Label>Quick Actions</Menu.Label>
+                        <Menu.Label>Actions</Menu.Label>
+                        {canManageOwn && (
+                          <Menu.Item
+                            leftSection={<IconPencil size={14} stroke={1.5} />}
+                            component={Link}
+                            href={`/challenges/${challenge.id}/edit`}
+                          >
+                            Edit Challenge
+                          </Menu.Item>
+                        )}
                         <Menu.Item
-                          leftSection={<IconX size={14} />}
+                          leftSection={<IconTrash size={14} />}
                           color="red"
-                          onClick={handleVoidChallenge}
+                          disabled={deletingOwn}
+                          onClick={handleOwnerDelete}
                         >
-                          Cancel Challenge
+                          Delete
+                        </Menu.Item>
+                        {canReport && <Menu.Divider />}
+                      </>
+                    )}
+                    {canReport && (
+                      <>
+                        {currentUser?.isModerator && <Menu.Divider />}
+                        <Menu.Item
+                          leftSection={<IconFlag size={14} stroke={1.5} />}
+                          onClick={() =>
+                            openReportModal({
+                              entityType: ReportEntity.Challenge,
+                              entityId: challenge.id,
+                            })
+                          }
+                        >
+                          Report
                         </Menu.Item>
                       </>
                     )}
-
-                    <Menu.Divider />
-                    <Menu.Item
-                      leftSection={<IconTrash size={14} />}
-                      color="red"
-                      onClick={handleDelete}
-                    >
-                      Delete
-                    </Menu.Item>
                   </Menu.Dropdown>
                 </Menu>
               )}
@@ -427,6 +679,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <Badge size="lg" radius="sm" color="blue">
                 Upcoming
               </Badge>
+            ) : isCancelled ? (
+              <IconBadge size="lg" radius="sm" color="red" icon={<IconX size={16} />}>
+                Cancelled
+              </IconBadge>
             ) : null}
 
             {/* Countdown (active only) */}
@@ -462,9 +718,11 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>
           <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
             <Stack gap="md">
-              {/* Cover Image */}
+              {/* w-full is load-bearing: `mx-auto` cancels the parent Stack's cross-axis stretch,
+                  so without a definite width the box is fit-content — and the blurred branch's only
+                  content is MediaHash's absolutely-positioned canvas, collapsing the cover to 0x0. */}
               {challenge.coverImage && (
-                <div className="relative mx-auto max-w-2xl overflow-hidden rounded-lg">
+                <div className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-lg">
                   <ImageGuard2 image={challenge.coverImage}>
                     {(safe) => (
                       <>
@@ -512,7 +770,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
       {/* Discussion Section */}
       <Container size="xl" id="comments" py={32}>
-        <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
+        <ChallengeDiscussion
+          challengeId={challenge.id}
+          userId={getChallengeDisplayUser(challenge).id}
+        />
       </Container>
 
       {/* Entries Section */}
@@ -608,6 +869,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const currentUser = useCurrentUser();
   const isActive = challenge.status === ChallengeStatus.Active;
   const isDynamicPool = challenge.prizeMode === PrizeMode.Dynamic && challenge.buzzPerAction > 0;
+  const isOwner = useIsChallengeOwner(challenge);
+
+  const handleOpenSubmitModal = () => {
+    if (!challenge.collectionId) return;
+    dialogStore.trigger({
+      component: ChallengeSubmitModal,
+      props: { challengeId: challenge.id, collectionId: challenge.collectionId },
+    });
+  };
 
   // Get user's entry count for this challenge
   const { data: userEntryData } = trpc.challenge.getUserEntryCount.useQuery(
@@ -663,15 +933,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   const challengeDetails: DescriptionTableProps['items'] = [
     {
       label: 'Starts',
-      value: (
-        <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.startsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Ends',
-      value: (
-        <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A [UTC]', true)}</Text>
-      ),
+      value: <Text size="sm">{formatDate(challenge.endsAt, 'MMM DD, YYYY hh:mm A', false)}</Text>,
     },
     {
       label: 'Max Entries',
@@ -679,7 +945,13 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     },
     {
       label: 'AI Reviews',
-      value: <Text size="sm">Only 6–12 entries selected at random every 10 min</Text>,
+      value: (
+        <Text size="sm">
+          {challenge.entryFee > 0
+            ? 'Every entry is judged'
+            : 'Only 6–12 entries selected at random every 10 min'}
+        </Text>
+      ),
     },
     ...(challenge.entryPrize && challenge.entryPrizeRequirement > 0
       ? [
@@ -707,8 +979,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       : []),
   ];
 
-  // Prize breakdown
-  const prizeItems: DescriptionTableProps['items'] = challenge.prizes.map((prize, index) => ({
+  // Prize breakdown. Dynamic-pool (user) challenges don't materialize `prizes` until they end
+  // (distributePrizes runs at winner-pick), so before then show the projected split derived from
+  // the current pool + distribution. Completed challenges render their real `prizes`.
+  const isProjectedPrizes =
+    isDynamicPool && !challenge.prizes.length && !!challenge.prizeDistribution?.length;
+  const prizeBreakdown = isProjectedPrizes
+    ? distributePrizes(challenge.prizePool, challenge.prizeDistribution ?? [])
+    : challenge.prizes;
+  const prizeItems: DescriptionTableProps['items'] = prizeBreakdown.map((prize, index) => ({
     label: (
       <Group gap={4}>
         <ThemeIcon
@@ -718,18 +997,43 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
         >
           <IconTrophy size={14} />
         </ThemeIcon>
-        <Text size="sm">{getPlaceLabel(index + 1)}</Text>
+        <Text size="sm" c="dimmed">
+          {getPlaceLabel(index + 1)}
+        </Text>
       </Group>
     ),
     value: (
       <CurrencyBadge
         size="sm"
         currency={Currency.BUZZ}
+        type={challenge.buzzType}
         unitAmount={prize.buzz}
-        variant="transparent"
       />
     ),
   }));
+
+  if (challenge.entryPrize) {
+    prizeItems.push({
+      label: (
+        <Group gap={4}>
+          <ThemeIcon size="sm" color="blue" variant="light">
+            <IconGift size={14} />
+          </ThemeIcon>
+          <Text size="sm" c="dimmed">
+            Participation
+          </Text>
+        </Group>
+      ),
+      value: (
+        <CurrencyBadge
+          size="sm"
+          currency={Currency.BUZZ}
+          type="blue"
+          unitAmount={challenge.entryPrize.buzz}
+        />
+      ),
+    });
+  }
 
   // Shared props for DescriptionTable inside accordion panels (no outer borders)
   const accordionTableProps = {
@@ -739,28 +1043,6 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       radius: 0,
     },
   } as const;
-
-  if (challenge.entryPrize) {
-    prizeItems.push({
-      label: (
-        <Group gap={4}>
-          <ThemeIcon size="sm" color="blue" variant="light">
-            <IconGift size={14} />
-          </ThemeIcon>
-          <Text size="sm">Participation</Text>
-        </Group>
-      ),
-      value: (
-        <CurrencyBadge
-          size="sm"
-          currency={Currency.BUZZ}
-          type="blue"
-          unitAmount={challenge.entryPrize.buzz}
-          variant="transparent"
-        />
-      ),
-    });
-  }
 
   return (
     <Stack gap="md">
@@ -819,6 +1101,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               borderLeft: getBorder(cs, 'teal'),
               borderRight: getBorder(cs, 'teal'),
               background: getBackground(cs, 'teal'),
+              borderRadius: 'var(--mantine-radius-md) var(--mantine-radius-md) 0 0',
             }}
           >
             <Stack gap="sm" align="center" p="md">
@@ -832,7 +1115,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               </Group>
 
               <Group gap={6} justify="center" align="baseline">
-                <CurrencyIcon currency="BUZZ" size={28} />
+                <CurrencyIcon currency="BUZZ" type={challenge.buzzType} size={28} />
                 <Text
                   fw={900}
                   style={{
@@ -1046,25 +1329,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                   Generate
                 </Button>
                 {challenge.collectionId && (
-                  <LoginRedirect reason="submit-challenge">
-                    <Button
-                      onClick={() => {
-                        dialogStore.trigger({
-                          component: ChallengeSubmitModal,
-                          props: {
-                            challengeId: challenge.id,
-                            collectionId: challenge.collectionId!,
-                          },
-                        });
-                      }}
-                      leftSection={<IconPhoto size={16} />}
-                      variant="light"
-                      color="blue"
-                      fullWidth
-                    >
-                      Submit
-                    </Button>
-                  </LoginRedirect>
+                  <SubmitEntryButton
+                    isOwner={isOwner}
+                    onClick={handleOpenSubmitModal}
+                    label="Submit"
+                    fullWidth
+                  />
                 )}
               </Group>
             </div>
@@ -1087,22 +1357,12 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                 Generate
               </Button>
               {challenge.collectionId && (
-                <LoginRedirect reason="submit-challenge">
-                  <Button
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: ChallengeSubmitModal,
-                        props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-                      });
-                    }}
-                    leftSection={<IconPhoto size={16} />}
-                    variant="light"
-                    color="blue"
-                    fullWidth
-                  >
-                    Submit
-                  </Button>
-                </LoginRedirect>
+                <SubmitEntryButton
+                  isOwner={isOwner}
+                  onClick={handleOpenSubmitModal}
+                  label="Submit"
+                  fullWidth
+                />
               )}
             </>
           ) : challenge.status === ChallengeStatus.Completed ? (
@@ -1137,7 +1397,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       <Accordion
         variant="separated"
         multiple
-        defaultValue={['details', 'models', 'prizes']}
+        defaultValue={['details', 'models', 'prizes', 'judging']}
         styles={(theme) => ({
           content: { padding: 0 },
           item: {
@@ -1165,10 +1425,43 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
           </Accordion.Control>
           <Accordion.Panel>
             <ScrollArea.Autosize mah={300}>
+              {isProjectedPrizes && (
+                <Text size="xs" c="dimmed" px="xs" pb={4}>
+                  Projected from the current pool — grows as entries are submitted.
+                </Text>
+              )}
               <DescriptionTable items={prizeItems} labelWidth="50%" {...accordionTableProps} />
             </ScrollArea.Autosize>
           </Accordion.Panel>
         </Accordion.Item>
+
+        {!!challenge.judgingCategories?.length && (
+          <Accordion.Item value="judging">
+            <Accordion.Control>
+              <Group justify="space-between">Judging</Group>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <div className="flex flex-col bg-gray-0 dark:bg-[#1f2023]">
+                {challenge.judgingCategories.map((category) => (
+                  <div
+                    key={category.key}
+                    className="flex flex-col gap-1 border-b border-gray-3 px-4 py-2.5 last:border-b-0 dark:border-dark-4"
+                  >
+                    <Group justify="space-between" gap="xs" wrap="nowrap">
+                      <Text size="sm">{category.label}</Text>
+                      <Text size="sm" fw={500}>
+                        {category.weight}%
+                      </Text>
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      {category.criteria}
+                    </Text>
+                  </div>
+                ))}
+              </div>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
 
         {challenge.models.length > 0 && (
           <Accordion.Item value="models">
@@ -1250,12 +1543,15 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
       </Accordion>
 
       <CreatorCardSimple
-        user={{
-          ...challenge.createdBy,
-          // Convert null to undefined for CreatorCardSimple compatibility
-          cosmetics: challenge.createdBy.cosmetics ?? undefined,
-          profilePicture: challenge.createdBy.profilePicture ?? undefined,
-        }}
+        user={(() => {
+          const author = getChallengeDisplayUser(challenge);
+          return {
+            ...author,
+            // Convert null to undefined for CreatorCardSimple compatibility
+            cosmetics: author.cosmetics ?? undefined,
+            profilePicture: author.profilePicture ?? undefined,
+          };
+        })()}
         statDisplayOverwrite={[]}
       />
     </Stack>
@@ -1287,6 +1583,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
 
   return (
     <div
+      id="winners"
       className="relative overflow-hidden py-12"
       style={{
         background: isDark
@@ -1321,6 +1618,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                   isFirst={index === 1}
                   className={index === 1 ? 'z-10' : ''}
                   judgeInfo={judgeInfo}
+                  buzzType={challenge.buzzType}
                 />
               ))}
             </div>
@@ -1338,6 +1636,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                     isFirst={winner.place === 1}
                     isMobile
                     judgeInfo={judgeInfo}
+                    buzzType={challenge.buzzType}
                   />
                 ))}
             </Stack>
@@ -1419,19 +1718,30 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   const currentUser = useCurrentUser();
   const mobile = useIsMobile();
   const isModerator = currentUser?.isModerator ?? false;
+  const domainColor = useDomainColor();
+  // On green (SFW) the domain caps entries to PG. Logged-in users can opt into
+  // PG-13, mirroring the images feed filter. Anonymous users are hard-capped by
+  // the domain rule, so the toggle would be a no-op for them.
+  const showPG13Toggle = domainColor === 'green' && !!currentUser;
+
+  const router = useRouter();
 
   const [judgeReviewedOnly, setJudgeReviewedOnly] = useState(false);
-  const [myEntriesOnly, setMyEntriesOnly] = useState(false);
+  // Seeded from `?mine=1` so the Your Challenges "View entry" CTA lands on the user's own entries.
+  const [myEntriesOnly, setMyEntriesOnly] = useState(() => !!router.query.mine);
   const [pendingReviewOnly, setPendingReviewOnly] = useState(false);
+  const [includePG13, setIncludePG13] = useState(false);
   const [opened, setOpened] = useState(false);
   const isActive = challenge.status === ChallengeStatus.Active;
   const hasCollection = !!challenge.collectionId;
   const displaySubmitAction = isActive && hasCollection && !currentUser?.muted;
+  const isOwner = useIsChallengeOwner(challenge);
 
   const filterCount =
     (judgeReviewedOnly ? 1 : 0) +
     (myEntriesOnly ? 1 : 0) +
-    (isModerator && pendingReviewOnly ? 1 : 0);
+    (isModerator && pendingReviewOnly ? 1 : 0) +
+    (showPG13Toggle && includePG13 ? 1 : 0);
 
   const judgeInfo = useMemo(
     () =>
@@ -1476,6 +1786,11 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
       <Stack gap={0}>
         <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <Group gap={8} mb={4}>
+          {showPG13Toggle && (
+            <FilterChip checked={includePG13} onChange={() => setIncludePG13((v) => !v)}>
+              <span>Include PG-13</span>
+            </FilterChip>
+          )}
           <FilterChip checked={judgeReviewedOnly} onChange={() => setJudgeReviewedOnly((v) => !v)}>
             <span>Judge Reviewed</span>
           </FilterChip>
@@ -1501,6 +1816,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
             setJudgeReviewedOnly(false);
             setMyEntriesOnly(false);
             setPendingReviewOnly(false);
+            setIncludePG13(false);
           }}
           fullWidth
         >
@@ -1557,6 +1873,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
   return (
     <Container
       fluid
+      id="entries"
       my="md"
       style={{
         background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
@@ -1585,16 +1902,12 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                     >
                       Generate Entries
                     </Button>
-                    <LoginRedirect reason="submit-challenge">
-                      <Button
-                        size="sm"
-                        variant="light"
-                        onClick={handleOpenSubmitModal}
-                        leftSection={<IconPhoto size={16} />}
-                      >
-                        Submit Entries
-                      </Button>
-                    </LoginRedirect>
+                    <SubmitEntryButton
+                      isOwner={isOwner}
+                      onClick={handleOpenSubmitModal}
+                      label="Submit Entries"
+                      size="sm"
+                    />
                   </>
                 )}
               </Group>
@@ -1617,6 +1930,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                     : undefined,
                   userId: myEntriesOnly ? currentUser?.id : undefined,
                   pendingReviewOnly: isModerator && pendingReviewOnly ? true : undefined,
+                  includePG13: showPG13Toggle && includePG13 ? true : undefined,
                   period: 'AllTime',
                   sort: ImageSort.Random,
                 }}
@@ -1634,8 +1948,17 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
 function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
   const currentUser = useCurrentUser();
   const isActive = challenge.status === ChallengeStatus.Active;
+  const isOwner = useIsChallengeOwner(challenge);
 
   const isDynamicPool = challenge.prizeMode === PrizeMode.Dynamic && challenge.buzzPerAction > 0;
+
+  const handleOpenSubmitModal = () => {
+    if (!challenge.collectionId) return;
+    dialogStore.trigger({
+      component: ChallengeSubmitModal,
+      props: { challengeId: challenge.id, collectionId: challenge.collectionId },
+    });
+  };
 
   if (!isActive || currentUser?.muted || isDynamicPool) return null;
 
@@ -1651,25 +1974,54 @@ function MobileCTAInline({ challenge }: { challenge: ChallengeDetail }) {
         Generate Entries
       </Button>
       {challenge.collectionId && (
-        <LoginRedirect reason="submit-challenge">
-          <Button
-            onClick={() => {
-              dialogStore.trigger({
-                component: ChallengeSubmitModal,
-                props: { challengeId: challenge.id, collectionId: challenge.collectionId! },
-              });
-            }}
-            leftSection={<IconPhoto size={16} />}
-            variant="light"
-            color="blue"
-            fullWidth
-          >
-            Submit Entries
-          </Button>
-        </LoginRedirect>
+        <SubmitEntryButton
+          isOwner={isOwner}
+          onClick={handleOpenSubmitModal}
+          label="Submit Entries"
+          fullWidth
+        />
       )}
     </Stack>
   );
+}
+
+function SubmitEntryButton({
+  isOwner,
+  onClick,
+  label,
+  size,
+  fullWidth,
+}: {
+  isOwner: boolean;
+  onClick: () => void;
+  label: string;
+  size?: MantineSize;
+  fullWidth?: boolean;
+}) {
+  const button = (
+    <Button
+      // `data-disabled` instead of `disabled` so the tooltip still receives hover events.
+      data-disabled={isOwner || undefined}
+      aria-disabled={isOwner || undefined}
+      onClick={isOwner ? (e: MouseEvent) => e.preventDefault() : onClick}
+      leftSection={<IconPhoto size={16} />}
+      variant="light"
+      color="blue"
+      size={size}
+      fullWidth={fullWidth}
+    >
+      {label}
+    </Button>
+  );
+
+  if (isOwner)
+    return (
+      <Tooltip label="You can't submit entries to your own challenge" withArrow>
+        {button}
+      </Tooltip>
+    );
+
+  return <LoginRedirect reason="submit-challenge">{button}</LoginRedirect>;
 }
 
 function getPlaceLabel(place: number): string {

@@ -2,6 +2,7 @@
 // used it — dropped here.) Structured JSON to stdout for log aggregation (Axiom, etc.); fire-and-forget.
 
 import { oauthEventsTotal } from '../metrics';
+import { logToAxiom } from '$lib/server/axiom';
 
 export type OAuthEventType =
   | 'client.created'
@@ -38,8 +39,9 @@ export function logOAuthEvent(event: OAuthAuditEvent): void {
     ...event,
   };
 
-  // Log as structured JSON for log aggregation (Axiom, etc.)
-  console.log(`[oauth-audit] ${JSON.stringify(entry)}`);
+  // Dual-write to Loki (via the @civitai/axiom stderr line) + Axiom. Fire-and-forget — never blocks the
+  // request; a logging failure must not affect the audited operation.
+  void logToAxiom({ event: 'oauth-audit', ...entry }).catch(() => {});
 
   // Mirror to a bounded-cardinality counter. The label is the event type with dots→underscores
   // (e.g. token.issued → token_issued) so it's a valid, stable Prometheus label value. This is the

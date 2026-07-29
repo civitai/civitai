@@ -1,17 +1,19 @@
 import { TRPCError } from '@trpc/server';
+import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
+import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { getOwnerDonationGoals } from '~/server/services/donation-goal.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
   LinkedComponentSettings,
-  ModelVersionEarlyAccessConfig,
   ModelVersionEarlyAccessPurchase,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -28,15 +30,15 @@ import { getStaticContent } from '~/server/services/content.service';
 import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
 import {
   addAdditionalLicensePermissions,
+  assertUserEarlyAccessLimits,
   createModelVersionPostFromTraining,
   deleteVersionById,
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
-  getUserEarlyAccessModelVersions,
   getVersionById,
   getWorkflowIdFromModelVersion,
-  modelVersionDonationGoals,
+  modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
   queryModelVersions,
@@ -45,12 +47,8 @@ import {
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
-import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
+import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import {
-  getMaxEarlyAccessDays,
-  getMaxEarlyAccessModels,
-} from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -113,8 +111,6 @@ const loadModelVersion = async ({
         description: true,
         baseModel: true,
         baseModelType: true,
-        earlyAccessConfig: true,
-        earlyAccessEndsAt: true,
         trainedWords: true,
         epochs: true,
         steps: true,
@@ -129,6 +125,8 @@ const loadModelVersion = async ({
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
+        licensingSourceVersionId: true,
+        flags: true,
         meta: true,
         model: {
           select: {
@@ -143,7 +141,7 @@ const loadModelVersion = async ({
             availability: true,
           },
         },
-        files: withFiles ? { select: modelFileSelect } : false,
+        files: withFiles ? { select: modelFileSelect, where: { replacedAt: null } } : false,
         posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
@@ -214,26 +212,29 @@ const loadModelVersion = async ({
         });
     }
 
-    const linkedComponents = linkedComponentResources.map((r) => {
-      const s = r.settings as LinkedComponentSettings;
-      const fileData = linkedFileDataMap.get(s.fileId);
-      return {
-        recommendedResourceId: r.id,
-        componentType: s.componentType,
-        modelId: s.modelId,
-        modelName: s.modelName,
-        versionId: r.resource?.id ?? 0,
-        versionName: s.versionName,
-        fileId: s.fileId,
-        fileName: fileData?.name ?? s.fileName,
-        sizeKB: fileData?.sizeKB,
-        fileType: fileData?.type,
-        fileMetadata: fileData?.metadata as
-          | { format?: string | null; size?: string | null; fp?: string | null }
-          | undefined,
-        isRequired: s.isRequired,
-      };
-    });
+    const linkedComponents = selectLiveLinkedComponents(
+      linkedComponentResources.map((r) => {
+        const s = r.settings as LinkedComponentSettings;
+        const fileData = linkedFileDataMap.get(s.fileId);
+        return {
+          recommendedResourceId: r.id,
+          componentType: s.componentType,
+          modelId: s.modelId,
+          modelName: s.modelName,
+          versionId: r.resource?.id ?? 0,
+          versionName: s.versionName,
+          fileId: s.fileId,
+          fileName: fileData?.name ?? s.fileName,
+          sizeKB: fileData?.sizeKB,
+          fileType: fileData?.type,
+          fileMetadata: fileData?.metadata as
+            | { format?: string | null; size?: string | null; fp?: string | null }
+            | undefined,
+          isRequired: s.isRequired,
+        };
+      }),
+      new Set(linkedFileDataMap.keys())
+    );
 
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
     const generationResources = await getResourceData(recommendedResourceIds, {
@@ -259,6 +260,7 @@ const loadModelVersion = async ({
           covered: version.generationCoverage?.covered ?? false,
           modelUserId: version.model.user.id,
           modelType: version.model.type,
+          flags: version.flags,
           modelVersionAlias: (version.meta as ModelVersionMeta | null)?.generationAlias,
         },
       ],
@@ -272,11 +274,25 @@ const loadModelVersion = async ({
     const canGenerate = versionState?.canGenerate ?? false;
     const wildcardSetId = versionState?.wildcardSetId;
 
+    // Expose the version's gate + EA donation goal (the client reads paidAccess.terms directly).
+    // The donationGoal seeds ONLY the owner's edit form, so use the RAW owner read (unfiltered by the
+    // public EA-window/opt-out) and never hand it to a non-owner — public display reads the goal from
+    // modelVersion.donationGoal instead.
+    const paidAccess = (await getPaidAccess('ModelVersion', [id]))[id];
+    const isOwnerOrMod =
+      !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
+    const eaDonationGoal =
+      paidAccess && isOwnerOrMod
+        ? (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null
+        : null;
+
     return {
       ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
       canGenerate,
       wildcardSetId,
-      earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
+      paidAccess: toModelVersionPaidAccessDto(paidAccess),
+      donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
@@ -362,34 +378,24 @@ export const upsertModelVersionHandler = async ({
       input.trainingDetails = undefined;
     }
 
-    if (!!input.earlyAccessConfig?.timeframe) {
-      const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta, features: ctx.features });
-
-      if (!ctx.user.isModerator && input.earlyAccessConfig?.timeframe > maxDays) {
-        throw throwBadRequestError('Early access days exceeds user limit');
-      }
+    // A permanent (never-expiring) gate carries no timeframeDays, so it skips every timed-window cap
+    // below (max-days, max-concurrent EA models, and the CP tier check). Restrict it to moderators on
+    // this path — the Creator Studio sets permanent gates via the WEBHOOK_TOKEN-gated early-access
+    // endpoint, never through modelVersion.upsert.
+    if (input.paidAccess?.permanent && !ctx.user.isModerator) {
+      throw throwBadRequestError('Permanent access can only be set from the Creator Studio.');
     }
 
-    if (input?.earlyAccessConfig?.timeframe) {
-      // Confirm the user doesn't have any other early access models that are still active.
-      const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: ctx.user.id });
+    await assertUserEarlyAccessLimits({
+      userId: ctx.user.id,
+      userMeta: ctx.user.meta,
+      features: ctx.features,
+      isModerator: ctx.user.isModerator,
+      timeframeDays: input.paidAccess?.timeframeDays,
+      versionId: input.id,
+    });
 
-      if (
-        !ctx.user.isModerator &&
-        activeEarlyAccess.length >=
-          getMaxEarlyAccessModels({ userMeta: ctx.user.meta, features: ctx.features }) &&
-        (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
-      ) {
-        throw throwBadRequestError(
-          'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
-        );
-      }
-    }
-
-    if (
-      input?.usageControl !== ModelUsageControl.Download &&
-      input?.earlyAccessConfig?.chargeForDownload
-    ) {
+    if (input?.usageControl !== ModelUsageControl.Download && !!input.paidAccess?.terms.download) {
       throw throwBadRequestError(
         'Cannot charge for download if downloads are disabled for this model version'
       );
@@ -402,7 +408,7 @@ export const upsertModelVersionHandler = async ({
             select: { licensingFee: true, licensingFeeSettlementCurrency: true },
           })
         : null;
-      const hadExistingFee = !!existing?.licensingFee && existing.licensingFee > 0;
+      const hadExistingFee = existing?.licensingFee != null && Number(existing.licensingFee) > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
       }
@@ -418,6 +424,20 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
+    // Licensing lineage: the chosen source must be a registered LicensingRoot for
+    // the same base model. Guards against pointing at an arbitrary version to
+    // dodge the base-model rule.
+    if (input.licensingSourceVersionId != null) {
+      const source = await dbRead.licensingRoot.findUnique({
+        where: { modelVersionId: input.licensingSourceVersionId },
+        select: { baseModel: true },
+      });
+      if (!source)
+        throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
+      if (source.baseModel !== input.baseModel)
+        throw throwBadRequestError('Licensing source must share the same base model.');
+    }
+
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,
@@ -426,7 +446,7 @@ export const upsertModelVersionHandler = async ({
 
     // Just update early access deadline if updating the model version
     if (input.id)
-      await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+      await queueModelEarlyAccessReindex({ id: version.modelId }).catch((e) => {
         console.error('Unable to update model early access deadline');
         console.error(e);
       });
@@ -489,26 +509,41 @@ export const upsertModelVersionHandler = async ({
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return version;
+    // The service returns a full Prisma row; devalue (TRPC_WRITE_DEVALUE pools)
+    // throws on a raw `Decimal`, so convert before it hits the wire.
+    return {
+      ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
 
-export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
+export const deleteModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   try {
-    const version = await deleteVersionById(input);
+    const version = await deleteVersionById({ ...input, isModerator: ctx.user.isModerator });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
-    await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+    await queueModelEarlyAccessReindex({ id: version.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });
 
     await dataForModelsCache.refresh(version.modelId);
 
-    return version;
+    // `deleteVersionById` returns the full deleted row — same Decimal hazard as upsert above.
+    return {
+      ...version,
+      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -530,7 +565,6 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        earlyAccessConfig: true,
         model: { select: { userId: true, nsfw: true } },
       },
     });
@@ -563,7 +597,7 @@ export const publishModelVersionHandler = async ({
       republishing,
     });
 
-    await updateModelEarlyAccessDeadline({ id: updatedVersion.modelId }).catch((e) => {
+    await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });
@@ -832,7 +866,7 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
   }
 };
 
-export const modelVersionDonationGoalsHandler = async ({
+export const modelVersionDonationGoalHandler = async ({
   input,
   ctx,
 }: {
@@ -844,7 +878,7 @@ export const modelVersionDonationGoalsHandler = async ({
     // try/catch (so a Prisma error bypassed the P2025→NOT_FOUND mapping in
     // throwDbError and surfaced as INTERNAL_SERVER_ERROR). The service now also
     // throws NOT_FOUND at the source, so this is belt-and-suspenders.
-    return await modelVersionDonationGoals({
+    return await modelVersionDonationGoal({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,

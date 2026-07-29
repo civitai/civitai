@@ -39,6 +39,7 @@ const define = { 'process.env': JSON.stringify(publicEnv) };
 const workers = [
   { in: 'src/utils/signals/worker.ts', out: 'public/workers/signals.worker.js' },
   { in: 'src/workers/civitai-link.worker.ts', out: 'public/workers/civitai-link.worker.js' },
+  { in: 'src/workers/file-hash.worker.ts', out: 'public/workers/file-hash.worker.js' },
 ];
 
 const watch = process.argv.includes('--watch');

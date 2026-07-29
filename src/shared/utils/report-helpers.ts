@@ -8,6 +8,7 @@ export enum ReportEntity {
   Post = 'post',
   User = 'reportedUser',
   Collection = 'collection',
+  Challenge = 'challenge',
   Bounty = 'bounty',
   BountyEntry = 'bountyEntry',
   Chat = 'chat',

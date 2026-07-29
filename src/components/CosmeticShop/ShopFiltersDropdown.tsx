@@ -1,4 +1,4 @@
-import type { ChipProps, ButtonProps } from '@mantine/core';
+import type { ChipProps } from '@mantine/core';
 import {
   Popover,
   Group,
@@ -10,24 +10,27 @@ import {
   Drawer,
   useComputedColorScheme,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter } from '@tabler/icons-react';
+import { IconFilter } from '@tabler/icons-react';
+import { FilterButton } from '~/components/Buttons/FilterButton';
 import { getDisplayName } from '~/utils/string-helpers';
 import React, { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import type { GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import classes from './ShopFiltersDropdown.module.scss';
-import clsx from 'clsx';
 
 type Filters = GetShopInput & { modifier?: 'owned' | 'notOwned' };
 
-export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Props) {
+export function ShopFiltersDropdown({ filters, setFilters, availableTypes, hideModifiers }: Props) {
   const colorScheme = useComputedColorScheme('dark');
   const mobile = useIsMobile();
 
+  const types = availableTypes ?? (Object.values(CosmeticType) as CosmeticType[]);
+
   const [opened, setOpened] = useState(false);
   const filterLength =
-    (filters.cosmeticTypes ? filters.cosmeticTypes.length : 0) + (!!filters.modifier ? 1 : 0);
+    (filters.cosmeticTypes ? filters.cosmeticTypes.length : 0) +
+    (!hideModifiers && !!filters.modifier ? 1 : 0);
 
   const clearFilters = useCallback(() => setFilters({}), [setFilters]);
 
@@ -48,21 +51,14 @@ export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Pro
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
-      <Button
-        className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={colorScheme === 'dark' ? 'filled' : 'light'}
-        {...buttonProps}
-        rightSection={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
+      <FilterButton
+        icon={IconFilter}
+        active={opened}
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
-        <Group gap={4} wrap="nowrap">
-          <IconFilter size={16} />
-          Filters
-        </Group>
-      </Button>
+        Filters
+      </FilterButton>
     </Indicator>
   );
 
@@ -78,7 +74,7 @@ export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Pro
           multiple
         >
           <Group gap={8}>
-            {Object.values(CosmeticType).map((type, index) => (
+            {types.map((type, index) => (
               <Chip key={index} value={type} {...chipProps}>
                 <span>{getDisplayName(type)}</span>
               </Chip>
@@ -86,24 +82,26 @@ export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Pro
           </Group>
         </Chip.Group>
       </Stack>
-      <Stack gap="md">
-        <Divider label="Modifiers" className="text-sm font-bold" />
-        <Chip.Group
-          value={filters.modifier}
-          onChange={(modifier) =>
-            setFilters((prev) => ({ ...prev, modifier: modifier as Filters['modifier'] }))
-          }
-        >
-          <Group gap={8}>
-            <Chip value="owned" {...chipProps}>
-              Owned
-            </Chip>
-            <Chip value="notOwned" {...chipProps}>
-              Not Owned
-            </Chip>
-          </Group>
-        </Chip.Group>
-      </Stack>
+      {!hideModifiers && (
+        <Stack gap="md">
+          <Divider label="Modifiers" className="text-sm font-bold" />
+          <Chip.Group
+            value={filters.modifier}
+            onChange={(modifier) =>
+              setFilters((prev) => ({ ...prev, modifier: modifier as Filters['modifier'] }))
+            }
+          >
+            <Group gap={8}>
+              <Chip value="owned" {...chipProps}>
+                Owned
+              </Chip>
+              <Chip value="notOwned" {...chipProps}>
+                Not Owned
+              </Chip>
+            </Group>
+          </Chip.Group>
+        </Stack>
+      )}
       {filterLength > 0 && (
         <Button
           color="gray"
@@ -162,4 +160,8 @@ export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Pro
 type Props = {
   setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   filters: Filters;
-} & Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
+  // Restrict the cosmetic-type chips (e.g. Creator Shop shows only sellable types).
+  availableTypes?: CosmeticType[];
+  // Hide the Owned / Not Owned modifiers (Creator Shop storefront).
+  hideModifiers?: boolean;
+};

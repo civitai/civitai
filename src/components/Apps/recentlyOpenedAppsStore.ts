@@ -26,10 +26,19 @@ export const MAX_RECENTS = 8;
 
 /** One recorded recently-opened app. `id` is the app block id (the stable key
  *  used for de-dup); `blockId` is the human/slug handle kept for display +
- *  re-resolution against the listing. */
+ *  re-resolution against the listing (and the `/apps/run/<blockId>` link).
+ *
+ *  `name` + `iconUrl` are OPTIONAL display enrichments so a consumer (the shared
+ *  app-chrome "Recently run" menu) can render icon + name WITHOUT re-fetching the
+ *  listing. They are optional on purpose: entries persisted before this field
+ *  existed are `{id, blockId}`-only and MUST still parse (backward-compatible),
+ *  and a caller that doesn't readily have the name/icon simply omits them (the
+ *  UI falls back to a generic icon / the blockId handle). */
 export type RecentApp = {
   id: string;
   blockId: string;
+  name?: string;
+  iconUrl?: string;
 };
 
 function isClient(): boolean {
@@ -48,7 +57,17 @@ function coerce(raw: unknown): RecentApp[] {
       typeof (item as RecentApp).id === 'string' &&
       typeof (item as RecentApp).blockId === 'string'
     ) {
-      out.push({ id: (item as RecentApp).id, blockId: (item as RecentApp).blockId });
+      const entry: RecentApp = {
+        id: (item as RecentApp).id,
+        blockId: (item as RecentApp).blockId,
+      };
+      // Carry the OPTIONAL display enrichments through only when present AND a
+      // string — a legacy `{id,blockId}`-only entry, or a hand-edited blob with
+      // a wrong-typed name/iconUrl, degrades to "no enrichment" (never crashes).
+      const { name, iconUrl } = item as RecentApp;
+      if (typeof name === 'string') entry.name = name;
+      if (typeof iconUrl === 'string') entry.iconUrl = iconUrl;
+      out.push(entry);
     }
   }
   return out;

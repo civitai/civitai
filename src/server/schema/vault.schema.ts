@@ -45,6 +45,12 @@ export const vaultItemsRemoveModelVersionsSchema = z.object({
 export type VaultItemMetadataSchema = z.infer<typeof vaultItemMetadataSchema>;
 export const vaultItemMetadataSchema = z.object({
   failures: z.number().default(0),
+  latestError: z.string().optional(),
+  // Advisory in-flight lease (epoch millis) set by the process-vault-items job
+  // while it works an item, so overlapping runs don't double-process it. Cleared
+  // on completion; a killed run's stale lease ages out. `nullish` because the job
+  // clears it by writing JSON null.
+  processingStartedAt: z.number().nullish(),
 });
 
 export type VaultItemFilesSchema = z.infer<typeof vaultItemFilesSchema>;

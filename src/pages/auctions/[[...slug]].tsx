@@ -28,6 +28,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getAuctionNameBySlug } from '~/server/services/auction.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -38,57 +39,31 @@ type AuctionQueryData = {
 };
 
 export const getServerSideProps = createServerSideProps({
-  useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, features, ctx, session }) => {
+  resolver: async ({ features, ctx, session }) => {
     if (!features?.auctions) return { notFound: true };
 
-    let auctionName: string | null = null;
-    let valid = true;
-
-    if (ssg) {
-      await ssg.auction.getAll.prefetch();
-      const { slug, d } = ctx.query as AuctionQueryData;
-      if (slug && slug.length) {
-        const sSlug = slug[0];
-        if (sSlug !== MY_BIDS) {
-          // await ssg.auction.getBySlug.prefetch({ slug: sSlug });
-          try {
-            await ssg.auction.getMyBids.prefetch();
-
-            // TODO try to parse this better
-            // const queryD = Array.isArray(d) ? d[0] : d;
-            // const realD = !queryD ? 0 : Number(queryD);
-            // const res = await ssg.auction.getBySlug.fetch({ slug: sSlug, d: realD });
-            const res = await ssg.auction.getBySlug.fetch({ slug: sSlug });
-            auctionName = res?.auctionBase?.name ?? null;
-          } catch {
-            valid = false;
-          }
-        } else {
-          if (!session) {
-            return {
-              redirect: {
-                destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
-                permanent: false,
-              },
-            };
-          }
-          await ssg.auction.getMyBids.prefetch();
-          await ssg.auction.getMyRecurringBids.prefetch();
-
-          auctionName = 'My Bids';
-        }
-      }
+    const { slug } = ctx.query as AuctionQueryData;
+    if (slug?.[0] === MY_BIDS && !session) {
+      return {
+        redirect: {
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
+          permanent: false,
+        },
+      };
     }
 
-    return { props: { auctionName, valid } };
+    // Only the name, so link unfurls carry the auction. Everything the page renders is
+    // fetched client-side.
+    const auctionName =
+      slug?.[0] && slug[0] !== MY_BIDS ? await getAuctionNameBySlug(slug[0]) : null;
+
+    return { props: { auctionName } };
   },
 });
 
 export default function Auctions({
   auctionName,
-  valid,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
   const { slug: initialSlug } = router.query as AuctionQueryData;
@@ -115,15 +90,8 @@ export default function Auctions({
   } = trpc.auction.getAll.useQuery();
 
   const getDocTitle = () => {
-    return `Auction${
-      slug === MY_BIDS
-        ? ': My Bids'
-        : auctionName
-        ? `: ${auctionName}`
-        : selectedAuction?.auctionBase?.name
-        ? `: ${selectedAuction.auctionBase.name}`
-        : 's'
-    } | Civitai`;
+    const name = selectedAuction?.auctionBase?.name ?? auctionName;
+    return `Auction${slug === MY_BIDS ? ': My Bids' : name ? `: ${name}` : 's'} | Civitai`;
   };
 
   // TODO fix hitting /auctions when none are available
@@ -139,11 +107,20 @@ export default function Auctions({
     document.title = getDocTitle();
   }, [slug, auctions.length]);
 
+  // A slug that matches no active auction is only knowable once the list has loaded.
+  // Derived rather than latched: the set of active slugs turns over daily without the
+  // count changing, and getAll is cached for 30s, so a freshly-opened auction can be
+  // absent from the first response and present in the next one.
+  const isValidSlug =
+    isLoadingAuctions ||
+    isErrorAuctions ||
+    !slug ||
+    slug === MY_BIDS ||
+    auctions.some((a) => a.auctionBase.slug === slug);
+
   useEffect(() => {
-    if (valid !== validAuction) {
-      setValidAuction(valid);
-    }
-  }, [valid]);
+    if (isValidSlug !== validAuction) setValidAuction(isValidSlug);
+  }, [isValidSlug, validAuction, setValidAuction]);
 
   useEffect(() => {
     if (!running) runTour({ key: 'auction', step: 0 });

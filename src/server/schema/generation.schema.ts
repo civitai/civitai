@@ -2,7 +2,7 @@ import * as z from 'zod';
 import type { Sampler } from '~/server/common/constants';
 import { constants, generation } from '~/server/common/constants';
 import { GenerationRequestStatus } from '~/server/common/enums';
-import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
+import { modelVersionTermsSchema } from '~/server/schema/model-version.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { generationSamplers } from '~/shared/constants/generation.constants';
@@ -23,18 +23,6 @@ import { imageSchema } from './image.schema';
 //   type: z.enum(ModelType),
 //   name: z.string(),
 // });
-
-export type GetGenerationResourcesInput = z.infer<typeof getGenerationResourcesSchema>;
-export const getGenerationResourcesSchema = z.object({
-  limit: z.number().default(10),
-  page: z.number().default(1),
-  query: z.string().optional(),
-  types: z.enum(ModelType).array().optional(),
-  notTypes: z.enum(ModelType).array().optional(),
-  ids: z.number().array().optional(),
-  baseModel: z.string().optional(),
-  supported: z.boolean().optional(),
-});
 
 /**
  * Operator-controlled generator config, persisted to Redis (hash field
@@ -72,8 +60,9 @@ const generationResourceSchemaBase = z.object({
   name: z.string(),
   trainedWords: z.string().array().default([]),
   baseModel: z.string(),
-  earlyAccessEndsAt: z.coerce.date().optional(),
-  earlyAccessConfig: modelVersionEarlyAccessConfigSchema.optional(),
+  paidAccess: z
+    .object({ endsAt: z.coerce.date().nullable(), terms: modelVersionTermsSchema })
+    .nullish(),
   canGenerate: z.boolean(),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
@@ -383,4 +372,12 @@ export type ResolveImageMetaInput = z.infer<typeof resolveImageMetaSchema>;
 export const resolveImageMetaSchema = z.object({
   /** Raw EXIF metadata extracted from the image */
   metadata: z.record(z.string(), z.unknown()),
+});
+
+export type ResolveWildcardPackInput = z.infer<typeof resolveWildcardPackSchema>;
+export const resolveWildcardPackSchema = z.object({
+  /** The `Wildcards`-type ModelVersion whose zip pack to gate + resolve a
+   *  short-lived signed download URL for (the App Blocks page-host bridge then
+   *  fetches + unzips it client-side, as the logged-in user). */
+  modelVersionId: z.number().int().positive(),
 });

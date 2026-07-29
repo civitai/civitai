@@ -32,6 +32,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     if (!challengeRecord) return res.status(404).json({ error: 'Challenge not found' });
     challenge = challengeToLegacyFormat(challengeRecord);
   } else {
+    // Mod-only fallback for legacy single-daily-challenge callers: intentionally a LIMIT-1
+    // singleton lookup (newest active), not multi-challenge aware. Pass `challengeId` to target
+    // a specific challenge with many concurrently active.
     challenge = await getCurrentChallenge();
   }
 

@@ -17,6 +17,7 @@ import type {
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
+import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -36,6 +37,7 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
+  CosmeticShopItemStatus,
   CosmeticType,
   MediaType,
   MetricTimeframe,
@@ -62,8 +64,25 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
-  if (input.name) cosmeticWhere.name = { contains: input.name, mode: 'insensitive' };
+  if (input.name) {
+    const term = input.name.trim();
+    // INT4-bounded — an oversized pasted id would fail the whole query.
+    const termId = /^\d+$/.test(term) && Number(term) <= 2147483647 ? Number(term) : undefined;
+    // Match item title, cosmetic name, or the creator (username / raw id).
+    where.OR = [
+      { title: { contains: term, mode: 'insensitive' } },
+      { cosmetic: { name: { contains: term, mode: 'insensitive' } } },
+      { cosmetic: { creator: { username: { contains: term, mode: 'insensitive' } } } },
+      ...(termId ? [{ cosmetic: { createdById: termId } }] : []),
+    ];
+  }
+  if (input.ids?.length) where.id = { in: input.ids };
   if (input.types && input.types.length) cosmeticWhere.type = { in: input.types };
+  if (input.resellable) {
+    where.status = CosmeticShopItemStatus.Published;
+    cosmeticWhere.createdById = { not: null };
+    where.meta = { path: ['sellableByOthers'], equals: true };
+  }
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
 
@@ -282,6 +301,29 @@ export const upsertCosmeticShopSection = async ({
   image, // TODO
   ...cosmeticShopSection
 }: UpsertCosmeticShopSectionInput & { userId: number }) => {
+  // Creator-listed items may only be featured when published AND opted into
+  // resale — a creator who never marked their item sellable-by-others hasn't
+  // consented to official-shop placement.
+  if (items?.length) {
+    const ineligible = await dbWrite.cosmeticShopItem.findMany({
+      where: {
+        id: { in: items },
+        cosmetic: { createdById: { not: null } },
+        OR: [
+          { status: { not: CosmeticShopItemStatus.Published } },
+          { NOT: { meta: { path: ['sellableByOthers'], equals: true } } },
+        ],
+      },
+      select: { title: true },
+    });
+    if (ineligible.length)
+      throw new Error(
+        `These creator items are not published resellable cosmetics: ${ineligible
+          .map((i) => i.title)
+          .join(', ')}`
+      );
+  }
+
   const shouldCreateImage = image && !image.id;
   const [imageRecord] = shouldCreateImage
     ? await createEntityImages({
@@ -406,9 +448,10 @@ export const reorderCosmeticShopSections = async ({
 
 export const getShopSectionsWithItems = async ({
   isModerator,
+  creatorShopEnabled,
   cosmeticTypes,
   sectionId,
-}: { isModerator?: boolean } & GetShopInput = {}) => {
+}: { isModerator?: boolean; creatorShopEnabled?: boolean } & GetShopInput = {}) => {
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -433,8 +476,19 @@ export const getShopSectionsWithItems = async ({
         },
         where: {
           shopItem: {
-            cosmetic: (cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {},
+            cosmetic: {
+              ...((cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {}),
+              // Creator-made cosmetics (createdById set — official items also
+              // have an addedById, the mod who listed them) are gated behind
+              // the creatorShop feature flag; a section of only creator items
+              // disappears entirely for unflagged viewers via the
+              // empty-section filter below.
+              ...(isModerator || creatorShopEnabled ? {} : { createdById: null }),
+            },
             archivedAt: null,
+            // Creator items in official sections can lose their Published
+            // status after being featured (revert/reject) — hide those.
+            ...(isModerator ? {} : { status: CosmeticShopItemStatus.Published }),
             OR: isModerator
               ? undefined
               : [{ availableTo: { gte: new Date() } }, { availableTo: null }],
@@ -476,6 +530,7 @@ export const getShopSectionsWithItems = async ({
 export const purchaseCosmeticShopItem = async ({
   userId,
   shopItemId,
+  viaShopUserId,
   buzzType = 'yellow',
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
@@ -485,6 +540,7 @@ export const purchaseCosmeticShopItem = async ({
     where: { id: shopItemId },
     select: {
       id: true,
+      status: true,
       cosmeticId: true,
       availableQuantity: true,
       availableFrom: true,
@@ -492,9 +548,11 @@ export const purchaseCosmeticShopItem = async ({
       unitAmount: true,
       title: true,
       meta: true,
+      addedById: true,
       cosmetic: {
         select: {
           type: true,
+          createdById: true,
         },
       },
       _count: {
@@ -509,6 +567,17 @@ export const purchaseCosmeticShopItem = async ({
 
   if (!shopItem) {
     throw new Error('Cosmetic not found');
+  }
+
+  // Creator-submitted items share this table; only Published items are sellable.
+  // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
+  if (shopItem.status !== CosmeticShopItemStatus.Published) {
+    throw new Error('Cosmetic is not available');
+  }
+
+  // Creators can't buy their own cosmetic — they're granted it on approval.
+  if (shopItem.cosmetic.createdById === userId) {
+    throw new Error('You already own this cosmetic');
   }
 
   if (
@@ -618,29 +687,93 @@ export const purchaseCosmeticShopItem = async ({
       await withRetries(async () => {
         // We do this last mainly because we don't want to fail the purchase if this fails.
         // We can divide the funds later if needed.
-        const paidToUsers: number[] = meta?.paidToUserIds ?? [];
-        if (paidToUsers.length > 0) {
-          // distribute the buzz to these users:
-          const amountPerUser = Math.floor(shopItem.unitAmount / paidToUsers.length);
+        // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
+        // their 70% share directly. When another creator (the seller = addedById)
+        // lists a sellable-by-others cosmetic, that 70% pool is split by the
+        // cosmetic's sellerShare (% of price the seller keeps; creator gets the
+        // rest). Official items keep the legacy meta.paidToUserIds distribution.
+        const price = shopItem.unitAmount;
+        const creatorId = shopItem.cosmetic.createdById;
+        const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
+          price,
+          meta?.sellerShare ?? 0
+        );
 
-          await Promise.all(
-            paidToUsers.map((paidToUserId) =>
-              // TODO.RedSplit: In the future, we might (?) want to use a different type of transaction here.
-              createBuzzTransaction({
-                fromAccountId: 0,
-                toAccountId: paidToUserId,
-                amount: amountPerUser,
-                type: TransactionType.Sell,
-                description: `A user has purchased your cosmetic - ${shopItem.title}`,
-                externalTransactionId: transactionId,
-                details: {
-                  purchasedBy: userId,
-                  originalAmount: shopItem.unitAmount,
-                },
-              })
-            )
-          );
+        // Cross-creator resale: when bought through another creator's shop
+        // (viaShopUserId) that actually resells this sellable item, split the 70%
+        // pool by the item's sellerShare. Verified server-side so credit can't be
+        // spoofed. Buying through your own resell listing pays no seller share —
+        // the kickback would be a self-discount.
+        // Every purchase declares its shop context: CIVITAI_SHOP_ATTRIBUTION
+        // (-1) = the official Civitai shop (platform acts as the reseller and
+        // keeps the seller share), a user id = that user's storefront. Positive
+        // attributions are verified against the shop owner's settings; anything
+        // unverified, missing, or spoofed falls back to the official-shop split
+        // so bad attribution can never dodge the platform's share.
+        //
+        // Verified attributions that keep the creator on the full pool: their
+        // own open shop, and a buyer purchasing through their OWN resell
+        // listing (no kickback — the seller share would be a self-discount).
+        let resellerId: number | undefined;
+        let creatorKeepsPool = false;
+        if (creatorId && meta?.sellableByOthers && viaShopUserId && viaShopUserId > 0) {
+          const viaUser = await dbRead.user.findUnique({
+            where: { id: viaShopUserId },
+            select: { settings: true },
+          });
+          const viaShop = (
+            viaUser?.settings as {
+              creatorShop?: { enabled?: boolean; resoldItemIds?: number[] };
+            } | null
+          )?.creatorShop;
+          if (viaShopUserId === creatorId) {
+            creatorKeepsPool = viaShop?.enabled === true;
+          } else if (viaShop?.resoldItemIds?.includes(shopItem.id)) {
+            if (viaShopUserId === userId) creatorKeepsPool = true;
+            else resellerId = viaShopUserId;
+          }
         }
+
+        const platformResale =
+          !!creatorId && !!meta?.sellableByOthers && !resellerId && !creatorKeepsPool;
+
+        let recipients: { userId: number; amount: number }[];
+        if (creatorId) {
+          if (resellerId || platformResale) {
+            recipients = [
+              ...(creatorAmount > 0 ? [{ userId: creatorId, amount: creatorAmount }] : []),
+              ...(resellerId && sellerAmount > 0
+                ? [{ userId: resellerId, amount: sellerAmount }]
+                : []),
+            ];
+          } else {
+            recipients = [{ userId: creatorId, amount: creatorPool }];
+          }
+        } else {
+          recipients = (meta?.paidToUserIds ?? []).map((uid) => ({
+            userId: uid,
+            amount: Math.floor(price / (meta?.paidToUserIds?.length ?? 1)),
+          }));
+        }
+
+        await Promise.all(
+          recipients.map((r) =>
+            createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: r.userId,
+              // Pay creators/resellers in the same Buzz color the buyer paid with.
+              toAccountType: buzzType,
+              amount: r.amount,
+              type: TransactionType.Sell,
+              description: `A user has purchased your cosmetic - ${shopItem.title}`,
+              // Unique per recipient when the pool is split, so the two payouts
+              // don't collide on the same external id.
+              externalTransactionId:
+                recipients.length > 1 ? `${transactionId}:${r.userId}` : transactionId,
+              details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
+            })
+          )
+        );
       }, 3);
     } catch (e) {
       // We will NOT stop the user interaction for this.

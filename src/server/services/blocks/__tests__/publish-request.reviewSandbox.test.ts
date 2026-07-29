@@ -20,19 +20,41 @@ const {
   mockGetReviewHead,
   mockTriggerReviewBuild,
   mockDeleteReviewResources,
+  mockDeleteAgentReviewResources,
+  mockDeleteStagedBundle,
+  mockDeprovisionReviewPreview,
 } = vi.hoisted(() => ({
   mockDbRead: {
     appBlockPublishRequest: { findUnique: vi.fn(), findMany: vi.fn(async () => []) },
+    // Fix #1 (onsite): withdrawRequest now probes for a reset listing to close. No reset
+    // listing in these sandbox tests → findFirst returns null → the close early-returns.
+    appListing: { findFirst: vi.fn(async () => null) },
+    appListingModerationEvent: { findFirst: vi.fn(async () => null) },
   },
   mockDbWrite: {
     appBlockPublishRequest: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       update: vi.fn(async () => ({})),
     },
+    $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+    appListing: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    appListingModerationEvent: { create: vi.fn(async () => ({})) },
+    // AGENTIC REVIEW (P1) — teardownAgentReviewForRequest first probes findFirst
+    // (cheap indexed existence gate) then flips a running report → torn-down via
+    // updateMany. Default findFirst = a report exists (agent review ran).
+    appReviewAgentReport: {
+      findFirst: vi.fn(async () => ({ id: 'report_1' })),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
   },
   mockGetReviewHead: vi.fn(async () => 'a'.repeat(40)),
   mockTriggerReviewBuild: vi.fn(async () => ({ name: 'review-pr-1' })),
   mockDeleteReviewResources: vi.fn(async () => undefined),
+  mockDeleteAgentReviewResources: vi.fn(async () => undefined),
+  mockDeleteStagedBundle: vi.fn(async () => undefined),
+  // #2831 — teardownReviewForRequest dynamically imports this to drop the
+  // disposable run-for-real preview storage schema.
+  mockDeprovisionReviewPreview: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
@@ -47,11 +69,24 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   // pure helper used by previewRequest
   reviewHost: (sha: string, domain: string) => `review-${sha.slice(0, 16)}.${domain}`,
 }));
+// AGENTIC REVIEW (P1) — teardownAgentReviewForRequest dynamically imports these.
+vi.mock('~/server/services/blocks/agent-review.service', () => ({
+  deleteAgentReviewResources: mockDeleteAgentReviewResources,
+}));
+vi.mock('~/utils/bundle-s3', () => ({
+  deleteStagedBundle: mockDeleteStagedBundle,
+}));
+vi.mock('~/server/services/apps/storage-provision.service', () => ({
+  AppStorageProvisioner: {
+    deprovisionReviewPreview: mockDeprovisionReviewPreview,
+  },
+}));
 
 import {
   previewRequest,
   getReviewStatus,
   teardownReviewForRequest,
+  teardownAgentReviewForRequest,
   teardownPreview,
   countActiveReviewPreviews,
   listActiveReviewPreviews,
@@ -246,6 +281,8 @@ describe('teardownReviewForRequest', () => {
   beforeEach(() => {
     mockDbRead.appBlockPublishRequest.findUnique.mockReset();
     mockDeleteReviewResources.mockClear();
+    mockDeprovisionReviewPreview.mockReset();
+    mockDeprovisionReviewPreview.mockResolvedValue(undefined);
   });
 
   it('deletes review resources by publish request (label selector is the boundary)', async () => {
@@ -260,6 +297,8 @@ describe('teardownReviewForRequest', () => {
       sha: SHA,
       publishRequestId: PUBREQ,
     });
+    // The disposable preview storage schema is dropped too (#2831).
+    expect(mockDeprovisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: PUBREQ });
   });
 
   it('never throws even if the delete fails', async () => {
@@ -271,6 +310,92 @@ describe('teardownReviewForRequest', () => {
     mockDeleteReviewResources.mockRejectedValue(new Error('k8s down'));
     await expect(teardownReviewForRequest(PUBREQ)).resolves.toBeUndefined();
   });
+
+  it('#2831 — a k8s teardown FAILURE still DROPs the preview schema (drop runs first, independently)', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: 'my-app',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ sha: SHA }),
+    });
+    // The k8s delete throws — must NOT skip the schema drop.
+    mockDeleteReviewResources.mockRejectedValue(new Error('k8s down'));
+    await expect(teardownReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+    // The DROP ran regardless of the k8s failure (it runs FIRST, in its own try).
+    expect(mockDeprovisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: PUBREQ });
+  });
+
+  it('#2831 — drops the preview schema even when the request row has VANISHED (early return path)', async () => {
+    // The row lookup returns null → the k8s teardown early-returns, but the schema
+    // drop already ran before the lookup, so it is not skipped.
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);
+    await teardownReviewForRequest(PUBREQ);
+    expect(mockDeprovisionReviewPreview).toHaveBeenCalledWith({ publishRequestId: PUBREQ });
+    expect(mockDeleteReviewResources).not.toHaveBeenCalled();
+  });
+
+  it('#2831 — a preview-drop FAILURE never throws and does not block the k8s teardown', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      slug: 'my-app',
+      deployState: 'preview-live',
+      deployDetail: JSON.stringify({ sha: SHA }),
+    });
+    mockDeprovisionReviewPreview.mockRejectedValue(new Error('appsdb down'));
+    await expect(teardownReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+    // The k8s teardown still ran despite the preview-drop failure.
+    expect(mockDeleteReviewResources).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AGENTIC REVIEW (P1, audit #1/#2) — teardownAgentReviewForRequest is DECOUPLED
+// from the sandbox-preview teardown: it always deletes the agent k8s objects,
+// flips a running report row → torn-down, and cleans up the staged bundle,
+// regardless of whether a sandbox preview ever ran.
+// ---------------------------------------------------------------------------
+describe('teardownAgentReviewForRequest', () => {
+  beforeEach(() => {
+    mockDeleteAgentReviewResources.mockClear();
+    mockDeleteStagedBundle.mockClear();
+    mockDbWrite.appReviewAgentReport.findFirst.mockClear();
+    mockDbWrite.appReviewAgentReport.findFirst.mockResolvedValue({ id: 'report_1' });
+    mockDbWrite.appReviewAgentReport.updateMany.mockClear();
+    mockDbWrite.appReviewAgentReport.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('deletes agent resources, flips the running report to torn-down, and cleans the staged bundle', async () => {
+    await teardownAgentReviewForRequest(PUBREQ);
+
+    expect(mockDeleteAgentReviewResources).toHaveBeenCalledWith(
+      expect.objectContaining({ publishRequestId: PUBREQ })
+    );
+    expect(mockDbWrite.appReviewAgentReport.updateMany).toHaveBeenCalledWith({
+      where: { publishRequestId: PUBREQ, status: 'running' },
+      data: { status: 'torn-down', completedAt: expect.any(Date) },
+    });
+    expect(mockDeleteStagedBundle).toHaveBeenCalledWith(PUBREQ);
+  });
+
+  it('skips the k8s + MinIO teardown I/O when no agent review ran for the request', async () => {
+    // No report row for this request → the cheap indexed gate returns early,
+    // so the live approve/reject/withdraw path pays a single indexed read, not
+    // the k8s LIST+DELETE + MinIO LIST+DELETE round-trips.
+    mockDbWrite.appReviewAgentReport.findFirst.mockResolvedValue(null);
+
+    await expect(teardownAgentReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+
+    expect(mockDbWrite.appReviewAgentReport.findFirst).toHaveBeenCalledWith({
+      where: { publishRequestId: PUBREQ },
+      select: { id: true },
+    });
+    expect(mockDeleteAgentReviewResources).not.toHaveBeenCalled();
+    expect(mockDbWrite.appReviewAgentReport.updateMany).not.toHaveBeenCalled();
+    expect(mockDeleteStagedBundle).not.toHaveBeenCalled();
+  });
+
+  it('never throws even if a step fails (best-effort)', async () => {
+    mockDbWrite.appReviewAgentReport.updateMany.mockRejectedValue(new Error('db down'));
+    await expect(teardownAgentReviewForRequest(PUBREQ)).resolves.toBeUndefined();
+  });
 });
 
 describe('withdrawRequest review teardown (#2831)', () => {
@@ -280,6 +405,10 @@ describe('withdrawRequest review teardown (#2831)', () => {
     mockDbWrite.appBlockPublishRequest.updateMany.mockReset();
     mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
     mockDeleteReviewResources.mockClear();
+    mockDeleteAgentReviewResources.mockClear();
+    // A report row exists → the agent teardown gate passes (a prior test may have
+    // flipped findFirst to null).
+    mockDbWrite.appReviewAgentReport.findFirst.mockResolvedValue({ id: 'report_1' });
   });
 
   it('tears down the review env when a previewed request is self-withdrawn', async () => {
@@ -312,7 +441,7 @@ describe('withdrawRequest review teardown (#2831)', () => {
     });
   });
 
-  it('does NOT tear down when no preview was started', async () => {
+  it('does NOT tear down the SANDBOX when no preview was started, but STILL tears down the agent (audit #1)', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce({
       id: PUBREQ,
       status: 'pending',
@@ -323,7 +452,12 @@ describe('withdrawRequest review teardown (#2831)', () => {
     await withdrawRequest({ publishRequestId: PUBREQ, userId: USER });
     await new Promise((r) => setTimeout(r, 0));
 
+    // Sandbox teardown is preview-gated → skipped.
     expect(mockDeleteReviewResources).not.toHaveBeenCalled();
+    // Agent teardown is UNCONDITIONAL → fires even with no sandbox preview.
+    expect(mockDeleteAgentReviewResources).toHaveBeenCalledWith(
+      expect.objectContaining({ publishRequestId: PUBREQ })
+    );
   });
 });
 
@@ -531,6 +665,101 @@ describe('teardownPreview', () => {
   it('throws when the request is not found', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(null);
     await expect(teardownPreview({ publishRequestId: PUBREQ })).rejects.toThrow(/not found/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// markReviewPreviewState — the stale-watcher sha guard (#2831 reachability arc).
+// The reachability wait can keep an apply watcher alive for minutes, so a mod
+// can tear down preview A mid-wait and re-preview a new build B within the
+// window. The watcher's advancing writes pass `expectedSha` so a superseded
+// watcher can't clobber the newer preview's row.
+// ---------------------------------------------------------------------------
+describe('markReviewPreviewState (stale-watcher sha guard)', () => {
+  const SHA_A = 'a'.repeat(40);
+  const SHA_B = 'b'.repeat(40);
+
+  beforeEach(() => {
+    mockDbWrite.appBlockPublishRequest.updateMany.mockReset();
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it('adds the sha guard (deployDetail contains the serialized sha) when expectedSha is set', async () => {
+    await markReviewPreviewState(
+      PUBREQ,
+      'preview-live',
+      { sha: SHA_A, host: 'h', url: 'u' },
+      { requireActivePreview: true, expectedSha: SHA_A }
+    );
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: PUBREQ,
+          status: 'pending',
+          deployState: { startsWith: 'preview-' },
+          deployDetail: { contains: `"sha":"${SHA_A}"` },
+        }),
+      })
+    );
+  });
+
+  it('the initial (building) write carries NO sha guard and NO active-preview guard', async () => {
+    // previewRequest is ESTABLISHING the new preview — its sha isn't on the row
+    // yet, so requiring it would deadlock the first transition.
+    await markReviewPreviewState(PUBREQ, 'preview-building', { sha: SHA_A, host: 'h', url: 'u' });
+    const [arg] = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls[0] as any[];
+    expect(arg.where).not.toHaveProperty('deployDetail');
+    expect(arg.where).not.toHaveProperty('deployState');
+  });
+
+  it('a superseded watcher (sha A) does NOT clobber the newer active preview (sha B)', async () => {
+    // Play the DB: the row's CURRENT detail belongs to build B. An updateMany
+    // changes the row only when the where-clause's sha fragment is actually a
+    // substring of B's stored detail (which is exactly what Postgres LIKE does).
+    const storedDetailForB = JSON.stringify({ sha: SHA_B, host: 'review-bbbbbbbbbbbbbbbb.civit.ai' });
+    let rowsChanged = 0;
+    mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation(async ({ where }: any) => {
+      const frag = where?.deployDetail?.contains as string | undefined;
+      // requireActivePreview is satisfied (B is a preview-* state); the sha
+      // fragment is the discriminator. No fragment (guard dropped) → matches.
+      const matches = frag == null || storedDetailForB.includes(frag);
+      const count = matches ? 1 : 0;
+      rowsChanged += count;
+      return { count };
+    });
+
+    // Stale watcher A advances toward preview-live for its OWN sha (A).
+    await markReviewPreviewState(
+      PUBREQ,
+      'preview-live',
+      { sha: SHA_A, host: 'hA', url: 'uA' },
+      { requireActivePreview: true, expectedSha: SHA_A }
+    );
+
+    // B's row is untouched — the guard fragment for A is absent from B's detail,
+    // so watcher A changed 0 rows. (If the expectedSha guard were dropped, the
+    // where-clause would carry no sha fragment, `matches` would be true, and this
+    // would be 1 → the test fails, proving the guard is load-bearing.)
+    expect(rowsChanged).toBe(0);
+  });
+
+  it('the OWNING watcher (sha B) still advances the row it owns', async () => {
+    const storedDetailForB = JSON.stringify({ sha: SHA_B, host: 'review-bbbbbbbbbbbbbbbb.civit.ai' });
+    let rowsChanged = 0;
+    mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation(async ({ where }: any) => {
+      const frag = where?.deployDetail?.contains as string | undefined;
+      const matches = frag == null || storedDetailForB.includes(frag);
+      const count = matches ? 1 : 0;
+      rowsChanged += count;
+      return { count };
+    });
+    await markReviewPreviewState(
+      PUBREQ,
+      'preview-live',
+      { sha: SHA_B, host: 'hB', url: 'uB' },
+      { requireActivePreview: true, expectedSha: SHA_B }
+    );
+    expect(rowsChanged).toBe(1);
   });
 });
 

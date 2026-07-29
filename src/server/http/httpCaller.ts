@@ -1,13 +1,19 @@
 import { QS } from '~/utils/qs';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { handleLogError } from '../utils/errorHandling';
 
 export abstract class HttpCaller {
   private baseUrl: string;
   private baseHeaders: MixedObject;
+  // Anti-hang ceiling only — without it a hung vendor (payment/orchestrator/etc.)
+  // parks the request for undici's ~300s default. Generous so slow-but-legit
+  // captures are never cut off; override per-caller via the constructor option.
+  private timeout: number;
 
-  constructor(baseUrl: string, options?: { headers?: MixedObject }) {
+  constructor(baseUrl: string, options?: { headers?: MixedObject; timeout?: number }) {
     this.baseUrl = baseUrl;
     this.baseHeaders = options?.headers || {};
+    this.timeout = options?.timeout ?? 120_000;
   }
 
   private async prepareResponse<TData = any>(response: Response) {
@@ -33,6 +39,7 @@ export abstract class HttpCaller {
         ...this.baseHeaders,
         ...opts?.headers,
       },
+      signal: fetchTimeoutSignal(this.timeout),
     });
   }
 
@@ -55,6 +62,7 @@ export abstract class HttpCaller {
       method: 'POST',
       body,
       headers: { ...this.baseHeaders, ...headers },
+      signal: fetchTimeoutSignal(this.timeout),
     });
   }
 
@@ -87,6 +95,7 @@ export abstract class HttpCaller {
       method: 'PUT',
       body,
       headers: { ...this.baseHeaders, ...headers },
+      signal: fetchTimeoutSignal(this.timeout),
     });
   }
 
@@ -111,6 +120,7 @@ export abstract class HttpCaller {
   public async deleteRaw(endpoint: string) {
     return await fetch(`${this.baseUrl}${endpoint}`, {
       method: 'DELETE',
+      signal: fetchTimeoutSignal(this.timeout),
     });
   }
 

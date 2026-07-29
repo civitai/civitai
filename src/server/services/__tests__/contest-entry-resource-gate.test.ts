@@ -1,0 +1,288 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * Task 11: validate the required-resource rule (Challenge.modelVersionIds) BEFORE the
+ * entry-fee charge in validateContestCollectionEntry, not just at promotion (which runs
+ * AFTER the fee already ran — see challenge-rewards.ts:promoteChallengeEntries). Entry fees
+ * are never refunded (challenge-funding.ts), so an off-resource image used to be charged
+ * then auto-rejected with no refund. These tests assert the gate throws before any charge
+ * is attempted, and that a valid image still reaches the charge step.
+ *
+ * The module-load scaffold below (redis/db/search-index/sibling-service mocks) mirrors
+ * collection.service.sysredis-soft.test.ts, which already proved this is the minimal set
+ * needed to import collection.service.ts without pulling in kysely/@civitai/db.
+ */
+
+const REQUIRED_VERSION_ID = 111;
+const COLLECTION_ID = 100;
+const USER_ID = 5;
+const IMAGE_ID = 9001;
+const CREATOR_ID = 4242;
+
+const {
+  mockChargeEntryFees,
+  mockChallengeFindFirst,
+  mockImageResourceNewFindMany,
+  mockDbRead,
+  mockAmIBlockedByUser,
+} = vi.hoisted(() => {
+  const mockChargeEntryFees = vi.fn();
+  const mockChallengeFindFirst = vi.fn();
+  const mockImageResourceNewFindMany = vi.fn();
+  const mockAmIBlockedByUser = vi.fn(async () => false);
+  const mockDbRead = {
+    user: { findUnique: vi.fn() },
+    challenge: { findFirst: mockChallengeFindFirst },
+    collectionItem: { count: vi.fn(), findFirst: vi.fn() },
+    collection: { findMany: vi.fn() },
+    image: { findMany: vi.fn() },
+    article: { findMany: vi.fn() },
+    model: { findMany: vi.fn() },
+    post: { findMany: vi.fn() },
+    imageResourceNew: { findMany: mockImageResourceNewFindMany },
+    $queryRaw: vi.fn(),
+  };
+  return {
+    mockChargeEntryFees,
+    mockChallengeFindFirst,
+    mockImageResourceNewFindMany,
+    mockDbRead,
+    mockAmIBlockedByUser,
+  };
+});
+
+vi.mock('~/server/redis/client', () => {
+  const make = (): any => new Proxy(() => 'k', { get: () => make() });
+  const keyProxy = make();
+  return {
+    redis: { get: vi.fn(), set: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
+    sysRedis: { get: vi.fn(), set: vi.fn() },
+    REDIS_KEYS: keyProxy,
+    REDIS_SYS_KEYS: keyProxy,
+    REDIS_SUB_KEYS: keyProxy,
+    withSysReadDeadline: vi.fn((p) => p),
+  };
+});
+
+vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
+
+// @civitai/db's index re-exports ./kysely, whose top-level `import 'kysely'` is not
+// installed in this worktree. Replacing the whole package short-circuits that eval.
+vi.mock('@civitai/db', () => ({
+  createLagTracker: vi.fn(() => ({})),
+  loadDbEnv: vi.fn(() => ({})),
+}));
+
+vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/db-lag-helpers', () => ({
+  getDbWithoutLag: vi.fn(),
+  preventReplicationLag: vi.fn(),
+}));
+vi.mock('~/server/search-index', () => ({}));
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+vi.mock('~/server/redis/caches', () => ({
+  tagIdsForImagesCache: {},
+  userCollectionCountCache: {},
+}));
+vi.mock('~/server/services/article.service', () => ({ getArticles: vi.fn() }));
+vi.mock('~/server/services/home-block-cache.service', () => ({ homeBlockCacheBust: vi.fn() }));
+vi.mock('~/server/services/image.service', () => ({
+  getAllImages: vi.fn(),
+  enqueueImageIngestion: vi.fn(),
+}));
+vi.mock('~/server/services/model.service', () => ({
+  getModelsWithVersions: vi.fn(),
+  bustFeaturedModelsCache: vi.fn(),
+  getModelsWithImagesAndModelVersions: vi.fn(),
+}));
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: mockAmIBlockedByUser }));
+vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
+vi.mock('~/server/services/post.service', () => ({ getPostsInfinite: vi.fn() }));
+
+// chargeContestEntryFeesForCollection dynamically imports this module at runtime — mock it
+// so we can assert the fee charge is (or isn't) reached, without pulling in the buzz ledger.
+vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
+  chargeEntryFees: mockChargeEntryFees,
+}));
+
+const { validateContestCollectionEntry } = await import('~/server/services/collection.service');
+
+// Dispatch dbRead.challenge.findFirst by the distinguishing field in its `where` clause —
+// the function makes several distinct challenge lookups in sequence.
+function wireChallengeFindFirst(opts: { hasResourceChallenge: boolean; hasFeeChallenge: boolean }) {
+  mockChallengeFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+    if ('createdById' in where) return null; // own-challenge self-entry check
+    if ('modelVersionIds' in where) {
+      return opts.hasResourceChallenge ? { modelVersionIds: [REQUIRED_VERSION_ID] } : null;
+    }
+    if ('maxParticipants' in where) return null; // no participant cap configured
+    if (where.source === 'User') {
+      // The fee-challenge lookup (collection.service.ts chargeContestEntryFeesForCollection) is the
+      // only source=User lookup that also filters `status: 'Active'` in its where;
+      // select: { id, entryFee, buzzType }.
+      if ('status' in where) {
+        return opts.hasFeeChallenge ? { id: 1, entryFee: 100, buzzType: 'yellow' } : null;
+      }
+      // Otherwise this is the assertUserChallengeAcceptingEntries timing gate
+      // (challenge-entry-gate.ts), which runs BEFORE the resource gate and rejects
+      // unless the user challenge is Active. Return an Active challenge so execution
+      // reaches the resource gate under test. ('Active' is ChallengeStatus.Active —
+      // the same literal collection.service uses.)
+      return { status: 'Active', createdById: CREATOR_ID };
+    }
+    return null;
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+  mockDbRead.$queryRaw.mockResolvedValue([]); // alreadyJudged check: nothing already judged
+  mockDbRead.collection.findMany.mockResolvedValue([]); // no featured collections
+  mockChargeEntryFees.mockResolvedValue({ paidImageIds: [IMAGE_ID], unpaidImageIds: [] });
+});
+
+describe('contest entry resource gate (Task 11)', () => {
+  it('rejects an image lacking any required modelVersionId before charging', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    mockImageResourceNewFindMany.mockResolvedValue([]); // image has no matching resource
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).rejects.toThrow('This image does not use a required model for this challenge.');
+
+    expect(mockImageResourceNewFindMany).toHaveBeenCalledWith({
+      where: { imageId: { in: [IMAGE_ID] }, modelVersionId: { in: [REQUIRED_VERSION_ID] } },
+      select: { imageId: true },
+      distinct: ['imageId'],
+    });
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
+  it('accepts an image that has one of the required versions and reaches the charge step', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    mockImageResourceNewFindMany.mockResolvedValue([{ imageId: IMAGE_ID }]);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).resolves.toBeUndefined();
+
+    expect(mockChargeEntryFees).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the gate entirely when the challenge has no modelVersionIds restriction', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: false, hasFeeChallenge: true });
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).resolves.toBeUndefined();
+
+    expect(mockImageResourceNewFindMany).not.toHaveBeenCalled();
+    expect(mockChargeEntryFees).toHaveBeenCalledTimes(1);
+  });
+
+  it('moderators bypass the resource gate', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: true, hasFeeChallenge: true });
+    mockImageResourceNewFindMany.mockResolvedValue([]); // would fail the gate if it ran
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        // These cases enter a User-source challenge, which is behind the `userChallenges` flag.
+        canAccessUserChallenges: true,
+        isModerator: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).resolves.toBeUndefined();
+
+    expect(mockImageResourceNewFindMany).not.toHaveBeenCalled();
+  });
+
+  it('charges moderators the entry fee — the resource-gate bypass is not a fee exemption', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: false, hasFeeChallenge: true });
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        canAccessUserChallenges: true,
+        isModerator: true,
+        imageIds: [IMAGE_ID],
+        metadata: {},
+      })
+    ).resolves.toBeUndefined();
+
+    // A fee-exempt entry still competes for the prizes, so it would pay out from a pool it
+    // never funded (challenge 413: 2 mod entries, prizePool 0).
+    expect(mockChargeEntryFees).toHaveBeenCalledTimes(1);
+    expect(mockChargeEntryFees).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, imageIds: [IMAGE_ID], entryFee: 100 })
+    );
+  });
+});
+
+describe('validateContestCollectionEntry — creator block gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAmIBlockedByUser.mockResolvedValue(false);
+  });
+
+  it('rejects an entry from a viewer the creator has blocked, before charging', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: false, hasFeeChallenge: false });
+    mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+    mockAmIBlockedByUser.mockResolvedValue(true);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        imageIds: [IMAGE_ID],
+        canAccessUserChallenges: true,
+      })
+    ).rejects.toThrow('not available');
+
+    expect(mockAmIBlockedByUser).toHaveBeenCalledWith({ userId: USER_ID, targetUserId: CREATOR_ID });
+    expect(mockChargeEntryFees).not.toHaveBeenCalled();
+  });
+
+  it('lets an unblocked viewer proceed past the block gate', async () => {
+    wireChallengeFindFirst({ hasResourceChallenge: false, hasFeeChallenge: false });
+    mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+    mockDbRead.$queryRaw.mockResolvedValue([]); // no already-judged image
+    mockAmIBlockedByUser.mockResolvedValue(false);
+
+    await expect(
+      validateContestCollectionEntry({
+        collectionId: COLLECTION_ID,
+        userId: USER_ID,
+        imageIds: [IMAGE_ID],
+        canAccessUserChallenges: true,
+      })
+    ).resolves.toBeUndefined();
+  });
+});

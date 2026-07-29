@@ -4,6 +4,7 @@ import { MyModelsSection } from '~/components/Profile/Sections/MyModelsSection';
 import { PopularArticlesSection } from '~/components/Profile/Sections/PopularArticlesSection';
 import { PopularModelsSection } from '~/components/Profile/Sections/PopularModelsSection';
 import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReviewsSection';
+import { ShopSection } from '~/components/Profile/Sections/ShopSection';
 import { ShowcaseSection } from '~/components/Profile/Sections/ShowcaseSection';
 import type {
   ProfileSectionSchema,
@@ -22,6 +23,7 @@ export const defaultProfileSectionStatus: Record<ProfileSectionType, boolean> = 
   modelsOverview: true,
   imagesOverview: true,
   recentReviews: true,
+  shop: false,
 } as const;
 
 export const ProfileSectionComponent: Record<
@@ -34,6 +36,7 @@ export const ProfileSectionComponent: Record<
   modelsOverview: MyModelsSection,
   imagesOverview: MyImagesSection,
   recentReviews: RecentReviewsSection,
+  shop: ShopSection,
 } as const;
 
 export const profileSectionLabels: Record<ProfileSectionType, string> = {
@@ -43,6 +46,7 @@ export const profileSectionLabels: Record<ProfileSectionType, string> = {
   modelsOverview: 'Models overview',
   imagesOverview: 'Images overview',
   recentReviews: 'Recent reviews',
+  shop: 'Shop',
 } as const;
 export const getAllAvailableProfileSections = (userSections: ProfileSectionSchema[] = []) => {
   const sections: ProfileSectionSchema[] = [

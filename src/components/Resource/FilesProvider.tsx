@@ -13,13 +13,19 @@ import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { getPrimaryFileTypes, primaryFileTypesByModelType } from '~/utils/file-display-helpers';
+import {
+  getPrimaryFileTypes,
+  primaryFileTypesByModelType,
+  UNQUANTIZED_QUANT_TYPE,
+} from '~/utils/file-display-helpers';
 import {
   getModelFileFormat,
   inferGgufQuantType,
   inferSafetensorsPrecision,
 } from '~/utils/file-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { resolveOfficialFileHash } from '~/components/Resource/official-match';
+import { useFileHash } from '~/hooks/useFileHash';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getFileExtension, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -28,15 +34,31 @@ import { isDefined } from '~/utils/type-guards';
 type ZodErrorSchema = { _errors: string[] };
 type SchemaError = {
   type?: ZodErrorSchema;
-  size?: ZodErrorSchema;
   fp?: ZodErrorSchema;
   format?: ZodErrorSchema;
   quantType?: ZodErrorSchema;
 };
+type FileErrors = Array<SchemaError | undefined>;
+
+// Both link mutations (the Meili picker and linkOfficialFileByHash) return the
+// same server shape; map it to a client LinkedComponent in one place.
+function toLinkedComponent(
+  result: Omit<LinkedComponent, 'componentType' | 'fileMetadata'> & {
+    componentType: string;
+    fileMetadata: LinkedComponent['fileMetadata'] | null;
+  }
+): LinkedComponent {
+  return {
+    ...result,
+    componentType: result.componentType as ModelFileComponentType,
+    fileMetadata: result.fileMetadata ?? undefined,
+  };
+}
 
 export type FileFromContextProps = {
   id?: number;
   name: string;
+  overrideName?: string | null;
   modelType?: ModelType | null;
   type?: ModelFileType | null;
   sizeKB?: number;
@@ -50,12 +72,15 @@ export type FileFromContextProps = {
   uuid: string;
   isPending?: boolean;
   isUploading?: boolean;
+  // True while the file is being hashed + checked against official copies before
+  // any upload starts. Cleared when the check resolves (link or upload).
+  isCheckingOfficial?: boolean;
   status: 'pending' | 'uploading' | 'error' | 'aborted' | 'success';
 };
 
 type FilesContextState = {
   hasPending: boolean;
-  errors: SchemaError[] | null;
+  errors: FileErrors | null;
   files: FileFromContextProps[];
   linkedComponents: LinkedComponent[];
   modelId?: number;
@@ -67,7 +92,7 @@ type FilesContextState = {
   retry: (uuid: string) => Promise<void>;
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
   removeFile: (uuid: string) => void;
-  validationCheck: () => boolean;
+  validationCheck: (uuid?: string) => boolean;
   addLinkedComponent: (
     component: LinkedComponent | Omit<LinkedComponent, 'fileId' | 'fileName' | 'sizeKB'>
   ) => Promise<void>;
@@ -92,14 +117,16 @@ export const useFilesContext = () => {
 
 export function FilesProvider({ model, version, children }: FilesProviderProps) {
   const queryUtils = trpc.useUtils();
+  const { hashFile } = useFileHash();
   const upload = useS3UploadStore((state) => state.upload);
   const setItems = useS3UploadStore((state) => state.setItems);
 
-  const [errors, setErrors] = useState<SchemaError[] | null>(null);
+  const [errors, setErrors] = useState<FileErrors | null>(null);
   const [files, setFiles] = useState<FileFromContextProps[]>(() => {
     const initialFiles = (version?.files?.map((file) => ({
       id: file.id,
       name: file.name,
+      overrideName: file.overrideName ?? null,
       type: file.type as ModelFileType,
       sizeKB: file.sizeKB,
       size: file.metadata?.size,
@@ -165,6 +192,8 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     },
   });
 
+  const linkOfficialMutation = trpc.modelVersion.linkOfficialFileByHash.useMutation();
+
   const addLinkedComponentMutation = trpc.modelVersion.addLinkedComponent.useMutation({
     onError(error) {
       showErrorNotification({
@@ -221,24 +250,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       isRequired: component.isRequired ?? true,
     });
 
-    const enriched: LinkedComponent = {
-      recommendedResourceId: result.recommendedResourceId,
-      componentType: result.componentType as ModelFileComponentType,
-      modelId: result.modelId,
-      modelName: result.modelName,
-      versionId: result.versionId,
-      versionName: result.versionName,
-      fileId: result.fileId,
-      fileName: result.fileName,
-      sizeKB: result.sizeKB,
-      fileType: result.fileType,
-      fileMetadata: result.fileMetadata ?? undefined,
-      isRequired: result.isRequired,
-    };
-
     setLinkedComponents((prev) => [
       ...prev.filter((c) => c.versionId !== component.versionId),
-      enriched,
+      toLinkedComponent(result),
     ]);
   };
 
@@ -315,23 +329,121 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     }
   };
 
-  const checkValidation = () => {
+  // Called once the finished file has been cleared from the upload tracker, so the
+  // toast can't announce a completed upload while the row still renders a progress bar.
+  const showUploadFinishedNotification = (result: {
+    id: number;
+    name: string;
+    modelVersion: { id: number; status: ModelStatus; _count: { posts: number } };
+  }) => {
+    const hasPublishedPosts = result.modelVersion._count.posts > 0;
+    const isVersionPublished = result.modelVersion.status === ModelStatus.Published;
+    const { uploading } = useS3UploadStore
+      .getState()
+      .getStatus((item) => item.meta?.versionId === result.modelVersion.id);
+    const stillUploading = uploading > 0;
+
+    const notificationId = `upload-finished-${result.id}`;
+    showNotification({
+      id: notificationId,
+      autoClose: stillUploading,
+      color: 'green',
+      title: `Finished uploading ${result.name}`,
+      styles: { root: { alignItems: 'flex-start' } },
+      message: !stillUploading ? (
+        <Stack gap={4}>
+          {isVersionPublished ? (
+            <>
+              <Text size="sm" c="dimmed">
+                All files finished uploading.
+              </Text>
+              <Link
+                href={getModelUrl({
+                  modelId: model?.id ?? 0,
+                  modelName: model?.name,
+                  modelVersionId: result.modelVersion.id,
+                })}
+                passHref
+                legacyBehavior
+              >
+                <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
+                  Go to model
+                </Anchor>
+              </Link>
+            </>
+          ) : hasPublishedPosts ? (
+            <>
+              <Text size="sm" c="dimmed">
+                {`Your files have finished uploading, let's publish this version.`}
+              </Text>
+              <Text
+                c="blue.4"
+                size="sm"
+                style={{ cursor: 'pointer' }}
+                onClick={() => {
+                  hideNotification(notificationId);
+
+                  showNotification({
+                    id: 'publishing-version',
+                    message: 'Publishing...',
+                    loading: true,
+                  });
+
+                  if (model?.status !== ModelStatus.Published)
+                    publishModelMutation.mutate({
+                      id: model?.id as number,
+                      versionIds: [result.modelVersion.id],
+                    });
+                  else publishVersionMutation.mutate({ id: result.modelVersion.id });
+                }}
+              >
+                Publish it
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text size="sm" c="dimmed">
+                Your files have finished uploading, but you still need to add a post.
+              </Text>
+              <Link
+                href={`/models/${model?.id}/model-versions/${result.modelVersion.id}/wizard?step=3`}
+                passHref
+                legacyBehavior
+              >
+                <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
+                  Finish setup
+                </Anchor>
+              </Link>
+            </>
+          )}
+        </Stack>
+      ) : undefined,
+    });
+  };
+
+  // Passing a uuid validates only that file — editing one file's settings shouldn't
+  // fail because another file in the version is still missing metadata.
+  const checkValidation = (uuid?: string) => {
     setErrors(null);
 
-    const validation = metadataSchema.safeParse(files);
+    const targetIndex = uuid ? files.findIndex((x) => x.uuid === uuid) : -1;
+    const toValidate = targetIndex >= 0 ? [files[targetIndex]] : files;
+
+    const validation = metadataSchema.safeParse(toValidate);
     if (!validation.success) {
-      const errors = validation.error.format() as unknown as Array<{
-        [k: string]: ZodErrorSchema;
-      }>;
+      // format() returns an object keyed by failing index, not an array.
+      const formatted = validation.error.format() as unknown as Record<number, SchemaError>;
+      const errors =
+        targetIndex >= 0
+          ? files.map((_, i) => (i === targetIndex ? formatted[0] : undefined))
+          : files.map((_, i) => formatted[i]);
       setErrors(errors);
 
-      // Build user-friendly error messages per file
       const missingFields: string[] = [];
       errors.forEach((err, i) => {
         if (!err) return;
         const fileName = files[i]?.name ?? `File ${i + 1}`;
         const fields: string[] = [];
-        if (err.size?._errors?.length) fields.push('model size');
         if (err.fp?._errors?.length) fields.push('precision');
         if (err.quantType?._errors?.length) fields.push('quant type');
         if (err.type?._errors?.length) fields.push('file type');
@@ -345,6 +457,18 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       }
 
       return false;
+    }
+
+    if (targetIndex >= 0) {
+      // Only conflicts the edited file is part of — an unrelated pair of siblings
+      // that happen to share a key isn't this save's problem.
+      const target = files[targetIndex];
+      const conflicts = getConflictingFiles(files).filter((group) => group.includes(target));
+      if (conflicts.length) {
+        showConflictNotification(conflicts);
+        return false;
+      }
+      return true;
     }
 
     // External-generation versions (mod-only, routed via external engines) intentionally
@@ -380,104 +504,16 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       }
     }
 
-    const noConflicts = checkConflictingFiles(files);
-    if (!noConflicts) {
-      showErrorNotification({
-        title: 'Duplicate file types',
-        error: new Error(
-          'There are multiple files with the same type and size, please adjust your files'
-        ),
-      });
+    const conflicts = getConflictingFiles(files);
+    if (conflicts.length) {
+      showConflictNotification(conflicts);
+      return false;
     }
-    return noConflicts;
+    return true;
   };
 
   const createFileMutation = trpc.modelFile.create.useMutation({
     async onSuccess(result) {
-      const hasPublishedPosts = result.modelVersion._count.posts > 0;
-      const isVersionPublished = result.modelVersion.status === ModelStatus.Published;
-      const { uploading } = useS3UploadStore
-        .getState()
-        .getStatus((item) => item.meta?.versionId === result.modelVersion.id);
-      const stillUploading = uploading > 0;
-
-      const notificationId = `upload-finished-${result.id}`;
-      showNotification({
-        id: notificationId,
-        autoClose: stillUploading,
-        color: 'green',
-        title: `Finished uploading ${result.name}`,
-        styles: { root: { alignItems: 'flex-start' } },
-        message: !stillUploading ? (
-          <Stack gap={4}>
-            {isVersionPublished ? (
-              <>
-                <Text size="sm" c="dimmed">
-                  All files finished uploading.
-                </Text>
-                <Link
-                  href={getModelUrl({
-                    modelId: model?.id ?? 0,
-                    modelName: model?.name,
-                    modelVersionId: result.modelVersion.id,
-                  })}
-                  passHref
-                  legacyBehavior
-                >
-                  <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
-                    Go to model
-                  </Anchor>
-                </Link>
-              </>
-            ) : hasPublishedPosts ? (
-              <>
-                <Text size="sm" c="dimmed">
-                  {`Your files have finished uploading, let's publish this version.`}
-                </Text>
-                <Text
-                  c="blue.4"
-                  size="sm"
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => {
-                    hideNotification(notificationId);
-
-                    showNotification({
-                      id: 'publishing-version',
-                      message: 'Publishing...',
-                      loading: true,
-                    });
-
-                    if (model?.status !== ModelStatus.Published)
-                      publishModelMutation.mutate({
-                        id: model?.id as number,
-                        versionIds: [result.modelVersion.id],
-                      });
-                    else publishVersionMutation.mutate({ id: result.modelVersion.id });
-                  }}
-                >
-                  Publish it
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text size="sm" c="dimmed">
-                  Your files have finished uploading, but you still need to add a post.
-                </Text>
-                <Link
-                  href={`/models/${model?.id}/model-versions/${result.modelVersion.id}/wizard?step=3`}
-                  passHref
-                  legacyBehavior
-                >
-                  <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
-                    Finish setup
-                  </Anchor>
-                </Link>
-              </>
-            )}
-          </Stack>
-        ) : undefined,
-      });
-
       await queryUtils.modelVersion.getById.invalidate({
         id: result.modelVersion.id,
         withFiles: true,
@@ -561,8 +597,55 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
   }: FileFromContextProps) => {
     if (!file || !type) return;
 
+    let officialSha256: string | null = null;
+    try {
+      officialSha256 = await resolveOfficialFileHash({
+        file,
+        findBySize: (size) => queryUtils.modelFile.hasOfficialFileOfSize.fetch({ size }),
+        hashFile,
+        onHashStart: () =>
+          setFiles((state) =>
+            state.map((x) => (x.uuid === uuid ? { ...x, isCheckingOfficial: true } : x))
+          ),
+      });
+    } catch {
+      // network/server error — fall through to normal upload
+    }
+
+    if (officialSha256 && versionId) {
+      // Bytes already exist on the official account — re-verify server-side, skip upload,
+      // and create a linked-component pointer instead.
+      try {
+        const result = await linkOfficialMutation.mutateAsync({
+          id: versionId,
+          sha256: officialSha256,
+        });
+        if (result) {
+          setLinkedComponents((prev) => [...prev, toLinkedComponent(result)]);
+          setFiles((state) => state.filter((x) => x.uuid !== uuid));
+          showSuccessNotification({
+            title: 'Linked to official file',
+            message: `${result.modelName} already hosts this file — upload skipped.`,
+          });
+          return;
+        }
+        // no match → fall through to normal upload
+      } catch (e) {
+        showErrorNotification({
+          title: 'Failed to link official file',
+          reason: 'Uploading normally instead.',
+          error: e as Error,
+        });
+        // fall through to normal upload
+      }
+    }
+
     setFiles((state) =>
-      state.map((x) => (x.uuid === uuid ? { ...x, isPending: false, isUploading: true } : x))
+      state.map((x) =>
+        x.uuid === uuid
+          ? { ...x, isPending: false, isUploading: true, isCheckingOfficial: false }
+          : x
+      )
     );
 
     try {
@@ -613,6 +696,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
             setFiles((state) =>
               state.map((x) => (x.uuid === uuid ? { ...x, id: saved.id, isUploading: false } : x))
             );
+            showUploadFinishedNotification(saved);
           } catch (e: unknown) {
             showErrorNotification({
               title: 'Failed to save file',
@@ -680,7 +764,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         onDrop,
         startUpload,
         errors: errors,
-        hasPending: files.some((x) => x.isPending),
+        hasPending: files.some((x) => x.isPending || x.isCheckingOfficial),
         retry,
         updateFile: handleUpdateFile,
         removeFile,
@@ -706,13 +790,6 @@ const metadataSchema = modelFileMetadataSchema
     name: z.string(),
   })
   .refine(
-    (data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.size : true),
-    {
-      error: 'Model size is required for model files',
-      path: ['size'],
-    }
-  )
-  .refine(
     (data) =>
       data.type === 'Model' && data.modelType === 'Checkpoint' && !data.name.endsWith('.gguf')
         ? !!data.fp
@@ -726,21 +803,49 @@ const metadataSchema = modelFileMetadataSchema
     error: 'Quant type is required for GGUF files',
     path: ['quantType'],
   })
+  .refine((data) => (data.quantType === UNQUANTIZED_QUANT_TYPE ? !!data.fp : true), {
+    error: 'Floating point is required for unquantized files',
+    path: ['fp'],
+  })
   .array();
 
-// TODO.manuel: This is a hacky way to check for duplicates
-export const checkConflictingFiles = (files: FileFromContextProps[]) => {
-  const conflictCount: Record<string, number> = {};
+// The key is positional so absent fields can't collapse two distinct files onto
+// the same key.
+export const getConflictingFiles = (files: FileFromContextProps[]) => {
+  const groups = new Map<string, FileFromContextProps[]>();
 
   files.forEach((item) => {
     const key = [item.size, item.type, item.fp, getModelFileFormat(item.name), item.quantType]
-      .filter(Boolean)
-      .join('-');
-    if (conflictCount[key]) conflictCount[key] += 1;
-    else conflictCount[key] = 1;
+      .map((value) => value ?? '')
+      .join('|');
+    groups.set(key, [...(groups.get(key) ?? []), item]);
   });
 
-  return Object.values(conflictCount).every((count) => count === 1);
+  // Component files need none of size/fp/quantType, so a group where no member has
+  // any of them (e.g. two bare Text Encoders) has nothing to disambiguate on and
+  // isn't a real duplicate.
+  const hasDistinguishingSettings = (file: FileFromContextProps) =>
+    !!(file.size || file.fp || file.quantType);
+
+  return [...groups.values()].filter(
+    (group) => group.length > 1 && group.some(hasDistinguishingSettings)
+  );
+};
+
+const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
+  showErrorNotification({
+    title: 'Duplicate file types',
+    error: new Error(
+      conflicts
+        .map(
+          (group) =>
+            `${group
+              .map((f) => f.name)
+              .join(', ')}: same type, size, format, precision and quant, one must differ`
+        )
+        .join('\n')
+    ),
+  });
 };
 
 /** Model types whose primary file is an archive/config rather than model weights */
@@ -778,7 +883,6 @@ function inferFileType(fileName: string, modelType?: ModelType | null): ModelFil
       return undefined;
   }
 }
-
 
 /**
  * Pick a default type for a file dropped into the Additional Components section so

@@ -1,4 +1,11 @@
-import type { Counter, Gauge, Histogram, Metric, Registry } from 'prom-client';
+import type {
+  Counter,
+  Gauge,
+  Histogram,
+  HistogramConfiguration,
+  Metric,
+  Registry,
+} from 'prom-client';
 import client from 'prom-client';
 
 export const PROM_PREFIX = 'civitai_app_';
@@ -65,6 +72,15 @@ export function registerCounterWithLabels<T extends string>({
   }
 }
 
+export function registerGauge({ name, help }: { name: string; help: string }) {
+  // Do this to deal with HMR in nextjs
+  try {
+    return new client.Gauge({ name: PROM_PREFIX + name, help });
+  } catch (e) {
+    return client.register.getSingleMetric(PROM_PREFIX + name) as Gauge<string>;
+  }
+}
+
 export function registerGaugeWithLabels<T extends string>({
   name,
   help,
@@ -98,12 +114,16 @@ export function registerHistogram<T extends string = string>({
   // Do this to deal with HMR in nextjs
   const fullName = prefix + name;
   try {
-    return new client.Histogram({
-      name: fullName,
-      help,
-      labelNames: labelNames ? [...labelNames] : undefined,
-      buckets: buckets ? [...buckets] : undefined,
-    });
+    // Only set labelNames/buckets when provided. Passing `undefined` for either
+    // overrides prom-client's own defaults (labelNames -> [], buckets -> the
+    // default set) via Object.assign, and an undefined labelNames makes the
+    // Histogram constructor throw AFTER it has already self-registered — leaving
+    // a bucketless zombie in the registry that the catch below then hands back,
+    // so a later .observe() dies on `undefined.length` in findBound.
+    const config: HistogramConfiguration<T> = { name: fullName, help };
+    if (labelNames) config.labelNames = [...labelNames];
+    if (buckets) config.buckets = [...buckets];
+    return new client.Histogram(config);
   } catch (e) {
     return client.register.getSingleMetric(fullName) as Histogram<T>;
   }
@@ -188,7 +208,8 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
 // resolver, labeled by procedure path. Used to rank heavy-pool isolation
 // candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
-// layout (to 30s) keeps the long tail visible like images_search.
+// layout is trimmed for cardinality (see the buckets note below) while keeping
+// resolution around typical p95/p99.
 //
 // ⚠️ HIGH CARDINALITY: `path` is a fixed enum of ~870 procedure names (NOT ~93 —
 // that's the router count), so this emits ~870 x (buckets+sum+count) series PER
@@ -198,13 +219,65 @@ export const trpcProcedureDuration = registerHistogram({
   name: 'trpc_procedure_duration_seconds',
   help: 'tRPC procedure wall-clock duration (full chain + resolver) by path',
   labelNames: ['path'] as const,
-  buckets: [0.05, 0.25, 1, 2, 5, 10, 30],
+  // Trimmed 7→6 explicit boundaries (le 8→7 incl. +Inf, ~12% fewer _bucket
+  // series) to cut Prometheus cardinality on this high-`path` histogram while
+  // keeping boundaries near typical p95/p99. Dropped only the 50ms floor; the
+  // 30s tail boundary is retained so _bucket-based p99 can still resolve the
+  // 10–30s range (the parked-handler / slow-procedure diagnostic band).
+  buckets: [0.1, 0.5, 1, 2.5, 10, 30],
+});
+
+// Web-client READ-capability saturation for the superjson → devalue serializer
+// migration. Incremented per web tRPC procedure, bucketed by whether the request's
+// reported `x-client-version` belongs to a build that can decode the union
+// serializer (Phase-1-capable). LOW cardinality by construction: a single boolean
+// label (`phase1_capable` = 'true' | 'false') — NOT the raw version string. The
+// Phase-2 write-flip go/no-go reads the saturation ratio:
+//   rate(...{phase1_capable="true"}) / rate(...) — the fraction of live web traffic
+//   that can safely decode a devalue response.
+export const trpcClientReadCapabilityRequests = registerCounterWithLabels({
+  name: 'trpc_client_read_capability_requests_total',
+  help: 'Web tRPC procedures bucketed by client union-decode (Phase-1) capability',
+  labelNames: ['phase1_capable'] as const,
 });
 
 // Image feed metrics
 export const imagesFeedWithoutIndexCounter = registerCounter({
   name: 'images_feed_without_index_total',
   help: 'Number of times getInfiniteImagesHandler is called with useIndex=false or undefined',
+});
+
+// Metrics for the BitDex publish re-emitter job (reemit-bitdex-ops): runs is the
+// liveness signal, images_emitted/runs tracks emission volume, and the duration
+// histogram guards the emit statement against getting slow.
+export const reemitAttemptsCounter = registerCounter({
+  name: 'reemit_attempts_total',
+  help: 'BitDex publish re-emitter runs that passed the enabled gate and attempted the emit (incremented before the emit — counts erroring runs too)',
+});
+export const reemitRunsCounter = registerCounter({
+  name: 'reemit_runs_total',
+  help: 'BitDex publish re-emitter runs that emitted SUCCESSFULLY (success-only; compare to reemit_attempts_total for the error rate)',
+});
+export const reemitErrorsCounter = registerCounter({
+  name: 'reemit_errors_total',
+  help: 'BitDex publish re-emitter emits that threw (e.g. a missing shared PG function) before rethrowing',
+});
+export const reemitPostsScannedCounter = registerCounter({
+  name: 'reemit_posts_scanned_total',
+  help: 'Distinct posts scanned by the BitDex publish re-emitter across all runs',
+});
+export const reemitImagesEmittedCounter = registerCounter({
+  name: 'reemit_images_emitted_total',
+  help: 'BitdexOps rows (per-image ops) written by the BitDex publish re-emitter across all runs',
+});
+export const reemitRunDurationHistogram = registerHistogram({
+  name: 'reemit_run_duration_seconds',
+  help: 'Wall-clock duration of the BitDex publish re-emitter INSERT...SELECT emit statement',
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+});
+export const reemitSkippedRateLimitCounter = registerCounter({
+  name: 'reemit_skipped_rate_limit_total',
+  help: 'BitDex publish re-emitter fires skipped by the self rate-limit because too little time has passed since the last successful emit (external scheduler over-firing)',
 });
 
 // Creator compensation metrics
@@ -308,15 +381,29 @@ export const redisCommandDuration = registerHistogram({
   buckets: [0.001, 0.005, 0.025, 0.1, 0.5, 1, 2, 5, 10, 30],
 });
 
-// Cluster-client SELF-HEAL reconnect counter (FIX #1). Incremented once each time the inflight-leak
-// watchdog forces a full cluster reconnect. Healthy pods never touch this; a nonzero rate flags a pod
-// that hit the binary-wedge state and was auto-recovered (vs needing a human rolling-restart). `trigger`
-// distinguishes the two watchdog paths: 'deadline' = the sawtooth-immune deadline-hit-rate trigger,
-// 'inflight' = the legacy sustained-inflight breach. (See @civitai/redis cluster-selfheal.)
+// SELF-HEAL reconnect counter. Incremented once each time an inflight-leak self-heal watchdog forces
+// a full client reconnect. Healthy pods never touch this; a nonzero rate flags a pod that hit the
+// binary-wedge state and was auto-recovered (vs needing a human rolling-restart). `client`
+// distinguishes which node-redis client healed: 'cluster' = the cache cluster client, 'sys' = the
+// sysRedis Sentinel client (incident 2026-07-03). `trigger` distinguishes the watchdog path:
+// 'deadline' = the sawtooth-immune deadline-hit-rate trigger (cluster only), 'inflight' = the
+// sustained-inflight breach (both clients). (See @civitai/redis cluster-selfheal / sys-inflight.)
 export const redisSelfHealReconnectCounter = registerCounterWithLabels({
   name: 'redis_selfheal_reconnect_total',
-  help: 'Forced cluster-client reconnects by the inflight-leak self-heal watchdog',
-  labelNames: ['trigger'] as const,
+  help: 'Forced node-redis client reconnects by the inflight-leak self-heal watchdog, by client (cluster|sys) and trigger',
+  labelNames: ['trigger', 'client'] as const,
+});
+
+// The self-heal watchdog's OWN observation of the wedge: the in-process count of cluster command
+// SLOW-SETTLES in its sliding window (the deadline-hit trigger's input), sampled + published each
+// watchdog tick. This is DISTINCT from redis_command_duration_seconds — it is exactly what the
+// watchdog evaluates against REDIS_CLUSTER_SELFHEAL_DEADLINE_HIT_THRESHOLD, so a rising series that
+// crosses the threshold is the leading indicator of an imminent self-heal reconnect. Added after
+// the 2026-07-06 fleet wedge, where the watchdog's own signal was invisible and the trigger 0-fired.
+export const redisSelfHealDeadlineHitsWindow = registerGaugeWithLabels({
+  name: 'redis_selfheal_deadline_hits_window',
+  help: "The self-heal watchdog's in-process cluster slow-settle count over its sliding window, by client; the deadline-hit trigger fires when this crosses the threshold",
+  labelNames: ['client'] as const,
 });
 
 // Cluster ROUTING retry-after-rediscover counter (the topology-churn 500 wave). Incremented when a cluster
@@ -379,6 +466,48 @@ export const appStorageLatencyHistogram = registerHistogram({
   help: 'App Blocks KV procedure latency',
   labelNames: ['op'] as const,
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
+// Image ingestion / scan pipeline. The image-ingestion path (submit → scanner →
+// webhook write-back → cron drain) previously had ZERO Prometheus coverage; these
+// give per-lane submission volume, webhook-outcome split, cron throughput, and (via
+// collect()-based gauges in src/server/prom/client.ts) the working-state backlog.
+export const imageScanWebhookCounter = registerCounterWithLabels({
+  name: 'image_scan_webhook_total',
+  help: 'Image scan-result webhook callbacks by outcome',
+  labelNames: ['result'] as const,
+});
+
+export const imageScanSubmittedCounter = registerCounterWithLabels({
+  name: 'image_scan_submitted_total',
+  help: 'ingestImage() scan submissions by lane (new|legacy) and result (success|failed)',
+  labelNames: ['lane', 'result'] as const,
+});
+
+export const imageIngestCronCounter = registerCounterWithLabels({
+  name: 'image_ingest_cron_total',
+  help: 'ingest-images cron per-bucket image counts (sent lanes, waitingForRetry, staleRemoved)',
+  labelNames: ['bucket'] as const,
+});
+
+export const imageIngestCronQueueDepth = registerGauge({
+  name: 'image_ingest_cron_queue_depth',
+  help: 'ImageScan JobQueue depth read by the ingest-images cron on its most recent run',
+});
+
+// Fleet-wide cron job health (createJob in src/server/jobs/job.ts). Makes a
+// dead/erroring cron — e.g. ingest-images — visible: job_errors_total spikes and
+// the duration histogram flatlines when a job stops running.
+export const jobDurationHistogram = registerHistogram({
+  name: 'job_duration_seconds',
+  help: 'Cron job wall-clock run duration by job name',
+  labelNames: ['job'] as const,
+  buckets: [0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300],
+});
+export const jobErrorsCounter = registerCounterWithLabels({
+  name: 'job_errors_total',
+  help: 'Cron job runs that threw, by job name',
+  labelNames: ['job'] as const,
 });
 
 // NOTE: the DB pool-depth gauges live in the app (src/server/prom/client.ts) — they

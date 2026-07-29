@@ -33,7 +33,7 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
       .join(',');
     const updateResp = await write.cancellableQuery<{ key: string }>(`
       UPDATE "PendingNotification" pn
-      SET "users" = u.users::int[], "lastTriggered" = NOW()
+      SET "users" = ARRAY(SELECT DISTINCT unnest(pn."users" || u.users::int[])), "lastTriggered" = NOW()
       FROM (VALUES ${updateValues}) AS u(key, users)
       WHERE pn."key" = u.key
       RETURNING pn."key"
@@ -58,7 +58,7 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
       const insertResp = await write.cancellableQuery(`
         INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds")
         VALUES ${insertValues}
-        ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
+        ON CONFLICT (key) DO UPDATE SET "users" = ARRAY(SELECT DISTINCT unnest("PendingNotification"."users" || excluded."users")), "lastTriggered" = NOW()
       `);
       await insertResp.result();
     }
@@ -100,22 +100,86 @@ export async function queryNotifications(input: {
   return await query.result();
 }
 
-// --- read: per-category counts (cache-fronted, lag-aware) -------------------------------------------
-export async function countNotifications(input: {
+// --- read: per-category counts (cache-fronted, lag-aware, single-flighted) --------------------------
+// Per-key request coalescing (single-flight). The bell-count query is the heaviest read on the DB and,
+// within a user's replication-lag window, busts the cache and hits the primary on EVERY call — so N
+// concurrent count requests for the same (userId, unread, category) used to each launch the multi-second
+// `GROUP BY category` scan (an observed 43-way thundering herd on one user). Here, if an identical call is
+// already in flight we await ITS promise and return that result instead of launching another. On settle the
+// entry is removed (finally) so the next call re-derives fresh cache/lag state.
+//
+// NOT strictly correctness-neutral: countNotificationsImpl's result also depends on the lag-flag state AT
+// EXECUTION time (replica vs primary read via getNotifDbWithoutLag), which the (userId, unread, category)
+// key does not capture. If a mark-read lands DURING an in-flight replica read, a caller that arrives after
+// the write and coalesces gets the pre-write (replica) count instead of its own fresh primary read. This is
+// bounded and self-healing: mark-read busts the cache so the next poll re-queries; the staleness lasts at
+// most one in-flight-query duration; and the client already optimistically decremented, so the badge shows
+// the right number regardless. We deliberately do NOT gate coalescing on the lag flag — that check is async
+// (Redis), which would reintroduce the TOCTOU race the synchronous set() below avoids, and recent-writers
+// are exactly the herd single-flight most needs to collapse.
+//
+// NOTE the semantic difference from markNotificationsRead's `userWriteQueues`: writes SERIALIZE (each
+// enqueued onto the tail of the prior) because concurrent writes must not overlap; reads COALESCE (all
+// awaiters share the ONE in-flight promise) because the result is identical and re-running is pure waste.
+//
+// Exported for test visibility only (like userWriteQueues) — not part of the public surface.
+export const countInFlight = new Map<string, Promise<NotificationCategoryCount[]>>();
+
+export function countNotifications(input: {
+  userId: number;
+  unread: boolean;
+  category?: NotificationCategory | null;
+}): Promise<NotificationCategoryCount[]> {
+  const { userId, unread, category } = input;
+  const key = `${userId}:${unread}:${category ?? 'all'}`;
+
+  const existing = countInFlight.get(key);
+  if (existing) return existing;
+
+  const inFlight = countNotificationsImpl(input);
+  countInFlight.set(key, inFlight);
+  // Clean up on settle (success OR failure) so a rejection can't poison the key and the next call re-derives
+  // fresh state. Guard on identity in case a later call already replaced this entry. The trailing .catch
+  // swallows ONLY this cleanup chain's copy of a rejection (the real rejection still reaches the callers
+  // awaiting `inFlight`); without it, the derived finally-promise would surface as an unhandled rejection.
+  void inFlight
+    .finally(() => {
+      if (countInFlight.get(key) === inFlight) countInFlight.delete(key);
+    })
+    .catch(() => {});
+  return inFlight;
+}
+
+async function countNotificationsImpl(input: {
   userId: number;
   unread: boolean;
   category?: NotificationCategory | null;
 }): Promise<NotificationCategoryCount[]> {
   const { userId, unread, category } = input;
 
+  // The count cache (cache.ts) is a SINGLE per-user redis hash of per-category UNREAD counts, maintained
+  // incrementally by the worker's incrementUser (fan-out) / decrementUser (mark-read). It is keyed on
+  // `userId` ONLY — it does not distinguish the `unread` flag or a `category` filter. So it can correctly
+  // represent EXACTLY ONE variant of this query: `unread:true` with no category. For any other variant:
+  //   - `unread:false` (totals incl. read): there is no worker-maintained "total" counter, so this is
+  //     fundamentally uncacheable in this structure — and writing a total into the hash would CORRUPT the
+  //     worker's unread counters for every subsequent read.
+  //   - a `category`-scoped call: getUser returns the ALL-category hash, not the requested subset.
+  // Therefore gate the ENTIRE cache interaction (read + recent-writer bust + populate) on the cacheable
+  // variant. Non-cacheable variants touch the cache NOT AT ALL and just run the DB query uncached —
+  // getNotifDbWithoutLag still routes recent-writers to the primary, so freshness is preserved.
+  const cacheable = unread === true && category == null;
+
   // Check the lag flag BEFORE the cache — if a recent write flagged this user, bust the cache and read
-  // the primary to avoid a stale count.
+  // the primary to avoid a stale count. Only the cacheable variant interacts with the cache at all.
   const db = await getNotifDbWithoutLag(userId);
-  if (isWritePool(db)) {
-    await notificationCache.bustUser(userId);
-  } else {
-    const cached = await notificationCache.getUser(userId);
-    if (cached) return cached;
+  if (cacheable) {
+    if (isWritePool(db)) {
+      await notificationCache.bustUser(userId);
+    } else {
+      const cached = await notificationCache.getUser(userId);
+      if (cached) return cached;
+    }
   }
 
   const where: string[] = ['un."userId" = $1'];
@@ -134,7 +198,7 @@ export async function countNotifications(input: {
     params
   );
   const result = await query.result();
-  await notificationCache.setUser(userId, result);
+  if (cacheable) await notificationCache.setUser(userId, result);
   return result;
 }
 
@@ -169,7 +233,10 @@ export async function cleanupNotifications(before: Date): Promise<number> {
 }
 
 // --- mark read: per-user serialized + retried on transient pool-acquire errors ----------------------
-const userWriteQueues = new Map<number, Promise<void>>();
+// Exported for test visibility only: `markNotificationsRead` returns void, so the fire-and-forget
+// per-user chain promise is otherwise unreachable and the serialization/retry behavior can't be awaited
+// deterministically. Not part of the module's public surface — do not depend on it from app code.
+export const userWriteQueues = new Map<number, Promise<void>>();
 
 const TRANSIENT_WRITE_ERRORS = [
   'Connection terminated due to connection timeout',

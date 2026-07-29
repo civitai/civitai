@@ -28,6 +28,13 @@
       "description": "Human-readable display name. The server only requires a non-empty string (no length cap), so the CLI does not impose one either.",
       "minLength": 1
     },
+    "tagline": {
+      "type": "string",
+      "description": "Optional one-line pitch shown under the app's name on its `/apps` store card + detail page. Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version. Omit it and the store simply shows no tagline. Must contain a non-whitespace character and is capped at 140 characters — the same bound off-site listings use (OFFSITE_TAGLINE_MAX), kept in lockstep with MANIFEST_TAGLINE_MAX_LENGTH in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality). NOTE: the server measures the TRIMMED length, while this maxLength counts the raw string — so a value padded past 140 is rejected here but accepted server-side. That asymmetry is deliberate and one-directional: this schema is never more permissive than the server, so local validation can't green-light something submit would reject.",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "\\S"
+    },
     "type": {
       "type": "string",
       "description": "Free-form descriptor used by some examples (e.g. \"block\"). Not validated by the platform.",
@@ -37,6 +44,19 @@
       "type": "string",
       "description": "Content rating of the app surface.",
       "enum": ["g", "pg", "pg13", "r", "x"]
+    },
+    "category": {
+      "type": "string",
+      "description": "Optional marketplace category for the app's `/apps` store listing. When present it flows to the listing automatically on moderator-approve (only when a moderator has not already curated a category). Omit to let a moderator categorise the app. Must be one of the known marketplace categories — this enum is kept in lockstep with MARKETPLACE_CATEGORIES in src/server/services/blocks/marketplace-categories.constants.ts (a drift-guard test enforces equality).",
+      "enum": [
+        "generation",
+        "games",
+        "utility",
+        "discovery",
+        "moderation",
+        "analytics",
+        "other"
+      ]
     },
     "renderMode": {
       "type": "string",
@@ -56,16 +76,27 @@
         "type": "string",
         "enum": [
           "models:read:self",
-          "media:read:owned",
           "user:read:self",
           "ai:write:budgeted",
           "buzz:read:self",
-          "block:settings:read",
-          "block:settings:write",
           "social:tip:self",
           "apps:storage:read",
-          "apps:storage:write"
+          "apps:storage:write",
+          "apps:storage:shared:read",
+          "apps:storage:shared:write",
+          "collections:read:self",
+          "collections:write:self",
+          "collections:read:private"
         ]
+      }
+    },
+    "scopeJustifications": {
+      "type": "object",
+      "description": "OPTIONAL per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. Backward-compatible — omit it and the manifest stays valid; `scopes` is unchanged. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. NOTE: this captures the developer's STATED rationale only; the platform does not verify the claims.",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
       }
     },
     "minApiVersion": {
@@ -75,16 +106,22 @@
     },
     "buildCommand": {
       "type": "string",
-      "description": "Config-as-code: command the platform runs to build the static bundle (e.g. \"npm run build\"). Omit for no-build (static) apps. When set, outputDir must also be set.",
+      "description": "Config-as-code: command the platform runs to build the static bundle. Must be one of an allowlisted set of build invocations (defense-in-depth against shell injection): \"npm run <script>\", \"pnpm run <script>\", \"yarn run <script>\" (where <script> is a package.json script name), \"vite build\", or \"npx vite build\". Omit for no-build (static) apps. When set, outputDir must also be set. The pattern and max length are kept in lockstep with BUILD_COMMAND_RE / BUILD_COMMAND_MAX_LENGTH in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality).",
       "minLength": 1,
-      "maxLength": 256
+      "maxLength": 128,
+      "pattern": "^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$"
     },
     "outputDir": {
       "type": "string",
-      "description": "Config-as-code: directory (relative to the project root) the buildCommand emits static files into (e.g. \"dist\"). Required when buildCommand is set.",
+      "description": "Config-as-code: directory (relative to the project root) the buildCommand emits static files into (e.g. \"dist\"). Must be a safe relative path \u2014 no leading \"/\", no \"..\" path traversal, no backslash separators, and no Windows drive prefix (e.g. C:). Required when buildCommand is set. Kept in lockstep with the outputDir checks in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality). (The server additionally rejects a NUL byte; that impossible-in-a-manifest case is intentionally omitted here for RE2 regex portability.)",
       "minLength": 1,
       "maxLength": 256,
-      "pattern": "^[^/].*"
+      "allOf": [
+        { "$comment": "no leading '/' (absolute path)", "not": { "pattern": "^/" } },
+        { "$comment": "no backslash separators (Windows / '\\..' traversal)", "not": { "pattern": "\\\\" } },
+        { "$comment": "no '..' path-traversal segment", "not": { "pattern": "(^|/)\\.\\.(/|$)" } },
+        { "$comment": "no Windows drive prefix (e.g. C:)", "not": { "pattern": "^[A-Za-z]:" } }
+      ]
     },
     "publicSettingsKeys": {
       "type": "array",

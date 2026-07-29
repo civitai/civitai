@@ -1,7 +1,7 @@
-import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, Title } from '@mantine/core';
+import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, TextInput, Title } from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -15,12 +15,15 @@ import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { showErrorNotification } from '~/utils/notifications';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
 import { QS } from '~/utils/qs';
+import { sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
+import { useWizardAutoResume } from './useWizardAutoResume';
 import { useWizardStepSave } from './useWizardStepSave';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
@@ -207,6 +210,29 @@ const CreateSteps = ({
   );
 };
 
+export function TrainStepModelFileRename({
+  modelVersion,
+  value,
+  onChange,
+}: {
+  modelVersion: ModelWithTags['modelVersions'][number];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const modelFile = modelVersion.files.find((f) => f.type === 'Model');
+  if (!modelFile?.id) return null;
+
+  return (
+    <TextInput
+      label="Download filename"
+      description="The name users will see when downloading this model file"
+      placeholder={`${modelVersion.name || 'model'}.safetensors`}
+      value={value}
+      onChange={(e) => onChange(e.currentTarget.value)}
+    />
+  );
+}
+
 const TrainSteps = ({
   step,
   model,
@@ -248,6 +274,30 @@ const TrainSteps = ({
       .then();
   const { formId, handleStepSelect, withSavedNav, clearPendingStep } =
     useWizardStepSave(navigateToStep);
+
+  const modelFile = modelVersion.files.find((f) => f.type === 'Model');
+  const [fileName, setFileName] = useState<string>(
+    modelFile?.overrideName ?? (modelVersion.name ? `${modelVersion.name}.safetensors` : '')
+  );
+  const updateFileMutation = trpc.modelFile.update.useMutation();
+
+  const handleVersionNext = async () => {
+    if (modelFile?.id) {
+      const next = fileName.trim() ? sanitizeDownloadFilename(fileName) : null;
+      const current = modelFile.overrideName ?? null;
+      if (next !== current) {
+        try {
+          await updateFileMutation.mutateAsync({ id: modelFile.id, overrideName: next });
+        } catch {
+          showErrorNotification({
+            error: new Error('Could not save the download filename, please try again'),
+          });
+          return;
+        }
+      }
+    }
+    goNext();
+  };
 
   return (
     <Stepper
@@ -317,14 +367,26 @@ const TrainSteps = ({
             id={formId}
             model={model}
             version={modelVersion}
-            onSubmit={withSavedNav(() => goNext())}
+            onSubmit={withSavedNav(() => handleVersionNext())}
+            afterName={
+              <TrainStepModelFileRename
+                modelVersion={modelVersion}
+                value={fileName}
+                onChange={setFileName}
+              />
+            }
           >
             {({ loading, canSave }) => (
               <Group mt="xl" justify="flex-end">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button type="submit" loading={loading} disabled={!canSave} onClick={clearPendingStep}>
+                <Button
+                  type="submit"
+                  loading={loading || updateFileMutation.isPending}
+                  disabled={!canSave}
+                  onClick={clearPendingStep}
+                >
                   Next
                 </Button>
               </Group>
@@ -427,49 +489,27 @@ export function ModelWizard() {
   };
 
   // File-less ExternalGeneration versions don't need the upload step. Hoisted so the
-  // CreateSteps stepper and the auto-redirect effect agree on the same step layout.
+  // CreateSteps stepper and the auto-resume hook agree on the same step layout.
   const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
 
-  // Only auto-resume to the furthest valid step ONCE, when the model first loads.
-  // Without this guard the effect re-runs on every `model` refetch — e.g. when a
-  // file upload completes and invalidates the model query — yanking the user
-  // forward to the next step. Forward navigation is now user-driven (Next button
-  // or clicking a reachable step indicator).
-  const autoResumedRef = useRef(false);
+  useWizardAutoResume({
+    ready: !isNew && !isTraining && !!model,
+    resolveStep: () => {
+      const hasVersions = !!model && model.modelVersions.length > 0;
+      const hasFiles = !!model && model.modelVersions.some((version) => version.files.length > 0);
 
-  useEffect(() => {
-    // redirect to correct step if missing values
-    if (!isNew) {
-      // don't redirect for trained type or if model is not loaded
-      if (isTraining || !model) return;
-      // resume only once per mount — never push the user forward mid-session
-      if (autoResumedRef.current) return;
-      autoResumedRef.current = true;
-
-      const hasVersions = model.modelVersions.length > 0;
-      const hasFiles = model.modelVersions.some((version) => version.files.length > 0);
-
-      if (!hasVersions)
-        router
-          .replace(getWizardUrl({ id, step: 2, templateId, bountyId, src }), undefined, {
-            shallow: true,
-          })
-          .then();
-      else if (!hasFiles && !skipFiles)
-        router
-          .replace(getWizardUrl({ id, step: 3, templateId, bountyId, src }), undefined, {
-            shallow: true,
-          })
-          .then();
-      else
-        router
-          .replace(getWizardUrl({ id, step: 4, templateId, bountyId, src }), undefined, {
-            shallow: true,
-          })
-          .then();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, isNew, model, modelVersion, templateId, bountyId, src]);
+      if (!hasVersions) return 2;
+      if (!hasFiles && !skipFiles) return 3;
+      return 4;
+    },
+    onResume: (targetStep) => {
+      router
+        .replace(getWizardUrl({ id, step: targetStep, templateId, bountyId, src }), undefined, {
+          shallow: true,
+        })
+        .then();
+    },
+  });
 
   const postId = modelVersion?.posts[0]?.id;
 

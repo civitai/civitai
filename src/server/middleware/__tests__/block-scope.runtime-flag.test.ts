@@ -144,7 +144,7 @@ describe('withBlockScope — Decision 4 runtime gate (real JWT round-trip)', () 
       res.status(200).json({ via: 'legacy' });
     });
 
-    const route = withBlockScope(wrapped as never, { requiredScope: REQUIRED_SCOPE });
+    const route = withBlockScope(wrapped as never, { endpoint: 'models', requiredScope: REQUIRED_SCOPE });
     const res = makeRes();
     await route(makeReq(token) as never, res as never);
 
@@ -169,7 +169,7 @@ describe('withBlockScope — Decision 4 runtime gate (real JWT round-trip)', () 
       res.status(200).json({ via: 'legacy' });
     });
 
-    const route = withBlockScope(wrapped as never, { requiredScope: REQUIRED_SCOPE });
+    const route = withBlockScope(wrapped as never, { endpoint: 'models', requiredScope: REQUIRED_SCOPE });
     const res = makeRes();
     await route(makeReq(token) as never, res as never);
 
@@ -187,7 +187,7 @@ describe('withBlockScope — Decision 4 runtime gate (real JWT round-trip)', () 
       res.status(200).json({ via: 'block' });
     });
 
-    const route = withBlockScope(wrapped as never, { requiredScope: REQUIRED_SCOPE });
+    const route = withBlockScope(wrapped as never, { endpoint: 'models', requiredScope: REQUIRED_SCOPE });
     const res = makeRes();
     await route(makeReq(token) as never, res as never);
 

@@ -16,6 +16,13 @@ const schema = z.object({
   blocklist: z.string(),
 });
 
+const blocklistDescriptions: Partial<Record<BlocklistType, string>> = {
+  [BlocklistType.PromptBenignPhrase]:
+    'Whole phrases in the positive prompt that innocently contain a minor/POI detection word (proper nouns, technical terms). Each phrase is blanked from the prompt before the scan audit runs, so it never false-flags an image for review. Enter the full phrase — e.g. "teen titans", "minor barrel distortion".',
+  [BlocklistType.NegativeBenignPhrase]:
+    'Same as Prompt Benign Phrase, but matched against the negative prompt — e.g. "mature content". Use for boilerplate negatives that trip the minor audit.',
+};
+
 function BlocklistsPage() {
   const tabs = Object.values(BlocklistType).sort();
   const [tab, setTab] = useState(tabs[0]);
@@ -58,6 +65,12 @@ function BlocklistsPage() {
           ))}
         </Tabs.List>
       </Tabs>
+
+      {blocklistDescriptions[tab] && (
+        <Text size="sm" c="dimmed">
+          {blocklistDescriptions[tab]}
+        </Text>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center p-5">

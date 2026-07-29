@@ -24,6 +24,7 @@ function ComicsBrowse() {
     | 'MostChapters';
   const period = (router.query.period as string) || undefined;
   const followed = router.query.followed === 'true' || undefined;
+  const followedComics = router.query.followedComics === 'true' || undefined;
 
   const setQuery = (updates: Record<string, string | undefined>) => {
     const query = { ...router.query };
@@ -39,11 +40,15 @@ function ComicsBrowse() {
 
   return (
     <>
-      <Meta title="Comics - Civitai" description="Browse AI-generated comics on Civitai" canonical="/comics" />
+      <Meta
+        title="Comics - Civitai"
+        description="Browse AI-generated comics on Civitai"
+        canonical="/comics"
+      />
       <MasonryContainer>
         <Stack gap="xs">
           <ComicGenreScroller value={genre} onChange={(g) => setQuery({ genre: g })} />
-          <ComicsInfinite filters={{ genre, sort, period, followed }} showEof />
+          <ComicsInfinite filters={{ genre, sort, period, followed, followedComics }} showEof />
         </Stack>
       </MasonryContainer>
     </>

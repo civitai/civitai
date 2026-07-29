@@ -14,7 +14,7 @@ import type {
 export type TopicStatusEvent = Omit<SignalTopicStatus, 'type'>;
 export type TopicStatusHandler = (event: TopicStatusEvent) => void;
 const TOPIC_STATUS_EVENT = '__topicStatus';
-import { Deferred, EventEmitter } from './utils';
+import { Deferred, EventEmitter, teardownSignalWorker } from './utils';
 
 export type SignalWorker = NonNullable<ReturnType<typeof useSignalsWorker>>;
 
@@ -58,8 +58,13 @@ export function useSignalsWorker(options?: {
     setWorker(newWorker);
 
     function cleanup() {
-      newWorker.port.postMessage({ type: 'beforeunload' });
-      newWorker.port.close();
+      // `teardownSignalWorker` sends `beforeunload` then uses the wrapper's
+      // polymorphic close() — closing the MessagePort on SharedWorker-capable
+      // browsers and terminating the dedicated Worker on the fallback path
+      // (Android Chrome / Samsung Internet). Calling `newWorker.port.close()`
+      // directly threw `TypeError: port.close is not a function` on the fallback
+      // cohort, where `port` is the Worker (no `.close()`).
+      teardownSignalWorker(newWorker);
       emitter.stop();
     }
 

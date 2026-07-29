@@ -58,3 +58,21 @@ describe('login Turnstile widget (invisible mode + token-gated submit)', () => {
     expect(input).not.toMatch(/value=\{form\?\.email/);
   });
 });
+
+describe('login interactive fallback wiring', () => {
+  it('renders the managed fallback slot only after the invisible widget fails', () => {
+    expect(pageSource).toMatch(/\{#if fallbackActive\}/);
+    expect(pageSource).toMatch(/class="managed-slot"[\s\S]*?bind:this=\{managedEl\}/);
+  });
+
+  it('carries the managed token + mode + fail reason as hidden fields', () => {
+    expect(pageSource).toMatch(/name="captchaMode"/);
+    expect(pageSource).toMatch(/name="managed-turnstile-response"/);
+    expect(pageSource).toMatch(/name="captchaFailReason"/);
+  });
+
+  it('keeps the invisible submit gate unchanged (fallback rides captchaToken, not a new disabled term)', () => {
+    // The whole design hinges on captchaToken staying the single gate; the button expr must not gain a term.
+    expect(pageSource).toMatch(/disabled=\{submitting \|\| captchaPending\}/);
+  });
+});

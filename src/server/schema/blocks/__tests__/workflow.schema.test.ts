@@ -133,3 +133,77 @@ describe('blockWorkflowBodySchema — additionalResources (Page-LoRA)', () => {
     expect((parsed as any).additionalResources[0].strength).toBe(1);
   });
 });
+
+/**
+ * G5 — generic published-content-author key. Opaque, optional, bounded to the
+ * shared-storage key shape (≤64). The server resolves the author from it; the
+ * wire schema only bounds shape.
+ */
+describe('blockWorkflowBodySchema — sharedContentKey (G5)', () => {
+  it('is optional — a body without it parses (field stays undefined)', () => {
+    const parsed = blockWorkflowBodySchema.parse(baseBody());
+    expect((parsed as { sharedContentKey?: unknown }).sharedContentKey).toBeUndefined();
+  });
+
+  it('accepts a bounded opaque key', () => {
+    const parsed = blockWorkflowBodySchema.parse(baseBody({ sharedContentKey: 'k_01ABCDEF' }));
+    expect((parsed as { sharedContentKey?: string }).sharedContentKey).toBe('k_01ABCDEF');
+  });
+
+  it('rejects an over-long key (> 64 chars)', () => {
+    expect(() =>
+      blockWorkflowBodySchema.parse(baseBody({ sharedContentKey: 'k'.repeat(65) }))
+    ).toThrow();
+  });
+
+  it('rejects an empty key', () => {
+    expect(() => blockWorkflowBodySchema.parse(baseBody({ sharedContentKey: '' }))).toThrow();
+  });
+
+  it('rejects a non-string key', () => {
+    expect(() => blockWorkflowBodySchema.parse(baseBody({ sharedContentKey: 123 }))).toThrow();
+  });
+});
+
+/**
+ * img2img sourceImage host allowlist (blockSourceImageSchema).
+ *
+ * The `generationSource` block-upload mode returns an orchestrator consumer-blob
+ * URL (`https://orchestration…civitai.com/v2/consumer/blobs/…`) — the SAME host
+ * the generator's own SourceImageUpload yields. This locks in that such a URL
+ * PASSES the existing allowlist unchanged (hostname ends in `.civitai.com`), so
+ * no loosening was required, while attacker-controlled / non-https / host-
+ * confusion URLs are still rejected.
+ */
+describe('blockWorkflowBodySchema — sourceImage host allowlist (generationSource reconciliation)', () => {
+  const withSource = (url: string) =>
+    blockWorkflowBodySchema.parse(baseBody({ sourceImage: { url, width: 512, height: 512 } }));
+
+  it('accepts the orchestrator consumer-blob URL that generationSource yields', () => {
+    // Representative of uploadConsumerBlob's result (see SourceImageUpload).
+    const parsed = withSource(
+      'https://orchestration.civitai.com/v2/consumer/blobs/CXJQSCS1TYZR1PX45C7QBVB8E0.jpeg?sig=abc&exp=2030-01-01T00:00:00Z'
+    );
+    expect((parsed as { sourceImage?: { url: string } }).sourceImage?.url).toContain(
+      'orchestration.civitai.com'
+    );
+  });
+
+  it('accepts the orchestration-new subdomain variant (hostname still ends in .civitai.com)', () => {
+    expect(() =>
+      withSource('https://orchestration-new.civitai.com/v2/consumer/blobs/E8S6FBPH50ENNVF2PD5.jpeg')
+    ).not.toThrow();
+  });
+
+  it('REJECTS a host-confusion URL that merely contains the allowed host as a substring', () => {
+    expect(() =>
+      withSource('https://evil.example/?x=orchestration.civitai.com/blob.jpeg')
+    ).toThrow();
+  });
+
+  it('REJECTS a non-https orchestrator URL', () => {
+    expect(() =>
+      withSource('http://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg')
+    ).toThrow();
+  });
+});

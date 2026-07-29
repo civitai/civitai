@@ -1,0 +1,53 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches:
+      - 'release'
+  workflow_dispatch: {}
+
+env:
+  IMAGE_NAME: latest
+
+# The repo for this was civitai/chopped-server
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: 'ghcr.io/${{ github.repository_owner }}/chopped-service'
+          tags: |
+            type=raw,value=${{ env.IMAGE_NAME }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Deploy Main
+        uses: convictional/trigger-workflow-and-wait@v1.6.1
+        with:
+          owner: civitai
+          repo: civitai-deployment
+          workflow_file_name: deploy-chopped-service.yml
+          github_token: ${{ secrets.GHA_WORKFLOW_TRIGGER }}
+          ref: main
+          client_payload: |
+            { "environment": "chopped" }
+          wait_workflow: true

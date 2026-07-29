@@ -9,6 +9,7 @@ import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
 import { autogenerateScreenshotIfMissing } from '~/server/services/blocks/autogenerate-screenshot.service';
+import { buildFailureDeployDetail } from '~/server/services/blocks/build-failure-reason';
 import { markRequestDeployState } from '~/server/services/blocks/publish-request.service';
 
 /**
@@ -57,6 +58,17 @@ type CallbackBody = {
   // it is covered by the signature. Validated for skew below. ABSENT/non-finite
   // is ALLOWED (enforce-if-present rollout tolerance).
   ts?: unknown;
+  // OPTIONAL sanitized excerpt of WHY the build failed, emitted by the build
+  // pipeline ONLY on a non-success outcome and only when a non-empty excerpt
+  // exists. Absent on every success callback and on every callback from a
+  // pipeline that predates the field, in which case the stored deploy_detail is
+  // byte-identical to what shipped before (see `buildFailureDeployDetail`).
+  //
+  // Typed `unknown` ON PURPOSE: this is tenant-influenced build output. It is
+  // only READ when it is a string, and its content is ALWAYS re-sanitized
+  // server-side by `sanitizeBuildFailureReason` before being persisted — an HMAC
+  // proves WHO sent the bytes, never that the bytes are safe.
+  failureReason?: unknown;
 };
 
 // F5 — allowed clock skew between the callback signer and this receiver, in
@@ -234,7 +246,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // `app-blocks-pipeline-enabled` flag (NOT the mod-segmented user flag), so the
   // pipeline can run for mod-approved blocks without enabling the user feature.
   if (!(await isAppBlocksPipelineEnabled())) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
+    res.status(503).json({ error: 'Apps are not enabled' });
     return;
   }
 
@@ -292,12 +304,17 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/build',
       description: `Build ${body.status ?? 'failed'}`,
     });
+    // Surface the REAL reason to the app author. `buildFailureDeployDetail`
+    // returns exactly the previous `Build <status>` string when there is no
+    // usable excerpt (absent field, non-string, or empty after sanitization), so
+    // an OLD pipeline against this handler is byte-identical to today.
     await markRequestDeployState(
       body.slug,
       body.sha,
       'failed',
-      `Build ${String(body.status ?? 'failed').slice(0, 60)}`
+      buildFailureDeployDetail(body.status, body.failureReason)
     );
+    // Response body unchanged — Tekton consumes nothing beyond `ok`.
     res.status(200).json({ ok: true, applied: false, reason: 'build failed' });
     return;
   }

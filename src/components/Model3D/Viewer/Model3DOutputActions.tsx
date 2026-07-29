@@ -150,7 +150,7 @@ export function Model3DOutputActions({
           fullWidth
           leftSection={<IconDownload size={14} stroke={2} />}
         >
-          Download {entries[0].format.toUpperCase()}
+          Download
         </Button>
       ) : (
         <Menu position="bottom-end" withinPortal>

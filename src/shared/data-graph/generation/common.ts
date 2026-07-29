@@ -1084,6 +1084,31 @@ export function createCheckpointGraph(
         }
       },
       ['model']
+    )
+    // When the selected checkpoint is a known version that isn't offered by the
+    // current workflow but is by another (version options are workflow-scoped —
+    // e.g. Boogu Edit / Edit-Turbo only exist on img2img:edit), switch to a
+    // workflow that supports it. Lets a user open the form on such a checkpoint
+    // (model page "Generate", remix) and land on the matching workflow.
+    .effect(
+      (ctx, _ext, set) => {
+        if (!options?.workflowVersions) return;
+        const modelId = (ctx.model as { id?: number } | undefined)?.id;
+        if (!modelId || !allVersionIds?.has(modelId)) return;
+
+        const rawWorkflow = (ctx as { workflow?: string }).workflow ?? '';
+        const currentKey = getWorkflowKey(options.workflowVersions, rawWorkflow);
+        const currentConfig = options.workflowVersions[currentKey];
+        if (currentConfig && getAllVersionIds(currentConfig.versions).has(modelId)) return;
+
+        const targetKey = Object.keys(options.workflowVersions).find((key) =>
+          getAllVersionIds(options.workflowVersions![key].versions).has(modelId)
+        );
+        if (targetKey && targetKey !== currentKey) {
+          set('workflow', targetKey);
+        }
+      },
+      ['model']
     );
 
   // Cast needed: DataGraph infers `model` as required from .node('model', ...) but
@@ -1292,6 +1317,10 @@ export interface ImagesNodeConfig {
   max?: number;
   /** Minimum number of images required (default: 1) */
   min?: number;
+  /** Input label shown above the dropzone */
+  label?: string;
+  /** Helper text shown under the label */
+  description?: string;
   /**
    * Named slots for fixed-position images (e.g., first/last frame).
    * When provided, renders side-by-side dropzones with labels.
@@ -1340,6 +1369,8 @@ export interface ImagesNodeConfig {
 export function imagesNode({
   min = 1,
   max = 1,
+  label,
+  description,
   slots,
   modes,
   warnOnMissingAiMetadata,
@@ -1383,6 +1414,8 @@ export function imagesNode({
     meta: {
       min: effectiveMin,
       max: effectiveMax,
+      label,
+      description,
       slots,
       modes,
       warnOnMissingAiMetadata,

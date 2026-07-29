@@ -9,7 +9,7 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
+import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 
@@ -18,6 +18,7 @@ import { FilesProvider } from '~/components/Resource/FilesProvider';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
+import { useWizardAutoResume } from '~/components/Resource/Wizard/useWizardAutoResume';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById, ModelVersionById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -34,6 +35,7 @@ const CreateSteps = ({
   versionId,
   modelData,
   modelVersion,
+  previousBaseModel,
   goBack,
   goNext,
   router,
@@ -44,6 +46,7 @@ const CreateSteps = ({
   versionId?: string | string[];
   modelData?: ModelVersionById['model'];
   modelVersion?: ModelVersionById;
+  previousBaseModel?: string | null;
   goBack: () => void;
   goNext: () => void;
   router: NextRouter;
@@ -85,6 +88,7 @@ const CreateSteps = ({
             id={formId}
             model={modelData}
             version={modelVersion}
+            previousBaseModel={previousBaseModel}
             onSubmit={withSavedNav((result) => {
               const skipFiles = result?.usageControl === ModelUsageControl.ExternalGeneration;
               const nextStep = skipFiles ? 3 : 2;
@@ -274,7 +278,7 @@ const TrainSteps = ({
   );
 };
 
-export function ModelVersionWizard({ data }: Props) {
+export function ModelVersionWizard({ data, previousBaseModel }: Props) {
   const router = useRouter();
 
   const { id, versionId } = router.query;
@@ -320,26 +324,17 @@ export function ModelVersionWizard({ data }: Props) {
   const postId = modelVersion?.posts?.filter((post) => post.userId === modelData?.user.id)?.[0]?.id;
   const isTraining = modelVersion?.uploadType === ModelUploadType.Trained;
 
-  useEffect(() => {
-    if (isTraining || isInitialLoading) return;
-
-    // redirect to correct step if missing values
-    if (!isNew) {
-      if (!hasFiles && !skipFiles)
-        router
-          .replace(`/models/${id}/model-versions/${versionId}/wizard?step=2`, undefined, {
-            shallow: true,
-          })
-          .then();
-      else
-        router
-          .replace(`/models/${id}/model-versions/${versionId}/wizard?step=3`, undefined, {
-            shallow: true,
-          })
-          .then();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasFiles, skipFiles, id, isNew, versionId]);
+  useWizardAutoResume({
+    ready: !isNew && !isTraining && !!modelVersion,
+    resolveStep: () => (!hasFiles && !skipFiles ? 2 : 3),
+    onResume: (targetStep) => {
+      router
+        .replace(`/models/${id}/model-versions/${versionId}/wizard?step=${targetStep}`, undefined, {
+          shallow: true,
+        })
+        .then();
+    },
+  });
 
   return (
     <FilesProvider model={modelData} version={modelVersion}>
@@ -386,6 +381,7 @@ export function ModelVersionWizard({ data }: Props) {
           versionId={versionId}
           modelData={modelData}
           modelVersion={modelVersion}
+          previousBaseModel={previousBaseModel}
           goBack={goBack}
           goNext={goNext}
           router={router}
@@ -399,4 +395,5 @@ export function ModelVersionWizard({ data }: Props) {
 
 type Props = {
   data?: ModelById;
+  previousBaseModel?: string | null;
 };

@@ -367,7 +367,7 @@ function ResourceInfoCard({
                 </HoverCard.Dropdown>
               </HoverCard>
             )}
-            {resource.earlyAccessEndsAt && (
+            {resource.paidAccess?.endsAt && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>
                   <LegacyActionIcon size={18} color="yellow.7" variant="filled">

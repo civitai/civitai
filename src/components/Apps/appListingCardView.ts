@@ -6,9 +6,12 @@
  * project (the civitai browser-mode component suites are REPORT-ONLY / non-
  * blocking — so the real, blocking test coverage for this behaviour is here).
  *
- * DARK / parallel-run: consumed only by the mod-only `/apps/store-preview`
- * preview surface. The default `/apps` render (MarketplaceBody → AppBlockCard)
- * is untouched; the cutover is a later PR (P2d).
+ * LIVE (P2d cut over): this view-model now backs the DEFAULT `/apps` store grid
+ * (`AppListingsMarketplaceBody` → `AppListingCard`), reading the unified
+ * `AppListing` record over BOTH kinds. The page remains flag-gated (the App
+ * Blocks Flipt segment + `deIndex`) — not "store-preview only" any more. The
+ * unified DETAIL still lives at `/apps/store-preview/<slug>`
+ * (`getListingDetailHref`).
  *
  * CTA target policy (P2c — the unified dark listing detail now exists at
  * `/apps/store-preview/<slug>`, so every card can reach a real detail surface and
@@ -34,6 +37,7 @@ import type {
   ListingCard,
   ListingRecommendRollup,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import type { AppListingStatus } from '~/server/services/blocks/app-listing-status.constants';
 
 /** Kind badge shown on the card face. */
 export type ListingBadgeKind = 'onsite' | 'connect' | 'external-link';
@@ -136,4 +140,62 @@ export function getListingCta(
 
   // Off-site connect (OAuth) — the Connect affordance lives on the detail page.
   return { label: 'View details', action: 'detail', href: detailHref, external: false };
+}
+
+// ---------------------------------------------------------------------------
+// Owner "Edit" deep-link (Item 2) — pure gating + href builders, shared by the
+// store card + detail. Mirrors the my-submissions edit gating
+// (`MySubmissionsList` `showEdit` / `OffsiteSubmissionsList` `canEdit`): the
+// owner can edit an app that is still editable (NOT mod-removed / rejected).
+// ---------------------------------------------------------------------------
+
+/** Statuses whose backing listing an owner can still edit (mirrors the my-
+ *  submissions gating: a `removed`/`rejected` listing is NOT editable). */
+const EDITABLE_LISTING_STATUSES: readonly AppListingStatus[] = ['draft', 'pending', 'approved'];
+
+/**
+ * Is a listing in an owner-editable status? The public store read path is
+ * approved-only and its allowlist DTO deliberately carries NO status field, so
+ * the card/detail call this with `null`/`undefined` → treated as editable (an
+ * approved, live listing). A `removed` (mod takedown) / `rejected` status is
+ * never editable — so if a status is ever threaded in, the gate stays correct.
+ */
+export function isEditableListingStatus(status?: AppListingStatus | null): boolean {
+  if (status == null) return true;
+  return EDITABLE_LISTING_STATUSES.includes(status);
+}
+
+/**
+ * Show the owner "Edit" affordance? True only for the listing owner AND an
+ * editable status. Non-owners never see it; a mod-removed / rejected listing is
+ * not editable even for the owner (mirrors `showEdit` / `canEdit`).
+ */
+export function canOwnerEditListing(opts: {
+  isOwner: boolean;
+  status?: AppListingStatus | null;
+}): boolean {
+  return opts.isOwner && isEditableListingStatus(opts.status);
+}
+
+/**
+ * The owner "Edit" deep-link target, by kind:
+ *   - on-site  → `/apps/<appBlockId>/edit` (the UNIFIED tabbed editor — App/Manifest
+ *     + Listing media; defaults to the manifest tab). Null when the on-site listing
+ *     has no backing `appBlockId` (nothing to edit) — the caller then hides the
+ *     button rather than routing to a dead link.
+ *   - off-site → `/apps/submit?edit=<listingId>` (the off-site submit editor,
+ *     keyed on the AppListing id — LEFT UNCHANGED; offsite is already unified).
+ * Structurally accepts both the card + detail `kindData` (only `kind` +
+ * `appBlockId` are read). `null` = no editable target → don't render Edit.
+ */
+export function getOwnerEditHref(
+  kindData: { kind: 'onsite'; appBlockId: string | null } | { kind: 'offsite' },
+  listingId: string
+): string | null {
+  if (kindData.kind === 'onsite') {
+    return kindData.appBlockId
+      ? `/apps/${encodeURIComponent(kindData.appBlockId)}/edit`
+      : null;
+  }
+  return `/apps/submit?edit=${encodeURIComponent(listingId)}`;
 }

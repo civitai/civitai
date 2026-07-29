@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-ui
+  namespace: metric-watcher
+  labels:
+    app: kafka-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-ui
+  template:
+    metadata:
+      labels:
+        app: kafka-ui
+    spec:
+      containers:
+        - name: kafka-ui
+          image: provectuslabs/kafka-ui:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: KAFKA_CLUSTERS_0_NAME
+              value: "metric-watcher"
+            - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
+              value: "metric-watcher-cluster-kafka-bootstrap.metric-watcher.svc:9092"
+            - name: KAFKA_CLUSTERS_0_ZOOKEEPER
+              value: "metric-watcher-cluster-zookeeper-client.metric-watcher.svc:2181"
+            - name: KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME
+              value: "debezium"
+            - name: KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS
+              value: "http://debezium-connect-api.metric-watcher.svc:8083"
+            - name: KAFKA_CLUSTERS_0_READONLY
+              value: "false"
+            - name: AUTH_TYPE
+              value: "DISABLED"
+            - name: MANAGEMENT_HEALTH_LDAP_ENABLED
+              value: "false"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ui
+  namespace: metric-watcher
+  labels:
+    app: kafka-ui
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: kafka-ui
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ui-nodeport
+  namespace: metric-watcher
+  labels:
+    app: kafka-ui
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
+      protocol: TCP
+      name: http
+  selector:
+    app: kafka-ui
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kafka-ui
+  namespace: metric-watcher
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: kafka-ui.metric-watcher.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kafka-ui
+                port:
+                  number: 8080

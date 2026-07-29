@@ -21,15 +21,15 @@ export type ProductTier = z.infer<typeof productTierSchema>;
 const productTierSchema = z.enum(['free', 'founder', 'bronze', 'silver', 'gold']);
 export type SubscriptionProductMetadata = z.infer<typeof subscriptionProductMetadataSchema>;
 export const subscriptionProductMetadataSchema = z.looseObject({
-  vaultSizeKb: z.coerce.number().positive().optional(),
+  vaultSizeKb: z.coerce.number().nonnegative().optional(),
   badge: z.string().optional(),
-  monthlyBuzz: z.coerce.number().positive().optional(),
+  monthlyBuzz: z.coerce.number().nonnegative().optional(),
   animatedBadge: booleanString().optional(),
   badgeType: z.enum(['none', 'static', 'animated']).default('none'),
   tier: productTierSchema,
-  generationLimit: z.coerce.number().positive().optional(),
-  quantityLimit: z.coerce.number().positive().optional(),
-  queueLimit: z.coerce.number().positive().optional(),
+  generationLimit: z.coerce.number().nonnegative().optional(),
+  quantityLimit: z.coerce.number().nonnegative().optional(),
+  queueLimit: z.coerce.number().nonnegative().optional(),
   rewardsMultiplier: z.coerce.number().positive().default(1),
   purchasesMultiplier: z.coerce.number().positive().default(1),
   buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow'),
@@ -37,7 +37,7 @@ export const subscriptionProductMetadataSchema = z.looseObject({
   // Makes it so that we include it when creating a paddle transaction.
   // Used for Save Details only.
   includeWithTransaction: booleanString().optional(),
-  maxPrivateModels: z.coerce.number().positive().optional(),
+  maxPrivateModels: z.coerce.number().nonnegative().optional(),
   supportLevel: z.string().optional(),
 });
 

@@ -75,7 +75,7 @@ export const uploadYoutubeVideo = async ({
   description,
 }: S3ToYoutubeInput) => {
   const service = youtube('v3');
-  const blob = await fetchBlob(getEdgeUrl(url, { type: 'video', original: true }));
+  const blob = await fetchBlob(getEdgeUrl(url, { type: 'video', original: true }), 300_000);
   if (!blob) return;
 
   const stream = (blob as Blob).stream();

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { BlockManifestValidator } from '../block-manifest-validator.service';
+import {
+  BlockManifestValidator,
+  MANIFEST_TAGLINE_MAX_LENGTH,
+} from '../block-manifest-validator.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 
 const VALID_MANIFEST = {
   blockId: 'test-block',
@@ -243,6 +247,26 @@ describe('BlockManifestValidator', () => {
       ).toBe(true);
     }
   });
+
+  // Deprecation: the removed decorative scopes are now UNKNOWN, so a NEW/edited
+  // manifest declaring one is rejected at registration/edit time (intended — an
+  // existing approved app that historically declared one degrades gracefully at
+  // MINT instead; see the block-tokens mint graceful-drop test).
+  it.each([['media:read:owned'], ['block:settings:read'], ['block:settings:write']])(
+    'rejects a manifest declaring the removed decorative scope %s',
+    (removed) => {
+      const manifest = { ...VALID_MANIFEST, scopes: [removed] };
+      const result = BlockManifestValidator.validate(manifest, TokenScope.Full);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some(
+            (e) => e.includes('not a known block scope') && e.includes(removed)
+          )
+        ).toBe(true);
+      }
+    }
+  );
 
   it('accepts the known SKIP_OAUTH_CHECK scope apps:storage:read', () => {
     // apps:storage:read maps to SKIP_OAUTH_CHECK, so it passes the OAuth-bit gate
@@ -612,6 +636,269 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(result.errors.some((e) => e.includes('iframe.src'))).toBe(true);
+      }
+    });
+  });
+
+  // W13 category-on-approve — the OPTIONAL marketplace `category`. Absent is
+  // fine; present must be a MARKETPLACE_CATEGORIES member (single-sourced with
+  // the const + the published schema's `category` enum).
+  describe('category (optional marketplace taxonomy)', () => {
+    it('accepts a manifest with NO category (optional)', () => {
+      // VALID_MANIFEST declares no category.
+      expect(BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it.each(MARKETPLACE_CATEGORIES.map((c) => [c] as const))(
+      'accepts the valid category %j',
+      (category) => {
+        const manifest = { ...VALID_MANIFEST, category };
+        expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+      }
+    );
+
+    it.each([
+      ['productivity', 'not in the taxonomy'],
+      ['Generation', 'wrong case'],
+      ['', 'empty string'],
+      [42, 'non-string'],
+      [null, 'null'],
+    ])('rejects category %j (%s) with a clear error', (category) => {
+      const manifest = { ...VALID_MANIFEST, category };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.startsWith('category must be one of'))).toBe(true);
+      }
+    });
+  });
+
+  // The OPTIONAL one-line store `tagline`. Absent is fine (the store shows no
+  // tagline); present must be a string whose TRIMMED length is 1..140. This is
+  // the AUTHORITATIVE gate — the published JSON schema is a shape hint.
+  describe('tagline (optional store one-liner)', () => {
+    it('accepts a manifest with NO tagline (optional, backward-compatible)', () => {
+      // VALID_MANIFEST declares no tagline.
+      expect(BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a normal tagline', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'The fastest way to remix a model' };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a tagline EXACTLY at the cap', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH) };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts an over-cap tagline whose TRIMMED length fits (padding is not counted)', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        tagline: `   ${'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH)}   `,
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('rejects a tagline one char OVER the cap', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH + 1) };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e === `tagline must be ≤${MANIFEST_TAGLINE_MAX_LENGTH} chars`)
+        ).toBe(true);
+      }
+    });
+
+    it.each([
+      [42, 'number'],
+      [null, 'null'],
+      [{ text: 'hi' }, 'object'],
+      [['hi'], 'array'],
+      [true, 'boolean'],
+    ])('rejects a non-string tagline %j (%s)', (tagline) => {
+      const manifest = { ...VALID_MANIFEST, tagline };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e === 'tagline must be a string')).toBe(true);
+      }
+    });
+
+    it.each([
+      ['', 'empty string'],
+      ['   ', 'spaces only'],
+      ['\n\t ', 'whitespace only'],
+    ])('rejects a blank tagline %j (%s) — omit it instead', (tagline) => {
+      const manifest = { ...VALID_MANIFEST, tagline };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')
+        ).toBe(true);
+      }
+    });
+
+    it('does not regress the other manifest rules (a bad blockId still fails alongside a good tagline)', () => {
+      const manifest = { ...VALID_MANIFEST, blockId: 'X', tagline: 'fine' };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.startsWith('blockId must be'))).toBe(true);
+        expect(result.errors.some((e) => e.startsWith('tagline'))).toBe(false);
+      }
+    });
+  });
+
+  // Per-scope justifications — OPTIONAL, backward-compatible dev-supplied map of
+  // scope-id → rationale (captured for mod review; NOT verified by the platform).
+  describe('scopeJustifications (optional per-scope rationale)', () => {
+    it('accepts a manifest with NO scopeJustifications (optional, backward-compatible)', () => {
+      // VALID_MANIFEST declares no scopeJustifications.
+      expect(BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a justification keyed by a declared scope', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopeJustifications: { 'models:read:self': 'We render the page model in a comparison widget.' },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts an empty scopeJustifications object', () => {
+      const manifest = { ...VALID_MANIFEST, scopeJustifications: {} };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a justification at the max length boundary (500 chars)', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopeJustifications: { 'models:read:self': 'a'.repeat(500) },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('rejects a justification for a scope NOT in the manifest scopes', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        // user:read:self is a real block scope but is NOT declared in scopes here.
+        scopeJustifications: { 'user:read:self': 'reason' },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+        ).toBe(true);
+      }
+    });
+
+    it('rejects a justification longer than 500 chars', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopeJustifications: { 'models:read:self': 'a'.repeat(501) },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('≤500 chars'))).toBe(true);
+      }
+    });
+
+    it.each([
+      ['', 'empty string'],
+      [42, 'non-string'],
+      [null, 'null'],
+    ])('rejects a %j (%s) justification value', (value) => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopeJustifications: { 'models:read:self': value },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('models:read:self'))).toBe(true);
+      }
+    });
+
+    it.each([
+      [['models:read:self'], 'an array'],
+      [null, 'null'],
+      ['reason', 'a string'],
+    ])('rejects scopeJustifications that is %s (not a plain object)', (scopeJustifications) => {
+      const manifest = { ...VALID_MANIFEST, scopeJustifications };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e.startsWith('scopeJustifications must be an object'))
+        ).toBe(true);
+      }
+    });
+  });
+
+  // SUBMISSION gate: validateSubmission = the synchronous shape/security checks
+  // PLUS the accurate ReDoS + input-bound gate on settings-field patterns. This
+  // is what every manifest-SUBMISSION path calls (git-push webhook, developer
+  // API, blocks.updateManifest, publish-request approve).
+  describe('validateSubmission — settings pattern ReDoS gate', () => {
+    const withSettings = (settings: Record<string, unknown>) => ({ ...VALID_MANIFEST, settings });
+    const stringField = (extra: Record<string, unknown>) => ({
+      scope: 'publisher',
+      type: 'string',
+      widget: 'text',
+      label: 'L',
+      description: 'D',
+      ...extra,
+    });
+
+    it('accepts a normal manifest with no settings', async () => {
+      expect(await BlockManifestValidator.validateSubmission(VALID_MANIFEST, APP_CTX)).toEqual({
+        valid: true,
+      });
+    });
+
+    it.each([
+      ['^[a-z0-9]+(-[a-z0-9]+)*$', 'slug'],
+      ['^\\d{1,4}(\\.\\d{1,2})?$', 'decimal'],
+      ['^[a-z0-9]+(_[a-z0-9]+)*$', 'snake_case'],
+    ])('accepts a safe patterned field (%s)', async (pattern) => {
+      const manifest = withSettings({ f: stringField({ pattern, max_length: 64 }) });
+      expect(await BlockManifestValidator.validateSubmission(manifest, APP_CTX)).toEqual({
+        valid: true,
+      });
+    });
+
+    it('rejects an exponential (ReDoS) pattern with a dev-facing error', async () => {
+      const manifest = withSettings({ evil: stringField({ pattern: '(a+)+$', max_length: 64 }) });
+      const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => /settings\.evil.*ReDoS/i.test(e))).toBe(true);
+      }
+    });
+
+    it('rejects a patterned field that omits max_length', async () => {
+      const manifest = withSettings({ code: stringField({ pattern: '^[a-z]+$' }) });
+      const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => /must also declare "max_length"/.test(e))).toBe(true);
+      }
+    });
+
+    it('merges base (shape) errors with settings-pattern errors', async () => {
+      // bad blockId (base error) AND a ReDoS pattern (settings error) at once.
+      const manifest = withSettings({ evil: stringField({ pattern: '(a+)+$', max_length: 64 }) });
+      manifest.blockId = 'Bad_Id';
+      const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('blockId'))).toBe(true);
+        expect(result.errors.some((e) => /settings\.evil.*ReDoS/i.test(e))).toBe(true);
       }
     });
   });

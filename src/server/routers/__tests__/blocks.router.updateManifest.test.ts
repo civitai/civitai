@@ -38,9 +38,9 @@ const {
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
-vi.mock('~/env/server', () => ({
-  env: { FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com', APPS_DOMAIN: 'civit.ai', LOGGING: '' },
-}));
+// env comes from the global ~/env/server mock in src/__tests__/setup.ts
+// (complete TEST_ENV_DEFAULTS incl. FORGEJO_PUBLIC_URL / APPS_DOMAIN / MEILI /
+// S3). Overriding it locally drops those defaults and crashes at import.
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
   FORGEJO_ORG: 'civitai-apps',
   commitFiles: mockCommitFiles,
@@ -50,7 +50,9 @@ vi.mock('~/server/services/blocks/publish-request.service', () => ({
   recordPendingFromPush: mockRecordPending,
 }));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
-  BlockManifestValidator: { validate: mockValidate },
+  // The router now calls the async submission gate (validate + settings-pattern
+  // ReDoS check); point it at the same mock so mockValidate drives the outcome.
+  BlockManifestValidator: { validate: mockValidate, validateSubmission: mockValidate },
 }));
 vi.mock('~/server/services/blocks/manifest-normalize', () => ({
   stampCanonicalIframeSrc: mockStamp,
@@ -94,12 +96,14 @@ vi.mock('~/server/db/client', () => ({
   dbRead: { appBlock: { findUnique: vi.fn() } },
   dbWrite: {},
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(), set: vi.fn() },
-  sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return {
+    ...actual,
+    redis: { get: vi.fn(), set: vi.fn() },
+    sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
+  };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
@@ -370,6 +374,82 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     // tier — never the self-declared `internal`.
     const validated = mockValidate.mock.calls[0][0] as { trustTier: string };
     expect(validated.trustTier).toBe('unverified');
+  });
+
+  // The MANIFEST-GOVERNED store fields. An onsite listing has no other author
+  // surface for these (the /apps/[appBlockId]/edit Listing tab is media-only),
+  // so the editor must be able to both SET and CLEAR them here.
+  describe('tagline + category (manifest-governed store fields)', () => {
+    it('accepts + commits a tagline and category', async () => {
+      findUnique.mockResolvedValue(approvedBlock);
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await caller.updateManifest({
+        appBlockId: 'ab_1',
+        patch: { ...validPatch, tagline: 'A crisp one-liner', category: 'utility' },
+      });
+
+      const commitArg = mockCommitFiles.mock.calls[0][0];
+      const committed = JSON.parse(commitArg.files[0].content.toString('utf8'));
+      expect(committed.tagline).toBe('A crisp one-liner');
+      expect(committed.category).toBe('utility');
+      // The validator (the authoritative gate) saw them too.
+      const validated = mockValidate.mock.calls[0][0] as Record<string, unknown>;
+      expect(validated.tagline).toBe('A crisp one-liner');
+      expect(validated.category).toBe('utility');
+    });
+
+    it('an explicit null DELETES the key from the merged manifest (clear, not a null value)', async () => {
+      // The stored manifest already has both; the client clears them. `null` must
+      // REMOVE the key — the manifest fields are optional and the validator
+      // rejects a non-string value, so a literal null would fail validation and
+      // an `undefined` would be dropped by the {...stored, ...patch} merge (which
+      // would silently retain the stale value).
+      findUnique.mockResolvedValue({
+        ...approvedBlock,
+        manifest: { ...approvedBlock.manifest, tagline: 'Old pitch', category: 'games' },
+      });
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await caller.updateManifest({
+        appBlockId: 'ab_1',
+        patch: { ...validPatch, tagline: null, category: null },
+      });
+
+      const validated = mockValidate.mock.calls[0][0] as Record<string, unknown>;
+      expect('tagline' in validated).toBe(false);
+      expect('category' in validated).toBe(false);
+      const commitArg = mockCommitFiles.mock.calls[0][0];
+      const committed = JSON.parse(commitArg.files[0].content.toString('utf8'));
+      expect('tagline' in committed).toBe(false);
+      expect('category' in committed).toBe(false);
+      // And the stale values are genuinely gone from the committed bytes.
+      expect(commitArg.files[0].content.toString('utf8')).not.toContain('Old pitch');
+    });
+
+    it('OMITTING them preserves the stored values (sparse patch, unchanged merge semantics)', async () => {
+      findUnique.mockResolvedValue({
+        ...approvedBlock,
+        manifest: { ...approvedBlock.manifest, tagline: 'Kept pitch', category: 'games' },
+      });
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await caller.updateManifest({ appBlockId: 'ab_1', patch: validPatch });
+
+      const validated = mockValidate.mock.calls[0][0] as Record<string, unknown>;
+      expect(validated.tagline).toBe('Kept pitch');
+      expect(validated.category).toBe('games');
+    });
+
+    it('a validator-rejected tagline is a BAD_REQUEST — nothing committed', async () => {
+      findUnique.mockResolvedValue(approvedBlock);
+      mockValidate.mockReturnValue({ valid: false, errors: ['tagline must be ≤140 chars'] });
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await expect(
+        caller.updateManifest({
+          appBlockId: 'ab_1',
+          patch: { ...validPatch, tagline: 'a'.repeat(200) },
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockCommitFiles).not.toHaveBeenCalled();
+    });
   });
 
   it('server-owned trustTier: with no stored tier on the row it defaults to `unverified` (never the patched value)', async () => {

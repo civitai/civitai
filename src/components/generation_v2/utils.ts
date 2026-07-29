@@ -25,6 +25,21 @@ export function shouldFilterResource(resource: GenerationResource | undefined): 
 }
 
 /**
+ * `trainedWords` is a LoRA's trigger-word list. It's the only per-resource field
+ * that grows unboundedly with resource count, and the request doesn't need it:
+ * client-side trigger injection already ran (the `triggerWords` computed node), and
+ * the server re-enriches trained words via `getResourceData`. Carrying it inflates the
+ * whatIf GET's encoded URL and can trip the batch link's `maxURLLength` cap once several
+ * resources are added — so strip it from every resource before whatIf/submit.
+ */
+function stripResourceRequestBloat<T>(resource: T): T {
+  if (!resource || typeof resource !== 'object') return resource;
+  if (!('trainedWords' in (resource as Record<string, unknown>))) return resource;
+  const { trainedWords, ...rest } = resource as Record<string, unknown>;
+  return rest as T;
+}
+
+/**
  * Filter a graph snapshot before submission or whatIf query.
  * - Removes computed nodes (derived values)
  * - Removes resources where canGenerate is false (user can't use them)
@@ -46,16 +61,17 @@ export function filterSnapshotForSubmit<T extends Record<string, unknown>>(
 
   // Filter out disabled resources from the resources array
   if (filtered.resources && Array.isArray(filtered.resources)) {
-    filtered.resources = (filtered.resources as GenerationResource[]).filter(
-      (resource) => !shouldFilterResource(resource)
-    );
+    filtered.resources = (filtered.resources as GenerationResource[])
+      .filter((resource) => !shouldFilterResource(resource))
+      .map(stripResourceRequestBloat);
   }
 
   // Clear VAE if it's disabled
   if (filtered.vae && shouldFilterResource(filtered.vae as GenerationResource)) {
     filtered.vae = undefined;
+  } else if (filtered.vae) {
+    filtered.vae = stripResourceRequestBloat(filtered.vae as GenerationResource);
   }
 
   return filtered as T;
 }
-

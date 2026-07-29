@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   newAppBlockId,
+  newAppListingModerationEventId,
+  newAppListingReportId,
   newBlockInstanceId,
   newBlockUserSubscriptionId,
   newModelBlockInstallId,
@@ -12,6 +14,8 @@ describe('app-block-ids', () => {
     expect(newModelBlockInstallId()).toMatch(/^mbi_[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(newBlockInstanceId()).toMatch(/^bki_[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(newBlockUserSubscriptionId()).toMatch(/^bus_[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(newAppListingReportId()).toMatch(/^alrp_[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(newAppListingModerationEventId()).toMatch(/^alme_[0-9A-HJKMNP-TV-Z]{26}$/);
   });
 
   it('produces unique ids on repeated calls', () => {

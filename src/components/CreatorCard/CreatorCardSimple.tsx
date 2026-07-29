@@ -175,45 +175,49 @@ const CreatorCardSimpleContent = ({
           </Group>
           <Box className={classes.profileDetailsContainer}>
             <Stack gap="xs" className={classes.profileDetails} py={8} h="100%">
-              <Group align="center" justify="space-between" wrap="nowrap">
-                <UserProfileLink user={creator} linkToProfile>
-                  <Group wrap="nowrap">
-                    <Box className={classes.avatar}>
-                      <UserAvatar
-                        size="lg"
-                        avatarProps={{
-                          size: 60,
-                          style: {
-                            minHeight: '100%',
-                            objectFit: 'cover',
-                          },
-                        }}
-                        user={creatorWithCosmetics}
-                      />
-                    </Box>
-                    <Stack gap={0} ml={70}>
-                      <Username
-                        username={creator?.username}
-                        deletedAt={creator?.deletedAt}
-                        cosmetics={cosmetics ?? []}
-                        size="md"
-                        badgeSize={0}
-                      />
-                      {!!subText ? (
-                        <>{subText}</>
-                      ) : (
-                        <>
-                          {creator.createdAt && (
-                            <Text size="xs" lh={1} lineClamp={1} className="text-white/75">
-                              Joined {formatDate(creator.createdAt)}
-                            </Text>
-                          )}
-                        </>
-                      )}
-                    </Stack>
-                  </Group>
-                </UserProfileLink>
-                {actions ? actions(creator) : null}
+              <Group align="center" justify="space-between" wrap="nowrap" gap="xs">
+                {/* Name side yields (shrinks + clips) so the fixed action icons
+                    below never get pushed off the card on smaller widths. */}
+                <Box style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                  <UserProfileLink user={creator} linkToProfile>
+                    <Group wrap="nowrap">
+                      <Box className={classes.avatar}>
+                        <UserAvatar
+                          size="lg"
+                          avatarProps={{
+                            size: 60,
+                            style: {
+                              minHeight: '100%',
+                              objectFit: 'cover',
+                            },
+                          }}
+                          user={creatorWithCosmetics}
+                        />
+                      </Box>
+                      <Stack gap={0} ml={70} style={{ minWidth: 0 }}>
+                        <Username
+                          username={creator?.username}
+                          deletedAt={creator?.deletedAt}
+                          cosmetics={cosmetics ?? []}
+                          size="md"
+                          badgeSize={0}
+                        />
+                        {!!subText ? (
+                          <>{subText}</>
+                        ) : (
+                          <>
+                            {creator.createdAt && (
+                              <Text size="xs" lh={1} lineClamp={1} className="text-white/75">
+                                Joined {formatDate(creator.createdAt)}
+                              </Text>
+                            )}
+                          </>
+                        )}
+                      </Stack>
+                    </Group>
+                  </UserProfileLink>
+                </Box>
+                {actions ? <Box style={{ flexShrink: 0 }}>{actions(creator)}</Box> : null}
               </Group>
             </Stack>
           </Box>

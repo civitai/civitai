@@ -4,10 +4,13 @@ import {
   Divider,
   getPrimaryShade,
   Group,
+  Loader,
+  Popover,
   Progress,
   Select,
   Stack,
   Text,
+  TextInput,
   ThemeIcon,
   Tooltip,
   useComputedColorScheme,
@@ -24,6 +27,7 @@ import {
   IconCircleCheck,
   IconCloudUpload,
   IconLink,
+  IconPencil,
   IconPlus,
   IconRefresh,
   IconTrash,
@@ -39,14 +43,20 @@ import type { FileFromContextProps } from '~/components/Resource/FilesProvider';
 import { useFilesContext } from '~/components/Resource/FilesProvider';
 import type { ModelFileType, ZipModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
+import { baseModelHasFileSize } from '~/shared/constants/basemodel.constants';
+import { useIsOverflown } from '~/hooks/useIsOverflown';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
-import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
+import { getDisplayName, getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { comfyFileTypeLabels, filterFileTypeByExtension } from '~/utils/file-display-helpers';
+import {
+  comfyFileTypeLabels,
+  filterFileTypeByExtension,
+  UNQUANTIZED_QUANT_TYPE,
+} from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -78,21 +88,11 @@ function InlineDropzone({
       accept={accept}
       maxFiles={maxFiles}
       onReject={onReject}
-      styles={{
-        root: {
-          border: '2px dashed var(--mantine-color-dark-4)',
-          borderRadius: 8,
-          padding: 16,
-          backgroundColor: 'transparent',
-          cursor: 'pointer',
-          '&:hover': {
-            borderColor: 'var(--mantine-color-blue-5)',
-            backgroundColor: 'rgba(34, 139, 230, 0.05)',
-          },
-        },
-      }}
+      useFsAccessApi={!isAndroidDevice()}
+      className={classes.dropzone}
+      p="md"
     >
-      <Stack gap={4} align="center">
+      <Stack gap={4} align="center" style={{ pointerEvents: 'none' }}>
         <Group justify="center" gap="xs">
           <IconPlus size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
           <Text size="sm" c="dimmed">
@@ -136,7 +136,7 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
 }
 
 // TODO.Briant - compare file extension when checking for duplicate files
-export function Files() {
+export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean } = {}) {
   const {
     files,
     linkedComponents,
@@ -295,7 +295,7 @@ export function Files() {
             preferences.
           </Text>
         </Card.Section>
-        <Stack gap="sm" p="md">
+        <Stack gap="sm" pt="md">
           {modelFiles.length > 0 ? (
             <>
               {modelFiles.map((file) => (
@@ -304,6 +304,7 @@ export function Files() {
                   data={file}
                   index={files.indexOf(file)}
                   fileTypes={primaryTypes}
+                  showRename={showRenameOnPrimary}
                 />
               ))}
               <InlineDropzone
@@ -332,16 +333,8 @@ export function Files() {
               }}
               maxFiles={primary.maxFiles}
               onReject={handleRejectPrimary}
-              className={classes.dropzoneReject}
+              className={classes.dropzone}
               useFsAccessApi={!isAndroidDevice()}
-              styles={{
-                root: {
-                  border: '2px dashed var(--mantine-color-dark-4)',
-                  borderRadius: 'var(--mantine-radius-md)',
-                  backgroundColor: 'transparent',
-                  cursor: 'pointer',
-                },
-              }}
             >
               <Stack gap="xs" align="center" py="lg" style={{ pointerEvents: 'none' }}>
                 <ThemeIcon size={48} radius="xl" variant="light" color="blue">
@@ -377,7 +370,7 @@ export function Files() {
             Components and files that accompany this model. Mark each as required or optional.
           </Text>
         </Card.Section>
-        <Stack gap="sm" p="md">
+        <Stack gap="sm" pt="md">
           {!hasAdditionalContent && (
             <Stack gap="xs" align="center" py="md">
               <IconLayersLinked
@@ -465,7 +458,7 @@ export function Files() {
                 <li>Users&apos; preferences will auto-select the best match for their setup</li>
                 <li>Link to existing models when the component already exists on Civitai</li>
                 <li>
-                  Only create a new <strong>version</strong>{' '}when you&apos;ve actually
+                  Only create a new <strong>version</strong> when you&apos;ve actually
                   trained/updated the model
                 </li>
               </ul>
@@ -557,19 +550,17 @@ function LinkedComponentCard({
 
 /**
  * Whether a file still needs required metadata before it's publishable — mirrors
- * the server metadata refinements: a type for everything, quant type for GGUF,
- * and size + precision for Checkpoint model weights. Drives the "Needs info" badge
- * so auto-uploaded files that couldn't be auto-detected get flagged instead of
+ * the client validation refinements: a type for everything, quant type for GGUF,
+ * precision for Checkpoint model weights. Drives the "Needs info" badge so
+ * auto-uploaded files that couldn't be auto-detected get flagged instead of
  * silently persisting incomplete.
  */
 function isMissingRequiredInfo(file: FileFromContextProps): boolean {
   if (!file.type) return true;
   const isGguf = file.name.toLowerCase().endsWith('.gguf');
   const isCheckpointModel = file.type === 'Model' && file.modelType === 'Checkpoint';
-  // GGUF always needs a quant type; Checkpoint weights additionally need a size
-  // regardless of extension (precision is the only field GGUF Checkpoints skip).
-  if (isGguf) return !file.quantType || (isCheckpointModel && !file.size);
-  if (isCheckpointModel) return !file.size || !file.fp;
+  if (isGguf) return !file.quantType;
+  if (isCheckpointModel) return !file.fp;
   return false;
 }
 
@@ -578,14 +569,18 @@ function FileCard({
   data: versionFile,
   index,
   showRequiredToggle,
+  showRename,
   fileTypes: fileTypesProp,
 }: {
   data: FileFromContextProps;
   index: number;
   showRequiredToggle?: boolean;
+  showRename?: boolean;
   fileTypes?: ModelFileType[];
 }) {
   const { removeFile, updateFile, dropzoneConfig, modelId, errors } = useFilesContext();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
   const allFileTypes = [
     ...dropzoneConfig.primary.fileTypes,
     ...dropzoneConfig.additional.fileTypes,
@@ -622,6 +617,52 @@ function FileCard({
     else if (uuid) removeFile(uuid);
   };
 
+  const renameFileMutation = trpc.modelFile.update.useMutation({
+    async onSuccess(_, variables) {
+      updateFile(versionFile.uuid, { overrideName: variables.overrideName ?? null });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({
+        id: versionFile.versionId,
+        withFiles: true,
+      });
+      setRenameOpen(false);
+    },
+    onError() {
+      showErrorNotification({ error: new Error('Could not rename file, please try again') });
+    },
+  });
+
+  // Persisted on change rather than through the file's inline Save: the page-level
+  // "Save Changes" button only starts uploads, so a deferred flag silently gets lost.
+  const requiredMutation = trpc.modelFile.update.useMutation({
+    onError(_error, variables) {
+      updateFile(versionFile.uuid, { isRequired: !variables.metadata?.isRequired });
+      showErrorNotification({
+        error: new Error('Could not update the required flag, please try again'),
+      });
+    },
+  });
+
+  const handleToggleRequired = (isRequired: boolean) => {
+    updateFile(versionFile.uuid, { isRequired });
+    if (versionFile.id) requiredMutation.mutate({ id: versionFile.id, metadata: { isRequired } });
+  };
+
+  const handleRenameOpen = () => {
+    setRenameValue(versionFile.overrideName ?? versionFile.name);
+    setRenameOpen(true);
+  };
+
+  const handleRenameSave = () => {
+    if (!versionFile.id) return;
+    const originalExt = `.${getFileExtension(versionFile.name)}`;
+    const next = renameValue.trim() ? sanitizeDownloadFilename(renameValue, originalExt) : null;
+    renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
+  };
+
+  const displayName = versionFile.overrideName ?? versionFile.name;
+  const { ref: nameRef, overflown: nameOverflown } = useIsOverflown<HTMLParagraphElement>([
+    displayName,
+  ]);
   const iconConfig = getFileIconConfig(versionFile.name, {
     format: versionFile.format,
   });
@@ -644,47 +685,104 @@ function FileCard({
       withBorder
       p="sm"
     >
-      <Group gap="md" wrap="nowrap">
-        <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
-          <FileIcon size={20} />
-        </ThemeIcon>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Group gap={6} wrap="nowrap">
-            <Text size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
-              {versionFile.name}
-            </Text>
-            {isMissingRequiredInfo(versionFile) && (
-              <Badge color="yellow" variant="light" size="xs">
-                Needs info
-              </Badge>
+      <Group gap="md">
+        <Group gap="md" wrap="nowrap" style={{ flex: '1 1 220px', minWidth: 0 }}>
+          <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
+            <FileIcon size={20} />
+          </ThemeIcon>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Tooltip
+              label={displayName}
+              disabled={!nameOverflown}
+              openDelay={300}
+              withinPortal
+              multiline
+              maw={420}
+              style={{ overflowWrap: 'anywhere' }}
+            >
+              <Text ref={nameRef} size="sm" fw={500} c={failedUpload ? 'red' : 'white'} truncate>
+                {displayName}
+              </Text>
+            </Tooltip>
+            <Group gap={6} wrap="nowrap">
+              <Text size="xs" c="dimmed">
+                {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
+              </Text>
+              {isMissingRequiredInfo(versionFile) && (
+                <Badge color="yellow" variant="light" size="xs">
+                  Needs info
+                </Badge>
+              )}
+            </Group>
+            {versionFile.isCheckingOfficial && (
+              <Group gap={6} wrap="nowrap" mt={4}>
+                <Loader size="xs" />
+                <Text size="xs" c="dimmed">
+                  Checking for an existing copy on Civitai&hellip;
+                </Text>
+              </Group>
             )}
-          </Group>
-          <Text size="xs" c="dimmed">
-            {[fileSizeStr, formatLabel].filter(Boolean).join(' \u2022 ')}
-          </Text>
-          {showRequiredToggle && !versionFile.isUploading && (
-            <Switch
-              size="xs"
-              label="Required"
-              checked={versionFile.isRequired ?? false}
-              onChange={(e) =>
-                updateFile(versionFile.uuid, { isRequired: e.currentTarget.checked })
-              }
-              mt={4}
-            />
-          )}
-        </div>
+            {showRequiredToggle && !versionFile.isUploading && !versionFile.isCheckingOfficial && (
+              <Switch
+                size="xs"
+                label="Required"
+                checked={versionFile.isRequired ?? false}
+                onChange={(e) => handleToggleRequired(e.currentTarget.checked)}
+                mt={4}
+              />
+            )}
+          </div>
+        </Group>
         {/* Selects render during upload too, so the user can set type/precision/
             size/quant while the bytes upload — the save reads the latest via
             filesRef. */}
-        <Group gap="xs" wrap="nowrap" align="flex-end">
+        <Group gap="xs" align="flex-end">
           <FileEditForm file={versionFile} fileTypes={fileTypes} index={index} />
+          {!versionFile.isUploading && showRename && versionFile.id && !trackedFile && (
+            <Popover
+              opened={renameOpen}
+              onClose={() => setRenameOpen(false)}
+              width={300}
+              position="top-end"
+              withArrow
+              withinPortal
+            >
+              <Popover.Target>
+                <LegacyActionIcon onClick={handleRenameOpen} title="Rename download file">
+                  <IconPencil size={16} />
+                </LegacyActionIcon>
+              </Popover.Target>
+              <Popover.Dropdown>
+                <Stack gap="xs">
+                  <TextInput
+                    label="Download filename"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.currentTarget.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleRenameSave()}
+                    size="xs"
+                    autoFocus
+                  />
+                  <Group justify="flex-end" gap="xs">
+                    <Button size="xs" variant="default" onClick={() => setRenameOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="xs"
+                      onClick={handleRenameSave}
+                      loading={renameFileMutation.isPending}
+                    >
+                      Save
+                    </Button>
+                  </Group>
+                </Stack>
+              </Popover.Dropdown>
+            </Popover>
+          )}
           {!trackedFile && (
             <LegacyActionIcon
               color="red"
               onClick={() => handleRemoveFile(versionFile.uuid)}
               loading={deleteFileMutation.isPending}
-              style={{ marginTop: 18 }}
             >
               <IconTrash size={16} />
             </LegacyActionIcon>
@@ -872,9 +970,10 @@ function FileEditForm({
   fileTypes: ModelFileType[];
 }) {
   const [initialFile, setInitialFile] = useState({ ...versionFile });
-  const { errors, updateFile, validationCheck } = useFilesContext();
+  const { errors, updateFile, validationCheck, baseModel } = useFilesContext();
   const error = errors?.[index];
   const { precisions, quantTypes } = useModelFileOptions();
+  const showSize = baseModelHasFileSize(baseModel);
 
   const { mutate, isPending: isLoading } = trpc.modelFile.update.useMutation({
     onSuccess: () => {
@@ -891,7 +990,7 @@ function FileEditForm({
   }, [versionFile.id]);
 
   const handleSave = () => {
-    const valid = validationCheck();
+    const valid = validationCheck(versionFile.uuid);
     if (valid && versionFile.id) {
       mutate({
         id: versionFile.id,
@@ -907,8 +1006,10 @@ function FileEditForm({
     }
   };
 
+  // Keep the file's own type selectable even when it's no longer offered, so a
+  // legacy type doesn't render as a blank Select.
   const filterByFileExtension = (value: ModelFileType) =>
-    filterFileTypeByExtension(value, versionFile.name);
+    value === versionFile.type || filterFileTypeByExtension(value, versionFile.name);
 
   const handleReset = () => {
     updateFile(versionFile.uuid, {
@@ -916,11 +1017,17 @@ function FileEditForm({
       size: initialFile.size,
       fp: initialFile.fp,
       quantType: initialFile.quantType,
-      isRequired: initialFile.isRequired,
     });
   };
 
-  const canManualSave = !!versionFile.id && !isEqual(versionFile, initialFile);
+  // isRequired is excluded because its toggle persists on change — comparing it
+  // would leave Save/Reset showing for a value that's already saved.
+  const canManualSave =
+    !!versionFile.id &&
+    !isEqual(
+      { ...versionFile, overrideName: undefined, isRequired: undefined },
+      { ...initialFile, overrideName: undefined, isRequired: undefined }
+    );
 
   const isCheckpoint = versionFile.type === 'Model' && versionFile.modelType === 'Checkpoint';
   const isComponentFileByType =
@@ -934,7 +1041,7 @@ function FileEditForm({
   const showMetadataSelects = isCheckpoint || isComponentFile;
 
   return (
-    <Group gap="xs" align="flex-end" wrap="nowrap">
+    <Group gap="xs" align="flex-end">
       <div>
         <SelectLabel>Type</SelectLabel>
         <Select
@@ -979,7 +1086,7 @@ function FileEditForm({
             </div>
           )}
 
-          {isGguf ? (
+          {isGguf && (
             <div>
               <SelectLabel>Quant</SelectLabel>
               <Select
@@ -994,11 +1101,15 @@ function FileEditForm({
                 onChange={(value) => {
                   updateFile(versionFile.uuid, {
                     quantType: value as ModelFileQuantType | null,
+                    // Precision is only editable while unquantized; don't strand a hidden value.
+                    ...(value !== UNQUANTIZED_QUANT_TYPE && { fp: null }),
                   });
                 }}
               />
             </div>
-          ) : (
+          )}
+
+          {(!isGguf || versionFile.quantType === UNQUANTIZED_QUANT_TYPE) && (
             <div>
               <SelectLabel>Precision</SelectLabel>
               <Select
@@ -1016,7 +1127,7 @@ function FileEditForm({
             </div>
           )}
 
-          {isCheckpoint && (
+          {isCheckpoint && showSize && (
             <div>
               <SelectLabel>Size</SelectLabel>
               <Select
@@ -1024,7 +1135,6 @@ function FileEditForm({
                 size="xs"
                 w={80}
                 placeholder="Size"
-                error={error?.size?._errors[0]}
                 data={constants.modelFileSizes.map((size) => ({
                   label: startCase(size),
                   value: size,

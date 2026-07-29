@@ -71,29 +71,16 @@ vi.mock('~/server/db/client', () => ({
 // Mock the heavy peer modules the router imports so the import graph
 // stays cheap and we don't accidentally hit live deps.
 // blocks.router transitively pulls in many redis-cache modules (resource-data.redis,
-// caches.ts, ...) that each read `REDIS_KEYS.<GROUP>.<KEY>` AT IMPORT TIME. The
-// real keys live in redis/client (which connects on import, so we can't
-// importActual it). A hand-trimmed REDIS_KEYS is whack-a-mole: it flakily threw on
-// whichever key the current load order happened to reach first (RESOURCE_DATA, then
-// CACHES.TAG_IDS_FOR_IMAGES, ...). `completeKeys` wraps the few values the tests
-// assert on with an auto-vivifying Proxy so ANY other key resolves to a
-// deterministic placeholder string instead of `undefined.X` — ending the flake.
-const { completeKeys } = vi.hoisted(() => {
-  const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
-    new Proxy(explicit, {
-      get: (t, k) => (k in t ? (t as any)[k] : typeof k === 'string' ? `mock:${name}:${k}` : (t as any)[k]),
-    });
-  const completeKeys = (explicit: Record<string, Record<string, string>>) =>
-    new Proxy(explicit, {
-      get: (t, g) => (g in t ? group((t as any)[g], g as string) : typeof g === 'string' ? group({}, g) : (t as any)[g]),
-    });
-  return { completeKeys };
+// caches.ts, ...) that read REDIS_KEYS/REDIS_SYS_KEYS.<GROUP>.<KEY> AT IMPORT TIME.
+// importActual the @civitai/redis PACKAGE — it's side-effect-free (only exports the
+// key constants + factory; connections happen when createRedisClients() is CALLED,
+// which only the ~/server/redis/client shim does at import) → the COMPLETE real key
+// tree, so no hand-trimmed subset can go stale. (Replaces the old completeKeys Proxy,
+// which covered REDIS_KEYS but not REDIS_SYS_KEYS.)
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
 });
-
-vi.mock('~/server/redis/client', () => ({
-  redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-  REDIS_KEYS: completeKeys({ BLOCKS: {} }),
-}));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),

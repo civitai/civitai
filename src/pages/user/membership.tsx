@@ -33,6 +33,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
@@ -420,6 +421,13 @@ export default function UserMembership() {
                           <Button component={Link} href="/pricing" radius="xl">
                             Upgrade
                           </Button>
+                        )}
+                        {isStripe && !subscription.isBadState && (
+                          <StripeManageSubscriptionButton>
+                            <Button radius="xl" variant="light">
+                              Manage Payment Methods
+                            </Button>
+                          </StripeManageSubscriptionButton>
                         )}
                         {!subscription.cancelAt && !isCivitaiProvider && (
                           <CancelMembershipAction

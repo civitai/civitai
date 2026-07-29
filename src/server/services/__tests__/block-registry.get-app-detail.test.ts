@@ -88,6 +88,11 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     content_rating: 'PG',
     version: '1.2.3',
     approved_scopes: ['ai:write:budgeted', 'models:read:self'],
+    // DEPLOY-GATE: a deployed on-platform app (non-null timestamp) so the detail
+    // read returns its projection. The dedicated deploy-gate suite covers the
+    // never-deployed (NULL → NOT_FOUND) and offsite-exempt cases.
+    external_url: null,
+    current_version_deployed_at: new Date('2026-01-01T00:00:00Z'),
     install_count: 7n,
     avg_rating: 4.5,
     review_count: 12n,

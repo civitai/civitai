@@ -103,6 +103,89 @@ describe('toggleModelEngagement — idempotent on P2002 race (the confirmed prod
   });
 });
 
+describe('toggleModelEngagement — explicit setTo direction (notify silent-unsubscribe fix)', () => {
+  // Regression for the audit finding on the engaged-models client refactor:
+  // a genuinely Notify-ON model whose by-ids read errored made the client render
+  // the bell as "off"; the old notify mutation then sent `type=undefined` → the
+  // server BLIND-toggled (`setTo ??= engagement?.type===type ? false : true`) and,
+  // seeing the existing Notify row, DELETED it — a silent, wrong-direction
+  // unsubscribe. The fix makes the client always carry an explicit `setTo`, so the
+  // server sets the row to exactly the intended state and can never delete on a
+  // "subscribe" click. These tests pin BOTH: the old blind path was destructive,
+  // the new explicit-setTo path is an idempotent subscribe.
+
+  it('LEGACY blind toggle (no setTo) on an existing Notify → DELETES it (the bug being closed)', async () => {
+    mockDb.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+
+    const result = await toggleModelEngagement({ userId: 42, modelId: 10, type: 'Notify' });
+
+    // Blind toggle: existing type === requested type → setTo resolves to false → delete.
+    expect(mockDb.modelEngagement.delete).toHaveBeenCalledTimes(1);
+    expect(result).toBe(false); // "unsubscribed" — exactly the silent-unsubscribe symptom
+  });
+
+  it('explicit setTo:true on an existing Notify → NO delete, idempotent subscribe (returns true)', async () => {
+    mockDb.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Notify',
+      setTo: true,
+    });
+
+    // The row already IS Notify and we asked to set it ON → no-op success, never a delete.
+    expect(mockDb.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(mockDb.modelEngagement.update).not.toHaveBeenCalled();
+    expect(result).toBe(true); // still subscribed
+  });
+
+  it('explicit setTo:true on a Mute row (type Notify) → UPDATEs to Notify (un-mute subscribe), never deletes', async () => {
+    mockDb.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Mute' });
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Notify',
+      setTo: true,
+    });
+
+    expect(mockDb.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(mockDb.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(result).toBe(true);
+  });
+
+  it('explicit setTo:true type Mute on an existing Notify → UPDATEs to Mute (turn-off), never blind-deletes', async () => {
+    mockDb.modelEngagement.findUnique.mockResolvedValueOnce({ type: 'Notify' });
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Mute',
+      setTo: true,
+    });
+
+    expect(mockDb.modelEngagement.update).toHaveBeenCalledTimes(1);
+    expect(mockDb.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(result).toBe(true);
+  });
+
+  it('explicit setTo:true with no existing row → CREATEs the requested type (fresh subscribe)', async () => {
+    mockDb.modelEngagement.findUnique.mockResolvedValueOnce(null);
+
+    const result = await toggleModelEngagement({
+      userId: 42,
+      modelId: 10,
+      type: 'Notify',
+      setTo: true,
+    });
+
+    expect(mockDb.modelEngagement.create).toHaveBeenCalledTimes(1);
+    expect(mockDb.modelEngagement.delete).not.toHaveBeenCalled();
+    expect(result).toBe(true);
+  });
+});
+
 describe('toggleUserBountyEngagement — idempotent on P2002 race (sibling)', () => {
   it('P2002 on create → returns true instead of 500', async () => {
     mockDb.bountyEngagement.findUnique.mockResolvedValueOnce(null);

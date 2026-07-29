@@ -13,10 +13,14 @@ export const reactionRateLimits: RateLimit[] = [
   // 24 hour limit - prevent systematic abuse while allowing heavy usage
   { limit: 5000, period: CacheTTL.day },
   // Higher limits for users with good reputation scores (≥1000 total score)
-  { limit: 100, period: CacheTTL.xs, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000},
-  { limit: 500, period: CacheTTL.md, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000},
-  { limit: 1500, period: CacheTTL.hour, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000},
-  { limit: 8000, period: CacheTTL.day, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000},
+  { limit: 100, period: CacheTTL.xs, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000 },
+  { limit: 500, period: CacheTTL.md, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000 },
+  {
+    limit: 1500,
+    period: CacheTTL.hour,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000,
+  },
+  { limit: 8000, period: CacheTTL.day, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000 },
 ];
 
 export const reactableEntities: readonly [string, ...string[]] = [
@@ -29,7 +33,6 @@ export const reactableEntities: readonly [string, ...string[]] = [
   'resourceReview',
   'article',
   'bountyEntry',
-  'clubPost',
 ];
 
 export type ReactionEntityType = ToggleReactionInput['entityType'];

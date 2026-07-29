@@ -80,6 +80,32 @@ describe('AppStorageProvisioner.provision', () => {
     expect(joined).toContain('CREATE TRIGGER kv_quota_trg');
   });
 
+  it('provisions the SHARED storage tables + trigger (shared_kv/votes/counters/reports)', async () => {
+    await AppStorageProvisioner.provision({
+      appBlockId: 'apb_test',
+      slug: 'generate_from_model',
+    });
+    const joined = capturedQueries.map((q) => q.sql).join('\n');
+    const S = '"app_generate_from_model"';
+    // shared_kv: server-key PK, author, generated size_bytes, hidden columns.
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.shared_kv`);
+    expect(joined).toContain('key text PRIMARY KEY');
+    expect(joined).toContain('author_user_id integer NOT NULL');
+    expect(joined).toContain('hidden_at timestamptz');
+    // votes: composite PK (one-vote-per-user) + FK cascade.
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.votes`);
+    expect(joined).toContain(`REFERENCES ${S}.shared_kv(key) ON DELETE CASCADE`);
+    expect(joined).toContain('PRIMARY KEY (key, user_id)');
+    // counters: CHECK(count>=0) blocks underflow (H1) + FK cascade.
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.counters`);
+    expect(joined).toContain('CHECK (count >= 0)');
+    // reports table (M4/M5).
+    expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${S}.shared_kv_reports`);
+    // shared_kv reuses the quota trigger fn → shared bytes/rows fold into the quota.
+    expect(joined).toContain('CREATE TRIGGER shared_kv_quota_trg');
+    expect(joined).toContain(`EXECUTE FUNCTION ${S}.kv_quota_trigger()`);
+  });
+
   it('seeds the quota row with the provided appBlockId via a parameterized insert', async () => {
     await AppStorageProvisioner.provision({
       appBlockId: 'apb_seed_value',
@@ -136,6 +162,73 @@ describe('AppStorageProvisioner.deprovision', () => {
     expect(sqls.some((s) => s.includes('DROP SCHEMA IF EXISTS "app_generate_from_model" CASCADE'))).toBe(true);
     expect(sqls.some((s) => s.includes('DROP ROLE "app_generate_from_model_role"'))).toBe(true);
     expect(mockClient.release).toHaveBeenCalledOnce();
+  });
+});
+
+describe('AppStorageProvisioner.provisionReviewPreview (#2831)', () => {
+  it('rejects an invalid publishRequestId before touching the pool', async () => {
+    await expect(
+      AppStorageProvisioner.provisionReviewPreview({ publishRequestId: '!!' })
+    ).rejects.toThrow(/invalid publishRequestId/);
+    expect(mockPool.connect).not.toHaveBeenCalled();
+  });
+
+  it('provisions the DISPOSABLE apprev_ schema (per-user KV only) keyed on the publishRequestId', async () => {
+    // Default mockPool.query → schema does not exist → the DDL runs.
+    const { schema } = await AppStorageProvisioner.provisionReviewPreview({
+      publishRequestId: 'pubreq_abc',
+    });
+    expect(schema).toBe('"apprev_pubreqabc"');
+    const sqls = capturedQueries.map((q) => q.sql);
+    expect(sqls.some((s) => s.startsWith('BEGIN'))).toBe(true);
+    expect(sqls.some((s) => s.startsWith('COMMIT'))).toBe(true);
+    expect(sqls.some((s) => s.includes('CREATE SCHEMA IF NOT EXISTS "apprev_pubreqabc"'))).toBe(true);
+    expect(sqls.some((s) => s.includes('CREATE TABLE IF NOT EXISTS "apprev_pubreqabc".kv'))).toBe(true);
+    expect(sqls.some((s) => s.includes('"apprev_pubreqabc".quota'))).toBe(true);
+    expect(sqls.some((s) => s.includes('kv_quota_trigger'))).toBe(true);
+    // The quota seed row is keyed on the publishRequestId. Read the args from
+    // mock.calls (records the real 2nd arg regardless of any leaked impl).
+    const seedCall = mockClient.query.mock.calls.find(
+      (c) => String(c[0]).includes('INSERT INTO') && String(c[0]).includes('.quota')
+    );
+    expect(String(seedCall?.[0])).toContain('"apprev_pubreqabc".quota');
+    expect(seedCall?.[1]).toEqual(['pubreq_abc']);
+    // NEVER the approved app schema, and NEVER the cross-user / role surfaces.
+    expect(sqls.some((s) => s.includes('"app_'))).toBe(false);
+    expect(sqls.some((s) => s.includes('shared_kv'))).toBe(false);
+    expect(sqls.some((s) => s.includes('votes'))).toBe(false);
+    expect(sqls.some((s) => s.includes('CREATE ROLE'))).toBe(false);
+    expect(mockClient.release).toHaveBeenCalledOnce();
+  });
+
+  it('FAST-PATHs (no DDL) when the preview schema already exists', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ exists: true }], rowCount: 1 });
+    const { schema } = await AppStorageProvisioner.provisionReviewPreview({
+      publishRequestId: 'pubreq_abc',
+    });
+    expect(schema).toBe('"apprev_pubreqabc"');
+    // Existing schema → the DDL transaction is skipped entirely.
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(capturedQueries).toHaveLength(0);
+  });
+});
+
+describe('AppStorageProvisioner.deprovisionReviewPreview (#2831)', () => {
+  it('rejects an invalid publishRequestId', async () => {
+    await expect(
+      AppStorageProvisioner.deprovisionReviewPreview({ publishRequestId: '!!' })
+    ).rejects.toThrow(/invalid publishRequestId/);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('DROPs the disposable preview schema CASCADE (no role to reclaim)', async () => {
+    await AppStorageProvisioner.deprovisionReviewPreview({ publishRequestId: 'pubreq_abc' });
+    const poolSqls = mockPool.query.mock.calls.map((c) => String(c[0]));
+    expect(poolSqls.some((s) => s.includes('DROP SCHEMA IF EXISTS "apprev_pubreqabc" CASCADE'))).toBe(
+      true
+    );
+    // A preview schema has no per-app role.
+    expect(poolSqls.some((s) => s.includes('DROP ROLE'))).toBe(false);
   });
 });
 

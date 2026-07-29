@@ -16,7 +16,7 @@ import {
   getUserByIdHandler,
   getUserCosmeticsHandler,
   getUserCreatorHandler,
-  getUserEngagedModelsHandler,
+  getUserEngagedModelsByIdsHandler,
   getUserEngagedModelVersionsHandler,
   getUserFeatureFlagsHandler,
   getUserFollowingListHandler,
@@ -25,6 +25,7 @@ import {
   getUsernameAvailableHandler,
   getUserPaymentMethodsHandler,
   getUserPurchasedRewardsHandler,
+  getBanContentPreviewHandler,
   getUserSettingsHandler,
   getUserTagsHandler,
   setLeaderboardEligibilityHandler,
@@ -50,6 +51,7 @@ import {
   restoreAlertSchema,
   restoreUserSchema,
   getAllUsersInput,
+  getEngagedModelsByIdsSchema,
   getByUsernameSchema,
   getUserByUsernameSchema,
   getUserCosmeticsSchema,
@@ -57,6 +59,7 @@ import {
   getUserTagsSchema,
   setLeaderboardEligbilitySchema,
   setUserSettingsInput,
+  getBanContentPreviewSchema,
   toggleBanUserSchema,
   toggleFavoriteInput,
   toggleFeatureInputSchema,
@@ -141,9 +144,10 @@ export const userRouter = router({
   getSelfStatus: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getSelfStatusHandler),
-  getEngagedModels: protectedProcedure
+  getEngagedModelsByIds: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
-    .query(getUserEngagedModelsHandler),
+    .input(getEngagedModelsByIdsSchema)
+    .query(getUserEngagedModelsByIdsHandler),
   getEngagedModelVersions: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
@@ -244,6 +248,9 @@ export const userRouter = router({
     .mutation(toggleFollowUserHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(toggleBanUserSchema).mutation(toggleBanHandler),
+  getBanContentPreview: moderatorProcedure
+    .input(getBanContentPreviewSchema)
+    .query(getBanContentPreviewHandler),
   restoreAccount: moderatorProcedure.input(restoreUserSchema).mutation(restoreUserHandler),
   getToken: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })

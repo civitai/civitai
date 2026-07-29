@@ -1,14 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { isPaidAccessActive } from '@civitai/buzz';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import { modelVersionAccessCache } from '~/server/redis/caches';
-import type { SupportedClubEntities } from '~/server/schema/club.schema';
-import { isDefined } from '~/utils/type-guards';
 import type { SupportedAvailabilityResources } from '../schema/base.schema';
-
-const entityAccessOwnerTypes = ['User', 'Club', 'ClubTier'] as const;
-type EntityAccessOwnerType = (typeof entityAccessOwnerTypes)[number];
 
 type EntityAccessMeta = {
   buzzTransactionId?: string;
@@ -138,48 +135,56 @@ export const hasEntityAccess = async ({
     ...data.find((x) => x.entityId === entityId),
   }));
 
-  const privateRecords = matched.filter((d) =>
-    // Private & EarlyAccess both require a permission check.
-    [Availability.Private, Availability.EarlyAccess].some((a) => a === d.availability)
-  );
-
-  // All entities are public. Access granted to everyone.
-  if (privateRecords.length === 0 || isModerator) {
-    return matched.map((d) => ({
+  // The three "grant everyone full access" exits below all return this identical shape.
+  const grantAll = () =>
+    matched.map((d) => ({
       entityId: d.entityId,
       entityType,
       hasAccess: true,
       availability: d.availability,
       permissions: EntityAccessPermission.All,
     }));
+
+  // Moderators bypass gating entirely → skip the PaidAccess fetch below.
+  if (isModerator) return grantAll();
+
+  // Gated-ness for model versions comes from PaidAccess, not `availability`, so a version stays
+  // behind the permission check once the EarlyAccess enum value is retired (Phase 2). During Phase 1
+  // a PaidAccess row exists iff availability='EarlyAccess' & active, so this is behavior-preserving.
+  const paidGatedIds = new Set<number>();
+  if (entityType === 'ModelVersion') {
+    const paid = await getPaidAccess('ModelVersion', entityIds);
+    const now = new Date();
+    for (const id of entityIds) {
+      const row = paid[id];
+      if (row && isPaidAccessActive(row, now)) paidGatedIds.add(id);
+    }
   }
+  const isOpenAccess = (entityId: number, availability: Availability) =>
+    OPEN_ACCESS_AVAILABILITY.some((a) => a === availability) && !paidGatedIds.has(entityId);
+
+  // Private, EarlyAccess, and any PaidAccess-gated version require a permission check.
+  const privateRecords = matched.filter((d) => !isOpenAccess(d.entityId, d.availability));
+
+  // All entities are public. Access granted to everyone.
+  if (privateRecords.length === 0) return grantAll();
 
   const ownedRecords = matched.filter((d) => d.userId === userId);
 
   // Owners always have access.
-  if (userId && ownedRecords.length === matched.length) {
-    // Access to all records since all are owned by the user.
-    return matched.map((d) => ({
-      entityId: d.entityId,
-      entityType,
-      hasAccess: true,
-      availability: d.availability,
-      permissions: EntityAccessPermission.All,
-    }));
-  }
+  if (userId && ownedRecords.length === matched.length) return grantAll();
 
   if (!userId) {
     // Unauthenticated user. Only grant access to public items.
     return matched.map((d) => ({
       entityType,
       entityId: d.entityId,
-      hasAccess: OPEN_ACCESS_AVAILABILITY.some((a) => a === d.availability),
+      hasAccess: isOpenAccess(d.entityId, d.availability),
       availability: d.availability,
       permissions: EntityAccessPermission.All,
     }));
   }
 
-  // TODO: Add userId index to Club, ClubMemberhsip and ClubAdmin.
   // Note, we use DB write because we don't wanna have the user experience lag after unlocks.
   const entityAccess = await dbWrite.$queryRaw<EntityAccessRaw[]>`
     SELECT
@@ -192,70 +197,13 @@ export const hasEntityAccess = async ({
     FROM "EntityAccess" ea
     WHERE ea."accessToId" IN (${Prisma.join(entityIds, ', ')})
       AND ea."accessToType" = ${entityType}
-      AND (
-        -- ClubTier check
-        -- (
-        --   ea."accessorType" = 'ClubTier' AND
-        --   (
-        --     -- User is a member of the club tier
-        --     ea."accessorId" IN (
-        --       SELECT cm."clubTierId"
-        --       FROM "ClubMembership" cm
-        --       WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
-        --     )
-        --     -- User is a admin of the club tier
-        --     OR ea."accessorId" IN (
-        --       SELECT ct.id
-        --       FROM "ClubTier" ct
-        --       JOIN "ClubAdmin" ca ON ca."clubId" = ct."clubId"
-        --       WHERE ca."userId" = ${userId}
-        --     )
-        --     -- User is a owner of the club
-        --     OR ea."accessorId" IN (
-        --       SELECT ct.id
-        --       FROM "ClubTier" ct
-        --       JOIN "Club" c ON c.id = ct."clubId"
-        --       WHERE c."userId" = ${userId}
-        --     )
-        --   )
-        -- ) OR
-        -- -- Club check
-        -- (
-        --   ea."accessorType" = 'Club' AND
-        --   (
-        --     -- User is the owner of the club
-        --     ea."accessorId" IN (
-        --       SELECT c.id
-        --       FROM "Club" c
-        --       WHERE c."userId" = ${userId}
-        --     )
-        --     -- User is a member of this club
-        --     OR ea."accessorId" IN (
-        --       SELECT cm."clubId"
-        --       FROM "ClubMembership" cm
-        --       WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
-        --     )
-        --     --- User is an admin of this club
-        --     OR ea."accessorId" IN (
-        --       SELECT ca."clubId"
-        --       FROM "ClubAdmin" ca
-        --       WHERE ca."userId" = ${userId}
-        --     )
-        --   )
-        -- ) OR
-        -- User check
-        (
-          ea."accessorType" = 'User' AND ea."accessorId" = ${userId}
-        )
-      )
+      AND ea."accessorType" = 'User' AND ea."accessorId" = ${userId}
   `;
 
   // Complex scenario - we have mixed entities with public/private access.
   return entityIds.map((entityId) => {
     const openAccess = data.find(
-      (entity) =>
-        entity.entityId === entityId &&
-        OPEN_ACCESS_AVAILABILITY.some((a) => a === entity.availability)
+      (entity) => entity.entityId === entityId && isOpenAccess(entity.entityId, entity.availability)
     );
     // If the entity is public, we're ok to assume the user has access.
     if (openAccess) {
@@ -292,176 +240,6 @@ export const hasEntityAccess = async ({
       meta,
     };
   });
-};
-
-type ClubEntityAccessStatus = {
-  entityId: number;
-  entityType: SupportedClubEntities;
-  requiresClub: boolean;
-  clubs: {
-    clubId: number;
-    clubTierIds: number[];
-  }[];
-  availability: Availability;
-};
-
-export const entityRequiresClub = async ({
-  entityIds,
-  entityType,
-  clubId,
-  clubIds,
-  tx,
-}: {
-  entityIds: number[];
-  entityType: SupportedClubEntities;
-  clubId?: number;
-  clubIds?: number[];
-  tx?: Prisma.TransactionClient;
-}): Promise<ClubEntityAccessStatus[]> => {
-  if (entityIds.length === 0) {
-    return [];
-  }
-
-  const client = tx || dbRead;
-
-  let query = Prisma.sql``;
-  switch (entityType) {
-    case 'ModelVersion':
-      query = Prisma.sql`
-        SELECT
-          mv.id as "entityId",
-          mv."availability" as "availability"
-        FROM "ModelVersion" mv
-        WHERE mv.id IN (${Prisma.join(entityIds, ', ')})
-        `;
-
-      break;
-    case 'Article':
-      query = Prisma.sql`
-        SELECT
-          a."id" as "entityId",
-          a."availability" as "availability"
-        FROM "Article" a
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
-        `;
-      break;
-    case 'Post':
-      query = Prisma.sql`
-        SELECT
-          p."id" as "entityId",
-          p."availability" as "availability"
-        FROM "Post" p
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
-          `;
-      break;
-    default:
-      query = Prisma.sql``;
-  }
-
-  const entitiesAvailability = await client.$queryRaw<
-    { availability: Availability; entityId: number }[]
-  >`
-    ${query}
-  `;
-
-  const publicEntities = entitiesAvailability.filter(
-    (entity) => entity.availability !== Availability.Private
-  );
-  const privateEntities = entitiesAvailability.filter(
-    (entity) => entity.availability === Availability.Private
-  );
-
-  const publicEntitiesAccess = publicEntities.map((entity) => ({
-    entityType,
-    entityId: entity.entityId,
-    requiresClub: false,
-    clubs: [],
-    availability: entity.availability,
-  }));
-
-  if (!privateEntities.length) {
-    return publicEntitiesAccess;
-  }
-
-  const getClubFilter = (accessor: string) => {
-    if (clubIds && clubIds.length > 0) {
-      return Prisma.raw(`AND ${accessor} IN (${Prisma.join(clubIds, ', ')})`);
-    }
-
-    if (clubId) {
-      return Prisma.raw(`AND ${accessor} = ${clubId}`);
-    }
-    return Prisma.raw('');
-  };
-
-  const privateEntitiesAccess = await client.$queryRaw<
-    {
-      entityId: number;
-      entityType: string;
-      clubId: number;
-      clubTierId: number | null;
-    }[]
-  >`
-    SELECT
-      ea."accessToId" "entityId",
-      ea."accessToType" "entityType",
-      COALESCE(c.id, ct."clubId") as "clubId",
-      ct."id" as "clubTierId"
-    FROM "EntityAccess" ea
-    LEFT JOIN "Club" c ON ea."accessorType" = 'Club' AND ea."accessorId" = c.id ${getClubFilter(
-      'c.id'
-    )}
-    LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" ${getClubFilter(
-      'ct."clubId"'
-    )}
-    WHERE ea."accessToId" IN (${Prisma.join(entityIds, ', ')})
-      AND ea."accessToType" = ${entityType}
-    ORDER BY "clubTierId", "clubId"
-  `;
-
-  const access: ClubEntityAccessStatus[] = entityIds.map((entityId) => {
-    const publicEntityAccess = publicEntitiesAccess.find(
-      (entity) => entity.entityId === entityId && entity.entityType === entityType
-    );
-
-    if (publicEntityAccess) {
-      return publicEntityAccess;
-    }
-
-    const privateEntityAccesses = privateEntitiesAccess.filter(
-      (entity) => entity.entityId === entityId && entity.entityType === entityType
-    );
-
-    if (privateEntityAccesses.length === 0) {
-      return {
-        entityId,
-        entityType,
-        requiresClub: false,
-        clubs: [],
-        availability: Availability.Private,
-      };
-    }
-
-    const clubIds = [
-      ...new Set(privateEntityAccesses.map((privateEntityAccess) => privateEntityAccess.clubId)),
-    ];
-
-    return {
-      entityId,
-      entityType,
-      requiresClub: true,
-      availability: Availability.Private,
-      clubs: clubIds.map((clubId) => ({
-        clubId,
-        clubTierIds: privateEntityAccesses
-          .filter((e) => e.clubId === clubId)
-          .map((e) => e.clubTierId)
-          .filter(isDefined),
-      })),
-    };
-  });
-
-  return access;
 };
 
 export const entityOwnership = async ({
@@ -565,69 +343,6 @@ export const getUserEntityAccess = async ({ userId }: { userId: number }) => {
       CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
     FROM "EntityAccess" ea
     WHERE ea."accessorType" = 'User' AND ea."accessorId" = ${userId}
-
-    UNION
-
-    SELECT
-      ea."accessToId" "entityId",
-      ea."accessToType" "entityType",
-      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
-    FROM "EntityAccess" ea
-    JOIN "Club" c ON c.id = ea."accessorId" AND ea."accessorType" = 'Club'
-    WHERE c."userId" = ${userId}
-
-    UNION
-
-    SELECT
-      ea."accessToId" "entityId",
-      ea."accessToType" "entityType",
-      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
-    FROM "EntityAccess" ea
-    JOIN "ClubTier" ct ON ct.id = ea."accessorId" AND ea."accessorType" = 'ClubTier'
-    JOIN "Club" c ON c.id = ct."clubId"
-    WHERE c."userId" = ${userId}
-
-    UNION
-
-    SELECT
-      ea."accessToId" "entityId",
-      ea."accessToType" "entityType",
-      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
-    FROM "EntityAccess" ea
-    JOIN "ClubTier" ct ON ct.id = ea."accessorId" AND ea."accessorType" = 'ClubTier'
-    JOIN "ClubAdmin" ca ON ca."clubId" = ct."clubId"
-    WHERE ca."userId" = ${userId}
-
-    UNION
-
-    SELECT
-      ea."accessToId" "entityId",
-      ea."accessToType" "entityType",
-      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
-    FROM "EntityAccess" ea
-    JOIN "Club" c ON c.id = ea."accessorId" AND ea."accessorType" = 'Club'
-    JOIN "ClubAdmin" ca ON ca."clubId" = c.id
-    WHERE ca."userId" = ${userId}
-
-    UNION
-
-    SELECT
-      ea."accessToId" "entityId",
-      ea."accessToType" "entityType",
-      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
-    FROM "EntityAccess" ea
-    JOIN "ClubMembership" cm ON cm."clubId" = ea."accessorId" AND ea."accessorType" = 'Club'
-    WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
-
-    UNION
-
-    SELECT
-      ea."accessToId" "entityId",
-      ea."accessToType" "entityType",
-      CONCAT(ea."accessToType", ':', ea."accessToId") "entityKey"
-    FROM "EntityAccess" ea
-    JOIN "ClubMembership" cm ON cm."clubId" = ea."accessorId" AND ea."accessorType" = 'ClubTier'
-    WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
   `;
 
   return entities;

@@ -1,4 +1,5 @@
 import { dev } from '$app/environment';
+import { env } from '$env/dynamic/private';
 import { TokenScope } from '@civitai/auth/token-scope';
 import {
   firstPartyClientId,
@@ -49,6 +50,22 @@ function clientForOrigin(origin: string): FirstPartyClient {
 // client resolution AND the post-login redirect guard (buildPostLoginOriginCheck below). The cache/match
 // logic lives in @civitai/auth (createTrustedDomainRegistry — reusable by any spoke); we inject only the
 // Kysely query + the dev-loopback hosts (so local login needs no seeding when the hub runs in dev).
+//
+// DEV RGB proxy: the main app can serve local dev off the rgb-proxy color domains
+// (civitai-dev.{red,green,blue}), which are distinct registrable domains, not loopback — so first-party
+// login from them would fail the trust check. `AUTH_DEV_TRUST_HOSTS` (dev-only, comma-separated) adds those
+// hosts to the always-trust set without seeding DB rows. Ignored entirely in prod (`dev` is false).
+const devAlwaysTrust = dev
+  ? [
+      'localhost',
+      '127.0.0.1',
+      ...(env.AUTH_DEV_TRUST_HOSTS ?? '')
+        .split(',')
+        .map((h) => h.trim().toLowerCase())
+        .filter(Boolean),
+    ]
+  : [];
+
 export const spokeDomains = createTrustedDomainRegistry({
   load: async () => {
     const rows = await db
@@ -58,7 +75,7 @@ export const spokeDomains = createTrustedDomainRegistry({
       .execute();
     return rows.map((r) => ({ domain: r.domain, includeSubdomains: r.includeSubdomains }));
   },
-  alwaysTrustHosts: dev ? ['localhost', '127.0.0.1'] : [],
+  alwaysTrustHosts: devAlwaysTrust,
 });
 
 /** Parse the origin (scheme+host[+port]) of a URL, or undefined if unparseable. */

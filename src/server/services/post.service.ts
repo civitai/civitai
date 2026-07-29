@@ -20,6 +20,7 @@ import {
   thumbnailCache,
   imageMetadataCache,
   userBasicCache,
+  userImageVideoCountCaches,
   userPostCountCache,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -39,6 +40,7 @@ import {
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
 import {
   createImage,
   createImageResources,
@@ -52,6 +54,7 @@ import {
   purgeResizeCache,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
 import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
@@ -61,6 +64,7 @@ import type {
 } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
+import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -72,7 +76,6 @@ import {
   Availability,
   CollectionContributorPermission,
   CollectionMode,
-  CollectionReadConfiguration,
   CollectionType,
   MediaType,
   Model3DStatus,
@@ -157,12 +160,11 @@ const getPostStatsObject = async (data: { id: number }[]) => {
  * - user: Internal (session user from context)
  * - tags: src/components/Post/post.utils.ts:30, src/components/Post/Infinite/PostsInfinite.tsx:20, src/components/Collections/Collection.tsx:378
  * - modelVersionId: src/components/ResourceReview/ResourceReviewDetail.tsx:47, src/components/Post/post.utils.ts:32, src/components/Post/Infinite/PostsInfinite.tsx:19, src/components/Collections/Collection.tsx:377
- * - ids: src/server/services/collection.service.ts:1347, src/server/services/clubPost.service.ts:321 (internal server-side use only)
+ * - ids: src/server/services/collection.service.ts:1347 (internal server-side use only)
  * - collectionId: src/components/Post/post.utils.ts:37, src/components/Post/Infinite/PostsInfinite.tsx:24, src/components/Collections/Collection.tsx:384,390
  * - include: Internal use (cosmetics, detail)
  * - draftOnly: src/pages/user/[username]/posts.tsx:90, src/components/Post/Infinite/PostsInfinite.tsx:25, src/components/Collections/Collection.tsx:380,391
  * - followed: src/pages/user/[username]/posts.tsx:90, src/components/Post/post.utils.ts:39, src/components/Collections/Collection.tsx:381,391
- * - clubId: src/pages-old/clubs/[id]/posts.tsx:41
  * - browsingLevel: src/components/Post/post.utils.ts:24,49,61, src/components/ResourceReview/ResourceReviewDetail.tsx:43,49
  * - pending: src/pages/user/[username]/posts.tsx:90, src/components/Post/Infinite/PostsInfinite.tsx:27
  * - excludedTagIds: src/components/Post/post.utils.ts:51-56,62 (from browsing settings addons)
@@ -190,7 +192,6 @@ export const getPostsInfinite = async ({
   draftOnly,
   scheduled,
   followed,
-  clubId,
   browsingLevel,
   pending,
   excludedTagIds,
@@ -203,7 +204,6 @@ export const getPostsInfinite = async ({
   include?: string[];
 }) => {
   const AND = [Prisma.sql`1 = 1`];
-  const WITH: Prisma.Sql[] = [];
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
@@ -407,34 +407,7 @@ export const getPostsInfinite = async ({
     }
   }
 
-  if (clubId) {
-    cacheTime = 0; //CacheTTL.day;
-    cacheTags.push(`posts-club:${clubId}`);
-
-    WITH.push(Prisma.sql`
-      "clubPosts" AS (
-        SELECT DISTINCT ON (p."id") p."id" as "postId"
-        FROM "EntityAccess" ea
-        JOIN "Post" p ON p."id" = ea."accessToId"
-        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
-        WHERE (
-            (
-             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
-            )
-            OR (
-              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
-            )
-          )
-          AND ea."accessToType" = 'Post'
-      )
-    `);
-
-    joins.push(`JOIN "clubPosts" cp ON cp."postId" = p."id"`);
-  }
-
-  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const postsRawQuery = Prisma.sql`
-    ${queryWith}
     SELECT
       p.id,
       p."nsfwLevel",
@@ -550,19 +523,18 @@ export const getPostsInfinite = async ({
             const collection = collections.find((x) => x.id === p.collectionId);
             if (!collection) return false;
 
-            if (
-              collection.read !== CollectionReadConfiguration.Public &&
-              !collection?.contributors[0]?.permissions.includes(
-                CollectionContributorPermission.VIEW
-              )
-            ) {
+            if (!canViewCollectionPost(collection)) {
               return false;
             }
           }
 
           return true;
         })
-        .map(({ userId: creatorId, ...post }) => {
+        // Strip `cursorId` from each item: it's the raw sort-key value selected
+        // for keyset pagination (surfaced via the page-level `nextCursor`), NOT
+        // a per-item field — no consumer reads `item.cursorId`. Dropping it
+        // removes one field (a superjson-typed Date/number node) PER POST.
+        .map(({ userId: creatorId, cursorId: _cursorId, ...post }) => {
           const _images = images.filter((x) => x.postId === post.id);
           const { username, image, deletedAt } = userData[creatorId] || {};
 
@@ -580,7 +552,16 @@ export const getPostsInfinite = async ({
                 | null,
             },
             stats: postStats[post.id] ?? null,
-            images: _images,
+            // Cap the images embedded per post in the browse feed. The post cards
+            // render only `images[0]` (cover) + the `imageCount` field above
+            // (computed from the FULL list, so the count is unaffected), but
+            // `getImagesForPosts` returns the post's ENTIRE image list — a gallery
+            // post can carry dozens/hundreds of rows, the dominant contributor to
+            // this endpoint's ~1.6 MB payloads serialized synchronously on the
+            // event loop. The cap keeps headroom for the client hidden-preferences
+            // fall-through (see `post-getinfinite-images.ts`); `.slice` returns a
+            // new array so nothing upstream is mutated.
+            images: capPostGetInfiniteImages(_images),
             cosmetic: cosmetics[post.id] ?? null,
           };
         })
@@ -971,6 +952,7 @@ export const updatePost = async ({
         action: SearchIndexUpdateQueueAction.Update,
       });
     }
+    await userImageVideoCountCaches.refresh(post.userId);
   }
 
   return post;
@@ -1207,7 +1189,10 @@ export const addPostImage = async ({
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
     // older meta has type: string, but the updated meta has process: string
-    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
+    const rawProcess = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
+    // Graph workflow keys carry a variant suffix (e.g. 'img2img:hires-fix'); techniques are
+    // keyed on the base ('img2img'), so match on the segment before the colon.
+    const process = rawProcess?.split(':')[0];
     if (process) {
       techniqueId = (await getTechniqueByName(process))?.id;
     }
@@ -1396,6 +1381,14 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   ];
   if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
     cacheRefreshPromises.push(purgeResizeCache({ url: result.url }));
+  }
+  // Bust the image-delivery metadata cache on ANY hideMeta change (both directions): that
+  // cache serves { hideMeta } to the delivery/resize path, and a stale value would keep
+  // embedding (or keep stripping) generation metadata for up to its TTL. The privacy-
+  // sensitive direction (false -> true) is the reason this bust is explicit rather than
+  // TTL-bounded.
+  if (image.hideMeta !== undefined && currentImage && currentImage.hideMeta !== image.hideMeta) {
+    cacheRefreshPromises.push(bustImageDeliveryMetadataCache(result.url));
   }
   await Promise.all(cacheRefreshPromises);
 

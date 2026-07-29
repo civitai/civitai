@@ -88,7 +88,7 @@ describe('PostingToModel3DCard — durable data-gate', () => {
 
     // Chip rendered the model name + links to the 3D model.
     await expect.element(page.getByText('My Cube')).toBeInTheDocument();
-    const link = document.querySelector('a[href="/3d-models/555"]');
+    const link = document.querySelector('a[href="/3d-models/555/my-cube"]');
     expect(link).not.toBeNull();
 
     // getById ran enabled; getByPostId was NOT enabled even though postId was passed.
@@ -119,7 +119,7 @@ describe('PostingToModel3DCard — durable data-gate', () => {
     renderWithProviders(<PostingToModel3DCard postId={123} />);
 
     await expect.element(page.getByText('Linked From Post')).toBeInTheDocument();
-    const link = document.querySelector('a[href="/3d-models/777"]');
+    const link = document.querySelector('a[href="/3d-models/777/linked-from-post"]');
     expect(link).not.toBeNull();
 
     // The fallback path: getByPostId enabled, getById not.
@@ -150,7 +150,7 @@ describe('PostingToModel3DCard — durable data-gate', () => {
     );
 
     await expect.element(page.getByText('Feed Cube')).toBeInTheDocument();
-    expect(document.querySelector('a[href="/3d-models/4242"]')).not.toBeNull();
+    expect(document.querySelector('a[href="/3d-models/4242/feed-cube"]')).not.toBeNull();
     expect(document.body.textContent).not.toContain('LEAKED');
 
     // getByPostId never enabled even though postId was passed → the ambient call

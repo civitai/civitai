@@ -26,16 +26,20 @@ import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constan
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
+import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import { ApplyCustomFilter, BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id' }
+// Wrapped so a Meili outage degrades this dropdown to an empty result set
+// instead of an uncaught `MeiliSearchCommunicationError`. Fails quietly (no
+// banner) — the header quick-search just shows nothing during a blip.
+const meilisearch = createResilientSearchClient(
+  instantMeiliSearch(env.NEXT_PUBLIC_SEARCH_HOST as string, env.NEXT_PUBLIC_SEARCH_CLIENT_KEY, {
+    primaryKey: 'id',
+  })
 );
 
 // TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.

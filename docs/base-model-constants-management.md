@@ -39,13 +39,11 @@ A new constants file has been created at **`src/shared/constants/basemodel.const
 
 ### Legacy Files (To Be Deprecated)
 
-1. **`src/shared/constants/base-model.constants.ts`** (old file)
-   - `baseModelFamilyConfig` - Family groupings with display names and descriptions
-   - `baseModelGroupConfig` - Group display names, descriptions, and family references
-   - `baseModelConfig` - Core base model definitions (name, type, group, hidden, ecosystem, engine)
-   - `baseModelGenerationConfig` - Generation compatibility matrix (which model types work with which base models)
+`src/shared/constants/base-model.constants.ts` has been removed. Its list had drifted from
+reality — it never gained `Krea 2` — so anything reading it saw a stale set of base models.
+`basemodel.constants.ts` is the only source now.
 
-2. **`src/server/common/constants.ts`**
+1. **`src/server/common/constants.ts`**
    - `baseLicenses` - License definitions with URLs, names, notices, and NSFW restrictions
    - `baseModelLicenses` - Mapping of base models to their licenses
    - `generationConfig` - Generation settings per base model group (aspect ratios, default checkpoints)

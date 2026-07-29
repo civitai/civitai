@@ -3,6 +3,18 @@ import {
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
+import {
+  MARKETPLACE_CATEGORIES,
+  isMarketplaceCategory,
+} from '~/server/services/blocks/marketplace-categories.constants';
+// The lexical SSRF hostname guards were EXTRACTED to a shared, dependency-free
+// module (no `node:dns`, so this validator stays client-bundle-safe — it is
+// imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
+// so the manifest validator and the fetch-time guard share ONE source of truth.
+import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+// Single source for the per-scope justification length bound — shared with the
+// OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
+import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
@@ -14,6 +26,24 @@ interface RawManifest {
   renderMode?: unknown;
   trustTier?: unknown;
   scopes?: unknown;
+  /**
+   * OPTIONAL marketplace category. When present it MUST be a member of
+   * `MARKETPLACE_CATEGORIES` (single-sourced with the const + the published
+   * schema's `category` enum). It flows to the app's `/apps` store listing on
+   * moderator-approve (populated onto `AppBlock.category` only when a moderator
+   * hasn't already curated one — see `approveRequest`). Absent is fine.
+   */
+  category?: unknown;
+  /**
+   * OPTIONAL one-line pitch shown under the app's name on its `/apps` store card
+   * + detail page. Manifest-governed (the onsite store listing has NO other
+   * author surface for it — see the "ONSITE = ASSETS-ONLY" invariant in
+   * `offsite-listing.service`), so it flows to the listing on approve and is
+   * re-synced on every subsequent approved version. When present it must be a
+   * string whose TRIMMED length is 1..{@link MANIFEST_TAGLINE_MAX_LENGTH}; absent
+   * is fine (the store simply shows no tagline).
+   */
+  tagline?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -22,6 +52,15 @@ interface RawManifest {
     sandbox?: unknown;
   };
   requiredContext?: unknown;
+  /**
+   * Manifest-driven settings declaration (the W3 `manifestSettingsSchema` shape,
+   * keyed by snake_case field name). Structurally validated at install/runtime by
+   * `manifestSettingsSchema` / `validateBlockSettings`; here the SUBMISSION gate
+   * (`validateSubmission`) additionally enforces that any string field's `pattern`
+   * is not ReDoS-vulnerable and that a patterned field bounds its input via
+   * `max_length`. Optional — most manifests declare no settings.
+   */
+  settings?: unknown;
   assetBundleUrl?: unknown;
   /**
    * H-3: publisher-controlled allowlist of `settings` keys that listForModel
@@ -65,6 +104,17 @@ interface RawManifest {
    */
   buildCommand?: unknown;
   outputDir?: unknown;
+  /**
+   * OPTIONAL per-scope justification — a map of scope-id → free-text rationale
+   * the developer supplies to explain WHY the app requests each scope. Surfaced
+   * to the moderator in review. Backward-compatible: absent ⇒ still valid, and
+   * `scopes` is unchanged. Every key MUST be a scope present in `scopes` (a
+   * justification for a scope the app doesn't request is REJECTED, so the mod
+   * never sees dangling rationale). Each value is a non-empty string bounded by
+   * SCOPE_JUSTIFICATION_MAX_LENGTH. This only CAPTURES the dev's stated claim —
+   * the platform does not verify it (verification is a deliberate follow-up).
+   */
+  scopeJustifications?: unknown;
   [key: string]: unknown;
 }
 
@@ -87,6 +137,21 @@ const BLOCK_ID_MAX_LENGTH = 40;
 // `-prerelease` suffix. Single-sourced with the published schema + the CLI.
 const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
+/**
+ * CANONICAL `tagline` length cap. Deliberately the SAME bound off-site listings
+ * use (`OFFSITE_TAGLINE_MAX` in `~/server/schema/blocks/offsite-listing.schema`)
+ * so the two store kinds render consistently in the same card/detail slots.
+ *
+ * It is re-declared here rather than imported because this module is
+ * CLIENT-BUNDLE-SAFE (see the `ssrf-hostname` note above — `ManifestEditForm.tsx`
+ * imports it), and `offsite-listing.schema` pulls in zod + the external-app
+ * schema graph. A drift-guard test
+ * (`manifest-tagline.schema-drift.test.ts`) asserts this const, the canonical
+ * published schema's `tagline.maxLength`, and `OFFSITE_TAGLINE_MAX` are all equal,
+ * so the duplication can never silently diverge.
+ */
+export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
+
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
 // keeps the command AUDITABLE + bounds it to a small, documented set of safe
@@ -100,13 +165,20 @@ const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 // Anything else — extra args, flags, shell metacharacters, multiple commands —
 // is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
 // so the rejection reason is explicit when a metachar is what tripped it.
-const BUILD_COMMAND_MAX_LENGTH = 128;
-const BUILD_COMMAND_RE =
+export const BUILD_COMMAND_MAX_LENGTH = 128;
+export const BUILD_COMMAND_RE =
   /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
 // Shell metacharacters that must never appear in a buildCommand. Checked first
 // so the error is specific ("contains shell metacharacters") rather than the
 // generic allowlist-miss message.
 const SHELL_METACHAR_RE = /[;|&$`<>(){}\\!*?\[\]'"\n\r]/;
+
+// Max length of a single per-scope justification string (scopeJustifications
+// map value). Bounded so a malicious/careless manifest can't bloat the stored
+// blob or the mod-review render. LIFTED to @civitai/auth/token-scope (imported
+// above) so the App Blocks manifest path and the OAuth-connect scope-review
+// path share ONE literal; re-exported here to keep existing importers stable.
+export { SCOPE_JUSTIFICATION_MAX_LENGTH };
 
 // Min/max for the iframe height envelope. The host clamps incoming
 // RESIZE_IFRAME to these bounds, but rejecting absurd values at
@@ -114,89 +186,12 @@ const SHELL_METACHAR_RE = /[;|&$`<>(){}\\!*?\[\]'"\n\r]/;
 const HEIGHT_MIN_FLOOR = 40;
 const HEIGHT_MAX_CEILING = 4000;
 
-// SSRF gate for iframe.src and assetBundleUrl. The migrate-once-fix-forever
-// move is to reject hostnames that resolve to private/loopback ranges. We
-// can't DNS-resolve at validation time, so we use a hostname allowlist of
-// shapes we know are public: must have a dot, can't be an IP, can't be a
-// reserved hostname (localhost / metadata service endpoints).
-const PRIVATE_HOSTNAME_PATTERNS = [
-  /^localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^0\./,
-  /^::1$/,
-  // Full IPv6 ULA range fc00::/7 — the spec is fc00::/7, not fc00::/8.
-  // Previously only fc00: matched; widen to fc00-fdff.
-  /^f[cd][0-9a-f]{2}:/i,
-  /^fe80:/i,
-  // IPv6 with a zone identifier (RFC 6874 `%`-encoded) — sometimes accepted
-  // by URL parsers and lets an attacker pin a literal zone like %eth0.
-  /%/,
-  // Reserved internal infrastructure names commonly used internally.
-  /\.internal$/i,
-  /\.local$/i,
-  /^metadata\.google\.internal$/i,
-  // Note: punycode/IDN homograph attacks (e.g. `xn--...` registered as a
-  // look-alike) and DNS-rebinding (public name flipped to 127.0.0.1 at
-  // fetch time) are NOT caught by lexical validation. Phase 2's
-  // assetBundleUrl fetch must re-validate at fetch time and disable
-  // redirect-follow. v1 doesn't fetch either URL server-side so the
-  // exposure is bounded.
-];
-
-function isPublicHttpsUrl(raw: string): { ok: true } | { ok: false; reason: string } {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return { ok: false, reason: 'malformed URL' };
-  }
-  if (url.protocol !== 'https:') return { ok: false, reason: 'must be https' };
-  const hostname = url.hostname;
-
-  // Single-string IPv4 literals (audit B4): WHATWG URL accepts dot-less
-  // forms like `0x7f000001` and `2130706433` (the integer form of 127.0.0.1)
-  // and parses them to the corresponding IPv4 address. Reject these BEFORE
-  // the dotted-name check below, because they don't contain dots.
-  if (/^0x[0-9a-f]+$/i.test(hostname)) {
-    return { ok: false, reason: 'hex IPv4 literal not permitted' };
-  }
-  if (/^[0-9]+$/.test(hostname)) {
-    // Pure-integer form. Includes `2130706433` (= 127.0.0.1) and similar.
-    return { ok: false, reason: 'integer IPv4 literal not permitted' };
-  }
-
-  // IPv4-mapped IPv6 ([::ffff:127.0.0.1] and similar) — WHATWG URL surfaces
-  // these as `[::ffff:7f00:1]` style in `hostname` (lowercased, square
-  // brackets kept when URL.host includes them — URL.hostname strips them).
-  // Reject anything containing `::ffff:` (the IPv4-mapped prefix).
-  if (/::ffff:/i.test(hostname)) {
-    return { ok: false, reason: 'IPv4-mapped IPv6 not permitted' };
-  }
-
-  if (!hostname.includes('.') || hostname.endsWith('.')) {
-    return { ok: false, reason: 'hostname must be a public dotted name' };
-  }
-  for (const re of PRIVATE_HOSTNAME_PATTERNS) {
-    if (re.test(hostname)) return { ok: false, reason: 'private/internal hostname' };
-  }
-  // Pure-decimal-dotted IPv4 literals — keep the surface narrow even for
-  // public addresses; manifests should always load by DNS name.
-  if (/^[0-9.]+$/.test(hostname)) {
-    return { ok: false, reason: 'literal IPv4 addresses are not permitted' };
-  }
-  // Dotted hex/octal IPv4 literals (e.g. 0x7f.0x0.0x0.0x1, 0177.0.0.1).
-  if (/^0x[0-9a-f]+(\.0x[0-9a-f]+)+$/i.test(hostname)) {
-    return { ok: false, reason: 'hex IPv4 literals are not permitted' };
-  }
-  if (/^0[0-7]+(\.[0-7]+)+$/.test(hostname)) {
-    return { ok: false, reason: 'octal IPv4 literals are not permitted' };
-  }
-  return { ok: true };
-}
+// SSRF gate for iframe.src and assetBundleUrl. `isPublicHttpsUrl` (and the
+// `PRIVATE_HOSTNAME_PATTERNS` it uses) live in `~/server/utils/ssrf-hostname` (a
+// shared, dependency-free module) so this validator, the read-path anchors, and
+// the fetch-time guard in `safe-fetch.ts` can't drift. It is PURELY LEXICAL — a
+// server-side fetch of one of these URLs must additionally DNS-resolve + check
+// every address at fetch time (see safe-fetch.ts).
 
 // Sandbox is a positive allowlist gated by trust tier. Anything not listed
 // is rejected even if HTML's iframe sandbox accepts it. This stops the
@@ -361,6 +356,37 @@ export class BlockManifestValidator {
       errors.push('INLINE_REQUIRES_VERIFIED_TIER');
     }
 
+    // Optional marketplace `category`. When present it must be one of the known
+    // MARKETPLACE_CATEGORIES (referenced directly — never a second hardcoded
+    // copy, so the validator, the const, and the published schema's `category`
+    // enum can't drift). Absent is fine (a moderator can categorise later). On
+    // approve, a present+valid category is copied onto AppBlock.category only
+    // when a moderator hasn't already curated one (see approveRequest), so it
+    // flows to the auto-created store listing. Mirrors how the offsite
+    // submission path validates its taxonomy category.
+    if (m.category !== undefined && !isMarketplaceCategory(m.category)) {
+      errors.push(`category must be one of ${MARKETPLACE_CATEGORIES.join(', ')}`);
+    }
+
+    // Optional `tagline` (the one-line store pitch). Absent is fine. When
+    // present it must be a STRING whose TRIMMED length is 1..140 — trimmed so a
+    // whitespace-only value is rejected here rather than silently landing as a
+    // blank tagline on the store card, and so the cap can't be evaded with
+    // padding. The cap mirrors off-site listings (see
+    // MANIFEST_TAGLINE_MAX_LENGTH) so both store kinds render the same slot.
+    if (m.tagline !== undefined) {
+      if (typeof m.tagline !== 'string') {
+        errors.push('tagline must be a string');
+      } else {
+        const trimmed = m.tagline.trim();
+        if (trimmed.length === 0) {
+          errors.push('tagline must not be blank (omit it instead)');
+        } else if (trimmed.length > MANIFEST_TAGLINE_MAX_LENGTH) {
+          errors.push(`tagline must be ≤${MANIFEST_TAGLINE_MAX_LENGTH} chars`);
+        }
+      }
+    }
+
     if (!Array.isArray(m.scopes)) {
       errors.push('scopes must be an array of strings');
     } else {
@@ -392,6 +418,45 @@ export class BlockManifestValidator {
         errors.push(
           `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(', ')}`
         );
+      }
+    }
+
+    // Optional per-scope justifications (scope-id → rationale). Backward-compatible:
+    // absent ⇒ nothing to check. When present it must be a plain object; every key
+    // must be a scope the manifest actually declares (a justification for a scope
+    // NOT in `scopes` is rejected, so no dangling rationale reaches the mod), and
+    // every value must be a non-empty string ≤ SCOPE_JUSTIFICATION_MAX_LENGTH. The
+    // platform only CAPTURES the dev's stated rationale here — it does not verify it.
+    if (m.scopeJustifications !== undefined) {
+      if (
+        !m.scopeJustifications ||
+        typeof m.scopeJustifications !== 'object' ||
+        Array.isArray(m.scopeJustifications)
+      ) {
+        errors.push('scopeJustifications must be an object mapping scope-id to a justification string');
+      } else {
+        const declaredScopes = new Set(
+          Array.isArray(m.scopes)
+            ? (m.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
+            : []
+        );
+        for (const [scope, justification] of Object.entries(
+          m.scopeJustifications as Record<string, unknown>
+        )) {
+          if (!declaredScopes.has(scope)) {
+            errors.push(
+              `scopeJustifications references scope "${scope}" which is not in the manifest's scopes`
+            );
+            continue;
+          }
+          if (typeof justification !== 'string' || justification.length === 0) {
+            errors.push(`scopeJustifications["${scope}"] must be a non-empty string`);
+          } else if (justification.length > SCOPE_JUSTIFICATION_MAX_LENGTH) {
+            errors.push(
+              `scopeJustifications["${scope}"] must be ≤${SCOPE_JUSTIFICATION_MAX_LENGTH} chars`
+            );
+          }
+        }
       }
     }
 
@@ -631,6 +696,55 @@ export class BlockManifestValidator {
       ) {
         errors.push('outputDir must not contain path traversal ("..") or absolute/Windows paths');
       }
+    }
+
+    return errors.length === 0 ? { valid: true } : { valid: false, errors };
+  }
+
+  /**
+   * SUBMISSION gate. Runs the synchronous shape/security `validate` above AND the
+   * accurate ReDoS + input-bound check on `settings` field patterns, merging the
+   * errors. This is the method every manifest SUBMISSION path must call (git-push
+   * webhook, developer manifest API, `blocks.updateManifest`, publish-request
+   * approve) — it makes "a stored/approved manifest ⇒ its setting patterns are
+   * non-exponential and input-bounded" an ENFORCED invariant, giving the
+   * developer real feedback at submit time instead of a silent fail-open later.
+   *
+   * `validate` stays synchronous (client-safe, used everywhere else). The ReDoS
+   * analysis lives in a SERVER-ONLY module reached via dynamic `import()` so
+   * `recheck` never enters the client bundle, and it is only loaded when the
+   * manifest actually declares a string pattern (the common no-pattern manifest
+   * pays nothing).
+   */
+  static async validateSubmission(
+    manifest: unknown,
+    app: AppContext | number
+  ): Promise<ValidationResult> {
+    const base = this.validate(manifest, app);
+    const errors: string[] = base.valid ? [] : [...base.errors];
+
+    const settings =
+      manifest && typeof manifest === 'object' && !Array.isArray(manifest)
+        ? (manifest as RawManifest).settings
+        : undefined;
+    // Only pay the recheck load when there's at least one string `pattern` to
+    // analyze — keeps the overwhelmingly-common no-pattern submission cheap.
+    const hasStringPattern =
+      !!settings &&
+      typeof settings === 'object' &&
+      !Array.isArray(settings) &&
+      Object.values(settings as Record<string, unknown>).some(
+        (def) =>
+          !!def &&
+          typeof def === 'object' &&
+          !Array.isArray(def) &&
+          typeof (def as { pattern?: unknown }).pattern === 'string'
+      );
+    if (hasStringPattern) {
+      const { collectSettingsPatternErrors } = await import(
+        '~/server/services/blocks/settings-pattern-guard'
+      );
+      errors.push(...(await collectSettingsPatternErrors(settings)));
     }
 
     return errors.length === 0 ? { valid: true } : { valid: false, errors };

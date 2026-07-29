@@ -11,6 +11,8 @@ import {
   IconLock,
   IconLockOpen,
   IconBan,
+  IconPinned,
+  IconPinnedOff,
 } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
@@ -158,6 +160,34 @@ export function CommentDiscussionMenu({
     toggleHideCommentMutation.mutate({ id: comment.id });
   };
 
+  const togglePinCommentMutation = trpc.comment.togglePin.useMutation({
+    async onMutate({ id }) {
+      await queryUtils.comment.getById.cancel();
+
+      const prevComment = queryUtils.comment.getById.getData({ id });
+      if (prevComment)
+        queryUtils.comment.getById.setData({ id }, () => ({
+          ...prevComment,
+          pinnedAt: prevComment.pinnedAt ? null : new Date(),
+        }));
+
+      return { prevComment };
+    },
+    async onSuccess() {
+      await queryUtils.comment.getAll.invalidate();
+    },
+    onError(error, vars, context) {
+      showErrorNotification({
+        title: 'Could not pin comment',
+        error: new Error(error.message),
+      });
+      queryUtils.comment.getById.setData({ id: vars.id }, context?.prevComment);
+    },
+  });
+  const handleTogglePinComment = () => {
+    togglePinCommentMutation.mutate({ id: comment.id });
+  };
+
   return (
     <Menu position="bottom-end" withinPortal {...props}>
       <Menu.Target>
@@ -215,6 +245,20 @@ export function CommentDiscussionMenu({
             {comment.hidden ? 'Unhide comment' : 'Hide comment'}
           </Menu.Item>
         )}
+        {(isModelOwner || isMod) && (
+          <Menu.Item
+            leftSection={
+              comment.pinnedAt ? (
+                <IconPinnedOff size={14} stroke={1.5} />
+              ) : (
+                <IconPinned size={14} stroke={1.5} />
+              )
+            }
+            onClick={handleTogglePinComment}
+          >
+            {comment.pinnedAt ? 'Unpin comment' : 'Pin comment'}
+          </Menu.Item>
+        )}
         {isMod && (
           <Menu.Item leftSection={<IconBan size={14} stroke={1.5} />} onClick={handleTosViolation}>
             Remove as TOS Violation
@@ -242,7 +286,7 @@ export function CommentDiscussionMenu({
 }
 
 type Props = MenuProps & {
-  comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked' | 'hidden' | 'modelId'>;
+  comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked' | 'hidden' | 'modelId' | 'pinnedAt'>;
   size?: MantineSpacing;
   hideLockOption?: boolean;
   modelUserId?: number;

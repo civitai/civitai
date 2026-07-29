@@ -2,6 +2,7 @@ import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 import type { PaypalPurchaseBuzzSchema } from '../schema/paypal.schema';
 import { throwBadRequestError } from '../utils/errorHandling';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { createBuzzTransaction } from './buzz.service';
 import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 
@@ -28,6 +29,7 @@ export const createBuzzOrder = async ({
       'Content-Type': 'application/json',
       Authorization,
     },
+    signal: fetchTimeoutSignal(120_000),
     body: JSON.stringify({
       intent: 'CAPTURE',
       purchase_units: [
@@ -72,6 +74,7 @@ export const processBuzzOrder = async (orderId: string | number) => {
     headers: {
       Authorization,
     },
+    signal: fetchTimeoutSignal(120_000),
   });
 
   if (response.status === 200) {
@@ -105,6 +108,7 @@ export const processBuzzOrder = async (orderId: string | number) => {
           'Content-Type': 'application/json',
           Authorization,
         },
+        signal: fetchTimeoutSignal(120_000),
         body: JSON.stringify([
           {
             op: 'add',
@@ -121,6 +125,7 @@ export const processBuzzOrder = async (orderId: string | number) => {
           'Content-Type': 'application/json',
           Authorization,
         },
+        signal: fetchTimeoutSignal(120_000),
       });
 
       if (capture.status !== 201 && capture.status !== 200) {

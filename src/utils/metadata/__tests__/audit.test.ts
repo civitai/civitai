@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { includesMinorAge } from '~/utils/metadata/audit';
+import { includesInappropriate, includesMinor, includesMinorAge } from '~/utils/metadata/audit';
 
 describe('includesMinorAge', () => {
   describe('danbooru/pony tag false positives', () => {
@@ -24,6 +24,27 @@ describe('includesMinorAge', () => {
     it('source_* and rating_* tags adjacent to year should not flag', () => {
       expect(includesMinorAge('source_pony, year 2025')).toEqual({ found: false, age: undefined });
       expect(includesMinorAge('rating_safe, year 2025')).toEqual({ found: false, age: undefined });
+    });
+  });
+
+  describe('prompt attention-weight false positives', () => {
+    it('decimal weight digit adjacent to year should not flag', () => {
+      expect(includesMinorAge('(@ningen mame:0.8), year')).toEqual({
+        found: false,
+        age: undefined,
+      });
+    });
+
+    it('assorted decimal weights adjacent to year do not flag', () => {
+      expect(includesMinorAge('(masterpiece:0.8), (best quality:1.2), year 2025')).toEqual({
+        found: false,
+        age: undefined,
+      });
+    });
+
+    it('a real age inside a weighted group is still detected', () => {
+      expect(includesMinorAge('(8 year old:1.2)')).toEqual({ found: true, age: 8 });
+      expect(includesMinorAge('(loli:1.2), 8 year old')).toEqual({ found: true, age: 8 });
     });
   });
 
@@ -66,5 +87,37 @@ describe('includesMinorAge', () => {
         age: undefined,
       });
     });
+  });
+});
+
+// Benign-phrase neutralization (teen titans / minor barrel distortion / mature content)
+// lives in the moderator blocklist store now, not in these pure functions — its coverage
+// is in blocklist.service.test.ts. These tests pin the detection logic that stays here.
+describe('negative-prompt minor detection', () => {
+  it('flags genuine minor-steering negative nouns', () => {
+    expect(includesMinor('a woman', 'mature body')).toBeTruthy();
+    expect(includesMinor('a woman', 'adult body')).toBeTruthy();
+    expect(includesMinor('a woman', 'mature')).toBeTruthy();
+  });
+});
+
+describe('young-word anchoring (minor-review queue)', () => {
+  it('does not flag the "minor" substring inside longer words', () => {
+    // "minora"/"minority"/"Minoru" contain "minor" but are not minor references.
+    for (const prompt of ['labia majora and minora', 'a large minority group', 'Minoru Suzuki']) {
+      expect(includesInappropriate({ prompt }, true), prompt).toBe(false);
+    }
+  });
+
+  it('still flags whole-word minor signals', () => {
+    for (const prompt of [
+      'nude teen',
+      'a teenage girl at the park',
+      'underage minor girl',
+      'young schoolgirl',
+      '1girl is child, nude, and wearing school swimsuit',
+    ]) {
+      expect(includesInappropriate({ prompt }, true), prompt).toBe('minor');
+    }
   });
 });

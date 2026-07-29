@@ -29,6 +29,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
+import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -39,6 +40,7 @@ import {
   InputRTE,
   InputSegmentedControl,
   InputSelect,
+  InputSwitch,
   InputTags,
   InputText,
   useForm,
@@ -110,7 +112,9 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category', 'tags'];
+// 'tags' is deliberately absent: the field is named `tagsOnModels`, so the watch effect below
+// could never auto-apply it, the input has no locked state, and nothing enforces it server-side.
+const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category'];
 
 const availabilityDetails = {
   [Availability.Public]: {
@@ -173,6 +177,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const hasSfwOnlyNsfw = nsfw && sfwOnly;
   const { isDirty, errors } = form.formState;
   const features = useFeatureFlags();
+  const { requirements } = useCreatorProgramRequirements();
+  const isActiveCreatorMember = !!requirements?.validMembership;
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -446,6 +452,39 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                 username={modelUser}
               />
             )}
+            <Paper radius="md" p="md" withBorder>
+              <Stack gap="xs">
+                <div>
+                  <Text size="sm" fw={600}>
+                    Creator Controls: metric privacy
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Hide these public stats on this model&apos;s page and cards.{' '}
+                    {isActiveCreatorMember
+                      ? 'You and moderators always see your real stats.'
+                      : 'Requires an active Creator Program membership — these only apply while your membership is active.'}
+                  </Text>
+                </div>
+                <InputSwitch
+                  name="meta.hideBuzz"
+                  label="Hide tipped / earned Buzz"
+                  disabled={!isActiveCreatorMember}
+                  styles={{ track: { flex: '0 0 1em' } }}
+                />
+                <InputSwitch
+                  name="meta.hideDownloads"
+                  label="Hide download count"
+                  disabled={!isActiveCreatorMember}
+                  styles={{ track: { flex: '0 0 1em' } }}
+                />
+                <InputSwitch
+                  name="meta.hideGenerations"
+                  label="Hide generation count"
+                  disabled={!isActiveCreatorMember}
+                  styles={{ track: { flex: '0 0 1em' } }}
+                />
+              </Stack>
+            </Paper>
           </Stack>
         </ContainerGrid2.Col>
         <ContainerGrid2.Col span={12}>
@@ -555,7 +594,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   name="poi"
                   label="Depicts an actual person"
                   description={isLockedDescription(
-                    'category',
+                    'poi',
                     'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
                   )}
                   onChange={(value) => {
@@ -581,7 +620,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   name="nsfw"
                   label="Is intended to produce mature themes"
                   disabled={isLocked('nsfw') || poi === 'true' || minor || isPrivate}
-                  description={isLockedDescription('category')}
+                  description={isLockedDescription('nsfw')}
                   onChange={(event) => {
                     if (event.target.checked) {
                       form.setValue('poi', 'false');

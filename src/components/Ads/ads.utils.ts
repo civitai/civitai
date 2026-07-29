@@ -70,16 +70,24 @@ const adDensity: AdDensity[] = [
   [7, [6, 9]],
 ];
 
-export const supportUsImageSizes = [
-  [120, 600],
-  [300, 100],
-  [300, 250],
-  [300, 600],
-  [320, 50],
-  [320, 100],
-  [728, 90],
-  [970, 90],
-  [970, 250],
+// Neutral filenames/dir so adblock network filters don't match ad dimensions.
+export const supportUsImages = [
+  { width: 970, height: 250, src: '/images/creators/wide.jpg' },
+  { width: 970, height: 90, src: '/images/creators/wide-thin.jpg' },
+  { width: 728, height: 90, src: '/images/creators/long.jpg' },
+  { width: 300, height: 600, src: '/images/creators/tall.jpg' },
+  { width: 120, height: 600, src: '/images/creators/tall-thin.jpg' },
+  { width: 300, height: 250, src: '/images/creators/box.jpg' },
+  { width: 300, height: 100, src: '/images/creators/strip.jpg' },
+  { width: 320, height: 100, src: '/images/creators/strip-wide.jpg' },
+  { width: 320, height: 50, src: '/images/creators/strip-thin.jpg' },
 ];
+
+// Largest image that fits the slot — tallest, then widest.
+export function getSupportUsImage(maxWidth: number, maxHeight: number) {
+  return supportUsImages
+    .filter(({ width, height }) => width <= maxWidth && height <= maxHeight)
+    .sort((a, b) => b.height - a.height || b.width - a.width)[0];
+}
 
 export const adUnitsLoaded: Record<string, boolean> = {};

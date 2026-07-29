@@ -3,7 +3,9 @@ import {
   grantedPageScopes,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
+  resolveImageUploadRequest,
   resolveResourcePickerRequest,
+  resolveUngrantableConsentScopes,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
 } from '../pageBlockHostLogic';
@@ -44,6 +46,55 @@ describe('grantedPageScopes (#3/#6 — BLOCK_INIT carries the JWT scopes, not []
   it('is a no-op for a missingScopes entry that was never declared', () => {
     const declared = ['apps:storage:read'];
     expect(grantedPageScopes(declared, ['ai:write:budgeted'])).toEqual(declared);
+  });
+});
+
+describe('resolveUngrantableConsentScopes (Issue B — un-grantable dev-preview consent → toast)', () => {
+  it('returns the un-grantable subset when a requested scope is neither granted NOR missing (clamped at mint)', () => {
+    // dev-tunnel preview: the token carries models:read:self; the block asks for
+    // a scope the tunnel allowlist withheld → not granted, not addable via consent.
+    const out = resolveUngrantableConsentScopes(
+      ['apps:storage:read'],
+      ['models:read:self'],
+      []
+    );
+    expect(out).toEqual(['apps:storage:read']);
+  });
+
+  it('returns EMPTY for the BENIGN already-granted case (block re-requests a held scope) — no toast', () => {
+    expect(
+      resolveUngrantableConsentScopes(['buzz:read:self'], ['buzz:read:self', 'models:read:self'], [])
+    ).toEqual([]);
+  });
+
+  it('returns EMPTY when the requested scope is grantable via consent (it is in missingScopes) — modal path owns it', () => {
+    expect(
+      resolveUngrantableConsentScopes(['ai:write:budgeted'], ['models:read:self'], [
+        'ai:write:budgeted',
+      ])
+    ).toEqual([]);
+  });
+
+  it('returns EMPTY when the block sends no hint / a garbage hint (never a fragile heuristic)', () => {
+    expect(resolveUngrantableConsentScopes(undefined, ['models:read:self'], [])).toEqual([]);
+    expect(resolveUngrantableConsentScopes([], ['models:read:self'], [])).toEqual([]);
+    expect(resolveUngrantableConsentScopes('nope', ['models:read:self'], [])).toEqual([]);
+    expect(resolveUngrantableConsentScopes([1, null, ''], ['models:read:self'], [])).toEqual([]);
+  });
+
+  it('reports ONLY the un-grantable scopes from a mixed hint (drops granted + missing), sorted+deduped', () => {
+    const out = resolveUngrantableConsentScopes(
+      ['apps:storage:write', 'apps:storage:read', 'apps:storage:write', 'buzz:read:self', 'ai:write:budgeted'],
+      ['buzz:read:self'], // already granted
+      ['ai:write:budgeted'] // grantable via consent
+    );
+    expect(out).toEqual(['apps:storage:read', 'apps:storage:write']);
+  });
+
+  it('tolerates an undefined missingScopes', () => {
+    expect(
+      resolveUngrantableConsentScopes(['apps:storage:read'], ['models:read:self'], undefined)
+    ).toEqual(['apps:storage:read']);
   });
 });
 
@@ -175,5 +226,71 @@ describe('resolveCheckpointPickerRequest (OPEN_CHECKPOINT_PICKER — dev:live↔
     expect(resolveCheckpointPickerRequest(null)).toBeNull();
     expect(resolveCheckpointPickerRequest('Checkpoint')).toBeNull();
     expect(resolveCheckpointPickerRequest(123)).toBeNull();
+  });
+});
+
+describe('resolveImageUploadRequest (OPEN_IMAGE_UPLOAD — requestId drop rule + purpose)', () => {
+  it('accepts a valid string requestId and defaults purpose to display + asyncScan false', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u1' })).toEqual({
+      requestId: 'u1',
+      purpose: 'display',
+      asyncScan: false,
+    });
+  });
+
+  it('ignores extra fields (only requestId + purpose + asyncScan are threaded — the rest is server-gated)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u2', junk: 'x', imageId: 5 })).toEqual({
+      requestId: 'u2',
+      purpose: 'display',
+      asyncScan: false,
+    });
+  });
+
+  it('threads purpose:generationSource when the block requests the unscanned source mode', () => {
+    expect(
+      resolveImageUploadRequest({ requestId: 'u_src', purpose: 'generationSource' })
+    ).toEqual({ requestId: 'u_src', purpose: 'generationSource', asyncScan: false });
+  });
+
+  it('opts into asyncScan ONLY for a literal asyncScan === true', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_a', asyncScan: true })).toEqual({
+      requestId: 'u_a',
+      purpose: 'display',
+      asyncScan: true,
+    });
+    // Any non-true value → false (byte-compatible blocking for an old SDK).
+    for (const v of [false, undefined, null, 'true', 1, {}]) {
+      expect(resolveImageUploadRequest({ requestId: 'u_b', asyncScan: v }).asyncScan).toBe(false);
+    }
+    // Absent flag → false.
+    expect(resolveImageUploadRequest({ requestId: 'u_c' }).asyncScan).toBe(false);
+  });
+
+  it('normalizes an absent purpose to display (SDK back-compat — current SDK sends none)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_def' }).purpose).toBe('display');
+  });
+
+  it('normalizes an unknown / non-string purpose to the safe moderated default (display)', () => {
+    expect(resolveImageUploadRequest({ requestId: 'u_x', purpose: 'evil' }).purpose).toBe('display');
+    expect(resolveImageUploadRequest({ requestId: 'u_y', purpose: 42 }).purpose).toBe('display');
+    expect(resolveImageUploadRequest({ requestId: 'u_z', purpose: null }).purpose).toBe('display');
+    // Case-sensitive: only the exact literal opts into the unscanned path.
+    expect(resolveImageUploadRequest({ requestId: 'u_c', purpose: 'GenerationSource' }).purpose).toBe(
+      'display'
+    );
+  });
+
+  it('DROPS a request with a missing / empty / non-string requestId', () => {
+    expect(resolveImageUploadRequest({})).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: '' })).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: 42 })).toBeNull();
+    expect(resolveImageUploadRequest({ requestId: null })).toBeNull();
+  });
+
+  it('DROPS non-object / nullish payloads', () => {
+    expect(resolveImageUploadRequest(undefined)).toBeNull();
+    expect(resolveImageUploadRequest(null)).toBeNull();
+    expect(resolveImageUploadRequest('u3')).toBeNull();
+    expect(resolveImageUploadRequest(123)).toBeNull();
   });
 });

@@ -2,26 +2,50 @@ import { describe, it, expect } from 'vitest';
 import { resolveAppsPageAccess } from '../resolveAppsPageAccess';
 
 /**
- * F-E E1 — SSR gate-ordering invariant for /apps.
+ * F-E E1 + W13 PR-W1a/D8 — SSR gate-ordering + decoupling invariant for /apps.
  *
- * The marketplace is anon-capable but stays DARK behind the mod-segmented flag.
- * These tests pin the GATING INVARIANT so it FAILS if the gate is reordered,
- * removed, or a session→login redirect is reintroduced:
- *   - No flag → notFound, REGARDLESS of session (gate is the only control,
+ * The marketplace is anon-capable but stays DARK behind the store-visibility
+ * flag. W13 repoints that gate onto the dedicated `appListings` flag WITH an
+ * OR-fallback to `appBlocks` (access = `appListings || appBlocks`). These tests
+ * pin the GATING INVARIANT so it FAILS if the gate is reordered, removed, the
+ * OR-fallback is dropped, or a session→login redirect is reintroduced:
+ *   - Neither flag → notFound, REGARDLESS of session (gate is the only control,
  *     and it's a hard notFound — never a login redirect).
+ *   - `appListings`-only true → renders (the new dedicated visibility flag).
+ *   - `appBlocks`-only true → renders (the OR-FALLBACK — keeps the current
+ *     mods+testers cohort in while `app-listings` doesn't exist yet).
  *   - Flag granted + NO session → renders (the dark anon read path).
- *   - Flag granted + session → renders.
  */
 
 describe('resolveAppsPageAccess — gating invariant', () => {
-  it('no appBlocks flag → notFound (gate intact, even with no session)', () => {
+  it('neither flag → notFound (gate intact, even with no session)', () => {
     expect(resolveAppsPageAccess({ features: { appBlocks: false } })).toEqual({ notFound: true });
+    expect(
+      resolveAppsPageAccess({ features: { appBlocks: false, appListings: false } })
+    ).toEqual({ notFound: true });
   });
 
   it('undefined/null features → notFound (fails closed)', () => {
     expect(resolveAppsPageAccess({ features: undefined })).toEqual({ notFound: true });
     expect(resolveAppsPageAccess({ features: null })).toEqual({ notFound: true });
     expect(resolveAppsPageAccess({ features: {} })).toEqual({ notFound: true });
+  });
+
+  it('appListings-only true → renders (dedicated visibility flag lit)', () => {
+    expect(
+      resolveAppsPageAccess({ features: { appListings: true, appBlocks: false } })
+    ).toEqual({ props: {} });
+    // and with appBlocks entirely absent from the object
+    expect(resolveAppsPageAccess({ features: { appListings: true } })).toEqual({ props: {} });
+  });
+
+  it('appBlocks-only true → renders (the OR-fallback preserves the current cohort)', () => {
+    // The load-bearing dark-decoupling case: `app-listings` doesn't exist yet, so
+    // `appListings` is false but `appBlocks` still grants today's mods+testers.
+    expect(
+      resolveAppsPageAccess({ features: { appBlocks: true, appListings: false } })
+    ).toEqual({ props: {} });
+    expect(resolveAppsPageAccess({ features: { appBlocks: true } })).toEqual({ props: {} });
   });
 
   it('flag granted + NO session → renders (the dark anon read path, no login redirect)', () => {
@@ -31,10 +55,6 @@ describe('resolveAppsPageAccess — gating invariant', () => {
     // /login; E1 removes that so the page renders behind the flag.
     expect(result).not.toHaveProperty('redirect');
     expect(result).not.toHaveProperty('notFound');
-  });
-
-  it('flag granted (mod path today) → renders', () => {
-    expect(resolveAppsPageAccess({ features: { appBlocks: true } })).toEqual({ props: {} });
   });
 });
 

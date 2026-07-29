@@ -2,6 +2,7 @@ import { createJob, getJobDate } from './job';
 import type { TagRule } from '~/server/services/system-cache';
 import { getTagRules } from '~/server/services/system-cache';
 import { dbWrite } from '~/server/db/client';
+import { modelVotableTagsCache } from '~/server/redis/caches';
 import { Prisma } from '@prisma/client';
 import { createLogger } from '~/utils/logging';
 
@@ -37,13 +38,18 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
     : Prisma.empty;
 
   log('Updating models');
-  await dbWrite.$executeRaw`
+  // RETURNING the affected modelIds so we can bust their votable-tags cache — a newly
+  // applied TagsOnModels row is base score 5 in the ModelTag view → immediately votable.
+  const insertedModels = await dbWrite.$queryRaw<{ modelId: number }[]>`
     INSERT INTO "TagsOnModels"("modelId", "tagId")
     SELECT "modelId", ${fromId}
     FROM "TagsOnModels"
     WHERE "tagId" = ${toId} ${sinceClause}
-    ON CONFLICT ("modelId", "tagId") DO NOTHING;
+    ON CONFLICT ("modelId", "tagId") DO NOTHING
+    RETURNING "modelId";
   `;
+  if (insertedModels.length > 0)
+    await modelVotableTagsCache.bust(insertedModels.map((x) => x.modelId));
 
   log('Updating articles');
   await dbWrite.$executeRaw`
@@ -79,10 +85,15 @@ async function deleteTag({ toId }: TagRule, maxImageId: number, since?: Date) {
     : Prisma.empty;
 
   log('Deleting models');
-  await dbWrite.$executeRaw`
+  // RETURNING the affected modelIds so we can bust their votable-tags cache — removing
+  // the TagsOnModels row drops that tag from the model's votable list.
+  const deletedModels = await dbWrite.$queryRaw<{ modelId: number }[]>`
     DELETE FROM "TagsOnModels"
-    WHERE "tagId" = ${toId} ${sinceClause};
+    WHERE "tagId" = ${toId} ${sinceClause}
+    RETURNING "modelId";
   `;
+  if (deletedModels.length > 0)
+    await modelVotableTagsCache.bust(deletedModels.map((x) => x.modelId));
 
   log('Deleting articles');
   await dbWrite.$executeRaw`

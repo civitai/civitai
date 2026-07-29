@@ -12,8 +12,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import type { ResourceReviewSimpleModel } from '~/server/selectors/resourceReview.selector';
-import { trpc } from '~/utils/trpc';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import classes from './ResourceReviewThumbActions.module.scss';
 
 export function ResourceReviewThumbActions({
@@ -125,14 +124,13 @@ export function ResourceReviewThumbBadge({
   modelVersionId?: number;
   count?: number;
 }) {
-  const currentUser = useCurrentUser();
   const { totals, loading } = useQueryResourceReviewTotals({ modelId, modelVersionId });
-  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
-    trpc.user.getEngagedModels.useQuery(undefined, { enabled: !!currentUser });
+  // PR2: per-visible-set membership for this single model.
+  const { isEngaged: isModelEngaged, isKnown } = useEngagedModelMembership(modelId);
 
   if (loading && initialCount === undefined) return null;
 
-  const hasReview = reviewedModels.includes(modelId);
+  const hasReview = isModelEngaged('Recommended');
 
   return (
     <IconBadge
@@ -140,8 +138,11 @@ export function ResourceReviewThumbBadge({
       color={hasReview ? 'success.5' : 'gray'}
       size="lg"
       icon={<ThumbsUpIcon size={16} filled />}
-      style={{ cursor: 'pointer' }}
-      onClick={onClick}
+      // F1: don't surface the click affordance until membership is known — the
+      // displayed review state (and any toggle the click drives) is unreliable
+      // while the store is cold for this model.
+      style={{ cursor: isKnown ? 'pointer' : 'progress' }}
+      onClick={isKnown ? onClick : undefined}
     >
       <Text>{abbreviateNumber(totals?.up ?? 0)}</Text>
     </IconBadge>

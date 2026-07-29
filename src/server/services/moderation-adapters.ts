@@ -1,4 +1,5 @@
 import { articleModerationAdapter } from '~/server/services/article-moderation.adapter';
+import { challengeModerationAdapter } from '~/server/services/challenge-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
 
@@ -12,6 +13,7 @@ import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-ca
 // avoids the import cycle.
 const moderationAdapters: Record<string, ModerationAdapter> = {
   Article: articleModerationAdapter,
+  Challenge: challengeModerationAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
 };
 

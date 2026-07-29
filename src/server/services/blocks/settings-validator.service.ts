@@ -1,5 +1,9 @@
 import { TRPCError } from '@trpc/server';
-import type { ManifestSettings, ManifestSettingField } from '~/server/schema/blocks/manifest-settings.meta.schema';
+import {
+  MAX_PATTERNED_INPUT_LEN,
+  type ManifestSettings,
+  type ManifestSettingField,
+} from '~/server/schema/blocks/manifest-settings.meta.schema';
 
 /**
  * W3 v0 generic settings validator. Replaces the per-block-id schema map
@@ -117,11 +121,28 @@ function validateField(key: string, def: ManifestSettingField, raw: unknown): un
           message: `settings.${key}: exceeds max length ${def.max_length}`,
         });
       }
-      if (def.pattern && !new RegExp(def.pattern).test(raw)) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: `settings.${key}: format invalid`,
-        });
+      if (def.pattern) {
+        // Defense-in-depth: `def.pattern` is app-developer-authored and only
+        // mod-reviewed. The submission gate (BlockManifestValidator.validateSubmission)
+        // now rejects ReDoS-vulnerable patterns AND forces a patterned field to
+        // declare `max_length <= MAX_PATTERNED_INPUT_LEN` — but a pattern STORED
+        // before that gate existed could lack a max_length, leaving `raw` unbounded.
+        // Hard-cap the input the regex sees regardless, so a viewer can't feed
+        // a long string into a (legacy) pathological pattern and freeze the
+        // event loop. This tames polynomial patterns fully; exponential ones
+        // are the submission gate's job (an input cap can't save you there).
+        if (raw.length > MAX_PATTERNED_INPUT_LEN) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `settings.${key}: exceeds max length ${MAX_PATTERNED_INPUT_LEN}`,
+          });
+        }
+        if (!new RegExp(def.pattern).test(raw)) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `settings.${key}: format invalid`,
+          });
+        }
       }
       if (def.enum && !def.enum.includes(raw)) {
         throw new TRPCError({

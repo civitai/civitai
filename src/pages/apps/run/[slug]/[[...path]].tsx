@@ -1,6 +1,7 @@
 import { Box, useComputedColorScheme } from '@mantine/core';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { Meta } from '~/components/Meta/Meta';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
@@ -94,6 +95,17 @@ export default function AppPage(props: PageProps) {
   const currentUser = useCurrentUser();
   const colorScheme = useComputedColorScheme('dark');
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
+
+  // Record this ACTUAL run in the client-only recents store (localStorage), so
+  // the shared app-chrome "Recently run" menu can offer a 1-click return. Keyed
+  // by appBlockId (the store's stable de-dup id); `blockId` backs the
+  // `/apps/run/<blockId>` link and `name` is the display label. No icon URL is
+  // plumbed to this SSR page (PageProps carries none), so `iconUrl` is omitted —
+  // the menu falls back to a generic app icon. Fires once per mount; the store
+  // dedups so revisiting just moves the entry to the front.
+  useEffect(() => {
+    recordRecentlyOpenedApp({ id: appBlockId, blockId, name: appName });
+  }, [appBlockId, blockId, appName]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
   // from the approved AppBlock (no install row).

@@ -1,8 +1,10 @@
 import type { ThemeIconProps } from '@mantine/core';
 import {
   Badge,
+  Center,
   getPrimaryShade,
   HoverCard,
+  Loader,
   Paper,
   Text,
   ThemeIcon,
@@ -20,7 +22,7 @@ import {
   IconPinFilled,
   IconUserPlus,
 } from '@tabler/icons-react';
-import { memo, useMemo } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
@@ -44,6 +46,10 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { mergePostImages, shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
+import { POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { trpc } from '~/utils/trpc';
 import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -362,104 +368,273 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
         </>
       )}
     </ImageGuard2>
+  ) : features.galleryLazyPostImages &&
+    data.imageCount != null &&
+    data.imageCount > data.images.length ? (
+    // LAZY: server sent a first slice + the true `imageCount`; load the tail on
+    // approach so the initial feed payload stays small without truncating the UX.
+    <LazyPostImagesCarousel data={data} postId={postId} />
   ) : (
-    <SimpleImageCarousel loop total={data.images.length} className="flex h-full flex-col">
+    // Today's behaviour (flag OFF, or a post already within the slice): all images
+    // are inline — render them directly, no lazy fetch.
+    <StaticPostImagesCarousel images={data.images} postId={postId} />
+  );
+}
+
+const carouselIndicatorProps = {
+  className: 'flex w-full gap-px',
+  indicatorClassName:
+    'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
+} as const;
+
+/**
+ * One carousel slide's content (blur guard, remix, image, reactions, meta). Shared
+ * by the static and lazy carousels so an appended (lazily-fetched) image renders
+ * byte-identically to a seeded one. `dialogImages` seeds the detail modal with the
+ * carousel's currently-loaded set.
+ */
+function PostCarouselSlide({
+  image,
+  postId,
+  dialogImages,
+}: {
+  image: ImagesAsPostModel['images'][number];
+  postId: number;
+  dialogImages: ImagesAsPostModel['images'];
+}) {
+  const features = useFeatureFlags();
+  const { trackAction } = useTrackEvent();
+  const handleRemixClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    trackAction({
+      type: 'Image_Remix_Click',
+      details: { imageId: image.id, imageType: image.type, source: 'remix:model-gallery' },
+    }).catch(() => undefined);
+    generationGraphPanel.open({ type: image.type, id: image.id });
+  };
+
+  return (
+    <ImageGuard2 image={image} connectType="post" connectId={postId}>
+      {(safe) => (
+        <>
+          {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
+          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          {safe && (
+            <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
+              <ImagesAsPostsContextMenu image={image} />
+              {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
+                <HoverActionButton
+                  label="Remix"
+                  size={30}
+                  color="white"
+                  variant="filled"
+                  data-activity="remix:model-gallery"
+                  onClick={handleRemixClick}
+                >
+                  <IconBrush stroke={2.5} size={16} />
+                </HoverActionButton>
+              )}
+            </div>
+          )}
+          <RoutedDialogLink
+            name="imageDetail"
+            state={{ imageId: image.id }}
+            getState={() => ({ imageId: image.id, images: dialogImages })}
+            className={classes.link}
+          >
+            <>
+              <MediaHash {...image} className="opacity-70" />
+
+              {safe && (
+                <EdgeMedia2
+                  metadata={image.metadata}
+                  src={image.url}
+                  thumbnailUrl={image.thumbnailUrl}
+                  name={image.name ?? image.id.toString()}
+                  alt={image.name ?? undefined}
+                  type={image.type}
+                  imageId={image.id}
+                  width={450}
+                  placeholder="empty"
+                  wrapperProps={edgeMediaWrapperProps}
+                  skip={getSkipValue(image)}
+                  className="z-[1] object-cover"
+                />
+              )}
+            </>
+          </RoutedDialogLink>
+          <Reactions
+            entityId={image.id}
+            entityType="image"
+            reactions={image.reactions}
+            metrics={{
+              likeCount: image.stats?.likeCountAllTime,
+              dislikeCount: image.stats?.dislikeCountAllTime,
+              heartCount: image.stats?.heartCountAllTime,
+              laughCount: image.stats?.laughCountAllTime,
+              cryCount: image.stats?.cryCountAllTime,
+              tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+            }}
+            readonly={!safe}
+            className={classes.reactions}
+            targetUserId={image.user.id}
+            disableBuzzTip={image.poi}
+          />
+          {image.hasMeta && (
+            <div className="absolute bottom-1 right-0.5 z-10">
+              <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
+                  <IconInfoCircle color="white" opacity={0.9} strokeWidth={2.5} size={20} />
+                </div>
+              </ImageMetaPopover2>
+            </div>
+          )}
+        </>
+      )}
+    </ImageGuard2>
+  );
+}
+
+/** Today's carousel: every image is already in hand. Exported for component tests. */
+export function StaticPostImagesCarousel({
+  images,
+  postId,
+}: {
+  images: ImagesAsPostModel['images'];
+  postId: number;
+}) {
+  return (
+    <SimpleImageCarousel loop total={images.length} className="flex h-full flex-col">
       <SimpleImageCarousel.Viewport className="relative flex-1">
         <SimpleImageCarousel.Container className="h-full">
-          {data.images.map((image, index) => (
+          {images.map((image, index) => (
             <SimpleImageCarousel.Slide key={index} index={index} className="relative">
-              <ImageGuard2 image={image} connectType="post" connectId={postId}>
-                {(safe) => (
-                  <>
-                    {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                    {safe && (
-                      <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
-                        <ImagesAsPostsContextMenu image={image} />
-                        {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
-                          <HoverActionButton
-                            label="Remix"
-                            size={30}
-                            color="white"
-                            variant="filled"
-                            data-activity="remix:model-gallery"
-                            onClick={handleRemixClick(image)}
-                          >
-                            <IconBrush stroke={2.5} size={16} />
-                          </HoverActionButton>
-                        )}
-                      </div>
-                    )}
-                    <RoutedDialogLink
-                      name="imageDetail"
-                      state={{ imageId: image.id }}
-                      getState={() => ({ imageId: image.id, images: data.images })}
-                      className={classes.link}
-                    >
-                      <>
-                        <MediaHash {...image} className="opacity-70" />
-
-                        {safe && (
-                          <EdgeMedia2
-                            metadata={image.metadata}
-                            src={image.url}
-                            thumbnailUrl={image.thumbnailUrl}
-                            name={image.name ?? image.id.toString()}
-                            alt={image.name ?? undefined}
-                            type={image.type}
-                            imageId={image.id}
-                            width={450}
-                            placeholder="empty"
-                            wrapperProps={edgeMediaWrapperProps}
-                            skip={getSkipValue(image)}
-                            className="z-[1] object-cover"
-                          />
-                        )}
-                      </>
-                    </RoutedDialogLink>
-                    <Reactions
-                      entityId={image.id}
-                      entityType="image"
-                      reactions={image.reactions}
-                      metrics={{
-                        likeCount: image.stats?.likeCountAllTime,
-                        dislikeCount: image.stats?.dislikeCountAllTime,
-                        heartCount: image.stats?.heartCountAllTime,
-                        laughCount: image.stats?.laughCountAllTime,
-                        cryCount: image.stats?.cryCountAllTime,
-                        tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                      }}
-                      readonly={!safe}
-                      className={classes.reactions}
-                      targetUserId={image.user.id}
-                      disableBuzzTip={image.poi}
-                    />
-                    {image.hasMeta && (
-                      <div className="absolute bottom-1 right-0.5 z-10">
-                        <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                          <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
-                            <IconInfoCircle
-                              color="white"
-                              opacity={0.9}
-                              strokeWidth={2.5}
-                              size={20}
-                            />
-                          </div>
-                        </ImageMetaPopover2>
-                      </div>
-                    )}
-                  </>
-                )}
-              </ImageGuard2>
+              <PostCarouselSlide image={image} postId={postId} dialogImages={images} />
             </SimpleImageCarousel.Slide>
           ))}
         </SimpleImageCarousel.Container>
         <SimpleImageCarousel.Controls />
       </SimpleImageCarousel.Viewport>
-      <SimpleImageCarousel.Indicators
-        className="flex w-full gap-px"
-        indicatorClassName="h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100"
-      />
+      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
+    </SimpleImageCarousel>
+  );
+}
+
+/**
+ * Lazy carousel: seeded with the first slice + the true `imageCount`. Shows "1 of
+ * N" immediately (indicators from `imageCount`); fetches the post's remaining
+ * images via `trpc.image.getInfinite({ postId })` when the active slide approaches
+ * the loaded edge, re-applies the feed's hidden preferences to the fetched tail
+ * (content safety), and appends. The detail modal is seeded with whatever is
+ * loaded at click time.
+ *
+ * Exported for component tests.
+ */
+export function LazyPostImagesCarousel({
+  data,
+  postId,
+}: {
+  data: ImagesAsPostModel;
+  postId: number;
+}) {
+  const { filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers } =
+    useImagesAsPostsInfiniteContext();
+  const seed = data.images;
+  const total = data.imageCount ?? seed.length;
+
+  // Latch: fire the tail fetch once, when the active slide nears the loaded edge.
+  const [fetchTail, setFetchTail] = useState(false);
+  const handleIndexChange = useCallback(
+    (index: number) => {
+      setFetchTail(
+        (prev) =>
+          prev ||
+          shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
+      );
+    },
+    [seed.length, total]
+  );
+
+  // The tail = the WHOLE post (≤ POST_IMAGE_LIMIT), same version/browsing-level
+  // filters the gallery used, so the returned set matches `imageCount`. postId
+  // forces the DB path server-side (covered index, ~2ms).
+  const { data: tailData, isError: tailError } = trpc.image.getInfinite.useQuery(
+    {
+      ...filters,
+      postId,
+      browsingLevel,
+      limit: POST_IMAGE_LIMIT,
+      include: ['cosmetics', 'tagIds'],
+    },
+    {
+      // `postId != null` is the explicit invariant: a null postId must never broaden
+      // `getInfinite` to the model's general feed (it would append unrelated images).
+      enabled: fetchTail && postId != null,
+      trpc: { context: { skipBatch: true } },
+      staleTime: 5 * 60 * 1000,
+    }
+  );
+
+  // Content safety: re-apply the feed's hidden preferences to the fetched tail so
+  // it never surfaces images the feed slice would have dropped (owner/user-hidden,
+  // system-hidden tags, poi/minor). Browsing level is already applied server-side.
+  const { items: filteredTail } = useApplyHiddenPreferences({
+    type: 'images',
+    data: tailData?.items,
+    hiddenImages: hiddenImageIds,
+    hiddenUsers,
+    hiddenTags,
+    browsingLevel,
+  });
+
+  const fetched = !!tailData;
+  const loaded = useMemo(
+    () =>
+      fetched
+        ? (mergePostImages(
+            seed as { id: number }[],
+            (filteredTail ?? []) as { id: number }[]
+          ) as ImagesAsPostModel['images'])
+        : seed,
+    [fetched, seed, filteredTail]
+  );
+
+  // Before the tail resolves, advertise the true count so indicators read "1 of N".
+  // After, use the actual loaded length so navigation never dead-ends if the tail
+  // came back short (a hidden-pref drop) — self-correcting.
+  //
+  // On a persistent tail-fetch ERROR the tail never arrives (`fetched` stays false),
+  // so fall back to `loaded.length` (the seed) too — otherwise `effectiveTotal` would
+  // stay at the true count while `loaded` holds only the seed, stranding the unloaded
+  // slots on an unreachable `<Loader/>` at a dead-end "1 of N". Degrade only on error;
+  // the normal in-flight case keeps the true count so the loaders show while fetching.
+  const effectiveTotal = fetched || tailError ? loaded.length : total;
+
+  return (
+    <SimpleImageCarousel
+      loop
+      total={effectiveTotal}
+      onIndexChange={handleIndexChange}
+      className="flex h-full flex-col"
+    >
+      <SimpleImageCarousel.Viewport className="relative flex-1">
+        <SimpleImageCarousel.Container className="h-full">
+          {Array.from({ length: effectiveTotal }).map((_, index) => (
+            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
+              {loaded[index] ? (
+                <PostCarouselSlide image={loaded[index]} postId={postId} dialogImages={loaded} />
+              ) : (
+                <Center className="size-full">
+                  <Loader />
+                </Center>
+              )}
+            </SimpleImageCarousel.Slide>
+          ))}
+        </SimpleImageCarousel.Container>
+        <SimpleImageCarousel.Controls />
+      </SimpleImageCarousel.Viewport>
+      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
     </SimpleImageCarousel>
   );
 }

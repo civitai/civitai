@@ -2,8 +2,9 @@ import type { MantineColorScheme } from '@mantine/core';
 import { ColorSchemeScript, createTheme, MantineProvider, Modal, colorsTuple } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { DateLocaleProvider } from '~/providers/DateLocaleProvider';
+import { buildMantineCssVariablesHtml } from '~/providers/mantine-css-variables';
 
-const theme = createTheme({
+export const theme = createTheme({
   components: {
     Modal: Modal.extend({
       styles: {
@@ -233,6 +234,21 @@ const theme = createTheme({
   respectReducedMotion: true,
 });
 
+// Precompute Mantine's CSS-variables `<style>` payload ONCE at module load instead of
+// letting `MantineProvider` regenerate it on every SSR render. The output depends only on
+// the (module-constant) `theme` and is independent of `colorScheme`, so it is safe to
+// hoist. `withCssVariables={false}` below disables the per-render generation; this static
+// `<style>` replaces it byte-for-byte (see `mantine-css-variables.ts` + its test). Cuts the
+// per-render `getCSSColorVariables`/`getMergedVariables`/`removeDefaultVariables` SSR cost.
+const MANTINE_CSS_VARIABLES = buildMantineCssVariablesHtml(theme);
+
+// Mirrors Mantine's internal `<MantineCssVariables>` output (same `data-mantine-styles`
+// attribute + `<style>` shape) so client hydration matches the server markup exactly.
+function StaticMantineCssVariables() {
+  if (!MANTINE_CSS_VARIABLES) return null;
+  return <style data-mantine-styles dangerouslySetInnerHTML={{ __html: MANTINE_CSS_VARIABLES }} />;
+}
+
 export function ThemeProvider({
   children,
   colorScheme: cookieColorScheme,
@@ -243,7 +259,12 @@ export function ThemeProvider({
   return (
     <>
       <ColorSchemeScript defaultColorScheme={cookieColorScheme} />
-      <MantineProvider theme={theme} defaultColorScheme={cookieColorScheme ?? 'dark'}>
+      <MantineProvider
+        theme={theme}
+        defaultColorScheme={cookieColorScheme ?? 'dark'}
+        withCssVariables={false}
+      >
+        <StaticMantineCssVariables />
         <Notifications />
         <DateLocaleProvider>{children}</DateLocaleProvider>
       </MantineProvider>

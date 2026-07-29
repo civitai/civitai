@@ -96,6 +96,70 @@ export function getBrowsingLevelLabel(value: number) {
   const highest = getHighestBrowsingLevelBit(value);
   return highest ? browsingLevelLabels[highest] : '?';
 }
+
+// ---------------------------------------------------------------------------
+// Off-site App-Listing content-rating ↔ NsfwLevel mapping (App Blocks W13).
+//
+// Client-SAFE (this module is imported by browser components), so both the review
+// modal (derive a rating from an approved listing's asset levels) AND the server
+// (approve stamp + the asset attach ceiling) share ONE implementation — a
+// divergent inverse would let mature assets publish under a too-low rating.
+// ---------------------------------------------------------------------------
+
+/**
+ * The off-site content-rating ladder, ASCENDING by maturity ceiling. Kept in sync
+ * with `OFFSITE_CONTENT_RATINGS` in `offsite-listing.schema` (a plain literal list
+ * here avoids a shared→server-schema import; a unit test asserts they match). A
+ * value typed as {@link OffsiteRatingValue} is structurally assignable to that
+ * schema's `OffsiteContentRating` (same string literals).
+ */
+export const OFFSITE_CONTENT_RATING_LADDER = ['g', 'pg', 'pg13', 'r', 'x'] as const;
+export type OffsiteRatingValue = (typeof OFFSITE_CONTENT_RATING_LADDER)[number];
+
+/**
+ * Map an off-site content rating (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
+ * `NsfwLevel` bit its published assets may carry. Reuses the canonical
+ * `orchestratorNsfwLevelMap` (which lacks the SFW `g` rating → PG). A null/unknown
+ * rating FAILS CLOSED to PG (SFW) — never widen on ambiguity. (Canonical home; the
+ * app-listing-assets service re-exports this.)
+ */
+export function nsfwLevelFromContentRating(rating: string | null | undefined): NsfwLevel {
+  if (!rating || rating === 'g') return NsfwLevel.PG;
+  return orchestratorNsfwLevelMap[rating] ?? NsfwLevel.PG;
+}
+
+/**
+ * Inverse of {@link nsfwLevelFromContentRating} for a SINGLE detected level: the
+ * MINIMAL off-site rating whose ceiling covers `level`. Fail-CLOSED: a level above
+ * the `x` ceiling (X/XXX/Blocked) returns the TOP rating (`x`), NEVER a lower one —
+ * so a scanner's high reading can never be under-rated. Level 0 (no maturity
+ * signal) → `g`.
+ */
+export function contentRatingFromNsfwLevel(level: number): OffsiteRatingValue {
+  const bit = getHighestBrowsingLevelBit(level);
+  for (const rating of OFFSITE_CONTENT_RATING_LADDER) {
+    if (bit <= nsfwLevelFromContentRating(rating)) return rating;
+  }
+  // Fail closed: a bit above every ladder ceiling (X/XXX/Blocked) → the top rating.
+  return OFFSITE_CONTENT_RATING_LADDER[OFFSITE_CONTENT_RATING_LADDER.length - 1];
+}
+
+/**
+ * Derive the minimal off-site content rating that covers the MAX `nsfwLevel` across
+ * a listing's assets (icon + cover + screenshots). Empty / all-null → `g`. Used as
+ * the review modal's default + the approve-time derived floor. Fail-CLOSED via
+ * {@link contentRatingFromNsfwLevel} (never under-rates).
+ */
+export function deriveContentRatingFromAssets(
+  assets: { nsfwLevel?: number | null }[]
+): OffsiteRatingValue {
+  let maxBit = 0;
+  for (const a of assets) {
+    const bit = getHighestBrowsingLevelBit(a.nsfwLevel ?? 0);
+    if (bit > maxBit) maxBit = bit;
+  }
+  return contentRatingFromNsfwLevel(maxBit);
+}
 export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
 
 // all browsing levels

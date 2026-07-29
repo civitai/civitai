@@ -3,10 +3,7 @@ import { Prisma } from '@prisma/client';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import type {
-  ModelVersionEarlyAccessConfig,
-  RecommendedSettingsSchema,
-} from '~/server/schema/model-version.schema';
+import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 
 export const resourceDataCache = createCachedArray({
@@ -27,11 +24,11 @@ export const resourceDataCache = createCachedArray({
          WHERE rr."sourceId" = mv.id
            AND rr.settings->>'isLinkedComponent' = 'true'
            AND rr.settings->>'componentType' = 'VAE'
+           AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf.id = (rr.settings->>'fileId')::int)
          LIMIT 1) AS "vaeId",
         mv."status",
         mv."usageControl",
-        mv."licensingFee",
-        (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        mv."flags",
         (mv."meta"->'generationAlias'->>'versionId')::int AS "aliasId",
         gc."covered",
         FALSE AS "hasAccess",
@@ -80,12 +77,11 @@ export type GenerationResourceDataModel = {
   baseModel: string;
   settings: RecommendedSettingsSchema | null;
   availability: Availability;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
   aliasId: number | null;
   covered: boolean | null;
   status: ModelStatus;
   usageControl?: string;
-  licensingFee: number | null;
+  flags: number;
   hasAccess: boolean;
   epochNumber?: number;
   model: {

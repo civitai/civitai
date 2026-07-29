@@ -183,6 +183,26 @@ const envDisabledChecks: CheckKey[] = (env.HEALTHCHECK_DISABLED ?? []).filter(
   (name): name is CheckKey => name in checkFns
 );
 
+// Checks that ALWAYS run and record/emit their result (prom metric + response
+// body), but must NEVER flip the overall `healthy` boolean that pod READINESS
+// gates on. sysRedis is a SOFT dependency: a transient sysRedis stall (Sentinel
+// cutover, node reschedule, AOF reload) must not fail /api/health across all
+// pods and shed the whole fleet from the LB — that is the 2026-06-26 499/504
+// outage wave. We still want to SEE sysRedis health, we just won't shed
+// readiness on it.
+//
+// This is HARDCODED, deliberately NOT driven by the runtime
+// NON_CRITICAL_HEALTHCHECKS sysRedis config: that list is itself read FROM
+// sysRedis, and on a failed read runHealthChecks degrades to "run ALL checks,
+// suppress NOTHING" (see the config-fetch leg below). So during an ACTUAL
+// sysRedis outage — precisely when we need sysRedis treated as non-critical —
+// the runtime lever evaporates and re-arms the fleet-shed. A static set is the
+// only self-consistent way to make sysRedis non-critical. Disabling it via
+// HEALTHCHECK_DISABLED would instead stop the check running and lose the metric.
+// Scoped to sysRedis ONLY — every other check (DB, pg, cluster redis, meili,
+// clickhouse) stays critical and still flips `healthy` on failure.
+const STATIC_NON_CRITICAL_CHECKS: readonly CheckKey[] = ['sysRedis'];
+
 const counters = (() =>
   [...Object.keys(checkFns), 'overall'].reduce((agg, name) => {
     agg[name as CheckKey] = registerCounter({
@@ -363,7 +383,13 @@ export async function runHealthChecks(
     }
 
     const healthy = activeChecks.every(
-      ([name]) => nonCriticalChecks.includes(name as CheckKey) || results[name as CheckKey]
+      ([name]) =>
+        // Static soft-dependency exclusion (sysRedis) is unioned in FIRST and
+        // independently of the sysRedis-read `nonCriticalChecks`, so it holds
+        // even when that config read fails during a real sysRedis outage.
+        STATIC_NON_CRITICAL_CHECKS.includes(name as CheckKey) ||
+        nonCriticalChecks.includes(name as CheckKey) ||
+        results[name as CheckKey]
     );
     if (!healthy) counters.overall?.inc();
 

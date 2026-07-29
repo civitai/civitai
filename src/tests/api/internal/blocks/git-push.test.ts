@@ -25,7 +25,12 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
   getBlobContent: vi.fn(),
 }));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
-  BlockManifestValidator: { validate: vi.fn(() => ({ valid: true, errors: [] })) },
+  BlockManifestValidator: {
+    validate: vi.fn(() => ({ valid: true, errors: [] })),
+    // The handler now calls the async submission gate (validate + settings-pattern
+    // ReDoS check); this suite exercises the always-valid path.
+    validateSubmission: vi.fn(() => ({ valid: true, errors: [] })),
+  },
 }));
 
 // Mutable env mock so each test can set / clear FORGEJO_WEBHOOK_SECRET[_NEXT]

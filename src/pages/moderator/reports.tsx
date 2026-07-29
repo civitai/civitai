@@ -450,6 +450,7 @@ const getReportLink = (report: ReportDetail) => {
       report.comment.parentId ?? report.comment.id
     }&highlight=${report.comment.id}`;
   else if (report.image) return `/images/${report.image.id}`;
+  else if (report.challenge) return `/challenges/${report.challenge.id}`;
   else if (report.article) return `/articles/${report.article.id}`;
   else if (report.post) return `/posts/${report.post.id}`;
   else if (report.reportedUser) return `/user/${report.reportedUser.username}`;

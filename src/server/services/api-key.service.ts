@@ -16,9 +16,9 @@ import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrato
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 
-export function getApiKey({ id }: GetAPIKeyInput) {
-  return dbRead.apiKey.findUnique({
-    where: { id },
+export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
+  return dbRead.apiKey.findFirst({
+    where: { id, userId },
     select: {
       tokenScope: true,
       user: { select: simpleUserSelect },

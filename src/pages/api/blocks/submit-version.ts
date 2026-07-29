@@ -51,7 +51,7 @@ export default ModEndpoint(
     // `moderators`-segmented flag resolves ON for them (ModEndpoint has already
     // proven `user.isModerator` above). Mirrors enforceAppBlocksFlag.
     if (!(await isAppBlocksEnabled({ user }))) {
-      res.status(503).json({ message: 'App Blocks is not enabled' });
+      res.status(503).json({ message: 'Apps are not enabled' });
       return;
     }
 

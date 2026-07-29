@@ -8,7 +8,7 @@ import {
   getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
   getVersionLicenseHandler,
-  modelVersionDonationGoalsHandler,
+  modelVersionDonationGoalHandler,
   modelVersionEarlyAccessPurchaseHandler,
   modelVersionGeneratedImagesOnTimeframeHandler,
   publishModelVersionHandler,
@@ -24,6 +24,7 @@ import {
   mergeVersionsSchema,
   deleteExplorationPromptSchema,
   earlyAccessModelVersionsOnTimeframeSchema,
+  getLicensingRootsSchema,
   getModelVersionByModelTypeSchema,
   getModelVersionPopularityInput,
   getModelVersionSchema,
@@ -33,6 +34,7 @@ import {
   modelVersionUpsertSchema2,
   publishVersionSchema,
   addLinkedComponentSchema,
+  linkOfficialFileByHashSchema,
   setLinkedComponentsSchema,
   upsertExplorationPromptSchema,
   getModelVersionsByIdsInput,
@@ -43,15 +45,18 @@ import {
   deleteExplorationPrompt,
   getExplorationPromptsById,
   getModelVersionPopularity,
+  getLicensingRoots,
   getModelVersionsByModelType,
   getModelVersionsPopularity,
   getVersionById,
   getVersionsByIds,
   addLinkedComponent,
+  linkOfficialFileByHash,
   setLinkedComponents,
   upsertExplorationPrompt,
   bustMvCache,
   mergeVersions,
+  getUserEarlyAccessModelVersions,
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
@@ -123,10 +128,17 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsByIdsInput)
     .query(({ input }) => getVersionsByIds(input)),
+  getLicensingRoots: publicProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getLicensingRootsSchema)
+    .query(({ input }) => getLicensingRoots(input)),
   getExplorationPromptsById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .query(({ input }) => getExplorationPromptsById(input)),
+  getUserEarlyAccessVersions: protectedProcedure.query(({ ctx }) =>
+    getUserEarlyAccessModelVersions({ userId: ctx.user.id })
+  ),
   toggleNotifyEarlyAccess: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(getByIdSchema)
@@ -141,7 +153,16 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(addLinkedComponentSchema)
     .use(isOwnerOrModerator)
-    .mutation(async ({ input }) => addLinkedComponent(input)),
+    .mutation(async ({ input, ctx }) =>
+      addLinkedComponent({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  linkOfficialFileByHash: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(linkOfficialFileByHashSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ input, ctx }) =>
+      linkOfficialFileByHash({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(modelVersionUpsertSchema2)
@@ -198,10 +219,10 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsWrite, blockApiKeys: true })
     .input(modelVersionEarlyAccessPurchase)
     .mutation(modelVersionEarlyAccessPurchaseHandler),
-  donationGoals: publicProcedure
+  donationGoal: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
-    .query(modelVersionDonationGoalsHandler),
+    .query(modelVersionDonationGoalHandler),
   getTrainingDetails: moderatorProcedure
     .input(getByIdSchema)
     .query(getModelVersionForTrainingReviewHandler),

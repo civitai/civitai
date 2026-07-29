@@ -11,6 +11,7 @@ import {
   runModelSearch,
 } from '~/server/services/model-search.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
@@ -103,18 +104,33 @@ export default MixedAuthEndpoint(async function handler(
   let meiliNextCursor: string | undefined;
   if (query) {
     try {
-      const meili = await resolveModelSearchIds({ query, cursor, limit, browsingLevel });
+      const meili = await resolveModelSearchIds({
+        query,
+        cursor,
+        limit,
+        browsingLevel,
+        types: data.types,
+      });
       searchIds = meili.searchIds;
       meiliNextCursor = meili.nextCursor;
     } catch (e) {
-      if (e instanceof ModelSearchMeiliTimeoutError) {
+      // Transient model-search backend failure → retryable 503. The service
+      // now wraps a transient upstream as ModelSearchMeiliTimeoutError; we ALSO
+      // match a raw SDK Meili error that somehow escaped that wrap
+      // (isTransientMeiliError) as defense-in-depth — mirroring how
+      // /api/v1/users matches BOTH the wrapped signal and isTransientMeiliError.
+      // A non-transient error (malformed filter / auth / real app bug) is NOT
+      // matched and rethrows to surface as its real status.
+      if (e instanceof ModelSearchMeiliTimeoutError || isTransientMeiliError(e)) {
         // Override the public cache headers set by MixedAuthEndpoint —
         // without this Cloudflare caches the 503 and turns a transient
         // Meili brownout into a sticky 503 wall for every other
         // unauthenticated caller with the same query.
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
-        return res.status(503).json({ error: e.message });
+        return res
+          .status(503)
+          .json({ error: 'Model search is temporarily overloaded — please retry.' });
       }
       throw e;
     }

@@ -23,7 +23,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
+import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import { articleMetrics, modelMetrics, postMetrics, userMetrics } from '~/server/metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
@@ -65,6 +65,8 @@ import {
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel } from '~/server/services/auction.service';
+import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
+import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
 import { userModelCountCache } from '~/server/redis/caches';
@@ -83,6 +85,7 @@ import {
 } from '~/server/services/user-preferences.service';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
+import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -174,6 +177,7 @@ export const getUserCreator = async ({
         deletedAt: true,
         createdAt: true,
         publicSettings: true,
+        settings: true,
         excludeFromLeaderboards: true,
         links: {
           select: {
@@ -229,8 +233,16 @@ export const getUserCreator = async ({
     })
   );
 
+  // Expose only whether the shop is public — never leak the raw settings blob.
+  // "Live" requires an enabled shop AND an active membership; only pay for the
+  // membership check when the shop is enabled.
+  const { settings, ...rest } = user;
+  const shopEnabled =
+    (settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled === true;
+  const creatorShopEnabled = shopEnabled && (await hasValidCreatorMembership(user.id));
   return {
-    ...user,
+    ...rest,
+    creatorShopEnabled,
     _count: { models: modelCount },
   };
 };
@@ -270,11 +282,24 @@ export async function getUsersWithSearch({
       })
     );
   } catch (err) {
-    // Mirror image.getInfinite's handling: surface a fast, retryable 503 via
+    // Mirror /api/v1/images (#2759/#2765): surface a fast, retryable 503 via
     // TRPCError SERVICE_UNAVAILABLE so the client can retry instead of waiting
     // on Traefik's 30s router timeout. (Was TIMEOUT/408 under tRPC v10, which
     // lacked SERVICE_UNAVAILABLE; v11 has it.)
-    if (err instanceof MeiliCallTimeoutError) {
+    //
+    // Widened from `instanceof MeiliCallTimeoutError` to isTransientMeiliError:
+    // the timeout-wrapper only covers civitai's own MeiliCallTimeoutError, but a
+    // Meilisearch brownout also throws the SDK's OWN transient error types
+    // (MeiliSearchCommunicationError with statusCode=408/503, MeiliSearchApiError
+    // with a gateway httpStatus, MeiliSearchTimeOutError, network ECONNRESET, …).
+    // Those fell through this branch as raw Errors → throwDbError wrapped them as
+    // TRPCError INTERNAL_SERVER_ERROR → the handler emitted a raw 500 (the top
+    // REST 500 source on the ?query= path). Converting them here preserves the
+    // "transient" signal as SERVICE_UNAVAILABLE through throwDbError (which
+    // re-throws an existing TRPCError unchanged) so the handler maps it to 503.
+    // Non-transient errors (malformed filter / auth / real app bug) are NOT
+    // matched and continue to surface as their real status (500).
+    if (isTransientMeiliError(err)) {
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
         message: 'User search is temporarily overloaded — please retry.',
@@ -344,7 +369,7 @@ export const getUsers = async ({
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
       AND ${
         excludedUserIds && excludedUserIds.length > 0
-          ? Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`
+          ? Prisma.sql`u.id != ALL(${excludedUserIds}::int[])`
           : Prisma.sql`TRUE`
       }
       AND u."deletedAt" IS NULL
@@ -581,11 +606,42 @@ export const updateUserById = async ({
   return user;
 };
 
-export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
-  return dbRead.modelEngagement.findMany({
-    where: { userId: id, type },
-    select: { modelId: true, type: true },
-  });
+export type EngagedModelType = ModelEngagementType | 'Recommended';
+
+/**
+ * Per-visible-set engagement membership: given a bounded set of `modelIds`, return which of
+ * them the user has engaged with, keyed by engagement type. The additive, index-bounded
+ * replacement for `getUserEngagedModels` (whose caller returns a user's ENTIRE engagement
+ * history — a whale's 3.75 MB / 482 ms synchronous serialize froze an api-primary pod).
+ *
+ * Every returned array is a subset of the input `modelIds` (the intersection of the user's
+ * engagements ∩ input), so the response is bounded by |modelIds| × (#types) — no cache needed.
+ * `Recommended` is derived from resource reviews, filtered to the same input set.
+ */
+export const getUserEngagedModelsByIds = async ({
+  id,
+  modelIds,
+}: {
+  id: number;
+  modelIds: number[];
+}) => {
+  const [engagements, recommendedReviews] = await Promise.all([
+    dbRead.modelEngagement.findMany({
+      where: { userId: id, modelId: { in: modelIds } },
+      select: { modelId: true, type: true },
+    }),
+    getResourceReviewsByUserId({ userId: id, recommended: true, modelIds }),
+  ]);
+
+  const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
+    const { type, modelId } = model;
+    if (!acc[type]) acc[type] = [];
+    acc[type].push(modelId);
+    return acc;
+  }, {} as Record<EngagedModelType, number[]>);
+  engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
+
+  return engagedModels;
 };
 
 export async function getUserEngagedModelVersions({
@@ -675,8 +731,12 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
     id: excludeIds.length ? { notIn: excludeIds } : undefined,
     deletedAt: null,
   };
+  // On the username-search (query) path we replace the exact COUNT with a take+1
+  // "hasMore" probe (see the comment in the `count` block below): over-fetch one
+  // row so we can tell whether another page exists without running an aggregate.
+  const useHasMore = count && !!query && take != null;
   const items = await dbRead.user.findMany({
-    take,
+    take: useHasMore ? (take as number) + 1 : take,
     skip,
     select,
     where,
@@ -684,25 +744,37 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
   });
 
   if (count) {
-    // The count scans the whole ~892k-row Model table (index-only scan on
-    // Model_userId → HashAggregate distinct userIds → nested-loop to User,
-    // ~1174ms in EXPLAIN ANALYZE) on EVERY request and dominates this endpoint's
-    // latency. It's a slowly-moving aggregate, so cache it: a few-minutes-stale
-    // totalItems/totalPages is harmless. Cache unconditionally (no IS_DATAPACKET
-    // gate) — the 892k-row scan is expensive on every cluster. TTL = 10min
-    // (CacheTTL.md): cheap-to-refresh, bounds staleness to a sub-page drift on an
-    // ~86.5k-creator total.
+    // ── Username-search path (query present): DROP the exact COUNT ────────────
+    // The search count is pathological. `where.username = { contains: query }`
+    // compiles to `username LIKE '%query%'` (a leading wildcard no btree can
+    // serve) intersected with `models: { some: {} }`. Both sides are
+    // non-selective (~90k model-owners, tens-of-thousands of `%q%` matches) with
+    // a tiny intersection, so the planner scans the whole ~900k-row Model table →
+    // HashAggregate to ~90k distinct owners → nested-loop into User applying the
+    // LIKE as a filter: ~800ms–1.4s on EVERY keystroke-driven request, dominating
+    // this endpoint's DB latency (~53,000s of replica CPU / 37d in prod). It is
+    // also uncacheable: `query` is user-controlled on a public endpoint with no
+    // `.max()` in its zod schema, so per-query cache keys are an unbounded
+    // keyspace-growth vector.
     //
-    // Cache ONLY the hot default-listing count (no `query`). `query` is
-    // user-controlled on a public endpoint with no `.max()` in its zod schema and
-    // is interpolated raw into the cache key, so caching per-query would let
-    // arbitrary `?query=<random>` values mint UNBOUNDED distinct keys (each held
-    // EX=2×600s) on the shared cache cluster — a keyspace-growth vector. Per-query
-    // counts are also low-hit-rate. So run the username-search count inline.
+    // So on the query path we return a `hasMore` boolean derived from the take+1
+    // over-fetch instead of a count. The controller maps this to pagination
+    // metadata (totalItems/totalPages become monotonic lower-bounds that are
+    // exact on the final page; `hasMore` is the authoritative next-page signal
+    // and the REST nextPage/prevPage links keep working). The no-query BROWSE
+    // path below keeps its cached exact count unchanged.
     if (query) {
-      const queryCount = await dbRead.user.count({ where });
-      return { items, count: queryCount };
+      const hasMore = take != null && items.length > (take as number);
+      return { items: hasMore ? items.slice(0, take as number) : items, hasMore };
     }
+    // ── No-query browse path (unchanged): cached exact count ──────────────────
+    // The browse count scans the whole ~900k-row Model table (index-only scan on
+    // Model_userId → HashAggregate distinct userIds → nested-loop to User,
+    // ~1174ms in EXPLAIN ANALYZE). It's a slowly-moving aggregate, so cache it: a
+    // few-minutes-stale totalItems/totalPages is harmless. Cache unconditionally
+    // (no IS_DATAPACKET gate) — the scan is expensive on every cluster. TTL =
+    // 10min (CacheTTL.md): cheap-to-refresh, bounds staleness to a sub-page drift
+    // on an ~86.5k-creator total.
     // No-query path: key by `excludeIds` only (the only remaining varying part of
     // `where`; models:{some:{}} and deletedAt:null are constant).
     const sortedExcludeIds = [...excludeIds].sort((a, b) => a - b).join(',');
@@ -713,11 +785,9 @@ export const getCreators = async <TSelect extends Prisma.UserSelect>({
     // there too so this endpoint never 500s from the caching machinery. (A genuine
     // dbRead.user.count DB error still propagates — the fallback re-runs and throws
     // again — which matches pre-cache behavior.)
-    const cachedCount = await fetchThroughCache(
-      cacheKey,
-      () => dbRead.user.count({ where }),
-      { ttl: CacheTTL.md }
-    ).catch((e) => {
+    const cachedCount = await fetchThroughCache(cacheKey, () => dbRead.user.count({ where }), {
+      ttl: CacheTTL.md,
+    }).catch((e) => {
       // Only the lock-retry-exhaustion throw falls back to the inline count. Any
       // OTHER throw from the cache helper (e.g. a future key-type/serialization
       // invariant) must surface, not be silently swallowed into a count.
@@ -1115,6 +1185,10 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     isModerator: false,
     userId,
     force: true,
+    // Skip toggleBan's Moderated media block; softDeleteUser applies its own
+    // CSAM block below. Avoids a redundant double-write and a Moderated->CSAM
+    // flip. Models still unpublish (removeModels defaults on).
+    removeMedia: false,
   });
 
   await dbWrite.image.updateMany({
@@ -1629,6 +1703,8 @@ export const toggleBan = async ({
   userId,
   isModerator,
   force,
+  removeMedia,
+  removeModels,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
   // Get user with username for search index deletion
   const user = await getUserById({
@@ -1666,16 +1742,22 @@ export const toggleBan = async ({
     // Run cleanup operations in parallel groups
     // Group A: DB-heavy operations (run together)
     // Group B: External API operations (run together)
+    // Unpublishing models defaults ON for every ban (historical behavior); a
+    // moderator can opt out per-ban. Only `removeModels === false` skips it.
+    const shouldRemoveModels = removeModels !== false;
+
     await Promise.all([
       // Group A: Bulk unpublish models and handle bids
-      bulkUnpublishModelsForBannedUser({ odRef: id, odRefuserId: userId }).catch((error) => {
-        logToAxiom({
-          type: 'error',
-          name: 'ban-user-bulk-unpublish',
-          message: error.message,
-          error,
-        });
-      }),
+      shouldRemoveModels
+        ? bulkUnpublishModelsForBannedUser({ odRef: id, odRefuserId: userId }).catch((error) => {
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-bulk-unpublish',
+              message: error.message,
+              error,
+            });
+          })
+        : Promise.resolve(),
 
       // Wipe public-profile UserLink rows so banned users' off-site links
       // disappear immediately (replaces a manual Retool DELETE step).
@@ -1713,6 +1795,32 @@ export const toggleBan = async ({
         ),
       ]),
     ]);
+
+    // Opt-in "remove all images & videos": block (not delete) the banned user's
+    // media, defaulting ON for SexualMinor bans. Blocking (Moderated) preserves
+    // the 7-day appeal window — the remove-blocked-images job hard-deletes them
+    // after that. CSAM semantics stay reserved for the softDeleteUser path.
+    const shouldRemoveMedia =
+      removeMedia === true || (reasonCode === BanReasonCode.SexualMinor && removeMedia !== false);
+    if (shouldRemoveMedia) {
+      try {
+        await dbWrite.image.updateMany({
+          where: { userId: id, ingestion: { not: 'Blocked' } },
+          data: {
+            ingestion: 'Blocked',
+            nsfwLevel: NsfwLevel.Blocked,
+            blockedFor: BlockedReason.Moderated,
+          },
+        });
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-remove-content',
+          message: (error as Error).message,
+          error,
+        });
+      }
+    }
   } else {
     // Unbanning: reverse the at-period-end cancellation applied on ban, if the
     // membership is still within its paid period.
@@ -1763,6 +1871,21 @@ export const toggleBan = async ({
   }
 
   return updatedUser;
+};
+
+export const getBanContentPreview = async ({ userId }: { userId: number }) => {
+  const [imageCount, modelCount] = await Promise.all([
+    dbRead.image.count({
+      where: { userId, ingestion: { not: 'Blocked' } },
+    }),
+    dbRead.model.count({
+      where: {
+        userId,
+        status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+      },
+    }),
+  ]);
+  return { imageCount, modelCount };
 };
 
 export const toggleContestBan = async ({
@@ -2524,6 +2647,9 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
   }
 
   await userSettingsCache.bust([userId]);
+  // Keep the read-time metric-privacy defaults cache consistent with a settings write
+  // (the `hideModel*` flags live in `settings`); TTL backstops any other writer.
+  await bustUserMetricPrivacyDefaultsCache(userId);
 }
 
 export async function setDismissedAlerts(userId: number, alertIds: string[]) {

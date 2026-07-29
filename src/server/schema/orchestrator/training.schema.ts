@@ -109,6 +109,10 @@ const aiToolkitTrainingParams = z
       ecosystem: z.literal('krea2'),
       modelVariant: z.undefined().optional(),
     }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('mageflow'),
+      modelVariant: z.undefined().optional(),
+    }),
     // SD3, Flux1, Flux2Klein, and Wan require modelVariant
     aiToolkitBaseParams.extend({
       ecosystem: z.literal('sd3'),
@@ -173,6 +177,10 @@ const whatIfKohyaParams = z.object({
   maxTrainEpochs: z.number(),
   numRepeats: z.number(),
   trainBatchSize: z.number(),
+  // Sample prompts drive the sample-generation jobs that per-resource license
+  // fees attach to; without them the whatif estimate omits the fee that the
+  // real submission incurs. Optional so pre-update clients still validate.
+  samplePrompts: z.array(z.string()).optional(),
 });
 
 const whatIfAiToolkitParams = z.object({
@@ -215,6 +223,10 @@ const whatIfAiToolkitParams = z.object({
   keepTokens: z.number(),
   numRepeats: z.number().optional(),
   maxTrainEpochs: z.number().nullable().optional(),
+  // Sample prompts drive the sample-generation jobs that per-resource license
+  // fees attach to; without them the whatif estimate omits the fee that the
+  // real submission incurs. Optional so pre-update clients still validate.
+  samplePrompts: z.array(z.string()).optional(),
 });
 
 export const imageTrainingRouterWhatIfSchema = z

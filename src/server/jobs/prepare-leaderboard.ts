@@ -19,6 +19,12 @@ import { createJob, getJobDate } from './job';
 
 const log = createLogger('leaderboard', 'blue');
 
+// Accounts that must never appear on any leaderboard, regardless of the board's query.
+// Applied uniformly across every population path so exclusion lives at the system level, not per-query.
+// Mutes only count once confirmed by a moderator (mutedAt set); an unconfirmed `muted` flag does not exclude.
+const eligibleAccountSql = (alias = 'u') =>
+  `${alias}."deletedAt" IS NULL AND ${alias}."bannedAt" IS NULL AND ${alias}."mutedAt" IS NULL`;
+
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
@@ -139,7 +145,7 @@ async function updateLegendsBoardResults() {
           NOT u."excludeFromLeaderboards"
           OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
         )
-        AND u."deletedAt" IS NULL
+        AND ${eligibleAccountSql()}
       GROUP BY "userId", "leaderboardId"
     ), positions AS (
       SELECT
@@ -214,6 +220,7 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
       NOT u."excludeFromLeaderboards"
       OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = '${ctx.id}' AND NOT l.public)
     )
+      AND ${eligibleAccountSql()}
     ORDER BY score DESC
     LIMIT 1000
   `);
@@ -368,7 +375,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       row_number() OVER (ORDER BY (s->>'score')::int DESC) as position
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
     JOIN "User" u ON u.id = (s->>'userId')::int
-    WHERE u."deletedAt" IS NULL AND u.id > 0
+    WHERE ${eligibleAccountSql()} AND u.id > 0
       AND NOT u."excludeFromLeaderboards"
     ORDER BY (s->>'score')::int DESC
     LIMIT 1000
@@ -486,7 +493,7 @@ async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext) {
         s.*,
         (${positionStart} + row_number() OVER (ORDER BY score DESC)) as position
       FROM scores s
-      JOIN "User" u ON u.id = s."userId" AND NOT u."isModerator" AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+      JOIN "User" u ON u.id = s."userId" AND NOT u."isModerator" AND ${eligibleAccountSql()}
       WHERE NOT u."excludeFromLeaderboards"
     `);
     ctx.jobContext.on('cancel', query.cancel);

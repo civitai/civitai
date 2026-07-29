@@ -15,6 +15,8 @@ const { mockDb } = vi.hoisted(() => ({
     // createResourceReviewNotification (fired best-effort after the create
     // resolves) reads modelVersion; a null result makes it log+return cleanly.
     modelVersion: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    // upsertResourceReview now runs a block check that resolves the model owner.
+    model: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ userId: 1 })) },
     imageResourceNew: { count: vi.fn(async (..._a: unknown[]): Promise<number> => 0) },
     resourceReview: {
       create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
@@ -53,7 +55,10 @@ vi.mock('~/server/services/user.service', () => ({
   getProfilePicturesForUsers: vi.fn(async () => ({})),
 }));
 
-import { createResourceReview, upsertResourceReview } from '~/server/services/resourceReview.service';
+import {
+  createResourceReview,
+  upsertResourceReview,
+} from '~/server/services/resourceReview.service';
 
 const p2002 = () =>
   new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {

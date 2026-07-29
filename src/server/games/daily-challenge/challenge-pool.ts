@@ -8,6 +8,27 @@ import type { Prize } from '~/server/schema/challenge.schema';
 
 const DEFAULT_POINTS_BY_PLACE = [150, 100, 50];
 
+/**
+ * Split a fixed total pool across places by percentage, flooring each place and assigning the
+ * rounding remainder to 1st. Kept separate from computeDynamicPool so callers that already know
+ * the authoritative total (e.g. an entry-fee challenge's real collected prizePool) can derive the
+ * per-place breakdown WITHOUT re-deriving the total from a count.
+ */
+export function distributePrizes(totalPool: number, prizeDistribution: number[]): Prize[] {
+  const prizes = prizeDistribution.map((pct, i) => ({
+    buzz: Math.floor((totalPool * pct) / 100),
+    points: DEFAULT_POINTS_BY_PLACE[i] ?? 0,
+  }));
+
+  // Assign rounding remainder to 1st place
+  const allocated = prizes.reduce((sum, p) => sum + p.buzz, 0);
+  if (allocated < totalPool && prizes.length > 0) {
+    prizes[0].buzz += totalPool - allocated;
+  }
+
+  return prizes;
+}
+
 export function computeDynamicPool(input: {
   basePrizePool: number;
   buzzPerAction: number;
@@ -24,16 +45,7 @@ export function computeDynamicPool(input: {
     totalPool = maxPrizePool;
   }
 
-  const prizes = prizeDistribution.map((pct, i) => ({
-    buzz: Math.floor((totalPool * pct) / 100),
-    points: DEFAULT_POINTS_BY_PLACE[i] ?? 0,
-  }));
-
-  // Assign rounding remainder to 1st place
-  const allocated = prizes.reduce((sum, p) => sum + p.buzz, 0);
-  if (allocated < totalPool && prizes.length > 0) {
-    prizes[0].buzz += totalPool - allocated;
-  }
+  const prizes = distributePrizes(totalPool, prizeDistribution);
 
   return { totalPool, prizes };
 }

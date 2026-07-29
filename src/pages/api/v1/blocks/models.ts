@@ -127,7 +127,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   let meiliNextCursor: string | undefined;
   if (query) {
     try {
-      const meili = await resolveModelSearchIds({ query, cursor, limit, browsingLevel });
+      const meili = await resolveModelSearchIds({ query, cursor, limit, browsingLevel, types });
       searchIds = meili.searchIds;
       meiliNextCursor = meili.nextCursor;
     } catch (e) {
@@ -156,6 +156,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         cursor: !query ? cursor : undefined,
         query,
         searchIds,
+        // The public endpoint lets the addon policy decide, which leaves minor
+        // models visible under a SFW ceiling. Blocks stay strict on both axes.
+        disableMinor: true,
       },
       {
         // CLAMPED browsing level — never the client's. nsfwImagePassthrough is
@@ -195,4 +198,4 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,
 // still token-gated) — see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, { allowOpaqueOrigin: true });
+export default withBlockScope(baseHandler, { endpoint: 'models', allowOpaqueOrigin: true });

@@ -50,6 +50,7 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsentProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
+import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
@@ -61,6 +62,11 @@ import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
+import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
+import {
+  ANNOUNCEMENTS_DISMISSED_COOKIE,
+  parseDismissedCookieValue,
+} from '~/components/Announcements/announcements-dismissed-cookie';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
@@ -107,6 +113,7 @@ type CustomAppProps = {
   userFeatureFlags?: FeatureAccess;
   tosMeta?: TosMeta;
   announcements?: AnnouncementsSeed;
+  announcementsDismissed?: DismissedByType;
   following?: number[];
   seed: number;
   settings: UserContentSettings;
@@ -125,6 +132,7 @@ type CustomAppProps = {
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
   verifiedBot: VerifiedBot | null;
+  adsGated?: boolean;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -138,6 +146,7 @@ function MyApp(props: CustomAppProps) {
       userFeatureFlags,
       tosMeta,
       announcements,
+      announcementsDismissed,
       following,
       seed = Date.now(),
       canIndex,
@@ -152,6 +161,7 @@ function MyApp(props: CustomAppProps) {
       serverDomains,
       availableOAuthProviders,
       verifiedBot = null,
+      adsGated = false,
       ...pageProps
     },
   } = props;
@@ -197,6 +207,7 @@ function MyApp(props: CustomAppProps) {
       settings={settings}
       tosMeta={tosMeta}
       announcements={announcements}
+      announcementsDismissed={announcementsDismissed}
       following={following}
       liveNow={liveNow}
       chatSettings={chatSettings}
@@ -230,6 +241,8 @@ function MyApp(props: CustomAppProps) {
                 <RouterTransition />
                 {/* <ChadGPT isAuthed={!!session} /> */}
                 <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
+                  {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
+                  <FaroProvider />
                   <GoogleAnalytics />
                   <AccountProvider>
                     <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
@@ -241,7 +254,7 @@ function MyApp(props: CustomAppProps) {
                                 <ActivityReportingProvider>
                                   <ReferralsProvider {...cookies.referrals}>
                                     <FiltersProvider>
-                                      <AdsProvider>
+                                      <AdsProvider gated={adsGated}>
                                         <HiddenPreferencesProvider>
                                           <CivitaiLinkProvider>
                                             <BrowserRouterProvider>
@@ -353,6 +366,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
+  // Server-read announcement `dismissed` state from the `announcements-dismissed`
+  // cookie. `getCookies` hands us the URL-decoded JSON string, which
+  // `parseDismissedCookieValue` (the SAME parser the client store uses) turns into
+  // the per-type dismissed record. Threaded down so SSR + first client paint agree.
+  const announcementsDismissed = parseDismissedCookieValue(
+    typeof cookies[ANNOUNCEMENTS_DISMISSED_COOKIE] === 'string'
+      ? (cookies[ANNOUNCEMENTS_DISMISSED_COOKIE] as string)
+      : undefined
+  );
 
   // Match BOTH session cookie families: the new hub `civ-token` / `__Secure-civ-token` AND the legacy
   // next-auth `civitai-token` / `__Secure-civitai-token` (still honored during the cutover). Note the suffixes
@@ -583,6 +605,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       userFeatureFlags,
       tosMeta,
       announcements,
+      announcementsDismissed,
       following,
       seed: Date.now(),
       hasAuthCookie,

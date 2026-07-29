@@ -1,8 +1,10 @@
-import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
+import { env } from '~/env/server';
+import { PG_INT4_MAX, PG_INT4_MIN } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler } from '~/server/db/db-helpers';
+import { shouldFlushMetricSearchIndex } from '~/server/metrics/model-metric-search-flush';
 import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
@@ -67,7 +69,7 @@ export const modelMetrics = createMetricProcessor({
       const queuedModelVersions = await ctx.db.$queryRaw<{ id: number }[]>`
         SELECT id
         FROM "ModelVersion"
-        WHERE "modelId" IN (${Prisma.join(ctx.queue)})
+        WHERE "modelId" = ANY(${ctx.queue}::int[])
       `;
       ctx.queuedModelVersions = queuedModelVersions.map((x) => x.id);
     }
@@ -135,12 +137,24 @@ export const modelMetrics = createMetricProcessor({
       );
     }
 
-    const FLUSH_INTERVAL_MS = 15 * 60 * 1000;
+    // Debounce window for draining the accumulated ids into the search-index
+    // queue. Widening it collapses more of a hot model's repeated metric
+    // changes into a single reindex, shrinking the burst the search backend
+    // has to drain at peak. Env-configurable, but the value is read once at
+    // module load, so a change requires a pod restart/rollout to take effect
+    // (no image rebuild needed — it is NOT reconfigurable live). A bad value
+    // fails soft to the 45m default (see server-schema.ts) rather than crashing
+    // boot (default 45m — 3× the previous fixed 15m). The only
+    // cost is metric-drift staleness on the search doc (download/generation
+    // counts and the popularity rank derived from them lag by up to the
+    // window); genuine mutations still reindex immediately via the untouched
+    // service-layer queueUpdate path.
+    const FLUSH_INTERVAL_MS = env.SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS;
     const lastFlushStr = await sysRedis.get(
       REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH
     );
     const lastFlush = lastFlushStr ? new Date(lastFlushStr).getTime() : 0;
-    const shouldFlush = Date.now() - lastFlush >= FLUSH_INTERVAL_MS;
+    const shouldFlush = shouldFlushMetricSearchIndex(Date.now(), lastFlush, FLUSH_INTERVAL_MS);
 
     if (shouldFlush) {
       const pendingRaw = await sysRedis.sMembers(
@@ -220,9 +234,13 @@ async function bulkInsertMetrics<T extends readonly string[]>(
     .map((key) => `COALESCE(d."${key}", im."${key}", 0) as "${key}"`)
     .join(',\n');
   const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
-
-  const PG_INT_MAX = 2147483647;
-  const PG_INT_MIN = -2147483648;
+  // Only bump the row when a value actually moved. `updatedAt` gates the
+  // search-index enqueue (getVersionAggregationTasks → ctx.affected), so a
+  // re-SUM that returns the same count must stay a no-op — otherwise every
+  // still-active-today version re-queues to Meili each run and the write
+  // volume ramps through the UTC day.
+  const targetTuple = metrics.map((key) => `"${table}"."${key}"`).join(', ');
+  const excludedTuple = metrics.map((key) => `EXCLUDED."${key}"`).join(', ');
 
   const tasks = chunk(updates, 100).map((batch, i) => async () => {
     ctx.jobContext.checkIfCanceled();
@@ -236,8 +254,8 @@ async function bulkInsertMetrics<T extends readonly string[]>(
         if (
           typeof value !== 'number' ||
           !Number.isFinite(value) ||
-          value > PG_INT_MAX ||
-          value < PG_INT_MIN
+          value > PG_INT4_MAX ||
+          value < PG_INT4_MIN
         ) {
           offenders.push({ id: row[idColumn], key, value });
         }
@@ -266,6 +284,7 @@ async function bulkInsertMetrics<T extends readonly string[]>(
           SET
             ${metricOverrides},
             "updatedAt" = NOW()
+          WHERE (${targetTuple}) IS DISTINCT FROM (${excludedTuple})
       `;
     } catch (err) {
       const ids = (batch as any[]).map((r) => r[idColumn]);
@@ -364,20 +383,26 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
 const injectedVersionIds = allInjectableResourceIds;
 
 async function getGenerationTasks(ctx: ModelMetricContext) {
-  // Pull versions touched since lastUpdate from `orchestration.jobs` directly.
-  // The `daily_resource_generation_counts` MV is bucketed by Date, so filtering
-  // it by `toDate(lastUpdate)` returned every version generated since 00:00 UTC
-  // — growing linearly through the day and resetting at midnight UTC. That
-  // produced a daily ramp of search-index update volume into Meili.
+  // Flag every version generated since the start of the day containing
+  // lastUpdate (createdDate >= toDate(lastUpdate)) — normally today, but wider
+  // on the first run past UTC midnight or after an outage, which usefully
+  // re-reconciles the prior day's tail. Then re-SUM its all-time count below.
+  // `daily_resource_generation_counts` is built asynchronously from
+  // `orchestration.jobs`, so a job's contribution lands in the MV after the job
+  // row exists. Flagging by `jobs.createdAt >= lastUpdate` (a 1-minute window)
+  // therefore re-SUMs before the new counts settle and never revisits the
+  // version once it goes quiet, freezing the metric at an undercount. Re-summing
+  // all of today's active versions every minute reconciles that tail. The Meili
+  // write-volume ramp this breadth used to cause no longer forms: bulkInsertMetrics
+  // only bumps updatedAt on an actual value change, so a re-SUM returning the same
+  // count is a no-op and never re-queues the version to the search index.
   const generated = await ctx.ch.$query<{ modelVersionId: number }>`
     SELECT DISTINCT modelVersionId
-    FROM (
-      SELECT arrayJoin(resourcesUsed) AS modelVersionId
-      FROM orchestration.jobs
-      WHERE createdAt >= ${ctx.lastUpdate}
-        AND length(resourcesUsed) > 0
-    )
-    WHERE modelVersionId > 0
+    FROM orchestration.daily_resource_generation_counts
+    WHERE createdDate >= toDate(${ctx.lastUpdate})
+      AND createdDate <= today()
+      AND modelVersionId > 0
+      AND count <= ${PG_INT4_MAX}
   `;
   const affected = generated
     .map((x) => x.modelVersionId)
@@ -393,7 +418,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
       FROM orchestration.daily_resource_generation_counts
       WHERE modelVersionId IN (${ids})
         AND createdDate <= today()
-        AND count <= 2147483647
+        AND count <= ${PG_INT4_MAX}
       GROUP BY modelVersionId;
     `;
 
@@ -489,10 +514,10 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
 async function getVersionBuzzTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
     -- get recent version donations. These are the only way to "tip" a model version
-    SELECT DISTINCT "modelVersionId" as id
+    SELECT DISTINCT dg."entityId" as id
     FROM "Donation" d
     JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
-    WHERE dg."modelVersionId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
+    WHERE dg."entityType" = 'ModelVersion' AND dg."entityId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -502,14 +527,14 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
       ctx,
       `-- get version tip metrics
       SELECT
-        dg."modelVersionId",
+        dg."entityId" AS "modelVersionId",
         COUNT(amount) AS "tippedCount",
         SUM(amount) AS "tippedAmountCount"
       FROM "Donation" d
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
-      WHERE dg."modelVersionId" = ANY($1::int[])
-        AND dg."modelVersionId" BETWEEN $2 AND $3
-      GROUP BY dg."modelVersionId"`,
+      WHERE dg."entityType" = 'ModelVersion' AND dg."entityId" = ANY($1::int[])
+        AND dg."entityId" BETWEEN $2 AND $3
+      GROUP BY dg."entityId"`,
       [ids, ids[0], ids[ids.length - 1]]
     );
     log('getVersionBuzzTasks', i + 1, 'of', tasks.length, 'done');

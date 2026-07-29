@@ -24,6 +24,7 @@ import {
   Group,
   Input,
   Menu,
+  NumberInput,
   Paper,
   Radio,
   Select,
@@ -1283,28 +1284,6 @@ export function GenerationForm() {
               )}
             />
 
-            {/* PolyGen source image (image-to-3D only) */}
-            <Controller
-              graph={graph}
-              name="sourceImage"
-              render={({ value, onChange, error }) => {
-                const current = value as { url: string; width: number; height: number } | undefined;
-                return (
-                  <ImageUploadMultipleInput
-                    label="Starting image"
-                    description="The reference Meshy will use to build the 3D mesh"
-                    required
-                    max={1}
-                    aspect="square"
-                    imageLayout="wrap"
-                    value={current ? [current] : []}
-                    onChange={(v) => onChange((v[0] ?? undefined) as typeof value)}
-                    error={error?.message}
-                  />
-                );
-              }}
-            />
-
             {/* PolyGen: generate texture toggle (image-to-3D only) */}
             <Controller
               graph={graph}
@@ -1379,6 +1358,270 @@ export function GenerationForm() {
                     value={value as string}
                     onChange={(v) => onChange(v as typeof value)}
                     data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* ============================================================
+                Tripo (3D Models, image-to-3D) — Controllers auto-hide when
+                the active ecosystem isn't Tripo. `sourceImage` + `seed` reuse
+                the shared Controllers rendered above/below.
+                ============================================================ */}
+
+            {/* Tripo: texture quality */}
+            <Controller
+              graph={graph}
+              name="texture"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Texture"
+                    info="Texture quality. Standard is balanced; HD produces higher-resolution textures; None skips texturing for a bare mesh."
+                  />
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Tripo: texture alignment */}
+            <Controller
+              graph={graph}
+              name="textureAlignment"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Texture alignment"
+                    info="Align textures to the original image or to the generated geometry."
+                  />
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Tripo: orientation */}
+            <Controller
+              graph={graph}
+              name="orientation"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Orientation"
+                    info="Use Align to image to rotate the mesh to match the source image's viewpoint."
+                  />
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Tripo: PBR */}
+            <Controller
+              graph={graph}
+              name="pbr"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Generate PBR maps"
+                  description="Produce physically-based rendering material maps for realistic lighting."
+                  checked={!!value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
+            {/* Tripo: quad topology (forces FBX output) */}
+            <Controller
+              graph={graph}
+              name="quad"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Quad topology"
+                  description="Output quad-based topology (exported as FBX instead of GLB)."
+                  checked={!!value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
+            {/* Tripo: auto size */}
+            <Controller
+              graph={graph}
+              name="autoSize"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Auto size"
+                  description="Automatically scale the mesh to real-world proportions."
+                  checked={!!value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
+            {/* Tripo: face limit (optional; empty ⇒ auto) */}
+            <Controller
+              graph={graph}
+              name="faceLimit"
+              render={({ value, meta, onChange }) => {
+                const m = meta as { min?: number; max?: number; placeholder?: string };
+                return (
+                  <NumberInput
+                    label={
+                      <ControllerLabel
+                        label="Face limit"
+                        info="Maximum number of faces in the generated mesh. Leave blank to let Tripo choose automatically."
+                      />
+                    }
+                    value={(value as number | undefined) ?? ''}
+                    onChange={(v) => onChange(typeof v === 'number' ? v : undefined)}
+                    min={m.min}
+                    max={m.max}
+                    step={1000}
+                    placeholder={m.placeholder ?? 'Auto'}
+                    allowDecimal={false}
+                  />
+                );
+              }}
+            />
+
+            {/* Tripo: texture seed (optional) */}
+            <Controller
+              graph={graph}
+              name="textureSeed"
+              render={({ value, onChange }) => (
+                <NumberInput
+                  label={
+                    <ControllerLabel
+                      label="Texture seed"
+                      info="Optional seed for the texturing pass. Leave blank to randomize."
+                    />
+                  }
+                  value={(value as number | undefined) ?? ''}
+                  onChange={(v) => onChange(typeof v === 'number' ? v : undefined)}
+                  min={1}
+                  placeholder="Random"
+                  allowDecimal={false}
+                />
+              )}
+            />
+
+            {/* ============================================================
+                Hunyuan3D (3D Models, image-to-3D via Comfy) — Controllers
+                auto-hide when the active ecosystem isn't Hunyuan3D.
+                `sourceImage`, `seed`, `shouldTexture`, `shouldRemesh`, and
+                `enablePbr` reuse the shared Controllers rendered elsewhere.
+                ============================================================ */}
+
+            {/* Hunyuan3D: optional prompt/style hint */}
+            <Controller
+              graph={graph}
+              name="hunyuanPrompt"
+              render={({ value, meta, onChange, error }) => (
+                <Textarea
+                  label={
+                    <ControllerLabel
+                      label="Prompt"
+                      info="Optional. A short style/texture hint — Hunyuan3D derives geometry from the source image."
+                    />
+                  }
+                  value={(value as string) ?? ''}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  placeholder={(meta as { placeholder?: string }).placeholder}
+                  error={error?.message}
+                  autosize
+                  minRows={2}
+                  maxRows={4}
+                />
+              )}
+            />
+
+            {/* Hunyuan3D: model version */}
+            <Controller
+              graph={graph}
+              name="hunyuanModelVersion"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Model version"
+                    info="Hunyuan3D model revision. v2.1 is the latest; v2 Mini is faster and lighter."
+                  />
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Hunyuan3D: steps */}
+            <Controller
+              graph={graph}
+              name="hunyuanSteps"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label={
+                    <ControllerLabel
+                      label="Steps"
+                      info="Number of diffusion steps. More steps can improve detail at the cost of speed."
+                    />
+                  }
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                  step={(meta as { step: number }).step}
+                />
+              )}
+            />
+
+            {/* Hunyuan3D: cfg scale */}
+            <Controller
+              graph={graph}
+              name="hunyuanCfgScale"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label={
+                    <ControllerLabel
+                      label="CFG scale"
+                      info="How strongly the generation follows the guidance. Higher values adhere more closely."
+                    />
+                  }
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                  step={(meta as { step: number }).step}
+                />
+              )}
+            />
+
+            {/* Hunyuan3D: octree resolution (numeric enum) */}
+            <Controller
+              graph={graph}
+              name="hunyuanOctreeResolution"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Octree resolution"
+                    info="Voxel grid resolution for mesh extraction. Higher values capture finer geometry."
+                  />
+                  <ButtonGroupInput
+                    value={String(value)}
+                    onChange={(v) => onChange(Number(v) as typeof value)}
+                    data={(meta as { options: { label: string; value: number }[] }).options.map(
+                      (o) => ({ label: o.label, value: String(o.value) })
+                    )}
                   />
                 </div>
               )}
@@ -2257,6 +2500,8 @@ function ImagesInput({
     <ImageUploadMultipleInput
       value={value}
       onChange={onChange}
+      label={meta?.label}
+      description={meta?.description}
       aspect="square"
       max={meta?.max}
       slots={meta?.slots}

@@ -12,13 +12,48 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
     minPrice: z.number().optional(),
     maxPrice: z.number().optional(),
     archived: z.boolean().optional(),
+    // Only published creator-listed items marked sellable-by-others — lets mods
+    // pick up resellable creator cosmetics for official shop sections.
+    resellable: z.boolean().optional(),
+    ids: z.array(z.number()).optional(),
   })
 );
+
+// Shop context for purchases: the official Civitai shop attributes as the
+// system user (-1); creator storefronts attribute as their owner's user id.
+export const CIVITAI_SHOP_ATTRIBUTION = -1;
 
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
 export const cosmeticShopItemMeta = z.object({
   paidToUserIds: z.array(z.number()).optional(),
   purchases: z.number().default(0),
+  // Creator Shop: id of the creator who submitted this item (also drives payout),
+  // the Buzz submission-fee transaction, and the last moderator-approved price
+  // used to decide whether a price edit (>±25%) requires re-review.
+  creatorId: z.number().optional(),
+  submissionTxId: z.string().optional(),
+  lastApprovedAmount: z.number().optional(),
+  // Pre-submit artwork validation + image info, surfaced to moderators in the
+  // Creator Shop review queue.
+  autoChecks: z
+    .array(
+      z.object({
+        key: z.string(),
+        label: z.string(),
+        passed: z.boolean(),
+        detail: z.string().optional(),
+      })
+    )
+    .optional(),
+  imageMeta: z
+    .object({ width: z.number(), height: z.number(), hasTransparency: z.boolean() })
+    .optional(),
+  // sha256 of the submitted artwork bytes — used to block duplicate submissions.
+  imageHash: z.string().optional(),
+  // Cross-creator selling: whether other creators may resell this item, and the %
+  // of price (0-70, out of the creator's 70% pool) the reseller keeps.
+  sellableByOthers: z.boolean().optional(),
+  sellerShare: z.number().optional(),
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
@@ -93,6 +128,9 @@ export const updateCosmeticShopSectionsOrderInput = z.object({
 export type PurchaseCosmeticShopItemInput = z.infer<typeof purchaseCosmeticShopItemInput>;
 export const purchaseCosmeticShopItemInput = z.object({
   shopItemId: z.number(),
+  // The creator whose shop this was bought through — used to credit a reseller
+  // (Creator Shop cross-creator selling). Verified server-side.
+  viaShopUserId: z.number().optional(),
 });
 
 export type GetPreviewImagesInput = z.infer<typeof getPreviewImagesInput>;

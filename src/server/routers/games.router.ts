@@ -3,6 +3,7 @@ import { ComputeCost, GAME_TOKEN_LENGTH } from '~/components/Chopped/chopped.uti
 import { env as clientEnv } from '~/env/client';
 import { env } from '~/env/server';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import {
   addImageRatingSchema,
   cleanseSmiteSchema,
@@ -60,6 +61,7 @@ async function createGameInstance(code: string) {
       code,
       token: env.CHOPPED_TOKEN,
     }),
+    signal: fetchTimeoutSignal(60_000),
   });
 
   if (!response.ok) {

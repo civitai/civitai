@@ -96,27 +96,7 @@ export type UserWithProfile = RouterOutput['userProfile']['get'];
 export type ImageModerationReviewQueueImage =
   RouterOutput['image']['getModeratorReviewQueue']['items'][number];
 
-export type ClubGetById = RouterOutput['club']['getById'];
-export type ClubTier = RouterOutput['club']['getTiers'][number];
-
-export type UserClub = RouterOutput['club']['userContributingClubs'][number];
-export type ClubGetAll = RouterOutput['club']['getInfinite']['items'];
-export type ClubPostGetAll = RouterOutput['clubPost']['getInfiniteClubPosts']['items'];
-export type ClubMembershipGetAllRecord =
-  RouterOutput['clubMembership']['getInfinite']['items'][number];
-export type ClubMembershipOnClub = RouterOutput['clubMembership']['getClubMembershipOnClub'];
-
-export type ClubResourceGetPaginatedItem =
-  RouterOutput['club']['getPaginatedClubResources']['items'][number];
-
 export type UserPaymentMethod = RouterOutput['user']['getPaymentMethods'][number];
-
-export type ClubAdminInvite = RouterOutput['clubAdmin']['getInvitesPaged']['items'][number];
-export type ClubAdmin = RouterOutput['clubAdmin']['getAdminsPaged']['items'][number];
-export type ClubPostResource = RouterOutput['clubPost']['resourcePostCreateDetails'];
-
-type GenerationRouter = RouterOutput['generation'];
-export type GenerationGetResources = GenerationRouter['getResources']['items'];
 
 type ChatRouter = RouterOutput['chat'];
 export type ChatListMessage = ChatRouter['getAllByUser'][number];
@@ -132,10 +112,9 @@ export type CosmeticGetById = Exclude<RouterOutput['cosmetic']['getById'], null>
 export type CosmeticShopItemGetById = RouterOutput['cosmeticShop']['getShopItemById'];
 export type CosmeticShopSectionGetById = RouterOutput['cosmeticShop']['getSectionById'];
 
-export type ModelVersionDonationGoal = Exclude<
-  RouterOutput['modelVersion']['donationGoals'],
-  undefined
->[number];
+export type ModelVersionDonationGoal = NonNullable<
+  RouterOutput['modelVersion']['donationGoal']
+>;
 export type PostContestCollectionItem =
   RouterOutput['post']['getContestCollectionDetails']['items'][number];
 

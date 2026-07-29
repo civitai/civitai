@@ -7,6 +7,7 @@ import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -36,15 +37,31 @@ export function useAdsContext() {
 
 const useAdProviderStore = create<{
   ready: boolean;
-  adsBlocked: boolean;
+  adsBlocked?: boolean;
   consent: boolean;
   browserBlocked: boolean;
+  gateBlocked: boolean;
 }>(() => ({
   ready: false,
-  adsBlocked: true,
+  // Tri-state: undefined = detection pending, false = confirmed serving (loader onLoad / direct-ad
+  // probe success), true = confirmed blocked (onError / probe failure). We can't know ads are
+  // blocked without attempting to load them, so while pending we render the empty reserved ad slot
+  // and hold the SupportUs fallback until a block is actually confirmed. Defaulting to true showed
+  // the fallback during the pending window — a flash for the ~95% of users who aren't blocked.
+  adsBlocked: undefined,
   consent: true,
   browserBlocked: false,
+  gateBlocked: false,
 }));
+
+/** Covers client-side navigation; SSR uses the `gated` prop, which lands before first paint. */
+export function useAdGate(blocked: boolean) {
+  useIsomorphicLayoutEffect(() => {
+    if (!blocked) return;
+    useAdProviderStore.setState({ gateBlocked: true });
+    return () => useAdProviderStore.setState({ gateBlocked: false });
+  }, [blocked]);
+}
 
 const blockedUrls: string[] = [
   '/collections/6503138',
@@ -53,12 +70,21 @@ const blockedUrls: string[] = [
   '/moderator',
 ];
 
-export function AdsProvider({ children }: { children: React.ReactNode }) {
+export function AdsProvider({
+  children,
+  gated = false,
+}: {
+  children: React.ReactNode;
+  /** From `pageProps`. `Gated` mounts below this provider, so waiting for its effect would
+   *  server-render an ad slot and flash it before hydration. */
+  gated?: boolean;
+}) {
   const router = useRouter();
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const consent = useAdProviderStore((state) => state.consent);
   const browserBlocked = useAdProviderStore((state) => state.browserBlocked);
+  const gateBlocked = useAdProviderStore((state) => state.gateBlocked);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { allowed: consentAllowed } = useThirdPartyConsent();
@@ -145,7 +171,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         ready,
         adsBlocked,
         consent,
-        adsEnabled,
+        // Gated here rather than on the local `adsEnabled` so the Snigel loader still mounts
+        // (it's inert without a slot, and it drives the CMP handshake that sets `ready`), and
+        // so the adhesive footer — rendered outside the page tree — is covered too.
+        adsEnabled: adsEnabled && !((gated || gateBlocked) && !useDirectAds),
         useDirectAds,
         username: currentUser?.username,
         isMember,

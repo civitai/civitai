@@ -5,6 +5,7 @@ export const modelFileSelect = Prisma.validator<Prisma.ModelFileSelect>()({
   url: true,
   sizeKB: true,
   name: true,
+  overrideName: true,
   type: true,
   visibility: true,
   metadata: true,

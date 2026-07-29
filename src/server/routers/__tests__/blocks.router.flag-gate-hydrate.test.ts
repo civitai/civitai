@@ -99,12 +99,10 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
-  REDIS_SYS_KEYS: { BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } },
-}));
+vi.mock('~/server/redis/client', async () => {
+  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
+  return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
+});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
@@ -251,7 +249,7 @@ describe('assertAppBlocksEnabledForTokenUser — Flipt context is hydrated from 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'App Blocks not enabled' });
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
 
     // Global eval: with no user, isAppBlocksEnabled takes the no-user branch and
     // calls isFlipt(flag) with NO entityId/context (buildFliptContext is never

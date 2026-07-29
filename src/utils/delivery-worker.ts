@@ -11,6 +11,31 @@ export type DownloadInfo = {
 };
 
 /**
+ * Thrown by `getDownloadUrl` when the delivery worker responds non-OK for every
+ * key candidate. Carries the upstream HTTP `statusCode` so callers can tell a
+ * client error (404 not-found / 400 malformed key → the key doesn't resolve to a
+ * stored file) apart from a transient backend/storage failure (5xx, or a
+ * network-layer failure that never produces a status). Without this distinction
+ * a caller can only see a generic thrown Error and would have to guess — masking
+ * a real storage outage as "not found" (or a bad key as a 500).
+ *
+ * `statusCode` is the delivery worker's HTTP status. It is `undefined` only when
+ * the failure happened before a response existed (a `fetch` transport reject),
+ * in which case this error is never thrown — the transport error propagates
+ * as-is — so in practice `statusCode` is always set on a `DeliveryWorkerError`.
+ */
+export class DeliveryWorkerError extends Error {
+  readonly statusCode: number;
+  constructor(statusCode: number, statusText: string) {
+    // Keep the historical "Delivery worker error: …" message so existing
+    // callers/log-matchers that key off it are unaffected.
+    super(`Delivery worker error: ${statusText}`);
+    this.name = 'DeliveryWorkerError';
+    this.statusCode = statusCode;
+  }
+}
+
+/**
  * `decodeURIComponent` throws `URIError: URI malformed` on a value with a
  * broken/truncated percent-sequence (e.g. a lone `%`, `%E0%A4%A`). Some stored
  * `file.url` / filename values are already-encoded or contain raw `%` literals,
@@ -142,7 +167,7 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   }
 
   if (!response.ok) {
-    throw new Error(`Delivery worker error: ${response.statusText}`);
+    throw new DeliveryWorkerError(response.status, response.statusText);
   }
   const result = await response.json();
   return result as DownloadInfo;

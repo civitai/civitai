@@ -42,6 +42,15 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 export const BLOCK_CATALOG_RATE_LIMIT_MAX = 120;
 export const BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS = 10;
 
+// PUBLISH bucket (blocks.publishGenerationOutputs). A publish is FAR heavier than
+// a catalog read — each image is a fetch + S3 upload + scan cycle — so it gets its
+// OWN window/ceiling keyed by IMAGES (weight = image count), NOT one token per
+// call. 60 published images / 5-minute window is generous for a real benchmark
+// grid (which publishes a handful of results once) but hard-caps a token that
+// tries to drive a sustained fetch/upload/scan fan-out onto the origin.
+export const BLOCK_PUBLISH_RATE_LIMIT_MAX = 60;
+export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
+
 export type BlockCatalogRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
@@ -84,6 +93,47 @@ export async function checkBlockCatalogRateLimit(
     return { allowed: false, retryAfterSeconds: retryAfter };
   } catch {
     // Fail open — never block legitimate catalog traffic on a redis incident.
+    return { allowed: true };
+  }
+}
+
+/**
+ * Records a PUBLISH of `weight` images against `blockInstanceId`'s publish window
+ * and reports whether it is within the per-token ceiling. Distinct `:publish:`
+ * sub-namespace so it NEVER contends with the catalog-read or mint buckets. The
+ * cost is WEIGHTED by image count (a 20-image publish spends 20 tokens), because
+ * the expense is per-image (fetch + S3 upload + scan), not per-call. Same
+ * fail-open posture as the catalog limiter.
+ *
+ * @param blockInstanceId stable per-instance identity from the verified token.
+ * @param imageCount number of images this publish will materialise (weight ≥ 1).
+ */
+export async function checkBlockPublishRateLimit(
+  blockInstanceId: string,
+  imageCount: number
+): Promise<BlockCatalogRateLimitResult> {
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:publish:${blockInstanceId}` as const;
+  const weight = Math.max(1, Math.floor(imageCount));
+  try {
+    // INCRBY by the image weight; a fresh window's first publish returns exactly
+    // `weight` (the key was absent) — that's when we arm the TTL.
+    const count = await redis.incrBy(key as never, weight);
+    if (count === weight) {
+      await redis.expire(key as never, BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS);
+    } else {
+      const ttl = await redis.ttl(key as never);
+      if (ttl < 0) await redis.expire(key as never, BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS);
+    }
+
+    if (count <= BLOCK_PUBLISH_RATE_LIMIT_MAX) return { allowed: true };
+
+    let retryAfter = await redis.ttl(key as never);
+    if (!Number.isFinite(retryAfter) || retryAfter < 1) {
+      retryAfter = BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS;
+    }
+    return { allowed: false, retryAfterSeconds: retryAfter };
+  } catch {
+    // Fail open — never block a legitimate publish on a redis incident.
     return { allowed: true };
   }
 }

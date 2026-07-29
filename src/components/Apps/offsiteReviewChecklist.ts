@@ -1,0 +1,224 @@
+import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import {
+  SENSITIVE_TOKEN_SCOPES,
+  tokenScopeMaskToList,
+} from '~/shared/constants/token-scope.constants';
+
+/**
+ * App Store Listings (W13) — P3a kind-aware mod-review checklist (PURE view-model).
+ *
+ * The `/apps/review` Pending queue is kind-aware: an ON-SITE (App Block) request
+ * gets the deep code/bundle/manifest/scopes review the existing modal already
+ * renders; an OFF-SITE (external-link) request gets a LIGHTER, content-only
+ * checklist (no code to read — the app runs off-platform). This module is the
+ * single source of truth for WHICH checklist items apply to WHICH kind, extracted
+ * so the mapping is unit-testable without mounting the review page.
+ *
+ * `status` is AUTO-DERIVED where the request payload makes it deterministic (name
+ * present, https URL, asset presence) and left `'todo'` for the items that need a
+ * moderator's judgment (description not spam/phishing, category correct, and every
+ * on-site code item). The UI renders `ok`/`warn` as a computed check and `todo` as
+ * an un-ticked box the mod eyeballs.
+ */
+
+export type ReviewChecklistKind = 'onsite' | 'offsite';
+
+/** `ok` = auto-verified pass · `warn` = auto-detected problem · `todo` = mod judgment. */
+export type ReviewChecklistItemStatus = 'ok' | 'warn' | 'todo';
+
+export type ReviewChecklistItem = {
+  /** Stable id (test + React key). */
+  id: string;
+  label: string;
+  hint: string;
+  status: ReviewChecklistItemStatus;
+};
+
+/** The off-site listing facts the content checklist derives its auto-checks from. */
+export type OffsiteChecklistData = {
+  name: string | null | undefined;
+  // An on-site listing-MEDIA revision (`kind: 'onsite'`) is reviewed by this same
+  // content checklist but has NO external URL by design — pass `kind: 'onsite'` so
+  // the `url-https` item is OMITTED (a URL-less onsite row must not show a false
+  // "URL is https" warn). Omitted / `'offsite'` keeps the item (a real off-site
+  // listing with a missing / http URL still warns — unchanged).
+  kind?: ReviewChecklistKind;
+  externalUrl: string | null | undefined;
+  hasIcon: boolean;
+  hasCover: boolean;
+  screenshotCount: number;
+  category: string | null | undefined;
+  description: string | null | undefined;
+  // OAuth-CONNECT sub-kind (PR3): present only for a connect listing. When
+  // `connectClientId` is set the checklist adds a "sensitive scopes justified" item
+  // that WARNS if any sensitive requested scope lacks a non-empty justification.
+  connectClientId?: string | null;
+  connectRequestedScopes?: number | null;
+  connectScopeJustifications?: Record<string, string> | null;
+};
+
+/**
+ * The enum-keys of the SENSITIVE requested scopes that have NO non-empty
+ * justification (used by the checklist + a shared surface for the mod UI). Empty
+ * for a non-connect listing or when every sensitive scope is justified.
+ */
+export function unjustifiedSensitiveScopeKeys(data: {
+  connectRequestedScopes?: number | null;
+  connectScopeJustifications?: Record<string, string> | null;
+}): string[] {
+  const sensitiveRequested = (data.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0) return [];
+  const justifications = data.connectScopeJustifications ?? {};
+  return tokenScopeMaskToList(sensitiveRequested)
+    .filter(({ key }) => {
+      const raw = justifications[key];
+      return !(typeof raw === 'string' && raw.trim().length > 0);
+    })
+    .map(({ key }) => key);
+}
+
+/**
+ * The deep ON-SITE (App Block) review checklist. These items are STATIC reminders
+ * of the code/bundle review the mod performs in the existing modal panels — the
+ * off-site content checklist deliberately OMITS every one of them (there is no
+ * bundle / manifest / scopes / code to read for an external-link app).
+ */
+export function getOnsiteReviewChecklist(): ReviewChecklistItem[] {
+  return [
+    {
+      id: 'code-diff',
+      label: 'Code diff reviewed',
+      hint: 'Read the line-level diff / bundle contents for anything malicious or broken.',
+      status: 'todo',
+    },
+    {
+      id: 'bundle',
+      label: 'Bundle contents reviewed',
+      hint: 'The submitted files match the declared app; no unexpected payloads.',
+      status: 'todo',
+    },
+    {
+      id: 'manifest',
+      label: 'Manifest + slot targets reviewed',
+      hint: 'Declared slots, render mode and settings are appropriate.',
+      status: 'todo',
+    },
+    {
+      id: 'scopes',
+      label: 'Requested permissions justified',
+      hint: 'Every requested scope is needed for the stated functionality.',
+      status: 'todo',
+    },
+    {
+      id: 'screenshots',
+      label: 'Screenshots reviewed',
+      hint: 'Publisher-supplied imagery is on-brand and not abusive.',
+      status: 'todo',
+    },
+  ];
+}
+
+/**
+ * The lighter, content-only OFF-SITE (external-link) review checklist. Auto-checks
+ * the deterministic facts (name present, https URL, icon/cover/≥1 screenshot
+ * present) and leaves the judgment items (`description` not spam/phishing,
+ * `category` correct) as `todo`. Contains NONE of the on-site code/bundle items.
+ */
+export function getOffsiteReviewChecklist(data: OffsiteChecklistData): ReviewChecklistItem[] {
+  const namePresent = typeof data.name === 'string' && data.name.trim().length > 0;
+  const urlValid = validateExternalUrl(data.externalUrl).ok;
+  const screenshotOk = data.screenshotCount >= 1;
+  const isConnect = data.connectClientId != null;
+  const unjustifiedSensitive = isConnect ? unjustifiedSensitiveScopeKeys(data) : [];
+  // An on-site listing-media revision has no external URL by design — omit the
+  // `url-https` item entirely so the mod doesn't see a false red-X. Any off-site
+  // listing (kind omitted or 'offsite') keeps the item and still warns on a
+  // missing / non-https URL — behaviour unchanged.
+  const includeUrlItem = data.kind !== 'onsite';
+  return [
+    {
+      id: 'name',
+      label: 'Name present',
+      hint: 'The listing has a non-empty display name.',
+      status: namePresent ? 'ok' : 'warn',
+    },
+    ...(includeUrlItem
+      ? [
+          {
+            id: 'url-https',
+            label: 'URL is https and opens externally',
+            hint: 'The target is a valid https:// URL rendered with target="_blank" rel="noopener".',
+            status: (urlValid ? 'ok' : 'warn') as ReviewChecklistItemStatus,
+          },
+        ]
+      : []),
+    {
+      id: 'icon',
+      label: 'Icon present',
+      hint: 'An icon asset is attached to the draft listing.',
+      status: data.hasIcon ? 'ok' : 'warn',
+    },
+    {
+      id: 'cover',
+      label: 'Cover present',
+      hint: 'A cover asset is attached to the draft listing.',
+      status: data.hasCover ? 'ok' : 'warn',
+    },
+    {
+      id: 'screenshots',
+      label: 'At least one screenshot',
+      hint: 'The draft listing has one or more real screenshots.',
+      status: screenshotOk ? 'ok' : 'warn',
+    },
+    {
+      id: 'description',
+      label: 'Description is not spam or phishing',
+      hint: 'Read the description + tagline for spam, phishing or impersonation.',
+      status: 'todo',
+    },
+    {
+      id: 'category',
+      label: 'Category is correct',
+      hint: 'The declared category matches what the app actually does.',
+      status: 'todo',
+    },
+    // CONNECT sub-kind only (PR3): warn when a sensitive requested scope has no
+    // justification. Auto-`warn` if any is missing, `ok` when all are justified.
+    ...(isConnect
+      ? [
+          {
+            id: 'connect-sensitive-scopes',
+            label: 'Sensitive permissions justified',
+            hint:
+              unjustifiedSensitive.length > 0
+                ? `Missing a justification for: ${unjustifiedSensitive.join(', ')}. Approval is blocked until every sensitive scope is justified.`
+                : 'Every requested sensitive permission (money / private data / cross-user writes) carries a justification.',
+            status: unjustifiedSensitive.length > 0 ? ('warn' as const) : ('ok' as const),
+          },
+        ]
+      : []),
+  ];
+}
+
+/**
+ * Kind-aware dispatcher: the deep on-site checklist for `kind='onsite'`, the
+ * content-only off-site checklist for `kind='offsite'`. The off-site branch needs
+ * the listing facts; the on-site branch is static.
+ */
+export function getReviewChecklist(
+  kind: ReviewChecklistKind,
+  data?: OffsiteChecklistData
+): ReviewChecklistItem[] {
+  if (kind === 'onsite') return getOnsiteReviewChecklist();
+  return getOffsiteReviewChecklist(
+    data ?? {
+      name: null,
+      externalUrl: null,
+      hasIcon: false,
+      hasCover: false,
+      screenshotCount: 0,
+      category: null,
+      description: null,
+    }
+  );
+}

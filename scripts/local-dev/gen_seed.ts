@@ -13,7 +13,7 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getChatHash, getUsersFromHash } from '~/server/utils/chat';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import {
   ArticleEngagementType,

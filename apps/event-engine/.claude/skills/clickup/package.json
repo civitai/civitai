@@ -1,0 +1,10 @@
+{
+  "name": "clickup-skill",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "ClickUp integration skill for Claude Code",
+  "dependencies": {
+    "unified": "^11.0.0",
+    "remark-parse": "^11.0.0"
+  }
+}

@@ -53,11 +53,25 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  // If the viewer owns the model, don't hide a blocker's comments from them (the owner must
+  // still see + report engagement on their own content) — drop blockedByUsers only then; keep
+  // the anti-harassment exclusion for every non-owner viewer. Skip the lookup unless the
+  // viewer actually has a blocked-by list, since that's the only case it can change anything.
+  let isContentOwner = false;
+  if (user?.id && blockedByUsers.length) {
+    const model = await dbRead.model.findUnique({
+      where: { id: modelId },
+      select: { userId: true },
+    });
+    isContentOwner = model?.userId === user.id;
+  }
   // De-dupe + cap the exclusion list so the `userId: { notIn: [...] }` negation below stays
   // under the Postgres bind-parameter limit (a heavily-blocked viewer's combined list can
   // otherwise overflow → Prisma P2029 → 500). Ordering is a load-bearing safety priority —
   // see boundExcludedUserIds.
-  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
+  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
+    isContentOwner,
+  });
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
@@ -72,6 +86,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
       parentId: { equals: null },
       tosViolation: !isMod ? false : undefined,
       hidden,
+      pinnedAt: null,
       // OR: [
       //   {
       //     userId: { not: user?.id },
@@ -90,6 +105,38 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   });
 
   return comments;
+};
+
+export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
+  input: { modelId, userId, filterBy, hidden = false },
+  select,
+  user,
+}: {
+  input: GetAllCommentsSchema;
+  select: TSelect;
+  user?: SessionUser;
+}) => {
+  const isMod = user?.isModerator ?? false;
+  if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
+
+  const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
+
+  const db = await getDbWithoutLag('commentModel', modelId);
+  return db.comment.findMany({
+    where: {
+      modelId,
+      userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
+      parentId: { equals: null },
+      tosViolation: !isMod ? false : undefined,
+      hidden,
+      pinnedAt: { not: null },
+    },
+    orderBy: { pinnedAt: 'desc' },
+    select,
+  });
 };
 
 export const getCommentById = <TSelect extends Prisma.CommentSelect>({
@@ -186,6 +233,32 @@ export const toggleHideComment = async ({
   await preventReplicationLag('commentModel', comment.modelId);
 };
 
+export const togglePinComment = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator: boolean }) => {
+  const AND = [Prisma.sql`c.id = ${id}`, Prisma.sql`c."parentId" IS NULL`];
+  // Only the model owner or a moderator can pin a comment
+  if (!isModerator) AND.push(Prisma.sql`m."userId" = ${userId}`);
+
+  const [comment] = await dbWrite.$queryRaw<{ pinnedAt: Date | null; modelId: number }[]>`
+    SELECT
+      c."pinnedAt", c."modelId"
+    FROM "Comment" c
+    JOIN "Model" m ON m.id = c."modelId"
+    WHERE ${Prisma.join(AND, ' AND ')}
+  `;
+
+  if (!comment) throw throwNotFoundError(`You don't have permission to pin this comment`);
+
+  await dbWrite.comment.updateMany({
+    where: { id },
+    data: { pinnedAt: comment.pinnedAt ? null : new Date() },
+  });
+  await preventReplicationLag('commentModel', comment.modelId);
+};
+
 export const deleteCommentById = async ({ id }: GetByIdInput) => {
   const { modelId, model } =
     (await dbWrite.comment.findUnique({
@@ -270,10 +343,7 @@ export async function bulkSetCommentTosViolation({
 
     await Promise.allSettled(
       reports.map((report) =>
-        reportAcceptedReward.apply(
-          { userId: report.userId, reportId: report.id },
-          { ip: actor.ip }
-        )
+        reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, { ip: actor.ip })
       )
     );
 
@@ -302,7 +372,9 @@ export async function bulkDeleteComments({ ids }: { ids: number[] }) {
   });
   const result = await dbWrite.comment.deleteMany({ where: { id: { in: ids } } });
 
-  const modelIds = Array.from(new Set(affected.map((c) => c.modelId).filter((v): v is number => !!v)));
+  const modelIds = Array.from(
+    new Set(affected.map((c) => c.modelId).filter((v): v is number => !!v))
+  );
   const userIds = Array.from(
     new Set(affected.map((c) => c.model?.userId).filter((v): v is number => !!v))
   );

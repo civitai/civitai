@@ -16,7 +16,6 @@ import { DatePickerInput, TimeInput, DateTimePicker } from '@mantine/dates';
 import { TagsInput } from '~/components/Tags/TagsInput';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
-import { ClubResourceManagementInput } from '~/components/Club/ClubResourceManagementInput';
 import { ImageUpload } from '~/components/ImageUpload/ImageUpload';
 import { InlineSocialLinkInput } from '~/components/Profile/InlineSocialLinkInput';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
@@ -41,8 +40,15 @@ export type { FormProps } from '~/libs/form/components/Form';
 export { useForm } from './hooks/useForm';
 
 export const InputText = withController(TextInputWrapper);
-export const InputNumber = withController(NumberInputWrapper, ({ field }) => ({
-  value: field.value,
+export const InputNumber = withController(NumberInputWrapper, ({ field, form }) => ({
+  // RHF's useController substitutes the field's defaultValue whenever the stored value is
+  // undefined, which resurrects the old value in the UI right after the user clears the input.
+  // getValues() reads the raw store without that substitution, so a cleared field stays empty.
+  // Caveat: with `shouldUnregister: true` (the useForm default), a conditionally-mounted
+  // InputNumber that has a defaultValue renders empty on remount while useController silently
+  // re-seeds the store — the submit would carry a value the UI doesn't show. Mount such fields
+  // unconditionally or set shouldUnregister: false on that form.
+  value: form.getValues(field.name),
 }));
 export const InputTextArea = withController(Textarea);
 export const InputSelect = withController(SelectWrapper);
@@ -72,7 +78,6 @@ export const InputTags = withController(TagsInput);
 export const InputTime = withController(TimeInput);
 export const InputNumberSlider = withController(NumberSlider);
 export const InputInlineSocialLinkInput = withController(InlineSocialLinkInput);
-export const InputClubResourceManagementInput = withController(ClubResourceManagementInput);
 export const InputDateTimePicker = withController(DateTimePicker);
 
 export const InputSwitch = withController(Switch, ({ field }) => ({

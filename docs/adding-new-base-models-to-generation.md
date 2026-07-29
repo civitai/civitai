@@ -17,7 +17,7 @@ Before a base model can be used for generation, it must first be defined in the 
 ### 1. Define Base Model in Constants
 
 #### Add to Base Model Configuration
-**File**: `src/shared/constants/base-model.constants.ts`
+**File**: `src/shared/constants/basemodel.constants.ts`
 
 Add a new entry to the `baseModelConfig` array. The structure determines the base model's basic properties:
 
@@ -92,7 +92,7 @@ Once the base model is defined in the system, you can enable it for generation w
 ### 4. Define Base Model Generation Support
 
 #### Add to Base Model Generation Configuration
-**File**: `src/shared/constants/base-model.constants.ts`
+**File**: `src/shared/constants/basemodel.constants.ts`
 
 Add a new configuration entry to the `baseModelGenerationConfig` array:
 
@@ -294,7 +294,7 @@ This commit implemented Part 1 of the process:
 - Added 'CHR' badge indicator for the UI
 
 **Files Changed:**
-- `src/shared/constants/base-model.constants.ts` - Added base model definition
+- `src/shared/constants/basemodel.constants.ts` - Added base model definition
 - `src/server/common/constants.ts` - Added license mapping
 - `src/components/Model/ModelTypeBadge/ModelTypeBadge.tsx` - Added badge
 
@@ -308,7 +308,7 @@ This commit implemented Part 2 of the process:
 - Configured generation-specific behaviors
 
 **Files Changed:**
-- `src/shared/constants/base-model.constants.ts` - Added generation config
+- `src/shared/constants/basemodel.constants.ts` - Added generation config
 - `src/shared/constants/generation.constants.ts` - Added helper functions
 - `src/server/common/constants.ts` - Added generation resource config
 - `src/server/services/orchestrator/common.ts` - Added parameter handling

@@ -6,18 +6,19 @@ import {
   answerMetrics,
   articleMetrics,
   bountyEntryMetrics,
-  clubPostMetrics,
   postMetrics,
   questionMetrics,
 } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 
 export const toggleReaction = async ({
   entityType,
   entityId,
   userId,
   reaction,
-}: ToggleReactionInput & { userId: number }) => {
+  isModerator,
+}: ToggleReactionInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
     await deleteReaction({
@@ -29,6 +30,8 @@ export const toggleReaction = async ({
     });
     return 'removed';
   } else {
+    // Enforce on create only — a user blocked after reacting can still un-react.
+    await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
     await createReaction({ entityType, entityId, userId, reaction });
     return 'created';
   }
@@ -90,11 +93,6 @@ const getReaction = async ({
     case 'bountyEntry':
       return await db.bountyEntryReaction.findFirst({
         where: { userId, reaction, bountyEntryId: entityId },
-        select: { userId: true },
-      });
-    case 'clubPost':
-      return await db.clubPostReaction.findFirst({
-        where: { userId, reaction, clubPostId: entityId },
         select: { userId: true },
       });
     default:
@@ -178,16 +176,6 @@ const deleteReaction = async ({
       });
       await bountyEntryMetrics.queueUpdate(entityId);
       return;
-    case 'clubPost':
-      if (!entityId || !userId || !reaction) {
-        return;
-      }
-
-      await dbWrite.clubPostReaction.deleteMany({
-        where: { userId, reaction, clubPostId: entityId },
-      });
-      await clubPostMetrics.queueUpdate(entityId);
-      return;
     default:
       throw throwBadRequestError();
   }
@@ -242,11 +230,6 @@ const createReaction = async ({
     case 'bountyEntry':
       return await dbWrite.bountyEntryReaction.create({
         data: { ...data, bountyEntryId: entityId },
-        select: { reaction: true },
-      });
-    case 'clubPost':
-      return await dbWrite.clubPostReaction.create({
-        data: { ...data, clubPostId: entityId },
         select: { reaction: true },
       });
     default:

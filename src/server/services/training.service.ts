@@ -21,7 +21,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -41,6 +41,7 @@ import {
   throwBadRequestError,
   throwNotFoundError,
   throwRateLimitError,
+  throwServiceUnavailableError,
   withRetries,
 } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -271,7 +272,12 @@ export async function getTrainingServiceStatus() {
   // touched the sites that did string-typed ops (=== 'true', .split, etc.).
   let raw: string | null | undefined;
   try {
-    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);
+    // Wall-clock deadline: symmetric with the getGenerationStatus wrap in STEP 6.
+    // The try/catch only covers a fast DOWN reject — a silent sysRedis half-open
+    // would park this awaited hGet ~11min on the training status/submit path.
+    raw = await withSysReadDeadline(
+      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS)
+    );
   } catch (err) {
     logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err);
     raw = undefined;
@@ -477,6 +483,35 @@ export type TrainingWorkflowUpdateResult = {
 };
 
 /**
+ * Base type for PERMANENT, non-retryable failures of the training webhook path:
+ * conditions where retrying the workflow callback will deterministically fail
+ * again (the orchestrator re-delivers the identical workflow every time). The
+ * webhook handler catches this base type and acks (200) instead of returning
+ * 500, so a single orphaned/malformed training can't turn into a
+ * retry-amplified 500 storm. A genuine TRANSIENT failure (DB error, dependency
+ * timeout, unexpected bug) throws a plain Error instead and stays a 5xx so the
+ * orchestrator's retry can legitimately recover it.
+ */
+export class PermanentTrainingWebhookError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PermanentTrainingWebhookError';
+  }
+}
+
+/**
+ * Thrown when the training's backing ModelFile no longer exists (deleted or
+ * orphaned training) — the dominant observed storm cause. A subtype of
+ * PermanentTrainingWebhookError, so the handler treats it the same way.
+ */
+export class TrainingRecordNotFoundError extends PermanentTrainingWebhookError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TrainingRecordNotFoundError';
+  }
+}
+
+/**
  * Updates the model file metadata and model version training status based on workflow data.
  * Returns data needed for notifications (signals, emails, webhooks) which should be handled by the caller.
  */
@@ -487,8 +522,11 @@ export async function updateTrainingWorkflowRecords(
   const { transactions, steps, id: workflowId, createdAt, status: workflowStatus } = workflow;
 
   const step = steps?.[0] as (CustomImageResourceTrainingStep | CustomTrainingStep) | undefined;
-  if (!step) throw new Error('Missing step data');
-  if (!step.metadata.modelFileId) throw new Error('Missing modelFileId');
+  // Permanent: the workflow is created WITH its step + modelFileId metadata
+  // (see training.orch.ts). If the re-fetched workflow lacks either, the record
+  // is malformed/orphaned and every retry re-derives the same absence — ack it.
+  if (!step) throw new PermanentTrainingWebhookError('Missing step data');
+  if (!step.metadata.modelFileId) throw new PermanentTrainingWebhookError('Missing modelFileId');
 
   const {
     metadata: { modelFileId },
@@ -536,7 +574,10 @@ export async function updateTrainingWorkflowRecords(
     sampleImagesPrompts = imageOutput?.sampleImagesPrompts ?? [];
     moderationStatus = imageOutput?.moderationStatus;
   } else {
-    throw new Error(`Unsupported step type: ${stepType}`);
+    // Permanent: the step's $type is fixed at workflow creation; a type we
+    // don't handle won't become handleable on retry (retrying just re-fetches
+    // the same type). Ack + warn so a code-side gap surfaces without storming.
+    throw new PermanentTrainingWebhookError(`Unsupported step type: ${stepType}`);
   }
 
   if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
@@ -573,7 +614,7 @@ export async function updateTrainingWorkflowRecords(
       },
     },
   });
-  if (!modelFile) throw new Error(`ModelFile not found: "${modelFileId}"`);
+  if (!modelFile) throw new TrainingRecordNotFoundError(`ModelFile not found: "${modelFileId}"`);
 
   const { modelVersion } = modelFile;
   const { model } = modelVersion;
@@ -752,7 +793,7 @@ async function assertModelOwnership(modelId: number, userId: number) {
   }
 }
 
-function toOrchestratorError(error: unknown): never {
+export function toOrchestratorError(error: unknown): never {
   const status =
     typeof error === 'object' && error !== null && 'status' in error
       ? (error as { status?: number }).status
@@ -767,6 +808,23 @@ function toOrchestratorError(error: unknown): never {
     case 429:
       throw throwRateLimitError(messages);
     default:
+      // A genuine upstream 5xx (orchestrator HTTP 500/502/503/504) OR a status-less
+      // network/timeout failure (no HTTP status — the TCP/DNS/TLS layer failed
+      // before any response) is a TRANSIENT dependency outage, NOT this app's own
+      // fault. Mirror #2978's orchestrator submit-path fix: surface it as a
+      // retry-able 503 SERVICE_UNAVAILABLE with the ORIGINAL error preserved as
+      // `cause`, instead of a plain `Error` that tRPC wraps into a generic
+      // INTERNAL_SERVER_ERROR (500) with an EMPTY cause chain. That masked-cause 500
+      // is exactly what surfaced ~11×/2h on training.submitAutoLabelWorkflow: a
+      // transient orchestrator brownout mis-counted against our 500 SLO AND
+      // non-retryable to the client. `toOrchestratorError` is only reached on a
+      // `!data` result from an orchestrator round-trip (getConsumerBlobUploadUrl /
+      // clientSubmitWorkflow / clientGetWorkflow), so a local/logic bug thrown
+      // BEFORE the call never reaches here — only real upstream failures do.
+      if (status === undefined || status >= 500)
+        throw throwServiceUnavailableError(messages ?? null, error);
+      // Any OTHER unexpected non-5xx status is a real, non-transient anomaly — keep
+      // it a hard error so a genuine bug is NOT silently masked as a retry-able 503.
       throw new Error(messages || 'Orchestrator request failed');
   }
 }

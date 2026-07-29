@@ -56,7 +56,7 @@ const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.DoRA]: 'dora',
   [ModelType.LoCon]: 'lycoris',
   [ModelType.Controlnet]: 'controlnet',
-  [ModelType.TextEncoder]: 'textencoder',
+  [ModelType.TextEncoder]: 'text_encoders',
   [ModelType.UNet]: 'unet',
   [ModelType.CLIPVision]: 'clipvision',
   [ModelType.CLIP]: 'clip',

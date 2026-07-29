@@ -9,6 +9,7 @@ import {
   type JudgeScore,
   SCORE_WEIGHTS,
   calculateWeightedScore,
+  calculateCategoryScore,
 } from '~/server/games/daily-challenge/daily-challenge-scoring';
 
 const categories: { key: keyof JudgeScore; label: string; weight: number }[] = [
@@ -17,6 +18,18 @@ const categories: { key: keyof JudgeScore; label: string; weight: number }[] = [
   { key: 'humor', label: 'Humor', weight: SCORE_WEIGHTS.humor },
   { key: 'aesthetic', label: 'Aesthetic', weight: SCORE_WEIGHTS.aesthetic },
 ];
+
+const FIXED_SCORE_KEYS = ['theme', 'wittiness', 'humor', 'aesthetic'] as const;
+
+/**
+ * User-created challenges score against arbitrary creator-defined categories
+ * (`Record<categoryLabel, number>`) instead of the fixed set above. Detect which
+ * shape we got so we don't feed category-keyed scores into `calculateWeightedScore`
+ * (it assumes the fixed keys and would return NaN).
+ */
+function isFixedJudgeScore(score: JudgeScore | Record<string, number>): score is JudgeScore {
+  return FIXED_SCORE_KEYS.every((key) => typeof score[key] === 'number');
+}
 
 const CIVCHAN_USER_ID = 7665867;
 
@@ -39,13 +52,16 @@ export function JudgeScoreBadge({
   judgeInfo,
   size = 'sm',
 }: {
-  score: JudgeScore;
+  score: JudgeScore | Record<string, number>;
   imageId?: number;
   judgeInfo?: JudgeInfo;
   size?: 'xs' | 'sm';
 }) {
   const [opened, setOpened] = useState(false);
-  const weighted = calculateWeightedScore(score) ?? 0;
+  const fixedScore = isFixedJudgeScore(score) ? score : null;
+  const weighted = fixedScore
+    ? calculateWeightedScore(fixedScore) ?? 0
+    : calculateCategoryScore(score) ?? 0;
   const weightedRounded = Math.round(weighted * 10) / 10;
 
   const hasJudge = !!imageId && !!judgeInfo;
@@ -112,26 +128,38 @@ export function JudgeScoreBadge({
           <Text size="sm" fw={600}>
             {hasJudge ? 'Scores' : 'Judge Scores'}
           </Text>
-          {categories.map(({ key, label, weight }) => (
-            <div key={key}>
-              <Group justify="space-between" mb={2}>
-                <Text size="xs">
-                  {label}{' '}
-                  <Text span size="xs" c="dimmed">
-                    ({Math.round(weight * 100)}%)
-                  </Text>
-                </Text>
-                <Text size="xs" fw={600}>
-                  {score[key]}/10
-                </Text>
-              </Group>
-              <Progress
-                value={score[key] * 10}
-                color={getScoreColor(score[key], vibrant)}
-                size="sm"
-              />
-            </div>
-          ))}
+          {fixedScore
+            ? categories.map(({ key, label, weight }) => (
+                <div key={key}>
+                  <Group justify="space-between" mb={2}>
+                    <Text size="xs">
+                      {label}{' '}
+                      <Text span size="xs" c="dimmed">
+                        ({Math.round(weight * 100)}%)
+                      </Text>
+                    </Text>
+                    <Text size="xs" fw={600}>
+                      {fixedScore[key]}/10
+                    </Text>
+                  </Group>
+                  <Progress
+                    value={fixedScore[key] * 10}
+                    color={getScoreColor(fixedScore[key], vibrant)}
+                    size="sm"
+                  />
+                </div>
+              ))
+            : Object.entries(score).map(([key, value]) => (
+                <div key={key}>
+                  <Group justify="space-between" mb={2}>
+                    <Text size="xs">{key}</Text>
+                    <Text size="xs" fw={600}>
+                      {value}/10
+                    </Text>
+                  </Group>
+                  <Progress value={value * 10} color={getScoreColor(value, vibrant)} size="sm" />
+                </div>
+              ))}
           <Group
             justify="space-between"
             mt={4}
@@ -139,7 +167,7 @@ export function JudgeScoreBadge({
             pt={4}
           >
             <Text size="xs" fw={600}>
-              Weighted Score
+              {fixedScore ? 'Weighted Score' : 'Average Score'}
             </Text>
             <Text size="xs" fw={700} c={getScoreColor(weighted, vibrant)}>
               {weightedRounded.toFixed(1)}/10

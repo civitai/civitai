@@ -766,3 +766,38 @@ export const zImageControlNetPreprocessors: ControlNetPreprocessorKey[] = [
   'openpose',
   'dwpose',
 ];
+
+/**
+ * Anima ControlNet support. Backed by 5 Anima-specific control models on the
+ * orchestrator (`engine: comfy`, `ecosystem: anima`); each preprocessor below
+ * maps to one of them upstream: an "any-test-like" model (canny, gray), a
+ * lineart model (lineart variants + anyline), a depth model (depth/zoe/midas/
+ * leres/metric3d depth), a pose model (openpose, dwpose), and a scribble model
+ * (scribble variants + fakeScribble + hed + softedgePidinet).
+ * Kinds with no Anima model (mlsd, tile, shuffle, teed, depthZoe, normals,
+ * segmentation) are intentionally omitted.
+ */
+export const animaControlNetPreprocessors: ControlNetPreprocessorKey[] = [
+  'canny',
+  'gray',
+  'lineartStandard',
+  'lineartRealistic',
+  'lineartAnime',
+  'lineartManga',
+  'anyline',
+  'depthAnything',
+  'depthAnythingV2',
+  'zoeDepth',
+  'zoeDepthAnything',
+  'midasDepth',
+  'leresDepth',
+  'metric3dDepth',
+  'openpose',
+  'dwpose',
+  'scribble',
+  'scribbleXdog',
+  'scribblePidinet',
+  'fakeScribble',
+  'hed',
+  'softedgePidinet',
+];

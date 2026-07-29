@@ -13,6 +13,7 @@ import {
 } from '~/server/selectors/resourceReview.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   BlockedByUsers,
@@ -87,12 +88,16 @@ export const getUserResourceReview = async ({
 export const getResourceReviewsByUserId = ({
   userId,
   recommended,
+  modelIds,
 }: {
   userId: number;
   recommended?: boolean;
+  // When provided, bound the scan to these models (membership queries). Omitted =
+  // unfiltered = existing behavior for the current whole-history callers.
+  modelIds?: number[];
 }) => {
   return dbRead.resourceReview.findMany({
-    where: { userId, recommended },
+    where: { userId, recommended, ...(modelIds ? { modelId: { in: modelIds } } : {}) },
     select: { modelId: true, modelVersionId: true },
   });
 };
@@ -125,8 +130,7 @@ export const getResourceReviewsInfinite = async ({
   if (username) {
     const userFindArgs = { where: { username }, select: { id: true } };
     const targetUser =
-      (await dbRead.user.findUnique(userFindArgs)) ??
-      (await dbWrite.user.findUnique(userFindArgs));
+      (await dbRead.user.findUnique(userFindArgs)) ?? (await dbWrite.user.findUnique(userFindArgs));
 
     if (!targetUser) throw throwNotFoundError('User not found');
 
@@ -226,9 +230,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
   const cacheable = queryCache(dbRead, 'getRatingTotals', 'v1');
   const result = await cacheable<GetRatingTotalsRow[]>(query, {
     ttl: CacheTTL.hour,
-    tag: modelVersionId
-      ? [`rating:modelVersion:${modelVersionId}`]
-      : [`rating:model:${modelId}`],
+    tag: modelVersionId ? [`rating:modelVersion:${modelVersionId}`] : [`rating:model:${modelId}`],
   });
 
   const transformed = result.reduce(
@@ -318,10 +320,17 @@ const createResourceReviewNotification = async ({
 
 export const upsertResourceReview = async ({
   userId,
+  isModerator,
   ...data
-}: UpsertResourceReviewInput & { userId: number }) => {
+}: UpsertResourceReviewInput & { userId: number; isModerator?: boolean }) => {
   if (data.details) await throwOnBlockedLinkDomain(data.details);
   if (!data.id) {
+    await throwIfBlockedByEntityOwner({
+      userId,
+      entityType: 'model',
+      entityId: data.modelId,
+      isModerator,
+    });
     const ret = await dbWrite.resourceReview
       .create({
         data: { ...data, userId, thread: { create: {} } },
@@ -496,13 +505,26 @@ export const getPagedResourceReviews = async ({
   // the raw NOT IN below (P2029). Same fix + safety-priority order as the comment
   // surfaces; see boundExcludedUserIds.
   const [hiddenUsers, blockedByUsers, blockedUsers] = excludedUsers;
+  // If the viewer owns the model these reviews are on, don't hide a blocker's review/thumb
+  // from them (the owner must still see + report engagement on their own content) — drop
+  // blockedByUsers only then; keep the anti-harassment exclusion for every non-owner viewer.
+  // Skip the lookup unless the viewer has a blocked-by list, the only case it changes anything.
+  let isContentOwner = false;
+  if (userId && blockedByUsers.length) {
+    const modelVersion = await dbRead.modelVersion.findUnique({
+      where: { id: modelVersionId },
+      select: { model: { select: { userId: true } } },
+    });
+    isContentOwner = modelVersion?.model?.userId === userId;
+  }
   const excludedUserIds = boundExcludedUserIds(
     hiddenUsers.map((u) => u.id),
     blockedByUsers.map((u) => u.id),
-    blockedUsers.map((u) => u.id)
+    blockedUsers.map((u) => u.id),
+    { isContentOwner }
   );
   if (excludedUserIds.length) {
-    AND.push(Prisma.sql`rr."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+    AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`

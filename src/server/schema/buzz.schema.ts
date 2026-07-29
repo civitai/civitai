@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import type { BuzzApiAccountType } from '~/shared/constants/buzz.constants';
+import type { BuzzAccountType, BuzzApiAccountType } from '~/shared/constants/buzz.constants';
 import {
   BuzzTypes,
   TransactionType,
@@ -44,6 +44,28 @@ export const getUserBuzzTransactionsSchema = z.object({
   descending: z.boolean().optional(),
   accountType: z.enum(buzzAccountTypes).optional(),
 });
+
+const userTransactionFilters = {
+  type: z.enum(TransactionType).optional(),
+  start: z.date(),
+  end: z.date(),
+  accountTypes: z
+    .array(z.enum(buzzSpendTypes))
+    .min(1)
+    .default([...buzzSpendTypes]),
+};
+
+export type GetUserBuzzTransactionsMultiSchema = z.infer<typeof getUserBuzzTransactionsMultiSchema>;
+export const getUserBuzzTransactionsMultiSchema = z.object({
+  ...userTransactionFilters,
+  // `date|transactionId` — the sort key needs the tie-break, since bursts of
+  // generation transactions routinely share a second.
+  cursor: z.string().optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type ExportUserBuzzTransactionsSchema = z.infer<typeof exportUserBuzzTransactionsSchema>;
+export const exportUserBuzzTransactionsSchema = z.object(userTransactionFilters);
 
 export const buzzTransactionDetails = z
   .object({
@@ -176,13 +198,6 @@ export const getBuzzAccountTransactionsSchema =
   getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
 export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
 
-export const clubTransactionSchema = z.object({
-  clubId: z.number(),
-  amount: z.number(),
-});
-
-export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;
-
 export const compensationSources = ['compensation', 'licenseFee'] as const;
 export type CompensationSource = (typeof compensationSources)[number];
 
@@ -192,6 +207,53 @@ export const getDailyBuzzCompensationInput = z.object({
   date: z.coerce.date(),
   accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)).optional(),
   source: z.enum(compensationSources).default('compensation'),
+});
+
+// The pools the block API exposes: the three spendable types plus the creator
+// payout pools. `red` (disabled) and `club` (legacy) are deliberately excluded.
+export const blockBuzzAccountTypes = [
+  'yellow',
+  'blue',
+  'green',
+  'creatorProgramBank',
+  'creatorProgramBankGreen',
+  'cashPending',
+  'cashSettled',
+] as const satisfies readonly BuzzAccountType[];
+
+const transactionTypeNames = Object.keys(TransactionType).filter((key) =>
+  Number.isNaN(Number(key))
+) as [keyof typeof TransactionType, ...(keyof typeof TransactionType)[]];
+
+// tRPC input contracts for the block-token-authed buzz self-read MUTATIONS
+// (host-mediated page-block bridges — blocks.router `getMyBuzz{Transactions,
+// Accounts}` / `getMyDailyCompensation`). Each carries the page's block token;
+// the account/user is SELF-BOUND server-side off `claims.sub` (never these
+// inputs). `type` takes the TransactionType NAME ("Tip"), not the numeric value.
+// Dates use `z.coerce.date` so an ISO string OR a Date from the host bridge both
+// parse; `limit` is a real number (mutation body, not a query string).
+export type GetMyBuzzTransactionsInput = z.infer<typeof getMyBuzzTransactionsInput>;
+export const getMyBuzzTransactionsInput = z.object({
+  blockToken: z.string().min(1),
+  accountType: z.enum(blockBuzzAccountTypes).default('yellow'),
+  type: z.enum(transactionTypeNames).optional(),
+  cursor: z.coerce.date().optional(),
+  start: z.coerce.date().optional(),
+  end: z.coerce.date().optional(),
+  limit: z.number().int().min(1).max(200).default(50),
+});
+
+export type GetMyBuzzAccountsInput = z.infer<typeof getMyBuzzAccountsInput>;
+export const getMyBuzzAccountsInput = z.object({
+  blockToken: z.string().min(1),
+});
+
+export type GetMyDailyCompensationInput = z.infer<typeof getMyDailyCompensationInput>;
+export const getMyDailyCompensationInput = z.object({
+  blockToken: z.string().min(1),
+  date: z.coerce.date(),
+  source: z.enum(compensationSources).default('compensation'),
+  accountType: z.enum(blockBuzzAccountTypes).optional(),
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;

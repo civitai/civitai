@@ -435,6 +435,16 @@ export const CosmeticSource = {
   Claim: 'Claim',
 } as const;
 export type CosmeticSource = (typeof CosmeticSource)[keyof typeof CosmeticSource];
+export const CosmeticShopItemStatus = {
+  Draft: 'Draft',
+  PendingReview: 'PendingReview',
+  Published: 'Published',
+  Rejected: 'Rejected',
+  RequestedChanges: 'RequestedChanges',
+  Archived: 'Archived',
+} as const;
+export type CosmeticShopItemStatus =
+  (typeof CosmeticShopItemStatus)[keyof typeof CosmeticShopItemStatus];
 export const CosmeticEntity = {
   Model: 'Model',
   Image: 'Image',
@@ -593,6 +603,11 @@ export const Availability = {
   EarlyAccess: 'EarlyAccess',
 } as const;
 export type Availability = (typeof Availability)[keyof typeof Availability];
+export const PaidAccessEntityType = {
+  ModelVersion: 'ModelVersion',
+  ComicChapter: 'ComicChapter',
+} as const;
+export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
@@ -753,6 +768,19 @@ export const ChallengeReviewCostType = {
 } as const;
 export type ChallengeReviewCostType =
   (typeof ChallengeReviewCostType)[keyof typeof ChallengeReviewCostType];
+export const ChallengeIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+export type ChallengeIngestionStatus =
+  (typeof ChallengeIngestionStatus)[keyof typeof ChallengeIngestionStatus];
+export const ChallengeEngagementType = {
+  Notify: 'Notify',
+} as const;
+export type ChallengeEngagementType =
+  (typeof ChallengeEngagementType)[keyof typeof ChallengeEngagementType];
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;
@@ -895,3 +923,11 @@ export const ShopifyMerchOrderStatus = {
 } as const;
 export type ShopifyMerchOrderStatus =
   (typeof ShopifyMerchOrderStatus)[keyof typeof ShopifyMerchOrderStatus];
+export const OutboxEntity = {
+  Article: 'Article',
+  Image: 'Image',
+  Model: 'Model',
+  Post: 'Post',
+  ModelVersion: 'ModelVersion',
+} as const;
+export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];

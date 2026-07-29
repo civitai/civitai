@@ -66,6 +66,7 @@ export function DumbModelFiltersDropdown({
   position = 'bottom-end',
   isFeed,
   maxPopoverHeight,
+  hideEarlyAccess = false,
   ...buttonProps
 }: Props & {
   filters: Partial<ModelFilterSchema>;
@@ -129,12 +130,21 @@ export function DumbModelFiltersDropdown({
     setFilters(reset);
   }, [localMode, setFilters, setQueryFilters]);
 
-  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
-    useStagedFilters({
-      committed: committedFilters,
-      onApply: handleApply,
-      onClear: handleClear,
-    });
+  const {
+    opened,
+    toggle,
+    close,
+    mergedFilters,
+    isDirty,
+    patchPending,
+    apply,
+    reset,
+    clearAndClose,
+  } = useStagedFilters({
+    committed: committedFilters,
+    onApply: handleApply,
+    onClear: handleClear,
+  });
 
   const showCheckpointType =
     !mergedFilters.types?.length || mergedFilters.types.includes('Checkpoint');
@@ -144,7 +154,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.baseModels?.length ?? 0) +
     (mergedFilters.status?.length ?? 0) +
     (showCheckpointType && mergedFilters.checkpointType ? 1 : 0) +
-    (mergedFilters.earlyAccess ? 1 : 0) +
+    (!hideEarlyAccess && mergedFilters.earlyAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.isFeatured ? 1 : 0) +
@@ -204,11 +214,14 @@ export function DumbModelFiltersDropdown({
               }
             >
               <Group gap={8} mb={4}>
-                {Object.values(Availability).map((availability) => (
-                  <FilterChip key={availability} value={availability}>
-                    <span>{availability}</span>
-                  </FilterChip>
-                ))}
+                {/* EarlyAccess is never a model-level availability (gating is in PaidAccess); use the toggle above. */}
+                {Object.values(Availability)
+                  .filter((availability) => availability !== Availability.EarlyAccess)
+                  .map((availability) => (
+                    <FilterChip key={availability} value={availability}>
+                      <span>{availability}</span>
+                    </FilterChip>
+                  ))}
               </Group>
             </Chip.Group>
           </>
@@ -231,12 +244,14 @@ export function DumbModelFiltersDropdown({
         )}
 
         <Group gap={8} mb={4}>
-          <FilterChip
-            checked={mergedFilters.earlyAccess}
-            onChange={(checked) => patchPending({ earlyAccess: checked })}
-          >
-            <span>Early Access</span>
-          </FilterChip>
+          {!hideEarlyAccess && (
+            <FilterChip
+              checked={mergedFilters.earlyAccess}
+              onChange={(checked) => patchPending({ earlyAccess: checked })}
+            >
+              <span>Early Access</span>
+            </FilterChip>
+          )}
           {flags.imageGeneration && (
             <FilterChip
               checked={mergedFilters.supportsGeneration}
@@ -453,4 +468,6 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   position?: PopoverProps['position'];
   isFeed?: boolean;
   maxPopoverHeight?: CSSProperties['maxHeight'];
+  // Hide the Early Access toggle when the caller locks it on (e.g. Creator Shop).
+  hideEarlyAccess?: boolean;
 };

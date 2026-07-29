@@ -68,16 +68,20 @@ describe('slot-registry (Phase 0 foundation)', () => {
     );
   });
 
-  // W10 generation spend: `ai:write:budgeted` is NO LONGER page-forbidden —
-  // pages can spend Buzz on generation, bounded by the manifest per-gen budget
-  // (page.buzzBudgetPerGen) + the per-user daily cap. Tipping + balance-read
-  // stay forbidden (see the doc comment on PAGE_FORBIDDEN_SCOPES for why).
-  it('PAGE_FORBIDDEN_SCOPES forbids only tipping + balance-read (NOT budgeted gen)', () => {
-    expect([...PAGE_FORBIDDEN_SCOPES].sort()).toEqual(['buzz:read:self', 'social:tip:self'].sort());
+  // PAGE_FORBIDDEN_SCOPES is now EMPTY — every money/spend scope a page can
+  // request is BOUNDED (gen: per-gen buzzBudget + BLOCK_BUZZ_CAP_PER_DAY; tip:
+  // BLOCK_TIP_MAX_PER_TIP + BLOCK_TIP_CAP_PER_DAY; buzz:read:self is a
+  // self-balance read with no spend authority). Tipping came off the list once it
+  // gained explicit caps (bounded, no longer effectively-unbounded spend).
+  it('PAGE_FORBIDDEN_SCOPES is empty — no money/spend scope is categorically forbidden for pages', () => {
+    expect([...PAGE_FORBIDDEN_SCOPES]).toEqual([]);
   });
 
-  it('ai:write:budgeted is NOT forbidden for pages (generation spend allowed)', () => {
-    expect((PAGE_FORBIDDEN_SCOPES as readonly string[]).includes('ai:write:budgeted')).toBe(false);
+  it('none of ai:write:budgeted / social:tip:self / buzz:read:self is page-forbidden (all bounded)', () => {
+    const forbidden = PAGE_FORBIDDEN_SCOPES as readonly string[];
+    expect(forbidden.includes('ai:write:budgeted')).toBe(false);
+    expect(forbidden.includes('social:tip:self')).toBe(false);
+    expect(forbidden.includes('buzz:read:self')).toBe(false);
   });
 
   // Only `none` and `model` entities are wired in this build. user/image are

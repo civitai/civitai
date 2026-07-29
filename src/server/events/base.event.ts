@@ -3,7 +3,14 @@ import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
-import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SUB_KEYS,
+  REDIS_SYS_KEYS,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 // Disable pod memory keeping for now... We might not need it.
@@ -15,8 +22,13 @@ async function getManualAssignments(event: string) {
   // shouldn't 500 every cosmetic lookup — degrade to "no manual
   // assignments" for the outage window.
   try {
-    const assignments = await sysRedis.hGetAll(
-      `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
+    // Wall-clock deadline: this read is on the per-request cosmetic-resolution
+    // path during active events; the try/catch only covers a fast DOWN, so a
+    // silent half-open would park it ~11min.
+    const assignments = await withSysReadDeadline(
+      sysRedis.hGetAll(
+        `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
+      )
     );
     // manualAssignments[event] = assignments;
     return assignments;
@@ -108,7 +120,9 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     // missing map as no-op.
     let roleCache: Record<string, string>;
     try {
-      roleCache = await sysRedis.hGetAll(cacheKey);
+      // Wall-clock deadline so a silent half-open can't park this awaited read
+      // ~11min (the try/catch only covers a fast DOWN).
+      roleCache = await withSysReadDeadline(sysRedis.hGetAll(cacheKey));
     } catch (err) {
       logSysRedisFailOpen('read-degraded', 'getDiscordRoles read', err, { event: name });
       return {} as Record<string, string>;

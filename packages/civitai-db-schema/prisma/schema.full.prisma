@@ -352,10 +352,11 @@ model CryptoDeposit {
   serviceFee    Float?
   feeCurrency   String?
   paidFiat      Float?
-  chain         String?
-  retryCount    Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  chain           String?
+  retryCount      Int       @default(0)
+  stuckNotifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([status])
@@ -520,6 +521,7 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  createdCosmetics           Cosmetic[]                  @relation("CosmeticCreator")
   donationGoals              DonationGoal[]
   donations                  Donation[]
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
@@ -542,6 +544,7 @@ model User {
   challengeWins              ChallengeWinner[]
   challengeJudges            ChallengeJudge[]
   challengeEventsCreated     ChallengeEvent[]
+  challengeEngagements       ChallengeEngagement[]
   rewardsBonusEventsCreated  RewardsBonusEvent[]             @relation("RewardsBonusEventCreator")
   strikes                     UserStrike[]                    @relation("userStrikes")
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
@@ -570,6 +573,7 @@ model User {
   blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
   blockSpendAttributionsAsSpender  BlockSpendAttribution[]   @relation("BlockSpendAttributionSpender")
   blockSpendAttributionsAsAppOwner BlockSpendAttribution[]   @relation("BlockSpendAttributionAppOwner")
+  blockSpendAttributionsAsContentAuthor BlockSpendAttribution[] @relation("BlockSpendAttributionContentAuthor")
   blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
   blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
@@ -582,6 +586,9 @@ model User {
   appListingReviews                  AppListingReview[]
   appListingPublishRequestsSubmitted AppListingPublishRequest[] @relation("AppListingPublishRequestSubmitter")
   appListingPublishRequestsReviewed  AppListingPublishRequest[] @relation("AppListingPublishRequestReviewer")
+  appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
+  appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
+  appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
 
   @@index([deletedAt])
 }
@@ -870,7 +877,6 @@ model Model {
   uploadType          ModelUploadType @default(Created)
   locked              Boolean         @default(false)
   underAttack         Boolean         @default(false)
-  earlyAccessDeadline DateTime?
   mode                ModelModifier?
   unlisted            Boolean         @default(false)
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
@@ -879,6 +885,7 @@ model Model {
   lockedProperties    String[]        @default([])
   scannedAt           DateTime?
   sfwOnly             Boolean         @default(false)
+  isOfficial          Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -1020,6 +1027,7 @@ model ModelVersion {
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
   publishedAt          DateTime?
+  initialPublishedAt   DateTime?
   status               ModelStatus       @default(Draft)
   trainingStatus       TrainingStatus?
   trainingDetails      Json?
@@ -1033,16 +1041,21 @@ model ModelVersion {
   settings             Json?
   availability         Availability      @default(Public)
   nsfwLevel            Int               @default(0)
-  earlyAccessEndsAt    DateTime?
-  earlyAccessConfig    Json?
   uploadType           ModelUploadType   @default(Created)
   usageControl         ModelUsageControl @default(Download)
   earlyAccessTimeFrame Int               @default(0)
   flags                Int               @default(0)
 
-  licensingFee                   Int?
+  licensingFee                   Decimal?                        @db.Decimal(10, 2)
   licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
+
+  // Licensing lineage: the root version whose fee this version inherits (e.g. a
+  // checkpoint built on Anima-Turbo points at the turbo version). Null falls
+  // back to the (baseModel, modelType) BaseModelLicensingFee rule. Decoupled
+  // from baseModel so it never affects gen-compat / leaderboards / filters.
+  licensingSourceVersionId Int?
+  licensingSource          ModelVersion?  @relation("licensingSource", fields: [licensingSourceVersionId], references: [id], onDelete: SetNull)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1057,6 +1070,7 @@ model ModelVersion {
   metricsDaily            ModelMetricDaily[]
   modelVersionExploration ModelVersionExploration[]
   vaeFor                  ModelVersion[]            @relation("vae")
+  licensingDerivatives    ModelVersion[]            @relation("licensingSource")
   generationCoverage      GenerationCoverage?
   recommendedResources    RecommendedResource[]     @relation("recommendedResources")
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
@@ -1065,21 +1079,27 @@ model ModelVersion {
   ImageResourceNew        ImageResourceNew[]
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
-  baseModelLicensingFees  BaseModelLicensingFee[]
+  licensingRoot           LicensingRoot?
 
   @@index([modelId], type: Hash)
+  @@index([licensingSourceVersionId])
 }
 
-model BaseModelLicensingFee {
+// A version registered as a chargeable licensing root for its (baseModel,
+// modelType). Membership = a row exists; `isDefault` marks the one root a
+// derivative pre-selects (enforced one-per-scope by a partial unique index).
+// Replaces the ModelVersion.LicensingRoot flag + BaseModelLicensingFee pointer.
+model LicensingRoot {
+  id             Int          @id @default(autoincrement())
   baseModel      String
   modelType      ModelType
-  modelVersionId Int
+  modelVersionId Int          @unique
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  isDefault      Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  @@id([baseModel, modelType])
-  @@index([modelVersionId])
+  @@index([baseModel, modelType])
 }
 
 enum LicensingFeeType {
@@ -1173,6 +1193,7 @@ model ModelFile {
   headerData        Json?
   visibility        ModelFileVisibility @default(Public)
   dataPurged        Boolean             @default(false)
+  replacedAt        DateTime?
 
   @@index([modelVersionId], type: Hash)
 }
@@ -1365,6 +1386,7 @@ model Report {
   reportedUser   UserReport?
   collection     CollectionReport?
   bounty         BountyReport?
+  challenge      ChallengeReport?
   bountyEntry    BountyEntryReport?
   chat           ChatReport?
   comicProject   ComicProjectReport?
@@ -1678,7 +1700,7 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
-  sortAt            DateTime                @default(now())
+  sortAt            DateTime                @default(dbgenerated()) // authored by image_post_triggers (set_image_sort_at BEFORE INSERT/UPDATE); no client/DB literal default — keeps the field client-optional while the trigger owns the value
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
@@ -1718,6 +1740,7 @@ model Image {
   comicProjectHero        ComicProject[]         @relation("comicProjectHero")
   challengesCover     Challenge[]           @relation("ChallengeCoverImage")
   challengeWins       ChallengeWinner[]
+  challengeEventCovers ChallengeEvent[]     @relation("ChallengeEventCover")
   model3dThumbnails   Model3D[]             @relation("model3dThumbnail")
   model3dSources      Model3D[]             @relation("model3dSource")
   appListingIcons        AppListing[]           @relation("AppListingIcon")
@@ -2474,6 +2497,15 @@ model AppBlockPublishRequest {
 /// NOT run prisma migrate deploy; the committed SQL is hand-applied per env.
 model AppListing {
   id              String       @id // apl_<ULID>
+  // Integer surrogate for CommentsV2. The store `id` is a TEXT ULID, but a
+  // CommentsV2 `Thread` parent FK must be Int (`Thread.appListingId Int? @unique`)
+  // — CommentsV2 is integer-keyed end to end. This UNIQUE auto-increment surrogate
+  // bridges the two; it is NOT the PK (`id` stays the ULID). DB-assigned
+  // (autoincrement) + backfilled for existing rows by the w13 comments migration.
+  serialId        Int          @unique @default(autoincrement()) @map("serial_id")
+  // The CommentsV2 discussion thread for this listing (parent = serialId). Optional
+  // 1:1 — created lazily on the first comment/lock (mirrors every other Thread parent).
+  thread          Thread?      @relation("AppListingThread")
   // Store kind discriminator: 'onsite' (an AppBlock we host) or 'offsite'
   // (external-link or OAuth-connect). Validated in the service + a DB CHECK.
   kind            String
@@ -2493,7 +2525,10 @@ model AppListing {
   // Free-text marketplace category (taxonomy = MARKETPLACE_CATEGORIES const, so
   // adding a category needs no migration — mirrors AppBlock.category).
   category        String?
-  // Store lifecycle. Validated in the service + a DB CHECK.
+  // Store lifecycle: draft|pending|approved|rejected|removed. Validated in the
+  // service + a DB CHECK (the CHECK lives ONLY in the migration .sql — Prisma
+  // can't express it; canonical code set = APP_LISTING_STATUSES). P3b adds
+  // 'removed' (the mod delist target); see app-blocks-p3b-delist-claim-scope.
   status          String       @default("draft")
   // Maturity rating. For on-site listings this MIRRORS AppBlock.content_rating
   // (single source — the listing must NOT override the runtime .red/.com serving
@@ -2504,12 +2539,34 @@ model AppListing {
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
+  // W13 OAuth-connect scope review (DARK — additive, nullable; nothing reads
+  // these yet). `connectRequestedScopes` = the TokenScope bitmask the listing
+  // requests, always a subset ⊆ `connectClient.allowedScopes` (the per-client
+  // ceiling). `connectScopeJustifications` = a JSON object keyed by TokenScope
+  // enum-key STRING (e.g. "ModelsRead") → the dev's rationale (≤500 chars,
+  // SCOPE_JUSTIFICATION_MAX_LENGTH). Both NULL for external-link / on-site
+  // listings (only OAuth-connect listings carry them).
+  connectRequestedScopes     Int?  @map("connect_requested_scopes")
+  connectScopeJustifications Json? @map("connect_scope_justifications")
   // 1:1 backing AppBlock (UNIQUE) + idempotency key. Set for EVERY backfilled
   // row — on-site AND the #2821 off-site rows (both come from an AppBlock). It is
   // NOT a kind discriminator: discriminate on `kind`, never on appBlockId nullness.
   // Only a natively-created off-site listing (no backing AppBlock) leaves it NULL.
   appBlockId      String?      @unique @map("app_block_id")
   appBlock        AppBlock?    @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
+  // Edit-without-withdraw (shadow-draft revision): a hidden DRAFT clone of an
+  // APPROVED parent listing points here at its parent. On mod re-approve the
+  // shadow's contents are copied onto the parent (which keeps its id/slug/
+  // app_block_id/metrics/reports) and the shadow is deleted; on reject/withdraw
+  // the shadow is deleted and the parent is untouched. NULL for a normal (top-
+  // level) listing. CASCADE so deleting a parent removes its in-flight shadow.
+  // A request is a REVISION iff its listing's revisionOfId != null (no extra
+  // column on the request — it is inferred). The read path filters
+  // revisionOfId != null out (shadows are draft, so already hidden — this is
+  // defense-in-depth).
+  revisionOfId    String?      @map("revision_of_id")
+  revisionOf      AppListing?  @relation("AppListingRevision", fields: [revisionOfId], references: [id], onDelete: Cascade)
+  revisions       AppListing[] @relation("AppListingRevision")
   // Curation rail (mirrors AppBlock.featured / featured_order).
   featured        Boolean      @default(false)
   featuredOrder   Int?         @map("featured_order")
@@ -2523,6 +2580,9 @@ model AppListing {
   reviews         AppListingReview[]
   metric          AppListingMetric?
   publishRequests AppListingPublishRequest[]
+  // P3b off-site moderation: user reports + the append-only mod audit trail.
+  reports          AppListingReport[]
+  moderationEvents AppListingModerationEvent[]
 
   // Marketplace read-path indexes (future P2 read path).
   @@index([status, kind], map: "app_listings_status_kind_idx")
@@ -2533,6 +2593,14 @@ model AppListing {
   // P1 populates icon/cover (Postgres does NOT auto-index a FK). Free now (empty).
   @@index([iconId], map: "app_listings_icon_idx")
   @@index([coverId], map: "app_listings_cover_idx")
+  // Shadow-lookup (WHERE revisionOfId = parent) + the parent-delete cascade scan.
+  // NB: the migration creates this as a PARTIAL UNIQUE index (UNIQUE on
+  // revisionOfId WHERE revisionOfId IS NOT NULL) so a parent has at most ONE
+  // in-flight shadow at the DB level. Prisma can't express a partial-unique
+  // index, so this stays a plain @@index in the schema; the real one-shadow
+  // guard is the migration's partial-unique index + the app-level P2002 →
+  // idempotent-reuse handling in beginListingRevision.
+  @@index([revisionOfId], map: "app_listings_revision_of_id_key")
   @@map("app_listings")
 }
 
@@ -2613,7 +2681,7 @@ model AppListingMetric {
 /// on-site Tekton build queue clean. STRUCTURE ONLY in P0; wired in P3.
 model AppListingPublishRequest {
   id                String      @id // alpr_<ULID>
-  appListingId      String?     @map("app_listing_id") // NULL while first request pending; FK on approve
+  appListingId      String?     @map("app_listing_id") // Off-site (B1): set at SUBMIT to the draft AppListing. On-site: NULL until approve. Nullable (SetNull on listing delete).
   appListing        AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
   kind              String // 'onsite' | 'offsite'
   slug              String
@@ -2636,6 +2704,196 @@ model AppListingPublishRequest {
   @@index([submittedByUserId, status], map: "app_listing_publish_requests_my_submissions_idx")
   @@index([slug, status], map: "app_listing_publish_requests_slug_idx")
   @@map("app_listing_publish_requests")
+}
+
+/// App Store Listings (W13) — P3b OFF-SITE moderation report.
+///
+/// A user-facing report affordance for an approved off-site AppListing (e.g. it
+/// impersonates a real app, links malware, is broken). Feeds a mod queue that
+/// arbitrates a delist / claim. DEDICATED table (NOT the shared site `Report`
+/// hub) to keep the off-site path isolated from the shared moderation blast
+/// radius — see app-blocks-p3b-delist-claim-scope-2026-07-06.md.
+///
+/// DARK/INERT in PR1: no proc reads or writes this table yet.
+/// DB-only extras (NOT expressible in Prisma; live in the migration .sql):
+///   - reason  CHECK IN (impersonation, phishing-malware, broken, inappropriate, spam, other)
+///   - status  CHECK IN (pending, resolved, dismissed)
+///   - a PARTIAL-UNIQUE index (app_listing_id, reporter_user_id) WHERE status='pending'
+///     (one OPEN report per reporter per listing — DB-layer anti-spam dedup).
+///     Prisma can't express partial-unique, so the schema below carries only a
+///     plain composite @@index; the partial-unique lives ONLY in the .sql.
+model AppListingReport {
+  id               String     @id // alrp_<ULID>
+  appListingId     String     @map("app_listing_id")
+  appListing       AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  // The reporter. CASCADE on GDPR user-delete.
+  reporterUserId   Int        @map("reporter_user_id")
+  reporter         User       @relation("AppListingReportReporter", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  // Report reason (CHECK-constrained in the .sql).
+  reason           String
+  // Free-text elaboration (bounded in the schema layer when the proc lands).
+  details          String?
+  // Lifecycle: pending|resolved|dismissed (CHECK-constrained in the .sql).
+  status           String     @default("pending")
+  resolvedByUserId Int?       @map("resolved_by_user_id")
+  resolvedBy       User?      @relation("AppListingReportResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  resolvedAt       DateTime?  @map("resolved_at") @db.Timestamptz(6)
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  // Mod events this report triggered (SetNull back-relation — see below).
+  moderationEvents AppListingModerationEvent[]
+
+  // FIFO mod queue (open reports first).
+  @@index([status, createdAt(sort: Desc)], map: "app_listing_reports_queue_idx")
+  // Per-listing history.
+  @@index([appListingId], map: "app_listing_reports_listing_idx")
+  // Dedup support: the .sql upgrades this pair to a partial-unique WHERE pending.
+  @@index([appListingId, reporterUserId], map: "app_listing_reports_dedup_idx")
+  @@map("app_listing_reports")
+}
+
+/// App Store Listings (W13) — P3b OFF-SITE moderation audit trail.
+///
+/// An immutable, append-only record of every moderator action on an off-site
+/// listing (delist / relist / claim / purge / report-resolve / report-dismiss).
+/// Written in the SAME transaction as its mutation so a crash can't split the
+/// mutation from its audit record. DEDICATED table (do NOT overload
+/// AppListingPublishRequest) — see the P3b scope doc.
+///
+/// The listing FK, the actor FK, and the report FK are all nullable + SetNull so
+/// an event SURVIVES a later hard-delete (purge) of the listing, a moderator
+/// account delete, or a report delete — an append-only audit trail must outlive
+/// the things it references. The denormalized `slug` snapshot keeps the event
+/// self-describing even once the listing row is gone. `before`/`after` carry the
+/// structured state change (e.g. status approved->removed, or userId reassign).
+///
+/// DARK/INERT in PR1: no proc writes this table yet.
+/// DB-only extra (in the migration .sql): action CHECK IN
+///   (delist, relist, claim, purge, report-resolve, report-dismiss).
+model AppListingModerationEvent {
+  id           String      @id // alme_<ULID>
+  // Nullable + SetNull so the audit event outlives a listing purge.
+  appListingId String?     @map("app_listing_id")
+  appListing   AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
+  // Denormalized snapshot so the event is self-describing after a purge.
+  slug         String
+  // The acting moderator. NULLABLE + SetNull so the audit trail SURVIVES a
+  // moderator-account delete (consistent with the report's resolvedBy) — the
+  // whole point of an append-only audit log is that it outlives the actor.
+  actorUserId  Int?        @map("actor_user_id")
+  actor        User?       @relation("AppListingModEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  // The report that triggered this event (if any). Nullable + SetNull: not every
+  // event comes from a report (e.g. a proactive delist), and the event outlives
+  // the report. Lets PR3 correlate a mod-event to its originating report.
+  reportId     String?     @map("report_id")
+  report       AppListingReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  // Mod action (CHECK-constrained in the .sql).
+  action       String
+  // Mod-supplied rationale / ownership-verification note.
+  reason       String?
+  // Extra human-readable detail.
+  detail       String?
+  // Structured before/after state, e.g. {"status":"approved"} / {"userId":123}.
+  before       Json?
+  after        Json?
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Per-listing moderation history.
+  @@index([appListingId, createdAt(sort: Desc)], map: "app_listing_mod_events_listing_idx")
+  // Per-moderator activity.
+  @@index([actorUserId, createdAt(sort: Desc)], map: "app_listing_mod_events_actor_idx")
+  // Correlate events back to the report that triggered them.
+  @@index([reportId], map: "app_listing_mod_events_report_idx")
+  @@map("app_listing_moderation_events")
+}
+
+/// App Blocks — agentic mod code-review report (P0 persistence layer).
+///
+/// One row per agent code-review of an app version, keyed to the app + version
+/// so the NEXT version's review can diff against the prior one (the
+/// `priorReportId` chain). Fronts BOTH on-site App Blocks (`appBlockId`) and
+/// external / OAuth-connect apps (`oauthClientId`) — EXACTLY ONE of those is set.
+///
+/// P0 = data model ONLY, fully DARK/INERT: NOTHING in the running image reads or
+/// writes this table (no router, no REST handler, no job) — it is additive and
+/// safe to apply ahead of the code that will populate it. Provisioning, the
+/// review UI, and the chat surface arrive in later phases.
+///
+/// Design notes:
+///   - `publishRequestId`, `appBlockId`, `oauthClientId` are PLAIN INDEXED ids,
+///     NOT Prisma relations. `publishRequestId` is dual-target by construction
+///     (an on-site review is an AppBlockPublishRequest `pubreq_<ULID>`; a
+///     connect review is an AppListingPublishRequest `alpr_<ULID>`), so it has
+///     no single clean FK — it is resolved in the service by kind. Keeping the
+///     app-key columns index-only (no back-relations on AppBlock/OauthClient)
+///     keeps this dark P0 a self-contained additive island; the `(key, version)`
+///     indexes drive the "latest prior report" lookup without relation traversal.
+///   - `status` is a checked string (running|complete|failed|torn-down); the
+///     CHECK lives ONLY in the migration .sql (Prisma can't express it), the
+///     canonical code set is APP_REVIEW_AGENT_REPORT_STATUSES in the service.
+///   - `costUsd` is Decimal(12,6): LLM costs are frequently sub-cent, so the
+///     repo's Decimal(10,2) money precision would round them away — 6 dp keeps
+///     per-review cost faithful. Deliberate deviation from the (10,2) precedent.
+///
+/// MANUAL-APPLY (datapacket-talos CLAUDE.md DB rule #8): the main civitai DB
+/// (CNPG nvme0) does NOT run prisma migrate deploy; the committed SQL is
+/// hand-applied per environment.
+model AppReviewAgentReport {
+  id               String    @id // arar_<ULID>
+  // The review (publish request) this report was generated for. Dual-target
+  // (on-site = AppBlockPublishRequest, connect = AppListingPublishRequest) so it
+  // is stored as an indexed id, not a FK. Resolved by kind in the service.
+  publishRequestId String    @map("publish_request_id")
+  // The STABLE app key (= blockId), present on EVERY publish request — including a
+  // first version, before any AppBlock row exists. Onsite reports are keyed by
+  // this (see the (slug, version) index); the prior-report chain is scoped by it.
+  slug             String
+  // Report origin: 'onsite' | 'external' (CHECK in the .sql). External/connect is
+  // a later phase; onsite reports write 'onsite'.
+  kind             String    @default("onsite")
+  // App identity — INFORMATIONAL, nullable. `appBlockId` populated when the
+  // on-site AppBlock already exists (else null, e.g. a first version); reserved
+  // `oauthClientId` for the external / OAuth-connect app. No exactly-one invariant
+  // any more — `slug` is the key (the app_key XOR CHECK was dropped).
+  appBlockId       String?   @map("app_block_id")
+  oauthClientId    String?   @map("oauth_client_id")
+  // The reviewed bundle's version (semver) + integrity hash.
+  version          String
+  bundleSha256     String    @map("bundle_sha256")
+  // Agent-run lifecycle: running|complete|failed|torn-down (CHECK in the .sql).
+  status           String    @default("running")
+  // The LLM that produced the review (NULL until the run reports one).
+  model            String?
+  startedAt        DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz(6)
+  // Structured agent outputs (NULLABLE — populated as the run progresses).
+  codeReview       Json?     @map("code_review")
+  securityAudit    Json?     @map("security_audit")
+  scopeVerdicts    Json?     @map("scope_verdicts")
+  summaryMd        String?   @map("summary_md")
+  // The prior version's report in the chain (self-relation) — lets the next
+  // version diff against it. SetNull so deleting an older report does not
+  // cascade-delete its successors (the chain head is preserved).
+  priorReportId    String?               @map("prior_report_id")
+  priorReport      AppReviewAgentReport?  @relation("AppReviewAgentReportChain", fields: [priorReportId], references: [id], onDelete: SetNull)
+  nextReports      AppReviewAgentReport[] @relation("AppReviewAgentReportChain")
+  // LLM token accounting (provider-shaped Json) + total cost. See costUsd note
+  // in the model docstring for the Decimal(12,6) rationale.
+  tokenUsage       Json?     @map("token_usage")
+  costUsd          Decimal?  @map("cost_usd") @db.Decimal(12, 6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // "latest prior complete report for this app older than version X" lookups,
+  // scoped by the stable slug key.
+  @@index([slug, version], map: "app_review_agent_reports_slug_version_idx")
+  // By-review lookup (getAgentReport).
+  @@index([publishRequestId], map: "app_review_agent_reports_publish_request_idx")
+  // NB: the status CHECK ('running'|'complete'|'failed'|'torn-down'|'cost-capped'),
+  // the kind CHECK ('onsite'|'external'), and the PARTIAL UNIQUE index on
+  // (publish_request_id) WHERE status='running' live ONLY in the migration .sql —
+  // Prisma cannot express CHECKs or partial-unique indexes.
+  @@map("app_review_agent_reports")
 }
 
 /// Per-block-instance, per-user settings (viewer preferences).
@@ -2901,6 +3159,20 @@ model BlockSpendAttribution {
   appOwnerUserId     Int      @map("app_owner_user_id")
   appOwner           User     @relation("BlockSpendAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
 
+  /// The USER who published the shared content this generation ran on behalf
+  /// of (the "content author") — the durable BASIS for a FUTURE creator
+  /// payout. Resolved SERVER-SIDE from `sharedContentKey` against the calling
+  /// app's own `app_<slug>.shared_kv`, never client-supplied. NULL when no
+  /// key was supplied, the row is missing/hidden, or the author is the
+  /// spender (self) or the app owner. FULLY GENERIC — any app that publishes
+  /// cross-user shared content can populate it — not tied to any one app kind.
+  /// TRACK-ONLY today: nothing pays out on it yet.
+  contentAuthorUserId Int?    @map("content_author_user_id")
+  contentAuthor       User?   @relation("BlockSpendAttributionContentAuthor", fields: [contentAuthorUserId], references: [id], onDelete: SetNull)
+  /// The opaque shared-storage `key` the app supplied for this generation
+  /// (bounded, app-owned). NULL when the app supplied none.
+  sharedContentKey    String? @map("shared_content_key")
+
   status             String   @default("pending")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.
@@ -2914,6 +3186,7 @@ model BlockSpendAttribution {
   @@unique([workflowId, appBlockId], map: "block_spend_attribution_workflow_app_uniq")
   @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bsa_publisher_dashboard_idx")
   @@index([appBlockId, attributedAt(sort: Desc)], map: "bsa_app_block_dashboard_idx")
+  @@index([contentAuthorUserId, attributedAt(sort: Desc)], map: "bsa_content_author_idx")
   @@map("block_spend_attribution")
 }
 
@@ -3016,16 +3289,51 @@ model BlockScopeInvocation {
   id               BigInt   @id @default(autoincrement())
   userId           Int      @map("user_id")
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  appBlockId       String   @map("app_block_id")
-  appBlock         AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
-  blockInstanceId  String   @map("block_instance_id")
+  /// NULLABLE (App Dev Tunnel Phase 2): a PRE-APPROVAL dev-tunnel spend has NO
+  /// AppBlock row (approval is what creates it), so the token carries a SYNTHETIC
+  /// `ephemeral-<slug>` appBlockId that can never FK-resolve. For that case this
+  /// column is NULL and the synthetic ref is captured in `syntheticAppId`, so the
+  /// durable per-spend audit row persists instead of FK-failing + being swallowed
+  /// (the "only a log line" gap). An APPROVED app still sets this (real FK).
+  appBlockId       String?  @map("app_block_id")
+  appBlock         AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  /// The synthetic, non-resolving dev-app reference (`ephemeral-<slug>` /
+  /// `local-<slug>` / `pending-<pubreqId>`) for a PRE-APPROVAL dev-tunnel spend —
+  /// the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
+  syntheticAppId   String?  @map("synthetic_app_id")
+  /// NULLABLE: an EXTERNAL OAuth invocation (`source = 'external-oauth'`) has no
+  /// block instance — the acting app is a pure OauthClient with no App Block. A
+  /// block-token row always sets this.
+  blockInstanceId  String?  @map("block_instance_id")
+  /// The acting OauthClient id for an EXTERNAL OAuth invocation (`source =
+  /// 'external-oauth'`) — the "which app" for external OAuth API usage, mirroring
+  /// what `appBlockId` is for a block-token row. NULL for a block-token row.
+  /// Intentionally FK-LESS text so the audit row SURVIVES deletion of the
+  /// OauthClient it references (an audit trail must outlive the app).
+  oauthClientId    String?  @map("oauth_client_id")
+  /// Discriminates the token population that made the call: `'app-block'` (an App
+  /// Block block-token, the historical default) vs `'external-oauth'` (a standard
+  /// external OAuth access token verified at `enforceTokenScope`). Additive:
+  /// existing rows backfill to `'app-block'`.
+  source           String   @default("app-block")
   scope            String
   endpoint         String
   statusCode       Int      @map("status_code") @db.SmallInt
+  /// Structured per-action audit detail (W13). NULL for a passive read (whose
+  /// friendly label is derived from `scope` at render time) and for any row
+  /// written before this column existed. For an impactful MUTATION it carries a
+  /// stable `action` code + minimal subject refs (`{ action, amount?, toUserId?,
+  /// modelVersionId?, entityId?, entityType?, key?, outcome? }` — see
+  /// BlockActionDetail). Stores IDS, not display names — the view resolves them
+  /// via batch lookups, so the row never rots when a name changes. Nullable + no
+  /// default → additive, backwards-compatible, no backfill.
+  detail           Json?
   invokedAt        DateTime @default(now()) @map("invoked_at") @db.Timestamptz(6)
 
   @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
   @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
+  @@index([syntheticAppId, invokedAt(sort: Desc)], map: "bsi_synthetic_app_invoked_idx")
+  @@index([oauthClientId, invokedAt(sort: Desc)], map: "bsi_oauth_client_invoked_idx")
   @@map("block_scope_invocations")
 }
 
@@ -3136,6 +3444,7 @@ model Comment {
   modelId      Int
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
+  pinnedAt     DateTime?
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]
@@ -3315,6 +3624,11 @@ model Thread {
   model3d          Model3D?        @relation(fields: [model3dId], references: [id], onDelete: SetNull)
   model3dReviewId  Int?            @unique
   model3dReview    Model3DReview?  @relation(fields: [model3dReviewId], references: [id], onDelete: SetNull)
+  // App-store listing comments (W13). References the AppListing INTEGER surrogate
+  // (`serial_id`), NOT its TEXT ULID `id` — CommentsV2 is integer-keyed. `app_listings`
+  // is the same DB (main civitai nvme0), so this is a plain FK, not a cross-DB bridge.
+  appListingId     Int?            @unique
+  appListing       AppListing?     @relation("AppListingThread", fields: [appListingId], references: [serialId], onDelete: SetNull)
 
   metadata     Json @default("{}") // unused
   commentCount Int  @default(0)
@@ -3486,6 +3800,15 @@ enum CosmeticSource {
   Claim
 }
 
+enum CosmeticShopItemStatus {
+  Draft
+  PendingReview
+  Published
+  Rejected
+  RequestedChanges
+  Archived
+}
+
 model Cosmetic {
   id                  Int                         @id @default(autoincrement())
   name                String
@@ -3503,9 +3826,13 @@ model Cosmetic {
   productId           String?
   leaderboardId       String?
   leaderboardPosition Int?
+  createdById         Int?
+  creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
   cosmeticShopItems   CosmeticShopItem[]
+
+  @@index([createdById])
 }
 
 enum CosmeticEntity {
@@ -3562,6 +3889,10 @@ model CosmeticShopItem {
   title             String
   description       String?
   archivedAt        DateTime?
+  status            CosmeticShopItemStatus @default(Published)
+  reviewedById      Int?
+  reviewedAt        DateTime?
+  rejectionReason   String?
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
@@ -4203,6 +4534,31 @@ model EntityAccess {
   @@id([accessToId, accessToType, accessorId, accessorType])
 }
 
+enum PaidAccessEntityType {
+  ModelVersion
+  ComicChapter
+}
+
+// The config side of paid access (the purchase side is EntityAccess). Row exists => gated.
+// endsAt IS NULL <=> permanent; a date => timed; a donation goal overwrites it to now() to end early.
+// terms = PaidAccessTerms (bundle semantics). See docs/creator-studio/paid-access-schema.md.
+model PaidAccess {
+  entityType    PaidAccessEntityType
+  entityId      Int
+  ownerId       Int
+  endsAt        DateTime?
+  // Timed-window length in days for a not-yet-published gate; endsAt is materialized to
+  // publishedAt + timeframeDays at publish. NULL = permanent (no timed window).
+  timeframeDays Int?
+  terms         Json
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@id([entityType, entityId])
+  @@index([ownerId, entityType, endsAt]) // + a partial index (ownerId, entityType) WHERE endsAt IS NULL, added via raw SQL migration
+  @@index([entityType, endsAt]) // expiry-job + early-access-complete notification scan by end time
+}
+
 enum EntityCollaboratorStatus {
   Pending
   Approved
@@ -4713,14 +5069,18 @@ model DonationGoal {
   title          String
   description    String?
   goalAmount     Int
-  paidAmount     Int           @default(0)
+  // Polymorphic target (mirrors PaidAccess). Nullable while modelVersionId is dual-written;
+  // becomes the sole target when modelVersionId is dropped (re-key migration).
+  entityType     PaidAccessEntityType?
+  entityId       Int?
   modelVersionId Int?
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
-  isEarlyAccess  Boolean       @default(false)
   active         Boolean       @default(true)
 
   donations Donation[]
+
+  @@index([entityType, entityId])
 }
 
 model Donation {
@@ -5027,6 +5387,13 @@ enum ChallengeReviewCostType {
   Flat     // Single flat rate for all entries
 }
 
+enum ChallengeIngestionStatus {
+  Pending // Awaiting text+cover scan; hidden from public feeds
+  Scanned // Passed scan, nsfwLevel assigned, publicly visible
+  Blocked // Hard-blocked (hate/CSAM/etc.); never shown
+  Error   // Scan failed; needs retry
+}
+
 model Challenge {
   id Int @id @default(autoincrement())
 
@@ -5051,14 +5418,16 @@ model Challenge {
   allowedNsfwLevel Int @default(1) // Bitwise NSFW levels allowed (1=PG, 2=PG13, 4=R, etc.)
 
   // Judging Configuration
-  judgingPrompt    String? @db.Text // Custom AI judging prompt
-  reviewPercentage Int     @default(100) // % of entries to score
-  maxReviews       Int? // Hard cap on reviews (cost control)
+  judgingPrompt     String? @db.Text // Custom AI judging prompt (mod/system only)
+  judgingCategories Json? // User challenges: [{name, criteria}]; drives dynamic score schema + public display
+  reviewPercentage  Int     @default(100) // % of entries to score
+  maxReviews        Int? // Hard cap on reviews (cost control)
 
   // Entries - stored in a Contest Collection (auto-created if not provided)
   collectionId      Int? // Optional - auto-created on challenge creation
   collection        Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
-  maxEntriesPerUser Int         @default(20)
+  maxEntriesPerUser Int         @default(20) // Max submissions per participant
+  maxParticipants   Int? // Max distinct participants (null = unlimited); bounds entry-fee judging cost
 
   // Prizes & Costs
   prizes               Json @default("[]") // [{buzz: 5000, points: 150}, ...]
@@ -5075,10 +5444,12 @@ model Challenge {
   operationSpent  Int  @default(0) // Actual spent (use atomic increment)
   reviewCostType  ChallengeReviewCostType @default(None) // Type of paid review pricing
   reviewCost      Int  @default(0) // Buzz cost (per entry or flat, depending on reviewCostType)
+  entryFee        Int  @default(0) // Buzz charged per entry to participate (0 = free). Net to pool = entryFee - platform cut
+  buzzType        String @default("yellow")
 
   // Ownership & Source
-  createdById Int
-  createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdById Int?
+  createdBy   User?           @relation(fields: [createdById], references: [id], onDelete: SetNull)
   source      ChallengeSource @default(System)
 
   // Judge
@@ -5088,14 +5459,22 @@ model Challenge {
   // Lifecycle
   status ChallengeStatus @default(Scheduled)
 
+  // Moderation / scan gating (user challenges hidden until Scanned). Default Scanned so
+  // existing + system/mod challenges stay visible without a backfill blackout. Named `ingestion`
+  // to match the other scanned entities (Image.ingestion, Article.ingestion).
+  ingestion ChallengeIngestionStatus @default(Scanned)
+  scannedAt DateTime?
+
   // Metadata
   metadata  Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  winners ChallengeWinner[]
-  threads Thread[]
+  winners     ChallengeWinner[]
+  threads     Thread[]
+  reports     ChallengeReport[]
+  engagements ChallengeEngagement[]
 
   // Event grouping
   eventId Int?
@@ -5105,9 +5484,20 @@ model Challenge {
   @@index([status, endsAt]) // "Ending Soon" feed
   @@index([status, startsAt]) // "Just Started" feed
   @@index([status, visibleAt]) // "Upcoming" feed
+  @@index([status, ingestion]) // public feed excludes non-Scanned challenges
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
   @@index([eventId])
+}
+
+model ChallengeReport {
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  reportId    Int       @unique
+  report      Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, challengeId])
+  @@index([challengeId], type: Hash)
 }
 
 model ChallengeJudge {
@@ -5125,6 +5515,7 @@ model ChallengeJudge {
   reviewTemplate        String? @db.Text // JSON message template (agent-workbench format)
   winnerSelectionPrompt String? @db.Text
   active                Boolean @default(true)
+  userSelectable        Boolean @default(false) // offer this judge to users in the create form
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5133,6 +5524,42 @@ model ChallengeJudge {
 
   @@index([userId])
   @@index([active])
+}
+
+// Judging-category library for challenges. label/group/criteria feed the client picker;
+// rubric/rubricNsfw are server-only LLM prompt content, managed directly in the DB per
+// environment (same handling as ChallengeJudge prompts).
+model ChallengeCategory {
+  key        String  @id @db.VarChar(50)
+  label      String  @db.VarChar(100)
+  group      String  @db.VarChar(100)
+  criteria   String  @db.Text
+  rubric     String? @db.Text
+  rubricNsfw String? @db.Text
+  sortOrder  Int     @default(0)
+  active     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+}
+
+enum ChallengeEngagementType {
+  Notify
+}
+
+model ChallengeEngagement {
+  userId      Int
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeId Int
+  challenge   Challenge               @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  type        ChallengeEngagementType
+  createdAt   DateTime                @default(now())
+
+  @@id([type, challengeId, userId])
+  @@index([challengeId])
+  @@index([userId], type: Hash)
 }
 
 model ChallengeWinner {
@@ -5167,6 +5594,8 @@ model ChallengeEvent {
   endDate            DateTime
   active             Boolean  @default(true)
   winnerCooldownDays Int?
+  coverImageId       Int?
+  coverImage         Image?   @relation("ChallengeEventCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   createdById        Int?
   createdBy          User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt          DateTime @default(now())
@@ -6239,6 +6668,7 @@ model ComicChapter {
   earlyAccessConfig Json?
   earlyAccessEndsAt DateTime?
   publishedAt       DateTime?
+  initialPublishedAt DateTime?
   nsfwLevel         Int                @default(0)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
@@ -6877,4 +7307,25 @@ model ShopifyMerchOrder {
 
   @@index([email])
   @@index([userId])
+}
+
+enum OutboxEntity {
+  Article
+  Image
+  Model
+  Post
+  ModelVersion
+}
+
+/// Transactional outbox for entity lifecycle events, consumed by the event-engine app via Debezium CDC
+/// and its reconciliation poller. Pre-existed in the DB (applied manually); modeled here. `attempts` backs
+/// the poller's retry bookkeeping (park past a max-attempts cap; re-drive via redrive:outbox).
+model Outbox {
+  id         BigInt       @id @default(autoincrement())
+  event      String
+  entityType OutboxEntity
+  entityId   BigInt
+  createdAt  DateTime?    @default(now())
+  details    Json?
+  attempts   Int?
 }

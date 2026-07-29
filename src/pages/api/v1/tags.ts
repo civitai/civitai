@@ -42,7 +42,17 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
     if (error instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(error);
-      const parsedError = JSON.parse(error.message);
+      // Some TRPCErrors carry a JSON-stringified body (zod/validation); others
+      // (throwDbError-wrapped INTERNAL_SERVER_ERRORs) carry a plain string. A
+      // blind JSON.parse on the plain-string case throws, escapes this catch,
+      // and surfaces a raw unhandled 500 — so guard it with a fallback.
+      const parsedError = (() => {
+        try {
+          return JSON.parse(error.message);
+        } catch {
+          return { message: error.message };
+        }
+      })();
 
       res.status(status).json(parsedError);
     } else {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { getDetailPrimaryAction } from '~/components/Apps/appListingDetailView';
+import {
+  canOwnerEditListing,
+  getDetailPrimaryAction,
+  getOwnerEditHref,
+  isEditableListingStatus,
+} from '~/components/Apps/appListingDetailView';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -139,5 +144,30 @@ describe('getDetailPrimaryAction — off-site', () => {
     expect(action.href).toBeUndefined();
     expect(action.external).toBe(false);
     expect(action.note).toBeTruthy();
+  });
+});
+
+describe('owner Edit deep-link + gating (on the detail view-model)', () => {
+  it('on-site detail kindData → the unified /edit editor (extra fields ignored)', () => {
+    expect(
+      getOwnerEditHref(onsiteDetail({ hasPage: true, appBlockId: 'blk-7' }).kindData, 'l1')
+    ).toBe('/apps/blk-7/edit');
+  });
+  it('on-site with no appBlockId → null (no editable target → hide)', () => {
+    expect(getOwnerEditHref(onsiteDetail({ hasPage: false, appBlockId: null }).kindData, 'l1')).toBeNull();
+  });
+  it('off-site detail kindData → the submit editor keyed on the listing id', () => {
+    expect(getOwnerEditHref(offsiteDetail('external-link', { externalUrl: 'https://x' }).kindData, 'l2')).toBe(
+      '/apps/submit?edit=l2'
+    );
+    expect(getOwnerEditHref(offsiteDetail('connect').kindData, 'l2')).toBe('/apps/submit?edit=l2');
+  });
+
+  it('owner + editable → show; non-owner → hide; mod-removed → hide', () => {
+    expect(canOwnerEditListing({ isOwner: true })).toBe(true);
+    expect(canOwnerEditListing({ isOwner: false })).toBe(false);
+    expect(canOwnerEditListing({ isOwner: true, status: 'removed' })).toBe(false);
+    expect(isEditableListingStatus('approved')).toBe(true);
+    expect(isEditableListingStatus('removed')).toBe(false);
   });
 });

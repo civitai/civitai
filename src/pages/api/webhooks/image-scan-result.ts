@@ -7,16 +7,18 @@ import { styleTags, tagsNeedingReview, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
   BlockedReason,
+  BlocklistType,
   ImageScanType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
@@ -26,7 +28,7 @@ import {
   imageScanTypes,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
-import { queueModel3DForThumbnailImage } from '~/server/services/nsfwLevels.service';
+import { updateModel3DNsfwLevelForThumbnailImage } from '~/server/services/nsfwLevels.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import {
@@ -34,6 +36,7 @@ import {
   upsertTagsOnImageNew,
 } from '~/server/services/tagsOnImageNew.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import { imageScanWebhookCounter } from '~/server/prom/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { getComputedTags } from '~/server/utils/tag-rules';
@@ -60,13 +63,12 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 import { processImageScanResult } from '~/server/services/image-scan-result.service';
+import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
 
 // const REQUIRED_SCANS = 2;
-
-const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
 enum Status {
   Success = 0,
@@ -131,6 +133,7 @@ export default WebhookEndpoint(async (req, res) => {
       // ACK with 200 so the orchestrator drops the workflow instead of retrying
       // a result for a row that no longer exists.
       if (e instanceof Error && e.message.startsWith('image not found')) {
+        imageScanWebhookCounter.inc({ result: 'deleted_skip' });
         return res.status(200).json({ ok: true, skipped: 'deleted' });
       }
       if (e instanceof Error) {
@@ -142,8 +145,10 @@ export default WebhookEndpoint(async (req, res) => {
           cause: e?.cause,
         });
       }
+      imageScanWebhookCounter.inc({ result: 'error' });
       return res.status(400).send({ error: e.message });
     }
+    imageScanWebhookCounter.inc({ result: 'success' });
     return res.status(200).json({ ok: true });
   }
 
@@ -156,6 +161,7 @@ export default WebhookEndpoint(async (req, res) => {
 
   const data = bodyResults.data;
 
+  let webhookResult: 'success' | 'not_found' | 'unscannable';
   try {
     switch (bodyResults.data.status) {
       case Status.NotFound:
@@ -163,6 +169,7 @@ export default WebhookEndpoint(async (req, res) => {
           where: { id: data.id, ingestion: { in: pendingStates } },
           data: { ingestion: ImageIngestionStatus.NotFound },
         });
+        webhookResult = 'not_found';
         break;
       case Status.Unscannable:
         await updateImageScanJobs({
@@ -171,9 +178,22 @@ export default WebhookEndpoint(async (req, res) => {
           incrementRetryCount: true,
           whereIngestionIn: pendingStates,
         });
+        webhookResult = 'unscannable';
+        logToAxiom(
+          {
+            name: 'image-scan-result',
+            type: 'warning',
+            message: 'legacy scanner returned Unscannable',
+            source: 'webhook-legacy',
+            failureType: 'unscannable',
+            imageId: data.id,
+          },
+          'webhooks'
+        ).catch(() => null);
         break;
       case Status.Success:
         await handleSuccess(data, req);
+        webhookResult = 'success';
         break;
       default: {
         await logScanResultError({ id: data.id, message: 'unhandled data type' });
@@ -196,12 +216,17 @@ export default WebhookEndpoint(async (req, res) => {
       });
     }
 
+    imageScanWebhookCounter.inc({ result: webhookResult });
     return res.status(200).json({ ok: true });
   } catch (e: any) {
     // Image was deleted between scan submit and callback — there's nothing to
     // update. ACK with 200 so the scanner drops the job instead of re-delivering
     // the result for a row that no longer exists.
-    if (e.message === 'Image not found') return res.status(200).json({ ok: true, skipped: 'deleted' });
+    if (e.message === 'Image not found') {
+      imageScanWebhookCounter.inc({ result: 'deleted_skip' });
+      return res.status(200).json({ ok: true, skipped: 'deleted' });
+    }
+    imageScanWebhookCounter.inc({ result: 'error' });
     return res.status(400).send({ error: e.message });
   }
 });
@@ -252,6 +277,13 @@ async function updateImage(
   try {
     await dbWrite.image.update({ where: { id }, data });
 
+    // Terminal outcome — drop the ImageScan JobQueue row so completed scans don't
+    // linger as stale entries the ingest-images cron has to prune. Non-terminal
+    // states (e.g. Error) stay queued for retry.
+    if (data.ingestion === 'Scanned' || data.ingestion === 'Blocked') {
+      await removeImageScanJobQueue([id]);
+    }
+
     if (data.ingestion === 'Scanned') {
       if (reviewKey) {
         await Promise.all([
@@ -260,6 +292,7 @@ async function updateImage(
         ]);
       }
 
+      await userImageVideoCountCaches.bust(image.userId);
       await tagIdsForImagesCache.refresh(id);
 
       const isProfilePicture = image.metadata?.profilePicture === true;
@@ -269,11 +302,7 @@ async function updateImage(
 
       // await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
       if (image.postId) await updatePostNsfwLevel(image.postId);
-
-      // Re-enqueue the parent Model3D (if this image is a 3D thumbnail) so its
-      // nsfwLevel picks up the now-scanned thumbnail. The new scanner path does
-      // this too; the legacy path must mirror it or the model stays unrated.
-      await queueModel3DForThumbnailImage(id);
+      await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
 
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
 
@@ -315,7 +344,7 @@ async function updateImage(
         // #endregion
       }
     } else if (data.ingestion === 'Blocked') {
-      await queueModel3DForThumbnailImage(id);
+      await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: image.postId });
       await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     }
 
@@ -547,6 +576,8 @@ async function getTagsFromIncomingTags({
   tags: BodyProps['tags'];
   source: BodyProps['source'];
 }) {
+  const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
+
   if (!incomingTags) {
     await logToAxiom({
       type: 'image-scan-result',
@@ -914,8 +945,19 @@ async function processScanResult({
 
 type AuditImageScanResultsReturn = AsyncReturnType<typeof auditImageScanResults>;
 async function auditImageScanResults({ image }: { image: GetImageReturn }) {
-  const prompt = normalizeText(image.meta?.['prompt'] as string | undefined);
-  const negativePrompt = normalizeText(image.meta?.['negativePrompt'] as string | undefined);
+  // Moderator-managed benign phrases (proper nouns / technical terms that coincidentally
+  // contain a detection token) are blanked up front so every downstream check — minor,
+  // poi, blockedFor — sees the same cleaned text.
+  const [prompt, negativePrompt] = await Promise.all([
+    stripBenignPhrases(
+      normalizeText(image.meta?.['prompt'] as string | undefined),
+      BlocklistType.PromptBenignPhrase
+    ),
+    stripBenignPhrases(
+      normalizeText(image.meta?.['negativePrompt'] as string | undefined),
+      BlocklistType.NegativeBenignPhrase
+    ),
+  ]);
 
   const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<
     { id: number; name: string; nsfwLevel: number; confidence: number }[]

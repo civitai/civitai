@@ -108,7 +108,9 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
 
 async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[]) {
   const moderatedTagIds = await getModeratedTags().then((data) => data.map((x) => x.id));
-  const imageIds = args.filter((x) => moderatedTagIds.includes(x.tagId)).map((x) => x.imageId);
+  const imageIds = [...new Set(args.filter((x) => moderatedTagIds.includes(x.tagId)).map((x) => x.imageId))];
+
+  if (!imageIds.length) return;
 
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
@@ -116,34 +118,39 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
   });
 }
 
-async function applyTagRules(args: TagsOnImageNewArgs[]) {
+export async function applyTagRules(args: TagsOnImageNewArgs[]) {
   const tagRules = await getTagRules();
 
-  let applied = [...args];
-  for (const rule of tagRules) {
-    const nextTags: TagsOnImageNewArgs[] = [];
-    for (const tag of applied) {
-      if (tag.tagId === rule.toId) {
-        if (rule.type === 'Replace') {
-          nextTags.push({ ...tag, tagId: rule.fromId });
-        } else {
-          nextTags.push(tag);
-          nextTags.push({ ...tag, tagId: rule.fromId, confidence: 70, source: 'Computed' });
-        }
-      } else {
-        nextTags.push(tag);
-      }
-    }
-    applied = nextTags;
+  const keyOf = (imageId: number, tagId: number) => `${imageId}|${tagId}`;
+
+  // First-wins: a tag already present is never replaced, so a genuine User/
+  // high-confidence tag is not downgraded when a rule would append it as Computed.
+  const appliedMap: Record<string, TagsOnImageNewArgs> = {};
+  for (const tag of args) {
+    const key = keyOf(tag.imageId, tag.tagId);
+    if (!appliedMap[key]) appliedMap[key] = tag;
   }
 
-  return Object.values(
-    applied.reduce<Record<string, TagsOnImageNewArgs>>((acc, tag) => {
-      const key = `${tag.imageId}-${tag.tagId}`;
-      if (!acc[key]) {
-        acc[key] = tag;
+  for (const rule of tagRules) {
+    const toAdd: Record<string, TagsOnImageNewArgs> = {};
+    const toRemove: string[] = [];
+
+    for (const key in appliedMap) {
+      const tag = appliedMap[key];
+      if (tag.tagId === rule.toId) {
+        const targetKey = keyOf(tag.imageId, rule.fromId);
+        if (rule.type === 'Replace') {
+          toRemove.push(key);
+          if (!toAdd[targetKey]) toAdd[targetKey] = { ...tag, tagId: rule.fromId };
+        } else if (!toAdd[targetKey]) {
+          toAdd[targetKey] = { ...tag, tagId: rule.fromId, confidence: 70, source: 'Computed' };
+        }
       }
-      return acc;
-    }, {})
-  );
+    }
+
+    for (const key of toRemove) delete appliedMap[key];
+    for (const key in toAdd) if (!appliedMap[key]) appliedMap[key] = toAdd[key];
+  }
+
+  return Object.values(appliedMap);
 }

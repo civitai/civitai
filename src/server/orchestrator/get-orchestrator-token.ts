@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
-import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
@@ -48,9 +48,12 @@ export async function getOrchestratorToken(
   let token: string | null;
   if (TOKEN_STORE === 'redis') {
     try {
-      token = await sysRedis
-        .hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey)
-        .then((x) => x ?? null);
+      // Wall-clock deadline so a silent sysRedis half-open can't park this read
+      // ~11min on every authenticated generation call. A fast DOWN already
+      // rejects into the catch below; the SLOW half-open needs the race.
+      token = await withSysReadDeadline(
+        sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey)
+      ).then((x) => x ?? null);
     } catch (err) {
       logSysRedisFailOpen(
         'token-mint-amplification',

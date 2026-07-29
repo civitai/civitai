@@ -4,10 +4,11 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
-import { logToAxiom, safeError } from '~/server/logging/client';
+import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import { recordTrpcError } from '~/server/prom/http-errors';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { appRouter } from '~/server/routers';
+import { runWithSerializeCtx, serializeCtxFromRequest } from '~/server/logging/trpc-serialize-log';
 
 export const config = {
   api: {
@@ -105,18 +106,39 @@ const trpcHandler = createNextApiHandler({
         axInput = undefined;
       }
 
-      await logToAxiom(
-        {
-          ...safeError(error),
-          code: error.code,
-          path,
-          type,
-          user: ctx?.user?.id,
-          browser: req.headers['user-agent'],
-          input: axInput,
-        },
-        'civitai-prod'
-      );
+      // Everything reaching here is either a genuine server fault
+      // (INTERNAL_SERVER_ERROR / TIMEOUT — the invisible raw-500 class) or a
+      // remaining client-fault 4xx (BAD_REQUEST / NOT_FOUND / CONFLICT /
+      // PRECONDITION_FAILED); FORBIDDEN/UNAUTHORIZED/TOO_MANY_REQUESTS/
+      // SERVICE_UNAVAILABLE already returned above. buildCentralErrorLog un-masks
+      // the `.cause` chain for server faults and tags severity `type:'error'` (so
+      // 500s are queryable as detected_level="error"), while tagging the client-
+      // fault 4xx `type:'info'` so they stay out of the error stream. Behavior is
+      // unchanged: this only shapes the log line — the client still gets its
+      // original response.
+      //
+      // MERGE ORDER (crux): the tRPC OPERATION type (query/mutation) is preserved
+      // under `trpcType`, and buildCentralErrorLog is spread LAST so its severity
+      // `type` wins in the final JSON — otherwise the op-type `type` would clobber
+      // the severity and the pipeline would read `type:"query"` → detected_level
+      // stays "unknown" (still invisible).
+      //
+      // Skip if the fault was ALREADY logged by a router that logs+re-throws (e.g.
+      // orchestrator what-if) so we don't double-emit; recordTrpcError above still
+      // counts it either way.
+      if (!wasServerFaultLogged(error)) {
+        await logToAxiom(
+          {
+            path,
+            trpcType: type,
+            user: ctx?.user?.id,
+            browser: req.headers['user-agent'],
+            input: axInput,
+            ...buildCentralErrorLog(error),
+          },
+          'civitai-prod'
+        );
+      }
     } else {
       console.error(`❌ tRPC failed on ${path ?? 'unknown'}`);
       console.error(error);
@@ -139,5 +161,8 @@ const trpcHandler = createNextApiHandler({
 // handled natively by `allowMethodOverride: true` above (main), so no manual
 // restore step is needed here.
 export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
-  await trpcHandler(req, res);
+  // Seed the request-scoped procedure-path context so the transformer's serialize
+  // step (an awaited descendant of trpcHandler) can name the offending procedure
+  // on an oversized/slow serialize. No-op wrapper when the instrument is disabled.
+  await runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res));
 }) as NextApiHandler;

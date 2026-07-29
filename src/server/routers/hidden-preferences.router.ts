@@ -10,7 +10,14 @@ export const hiddenPreferencesRouter = router({
     // Prevents edge caching hidden preferences since they're being cache in redis already
     // NOTE: this is required because this endpoint is being forcefully cache in the browser wihout reason
     .use(noEdgeCache())
-    .query(({ ctx }) => getAllHiddenForUser({ userId: ctx.user?.id })),
+    // `hiddenPrefsCompact` (Flipt-ramped) → emit the compact wire shape, which
+    // strips the pure-overhead object wrapping on the id-only sets so superjson
+    // doesn't freeze the event loop re-serializing a whale's entire hidden set
+    // on every response (incl. cache hits). The client re-expands to the legacy
+    // shape, so downstream data is identical. See `~/shared/hidden-preferences/compact`.
+    .query(({ ctx }) =>
+      getAllHiddenForUser({ userId: ctx.user?.id, compact: !!ctx.features?.hiddenPrefsCompact })
+    ),
   toggleHidden: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(toggleHiddenSchema)

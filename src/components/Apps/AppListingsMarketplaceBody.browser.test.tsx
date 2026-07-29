@@ -27,7 +27,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     reviewCount: 0,
     kindData:
       kind === 'onsite'
-        ? { kind: 'onsite', appBlockId: `blk-${id}`, hasPage: false }
+        ? { kind: 'onsite', appBlockId: `blk-${id}`, hasPage: false, liveUrl: `https://slug-${id}.civit.ai` }
         : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
   };
 }
@@ -36,6 +36,12 @@ const mocks = vi.hoisted(() => ({
   items: [] as ListingCard[],
   lastArgs: null as null | Record<string, unknown>,
 }));
+
+// The grid renders AppListingCard, which calls useCurrentUser() (owner "Edit"
+// deep-link gate, added in #3392). Without a mock it hits the real
+// CivitaiSessionContext — absent in the provider stack — and throws "missing
+// CivitaiSessionContext", crashing every card render. Mock a signed-out viewer.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/utils/trpc', () => ({
   trpc: {

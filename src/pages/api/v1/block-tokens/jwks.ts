@@ -34,7 +34,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // behaviour as before — no widening, since unauthorized callers never hold a
   // block JWT to verify in the first place).
   if (!(await isAppBlocksRuntimeEnabled())) {
-    res.status(503).json({ error: 'App Blocks not enabled' });
+    res.status(503).json({ error: 'Apps are not enabled' });
     return;
   }
   // L-4: surface a 503 (configuration error) on malformed-key boot

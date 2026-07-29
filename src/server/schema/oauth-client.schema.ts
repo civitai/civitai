@@ -113,5 +113,20 @@ export function redirectUriMatches(registeredUris: string[], provided: string): 
 export const deleteOauthClientSchema = z.object({ id: z.string() });
 export type DeleteOauthClientInput = z.infer<typeof deleteOauthClientSchema>;
 
+/**
+ * Moderator-only global OAuth-client search (App-Blocks external-submit flow — mod
+ * client picker). An EMPTY/absent `query` returns the CALLER's own clients (matching
+ * the non-mod default); a non-empty `query` searches ALL non-App-Block clients by app
+ * name / author username / (numeric) author id. Keyset paginated by `createdAt desc`.
+ */
+export const searchOauthClientsForModeratorSchema = z.object({
+  query: z.string().trim().max(100).optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+  cursor: z.string().optional(),
+});
+export type SearchOauthClientsForModeratorInput = z.infer<
+  typeof searchOauthClientsForModeratorSchema
+>;
+
 export const rotateOauthClientSecretSchema = z.object({ id: z.string() });
 export type RotateOauthClientSecretInput = z.infer<typeof rotateOauthClientSecretSchema>;

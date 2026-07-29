@@ -29,7 +29,14 @@ import { redis } from '~/server/redis/client';
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
-const schema = z.object({ id: z.coerce.number() });
+// Bound the coerced id to Postgres int4 (the `Model.id` column type, max
+// 2147483647). `z.coerce.number()` alone accepts arbitrarily large numeric
+// strings (bot/scraper garbage like `853267723675816615`), which then bind to
+// the int4 model id in Prisma and throw a PG "value out of range for type
+// integer" → a raw 500. Rejecting them here fails safeParse → the existing 400
+// path fires. `.int().gt(0)` also rejects non-integer / non-positive ids. A
+// valid-but-nonexistent in-range id still passes and reaches the handler's 404.
+export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(2147483647) });
 
 const baseUrl = getBaseUrl();
 
@@ -63,6 +70,11 @@ async function buildPublicModelResponse(
       periodMode: 'published',
       browsingLevel,
     },
+    // `browsingLevel` here is the ceiling this endpoint is allowed to serve, not
+    // a request for mature content, so the addon discovery rules must not fire —
+    // they 404 minor-flagged and child-tagged models that /models/{id} serves at
+    // the same id. POI still applies, matching the model page.
+    ignoreBrowsingAddons: true,
   });
   if (items.length === 0) return null;
 
@@ -70,76 +82,76 @@ async function buildPublicModelResponse(
 
   return {
     ...model,
-      mode: model.mode == null ? undefined : model.mode,
-      creator: user
-        ? {
-            username: user.username,
-            image: user.profilePicture
-              ? getEdgeUrl(user.profilePicture.url, {
-                  width: 96,
-                  name: user.username,
-                  type: user.profilePicture.type,
-                })
-              : user.image
-              ? getEdgeUrl(user.image, { width: 96, name: user.username })
-              : null,
-          }
-        : undefined,
-      tags: tagsOnModels.map(({ name }) => name),
-      modelVersions: modelVersions
-        .filter((x) => x.status === 'Published')
-        .map(({ images, files, ...version }) => {
-          const castedFiles = files as Array<
-            Omit<(typeof files)[number], 'metadata'> & { metadata: BasicFileMetadata }
-          >;
-          const primaryFile = getPrimaryFile(castedFiles);
-          if (!primaryFile) return null;
+    mode: model.mode == null ? undefined : model.mode,
+    creator: user
+      ? {
+          username: user.username,
+          image: user.profilePicture
+            ? getEdgeUrl(user.profilePicture.url, {
+                width: 96,
+                name: user.username,
+                type: user.profilePicture.type,
+              })
+            : user.image
+            ? getEdgeUrl(user.image, { width: 96, name: user.username })
+            : null,
+        }
+      : undefined,
+    tags: tagsOnModels.map(({ name }) => name),
+    modelVersions: modelVersions
+      .filter((x) => x.status === 'Published')
+      .map(({ images, files, ...version }) => {
+        const castedFiles = files as Array<
+          Omit<(typeof files)[number], 'metadata'> & { metadata: BasicFileMetadata }
+        >;
+        const primaryFile = getPrimaryFile(castedFiles);
+        if (!primaryFile) return null;
 
-          const includeDownloadUrl = model.mode !== ModelModifier.Archived;
-          const includeImages = model.mode !== ModelModifier.TakenDown;
+        const includeDownloadUrl = model.mode !== ModelModifier.Archived;
+        const includeImages = model.mode !== ModelModifier.TakenDown;
 
-          return removeEmpty({
-            ...version,
-            files: includeDownloadUrl
-              ? castedFiles
-                  .filter((file) => file.visibility === ModelFileVisibility.Public)
-                  .map(({ hashes, metadata, ...file }) => ({
-                    ...file,
-                    metadata: removeEmpty(metadata),
-                    name: safeDecodeURIComponent(
-                      getDownloadFilename({ model, modelVersion: version, file })
-                    ),
-                    hashes: hashesAsObject(hashes),
-                    downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                      versionId: version.id,
-                      type: file.type,
-                      meta: metadata,
-                      primary: primaryFile.id === file.id,
-                    })}`,
-                    primary: primaryFile.id === file.id ? true : undefined,
-                    url: undefined,
-                    visibility: undefined,
-                  }))
-              : [],
-            images: includeImages
-              ? images.map(({ url, id, ...image }) => ({
-                  url: getEdgeUrl(url, {
-                    original: true,
-                    name: id.toString(),
-                    type: image.type,
-                  }),
-                  ...image,
+        return removeEmpty({
+          ...version,
+          files: includeDownloadUrl
+            ? castedFiles
+                .filter((file) => file.visibility === ModelFileVisibility.Public)
+                .map(({ hashes, metadata, ...file }) => ({
+                  ...file,
+                  metadata: removeEmpty(metadata),
+                  name: safeDecodeURIComponent(
+                    getDownloadFilename({ model, modelVersion: version, file })
+                  ),
+                  hashes: hashesAsObject(hashes),
+                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                    versionId: version.id,
+                    type: file.type,
+                    meta: metadata,
+                    primary: primaryFile.id === file.id,
+                  })}`,
+                  primary: primaryFile.id === file.id ? true : undefined,
+                  url: undefined,
+                  visibility: undefined,
                 }))
-              : [],
-            downloadUrl: includeDownloadUrl
-              ? `${baseUrl}${createModelFileDownloadUrl({
-                  versionId: version.id,
-                  primary: true,
-                })}`
-              : undefined,
-          });
-        })
-        .filter((x) => x),
+            : [],
+          images: includeImages
+            ? images.map(({ url, id, ...image }) => ({
+                url: getEdgeUrl(url, {
+                  original: true,
+                  name: id.toString(),
+                  type: image.type,
+                }),
+                ...image,
+              }))
+            : [],
+          downloadUrl: includeDownloadUrl
+            ? `${baseUrl}${createModelFileDownloadUrl({
+                versionId: version.id,
+                primary: true,
+              })}`
+            : undefined,
+        });
+      })
+      .filter((x) => x),
   };
 }
 
@@ -182,8 +194,7 @@ const baseHandler = PublicEndpoint(async function handler(
     // full TTL when the build reads a lagging replica. 400 (bad id) is rejected
     // above the cache; 5xx throws out of buildPublicModelResponse and is never
     // stored.
-    if (body === null)
-      return res.status(404).json({ error: `No model with id ${id}` });
+    if (body === null) return res.status(404).json({ error: `No model with id ${id}` });
 
     return res.status(200).json(body);
   } catch (error) {
@@ -245,4 +256,7 @@ async function fetchModelResponseCached(
 // App Blocks: allow this route to be called with an RS256 block JWT carrying
 // the `models:read:self` scope. When no block JWT is present the call falls
 // through to the existing PublicEndpoint path, so legacy callers are unaffected.
-export default withBlockScope(baseHandler, { requiredScope: 'models:read:self' });
+export default withBlockScope(baseHandler, {
+  endpoint: 'model_detail',
+  requiredScope: 'models:read:self',
+});

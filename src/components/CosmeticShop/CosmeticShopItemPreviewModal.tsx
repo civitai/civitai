@@ -9,6 +9,7 @@ import {
   Group,
   Button,
   Loader,
+  Paper,
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
@@ -25,14 +26,20 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import type { CosmeticShopItemGetById } from '~/types/router';
+import {
+  CIVITAI_SHOP_ATTRIBUTION,
+  cosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
+import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import { showSuccessNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
-type Props = { shopItem: CosmeticShopItemGetById };
+type Props = { shopItem: CosmeticShopItemGetById; viaShopUserId?: number };
 
 export const CosmeticShopItemPurchaseCompleteModal = ({
   shopItem,
@@ -106,7 +113,7 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
   );
 };
 
-export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
+export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props) => {
   const dialog = useDialogContext();
   const { cosmetic } = shopItem;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
@@ -120,9 +127,26 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
     (shopItem.availableQuantity === null || shopItem.availableQuantity > 0) &&
     (shopItem.availableFrom === null || dayjs(shopItem.availableFrom).isBefore(dayjs()));
 
+  // Resold items carry the seller share so the buyer sees who earns what.
+  const parsedMeta = cosmeticShopItemMeta.safeParse(shopItem.meta);
+  const resaleShare = parsedMeta.success ? parsedMeta.data.sellerShare : undefined;
+  // The split note only shows for cross-creator resale — not on the official
+  // Civitai shop, and not when buying the creator's own item on their own
+  // storefront (the creator keeps the full pool there).
+  const isOwnShopListing = viaShopUserId != null && viaShopUserId === shopItem.cosmetic.creator?.id;
+  const isResale =
+    viaShopUserId != null &&
+    viaShopUserId !== CIVITAI_SHOP_ATTRIBUTION &&
+    resaleShare != null &&
+    !isOwnShopListing;
+  const { sellerAmount: resellerAmount, creatorAmount } = computeCreatorShopSplit(
+    shopItem.unitAmount,
+    resaleShare ?? 0
+  );
+
   const handlePurchaseShopItem = async () => {
     try {
-      const userCosmetic = await purchaseShopItem({ shopItemId: shopItem.id });
+      const userCosmetic = await purchaseShopItem({ shopItemId: shopItem.id, viaShopUserId });
 
       showSuccessNotification({
         message: 'Your purchase has been completed and your cosmetic is now available to equip',
@@ -179,6 +203,25 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             )}
             {!isLoading && (
               <>
+                {isResale && (
+                  <Paper withBorder radius="md" p="sm">
+                    <Text size="xs" c="dimmed" mb={4}>
+                      You&apos;re buying from a reseller — this sale splits:
+                    </Text>
+                    <Group justify="space-between">
+                      <Text size="xs">Reseller earns</Text>
+                      <Text size="xs" fw={600}>
+                        {numberWithCommas(resellerAmount)} Buzz
+                      </Text>
+                    </Group>
+                    <Group justify="space-between">
+                      <Text size="xs">Original creator earns</Text>
+                      <Text size="xs" fw={600}>
+                        {numberWithCommas(creatorAmount)} Buzz
+                      </Text>
+                    </Group>
+                  </Paper>
+                )}
                 {canPurchase ? (
                   <BuzzTransactionButton
                     disabled={purchasingShopItem || !isAvailable}

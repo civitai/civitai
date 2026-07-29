@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — parent-minted, short-TTL, mod-bound access token.
@@ -178,4 +178,192 @@ function resolveSecret(): string {
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error('NEXTAUTH_SECRET is not set');
   return secret;
+}
+
+// ---------------------------------------------------------------------------
+// AGENTIC MOD CODE-REVIEW (App Blocks P1) — per-review callback bearer token.
+//
+// The ephemeral review agent pod posts its report back to the internal
+// `agent-report-callback` route. It authenticates with a per-review bearer token
+// minted HERE and injected into the pod env (CALLBACK_TOKEN) — deliberately NOT
+// the fleet-wide `BLOCK_BUILD_CALLBACK_SECRET` (which must never leave civitai-web
+// onto an untrusted agent pod). The token is bound to the `publishRequestId` and
+// short-lived, so a leaked token can only touch THAT review's report and only for
+// the run window.
+//
+// Same construction as the `mr` entry token above (domain-separated HMAC over
+// NEXTAUTH_SECRET, compact `base64url(payload).base64url(sig)`), but a DISTINCT
+// domain prefix so the two signatures can never be confused, and it binds
+// `publishRequestId` (not a host + mod id).
+// ---------------------------------------------------------------------------
+
+/** Callback-token TTL. Bounds the whole agent run (bundle pull → analysis →
+ *  report POST). 30 min is a generous ceiling for a cost-capped single review. */
+export const AGENT_CALLBACK_TOKEN_TTL_SECONDS = 30 * 60;
+
+/** Domain-separation prefix for the agent report-callback bearer. Bump `v1` if
+ *  the payload shape changes. */
+const AGENT_CALLBACK_DOMAIN_PREFIX = 'agent-report:v1';
+
+type AgentCallbackPayload = {
+  /** publishRequestId the token authorizes a report write for. */
+  p: string;
+  /** Absolute expiry, unix seconds. */
+  exp: number;
+};
+
+/** The domain-separated string HMAC'd for the agent report-callback bearer. */
+function agentCallbackSigningString(payload: AgentCallbackPayload): string {
+  return `${AGENT_CALLBACK_DOMAIN_PREFIX}:${payload.p}:${payload.exp}`;
+}
+
+export type SignAgentCallbackTokenParams = {
+  publishRequestId: string;
+  /** Injected for testability; defaults to env.NEXTAUTH_SECRET. */
+  secret?: string;
+  /** Injected for testability; defaults to AGENT_CALLBACK_TOKEN_TTL_SECONDS. */
+  ttlSeconds?: number;
+};
+
+/**
+ * Mint a compact `base64url(payload).base64url(sig)` bearer bound to a
+ * publishRequestId, valid for `ttlSeconds` (default 30m). Injected into the
+ * review agent pod as CALLBACK_TOKEN.
+ */
+export function signAgentCallbackToken(params: SignAgentCallbackTokenParams): string {
+  const secret = params.secret ?? resolveSecret();
+  const ttl = params.ttlSeconds ?? AGENT_CALLBACK_TOKEN_TTL_SECONDS;
+  const payload: AgentCallbackPayload = {
+    p: params.publishRequestId,
+    exp: nowSec() + ttl,
+  };
+  const payloadB64 = base64url(JSON.stringify(payload));
+  const sigB64 = base64url(hmac(secret, agentCallbackSigningString(payload)));
+  return `${payloadB64}.${sigB64}`;
+}
+
+export type VerifyAgentCallbackTokenResult = {
+  ok: boolean;
+  publishRequestId?: string;
+};
+
+/**
+ * Verify an agent report-callback bearer against the expected publishRequestId.
+ * NEVER throws on malformed input — returns `{ ok:false }`. Checks: parseable
+ * payload + signature, constant-time HMAC match, not expired, and the bound
+ * `publishRequestId` equals `expectedPublishRequestId`.
+ */
+export function verifyAgentCallbackToken(
+  token: string | null | undefined,
+  expectedPublishRequestId: string,
+  opts?: { secret?: string }
+): VerifyAgentCallbackTokenResult {
+  const fail: VerifyAgentCallbackTokenResult = { ok: false };
+  if (!token || typeof token !== 'string') return fail;
+  if (!expectedPublishRequestId) return fail;
+
+  const dot = token.indexOf('.');
+  if (dot <= 0 || dot === token.length - 1) return fail;
+  const payloadB64 = token.slice(0, dot);
+  const sigB64 = token.slice(dot + 1);
+
+  let payload: AgentCallbackPayload;
+  try {
+    const parsed = JSON.parse(base64urlToBuffer(payloadB64).toString('utf8'));
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.p !== 'string' ||
+      typeof parsed.exp !== 'number'
+    ) {
+      return fail;
+    }
+    payload = parsed as AgentCallbackPayload;
+  } catch {
+    return fail;
+  }
+
+  let secret: string;
+  try {
+    secret = opts?.secret ?? resolveSecret();
+  } catch {
+    return fail;
+  }
+
+  const expectedSig = hmac(secret, agentCallbackSigningString(payload));
+  let providedSig: Buffer;
+  try {
+    providedSig = base64urlToBuffer(sigB64);
+  } catch {
+    return fail;
+  }
+  if (providedSig.length !== expectedSig.length) return fail;
+  if (!timingSafeEqual(providedSig, expectedSig)) return fail;
+
+  if (payload.exp <= nowSec()) return fail;
+  if (payload.p !== expectedPublishRequestId) return fail;
+
+  return { ok: true, publishRequestId: payload.p };
+}
+
+// ---------------------------------------------------------------------------
+// AGENTIC MOD CODE-REVIEW (App Blocks P3, in-modal chat) — the agent pod's
+// GATEWAY secret, DERIVED (no storage / no migration).
+//
+// The moderator's in-modal chat proxies to the review agent pod's OpenClaw
+// gateway (`http://<agentName>.<ns>.svc.cluster.local:18789/v1/chat/completions`).
+// The gateway expects a bearer. Rather than persist a per-review secret, civitai
+// DERIVES it deterministically from NEXTAUTH_SECRET + the publishRequestId:
+//   - `deriveAgentHooksToken(publishRequestId)` is passed to the pod at PROVISION
+//     time (Job env `HOOKS_TOKEN`); the infra template feeds it into the pod's
+//     fetch-bundle init and the pod uses it as its gateway secret basis.
+//   - the gateway BEARER civitai sends on each chat = `sha256("gw-" + hooks)`.
+// Both are pure functions of (NEXTAUTH_SECRET, publishRequestId): the pod holds
+// HOOKS_TOKEN for its whole run and civitai RECOMPUTES the bearer for every chat
+// turn, so they always match without any shared/stored state.
+//
+// DETERMINISTIC (no exp): unlike the `mr` / callback tokens above, these are
+// stable derivations, not short-TTL bearers — the recompute-must-match invariant
+// requires determinism. Domain-separated + distinct construction so neither can
+// ever collide with the `mr` entry token or the callback bearer.
+// ---------------------------------------------------------------------------
+
+/** Domain-separation prefix for the derived per-review agent HOOKS token. Bump
+ *  `v1` if the derivation shape changes (would require an infra-template bump). */
+const AGENT_HOOKS_TOKEN_DOMAIN_PREFIX = 'agent-review-hooks:v1';
+
+export type DeriveAgentHooksTokenOpts = {
+  /** Injected for testability; defaults to env.NEXTAUTH_SECRET. */
+  secret?: string;
+};
+
+/**
+ * Derive the per-review agent HOOKS token: a domain-separated HMAC-SHA256 over
+ * NEXTAUTH_SECRET keyed by the publishRequestId, hex-encoded. Deterministic and
+ * distinct from the `mr` entry token and the callback bearer (different domain
+ * prefix + a plain `:${publishRequestId}` binding, no expiry). Passed to the pod
+ * at provision time as `HOOKS_TOKEN`.
+ */
+export function deriveAgentHooksToken(
+  publishRequestId: string,
+  opts?: DeriveAgentHooksTokenOpts
+): string {
+  const secret = opts?.secret ?? resolveSecret();
+  return createHmac('sha256', secret)
+    .update(`${AGENT_HOOKS_TOKEN_DOMAIN_PREFIX}:${publishRequestId}`)
+    .digest('hex');
+}
+
+/**
+ * The bearer the OpenClaw gateway expects = `sha256("gw-" + hooksToken)` (hex),
+ * where `hooksToken = deriveAgentHooksToken(publishRequestId)`. civitai sends
+ * this on every in-modal chat request; the pod computes the same value from the
+ * HOOKS_TOKEN it was provisioned with, so the two match without shared state.
+ */
+export function deriveAgentGatewayBearer(
+  publishRequestId: string,
+  opts?: DeriveAgentHooksTokenOpts
+): string {
+  const hooks = deriveAgentHooksToken(publishRequestId, opts);
+  return createHash('sha256').update(`gw-${hooks}`).digest('hex');
 }

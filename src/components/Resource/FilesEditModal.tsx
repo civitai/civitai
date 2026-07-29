@@ -20,6 +20,7 @@ import { FilesProvider, useFilesContext } from '~/components/Resource/FilesProvi
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ModelUploadType } from '~/shared/utils/prisma/enums';
 
 function SaveButton() {
   const { startUpload, hasPending } = useFilesContext();
@@ -49,9 +50,11 @@ export default function FilesEditModal({ modelVersionId }: { modelVersionId: num
   const isOwner = modelVersion?.model?.user.id === currentUser?.id || isModerator;
   if (!isLoading && modelVersion && !isOwner) dialog.onClose();
 
+  const isTrained = modelVersion?.model?.uploadType === ModelUploadType.Trained;
+
   return (
     <Modal {...dialog} withCloseButton={false} closeOnEscape={false} fullScreen>
-      <Container size="md">
+      <Container size="xl">
         {isLoading ? (
           <Center>
             <Loader size="lg" />
@@ -84,7 +87,7 @@ export default function FilesEditModal({ modelVersionId }: { modelVersionId: num
                 </Stack>
                 <SaveButton />
               </Group>
-              <Files />
+              <Files showRenameOnPrimary={isTrained} />
             </Stack>
           </FilesProvider>
         ) : (

@@ -66,6 +66,18 @@ vi.mock('~/server/services/notification.service', () => ({
 vi.mock('~/server/services/cosmetic.service', () => ({
   grantCosmetics: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('~/server/services/creator-membership.service', () => ({
+  bustCreatorMembershipValidCache: vi.fn().mockResolvedValue(undefined),
+}));
+// redeemTokens now routes cache invalidation through the shared
+// `invalidateSubscriptionCaches` helper (#3324) — which itself busts the
+// creator-membership-validity cache alongside session/multiplier/vault/cap/civitai
+// caches, matching how stripe/paddle activation invalidates them. Mock it at that
+// seam (the function redeemTokens actually calls) so the assertion isn't coupled to
+// its transitive internals (and doesn't drag in its heavy real dep graph).
+vi.mock('~/server/utils/subscription.utils', () => ({
+  invalidateSubscriptionCaches: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { Prisma } from '@prisma/client';
 import {
@@ -75,9 +87,13 @@ import {
   revokeForChargeback,
   awardMilestones,
   advanceReferralSubscriptions,
+  redeemTokens,
 } from '../referral.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { bustCreatorMembershipValidCache } from '~/server/services/creator-membership.service';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/enums';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 const resetAllMocks = () => {
   for (const [key, v] of Object.entries(mockDbWrite)) {
@@ -110,6 +126,10 @@ const resetAllMocks = () => {
   (mockDbWrite.$queryRaw as any).mockReset();
   (createBuzzTransaction as any).mockReset();
   (createBuzzTransaction as any).mockResolvedValue({ transactionId: 't1' });
+  (bustCreatorMembershipValidCache as any).mockClear();
+  (bustCreatorMembershipValidCache as any).mockResolvedValue(undefined);
+  (invalidateSubscriptionCaches as any).mockClear();
+  (invalidateSubscriptionCaches as any).mockResolvedValue(undefined);
 };
 
 beforeEach(resetAllMocks);
@@ -819,6 +839,144 @@ describe('revokeForChargeback', () => {
 // computeLifetimeReferralPoints — Expired status retention
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// Buzz account routing — referral rewards must mint from the central bank (0)
+// so the Buzz service's insufficient-funds check (fromAccountId !== 0) is
+// bypassed, exactly like base.reward.ts. Previously they minted from the
+// balance-checked account -1 (blue), which stranded ~190 rewards once its dust
+// was spent (regression since referral-v2 #2178).
+// -----------------------------------------------------------------------------
+
+describe('buzz account routing (central bank 0)', () => {
+  const settlePayload = {
+    refereeId: 42,
+    tier: 'bronze' as const,
+    monthlyBuzzAmount: 10_000,
+    sourceEventId: 'inv-routing-1',
+  };
+
+  const okCtx = () => {
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
+      id: 1,
+      userReferralCodeId: 99,
+      firstPaidAt: null,
+      paidMonthCount: 0,
+      userReferralCode: {
+        id: 99,
+        userId: 7,
+        deletedAt: null,
+        user: { createdAt: new Date('2024-01-01') },
+      },
+    });
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([{ paidMonthCount: 0, firstPaidAt: null }]);
+    mockDbWrite.referralReward.create.mockImplementation(async ({ data }: any) => ({
+      id: 555,
+      buzzAmount: data.buzzAmount ?? 0,
+      tokenAmount: data.tokenAmount ?? 0,
+      kind: data.kind,
+      userId: data.userId,
+      refereeId: data.refereeId ?? null,
+      tierGranted: data.tierGranted ?? null,
+      ...data,
+    }));
+    mockDbWrite.userReferral.update.mockResolvedValue({});
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
+  };
+
+  it('pays the referral reward FROM the central bank (fromAccountId 0), not the balance-checked -1', async () => {
+    okCtx();
+
+    await recordMembershipPaymentReward(settlePayload);
+
+    const grant = (createBuzzTransaction as any).mock.calls.find((c: any) =>
+      String(c[0].externalTransactionId).startsWith('referral-reward:')
+    );
+    expect(grant).toBeTruthy();
+    // The load-bearing assertion: 0 is the mint that bypasses the
+    // insufficient-funds check. Reverting REFERRAL_SYSTEM_ACCOUNT_ID to -1
+    // fails this (fail-before / pass-after).
+    expect(grant[0].fromAccountId).toBe(0);
+  });
+
+  it('credits the referrer blue ledger and omits fromAccountType to match base.reward', async () => {
+    okCtx();
+
+    await recordMembershipPaymentReward(settlePayload);
+
+    const grant = (createBuzzTransaction as any).mock.calls.find((c: any) =>
+      String(c[0].externalTransactionId).startsWith('referral-reward:')
+    );
+    expect(grant[0]).toMatchObject({
+      fromAccountId: 0,
+      toAccountId: 42, // the reward recipient (RefereeBonus → referee)
+      toAccountType: 'blue',
+      amount: 2_500, // 25% of 10k
+      type: TransactionType.Reward,
+    });
+    // Canonical bank-grant pattern (base.reward.ts / merch.service.ts) omits
+    // fromAccountType entirely — the recipient ledger is set via toAccountType.
+    expect(grant[0].fromAccountType).toBeUndefined();
+    expect(grant[0].externalTransactionId).toBe('referral-reward:555');
+  });
+
+  it('settles a reward against the (mocked) bank without ever tripping insufficient-funds / revert', async () => {
+    okCtx();
+
+    await recordMembershipPaymentReward(settlePayload);
+
+    // The grant succeeded, so settleRewardRow must NOT have reverted the row
+    // back to Pending. Pre-fix, a real bank would have thrown insufficient-funds
+    // from account -1 and triggered exactly this revert path.
+    const reverted = (mockDbWrite.referralReward.update as any).mock.calls.some(
+      (c: any) =>
+        c[0]?.data?.status === ReferralRewardStatus.Pending && c[0]?.data?.revokedReason
+    );
+    expect(reverted).toBe(false);
+  });
+
+  it('claws a settled reward BACK to the central bank (toAccountId 0, bank side untyped)', async () => {
+    mockDbWrite.referralReward.findMany.mockResolvedValue([
+      { id: 2, userId: 7, status: ReferralRewardStatus.Settled, buzzAmount: 500 },
+    ]);
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+
+    await revokeForChargeback({ sourceEventId: 'pi_bank', reason: 'refund' });
+
+    const clawback = (createBuzzTransaction as any).mock.calls.find((c: any) =>
+      String(c[0].externalTransactionId).startsWith('referral-clawback:')
+    );
+    expect(clawback).toBeTruthy();
+    expect(clawback[0]).toMatchObject({
+      fromAccountId: 7, // debit the referrer (real, balance-checked account)
+      fromAccountType: 'blue',
+      toAccountId: 0, // return to the central bank
+      amount: 500,
+      type: TransactionType.ChargeBack,
+      externalTransactionId: 'referral-clawback:2',
+    });
+    // The bank side must be untyped, matching the payout + every other
+    // send-to-bank call. `objectContaining`/`toMatchObject` can't catch an
+    // extra field, so assert its absence explicitly (fail-before if
+    // toAccountType: 'blue' is still present).
+    expect(clawback[0].toAccountType).toBeUndefined();
+  });
+
+  it('clears a stale revokedReason when a reward settles successfully', async () => {
+    okCtx();
+
+    await recordMembershipPaymentReward(settlePayload);
+
+    // settleRewardRow's CAS claim flips the row to Settled — and must also
+    // null out any lingering revokedReason (the ~190 stuck rewards carry the
+    // old insufficient-funds string). Fail-before if the claim omits it.
+    const claim = (mockDbWrite.referralReward.updateMany as any).mock.calls.find(
+      (c: any) => c[0]?.data?.status === ReferralRewardStatus.Settled
+    );
+    expect(claim).toBeTruthy();
+    expect(claim[0].data.revokedReason).toBeNull();
+  });
+});
+
 describe('computeLifetimeReferralPoints', () => {
   it('includes Expired tokens in the status filter so lifetime points do not drop', async () => {
     // We can't call the function directly here without exporting, but
@@ -836,5 +994,72 @@ describe('computeLifetimeReferralPoints', () => {
         ReferralRewardStatus.Expired,
       ])
     );
+  });
+});
+
+// -----------------------------------------------------------------------------
+// redeemTokens — busts the read-time creator-membership-validity cache (#3322)
+// so a referral-granted membership takes effect on the next read immediately,
+// instead of waiting out the cache's TTL backstop.
+// -----------------------------------------------------------------------------
+
+describe('redeemTokens — creator-membership cache invalidation', () => {
+  // Wire a successful redemption: enough settled tokens, no pre-existing referral
+  // sub (create path in grantReferralSubscription), and a grantable product for the
+  // offer's tier. offerIndex 0 = { cost: 1, tier: 'bronze', durationDays: 14 }.
+  const wireSuccessfulRedemption = () => {
+    // $queryRaw is called twice inside the tx: (1) redeemTokens' settled-token
+    // SELECT ... FOR UPDATE, then (2) grantReferralSubscription's row-lock SELECT
+    // (its result is ignored). One settled token of amount 1 covers the cost-1 offer.
+    (mockDbWrite.$queryRaw as any)
+      .mockResolvedValueOnce([{ id: 1, tokenAmount: 1 }])
+      .mockResolvedValueOnce([{ id: 'referral:42:1' }]);
+    // No existing referral subscription -> grantReferralSubscription create branch.
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(null);
+    mockDbWrite.customerSubscription.create.mockResolvedValue({});
+    // findReferralProductForTier reads dbRead.product.findMany.
+    mockDbRead.product.findMany.mockResolvedValue([
+      {
+        id: 'prod_bronze',
+        defaultPriceId: 'price_bronze',
+        metadata: { tier: 'bronze', referralGrantable: true },
+      },
+    ]);
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.referralRedemption.create.mockResolvedValue({
+      id: 99,
+      createdAt: new Date(),
+      tokensSpent: 1,
+      rewardType: 'MembershipPerks',
+      metadata: {},
+    });
+  };
+
+  it('busts the membership-validity cache once for the granted user after a successful redemption', async () => {
+    wireSuccessfulRedemption();
+
+    const result = await redeemTokens({ userId: 42, offerIndex: 0 });
+
+    expect(result.id).toBe(99);
+    // The grant committed (create ran); subscription caches (incl. the
+    // membership-validity cache) were invalidated for exactly the granted user,
+    // exactly once, after the tx commit.
+    expect(mockDbWrite.customerSubscription.create).toHaveBeenCalledTimes(1);
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledTimes(1);
+    expect(invalidateSubscriptionCaches).toHaveBeenCalledWith(42);
+  });
+
+  it('does not bust the cache when the redemption transaction fails', async () => {
+    wireSuccessfulRedemption();
+    // Not enough settled tokens for the cost-1 offer -> redeemTokens throws inside
+    // the tx (rolls back), so no grant committed and no cache bust should fire.
+    (mockDbWrite.$queryRaw as any).mockReset();
+    (mockDbWrite.$queryRaw as any).mockResolvedValueOnce([]);
+
+    await expect(redeemTokens({ userId: 42, offerIndex: 0 })).rejects.toThrow(
+      /Insufficient tokens/
+    );
+    expect(invalidateSubscriptionCaches).not.toHaveBeenCalled();
   });
 });

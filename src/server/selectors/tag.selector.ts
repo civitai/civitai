@@ -24,6 +24,9 @@ export const modelTagCompositeSelect = Prisma.validator<Prisma.ModelTagSelect>()
   upVotes: true,
   downVotes: true,
 });
+export type ModelTagComposite = Prisma.ModelTagGetPayload<{
+  select: typeof modelTagCompositeSelect;
+}>;
 export const imageTagCompositeSelect = Prisma.validator<Prisma.ImageTagSelect>()({
   tagId: true,
   tagName: true,

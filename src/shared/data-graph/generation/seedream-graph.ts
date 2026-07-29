@@ -4,13 +4,12 @@
  * Controls for Seedream ecosystem (ByteDance).
  * Meta contains only dynamic props - static props defined in components.
  *
- * Seedream versions: v3, v4, v4.5
+ * Seedream versions: v3, v4, v4.5, v5.0-lite, v5.0-pro
  *
  * Note: No LoRA support, no negative prompts, samplers, steps, or CLIP skip.
  * Uses CFG scale (guidance), seed, and aspect ratio.
  */
 
-import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
@@ -34,7 +33,7 @@ import {
 // =============================================================================
 
 /** Seedream version type */
-export type SeedreamVersion = 'v3' | 'v4' | 'v4.5' | 'v5.0-lite';
+export type SeedreamVersion = 'v3' | 'v4' | 'v4.5' | 'v5.0-lite' | 'v5.0-pro';
 
 /** Seedream version IDs */
 const seedreamVersionIds = {
@@ -42,6 +41,7 @@ const seedreamVersionIds = {
   v4: 2208278,
   'v4.5': 2470991,
   'v5.0-lite': 2720141,
+  'v5.0-pro': 3110984,
 } as const;
 
 /** Options for seedream version selector (using version IDs as values) */
@@ -50,6 +50,7 @@ const seedreamVersionOptions = [
   { label: 'v4', value: seedreamVersionIds.v4 },
   { label: 'v4.5', value: seedreamVersionIds['v4.5'] },
   { label: 'v5.0 lite', value: seedreamVersionIds['v5.0-lite'] },
+  { label: 'v5.0 pro', value: seedreamVersionIds['v5.0-pro'] },
 ];
 
 // =============================================================================
@@ -67,7 +68,9 @@ const seedreamResolutionOptions = [
   { label: '4K', value: '4K' },
 ] as const;
 
-/** Versions that support the 2K/4K resolution toggle */
+/** Versions that support the 2K/4K resolution toggle. v5.0-pro is 2K-only — it
+ *  accepts 4K dimensions but downsamples to 2K, so offering the toggle just
+ *  promises a resolution it never returns. */
 const versionsWithResolutionToggle = new Set<number>([
   seedreamVersionIds['v4.5'],
   seedreamVersionIds['v5.0-lite'],
@@ -101,7 +104,7 @@ export const seedreamGraph = new DataGraph<{ ecosystem: string; workflow: string
     () =>
       createCheckpointGraph({
         versions: { options: seedreamVersionOptions },
-        defaultModelId: seedreamVersionIds['v4.5'],
+        defaultModelId: seedreamVersionIds['v5.0-pro'],
       }),
     []
   )

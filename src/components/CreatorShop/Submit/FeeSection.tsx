@@ -1,0 +1,60 @@
+import { Alert, Group, SegmentedControl, Text } from '@mantine/core';
+import { IconWallet } from '@tabler/icons-react';
+import { CREATOR_SHOP_SUBMISSION_FEE } from '~/server/schema/creator-shop.schema';
+import { numberWithCommas } from '~/utils/number-helpers';
+
+// Fee-payment account picker (with live balances) and the submission-fee notice,
+// which warns when the chosen account can't cover the fee.
+export function FeeSection({
+  buzzType,
+  onBuzzTypeChange,
+  yellowBalance,
+  greenBalance,
+  blueBalance,
+  feeAccountBalance,
+  canAffordFee,
+}: {
+  buzzType: 'yellow' | 'green' | 'blue';
+  onBuzzTypeChange: (value: 'yellow' | 'green' | 'blue') => void;
+  yellowBalance: number;
+  greenBalance: number;
+  blueBalance: number;
+  feeAccountBalance: number;
+  canAffordFee: boolean;
+}) {
+  return (
+    <>
+      <Group gap="xs" align="center">
+        <Text size="sm">Pay fee with</Text>
+        <SegmentedControl
+          size="xs"
+          value={buzzType}
+          onChange={(v) => onBuzzTypeChange(v as 'yellow' | 'green' | 'blue')}
+          data={[
+            { value: 'yellow', label: `Yellow · ${numberWithCommas(yellowBalance)}` },
+            { value: 'green', label: `Green · ${numberWithCommas(greenBalance)}` },
+            { value: 'blue', label: `Blue · ${numberWithCommas(blueBalance)}` },
+          ]}
+        />
+      </Group>
+      <Alert color={canAffordFee ? 'yellow' : 'red'} icon={<IconWallet size={18} />}>
+        <Text size="sm" fw={600}>
+          {numberWithCommas(CREATOR_SHOP_SUBMISSION_FEE)} Buzz submission fee
+        </Text>
+        <Text size="xs" c="dimmed">
+          Charged when you submit for review. If we ask for changes, you can revise and resubmit at{' '}
+          <Text span fw={700} c="dimmed">
+            no extra cost
+          </Text>
+          . The fee only applies once your item is accepted or rejected for a policy violation.
+        </Text>
+        {!canAffordFee && (
+          <Text size="xs" c="red" fw={600} mt={4}>
+            Your {buzzType} Buzz balance ({numberWithCommas(feeAccountBalance)}) doesn&apos;t cover
+            the fee.
+          </Text>
+        )}
+      </Alert>
+    </>
+  );
+}

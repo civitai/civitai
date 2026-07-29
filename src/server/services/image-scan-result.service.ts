@@ -14,11 +14,13 @@ import {
 } from '~/shared/utils/prisma/enums';
 import {
   BlockedReason,
+  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
 } from '~/server/common/enums';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -27,7 +29,6 @@ import {
 } from '~/utils/metadata/audit';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
-import { TtlCache } from '~/server/utils/ttl-cache';
 import { Prisma } from '@prisma/client';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { isDefined } from '~/utils/type-guards';
@@ -38,14 +39,21 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
+import {
+  tagIdsForImagesCache,
+  tagCacheByName,
+  userImageVideoCountCaches,
+} from '~/server/redis/caches';
+import type { RedisKeyTemplateSys } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import {
   queueComicsForPanelImage,
-  queueModel3DForThumbnailImage,
   updateComicNsfwLevelsForImage,
+  updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
@@ -56,6 +64,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { recordImageScan } from '~/server/services/scanner-audit.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
+import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { decreaseDate } from '~/utils/date-helpers';
 
 export async function isExemptFromAiVerification(
@@ -115,10 +124,59 @@ type ProcessedTag = {
   type: TagType;
 };
 
-const tagCache = new TtlCache<TagWithId>({});
+// TTL for a stashed job reason. Comfortably longer than the orchestrator's 10-min
+// workflow expiry so the terminal workflow event can still read it.
+const JOB_REASON_TTL_SECONDS = 15 * 60;
+
+const jobReasonKey = (workflowId: string) =>
+  `${REDIS_SYS_KEYS.WEBHOOKS.IMAGE_SCAN_JOB_REASON}:${workflowId}` as RedisKeyTemplateSys;
+
+/** Orchestrator job-level event shape we care about (a subset of WorkflowStepJobEvent). */
+type OrchestratorJobEvent = {
+  $type?: string;
+  workflowId?: string;
+  jobId?: string;
+  reason?: string | null;
+};
+
+// Stash the job's failure `reason` keyed by workflowId. No DB/orchestrator round-trip:
+// just a short-lived Redis write so the terminal workflow event can classify.
+//
+// Correlation contract: job events fire before the terminal workflow event, so the
+// reason is stashed by the time the workflow event reads it. Across a workflow's
+// several jobs this is last-write-wins (fine — image scans typically have one failing
+// job; the reason strings we classify on are equivalent). If the reason is missing
+// (race, or a job event that never arrived) the failure classifies as Unknown, which
+// retries conservatively under the bounded cap — safe by construction. The TTL bounds
+// a stash that never gets a following workflow event so it can't linger.
+async function captureJobFailureReason(event: OrchestratorJobEvent) {
+  const workflowId = event.workflowId;
+  const reason = typeof event.reason === 'string' ? event.reason.trim() : '';
+  if (!workflowId || !reason) return;
+  await sysRedis
+    .set(jobReasonKey(workflowId), reason, { EX: JOB_REASON_TTL_SECONDS })
+    .catch(() => null);
+}
+
+async function readJobFailureReason(workflowId: string): Promise<string | null> {
+  const reason = await sysRedis.get(jobReasonKey(workflowId)).catch(() => null);
+  if (reason) sysRedis.del(jobReasonKey(workflowId)).catch(() => null);
+  return reason ?? null;
+}
 
 export async function processImageScanResult(req: NextApiRequest) {
   const event: WorkflowEvent = req.body;
+
+  // A job-level failure event only carries the reason — capture it and return; the
+  // workflow-level terminal event (below) does the actual ingestion update. Job
+  // events carry a top-level `jobId` (workflow events never do), and we only
+  // subscribe to job:failed/expired/canceled, so any job event here is a failure.
+  // Cast rather than a type predicate so `event` stays a WorkflowEvent afterwards.
+  const jobEvent = event as OrchestratorJobEvent;
+  if (typeof jobEvent.jobId === 'string') {
+    await captureJobFailureReason(jobEvent);
+    return;
+  }
 
   const { data } = await getWorkflow({
     client: internalOrchestratorClient,
@@ -174,19 +232,37 @@ export async function processImageScanWorkflow({
   completedAt?: Date | string | null;
 }) {
   if (status !== 'succeeded') {
-    const retryCount = await markImageScanError({ workflowId, imageId });
-    // This branch is otherwise silent: it flips the image to `Error` and burns a
-    // retry regardless of whether the workflow genuinely failed or merely timed
-    // out (`expired`). Log it so we can measure the status split and how often
-    // transient orchestrator failures eat an image's retry budget before deciding
-    // how to branch them. See docs/image-scan-reliability.md §5.1/§5.4.
+    // Which orchestrator steps failed (wdTagging / mediaHash / mediaRating) plus
+    // the job-level `reason` — captured off the `job:failed`/`job:expired`
+    // callback (getWorkflow itself exposes no per-job error) — are how we tell
+    // transient infra churn (Siglip container instability, 5xx, timeouts,
+    // expiry) apart from a genuinely unscannable image. `markImageScanError`
+    // stamps a `failureClass` from those signals; the `ingest-images` cron uses
+    // it to pick a retry ceiling. retryCount ALWAYS bumps (the absolute backstop).
+    const failedSteps = extractFailedSteps(steps);
+    const failureType =
+      status === 'expired' ? 'expired' : status === 'canceled' ? 'canceled' : 'workflow-failed';
+    const reason = await readJobFailureReason(workflowId);
+    const { retryCount, mediaType, failureClass } = await markImageScanError({
+      workflowId,
+      imageId,
+      status,
+      failureType,
+      failedSteps,
+      reason,
+    });
     logToAxiom(
       {
         name: 'image-scan-result',
         type: 'warning',
         message: `workflow not succeeded: ${status}`,
         source: 'image-scan-result.service',
+        failureType,
+        failedSteps,
+        reason,
+        failureClass,
         imageId,
+        mediaType,
         workflowId,
         status,
         retryCount,
@@ -229,6 +305,12 @@ export async function processImageScanWorkflow({
     prompt,
     negativePrompt,
   });
+
+  // Terminal outcome reached (resolveScanOutcome only ever returns Scanned or
+  // Blocked) — drop the ImageScan JobQueue row so it doesn't linger as a stale
+  // entry until the ingest-images cron happens to prune it. Error scans take the
+  // early-return branch above and stay queued for retry.
+  await removeImageScanJobQueue([image.id]);
 
   // --- side effects (run after the image row reflects the resolved outcome) ---
 
@@ -416,34 +498,90 @@ async function blockImageFromRating({
 }
 
 /**
- * Flip an image to `Error` and increment its scan `retryCount`. Returns the new
- * (post-increment) retryCount so callers can log it, or `null` when no row matched
- * (e.g. the image was deleted between scan request and callback).
+ * Which orchestrator steps reported `failed`, by step name (falling back to
+ * `$type`). This is the only per-failure diagnostic we get — the workflow status
+ * itself is just `failed`/`canceled` with no reason — so it's what tells a
+ * tagging failure (`tags`/wdTagging) apart from a hash (`hash`/mediaHash) or
+ * rating (`rating`/mediaRating) failure. Reads `status` off the raw workflow
+ * steps (not modeled on `ScanResultStep`, which only carries outputs).
+ */
+function extractFailedSteps(steps: ScanResultStep[]): string[] {
+  return (steps as Array<{ name?: string; $type?: string; status?: string }>)
+    .filter((step) => step?.status === 'failed')
+    .map((step) => step.name ?? step.$type ?? 'unknown');
+}
+
+/**
+ * Flip an image to `Error`, increment its scan `retryCount`, and stamp a small
+ * `scanJobs.error = { status, failureType, failedSteps, reason, failureClass, at }`
+ * so a plain Postgres query can tell WHY a scan errored (and which step) without an
+ * orchestrator lookup — and so the `ingest-images` cron can pick a retry ceiling
+ * from `failureClass`. retryCount ALWAYS increments: it's the absolute attempt
+ * count the per-class ceilings are applied against. Returns the new (post-increment)
+ * retryCount, the image's mediaType, and the computed failureClass; retryCount /
+ * mediaType are `null` when no row matched (e.g. the image was deleted between scan
+ * request and callback).
  */
 async function markImageScanError({
   workflowId,
   imageId,
+  status,
+  failureType,
+  failedSteps,
+  reason,
+  middleware,
 }: {
   workflowId: string;
   imageId: number;
-}): Promise<number | null> {
-  const rows = await dbWrite.$queryRaw<{ retryCount: number | null }[]>`
+  status: string;
+  failureType: string;
+  failedSteps: string[];
+  /** Human failure reason from the job-level callback, if captured. */
+  reason?: string | null;
+  /** Orchestrator middleware locus, if known. Not exposed on the v2 job event today. */
+  middleware?: string | null;
+}): Promise<{
+  retryCount: number | null;
+  mediaType: string | null;
+  failureClass: string;
+}> {
+  const failureClass = classifyImageScanFailure({ reason, failureType, middleware, failedSteps });
+  // undefined keys are dropped by JSON.stringify, so absent reason/middleware
+  // simply don't appear in the stored blob.
+  const errorJson = JSON.stringify({
+    status,
+    failureType,
+    failedSteps,
+    reason: reason ?? undefined,
+    middleware: middleware ?? undefined,
+    failureClass,
+    at: new Date().toISOString(),
+  });
+  const rows = await dbWrite.$queryRaw<{ retryCount: number | null; mediaType: string | null }[]>`
     UPDATE "Image"
     SET
       "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
       "scanJobs" = jsonb_set(
         jsonb_set(
-          COALESCE("scanJobs", '{}'),
-          '{retryCount}',
-          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+          jsonb_set(
+            COALESCE("scanJobs", '{}'),
+            '{retryCount}',
+            to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+          ),
+          '{workflowId}',
+          ${JSON.stringify(workflowId)}::jsonb
         ),
-        '{workflowId}',
-        ${JSON.stringify(workflowId)}::jsonb
+        '{error}',
+        ${errorJson}::jsonb
       )
     WHERE id = ${imageId}
-    RETURNING ("scanJobs"->>'retryCount')::int as "retryCount"
+    RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType"
   `;
-  return rows[0]?.retryCount ?? null;
+  return {
+    retryCount: rows[0]?.retryCount ?? null,
+    mediaType: rows[0]?.mediaType ?? null,
+    failureClass,
+  };
 }
 
 // Image loading
@@ -570,14 +708,14 @@ async function processTags({
   }
   const deduped: NormalizedTag[] = Object.values(tagMap);
 
-  const { found, missing } = tagCache.getMany(deduped.map((x) => x.name));
+  const { found, missing } = await tagCacheByName.fetch(deduped.map((x) => x.name));
   let queriedTags: TagWithId[] = [];
   if (missing.length > 0) {
     queriedTags = await dbWrite.tag.findMany({
       where: { name: { in: missing } },
       select: { id: true, name: true, nsfwLevel: true, type: true },
     });
-    tagCache.setMany(queriedTags.map((data) => ({ key: data.name, data })));
+    await tagCacheByName.setMany(queriedTags.map((data) => ({ key: data.name, data })));
   }
   const queriedNames = new Set(queriedTags.map((t) => t.name));
   const tagsToCreate = missing.filter((name) => !queriedNames.has(name));
@@ -594,7 +732,7 @@ async function processTags({
       ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
       RETURNING id, name, "nsfwLevel", type
     `;
-    tagCache.setMany(createdTags.map((data) => ({ key: data.name, data })));
+    await tagCacheByName.setMany(createdTags.map((data) => ({ key: data.name, data })));
   }
 
   const allTags = [...found.values(), ...queriedTags, ...createdTags]
@@ -769,8 +907,14 @@ async function auditScanResults(args: {
   prompt?: string;
   negativePrompt?: string;
 }) {
-  const prompt = normalizeText(args.prompt);
-  const negativePrompt = normalizeText(args.negativePrompt);
+  // Moderator-managed benign phrases (proper nouns / technical terms that coincidentally
+  // contain a detection token) are blanked up front so every downstream check — minor,
+  // poi, blockedFor — sees the same cleaned text. A benign phrase is innocent content, so
+  // it shouldn't feed any detector.
+  const [prompt, negativePrompt] = await Promise.all([
+    stripBenignPhrases(normalizeText(args.prompt), BlocklistType.PromptBenignPhrase),
+    stripBenignPhrases(normalizeText(args.negativePrompt), BlocklistType.NegativeBenignPhrase),
+  ]);
   const tags = await dbWrite.$queryRaw<
     { id: number; name: string; type: TagType; nsfwLevel: number; confidence: number }[]
   >`
@@ -996,22 +1140,21 @@ async function applyIngestionSideEffects({
     // A previously-cached Blocked image can still satisfy the showcase query
     // filters (needsReview IS NULL, nsfwLevel != 0) so drop it from the showcase.
     if (image.postId) await bustCachesForPosts(image.postId);
+    await updateModel3DNsfwLevelForThumbnailImage({ imageId: image.id, postId: image.postId });
     // If this image belongs to a comic panel, the parent project may
     // have been search-indexed under the old (unblocked) state. Re-queue
     // it so the next index pass re-evaluates visibility against the
     // moderation gates in `comics.search-index.ts:WHERE`.
     await queueComicsForPanelImage(image.id);
-    // If this image is the thumbnail of a Model3D, enqueue the parent
-    // Model3D for nsfwLevel recompute. A Blocked thumbnail (level 32) must
-    // be reflected on `Model3D.nsfwLevel` so the row drops out of any
-    // browsingLevel that doesn't include Blocked, mirroring the
-    // Image → Article cover flow.
-    await queueModel3DForThumbnailImage(image.id);
     return;
   }
 
   // handle scanned image updates
   if (outcome.ingestion === ImageIngestionStatus.Scanned) {
+    // Scanning is what makes an already-published image countable. Bust rather
+    // than refresh: this fires once per image, so a re-query here would be N
+    // identical counts for an N-image post.
+    await userImageVideoCountCaches.bust(image.userId);
     await tagIdsForImagesCache.refresh(image.id);
     if (
       typeof image.metadata === 'object' &&
@@ -1025,17 +1168,12 @@ async function applyIngestionSideEffects({
       // Without this, the showcase cache stays empty until its 24h TTL for any model version whose images hadn't scanned yet on first read.
       await bustCachesForPosts(image.postId);
     }
+    await updateModel3DNsfwLevelForThumbnailImage({ imageId: image.id, postId: image.postId });
     await updateComicNsfwLevelsForImage(image.id);
     // Refresh the comic project in the search index — even on a clean
     // Scanned, `needsReview` may have been set, which the index treats
     // as a visibility gate.
     await queueComicsForPanelImage(image.id);
-    // If this image is the thumbnail of a Model3D row, enqueue the parent
-    // Model3D for nsfwLevel recompute. The Model3D's level is derived from
-    // its thumbnail alone (see `updateModel3DNsfwLevels` in
-    // `nsfwLevels.service.ts`), so a fresh scan on the thumbnail Image is
-    // the trigger that propagates a rating up to the parent row.
-    await queueModel3DForThumbnailImage(image.id);
 
     await queueImageSearchIndexUpdate({
       ids: [image.id],

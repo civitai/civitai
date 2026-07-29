@@ -2,7 +2,7 @@ import { Button, Text, useComputedColorScheme } from '@mantine/core';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import Image from 'next/image';
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
@@ -11,6 +11,7 @@ import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useScrollMargin } from '~/hooks/useScrollMargin';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -91,13 +92,7 @@ export function MasonryGridVirtual<TData>({
   const ref = useRef<HTMLDivElement | null>(null);
   const scrollAreaRef = useScrollAreaRef();
 
-  const [scrollMargin, setScrollMargin] = useState(0);
-  useLayoutEffect(() => {
-    if (ref.current && scrollAreaRef?.current) {
-      setScrollMargin(getOffsetTopRelativeToAncestor(ref.current, scrollAreaRef.current));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const scrollMargin = useScrollMargin(ref);
 
   const getRowKey = useCallback(
     (rowIndex: number) => {
@@ -214,20 +209,4 @@ export function MasonryGridVirtual<TData>({
       })}
     </div>
   );
-}
-
-function getOffsetTopRelativeToAncestor(descendant: HTMLElement, ancestor: HTMLElement): number {
-  let offset = 0;
-  let current: HTMLElement | null = descendant;
-
-  while (current && current !== ancestor) {
-    offset += current.offsetTop;
-    current = current.offsetParent as HTMLElement;
-  }
-
-  if (current !== ancestor) {
-    throw new Error('Ancestor is not an offsetParent of the descendant');
-  }
-
-  return offset;
 }

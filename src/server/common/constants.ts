@@ -74,25 +74,44 @@ export const constants = {
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
-  modelFileFp: ['fp16', 'fp8', 'nf4', 'fp32', 'bf16'],
+  modelFileFp: [
+    'fp32',
+    'fp16',
+    'bf16',
+    'mxfp8',
+    'fp8_mixed',
+    'fp8_scaled',
+    'fp8',
+    'int8',
+    'nf4',
+    'nvfp4',
+    'int4',
+  ],
   modelFileQuantTypes: [
+    'None',
     'Q8_0',
     'Q6_K',
     'Q5_K_M',
     'Q5_K_S',
     'Q5_1',
     'Q5_0',
+    'Q4_K_XL',
     'Q4_K_M',
     'Q4_K_S',
     'Q4_1',
     'Q4_0',
+    'Q3_K_XL',
     'Q3_K_L',
     'Q3_K_M',
     'Q3_K_S',
+    'Q2_K_XL',
     'Q2_K',
     'Q2_K_S',
     'IQ4_XS',
+    'IQ4_KS',
     'IQ4_NL',
+    'IQ3_M',
+    'IQ3_S',
     'IQ3_XS',
     'IQ3_XXS',
     'IQ2_XS',
@@ -101,6 +120,8 @@ export const constants = {
     'IQ2_M',
     'IQ1_S',
     'IQ1_M',
+    'TQ2_0',
+    'TQ1_0',
   ],
   modelFileComponentTypes: [
     'Checkpoint',
@@ -148,7 +169,6 @@ export const constants = {
     image: 320,
     articles: 320,
     bounty: 320,
-    club: 320,
   },
   modPublishOnlyStatuses: [ModelStatus.UnpublishedViolation, ModelStatus.Deleted] as ModelStatus[],
   cacheTime: {
@@ -311,20 +331,6 @@ export const constants = {
     messageMaxLength: 1200,
     locationMaxLength: 30,
   },
-  clubs: {
-    tierMaxMemberLimit: 9999,
-    tierImageAspectRatio: 1 / 1,
-    tierImageDisplayWidth: 124,
-    tierImageSidebarDisplayWidth: 84,
-    avatarDisplayWidth: 124,
-    minMonthlyBuzz: 5,
-    minStripeCharge: 3000, // 3000 Buzz = $3.00 USD
-    headerImageAspectRatio: 1 / 4,
-    postCoverImageAspectRatio: 1 / 4,
-    engagementTypes: ['engaged'],
-    coverImageHeight: 400,
-    coverImageWidth: 1600,
-  },
   article: {
     coverImageHeight: 400,
     coverImageWidth: 850,
@@ -352,6 +358,8 @@ export const constants = {
   altTruncateLength: 125,
   system: {
     user: { id: -1, username: 'civitai' },
+    // Public CivitaiOfficial content account (distinct from the system actor above).
+    officialUserId: 12042163,
   },
   creatorsProgram: {
     rewards: {
@@ -1465,6 +1473,10 @@ export const generation = {
   },
 } as const;
 export const maxRandomSeed = 2147483647;
+// Postgres INT4 (integer) column bounds — the ceiling any value written to an
+// `integer` column (e.g. metric counts) must fit under.
+export const PG_INT4_MAX = 2_147_483_647;
+export const PG_INT4_MIN = -2_147_483_648;
 export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;

@@ -1,6 +1,4 @@
-// TODO: ModelVersionEarlyAccessConfig is imported from server - consider moving schema to shared
-// Source: ~/server/schema/model-version.schema.ts (modelVersionEarlyAccessConfigSchema)
-import type { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
+import type { ModelVersionTerms } from '@civitai/buzz';
 import type { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 type NodeRef = [string, number];
@@ -17,15 +15,13 @@ export type GenerationResourceBase = {
   trainedWords: string[];
   vaeId?: number;
   baseModel: string;
-  earlyAccessConfig?: ModelVersionEarlyAccessConfig;
+  paidAccess?: { endsAt: Date | null; terms: ModelVersionTerms } | null;
   canGenerate: boolean;
   hasAccess: boolean;
   air?: string;
   additionalResourceCost?: boolean;
   availability?: Availability;
   epochNumber?: number;
-  /** Per-image license fee in Buzz set by the model version owner */
-  licensingFee?: number | null;
   // settings
   clipSkip?: number;
   minStrength: number;

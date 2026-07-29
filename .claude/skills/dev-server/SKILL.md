@@ -40,6 +40,7 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 | `stop <session-id>` | Stop a session |
 | `restart <session-id>` | Restart a session |
 | `rgb [subcmd]` | RGB proxy control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
+| `auth [subcmd]` | Auth hub control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `shutdown` | Shutdown the daemon |
 
 ## Session Object
@@ -95,6 +96,7 @@ Run `node .claude/skills/dev-server/console.mjs` (or `npm run dev:daemon`) for a
 | `c` | Clear log buffer |
 | `x` | Stop session + exit |
 | `R` | Toggle RGB proxy (start/stop) |
+| `A` | Toggle auth hub (start/stop) |
 | `q` | Quit dashboard (server keeps running) |
 | `K` | Kill daemon + quit |
 
@@ -133,6 +135,50 @@ In the dashboard TUI, press `R` to toggle the proxy.
 ### Admin / sudo requirement
 
 Redbird binds ports 80 and 443. On Windows the daemon must be launched from an elevated terminal; on macOS/Linux start it with `sudo`. If it fails the daemon surfaces `lastError` via `/rgb` status and in RGB proxy logs.
+
+## Auth Hub
+
+Authentication was split into a standalone **login hub** (`apps/auth`, SvelteKit on port **5173**). The main app is now a **verify-only spoke**: it validates the hub's `civ-token` via the hub's JWKS and no longer runs next-auth sign-in itself. So a *fresh* login in dev needs the hub running. The daemon boots and manages it as a sidecar, same as the RGB proxy.
+
+### Control
+
+```bash
+node .claude/skills/dev-server/cli.mjs auth status    # status + JWKS url + lastError
+node .claude/skills/dev-server/cli.mjs auth start
+node .claude/skills/dev-server/cli.mjs auth restart
+node .claude/skills/dev-server/cli.mjs auth logs
+```
+
+In the dashboard TUI press `A` to toggle it; the session line shows `AUTH: ready`.
+
+### Configuration
+
+`.claude/skills/dev-server/.env`:
+
+```env
+AUTH_HUB_ENABLED=true      # auto-start the hub when the daemon boots
+AUTH_HUB_PATH=apps/auth    # path relative to project root
+AUTH_HUB_PORT=5173         # hub dev port (matches AUTH_JWT_ISSUER)
+```
+
+### One-time env setup
+
+The hub reads its **own** `apps/auth/.env` (Vite loads it — the daemon does not inject). It's already been generated for local dev, reusing the main app's dev DB / redis / secret / provider creds, with a fresh EC P-256 (ES256) signing keypair. Two files matter:
+
+- `apps/auth/.env` — hub signing keypair (`AUTH_JWT_PRIVATE_KEY`/`_PUBLIC_KEY`, PKCS8/SPKI), `AUTH_JWT_ISSUER=http://localhost:5173`, shared `NEXTAUTH_SECRET` + `AUTH_INTERNAL_TOKEN`, DB/redis, providers, email.
+- root `.env` — spoke side: `AUTH_JWT_ISSUER` + `AUTH_JWKS_URI` (→ `localhost:5173`) + a matching `AUTH_INTERNAL_TOKEN`.
+
+To regenerate the keypair: `openssl ecparam -genkey -name prime256v1 -noout -out sec1.pem && openssl pkcs8 -topk8 -nocrypt -in sec1.pem -out priv.pem && openssl ec -in sec1.pem -pubout -out pub.pem` (private must be **PKCS8** — `BEGIN PRIVATE KEY`, not SEC1 — for jose's `importPKCS8`).
+
+### RGB proxy mode
+
+The hub works behind the RGB proxy too. When you browse dev at `https://civitai-dev.{red,green,blue}` (instead of `localhost:3000`), those are **distinct registrable domains, not loopback**, so the hub would reject first-party login from them unless they're trusted. The hub trusts them via `AUTH_DEV_TRUST_HOSTS` in `apps/auth/.env` (dev-only; already set to the color domains + `civitai-dev.cyan`, mirroring the main app's `SERVER_DOMAIN_*`). The main app still points at the hub via `AUTH_JWT_ISSUER=http://localhost:5173` regardless of which color you browse — each color mints its **own** `civ-token` on its own domain via the first-party OAuth flow. If you add a new color/alias, add its host to `AUTH_DEV_TRUST_HOSTS` and restart the hub (`cli.mjs auth restart`). Ignored entirely in prod.
+
+### Logging in
+
+- **Email magic-link** works out of the box (`EMAIL_*` are set) — no external console changes needed.
+- **Social providers** (GitHub/Google/Discord/Reddit) additionally require the provider console to allow the hub redirect URI `http://localhost:5173/login/<provider>/callback`. Until that's added they fail with `redirect_uri_mismatch`.
+- Any **legacy** `civitai-token` cookie already in your browser still resolves without the hub (verify-only decode) and upgrades to a `civ-token` on next request once the hub is up.
 
 ## Notes
 

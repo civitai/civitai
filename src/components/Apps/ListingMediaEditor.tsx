@@ -1,0 +1,165 @@
+import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
+import { IconInfoCircle, IconSend } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
+import { useCallback, useEffect, useState } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
+import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+
+/**
+ * On-site listing MEDIA editor (owner) — the icon / cover / screenshot editor body
+ * for a LIVE on-site app, extracted from the former standalone
+ * `/apps/[appBlockId]/listing` page so it can be embedded as the "Listing media" tab
+ * of the unified `/apps/[appBlockId]/edit` page (and reused anywhere else).
+ *
+ * Owner gating is single-sourced at the tRPC layer: `getMyListingForApp` throws
+ * FORBIDDEN (non-owner) / NOT_FOUND (no listing) → this renders NotFound. All asset
+ * edits target a SHADOW revision (mod re-review) so the live listing keeps serving.
+ *
+ * NOTE: the "Back to app" affordance lives on the OWNING page (so the tabbed /edit
+ * page has a single back control), not here.
+ */
+export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
+  const router = useRouter();
+  const utils = trpc.useUtils();
+
+  // 1) Owner-gated resolve of the backing listing id for this app block. A non-owner
+  //    (FORBIDDEN) or a missing listing (NOT_FOUND) both settle to NotFound.
+  const {
+    data: listing,
+    isLoading: listingLoading,
+    error: listingError,
+  } = trpc.appListings.getMyListingForApp.useQuery(
+    { appBlockId },
+    { enabled: !!appBlockId, retry: false }
+  );
+
+  const listingId = listing?.appListingId;
+
+  // 2) Begin (or resume) the editable shadow revision — idempotent. Every asset
+  //    mutation the step performs targets the shadow, never the live parent.
+  const [shadowId, setShadowId] = useState<string | null>(null);
+  const [beginError, setBeginError] = useState<string | null>(null);
+  const beginRevision = trpc.appListings.beginListingRevision.useMutation();
+  useEffect(() => {
+    if (!listingId || shadowId || beginRevision.isPending) return;
+    beginRevision.mutate(
+      { listingId },
+      {
+        onSuccess: (res) => setShadowId(res.shadowId),
+        onError: (e) => setBeginError(e.message),
+      }
+    );
+    // Fire once per resolved listing id; the mutation object identity is stable enough
+    // and re-adding it would loop on each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listingId]);
+
+  // Track the asset floor so the submit button matches the server floor gate
+  // (icon+cover required; screenshots optional). Submit is deliberately NOT gated on
+  // scan completion — the server go-live scan gate is the safety net.
+  const [meetsFloor, setMeetsFloor] = useState(false);
+  const handleCompletenessChange = useCallback(
+    (state: { meetsFloor: boolean; complete: boolean }) => setMeetsFloor(state.meetsFloor),
+    []
+  );
+
+  // 4) Submit the prepared shadow for moderator re-approval.
+  const submitRevision = trpc.appListings.submitListingRevision.useMutation();
+  async function handleSubmit() {
+    if (!shadowId) return;
+    try {
+      await submitRevision.mutateAsync({ shadowId });
+      await utils.appListings.getMyListingForApp.invalidate({ appBlockId });
+      showSuccessNotification({
+        title: 'Sent for review',
+        message: 'Your image changes go live once a moderator re-approves them.',
+      });
+      void router.push('/apps/my-submissions');
+    } catch (e) {
+      const message = (e as { message?: string }).message ?? 'Failed to submit for review.';
+      showErrorNotification({ title: 'Could not submit', error: new Error(message) });
+    }
+  }
+
+  // FORBIDDEN (non-owner) / NOT_FOUND (no listing) both settle to NotFound.
+  if (listingError) return <NotFound />;
+
+  return (
+    <Stack gap="lg">
+      {/* 🔴 Honest, up-front framing — mirrors ExternalListingEditForm's live-app notice. */}
+      <Alert
+        icon={<IconInfoCircle size={16} />}
+        color="blue"
+        variant="light"
+        title="Listing images"
+        data-testid="apps-listing-media-live-notice"
+      >
+        <Text size="sm">
+          This app is <b>live</b> — your image changes are staged as a revision and go live only
+          after a moderator re-approves. Update the icon, cover and screenshots below, then submit
+          for review. Media can be added while it is still scanning; it only goes live once its scan
+          finishes cleanly.
+        </Text>
+      </Alert>
+
+      {listing?.hasPendingRevision && (
+        <Alert
+          color="orange"
+          variant="light"
+          icon={<IconInfoCircle size={16} />}
+          data-testid="apps-listing-media-pending-revision-notice"
+        >
+          <Text size="sm">
+            A revision of this app is already under review. Submitting again updates that pending
+            revision.
+          </Text>
+        </Alert>
+      )}
+
+      {beginError && (
+        <Alert color="red" variant="light" data-testid="apps-listing-media-begin-error">
+          <Text size="sm">{beginError}</Text>
+        </Alert>
+      )}
+
+      {listingLoading || !listing ? (
+        <Center py="xl">
+          <Loader />
+        </Center>
+      ) : !shadowId ? (
+        <Group gap={8} data-testid="apps-listing-media-preparing">
+          <Loader size={16} />
+          <Text size="sm" c="dimmed">
+            Preparing your revision…
+          </Text>
+        </Group>
+      ) : (
+        <Stack gap="md">
+          <div data-testid="apps-listing-media-assets-panel">
+            <ListingAssetStep
+              listingId={shadowId}
+              contentRating={listing.contentRating as OffsiteContentRating}
+              suggestions={{}}
+              allowRemove
+              onCompletenessChange={handleCompletenessChange}
+            />
+          </div>
+          <Group justify="flex-end">
+            <Button
+              onClick={() => void handleSubmit()}
+              loading={submitRevision.isPending}
+              disabled={!meetsFloor}
+              leftSection={<IconSend size={16} />}
+              data-testid="apps-listing-media-submit"
+            >
+              Submit for review
+            </Button>
+          </Group>
+        </Stack>
+      )}
+    </Stack>
+  );
+}

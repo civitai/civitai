@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   scopeUpdates: [] as Array<string | null | undefined>, // setAccountScope → updateTable('Account').set({ scope })
   accountInserts: [] as Array<{ scope?: string | null }>, // insertInto('Account').values({ ... })
   userCreated: false, // insertInto('User') ran → distinguishes create vs link
+  userInsert: undefined as Record<string, unknown> | undefined, // the values passed to insertInto('User')
 }));
 
 vi.mock('../session', () => ({
@@ -48,6 +49,7 @@ vi.mock('../../db/db', () => {
         returning: () => ({
           executeTakeFirstOrThrow: async () => {
             h.userCreated = true;
+            h.userInsert = vals as Record<string, unknown>;
             return { id: h.createdUserId };
           },
         }),
@@ -94,6 +96,7 @@ beforeEach(() => {
   h.scopeUpdates = [];
   h.accountInserts = [];
   h.userCreated = false;
+  h.userInsert = undefined;
 });
 
 describe('findOrCreateUser — granted-scope storage', () => {
@@ -136,5 +139,24 @@ describe('findOrCreateUser — granted-scope storage', () => {
     // ...but the email isn't verified, so step 2 is skipped and a new user is created (no takeover)
     expect(h.userCreated).toBe(true);
     expect(h.accountInserts[0].scope).toBe(DISCORD_SCOPE);
+  });
+});
+
+describe('findOrCreateUser — canonical email only stored when verified', () => {
+  it('does NOT store an UNVERIFIED provider email as the account email (anti-squat / anti-takeover)', async () => {
+    // Storing an unverified provider email as the citext-UNIQUE email would let an attacker squat a victim's
+    // address, and step 2 would later fold the victim's verified login into it.
+    await findOrCreateUser('discord', profile({ emailVerified: false }), DISCORD_SCOPE);
+    expect(h.userCreated).toBe(true);
+    expect(h.userInsert?.email).toBeNull();
+    expect(h.userInsert?.emailVerified).toBeNull();
+  });
+
+  it('stores a VERIFIED provider email + marks it verified on create', async () => {
+    // no existing-email match (existingUserByEmail unset) → step 3 create with the verified email
+    await findOrCreateUser('discord', profile({ emailVerified: true }), DISCORD_SCOPE);
+    expect(h.userCreated).toBe(true);
+    expect(h.userInsert?.email).toBe('mod@example.com');
+    expect(h.userInsert?.emailVerified).toBeInstanceOf(Date);
   });
 });

@@ -121,7 +121,6 @@ export function filterHomeOptions(features: FeatureAccess) {
     ({ key }) =>
       ![
         key === 'bounties' && !features.bounties,
-        key === 'clubs' && !features.clubs,
         key === 'shop' && !features.cosmeticShop,
         key === 'articles' && !features.articles,
         key === 'tools' && !features.toolSearch,
@@ -173,12 +172,7 @@ export function HomeTabs() {
               <IconPointFilled color="green" size={10} className="-ml-1 -mr-2" />
             )}
             {!!value.new && value.new > new Date() && (
-              <IconPointFilled
-                color="green"
-                size={10}
-                aria-label="New"
-                className="-ml-1 -mr-2"
-              />
+              <IconPointFilled color="green" size={10} aria-label="New" className="-ml-1 -mr-2" />
             )}
           </Button>
         );

@@ -1,4 +1,5 @@
 import { Center, Loader, LoadingOverlay, Stack } from '@mantine/core';
+import type { ReactNode } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
@@ -9,9 +10,10 @@ import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schem
 
 type Props = {
   filters?: Partial<GetInfiniteChallengesInput>;
+  emptyAction?: ReactNode;
 };
 
-export function ChallengesInfinite({ filters }: Props) {
+export function ChallengesInfinite({ filters, emptyAction }: Props) {
   const { challenges, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
     useQueryChallenges(filters);
 
@@ -26,7 +28,7 @@ export function ChallengesInfinite({ filters }: Props) {
           <Loader size="xl" />
         </Center>
       ) : challenges.length === 0 ? (
-        <NoContent message="No challenges found" />
+        <NoContent message="No challenges found">{emptyAction}</NoContent>
       ) : (
         <>
           <MasonryGridVirtual

@@ -14,6 +14,7 @@ import type {
 import dayjs from '~/shared/utils/dayjs';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { createKeyedTtlMemo } from '~/server/utils/ttl-memoize';
 import { DomainColor } from '~/shared/utils/prisma/enums';
 
 const bugSelect = Prisma.validator<Prisma.BugSelect>()({
@@ -181,8 +182,23 @@ export const deleteBug = async ({ id }: DeleteBugInput) => {
   }
 };
 
-export const getLatestBugUpdate = async (input?: { domain?: DomainColor }) => {
-  const { domain } = input ?? {};
+// `getLatest` is a global-per-domain query (identical for every user of a given
+// domain color) that the client polls on a 60s staleTime. It was previously an
+// uncached dbRead.findFirst on EVERY call — one of the hottest uncached reads at
+// peak. An in-proc (per-pod), per-domain TTL memo collapses that to ~1 DB read /
+// domain / TTL / pod.
+//
+// Staleness: this in-proc TTL (CacheTTL.xs, 60s) STACKS on top of the existing
+// edgeCacheIt({ ttl: CacheTTL.xs }) 60s CDN cache (+ staleWhileRevalidate 30s) on
+// the resolver, so worst-case value age is ~2×TTL (~120s) rather than the edge
+// TTL alone. Also, `new Date()` in the where-clause below is frozen for the memo
+// window, so a scheduled / future-dated bug can surface up to ~TTL (~60s) late.
+// Immaterial for minute-scale banner data. Fail-open: a DB error propagates
+// uncached (see createKeyedTtlMemo), preserving the prior throw-on-error path.
+const LATEST_BUG_UPDATE_INPROC_TTL_MS = CacheTTL.xs * 1000;
+
+const getLatestBugUpdateMemo = createKeyedTtlMemo<number>(async (domainKey) => {
+  const domain = domainKey ? (domainKey as DomainColor) : undefined;
   const bug = await dbRead.bug.findFirst({
     select: { updatedAt: true },
     where: {
@@ -194,6 +210,10 @@ export const getLatestBugUpdate = async (input?: { domain?: DomainColor }) => {
     orderBy: { updatedAt: 'desc' },
   });
   return !bug ? 0 : bug.updatedAt.getTime();
+}, LATEST_BUG_UPDATE_INPROC_TTL_MS);
+
+export const getLatestBugUpdate = async (input?: { domain?: DomainColor }) => {
+  return getLatestBugUpdateMemo(input?.domain ?? '');
 };
 
 export const getBugStatusForReport = async (bugId: number) => {

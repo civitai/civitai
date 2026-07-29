@@ -10,14 +10,14 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { useQueryModelVersionDonationGoals } from '../ModelVersions/model-version.utils';
+import { useQueryModelVersionDonationGoal } from '../ModelVersions/model-version.utils';
 import { constants, EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 
 export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Props) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
-  const { donationGoals } = useQueryModelVersionDonationGoals({
+  const { donationGoal } = useQueryModelVersionDonationGoal({
     modelVersionId: versionId,
   });
 
@@ -36,8 +36,6 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
 
   const toggleNotifyMutation = trpc.modelVersion.toggleNotifyEarlyAccess.useMutation({
     async onMutate() {
-      await queryUtils.user.getEngagedModels.cancel();
-
       const prevEngaged = queryUtils.user.getEngagedModelVersions.getData();
 
       // Toggle the model in the Notify list
@@ -70,7 +68,7 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
 
   if (!inEarlyAccess) return null;
 
-  const earlyAccessDonationGoal = (donationGoals ?? []).find((dg) => dg.isEarlyAccess);
+  const earlyAccessDonationGoal = donationGoal;
 
   return (
     <Alert color="yellow">

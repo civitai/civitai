@@ -1,0 +1,124 @@
+# This version isn't used. Instead we've migrated to the loadbalancer version
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: metric-watcher-cluster
+  namespace: metric-watcher
+  annotations:
+    strimzi.io/kraft: enabled
+    strimzi.io/node-pools: enabled
+spec:
+  kafka:
+    version: 3.9.0
+    # Note: replicas and storage moved to KafkaNodePool
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+      - name: external
+        port: 9094
+        type: nodeport
+        tls: false
+        configuration:
+          bootstrap:
+            nodePort: 30092
+          brokers:
+            - broker: 0
+              nodePort: 30093
+    config:
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      min.insync.replicas: 1
+      default.replication.factor: 1
+      auto.create.topics.enable: false
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yml
+  entityOperator:
+    topicOperator:
+      watchedNamespace: metric-watcher
+      reconciliationIntervalMs: 60000
+    userOperator:
+      watchedNamespace: metric-watcher
+      reconciliationIntervalMs: 60000
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-metrics
+  namespace: metric-watcher
+data:
+  kafka-metrics-config.yml: |
+    # Kafka metrics configuration for Prometheus
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+    - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), topic=(.+), partition=(.*)><>Value
+      name: kafka_server_$1_$2
+      type: GAUGE
+      labels:
+       clientId: "$3"
+       topic: "$4"
+       partition: "$5"
+    - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), brokerHost=(.+), brokerPort=(.+)><>Value
+      name: kafka_server_$1_$2
+      type: GAUGE
+      labels:
+       clientId: "$3"
+       broker: "$4:$5"
+    - pattern: kafka.server<type=(.+), cipher=(.+), protocol=(.+), listener=(.+), networkProcessor=(.+)><>connections
+      name: kafka_server_$1_connections_tls_info
+      type: GAUGE
+      labels:
+        cipher: "$2"
+        protocol: "$3"
+        listener: "$4"
+        networkProcessor: "$5"
+    - pattern: kafka.server<type=(.+), clientSoftwareName=(.+), clientSoftwareVersion=(.+), listener=(.+), networkProcessor=(.+)><>connections
+      name: kafka_server_$1_connections_software
+      type: GAUGE
+      labels:
+        clientSoftwareName: "$2"
+        clientSoftwareVersion: "$3"
+        listener: "$4"
+        networkProcessor: "$5"
+    - pattern: "kafka.server<type=(.+), listener=(.+), networkProcessor=(.+)><>(.+):"
+      name: kafka_server_$1_$4
+      type: GAUGE
+      labels:
+       listener: "$2"
+       networkProcessor: "$3"
+    - pattern: kafka.server<type=(.+), listener=(.+), networkProcessor=(.+)><>(.+)
+      name: kafka_server_$1_$4
+      type: GAUGE
+      labels:
+       listener: "$2"
+       networkProcessor: "$3"
+    - pattern: "kafka.(\\w+)<type=(.+), name=(.+)Percent\\w*><>MeanRate"
+      name: kafka_$1_$2_$3_percent
+      type: GAUGE
+    - pattern: "kafka.(\\w+)<type=(.+), name=(.+)Percent\\w*><>Value"
+      name: kafka_$1_$2_$3_percent
+      type: GAUGE
+    - pattern: "kafka.(\\w+)<type=(.+), name=(.+)Percent\\w*, (.+)=(.+)><>Value"
+      name: kafka_$1_$2_$3_percent
+      type: GAUGE
+      labels:
+        "$4": "$5"
+    - pattern: kafka.(\\w+)<type=(.+), name=(.+)><>(Count|Value)
+      name: kafka_$1_$2_$3
+      type: GAUGE
+    - pattern: kafka.(\\w+)<type=(.+), name=(.+), (.+)=(.+)><>(Count|Value)
+      name: kafka_$1_$2_$3
+      type: GAUGE
+      labels:
+        "$4": "$5"

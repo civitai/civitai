@@ -60,6 +60,7 @@ import type {
   DomainColor,
   CosmeticType,
   CosmeticSource,
+  CosmeticShopItemStatus,
   CosmeticEntity,
   BuzzAccountType,
   ArticleStatus,
@@ -80,6 +81,7 @@ import type {
   BountyEngagementType,
   CsamReportType,
   Availability,
+  PaidAccessEntityType,
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
@@ -101,6 +103,8 @@ import type {
   PrizeMode,
   PoolTrigger,
   ChallengeReviewCostType,
+  ChallengeIngestionStatus,
+  ChallengeEngagementType,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
   ComicProjectStatus,
@@ -120,6 +124,7 @@ import type {
   Model3DStatus,
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
+  OutboxEntity,
 } from './enums';
 
 export type Account = {
@@ -331,6 +336,7 @@ export type Appeal = {
 };
 export type AppListing = {
   id: string;
+  serial_id: Generated<number>;
   kind: string;
   slug: string;
   name: string;
@@ -343,7 +349,10 @@ export type AppListing = {
   content_rating: string | null;
   external_url: string | null;
   connect_client_id: string | null;
+  connect_requested_scopes: number | null;
+  connect_scope_justifications: unknown | null;
   app_block_id: string | null;
+  revision_of_id: string | null;
   featured: Generated<boolean>;
   featured_order: number | null;
   user_id: number;
@@ -362,6 +371,19 @@ export type AppListingMetric = {
   tipped_amount_count: Generated<number>;
   updated_at: Generated<Timestamp>;
 };
+export type AppListingModerationEvent = {
+  id: string;
+  app_listing_id: string | null;
+  slug: string;
+  actor_user_id: number | null;
+  report_id: string | null;
+  action: string;
+  reason: string | null;
+  detail: string | null;
+  before: unknown | null;
+  after: unknown | null;
+  created_at: Generated<Timestamp>;
+};
 export type AppListingPublishRequest = {
   id: string;
   app_listing_id: string | null;
@@ -375,6 +397,18 @@ export type AppListingPublishRequest = {
   rejection_reason: string | null;
   approval_notes: string | null;
   changelog: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppListingReport = {
+  id: string;
+  app_listing_id: string;
+  reporter_user_id: number;
+  reason: string;
+  details: string | null;
+  status: Generated<string>;
+  resolved_by_user_id: number | null;
+  resolved_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -396,6 +430,29 @@ export type AppListingScreenshot = {
   image_id: number | null;
   order: Generated<number>;
   caption: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppReviewAgentReport = {
+  id: string;
+  publish_request_id: string;
+  slug: string;
+  kind: Generated<string>;
+  app_block_id: string | null;
+  oauth_client_id: string | null;
+  version: string;
+  bundle_sha256: string;
+  status: Generated<string>;
+  model: string | null;
+  started_at: Generated<Timestamp>;
+  completed_at: Timestamp | null;
+  code_review: unknown | null;
+  security_audit: unknown | null;
+  scope_verdicts: unknown | null;
+  summary_md: string | null;
+  prior_report_id: string | null;
+  token_usage: unknown | null;
+  cost_usd: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -642,13 +699,6 @@ export type AuctionBase = {
   validForDays: Generated<number>;
   description: string | null;
 };
-export type BaseModelLicensingFee = {
-  baseModel: string;
-  modelType: ModelType;
-  modelVersionId: number;
-  createdAt: Generated<Timestamp>;
-  updatedAt: Timestamp;
-};
 export type Bid = {
   id: Generated<number>;
   auctionId: number;
@@ -738,11 +788,56 @@ export type Blocklist = {
 export type BlockScopeInvocation = {
   id: Generated<string>;
   user_id: number;
-  app_block_id: string;
-  block_instance_id: string;
+  /**
+   * NULLABLE (App Dev Tunnel Phase 2): a PRE-APPROVAL dev-tunnel spend has NO
+   * AppBlock row (approval is what creates it), so the token carries a SYNTHETIC
+   * `ephemeral-<slug>` appBlockId that can never FK-resolve. For that case this
+   * column is NULL and the synthetic ref is captured in `syntheticAppId`, so the
+   * durable per-spend audit row persists instead of FK-failing + being swallowed
+   * (the "only a log line" gap). An APPROVED app still sets this (real FK).
+   */
+  app_block_id: string | null;
+  /**
+   * The synthetic, non-resolving dev-app reference (`ephemeral-<slug>` /
+   * `local-<slug>` / `pending-<pubreqId>`) for a PRE-APPROVAL dev-tunnel spend —
+   * the forensic anchor when `appBlockId` is NULL. NULL for every approved-app row.
+   */
+  synthetic_app_id: string | null;
+  /**
+   * NULLABLE: an EXTERNAL OAuth invocation (`source = 'external-oauth'`) has no
+   * block instance — the acting app is a pure OauthClient with no App Block. A
+   * block-token row always sets this.
+   */
+  block_instance_id: string | null;
+  /**
+   * The acting OauthClient id for an EXTERNAL OAuth invocation (`source =
+   * 'external-oauth'`) — the "which app" for external OAuth API usage, mirroring
+   * what `appBlockId` is for a block-token row. NULL for a block-token row.
+   * Intentionally FK-LESS text so the audit row SURVIVES deletion of the
+   * OauthClient it references (an audit trail must outlive the app).
+   */
+  oauth_client_id: string | null;
+  /**
+   * Discriminates the token population that made the call: `'app-block'` (an App
+   * Block block-token, the historical default) vs `'external-oauth'` (a standard
+   * external OAuth access token verified at `enforceTokenScope`). Additive:
+   * existing rows backfill to `'app-block'`.
+   */
+  source: Generated<string>;
   scope: string;
   endpoint: string;
   status_code: number;
+  /**
+   * Structured per-action audit detail (W13). NULL for a passive read (whose
+   * friendly label is derived from `scope` at render time) and for any row
+   * written before this column existed. For an impactful MUTATION it carries a
+   * stable `action` code + minimal subject refs (`{ action, amount?, toUserId?,
+   * modelVersionId?, entityId?, entityType?, key?, outcome? }` — see
+   * BlockActionDetail). Stores IDS, not display names — the view resolves them
+   * via batch lookups, so the row never rots when a name changes. Nullable + no
+   * default → additive, backwards-compatible, no backfill.
+   */
+  detail: unknown | null;
   invoked_at: Generated<Timestamp>;
 };
 export type BlockSpendAttribution = {
@@ -770,6 +865,22 @@ export type BlockSpendAttribution = {
   spend_share_pct: number;
   app_owner_share_cents: number;
   app_owner_user_id: number;
+  /**
+   * The USER who published the shared content this generation ran on behalf
+   * of (the "content author") — the durable BASIS for a FUTURE creator
+   * payout. Resolved SERVER-SIDE from `sharedContentKey` against the calling
+   * app's own `app_<slug>.shared_kv`, never client-supplied. NULL when no
+   * key was supplied, the row is missing/hidden, or the author is the
+   * spender (self) or the app owner. FULLY GENERIC — any app that publishes
+   * cross-user shared content can populate it — not tied to any one app kind.
+   * TRACK-ONLY today: nothing pays out on it yet.
+   */
+  content_author_user_id: number | null;
+  /**
+   * The opaque shared-storage `key` the app supplied for this generation
+   * (bounded, app-owned). NULL when the app supplied none.
+   */
+  shared_content_key: string | null;
   status: Generated<string>;
   /**
    * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
@@ -1245,10 +1356,12 @@ export type Challenge = {
   modelVersionIds: Generated<number[]>;
   allowedNsfwLevel: Generated<number>;
   judgingPrompt: string | null;
+  judgingCategories: unknown | null;
   reviewPercentage: Generated<number>;
   maxReviews: number | null;
   collectionId: number | null;
   maxEntriesPerUser: Generated<number>;
+  maxParticipants: number | null;
   prizes: Generated<unknown>;
   entryPrize: unknown | null;
   entryPrizeRequirement: Generated<number>;
@@ -1263,14 +1376,36 @@ export type Challenge = {
   operationSpent: Generated<number>;
   reviewCostType: Generated<ChallengeReviewCostType>;
   reviewCost: Generated<number>;
-  createdById: number;
+  entryFee: Generated<number>;
+  buzzType: Generated<string>;
+  createdById: number | null;
   source: Generated<ChallengeSource>;
   judgeId: number | null;
   status: Generated<ChallengeStatus>;
+  ingestion: Generated<ChallengeIngestionStatus>;
+  scannedAt: Timestamp | null;
   metadata: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   eventId: number | null;
+};
+export type ChallengeCategory = {
+  key: string;
+  label: string;
+  group: string;
+  criteria: string;
+  rubric: string | null;
+  rubricNsfw: string | null;
+  sortOrder: Generated<number>;
+  active: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ChallengeEngagement = {
+  userId: number;
+  challengeId: number;
+  type: ChallengeEngagementType;
+  createdAt: Generated<Timestamp>;
 };
 export type ChallengeEvent = {
   id: Generated<number>;
@@ -1281,6 +1416,7 @@ export type ChallengeEvent = {
   endDate: Timestamp;
   active: Generated<boolean>;
   winnerCooldownDays: number | null;
+  coverImageId: number | null;
   createdById: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
@@ -1298,8 +1434,13 @@ export type ChallengeJudge = {
   reviewTemplate: string | null;
   winnerSelectionPrompt: string | null;
   active: Generated<boolean>;
+  userSelectable: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type ChallengeReport = {
+  challengeId: number;
+  reportId: number;
 };
 export type ChallengeWinner = {
   id: Generated<number>;
@@ -1606,6 +1747,7 @@ export type ComicChapter = {
   earlyAccessConfig: unknown | null;
   earlyAccessEndsAt: Timestamp | null;
   publishedAt: Timestamp | null;
+  initialPublishedAt: Timestamp | null;
   nsfwLevel: Generated<number>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
@@ -1712,6 +1854,7 @@ export type Comment = {
   modelId: number;
   locked: Generated<boolean | null>;
   hidden: Generated<boolean | null>;
+  pinnedAt: Timestamp | null;
 };
 export type CommentReaction = {
   id: Generated<number>;
@@ -1768,6 +1911,7 @@ export type Cosmetic = {
   productId: string | null;
   leaderboardId: string | null;
   leaderboardPosition: number | null;
+  createdById: number | null;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
@@ -1782,6 +1926,10 @@ export type CosmeticShopItem = {
   title: string;
   description: string | null;
   archivedAt: Timestamp | null;
+  status: Generated<CosmeticShopItemStatus>;
+  reviewedById: number | null;
+  reviewedAt: Timestamp | null;
+  rejectionReason: string | null;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;
@@ -1819,6 +1967,7 @@ export type CryptoDeposit = {
   paidFiat: number | null;
   chain: string | null;
   retryCount: Generated<number>;
+  stuckNotifiedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -1885,10 +2034,10 @@ export type DonationGoal = {
   title: string;
   description: string | null;
   goalAmount: number;
-  paidAmount: Generated<number>;
+  entityType: PaidAccessEntityType | null;
+  entityId: number | null;
   modelVersionId: number | null;
   createdAt: Generated<Timestamp>;
-  isEarlyAccess: Generated<boolean>;
   active: Generated<boolean>;
 };
 export type DownloadHistory = {
@@ -2198,6 +2347,15 @@ export type LicenseToModel = {
   A: number;
   B: number;
 };
+export type LicensingRoot = {
+  id: Generated<number>;
+  baseModel: string;
+  modelType: ModelType;
+  modelVersionId: number;
+  isDefault: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type Link = {
   id: Generated<number>;
   url: string;
@@ -2236,7 +2394,6 @@ export type Model = {
   uploadType: Generated<ModelUploadType>;
   locked: Generated<boolean>;
   underAttack: Generated<boolean>;
-  earlyAccessDeadline: Timestamp | null;
   mode: ModelModifier | null;
   unlisted: Generated<boolean>;
   gallerySettings: Generated<unknown>;
@@ -2245,6 +2402,7 @@ export type Model = {
   lockedProperties: Generated<string[]>;
   scannedAt: Timestamp | null;
   sfwOnly: Generated<boolean>;
+  isOfficial: Generated<boolean>;
   allowNoCredit: Generated<boolean>;
   allowCommercialUse: Generated<CommercialUse[]>;
   allowDerivatives: Generated<boolean>;
@@ -2406,6 +2564,7 @@ export type ModelFile = {
   headerData: unknown | null;
   visibility: Generated<ModelFileVisibility>;
   dataPurged: Generated<boolean>;
+  replacedAt: Timestamp | null;
 };
 export type ModelFileHash = {
   fileId: number;
@@ -2513,6 +2672,7 @@ export type ModelVersion = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   publishedAt: Timestamp | null;
+  initialPublishedAt: Timestamp | null;
   status: Generated<ModelStatus>;
   trainingStatus: TrainingStatus | null;
   trainingDetails: unknown | null;
@@ -2525,15 +2685,14 @@ export type ModelVersion = {
   settings: unknown | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
-  earlyAccessEndsAt: Timestamp | null;
-  earlyAccessConfig: unknown | null;
   uploadType: Generated<ModelUploadType>;
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
-  licensingFee: number | null;
+  licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
+  licensingSourceVersionId: number | null;
 };
 export type ModelVersionEngagement = {
   userId: number;
@@ -2642,6 +2801,25 @@ export type OauthConsent = {
   buzzLimit: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Generated<Timestamp>;
+};
+export type Outbox = {
+  id: Generated<string>;
+  event: string;
+  entityType: OutboxEntity;
+  entityId: string;
+  createdAt: Generated<Timestamp | null>;
+  details: unknown | null;
+  attempts: number | null;
+};
+export type PaidAccess = {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  endsAt: Timestamp | null;
+  timeframeDays: number | null;
+  terms: unknown;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type Partner = {
   id: Generated<number>;
@@ -3337,6 +3515,7 @@ export type Thread = {
   challengeId: number | null;
   model3dId: number | null;
   model3dReviewId: number | null;
+  appListingId: number | null;
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
@@ -3716,10 +3895,13 @@ export type DB = {
   app_blocks: AppBlock;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
   app_listing_metrics: AppListingMetric;
+  app_listing_moderation_events: AppListingModerationEvent;
   app_listing_publish_requests: AppListingPublishRequest;
+  app_listing_reports: AppListingReport;
   app_listing_reviews: AppListingReview;
   app_listing_screenshots: AppListingScreenshot;
   app_listings: AppListing;
+  app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   Article: Article;
@@ -3732,7 +3914,6 @@ export type DB = {
   ArticleStat: ArticleStat;
   Auction: Auction;
   AuctionBase: AuctionBase;
-  BaseModelLicensingFee: BaseModelLicensingFee;
   Bid: Bid;
   BidRecurring: BidRecurring;
   block_attribution_payout: BlockAttributionPayout;
@@ -3765,8 +3946,11 @@ export type DB = {
   BuzzWithdrawalRequestHistory: BuzzWithdrawalRequestHistory;
   CashWithdrawal: CashWithdrawal;
   Challenge: Challenge;
+  ChallengeCategory: ChallengeCategory;
+  ChallengeEngagement: ChallengeEngagement;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
+  ChallengeReport: ChallengeReport;
   ChallengeWinner: ChallengeWinner;
   Changelog: Changelog;
   Chat: Chat;
@@ -3857,6 +4041,7 @@ export type DB = {
   Leaderboard: Leaderboard;
   LeaderboardResult: LeaderboardResult;
   License: License;
+  LicensingRoot: LicensingRoot;
   Link: Link;
   ModActivity: ModActivity;
   Model: Model;
@@ -3893,6 +4078,8 @@ export type DB = {
   NewOrderSmite: NewOrderSmite;
   OauthClient: OauthClient;
   OauthConsent: OauthConsent;
+  Outbox: Outbox;
+  PaidAccess: PaidAccess;
   Partner: Partner;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;

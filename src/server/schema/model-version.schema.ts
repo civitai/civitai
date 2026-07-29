@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import type { ModelVersionTerms } from '@civitai/buzz';
 import * as z from 'zod';
 import {
   MAX_DONATION_GOAL,
@@ -82,6 +83,7 @@ export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
 export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
 export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
+export const trainingDetailsBaseModelsMageFlow = ['mageflow'] as const;
 export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
 export const trainingDetailsBaseModelsAcestep15Xl = [
   'acestep_15_xl_base',
@@ -103,6 +105,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsAnima,
   ...trainingDetailsBaseModelsBoogu,
   ...trainingDetailsBaseModelsKrea2,
+  ...trainingDetailsBaseModelsMageFlow,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -333,13 +336,21 @@ export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>
 export const addLinkedComponentSchema = z.object({
   id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
   targetVersionId: z.number(), // linked resource's version ID
+  targetFileId: z.number().optional(), // explicit file to link; falls back to auto-picking the primary
+  replaceFileId: z.number().optional(), // redundant file on the source version to delete after linking
   componentType: z.enum(constants.modelFileComponentTypes),
-  modelId: z.number(), // target model ID
-  modelName: z.string(), // target model name
-  versionName: z.string(), // target version name
+  modelId: z.number(),
+  modelName: z.string(),
+  versionName: z.string(),
   isRequired: z.boolean().optional().default(true),
 });
 export type AddLinkedComponentInput = z.infer<typeof addLinkedComponentSchema>;
+
+export const linkOfficialFileByHashSchema = z.object({
+  id: z.number(), // host version being edited; caller must own it
+  sha256: z.string().min(1),
+});
+export type LinkOfficialFileByHashInput = z.infer<typeof linkOfficialFileByHashSchema>;
 
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
 const recommendedResourceSchema = z.object({
@@ -352,25 +363,55 @@ export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 
 export const MAX_LICENSING_FEE = 100;
 
-export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
-export const modelVersionEarlyAccessConfigSchema = z.object({
-  timeframe: z.number(),
-  chargeForDownload: z.boolean().default(false),
-  downloadPrice: z.number().min(100).max(MAX_DONATION_GOAL).optional(),
-  chargeForGeneration: z.boolean().default(false),
-  generationPrice: z.number().min(50).optional(),
-  generationTrialLimit: z.number().max(1000).default(10),
-  donationGoalEnabled: z.boolean().default(false),
-  donationGoal: z.number().min(MIN_DONATION_GOAL).max(MAX_DONATION_GOAL).optional(),
-  donationGoalId: z.number().optional(),
-  originalPublishedAt: z.coerce.date().optional(),
-  freeGeneration: z.boolean().optional(),
+// Paid-access write boundary — the zod contract the client sends (mirrors the @civitai/buzz domain
+// types). `terms` is bundle semantics: buying `download` grants generation too; `generation`
+// describes how non-buyers may generate.
+const downloadGrantSchema = z.object({ price: z.number().min(100).max(MAX_DONATION_GOAL) });
+const generationGrantSchema = z.union([
+  z.object({ free: z.literal(true) }),
+  // `price` optional → falls back to the download price; `trialLimit` = free test generations.
+  // trialLimit must be an integer: mini/[id].ts CASTs it to int in raw SQL, which hard-errors (500)
+  // on a fractional value rather than rounding.
+  z.object({
+    price: z.number().min(50).optional(),
+    trialLimit: z.number().int().min(0).max(1000).optional(),
+  }),
+]);
+export const modelVersionTermsSchema = z.object({
+  download: downloadGrantSchema.optional(),
+  generation: generationGrantSchema.optional(),
 });
 
-export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema;
-// modelVersionEarlyAccessConfigSchema.omit({
-//   buzzTransactionId: true,
-// });
+export type ModelVersionPaidAccessInputSchema = z.infer<typeof modelVersionPaidAccessInputSchema>;
+export const modelVersionPaidAccessInputSchema = z.object({
+  // permanent = never-expiring gate (CP-member-only, enforced at the write endpoint). timeframeDays
+  // is the pre-publish window; 0 (and not permanent) means "configured but ungated" → gate cleared.
+  permanent: z.boolean().optional(),
+  timeframeDays: z.number().min(0).optional(),
+  terms: modelVersionTermsSchema,
+});
+
+export const donationGoalInputSchema = z.object({
+  amount: z.number().min(MIN_DONATION_GOAL).max(MAX_DONATION_GOAL),
+});
+
+// Read DTO for a model version's gate — the single shape the version is loaded with (getById /
+// getModel) and the form initializes from. NOT the write-input shape (that's the schemas above).
+export type ModelVersionPaidAccessDto = {
+  endsAt: Date | null;
+  timeframeDays: number | null;
+  terms: ModelVersionTerms;
+};
+
+// Narrow input for editing only a version's paid access (e.g. from the creator studio) without
+// round-tripping the whole version. `id` is named for the `isOwnerOrModerator` middleware; a null
+// `paidAccess` clears the gate.
+export type UpdateModelVersionPaidAccessInput = z.infer<typeof updateModelVersionPaidAccessSchema>;
+export const updateModelVersionPaidAccessSchema = z.object({
+  id: z.number(),
+  paidAccess: modelVersionPaidAccessInputSchema.nullish(),
+  donationGoal: donationGoalInputSchema.nullish(),
+});
 
 export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
@@ -407,7 +448,8 @@ export const modelVersionUpsertSchema2 = z.object({
   recommendedResources: z.array(recommendedResourceSchema).optional(),
   templateId: z.number().optional(),
   bountyId: z.number().optional(),
-  earlyAccessConfig: earlyAccessConfigInput.nullish(),
+  paidAccess: modelVersionPaidAccessInputSchema.nullish(),
+  donationGoal: donationGoalInputSchema.nullish(),
   earlyAccessGoalConfig: z
     .object({
       unitAmount: z.number(),
@@ -415,15 +457,32 @@ export const modelVersionUpsertSchema2 = z.object({
     .nullish(),
   uploadType: z.enum(ModelUploadType).optional(),
   usageControl: z.enum(ModelUsageControl).optional(),
-  licensingFee: z.number().int().min(0).max(MAX_LICENSING_FEE).nullish(),
+  licensingFee: z.number().min(0).max(MAX_LICENSING_FEE).nullish(),
   licensingFeeType: z.enum(LicensingFeeType).nullish(),
   licensingFeeSettlementCurrency: z.enum(LicensingFeeSettlementCurrency).nullish(),
+  // Inherit another version's licensing fee (a LicensingRoot for this baseModel).
+  // Null falls back to the (baseModel, modelType) rule.
+  licensingSourceVersionId: z.number().nullish(),
+  // Creator Controls: per-version metric privacy (merged into ModelVersion.meta).
+  meta: z
+    .object({
+      hideBuzz: z.boolean().optional(),
+      hideDownloads: z.boolean().optional(),
+      hideGenerations: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
 export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
+});
+
+export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
+export const getLicensingRootsSchema = z.object({
+  baseModel: z.string(),
+  modelType: z.enum(ModelType).optional(),
 });
 
 export type UpsertExplorationPromptInput = z.infer<typeof upsertExplorationPromptSchema>;

@@ -40,7 +40,6 @@ const availableReactions: Partial<Record<ToggleReactionInput['entityType'], Revi
   image: ['Like', 'Heart', 'Laugh', 'Cry'],
   post: ['Like', 'Heart', 'Laugh', 'Cry'],
   bountyEntry: ['Like', 'Heart', 'Laugh', 'Cry'],
-  clubPost: ['Like', 'Heart', 'Laugh', 'Cry'],
   commentOld: ['Like', 'Heart', 'Laugh', 'Cry'],
   comment: ['Like', 'Heart', 'Laugh', 'Cry'],
   article: ['Like', 'Heart', 'Laugh', 'Cry'],
@@ -254,7 +253,7 @@ function ReactionsList({
               noEmpty={noEmpty}
               invisibleEmpty={invisibleEmpty}
             >
-              {(props) => <ReactionBadge {...props} abbreviate={abbreviate} />}
+              {(props) => <ReactionBadge {...props} abbreviate={abbreviate} resetKey={entityId} />}
             </ReactionButton>
           );
         })}
@@ -268,6 +267,7 @@ function ReactionBadge({
   reaction,
   canClick,
   abbreviate,
+  resetKey,
   ...buttonProps
 }: {
   hasReacted: boolean;
@@ -275,6 +275,7 @@ function ReactionBadge({
   reaction: ReviewReactions;
   canClick: boolean;
   abbreviate?: boolean;
+  resetKey?: string | number;
 } & Omit<ButtonProps, 'children'> &
   React.ComponentPropsWithoutRef<'button'>) {
   const color = hasReacted ? 'blue' : 'gray';
@@ -299,7 +300,7 @@ function ReactionBadge({
       </Text>{' '}
       {!hideReactionCount && (
         <Text inherit lh={1}>
-          <AnimatedCount value={count} abbreviate={abbreviate ?? false} />
+          <AnimatedCount value={count} abbreviate={abbreviate ?? false} resetKey={resetKey} />
         </Text>
       )}
     </Button>
@@ -346,7 +347,7 @@ function BuzzTippingBadge({
     >
       <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
       <Text inherit lh={1}>
-        <AnimatedCount value={tippedAmountCount + tippedAmount} />
+        <AnimatedCount value={tippedAmountCount + tippedAmount} resetKey={entityId} />
       </Text>
     </Badge>
   );

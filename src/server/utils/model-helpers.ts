@@ -138,47 +138,59 @@ export type GroupedFileVariants<T> = {
 
 // Quality ranking for fp (higher index = better quality)
 const fpQualityRank: Record<ModelFileFp, number> = {
-  nf4: 1,
-  fp8: 2,
-  bf16: 3,
-  fp16: 4,
-  fp32: 5,
+  int4: 1,
+  nvfp4: 2,
+  nf4: 3,
+  int8: 4,
+  fp8: 5,
+  fp8_scaled: 6,
+  fp8_mixed: 7,
+  mxfp8: 8,
+  bf16: 9,
+  fp16: 10,
+  fp32: 11,
 };
 
 // Quality ranking for quant types (higher index = better quality)
 const quantQualityRank: Record<ModelFileQuantType, number> = {
-  IQ1_M: 1,
-  IQ1_S: 2,
-  IQ2_XXS: 3,
-  IQ2_XS: 4,
-  IQ2_S: 5,
-  IQ2_M: 6,
-  Q2_K_S: 7,
-  Q2_K: 8,
-  IQ3_XXS: 9,
-  IQ3_XS: 10,
-  Q3_K_S: 11,
-  Q3_K_M: 12,
-  Q3_K_L: 13,
-  IQ4_XS: 14,
-  IQ4_NL: 15,
-  Q4_0: 16,
-  Q4_1: 17,
-  Q4_K_S: 18,
-  Q4_K_M: 19,
-  Q5_0: 20,
-  Q5_1: 21,
-  Q5_K_S: 22,
-  Q5_K_M: 23,
-  Q6_K: 24,
-  Q8_0: 25,
+  TQ1_0: 1,
+  TQ2_0: 2,
+  IQ1_M: 3,
+  IQ1_S: 4,
+  IQ2_XXS: 5,
+  IQ2_XS: 6,
+  IQ2_S: 7,
+  IQ2_M: 8,
+  Q2_K_S: 9,
+  Q2_K: 10,
+  Q2_K_XL: 11,
+  IQ3_XXS: 12,
+  IQ3_XS: 13,
+  IQ3_S: 14,
+  IQ3_M: 15,
+  Q3_K_S: 16,
+  Q3_K_M: 17,
+  Q3_K_L: 18,
+  Q3_K_XL: 19,
+  IQ4_XS: 20,
+  IQ4_KS: 21,
+  IQ4_NL: 22,
+  Q4_0: 23,
+  Q4_1: 24,
+  Q4_K_S: 25,
+  Q4_K_M: 26,
+  Q4_K_XL: 27,
+  Q5_0: 28,
+  Q5_1: 29,
+  Q5_K_S: 30,
+  Q5_K_M: 31,
+  Q6_K: 32,
+  Q8_0: 33,
+  None: 34,
 };
 
-
 /**
- * Sorts files by quality (best quality first).
- * For SafeTensor files: fp32 > fp16 > bf16 > fp8 > nf4
- * For GGUF files: Q8_0 > Q6_K > Q5_K_M > ... > Q2_K > IQ2_M > ... > IQ1_M
+ * Sorts files by quality (best quality first), per fpQualityRank / quantQualityRank.
  * Full size > pruned size
  */
 function sortByQuality<T extends FileFormatType>(files: T[]): T[] {
@@ -280,7 +292,7 @@ export function groupFilesByVariant<T extends FileFormatType>(
 /**
  * Infers component type from file type if not explicitly set in metadata.
  */
-function inferComponentType(fileType: string): ModelFileComponentType | null {
+export function inferComponentType(fileType: string): ModelFileComponentType | null {
   switch (fileType) {
     case 'Model':
     case 'Pruned Model':
@@ -302,4 +314,14 @@ function inferComponentType(fileType: string): ModelFileComponentType | null {
     default:
       return null;
   }
+}
+
+// A linked component whose source ModelFile (settings.fileId) has been deleted
+// must not surface on public reads — otherwise consumers see a component that
+// 404s on download. `liveFileIds` is the set of fileIds still present in the DB.
+export function selectLiveLinkedComponents<T extends { fileId?: number | null }>(
+  components: T[],
+  liveFileIds: Set<number>
+): T[] {
+  return components.filter((c) => c.fileId != null && liveFileIds.has(c.fileId));
 }

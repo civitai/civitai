@@ -1,6 +1,15 @@
 import type { CardProps } from '@mantine/core';
-import { Card, Group, Stack, useMantineTheme, useComputedColorScheme } from '@mantine/core';
+import {
+  Card,
+  Group,
+  Stack,
+  Tooltip,
+  useMantineTheme,
+  useComputedColorScheme,
+} from '@mantine/core';
+import { IconShoppingBag } from '@tabler/icons-react';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
@@ -135,6 +144,7 @@ export const CreatorCardV2 = ({
 
   ...cardProps
 }: CreatorCardPropsV2) => {
+  const features = useFeatureFlags();
   return (
     <CreatorCardSimple
       {...cardProps}
@@ -143,6 +153,23 @@ export const CreatorCardV2 = ({
         withActions
           ? (creator) => (
               <Group gap={8} wrap="nowrap">
+                {features.creatorShop && creator.creatorShopEnabled && creator.username && (
+                  <Tooltip label="Visit shop" withArrow>
+                    <LegacyActionIcon
+                      component={NextLink}
+                      href={`/user/${creator.username}/shop`}
+                      size="lg"
+                      radius="xl"
+                      color="gray"
+                      variant="filled"
+                      w={32}
+                      h={32}
+                      aria-label="Visit shop"
+                    >
+                      <IconShoppingBag size={18} />
+                    </LegacyActionIcon>
+                  </Tooltip>
+                )}
                 {tipsEnabled && (
                   <TipBuzzButton
                     toUserId={creator.id}

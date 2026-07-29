@@ -225,7 +225,11 @@ export const toggleReactionHandler = async ({
       }
     }
 
-    const result = await toggleReaction({ ...input, userId: ctx.user.id });
+    const result = await toggleReaction({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
     const trackerEvent = await getTrackerEvent(input, result);
     if (trackerEvent) {
       await ctx.track

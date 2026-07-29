@@ -26,7 +26,13 @@ export const trackRouter = router({
   // for any bearer/API-key (non-cookie) caller, consistent with `addView`.
   blockRender: publicProcedure
     .input(blockRenderSchema)
-    .mutation(({ input, ctx }) => ctx.track.blockRender({ ...input, isAnon: !ctx.user })),
+    // `status`/`errorClass` are consumed only by the /api/track/block-render
+    // beacon (prom render counter); this legacy tRPC path keeps the CH insert
+    // byte-identical by stripping them before dispatch.
+    .mutation(({ input, ctx }) => {
+      const { status: _status, errorClass: _errorClass, ...renderData } = input;
+      return ctx.track.blockRender({ ...renderData, isAnon: !ctx.user });
+    }),
   trackShare: publicProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(trackShareSchema)

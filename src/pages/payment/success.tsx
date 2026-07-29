@@ -28,10 +28,16 @@ export default function PaymentSuccess() {
     refresh?.();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (cid !== customerId?.slice(-8)) {
-    router.replace('/');
-    return null;
-  }
+  // Guard runs client-side only. `customerId` is undefined during SSR (and before
+  // the current user hydrates), so navigating here in the render body would call
+  // `router.replace()` with no router instance on the server → thrown "No router
+  // instance found" → the page 500s for every request. Redirecting from an effect
+  // (after the user is actually known) keeps the render pure and SSR-safe while
+  // preserving the intent: a signed-in user whose customer id doesn't match `cid`
+  // is bounced to `/`.
+  useEffect(() => {
+    if (customerId && cid && cid !== customerId.slice(-8)) router.replace('/');
+  }, [customerId, cid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>

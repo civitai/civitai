@@ -20,6 +20,21 @@ import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/
 import { stringifyAIR } from '~/shared/utils/air';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
+// Per-attempt backstop for the image-ingestion orchestrator SUBMIT (enqueue only —
+// this returns a workflow id immediately, it does NOT wait for the scan to finish).
+// Left unbounded, a submit whose socket the orchestrator accepts but never answers
+// (the Siglip/wdTagging container-instability failure mode) hangs forever with no
+// caller-side timeout. In the ingest-images cron that single hang stalls its send
+// chunk and the whole run never completes — and because createJob only records
+// duration/errors when the run settles, the killed run records nothing and re-loads
+// the same stuck oldest-1000 rows every 5 min, so the backlog never drains. 15s sits
+// well above the ~4.7s submit P99, so it fires only on the genuine hang tail; a fired
+// AbortSignal.timeout throws a TimeoutError that submitWorkflowWithRetry treats as a
+// transient failure → backoff + retry (3 attempts) → surface. Mirrors the whatIf
+// per-attempt backstop. Only applied when NOT `wait`ing (a caller that passes `wait`
+// explicitly wants to block for the workflow, so we must not abort it early).
+const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
+
 export async function createImageIngestionRequest({
   imageId,
   url,
@@ -73,8 +88,8 @@ export async function createImageIngestionRequest({
                 engine: 'civitai',
                 includeAgeClassification: true,
                 includeAIRecognition: false,
-                includeFaceRecognition: true,
-                includeAnimeRecognition: true,
+                includeFaceRecognition: false,
+                includeAnimeRecognition: false,
               },
             } as WorkflowStepTemplate,
             {
@@ -146,8 +161,8 @@ export async function createImageIngestionRequest({
                     engine: 'civitai',
                     includeAgeClassification: true,
                     includeAIRecognition: false,
-                    includeFaceRecognition: true,
-                    includeAnimeRecognition: true,
+                    includeFaceRecognition: false,
+                    includeAnimeRecognition: false,
                   },
                 },
               },
@@ -157,11 +172,19 @@ export async function createImageIngestionRequest({
       ? [
           {
             url: `${callbackUrl}`,
+            // Job-level failure events (job:failed/expired/canceled) carry the
+            // human `reason` (e.g. "Failed to create container…", "…500 (Internal
+            // Server Error)") that workflow-level events + getWorkflow don't expose.
+            // The webhook stashes it so the terminal workflow event can classify
+            // the failure. Success path is unaffected — no job:succeeded here.
             type: [
               'workflow:succeeded',
               'workflow:failed',
               'workflow:expired',
               'workflow:canceled',
+              'job:failed',
+              'job:expired',
+              'job:canceled',
             ],
           },
         ]
@@ -170,11 +193,14 @@ export async function createImageIngestionRequest({
 
   // Re-submit transient infra failures (5xx / no-response), reusing the same
   // `externalId` so a 500 that actually created the workflow isn't duplicated.
-  const result = await submitWorkflowWithRetry({
-    client: internalOrchestratorClient,
-    query: wait ? { wait } : undefined,
-    body,
-  });
+  const result = await submitWorkflowWithRetry(
+    {
+      client: internalOrchestratorClient,
+      query: wait ? { wait } : undefined,
+      body,
+    },
+    wait ? undefined : { perAttemptTimeoutMs: IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS }
+  );
   const { data, response, attempts } = result;
   // `error` isn't present on every member of the result union — narrow with `in`.
   const error = 'error' in result ? result.error : undefined;

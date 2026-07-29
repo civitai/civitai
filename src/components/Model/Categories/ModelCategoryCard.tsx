@@ -38,13 +38,13 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import type { AssociatedResourceModelCardData } from '~/server/controllers/model.controller';
@@ -58,7 +58,8 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { AnimatedCount, Metrics } from '~/components/Metrics';
-import classes from './ModelCategoryCard.module.scss';
+import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
+import classes from './ModelCategoryCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -98,13 +99,8 @@ function ModelCategoryCardContent({
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
 
-  const { data: { Recommended: reviewedModels = [] } = { Recommended: [], Hide: [] } } =
-    trpc.user.getEngagedModels.useQuery(undefined, {
-      enabled: !!currentUser,
-      gcTime: Infinity,
-      staleTime: Infinity,
-    });
-  const hasReview = reviewedModels.includes(id);
+  const { isEngaged } = useEngagedModelMembership(id);
+  const hasReview = isEngaged('Recommended');
   const { hiddenUsers: hiddenUsers, hiddenModels: hiddenModels } = useHiddenPreferencesContext();
   const isHidden = hiddenUsers.get(user.id) || hiddenModels.get(id);
   const { setMenuItems } = useModelCardContextMenu();
@@ -136,7 +132,6 @@ function ModelCategoryCardContent({
       )}
     </>
   );
-
 
   const reportOption = {
     key: 'report-model',
@@ -464,7 +459,7 @@ function ModelCategoryCardStats({
       entityType="Model"
       entityId={data.id}
       initial={{
-        downloadCount: data.rank.downloadCount,
+        downloadCount: data.rank.downloadCount ?? 0,
         thumbsUpCount: data.rank.thumbsUpCount,
         commentCount: data.rank.commentCount,
       }}
@@ -496,7 +491,11 @@ function ModelCategoryCardStats({
           )}
           <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
             <Text fz={12}>
-              <AnimatedCount value={m.downloadCount} />
+              {data.hiddenMetrics?.downloads ? (
+                <HiddenMetricNotice size={12} />
+              ) : (
+                <AnimatedCount value={m.downloadCount ?? 0} />
+              )}
             </Text>
           </IconBadge>
         </Group>

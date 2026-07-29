@@ -4,6 +4,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import * as z from 'zod';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -101,6 +102,18 @@ export const imagesQueryParamSchema = z
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
+// The media-type scope a feed falls back to when its filters are cleared.
+// `/images` shows images, `/videos` shows videos; model-image feeds stay
+// unscoped (all media types). Returning `undefined` here would let `removeEmpty`
+// drop `types` from the payload, so the feed would serve every media type.
+export const getDefaultMediaTypes = (
+  filterType: FilterKeys<'images' | 'videos' | 'modelImages'>
+): MediaType[] | undefined => {
+  if (filterType === 'images') return [MediaType.image];
+  if (filterType === 'videos') return [MediaType.video];
+  return undefined;
+};
+
 // could have userImages and userVideo
 export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
@@ -128,6 +141,12 @@ export const useQueryImages = (
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   const browsingSettingsAddons = useBrowsingSettingsAddons();
+  // Only the domains that cap browsing (green) get `browsingLevel` backfilled by
+  // `applyDomainFeature`; on red/blue an absent level reaches the query as NULL and
+  // `(nsfwLevel & NULL)` drops every row. Default from context so a caller that omits
+  // it can't silently return zero images — inside a forced provider (minor models)
+  // this is the forced level, which is what those queries should be asking for.
+  const contextBrowsingLevel = useBrowsingLevelDebounced();
 
   // `!!currentUser` guards against `filters.userId === currentUser?.id` being
   // `undefined === undefined` for anonymous users, which treats them as the owner.
@@ -144,6 +163,7 @@ export const useQueryImages = (
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     {
       ...filters,
+      browsingLevel: filters.browsingLevel ?? contextBrowsingLevel,
       excludedTagIds,
       // OR-merge with the addon so either source can flag the filter.
       // Mods always have addon = false (BrowsingSettingsAddonsProvider), so

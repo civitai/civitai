@@ -35,6 +35,7 @@ import { getFiatDisplay, outerCardStyle } from '~/components/Buzz/CryptoDeposit/
 import { FiatMenu } from '~/components/Buzz/CryptoDeposit/FiatMenu';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useSpotlight } from '~/hooks/useSpotlight';
 import {
   useCurrentUserSettings,
   useMutateUserSettings,
@@ -60,21 +61,9 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
   const [copiedChain, setCopiedChain] = useState<string | null>(null);
   const chainChangedAfterCopy = copiedChain != null && copiedChain !== chain;
 
-  // Spotlight effect — uses refs + direct DOM manipulation to avoid re-renders on mouse move
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const el = spotlightRef.current;
-    if (!el) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    el.style.background = `radial-gradient(400px circle at ${x}px ${y}px, light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04)), transparent 70%)`;
-    el.style.opacity = '1';
-  }, []);
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-  }, []);
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
+    color: 'light-dark(rgba(0,0,0,0.02), rgba(255,255,255,0.04))',
+  });
 
   // Sync from saved user preference on load
   useEffect(() => {
@@ -343,7 +332,8 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send BTC on the <Text span fw={600} c="yellow">Bitcoin network</Text> only.
+                      Send BTC on the <Text span fw={600} c="yellow">Bitcoin network</Text>{' '}
+                      only.
                       Coinbase users: select &quot;Bitcoin&quot; as the network, not Base or
                       other networks. cbBTC (wrapped Bitcoin) is not supported.
                     </Text>
@@ -353,7 +343,8 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send LTC on the <Text span fw={600} c="yellow">Litecoin network</Text> only.
+                      Send LTC on the <Text span fw={600} c="yellow">Litecoin network</Text>{' '}
+                      only.
                       Coinbase users: select &quot;Litecoin&quot; as the network, not Base or
                       other networks. cbLTC (wrapped Litecoin) is not supported.
                     </Text>
@@ -363,7 +354,8 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send DOGE on the <Text span fw={600} c="yellow">Dogecoin network</Text> only.
+                      Send DOGE on the <Text span fw={600} c="yellow">Dogecoin network</Text>{' '}
+                      only.
                       Coinbase users: select &quot;Dogecoin&quot; as the network, not Base or
                       other networks. cbDOGE (wrapped Dogecoin) is not supported.
                     </Text>
@@ -373,7 +365,8 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
                     <Text size="xs" c="dimmed">
-                      Send SOL on the <Text span fw={600} c="yellow">Solana network</Text> only.
+                      Send SOL on the <Text span fw={600} c="yellow">Solana network</Text>{' '}
+                      only.
                       Coinbase users: select &quot;Solana&quot; as the network, not Base. SOL
                       sent via Base is not supported.
                     </Text>

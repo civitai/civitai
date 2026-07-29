@@ -106,7 +106,7 @@ describe('GET /api/v1/block-tokens/jwks — Decision 4 runtime gate', () => {
     await handler(makeReq(), res);
 
     expect(res.statusCode).toBe(503);
-    expect(res.body).toEqual({ error: 'App Blocks not enabled' });
+    expect(res.body).toEqual({ error: 'Apps are not enabled' });
     // It must never have served a key.
     expect(mockGetJwks).not.toHaveBeenCalled();
     // It read the runtime key, NOT the user key.

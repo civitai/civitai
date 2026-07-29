@@ -124,7 +124,12 @@ async function invoke(query: Record<string, unknown>) {
   // Import after mocks are registered.
   const mod = await import('~/pages/api/v1/blocks/models');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
-  const req = { method: 'GET', query, headers: {}, url: '/api/v1/blocks/models' } as unknown as NextApiRequest;
+  const req = {
+    method: 'GET',
+    query,
+    headers: {},
+    url: '/api/v1/blocks/models',
+  } as unknown as NextApiRequest;
   const res = fakeRes();
   await handler(req, res);
   return res;
@@ -208,6 +213,16 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     expect(input).not.toHaveProperty('someJunk');
   });
 
+  it('forces disableMinor on the search input, even under a SFW ceiling', async () => {
+    // The public endpoint lets the addon policy decide, and that rule only fires
+    // above R — so a SFW-clamped block would otherwise start listing minor models.
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag, domain: 'green' });
+    await invoke({});
+
+    const [input] = mockRunModelSearch.mock.calls[0];
+    expect(input.disableMinor).toBe(true);
+  });
+
   it('forwards the selector params (query/types/baseModels/sort/limit)', async () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
     await invoke({
@@ -223,9 +238,12 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     expect(input.types).toEqual(['Checkpoint']);
     expect(input.baseModels).toEqual(['SDXL 1.0']);
     expect(input.limit).toBe(20);
-    // The Meili pre-step must be called with the CLAMPED level too.
+    // The Meili pre-step must be called with the CLAMPED level too, and the
+    // type filter must reach it (filtering only post-Meili in the DB returns
+    // empty pages for sparse types like Wildcards).
     expect(mockResolveModelSearchIds).toHaveBeenCalledTimes(1);
     expect(mockResolveModelSearchIds.mock.calls[0][0].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].types).toEqual(['Checkpoint']);
   });
 
   it('401s when no block claims were stamped (defense-in-depth; e.g. no token)', async () => {

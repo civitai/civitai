@@ -18,7 +18,11 @@ export const getServerSideProps = createServerSideProps({
 export default function AppsPage() {
   const features = useFeatureFlags();
 
-  if (!features.appBlocks) return <NotFound />;
+  // W13 (PR-W1a/D8): store-visibility gate = dedicated `appListings` OR-falling-
+  // back to `appBlocks` (mirrors the SSR `resolveAppsPageAccess` gate). Zero
+  // behavior change today — `app-listings` doesn't exist yet, so `appListings`
+  // resolves mods-only and `appBlocks` covers the app-dev-testers cohort.
+  if (!(features.appListings || features.appBlocks)) return <NotFound />;
 
   return (
     <>
@@ -43,7 +47,10 @@ export default function AppsPage() {
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,
           a separate post-deploy op step) — the empty state renders sanely
           ("No apps yet"); expected + fine while dark. */}
-      <AppsPageLayout size="xl">
+      <AppsPageLayout size={1600}>
+        {/* Widened past the default `xl` (1320px) token — a 5-across grid at this
+            container width needs the extra room to keep card text from
+            truncating (see AppListingsMarketplaceBody's `xl` column span). */}
         <AppListingsMarketplaceBody />
       </AppsPageLayout>
     </>

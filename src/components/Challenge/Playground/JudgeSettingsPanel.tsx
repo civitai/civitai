@@ -4,11 +4,13 @@ import {
   Loader,
   ScrollArea,
   Stack,
+  Switch,
   Text,
   TextInput,
   Textarea,
 } from '@mantine/core';
 import { IconDeviceFloppy } from '@tabler/icons-react';
+import { JUDGE_USER_SELECTABLE_FIELD } from '~/shared/constants/challenge.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ModelSelector } from './ModelSelector';
@@ -51,6 +53,7 @@ export function JudgeSettingsPanel() {
   const currentReviewPrompt = draft?.reviewPrompt ?? judge?.reviewPrompt ?? '';
   const currentReviewTemplate = draft?.reviewTemplate ?? judge?.reviewTemplate ?? '';
   const currentWinnerPrompt = draft?.winnerSelectionPrompt ?? judge?.winnerSelectionPrompt ?? '';
+  const currentUserSelectable = draft?.userSelectable ?? judge?.userSelectable ?? false;
 
   const handleSave = () => {
     if (!judge || selectedJudgeId == null) return;
@@ -64,6 +67,7 @@ export function JudgeSettingsPanel() {
       reviewPrompt: currentReviewPrompt || null,
       reviewTemplate: currentReviewTemplate || null,
       winnerSelectionPrompt: currentWinnerPrompt || null,
+      userSelectable: currentUserSelectable,
     });
   };
 
@@ -173,6 +177,15 @@ export function JudgeSettingsPanel() {
                 updateDraft(selectedJudgeId, {
                   winnerSelectionPrompt: e.currentTarget.value || null,
                 });
+            }}
+          />
+          <Switch
+            label={JUDGE_USER_SELECTABLE_FIELD.label}
+            description={JUDGE_USER_SELECTABLE_FIELD.description}
+            checked={currentUserSelectable}
+            onChange={(e) => {
+              if (selectedJudgeId != null)
+                updateDraft(selectedJudgeId, { userSelectable: e.currentTarget.checked });
             }}
           />
           <ModelSelector />

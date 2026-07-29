@@ -113,6 +113,48 @@ type UploadViaUrlResponse = {
 };
 
 /**
+ * Upload ALREADY-FETCHED image bytes to Cloudflare Images. Unlike `uploadViaBuffer`
+ * (which downloads the URL itself, UNGUARDED) this takes bytes the caller has
+ * already pulled through the SSRF-hardened `safeFetch`, so it never performs an
+ * outbound fetch to an attacker-influenced URL. Used by the App Blocks
+ * external-listing OG-image ingest path. Returns the CF image id.
+ */
+export async function uploadBufferToCF(
+  data: Uint8Array | Buffer,
+  filename: string,
+  metadata: Record<string, unknown> | null = null
+) {
+  const missing = missingEnvs();
+  if (missing.length > 0)
+    throw new Error(`CloudFlare Image Upload: Missing ENVs ${missing.join(', ')}`);
+
+  metadata ??= {};
+  const body = new FormData();
+  // Copy into a fresh Uint8Array so the Blob owns a plain ArrayBuffer (a Node
+  // Buffer's underlying pool ArrayBuffer can be larger than the view).
+  const bytes = new Uint8Array(data);
+  body.append('file', new Blob([bytes]), filename);
+  body.append('requireSignedURLs', 'false');
+  body.append('metadata', JSON.stringify(metadata));
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/images/v1`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.CF_IMAGES_TOKEN}`,
+      },
+      body,
+    }
+  );
+
+  const result = (await response.json()) as UploadViaUrlResponse;
+  if (!result.success) throw new Error(result.errors.join('\n'));
+
+  return result.result;
+}
+
+/**
  * Download an image from a URL and upload it to Cloudflare Images as binary data.
  * Useful as a fallback when `uploadViaUrl` fails because CF can't reach the source URL.
  */

@@ -3,6 +3,7 @@ import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
+import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   getPopularCheckpointForEcosystem,
@@ -10,6 +11,7 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
+import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
 import {
   newBlockInstanceId,
   newBlockUserSubscriptionId,
@@ -383,6 +385,13 @@ export interface ResolvedBlockInstance {
     manifest: Record<string, unknown>;
     approvedScopes: string[];
     app: { allowedScopes: number } | null;
+    // DEPLOY-GATE: NULL ⇔ this app has NEVER successfully deployed its
+    // `<slug>.<APPS_DOMAIN>` origin (set to now() ONLY on a successful apply in
+    // build-callback.ts; left UNCHANGED on build failure/timeout AND while a
+    // NEW version re-builds — the old version keeps serving). The token mint
+    // requires this to be non-null so an approved-but-never-deployed app can't
+    // be run against an origin that would 404.
+    currentVersionDeployedAt: Date | null;
   };
 }
 
@@ -401,6 +410,34 @@ interface InstallOpts {
  */
 export interface PageBlockResolution {
   appBlock: ResolvedBlockInstance['appBlock'];
+}
+
+/**
+ * APP DEV TUNNEL — the shape resolved for an OWNED, NON-approved page app the
+ * author is dogfooding in their OWN dev tunnel (`resolveOwnedNonApprovedPageBlock`).
+ *
+ * This is the DEV-TUNNEL-ONLY companion to `resolvePageBlock` (which resolves ONLY
+ * `status:'approved'` apps for the PUBLIC run path). A previously-approved app that
+ * is now `suspended` / `pending` (re-submitted) / `deprecated` still owns a REAL
+ * `apb_` row + a moderator-reviewed `approvedScopes` snapshot, so its author can run
+ * it inside their own tunnel — but it stays NON-runnable publicly (`resolvePageBlock`
+ * still returns null for it). The mint sources scopes from `approvedScopes` (the
+ * pinned, mod-reviewed set — NEVER the raw manifest) and the per-gen budget from the
+ * manifest `page.buzzBudgetPerGen`.
+ */
+export interface OwnedNonApprovedPageBlockResolution {
+  /** The REAL AppBlock id (`apb_…`). */
+  appBlockId: string;
+  /** The app slug (== `block_id`), used to resolve the active dev tunnel. */
+  blockId: string;
+  /** The REAL OauthClient id (`appblk-…` / UUIDv4) — attribution resolves it. */
+  appId: string;
+  /** The app's current NON-approved status (suspended / pending / deprecated / …). */
+  status: string;
+  /** The moderator-reviewed approved-scope SNAPSHOT — the ONLY scope source. */
+  approvedScopes: string[];
+  /** The stored manifest — read for `page.buzzBudgetPerGen` only. */
+  manifest: Record<string, unknown>;
 }
 
 /**
@@ -425,6 +462,34 @@ export interface PageBlockSsr {
    *  column, set on approve). The SSR run-page gate 404s a mature (r/x) page app
    *  when the request host is not red-capable. NULL for pre-feature rows → SFW. */
   contentRating: string | null;
+}
+
+/**
+ * APP DEV TUNNEL — the caller's OWN app resolved for the `/apps/dev/<blockId>`
+ * route, at ANY status (pending/draft/approved/rejected). DISTINCT from
+ * PageBlockSsr in TWO load-bearing ways:
+ *   - it is OWNERSHIP-SCOPED (resolves only the caller's own app; null for
+ *     another author's app — see resolveDevPageBlockForAuthor), and
+ *   - it carries NO iframeSrc: the dev route's iframe points at the ephemeral
+ *     tunnel host (server-derived), NEVER the manifest's stored iframe.src. This
+ *     is why it can never resolve or serve a deployed `<slug>.civit.ai` bundle.
+ */
+export interface DevPageBlockResolution {
+  appBlockId: string;
+  blockId: string;
+  appId: string;
+  status: string;
+  trustTier: 'unverified' | 'verified' | 'internal';
+  name: string;
+  pageTitle: string;
+  sandbox: string;
+  scopes: string[];
+  contentRating: string | null;
+  /** For an `ephemeral` resolution only: which scope source produced `scopes` —
+   *  `'pending'` (the caller's own submitted-but-unapproved manifest) or
+   *  `'brand-new'` (a truly-unclaimed slug, scopes from the dev-tunnel session).
+   *  Undefined for the owned-approved path. Used for the mint-time audit log. */
+  ephemeralSource?: 'pending' | 'brand-new';
 }
 
 interface UninstallOpts {
@@ -725,6 +790,13 @@ export class BlockRegistry {
         WHERE bus.scope = 'publisher_all_my_models'
           AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          -- DEPLOY-GATE (generic, all app-blocks): don't render an installed
+          -- block on a model slot until its slug origin has SUCCESSFULLY deployed
+          -- (else the iframe 404s). Set on a successful apply, unchanged on
+          -- failure AND while a NEW version rebuilds, so a live app mid-re-deploy
+          -- keeps rendering. Off-site apps (external_url) have no iframe to
+          -- install on a slot, but the exemption keeps it uniform.
+          AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
           AND bus.slot_id = ${slotId}
           AND ${modelId} = ANY(bus.target_model_ids)
           AND bus.block_instance_id IS NOT NULL
@@ -779,6 +851,13 @@ export class BlockRegistry {
         WHERE bus.scope = 'publisher_all_my_models'
           AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          -- DEPLOY-GATE (generic, all app-blocks): don't render an installed
+          -- block on a model slot until its slug origin has SUCCESSFULLY deployed
+          -- (else the iframe 404s). Set on a successful apply, unchanged on
+          -- failure AND while a NEW version rebuilds, so a live app mid-re-deploy
+          -- keeps rendering. Off-site apps (external_url) have no iframe to
+          -- install on a slot, but the exemption keeps it uniform.
+          AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
           AND bus.slot_id IS NULL
           AND cardinality(bus.target_model_ids) = 0
           AND ab.manifest @> ${slotMatch}::jsonb
@@ -850,6 +929,13 @@ export class BlockRegistry {
         WHERE pdb.slot_id = ${slotId}
           AND pdb.enabled = TRUE
           AND ab.status = 'approved'
+          -- DEPLOY-GATE (generic, all app-blocks): don't render an installed
+          -- block on a model slot until its slug origin has SUCCESSFULLY deployed
+          -- (else the iframe 404s). Set on a successful apply, unchanged on
+          -- failure AND while a NEW version rebuilds, so a live app mid-re-deploy
+          -- keeps rendering. Off-site apps (external_url) have no iframe to
+          -- install on a slot, but the exemption keeps it uniform.
+          AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
           -- H1 (audit-10): pass NULL when modelType is omitted so the ANY
           -- arm cannot match. The prior coalesce-to-empty-string version
           -- accidentally became an exact-match against the empty string,
@@ -917,6 +1003,13 @@ export class BlockRegistry {
           AND bus.user_id = ${viewerUserId ?? -1}
           AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          -- DEPLOY-GATE (generic, all app-blocks): don't render an installed
+          -- block on a model slot until its slug origin has SUCCESSFULLY deployed
+          -- (else the iframe 404s). Set on a successful apply, unchanged on
+          -- failure AND while a NEW version rebuilds, so a live app mid-re-deploy
+          -- keeps rendering. Off-site apps (external_url) have no iframe to
+          -- install on a slot, but the exemption keeps it uniform.
+          AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
           AND bus.slot_id IS NULL
           AND cardinality(bus.target_model_ids) = 0
           AND ab.manifest @> ${slotMatch}::jsonb
@@ -1323,6 +1416,7 @@ export class BlockRegistry {
               status: true,
               manifest: true,
               approvedScopes: true,
+              currentVersionDeployedAt: true,
               app: { select: { allowedScopes: true } },
             },
           },
@@ -1383,6 +1477,7 @@ export class BlockRegistry {
           manifest: pinnedInstall.manifest,
           approvedScopes: pinnedInstall.approvedScopes,
           app: sub.appBlock.app ? { allowedScopes: sub.appBlock.app.allowedScopes } : null,
+          currentVersionDeployedAt: sub.appBlock.currentVersionDeployedAt ?? null,
         },
       };
     }
@@ -1406,6 +1501,7 @@ export class BlockRegistry {
               status: true,
               manifest: true,
               approvedScopes: true,
+              currentVersionDeployedAt: true,
               app: { select: { allowedScopes: true } },
             },
           },
@@ -1455,6 +1551,7 @@ export class BlockRegistry {
           manifest: (pdb.appBlock.manifest ?? {}) as Record<string, unknown>,
           approvedScopes: pdb.appBlock.approvedScopes ?? [],
           app: pdb.appBlock.app ? { allowedScopes: pdb.appBlock.app.allowedScopes } : null,
+          currentVersionDeployedAt: pdb.appBlock.currentVersionDeployedAt ?? null,
         },
       };
     }
@@ -1486,6 +1583,7 @@ export class BlockRegistry {
               status: true,
               manifest: true,
               approvedScopes: true,
+              currentVersionDeployedAt: true,
               app: { select: { allowedScopes: true } },
             },
           },
@@ -1561,6 +1659,7 @@ export class BlockRegistry {
           manifest: pinnedPub.manifest,
           approvedScopes: pinnedPub.approvedScopes,
           app: bus.appBlock.app ? { allowedScopes: bus.appBlock.app.allowedScopes } : null,
+          currentVersionDeployedAt: bus.appBlock.currentVersionDeployedAt ?? null,
         },
       };
     }
@@ -1592,6 +1691,7 @@ export class BlockRegistry {
               status: true,
               manifest: true,
               approvedScopes: true,
+              currentVersionDeployedAt: true,
               app: { select: { allowedScopes: true } },
             },
           },
@@ -1677,6 +1777,7 @@ export class BlockRegistry {
           manifest: pinnedView.manifest,
           approvedScopes: pinnedView.approvedScopes,
           app: bus.appBlock.app ? { allowedScopes: bus.appBlock.app.allowedScopes } : null,
+          currentVersionDeployedAt: bus.appBlock.currentVersionDeployedAt ?? null,
         },
       };
     }
@@ -1714,6 +1815,7 @@ export class BlockRegistry {
         status: true,
         manifest: true,
         approvedScopes: true,
+        currentVersionDeployedAt: true,
         app: { select: { allowedScopes: true } },
       },
     });
@@ -1731,7 +1833,72 @@ export class BlockRegistry {
         manifest,
         approvedScopes: ab.approvedScopes ?? [],
         app: ab.app ? { allowedScopes: ab.app.allowedScopes } : null,
+        currentVersionDeployedAt: ab.currentVersionDeployedAt ?? null,
       },
+    };
+  }
+
+  /**
+   * APP DEV TUNNEL — resolve the caller's OWN, NON-approved page app by its REAL
+   * AppBlock id (`apb_…`), for the dev-tunnel block-token mint ONLY.
+   *
+   * WHY THIS EXISTS — `resolvePageBlock` requires `status:'approved'`, so a
+   * previously-approved page app that is now `suspended` / `pending` (re-submitted)
+   * / `deprecated` resolves to null there and the mint 404s ("Couldn't authenticate
+   * this app"), even though the SSR dev route (`resolveDevPageBlockForAuthor`)
+   * happily mounts it at ANY status. This closes that asymmetry for the DEV TUNNEL
+   * ONLY: the owner can dogfood their non-approved app in their OWN tunnel, while the
+   * PUBLIC run path (`resolvePageBlock`, `resolvePageBlockBySlug`) stays untouched —
+   * a suspended app remains NON-runnable publicly.
+   *
+   * CONTAINMENT (every gate here or at the caller, fail-closed):
+   *   - OWNERSHIP is enforced IN the query (`app.userId === userId`). A foreign or
+   *     missing app returns the SAME bare null (no ownership/existence oracle).
+   *   - status `!= 'approved'` is enforced in the query: an APPROVED app never
+   *     double-resolves through this branch (it mints via `resolvePageBlock`), and
+   *     this method is a NO-OP for the approved case.
+   *   - it MUST declare a page (`manifestDeclaresPage`) — a region/model-only app has
+   *     no full-page surface to mint for.
+   * The caller additionally gates on an ACTIVE dev tunnel + the author/dev-tunnel
+   * flags before it will sign anything (see `tryDevTunnelOwnedNonApprovedMint`).
+   *
+   * SCOPE SOURCE = `approvedScopes` (the moderator-reviewed snapshot pinned at the
+   * app's last approval) — NEVER the raw/re-published manifest, so a suspended app
+   * cannot widen its own scopes by editing its manifest. The caller clamps this
+   * through the SAME tunnel belt (`clampTunnelDeclaredScopes`) as the ephemeral path.
+   */
+  static async resolveOwnedNonApprovedPageBlock(
+    appBlockId: string,
+    userId: number,
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<OwnedNonApprovedPageBlockResolution | null> {
+    if (!appBlockId || !userId) return null;
+    const db = opts?.db === 'read' ? dbRead : dbWrite;
+    const ab = await db.appBlock.findFirst({
+      // Ownership-scoped (app.userId === caller) AND non-approved only. A
+      // foreign/missing/approved row → null → the caller's bare 404 (no oracle).
+      where: { id: appBlockId, app: { userId }, status: { not: 'approved' } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        approvedScopes: true,
+      },
+    });
+    if (!ab) return null;
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    // A page app MUST declare a `page` block (mirrors resolvePageBlock) — otherwise
+    // there is no full-page surface to run.
+    if (!manifestDeclaresPage(manifest)) return null;
+    return {
+      appBlockId: ab.id,
+      blockId: ab.blockId,
+      appId: ab.appId,
+      status: ab.status,
+      approvedScopes: ab.approvedScopes ?? [],
+      manifest,
     };
   }
 
@@ -1807,6 +1974,239 @@ export class BlockRegistry {
       // NSFW-APP-RED-ONLY: NULL-safe (column is non-null on approve, but defend
       // against a pre-feature / partial row → treated as SFW by the gate).
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+    };
+  }
+
+  /**
+   * APP DEV TUNNEL — resolve the caller's OWN app by `blockId` (== AppBlock
+   * `block_id`, GLOBALLY unique via `@@unique([blockId])`) at ANY status, for the
+   * `/apps/dev/<blockId>` SSR route + the startDevTunnel gate. Ownership is
+   * enforced IN the query (`app.userId === userId`), so a `blockId` owned by a
+   * DIFFERENT author — or no such app — returns null (no ownership/existence
+   * oracle). Unlike resolvePageBlockBySlug this does NOT require `status:approved`
+   * NOR `manifestDeclaresPage`: a developer iterating locally may have a
+   * draft/pending app whose manifest has no page block yet. The dev host renders
+   * the LOCAL code via the tunnel, so the manifest iframe/page is irrelevant here.
+   *
+   * NOTE: this returns NO iframeSrc — the route derives the iframe host from the
+   * assigned tunnel host ONLY (T6). It cannot be used to serve a deployed bundle.
+   *
+   * EPHEMERAL PRE-SUBMIT FALLBACK (Phase 1): when the caller owns NO AppBlock row
+   * for `blockId` at all (the app has not been submitted/approved — no row + no
+   * OauthClient are created until moderator APPROVE), we attempt an EPHEMERAL
+   * resolution so an author can iterate on local code in the real host BEFORE
+   * submitting. It writes NO DB row and returns a synthetic resolution with safe
+   * `unverified` defaults (see resolveEphemeralDevPageBlock). SCOPED features
+   * (Buzz / App Storage block-token mint) remain 403 until approval — the prod
+   * block-token mint (`/api/v1/block-tokens`) still gates on `status:'approved'`
+   * and is untouched here; this is UI / local-code rendering only.
+   */
+  static async resolveDevPageBlockForAuthor(
+    blockId: string,
+    userId: number,
+    opts?: {
+      db?: 'read' | 'write';
+      /** BRAND-NEW (no pending row) scope source: the caller's dev-tunnel session's
+       *  clamped `grantedScopes` (from their local `block.manifest.json`, sent by the
+       *  CLI at tunnel start). Ignored for the pending (own submission → server-read
+       *  manifest) and owned-approved paths. Absent → brand-new resolves read-only. */
+      sessionGrantedScopes?: string[];
+      /** Whether the dedicated `app-blocks-dev-tunnel-unsubmitted-spend` flag is ON
+       *  for the caller. When false, the BRAND-NEW branch strips `ai:write:budgeted`
+       *  (renders read-only). Fail-closed default (false). No effect on pending. */
+      unsubmittedSpendAllowed?: boolean;
+    }
+  ): Promise<DevPageBlockResolution | null> {
+    if (!blockId || !userId) return null;
+    const db = opts?.db === 'write' ? dbWrite : dbRead;
+    const ab = await db.appBlock.findFirst({
+      // Ownership-scoped: the app's OauthClient.userId is the v1 ownership source
+      // of truth (same as getMyAppRepo). A foreign-owned or missing app → null,
+      // in which case we fall through to the ephemeral pre-submit path below.
+      where: { blockId, app: { userId } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        trustTier: true,
+        contentRating: true,
+      },
+    });
+    // No OWNED AppBlock row → try the ephemeral pre-submit resolution (Phase 1).
+    // resolveEphemeralDevPageBlock returns null (→ same bare NOT_FOUND, no oracle)
+    // for a slug claimed by anyone else, so a foreign-owned app is never leaked.
+    if (!ab)
+      return this.resolveEphemeralDevPageBlock(blockId, userId, db, {
+        sessionGrantedScopes: opts?.sessionGrantedScopes,
+        unsubmittedSpendAllowed: opts?.unsubmittedSpendAllowed,
+      });
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    const iframe = (manifest.iframe ?? {}) as { sandbox?: unknown };
+    const page = (manifest.page ?? {}) as { title?: unknown };
+    const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
+    const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
+      ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
+      : [];
+    return {
+      appBlockId: ab.id,
+      blockId: ab.blockId,
+      appId: ab.appId,
+      status: ab.status,
+      trustTier:
+        ab.trustTier === 'verified' || ab.trustTier === 'internal'
+          ? (ab.trustTier as 'verified' | 'internal')
+          : 'unverified',
+      name,
+      pageTitle: typeof page.title === 'string' ? page.title : name,
+      sandbox: typeof iframe.sandbox === 'string' ? iframe.sandbox : '',
+      scopes: declaredScopes,
+      contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+    };
+  }
+
+  /**
+   * EPHEMERAL PRE-SUBMIT DEV RESOLUTION (Phase 1 — "ephemeral resolution", design
+   * approach C). Reached ONLY from resolveDevPageBlockForAuthor when the caller
+   * owns NO AppBlock row for `blockId`. Lets an author open a dev tunnel for a
+   * BRAND-NEW app they have not yet submitted (before any AppBlock/OauthClient row
+   * exists), so they can iterate on local code inside the real host. Writes NO DB
+   * row — the returned resolution is a purely synthetic, ownership/existence gate
+   * plus manifest DISPLAY defaults; the iframe host is still derived from the live
+   * tunnel only (the resolution carries no iframeSrc).
+   *
+   * SECURITY — ANTI-SHADOW GUARD (refuse any slug claimed by someone else). Every
+   * refusal returns the SAME bare null the "foreign / absent app" case returns, so
+   * the guard NEVER distinguishes AMONG the claimed cases: foreign-approved,
+   * foreign-pending, and foreign-suspended all yield an identical bare null. It is
+   * NOT a full "no existence oracle" (see the caller comment in blocks.router.ts):
+   * a claimed slug returns null (consuming no host-pool / rate-limit budget) while
+   * an unclaimed slug returns a synthetic resolution (which downstream may allocate
+   * a rate-limited host), so a claimed-vs-unclaimed signal is inherent. Approved
+   * slugs are already PUBLIC (they render at `<slug>.civit.ai`), so the only
+   * residual signal this leaks is the EXISTENCE of a pending/suspended slug — and
+   * only to another author-flagged (trusted-cohort) caller, gated behind the
+   * per-user rate limit. That residual is the accepted trade for the pre-submit UX.
+   *   (A) if ANY AppBlock row exists for `blockId` → REFUSE. The caller-owned row
+   *       was already checked (and returned) by the caller, so any row reaching
+   *       here is FOREIGN. `block_id` is GLOBALLY unique (`@@unique([blockId])`,
+   *       `app_blocks_block_id_unique`), so a single indexed lookup settles it: a
+   *       row (any status/owner) means the slug is claimed and can never become
+   *       the caller's — a superset of "an approved AppBlock exists (any owner)".
+   *   (B) if an AppBlockPublishRequest with `status:'pending'` exists for `blockId`
+   *       owned by a DIFFERENT user → REFUSE. The partial unique index
+   *       `UNIQUE(slug) WHERE status='pending'` guarantees ≤1 pending row per slug,
+   *       so this is a single indexed (`app_block_publish_requests_slug_idx`)
+   *       lookup. The caller's OWN pending request is ALLOWED (they are claiming
+   *       the slug), as is a truly-unclaimed slug.
+   *   (C) if `blockId` is not a CANONICAL slug (the same `SLUG_REGEX` + 3–40-char
+   *       bounds submit enforces on `manifest.blockId`) → REFUSE, returning the
+   *       same bare null BEFORE any DB read. Every stored AppBlock.blockId / pending
+   *       slug is canonical, so a non-canonical `blockId` can never match a real row
+   *       — without this guard an uppercase / dotted / over-length / leading-digit
+   *       string would sail past guards (A)/(B) as "unclaimed" and burn a
+   *       rate-limited host-pool allocation. The owned path is unaffected (its rows
+   *       are always canonical, so it never reaches here).
+   * A user can therefore NEVER get an ephemeral resolution for a slug that belongs
+   * to — or is pending for — anyone else, nor for a structurally-invalid slug, and
+   * the refusal never reveals WHICH of these cases triggered it.
+   *
+   * Safe DISPLAY defaults (no DB row, no reviewed manifest): `unverified` trust
+   * tier, EMPTY scopes (scoped block-token mint stays 403 until approval — Phase 2),
+   * SFW `contentRating`, and a minimal `allow-scripts allow-forms` sandbox that
+   * matches the unverified-tier allowed set (the client re-clamps via
+   * intersectSandbox, so this can only ever be as wide as the tier permits). The
+   * synthetic appBlockId/appId use an `ephemeral-<slug>` namespace that can never
+   * collide with a real AppBlock.id or an OauthClient.id (UUIDv4 / `appblk-<slug>`).
+   */
+  private static async resolveEphemeralDevPageBlock(
+    blockId: string,
+    userId: number,
+    db: typeof dbRead | typeof dbWrite,
+    opts?: { sessionGrantedScopes?: string[]; unsubmittedSpendAllowed?: boolean }
+  ): Promise<DevPageBlockResolution | null> {
+    // Guard (C): reject a non-CANONICAL slug BEFORE any DB read (same bare null,
+    // no oracle). Canonical = the exact constraint submit enforces on
+    // manifest.blockId (SLUG_REGEX + 3–40 chars). Every stored blockId/pending
+    // slug is canonical, so a non-canonical string can never match a real row —
+    // rejecting it here stops an uppercase / dotted (`a.b`) / over-length /
+    // leading-digit slug from being treated as "unclaimed" and burning a
+    // rate-limited host-pool allocation. The owned path never reaches this
+    // (its rows are always canonical, so guard-A/B and this are moot for it).
+    if (blockId.length < 3 || blockId.length > 40 || !SLUG_REGEX.test(blockId)) {
+      return null;
+    }
+    // Guard (A): any FOREIGN AppBlock row for this slug → refuse (slug is claimed
+    // globally via @@unique([blockId])). Indexed on app_blocks_block_id_unique.
+    const claimed = await db.appBlock.findUnique({
+      where: { blockId },
+      select: { id: true },
+    });
+    if (claimed) return null;
+    // Guard (B): a FOREIGN pending publish request for this slug → refuse. ≤1
+    // pending row per slug (partial unique index). The caller's own pending is OK.
+    const pending = await db.appBlockPublishRequest.findFirst({
+      where: { slug: blockId, status: 'pending' },
+      select: { submittedByUserId: true, manifest: true },
+    });
+    if (pending && pending.submittedByUserId !== userId) return null;
+    // SCOPE SOURCE — the declared scopes the dev-page host surfaces to the block as
+    // `declaredScopes` (→ the block's `granted` UI state) AND the block-token mint
+    // uses as the JWT's granted set (both consume the SAME `clampTunnelDeclaredScopes`
+    // so they can NEVER diverge). Two ephemeral cases:
+    //
+    //   • SUBMITTED-PENDING (the caller owns `pending`): clamp the pending
+    //     submission's SERVER-READ, un-reviewed `manifest.scopes`. Without this the
+    //     block's Generate gate reads empty and hangs on "Grant access" while the JWT
+    //     already carries the budgeted scope (the pre-#2992 bug). NOT gated by the
+    //     unsubmitted-spend flag — the app IS submitted.
+    //   • BRAND-NEW (no pending row, truly-unclaimed slug the caller owns): the scope
+    //     source is the AUTHENTICATED CLI's dev-tunnel session (`sessionGrantedScopes`,
+    //     already clamped at write) — NEVER a browser body. When the dedicated
+    //     `app-blocks-dev-tunnel-unsubmitted-spend` flag is OFF for the caller, strip
+    //     `ai:write:budgeted` so a never-reviewed app renders READ-ONLY (fail-closed).
+    //
+    // NO new authority either way: the belt (TUNNEL allowlist, no OAuth ceiling,
+    // keyCanSpend=true) is identical; the runtime author-flag re-check + per-call /
+    // per-session / per-day Buzz caps remain the actual spend gates.
+    let ephemeralScopes: string[] = [];
+    const ephemeralSource: 'pending' | 'brand-new' = pending ? 'pending' : 'brand-new';
+    if (pending) {
+      const pendingManifest = (pending.manifest ?? {}) as { scopes?: unknown };
+      const declared = Array.isArray(pendingManifest.scopes)
+        ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
+        : [];
+      ephemeralScopes = clampTunnelDeclaredScopes(declared);
+    } else {
+      ephemeralScopes = clampTunnelDeclaredScopes(opts?.sessionGrantedScopes ?? []);
+      if (!opts?.unsubmittedSpendAllowed) {
+        ephemeralScopes = ephemeralScopes.filter((s) => s !== 'ai:write:budgeted');
+      }
+    }
+    // ALLOWED — truly-unclaimed slug, or the caller owns the pending request.
+    return {
+      // Synthetic, non-resolving ids (`ephemeral-<slug>`): the render path never
+      // FK-resolves these (the prod block-token mint 403s on the unapproved app
+      // before any appId/appBlockId lookup), and the prefix can never equal a real
+      // AppBlock.id nor an OauthClient.id (UUIDv4 / `appblk-<slug>`).
+      appBlockId: `ephemeral-${blockId}`,
+      blockId,
+      appId: `ephemeral-${blockId}`,
+      status: 'ephemeral',
+      trustTier: 'unverified',
+      name: blockId,
+      pageTitle: blockId,
+      // Minimal safe sandbox for an unverified tier (client intersectSandbox
+      // re-clamps to the allowlist ∪ MINIMAL_SANDBOX regardless).
+      sandbox: 'allow-scripts allow-forms',
+      // Clamped tunnel scopes: the own-pending server-read manifest (pending) or the
+      // CLI-declared session scopes (brand-new, flag-gated). Aligned with the
+      // block-token mint so the dev-page block's Generate gate is not falsely empty.
+      scopes: ephemeralScopes,
+      ephemeralSource,
+      // SFW default — no reviewed content rating exists pre-submit.
+      contentRating: null,
     };
   }
 
@@ -2772,6 +3172,14 @@ export class BlockRegistry {
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
+        -- DEPLOY-GATE (generic, all app-blocks): only list an ON-PLATFORM app
+        -- once it has SUCCESSFULLY deployed its slug origin at least once.
+        -- current_version_deployed_at is set on a successful apply and left
+        -- unchanged on build failure/timeout AND while a NEW version rebuilds, so
+        -- NULL means never-served (hide) and non-null means live (show, incl.
+        -- mid-re-deploy). OFF-SITE (external-link) apps host no origin and never
+        -- deploy, so external_url presence exempts them (they use externalUrl).
+        AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
         -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
         AND ${launchOnlySqlFilter(launchOnly)}
         -- NSFW-APP-RED-ONLY: hide mature (r/x) apps on non-red hosts.
@@ -2890,6 +3298,7 @@ export class BlockRegistry {
       version: string | null;
       approved_scopes: string[] | null;
       external_url: string | null;
+      current_version_deployed_at: Date | null;
       install_count: bigint;
       avg_rating: number | null;
       review_count: bigint;
@@ -2910,6 +3319,7 @@ export class BlockRegistry {
         ab.version,
         ab.approved_scopes,
         ab.external_url,
+        ab.current_version_deployed_at,
         ab.screenshots,
         (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count,
@@ -2931,6 +3341,14 @@ export class BlockRegistry {
     // router surfaces NOT_FOUND (no detail leak). isAppLaunchEligible reuses the
     // same "declares a page" predicate as the listing filter + the page mint.
     if (launchOnly && !isAppLaunchEligible(row.manifest)) return null;
+    // DEPLOY-GATE (generic, all app-blocks): an ON-PLATFORM app that has NEVER
+    // successfully deployed its `<slug>.<APPS_DOMAIN>` origin is indistinguishable
+    // from a missing one — its detail's liveUrl would 404 and it isn't runnable.
+    // `current_version_deployed_at` is NULL until the first successful apply and
+    // stays set while a NEW version rebuilds (so a live app mid-re-deploy still
+    // resolves). OFF-SITE (external-link) apps host no origin and never deploy —
+    // `external_url` presence exempts them.
+    if (row.external_url == null && row.current_version_deployed_at == null) return null;
     // NSFW-APP-RED-ONLY (non-red host): a mature (r/x) app is indistinguishable
     // from a missing one off .red — return null → NOT_FOUND. Uses the
     // authoritative content_rating column (set on approve), not the manifest.
@@ -3033,6 +3451,14 @@ export class BlockRegistry {
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'
+        -- DEPLOY-GATE (generic, all app-blocks): only list an ON-PLATFORM app
+        -- once it has SUCCESSFULLY deployed its slug origin at least once.
+        -- current_version_deployed_at is set on a successful apply and left
+        -- unchanged on build failure/timeout AND while a NEW version rebuilds, so
+        -- NULL means never-served (hide) and non-null means live (show, incl.
+        -- mid-re-deploy). OFF-SITE (external-link) apps host no origin and never
+        -- deploy, so external_url presence exempts them (they use externalUrl).
+        AND (ab.external_url IS NOT NULL OR ab.current_version_deployed_at IS NOT NULL)
         -- PAGE-ONLY LAUNCH GATE: non-mod callers see launch (page) apps only.
         AND ${launchOnlySqlFilter(launchOnly)}
         -- NSFW-APP-RED-ONLY: hide mature (r/x) apps on non-red hosts.

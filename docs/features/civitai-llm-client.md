@@ -212,5 +212,5 @@ For richer per-message dumps (full prompt content, image URLs, content tails), c
 
 ## See Also
 
-- [Daily Challenge System](./daily-challenge.md) — primary consumer of these clients.
+- [Challenge Platform](./challenge-platform.md) — primary consumer of these clients.
 - `src/server/services/ai/openrouter.ts` — `AI_MODELS` lives here; reuse it from both clients.

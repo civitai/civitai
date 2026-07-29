@@ -31,12 +31,18 @@ import {
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
+import {
+  isTransientMeiliError,
+  MeiliCallTimeoutError,
+  searchClient,
+  withMeili,
+} from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
   dataForModelsCache,
   modelTagCache,
+  modelVotableTagsCache,
   userBasicCache,
   userModelCountCache,
 } from '~/server/redis/caches';
@@ -59,6 +65,8 @@ import type {
   PublishModelSchema,
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
+  SetModelMinorInput,
+  SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   TransferModelOwnershipInput,
@@ -79,6 +87,7 @@ import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
+import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -86,7 +95,6 @@ import {
   saveItemInCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
@@ -100,6 +108,7 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
@@ -109,6 +118,19 @@ import {
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import {
+  anyMetricHidden,
+  gateHiddenMetrics,
+  getMetaMetricPrivacy,
+  getUserMetricPrivacyDefaults,
+  resolveModelHiddenMetrics,
+  resolveVersionHiddenMetrics,
+  type HiddenModelMetrics,
+} from '~/server/utils/model-metric-privacy';
+import {
+  getValidCreatorMembershipMap,
+  getUserMetricPrivacyDefaultsMap,
+} from '~/server/services/creator-program.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
@@ -116,7 +138,12 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
+import {
+  buildGetAllModelImages,
+  GET_ALL_IMAGES_PER_MODEL,
+} from '~/server/utils/model-getall-images';
 import {
   DEFAULT_PAGE_SIZE,
   getCursorClauses,
@@ -139,10 +166,13 @@ import {
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
+import { decreaseDate } from '~/utils/date-helpers';
+import { isPaidAccessActive } from '@civitai/buzz';
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
+import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetAssociatedResourcesInput,
@@ -151,6 +181,7 @@ import type {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
+import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { isDev } from '~/env/other';
 import { userUpdateCounter } from '~/server/prom/client';
 import { pgDbRead } from '~/server/db/pgDb';
@@ -177,6 +208,7 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
 type ModelRaw = {
   id: number;
   name: string;
+  meta?: ModelMeta | null;
   description?: string | null;
   type: ModelType;
   poi?: boolean;
@@ -193,7 +225,7 @@ type ModelRaw = {
   lastVersionAt: Date;
   publishedAt: Date | null;
   locked: boolean;
-  earlyAccessDeadline: Date;
+  earlyAccessDeadline: Date | null;
   mode: string;
   rank: {
     downloadCount: number;
@@ -222,6 +254,7 @@ type ModelRaw = {
     publishedAt: Date | null;
     status: ModelStatus;
     covered: boolean;
+    flags: number;
   }[];
   userId: number;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
@@ -236,10 +269,39 @@ type ModelRaw = {
  * Test endpoint: GET /api/internal/test-model-feed-filters?token=<JOB_TOKEN>
  * Run after changes to verify filters work correctly with baseModel filtering.
  */
+
+export async function getModelEarlyAccessDeadlines(
+  modelIds: number[]
+): Promise<Map<number, Date>> {
+  if (!modelIds.length) return new Map();
+  const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
+    SELECT mv."modelId", MAX(pa."endsAt") AS deadline
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
+      AND mv.status = 'Published'::"ModelStatus"
+      AND mv."modelId" IN (${Prisma.join(modelIds)})
+    GROUP BY mv."modelId"
+  `;
+  return new Map(rows.map((r) => [Number(r.modelId), r.deadline]));
+}
+
+export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT mv."modelId"
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion' AND pa."endsAt" > NOW()
+      AND mv.status = 'Published'::"ModelStatus"
+  `;
+  return rows.map((r) => Number(r.modelId));
+}
+
 export const getModelsRaw = async ({
   input,
   include,
   user: sessionUser,
+  ignoreBrowsingAddons,
   _forceBaseModelMetrics,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
@@ -248,9 +310,27 @@ export const getModelsRaw = async ({
   };
   include?: Array<'details' | 'cosmetics'>;
   user?: { id: number; isModerator?: boolean; username?: string };
+  /**
+   * Drop the addon-derived discovery exclusions — for by-id lookups, whose
+   * `browsingLevel` is a permission ceiling rather than viewer intent.
+   * Deliberately a sibling of `input` (not a field on it) so it can never arrive
+   * from parsed query params.
+   */
+  ignoreBrowsingAddons?: boolean;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
+    input,
+    {
+      id: sessionUser?.id,
+      username: sessionUser?.username,
+      isModerator: sessionUser?.isModerator,
+    },
+    { ignoreBrowsingAddons }
+  );
+  if (blockedEnforcement.emptyResult) return { items: [], isPrivate: false };
+
   const {
     user,
     take,
@@ -280,7 +360,6 @@ export const getModelsRaw = async ({
     needsReview,
     collectionId,
     fileFormats,
-    clubId,
     modelVersionIds,
     browsingLevel,
     excludedUserIds,
@@ -321,7 +400,21 @@ export const getModelsRaw = async ({
         client.index(MODELS_SEARCH_INDEX).search(query, request)
       );
     } catch (err) {
-      if (err instanceof MeiliCallTimeoutError) {
+      // Widened from `instanceof MeiliCallTimeoutError` to isTransientMeiliError
+      // (same fix as /api/v1/models' resolveModelSearchIds + #2972's user
+      // search). getModelsRaw is the search path behind model.getAll (the tRPC
+      // getModelsInfiniteHandler); its timeout-wrapper only caught civitai's own
+      // MeiliCallTimeoutError. A Meilisearch brownout ALSO throws the SDK's own
+      // transient types (MeiliSearchCommunicationError 408/429/5xx,
+      // MeiliSearchApiError gateway 502/503/504, network ECONNRESET, …), which
+      // fell through `throw err` → getModelsInfiniteHandler's throwDbError
+      // wrapped them as TRPCError INTERNAL_SERVER_ERROR → a 500 (invisible in
+      // Axiom). Converting them to SERVICE_UNAVAILABLE here surfaces a transient
+      // brownout as a retryable 503 through getModelsInfiniteHandler's
+      // `if (error instanceof TRPCError) throw error` (which re-throws it
+      // unchanged). Non-transient errors (malformed filter / auth / real app
+      // bug) are NOT matched and still surface as their real status.
+      if (isTransientMeiliError(err)) {
         throw new TRPCError({
           code: 'SERVICE_UNAVAILABLE',
           message: 'Model search is temporarily overloaded — please retry.',
@@ -399,9 +492,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(searchModelIds, ',')})`);
   }
 
-  // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
-  // At that point, we should be relying more on unlisted status which is set by the owner.
-  const hidePrivateModels = !ids && !clubId && !username && !user && !followed && !collectionId;
+  const hidePrivateModels = !ids && !username && !user && !followed && !collectionId;
 
   if (!archived) {
     AND.push(
@@ -414,6 +505,14 @@ export const getModelsRaw = async ({
   }
   if (disableMinor) {
     AND.push(Prisma.sql`${pSql}."minor" = false`);
+  }
+  if (input.excludedTagIds?.length) {
+    const notExcluded = Prisma.sql`NOT EXISTS (
+      SELECT 1 FROM "TagsOnModels" tom
+      WHERE tom."modelId" = m."id"
+        AND tom."tagId" IN (${Prisma.join([...new Set(input.excludedTagIds)])})
+    )`;
+    AND.push(userId ? Prisma.sql`(${notExcluded} OR m."userId" = ${userId})` : notExcluded);
   }
 
   if (isModerator) {
@@ -609,7 +708,14 @@ export const getModelsRaw = async ({
   }
 
   if (earlyAccess) {
-    AND.push(Prisma.sql`m."earlyAccessDeadline" >= ${new Date()}`);
+    AND.push(
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
+        WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
+          AND pamv.status = 'Published'::"ModelStatus" AND pa."endsAt" > NOW()
+      )`
+    );
   }
   if (availability) {
     if (availability === Availability.Private && !(username || isModerator)) {
@@ -666,7 +772,7 @@ export const getModelsRaw = async ({
 
   // Exclude user content
   if (excludedUserIds?.length) {
-    AND.push(Prisma.sql`mm."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+    AND.push(Prisma.sql`mm."userId" != ALL(${excludedUserIds}::int[])`);
   }
 
   // Build ORDER BY - use pAlias for per-base-model stats (downloadCount, thumbsUpCount, imageCount)
@@ -727,31 +833,7 @@ export const getModelsRaw = async ({
     AND.push(browsingLevelQuery);
   }
 
-  const WITH: Prisma.Sql[] = [];
-  if (clubId) {
-    WITH.push(Prisma.sql`
-      "clubModels" AS (
-        SELECT
-          mv."modelId" "modelId",
-          MAX(mv."id") "modelVersionId"
-        FROM "EntityAccess" ea
-        JOIN "ModelVersion" mv ON mv."id" = ea."accessToId"
-        LEFT JOIN "ClubTier" ct ON ea."accessorType" = 'ClubTier' AND ea."accessorId" = ct."id" AND ct."clubId" = ${clubId}
-        WHERE (
-            (
-             ea."accessorType" = 'Club' AND ea."accessorId" = ${clubId}
-            )
-            OR (
-              ea."accessorType" = 'ClubTier' AND ct."clubId" = ${clubId}
-            )
-          )
-          AND ea."accessToType" = 'ModelVersion'
-        GROUP BY mv."modelId"
-      )
-    `);
-  }
-
-  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
+  const queryWith = Prisma.sql``;
 
   // Build dynamic FROM clause based on query path
   // Four paths:
@@ -828,7 +910,7 @@ export const getModelsRaw = async ({
       mm."lastVersionAt",
       m."publishedAt",
       m."locked",
-      m."earlyAccessDeadline",
+      m."meta",
       ${pSql}."mode",
       ${pSql}."availability",
       jsonb_build_object(
@@ -842,8 +924,7 @@ export const getModelsRaw = async ({
       mm."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
-  const fromAndJoin = Prisma.sql`${fromClause}
-      ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}`;
+  const fromAndJoin = fromClause;
 
   const limitValue = (take ?? 100) + 1;
   const orderByRaw = Prisma.raw(orderBy);
@@ -915,9 +996,8 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics] = await withSpan(
-    'model:getAll:parallelFetch',
-    () =>
+  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, earlyAccessDeadlines] =
+    await withSpan('model:getAll:parallelFetch', () =>
       Promise.all([
         userBasicCache.fetch(userIds),
         getProfilePicturesForUsers(userIds),
@@ -926,8 +1006,12 @@ export const getModelsRaw = async ({
         includeCosmetics
           ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
           : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+        getModelEarlyAccessDeadlines(modelIds),
       ])
-  );
+    );
+  for (const model of models) {
+    model.earlyAccessDeadline = earlyAccessDeadlines.get(model.id) ?? null;
+  }
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -938,7 +1022,7 @@ export const getModelsRaw = async ({
   return {
     items: withSpan('model:getAll:transform', () =>
       models
-        .map(({ rank, cursorId, ...model }) => {
+        .map(({ rank, cursorId, meta, ...model }) => {
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
@@ -1020,6 +1104,7 @@ export const getModelsRaw = async ({
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
+            metricPrivacy: getMetaMetricPrivacy(meta),
           };
         })
         .filter(isDefined)
@@ -1045,6 +1130,15 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   count?: boolean;
 }) => {
+  const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(input, {
+    id: sessionUser?.id,
+    username: sessionUser?.username,
+    isModerator: sessionUser?.isModerator,
+  });
+  if (blockedEnforcement.emptyResult) {
+    return count ? { items: [], count: 0 } : { items: [], isPrivate: false };
+  }
+
   const {
     take,
     skip,
@@ -1078,7 +1172,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     collectionId,
     fileFormats,
     browsingLevel,
-    clubId,
   } = input;
 
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
@@ -1133,11 +1226,14 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (excludedUserIds && excludedUserIds.length && !username) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
-  // if (excludedTagIds && excludedTagIds.length && !username) {
-  //   AND.push({
-  //     tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
-  //   });
-  // }
+  if (excludedTagIds && excludedTagIds.length) {
+    AND.push({
+      OR: [
+        { tagsOnModels: { none: { tagId: { in: excludedTagIds } } } },
+        ...(sessionUser?.id ? [{ userId: sessionUser.id }] : []),
+      ],
+    });
+  }
   if (excludedModelIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedModelIds } });
   }
@@ -1159,7 +1255,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     isPrivate = true;
   }
   if (earlyAccess) {
-    AND.push({ earlyAccessDeadline: { gte: new Date() } });
+    AND.push({ id: { in: await getActiveEarlyAccessModelIds() } });
   }
 
   if (supportsGeneration) {
@@ -1286,9 +1382,26 @@ export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
 export const getModelsWithImagesAndModelVersions = async ({
   input,
   user,
+  // Per-model image cap for the RESPONSE (the shared image cache is untouched).
+  // The browse-feed controller selects the SLIM cap when the DARK
+  // `getAllModelImagesSlim` flag is on; other callers (home blocks, collections)
+  // default to `GET_ALL_IMAGES_PER_MODEL`.
+  imagesPerModel = GET_ALL_IMAGES_PER_MODEL,
+  // When true (flag-ON browse feed only) pick the nsfw-biased coverage slice instead
+  // of the naive first-`imagesPerModel`, so reducing the count adds ~zero feed drops.
+  biasImageSlice = false,
+  // Read-time Creator-Controls metric-privacy gate (#3266 A/B). DEFAULTS TRUE so
+  // callers that don't thread it (home blocks, collections) keep today's behavior;
+  // the browse-feed controller passes the once-per-request `modelMetricPrivacyReadtime`
+  // flag. When false, the per-request owner-settings + membership work below is
+  // skipped and raw metrics are emitted (pre-#3266 visibility).
+  metricPrivacyEnabled = true,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  imagesPerModel?: number;
+  biasImageSlice?: boolean;
+  metricPrivacyEnabled?: boolean;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1347,12 +1460,44 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
-  const unavailableGenResources = await getUnavailableResources();
+  // Creator Controls metric privacy for the card feed. Fetch owner defaults once,
+  // then only resolve CP membership for owners who actually have a hide flag set
+  // (keeps the common no-flags case free of membership lookups).
+  // Flag-gated (#3266 A/B): when `metricPrivacyEnabled` is false the whole batched
+  // owner-settings + `getValidCreatorMembershipMap` block is skipped and raw metrics
+  // are emitted (pre-#3266 visibility).
+  const isMod = !!user?.isModerator;
+  // Cache-backed per-owner metric-privacy DEFAULT flags (the three `hideModel*`
+  // booleans). Replaces a per-request `dbRead.user.findMany({ settings })` that
+  // deserialized every owner's full `settings` blob just to read three booleans — the
+  // measured api-primary read-time longtask (#3266). Values are the tiny derived slice,
+  // fed unchanged into the resolvers below (byte-identical).
+  let feedOwnerSettingsMap = new Map<number, unknown>();
+  let feedMembershipMap = new Map<number, boolean>();
+  if (metricPrivacyEnabled) {
+    const feedOwnerIds = [...new Set(items.map((m) => m.user.id))];
+    feedOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(feedOwnerIds);
+    const membershipCandidates = new Set<number>();
+    for (const it of items) {
+      const ownerId = it.user.id;
+      if (isMod || ownerId === user?.id) continue;
+      const defHidden = getUserMetricPrivacyDefaults(feedOwnerSettingsMap.get(ownerId));
+      if (anyMetricHidden(it.metricPrivacy) || anyMetricHidden(defHidden))
+        membershipCandidates.add(ownerId);
+    }
+    feedMembershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
+  }
+  const toMetaShape = (h: HiddenModelMetrics) => ({
+    hideBuzz: h.buzz,
+    hideDownloads: h.downloads,
+    hideGenerations: h.generations,
+  });
+
   const result = {
     nextCursor,
     isPrivate,
     items: items
-      .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
+      .map(({ hashes, modelVersions, rank, tagsOnModels, metricPrivacy, ...model }) => {
         const [version] = modelVersions;
         if (!version) {
           return null;
@@ -1371,27 +1516,49 @@ export const getModelsWithImagesAndModelVersions = async ({
 
         const canGenerate =
           !!version?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1 &&
+          !isGenerationDisabled(version.flags) &&
           isBaseModelGenerationSupported(version.baseModel, model.type);
+
+        const isOwner = isMod || model.user.id === user?.id;
+        const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
+          resolveModelHiddenMetrics({
+            modelMeta: toMetaShape(metricPrivacy),
+            userSettings: feedOwnerSettingsMap.get(model.user.id),
+            isOwnerOrModerator: isOwner,
+            hasValidMembership: feedMembershipMap.get(model.user.id) ?? false,
+          })
+        );
 
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
           hashes: hashes.map((hash) => hash.toLowerCase()),
+          hiddenMetrics: modelHidden,
           rank: {
-            downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
+            downloadCount: modelHidden.downloads
+              ? null
+              : rank?.[`downloadCount${input.period}`] ?? 0,
             thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
             thumbsDownCount: rank?.[`thumbsDownCount${input.period}`] ?? 0,
             commentCount: rank?.[`commentCount${input.period}`] ?? 0,
             collectedCount: rank?.[`collectedCount${input.period}`] ?? 0,
-            tippedAmountCount: rank?.[`tippedAmountCount${input.period}`] ?? 0,
+            tippedAmountCount: modelHidden.buzz
+              ? null
+              : rank?.[`tippedAmountCount${input.period}`] ?? 0,
           },
           version,
           // // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
           //   : versionImages,
-          images: filteredImages,
+          // Trim the images in the getAll (browse feed) response — the #1
+          // serialize-freeze source. `buildGetAllModelImages` caps the array to
+          // `imagesPerModel` (flag-selected) AND drops the per-image fields no
+          // consumer reads (always-on). It returns NEW arrays/objects, so the
+          // shared `imagesForModelVersionsCache` entries (still used at full 20
+          // with all fields by model-detail pages, auctions, etc.) are untouched.
+          // See `~/server/utils/model-getall-images`.
+          images: buildGetAllModelImages(filteredImages, imagesPerModel, biasImageSlice),
           canGenerate,
         };
       })
@@ -1400,6 +1567,25 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   return result;
 };
+
+/**
+ * Re-queue a user's published models for search reindex. Creator Controls metric
+ * privacy is baked into the search doc (effective = flag AND active membership), so
+ * a `hideModel*` user-setting flip or a membership lapse must re-run the transform,
+ * otherwise the search cards stay stale (over-hidden after a lapse; user-default
+ * flips invisible until an incidental reindex).
+ */
+export async function queueModelMetricPrivacyReindex(userId: number) {
+  if (!userId) return;
+  const models = await dbRead.model.findMany({
+    where: { userId, status: ModelStatus.Published },
+    select: { id: true },
+  });
+  if (!models.length) return;
+  await modelsSearchIndex.queueUpdate(
+    models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+}
 
 export const getModelVersionsMicro = async ({
   id,
@@ -1415,16 +1601,19 @@ export const getModelVersionsMicro = async ({
       id: true,
       name: true,
       index: true,
-      earlyAccessEndsAt: true,
       createdAt: true,
       publishedAt: true,
     },
   });
 
-  return versions.map(({ earlyAccessEndsAt, ...v }) => ({
-    ...v,
-    isEarlyAccess: earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt),
-  }));
+  const paidAccess = await getPaidAccess(
+    'ModelVersion',
+    versions.map((v) => v.id)
+  );
+  return versions.map((v) => {
+    const row = paidAccess[v.id];
+    return { ...v, isEarlyAccess: !!row && isPaidAccessActive(row) };
+  });
 };
 
 export const updateModelById = async ({
@@ -1522,8 +1711,10 @@ export const deleteModelById = async ({
         UPDATE "Post"
         SET "metadata" = "metadata" || jsonb_build_object(
           'unpublishedAt', ${new Date().toISOString()},
-          'unpublishedBy', ${userId}
-                                       )
+          'unpublishedBy', ${userId},
+          'prevPublishedAt', "publishedAt"
+                                       ),
+            "publishedAt" = NULL
         WHERE
             "publishedAt" IS NOT NULL
         AND "userId" = ${model.userId}
@@ -1549,6 +1740,39 @@ export const deleteModelById = async ({
   // never cached, so the base-row gap is benign on this path.)
   const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
   await preventModelVersionLagBatch(id, deletedVersionIds);
+  // Drop the deleted model's post images from the image search index — parity
+  // with unpublishModelById / permaDeleteModelById. The image index doesn't
+  // filter on model status, so without this a soft-deleted model's images keep
+  // surfacing in Meili-backed feeds even though the DB feed already hides them.
+  // dbWrite to dodge replica lag on the just-committed txn (same as unpublish).
+  if (deletedModel && deletedVersionIds.length) {
+    try {
+      const deletedPosts = await dbWrite.post.findMany({
+        where: { modelVersionId: { in: deletedVersionIds }, userId: deletedModel.userId },
+        select: { id: true },
+      });
+      if (deletedPosts.length) {
+        const deletedImages = await dbWrite.image.findMany({
+          where: { postId: { in: deletedPosts.map((p) => p.id) } },
+          select: { id: true },
+        });
+        if (deletedImages.length)
+          await queueImageSearchIndexUpdate({
+            ids: deletedImages.map((i) => i.id),
+            action: SearchIndexUpdateQueueAction.Delete,
+          });
+      }
+    } catch (error) {
+      // Best-effort: the model is already committed-deleted, so an index-queue
+      // hiccup must not throw to the caller and skip the trailing cache busts.
+      logToAxiom({
+        type: 'error',
+        name: 'model-delete-image-search-index',
+        message: `Failed to queue image search index update for model ${id}`,
+        error,
+      });
+    }
+  }
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
@@ -1606,6 +1830,9 @@ export const permaDeleteModelById = async ({
 }) => {
   // Populated inside the tx so the snapshot is consistent with the cascade.
   let modelFileUrls: string[] = [];
+  // Version ids captured inside the tx (before the cascade removes them) so the
+  // post-commit storage-resolver deregister can reach every reaped version.
+  let versionIds: number[] = [];
 
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
@@ -1627,6 +1854,8 @@ export const permaDeleteModelById = async ({
         },
       });
       if (!model) return { deletedModel: null, imagesToDelete: [] };
+
+      versionIds = model.modelVersions.map(({ id }) => id);
 
       // Get posts to find associated images
       const posts = await tx.post.findMany({
@@ -1721,6 +1950,23 @@ export const permaDeleteModelById = async ({
         });
       }
     }
+    // Post-commit: deregister storage-resolver file_locations for every version
+    // this model owned. For a tiered file the real backend object is keyed by
+    // file_locations.path (not the stale ModelFile.url the S3 cleanup used), and
+    // the surviving row keeps that object whitelisted against the dereference-
+    // quarantine sweep — a permanent leak. Best-effort + never throws.
+    if (versionIds.length > 0) {
+      try {
+        await deregisterFileLocationsBatch(versionIds);
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'model-perma-delete-deregister-file-locations',
+          message: `Failed to deregister file locations for model ${id}`,
+          error,
+        });
+      }
+    }
   }
 
   return deletedModel;
@@ -1759,6 +2005,181 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
   });
 };
 
+export async function applyModelFlagSideEffects({
+  before,
+  after,
+  tagsChanged = false,
+  nameChanged = false,
+  descriptionChanged = false,
+}: {
+  before: {
+    poi: boolean;
+    minor: boolean;
+    sfwOnly: boolean;
+    nsfw: boolean;
+    gallerySettings: Prisma.JsonValue;
+  };
+  after: {
+    id: number;
+    name: string;
+    description: string | null;
+    poi: boolean;
+    nsfw: boolean;
+    minor: boolean;
+    sfwOnly: boolean;
+    status: ModelStatus;
+    gallerySettings: Prisma.JsonValue;
+  };
+  tagsChanged?: boolean;
+  nameChanged?: boolean;
+  descriptionChanged?: boolean;
+}): Promise<void> {
+  const { id } = after;
+  const poiChanged = after.poi !== before.poi;
+  const minorChanged = after.minor !== before.minor || after.sfwOnly !== before.sfwOnly;
+  const nsfwChanged = after.nsfw !== before.nsfw;
+
+  // Update search index if listing changes
+  if (tagsChanged || poiChanged || minorChanged) {
+    await modelTagCache.refresh(id);
+    if (tagsChanged) await modelVotableTagsCache.bust(id);
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  }
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+  const newGallerySettings = after.gallerySettings as ModelGallerySettingsSchema;
+  const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
+
+  if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+
+  // Ingest model if it's published and any of the following fields have changed:
+  if (
+    (after.status === 'Published' || after.status === 'Scheduled') &&
+    (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
+  ) {
+    const parsedModel = ingestModelSchema.parse(after);
+    // Run it in the background to prevent blocking the request
+    ingestModel({ ...parsedModel }).catch((error) =>
+      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+    );
+  }
+
+  if (minorChanged || poiChanged) {
+    const modelVersions = await dbWrite.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true },
+    });
+
+    const modelVersionIds = modelVersions.map(({ id }) => id);
+
+    if (modelVersionIds.length !== 0) {
+      // Set-based on purpose: a gallery can hold hundreds of thousands of images, and
+      // binding one parameter per image id blows past Postgres' 65535 parameter limit.
+      // The value guard keeps a re-toggle from rewriting every row (and re-queueing every
+      // id into the search index) when the flags already match.
+      const updatedImages = await dbWrite.$queryRaw<{ id: number }[]>`
+        UPDATE "Image" i
+          SET minor = ${after.minor},
+              poi = ${after.poi}
+        FROM "Post" p
+        WHERE i."postId" = p.id
+          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
+          AND (i.minor IS DISTINCT FROM ${after.minor} OR i.poi IS DISTINCT FROM ${after.poi})
+        RETURNING i.id
+      `;
+
+      if (updatedImages.length !== 0) {
+        await queueImageSearchIndexUpdate({
+          ids: updatedImages.map(({ id }) => id),
+          action: SearchIndexUpdateQueueAction.Update,
+        });
+      }
+
+      await bustMvCache(modelVersionIds, id);
+    }
+  }
+}
+
+// Kept in sync with `lockableProperties` in ModelUpsertForm.tsx — these are the
+// fields the "Set as Minor" quick action locks against creator edits.
+export const MINOR_LOCKED_PROPERTIES = ['minor', 'nsfw', 'sfwOnly'];
+
+export async function setModelMinor({
+  id,
+  minor,
+  userId,
+}: SetModelMinorInput & { userId: number }) {
+  const before = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      nsfw: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  const prevLockedProperties = before.lockedProperties ?? [];
+  const lockedProperties = minor
+    ? uniq([...prevLockedProperties, ...MINOR_LOCKED_PROPERTIES])
+    : prevLockedProperties.filter((prop) => !MINOR_LOCKED_PROPERTIES.includes(prop));
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+
+  const result = await dbWrite.model.update({
+    where: { id },
+    // Unset deliberately leaves sfwOnly/nsfw/gallerySettings untouched — the model may
+    // have been legitimately SFW-only before it was flagged, and guessing wrong would
+    // silently re-open NSFW generation nobody asked to re-open.
+    data: minor
+      ? {
+          minor: true,
+          nsfw: false,
+          sfwOnly: true,
+          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+          lockedProperties,
+        }
+      : {
+          minor: false,
+          lockedProperties,
+        },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+    },
+  });
+
+  await preventReplicationLag('model', id);
+  // Audit before the fan-out: the flag write has already committed, so a fan-out
+  // failure must not cost us the record of who flipped it. The audit write itself
+  // must not block the fan-out either, so failures are logged, not thrown.
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: id,
+    activity: minor ? 'setMinor' : 'unsetMinor',
+  }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'set-model-minor-track-activity',
+      message: `Failed to track mod activity for model ${id}`,
+      error,
+    })
+  );
+  await applyModelFlagSideEffects({ before, after: result });
+
+  return result;
+}
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
@@ -1782,20 +2203,34 @@ export const upsertModel = async (
   } = input;
   let { meta } = input;
 
-  // don't allow updating of locked properties
-  if (!isModerator) {
-    const lockedProperties = data.lockedProperties ?? [];
-    for (const prop of lockedProperties) {
-      const key = prop as keyof typeof data;
-      if (data[key] !== undefined) delete data[key];
-    }
+  const beforeUpdate =
+    id && !templateId
+      ? await dbRead.model.findUnique({
+          where: { id },
+          select: {
+            name: true,
+            description: true,
+            poi: true,
+            userId: true,
+            minor: true,
+            sfwOnly: true,
+            nsfw: true,
+            lockedProperties: true,
+            gallerySettings: true,
+            meta: true,
+          },
+        })
+      : null;
 
+  const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
+  enforceLockedProperties({ data, storedLockedProperties, isModerator });
+
+  if (!isModerator) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
-    // If profanity exceeds thresholds, mark model as NSFW
     if (evaluation.shouldMarkNSFW && !data.nsfw) {
       meta = {
         ...(meta ?? {}),
@@ -1805,11 +2240,12 @@ export const upsertModel = async (
           metrics: evaluation.metrics,
         },
       };
-      data.nsfw = true;
-      data.lockedProperties =
-        data.lockedProperties && !data.lockedProperties.includes('nsfw')
-          ? [...data.lockedProperties, 'nsfw']
-          : ['nsfw'];
+      // A stored nsfw lock is a moderator's call (minor-flagging sets it false): keep the
+      // detection for review, but never let the filter overturn it.
+      if (!storedLockedProperties.includes('nsfw')) {
+        data.nsfw = true;
+        data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
+      }
     }
   }
 
@@ -1885,6 +2321,8 @@ export const upsertModel = async (
     }
 
     await modelTagCache.refresh(result.id);
+    // Model tag set changed → the votable-tags list (score>0 ModelTag rows) changed too.
+    await modelVotableTagsCache.bust(result.id);
     await preventReplicationLag('model', result.id);
     if (data.uploadType === ModelUploadType.Trained) {
       // getTrainingModelsByUserId filters by userId — flag that path so the
@@ -1893,20 +2331,6 @@ export const upsertModel = async (
     }
     return { ...result, meta: modelMeta };
   } else {
-    const beforeUpdate = await dbRead.model.findUnique({
-      where: { id },
-      select: {
-        name: true,
-        description: true,
-        poi: true,
-        userId: true,
-        minor: true,
-        sfwOnly: true,
-        nsfw: true,
-        gallerySettings: true,
-        meta: true,
-      },
-    });
     if (!beforeUpdate) return null;
 
     const isOwner = beforeUpdate.userId === userId || isModerator;
@@ -1965,77 +2389,19 @@ export const upsertModel = async (
       },
     });
     await preventReplicationLag('model', id);
+    await userModelCountCache.refresh(userId);
 
-    // Check any changes that would require a search index update
-    const poiChanged = result.poi !== beforeUpdate.poi;
-    const minorChanged =
-      result.minor !== beforeUpdate.minor || result.sfwOnly !== beforeUpdate.sfwOnly;
-    const nsfwChanged = result.nsfw !== beforeUpdate.nsfw;
-    const nameChanged = input.name !== beforeUpdate.name;
-    const descriptionChanged = input.description !== beforeUpdate.description;
     const modelMeta = result.meta as ModelMeta | null;
     const showcaseCollectionChanged =
       modelMeta?.showcaseCollectionId !== (beforeUpdate.meta as ModelMeta)?.showcaseCollectionId;
 
-    // Update search index if listing changes
-    if (tagsOnModels || poiChanged || minorChanged) {
-      await modelTagCache.refresh(result.id);
-      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    }
-
-    const newGallerySettings = result.gallerySettings as ModelGallerySettingsSchema;
-    const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
-
-    if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
-
-    await userModelCountCache.refresh(userId);
-
-    // Ingest model if it's published and any of the following fields have changed:
-    if (
-      (result.status === 'Published' || result.status === 'Scheduled') &&
-      (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
-    ) {
-      const parsedModel = ingestModelSchema.parse(result);
-      // Run it in the background to prevent blocking the request
-      ingestModel({ ...parsedModel }).catch((error) =>
-        logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-      );
-    }
-
-    if (minorChanged || poiChanged) {
-      // Update all images:
-      const modelVersions = await dbWrite.modelVersion.findMany({
-        where: { modelId: id },
-        select: { id: true },
-      });
-
-      const modelVersionIds = modelVersions.map(({ id }) => id);
-
-      if (modelVersionIds.length !== 0) {
-        const imageIds = await dbRead.$queryRaw<{ id: number }[]>`
-          SELECT i.id
-          FROM "Image" i
-          JOIN "Post" p ON i."postId" = p.id
-          WHERE p."modelVersionId" IN (${Prisma.join(modelVersionIds, ',')})
-        `;
-
-        if (imageIds.length !== 0) {
-          await dbWrite.$executeRaw`
-            UPDATE "Image"
-              SET minor = ${result.minor},
-                  poi = ${result.poi}
-            WHERE id IN (${Prisma.join(
-              imageIds.map(({ id }) => id),
-              ','
-            )})
-          `;
-
-          await imagesSearchIndex.queueUpdate(
-            imageIds.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-          );
-        }
-      }
-    }
+    await applyModelFlagSideEffects({
+      before: beforeUpdate,
+      after: result,
+      tagsChanged: !!tagsOnModels,
+      nameChanged: input.name !== beforeUpdate.name,
+      descriptionChanged: input.description !== beforeUpdate.description,
+    });
 
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
@@ -2370,22 +2736,33 @@ export const unpublishModelById = async ({
   // Use dbWrite for the search-index lookups for the same reason as
   // publishModelById — the replica may not yet reflect the txn we just
   // committed.
-  const posts = await dbWrite.post.findMany({
-    where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
-    select: { id: true },
-  });
-  const images = await dbWrite.image.findMany({
-    where: { postId: { in: posts.map((x) => x.id) } },
-    select: { id: true },
-  });
+  try {
+    const posts = await dbWrite.post.findMany({
+      where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
+      select: { id: true },
+    });
+    const images = await dbWrite.image.findMany({
+      where: { postId: { in: posts.map((x) => x.id) } },
+      select: { id: true },
+    });
 
-  // Remove this model from search index as it's been unpublished.
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  // Remove all affected images from search index
-  await queueImageSearchIndexUpdate({
-    ids: images.map((x) => x.id),
-    action: SearchIndexUpdateQueueAction.Delete,
-  });
+    // Remove this model from search index as it's been unpublished.
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    // Remove all affected images from search index
+    await queueImageSearchIndexUpdate({
+      ids: images.map((x) => x.id),
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  } catch (error) {
+    // Best-effort: the unpublish txn is already committed, so an index-queue
+    // hiccup must not throw to the caller and skip the trailing bid cleanup.
+    logToAxiom({
+      type: 'error',
+      name: 'model-unpublish-image-search-index',
+      message: `Failed to queue search index update for model ${id}`,
+      error,
+    });
+  }
 
   await deleteBidsForModel({ modelId: id });
 
@@ -2395,6 +2772,8 @@ export const unpublishModelById = async ({
 export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
   const files = (
     await dbRead.modelFile.findMany({
+      // No replacedAt/visibility filter needed: only primary `Model` files are read here,
+      // and primary files are never quarantined (linked-component replace rejects them).
       where: {
         modelVersionId: { in: vaeIds },
         type: 'Model',
@@ -2661,35 +3040,9 @@ export const getSimpleModelWithVersions = async ({
   return model;
 };
 
-export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
-  // Using dbWrite here cause immediately after a version has been unlocked it may update the model,
-  // meaning we need the latest version.
-  const model = await dbWrite.model.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      publishedAt: true,
-      modelVersions: {
-        where: { status: ModelStatus.Published },
-        select: { id: true, earlyAccessEndsAt: true, createdAt: true },
-      },
-    },
-  });
-  if (!model) throw throwNotFoundError();
-
-  const { modelVersions } = model;
-  const nextEarlyAccess = modelVersions.find((v) => !!v.earlyAccessEndsAt);
-
-  if (nextEarlyAccess) {
-    await updateModelById({
-      id,
-      data: {
-        earlyAccessDeadline: nextEarlyAccess.earlyAccessEndsAt,
-      },
-    });
-  } else {
-    await updateModelById({ id, data: { earlyAccessDeadline: null } });
-  }
+export const queueModelEarlyAccessReindex = async ({ id }: GetByIdInput) => {
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await dataForModelsCache.refresh(id);
 };
 
 /**
@@ -2838,6 +3191,8 @@ export const setModelsCategory = async ({
     `;
 
     await modelTagCache.refresh(modelIds);
+    // Applied tags land as score>0 ModelTag rows → refresh the votable-tags cache too.
+    await modelVotableTagsCache.bust(modelIds);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -3058,6 +3413,7 @@ export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpoi
 export async function getModelsWithVersions({
   input,
   user,
+  ignoreBrowsingAddons,
 }: {
   input: GetAllModelsOutput & { take?: number; skip?: number };
   user?: {
@@ -3066,11 +3422,14 @@ export async function getModelsWithVersions({
     username?: string;
     filePreferences?: UserFilePreferences;
   };
+  /** See `getModelsRaw` — by-id lookups opt out of the addon discovery gates. */
+  ignoreBrowsingAddons?: boolean;
 }) {
   const { items, nextCursor } = await getModelsRaw({
     input,
     user,
     include: ['details'],
+    ignoreBrowsingAddons,
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
@@ -3118,21 +3477,49 @@ export async function getModelsWithVersions({
     where: { modelVersionId: { in: modelVersionIds } },
   });
 
-  function getStatsForModel(modelId: number) {
+  // Creator Controls metric privacy for the v1 public API. Only download + tipped
+  // are exposed today (no generation count in v1 stats), so we gate what exists.
+  const isMod = !!user?.isModerator;
+  const viewerId = user?.id;
+  const apiOwnerIds = [...new Set(items.map((m) => m.user.id))];
+  // Cache-backed per-owner metric-privacy DEFAULT flags — see the feed path above;
+  // avoids deserializing every owner's full `settings` blob per request.
+  const apiOwnerSettingsMap = await getUserMetricPrivacyDefaultsMap(apiOwnerIds);
+  const apiMembershipCandidates = new Set<number>();
+  for (const it of items) {
+    const ownerId = it.user.id;
+    if (isMod || ownerId === user?.id) continue;
+    const defHidden = getUserMetricPrivacyDefaults(apiOwnerSettingsMap.get(ownerId));
+    if (anyMetricHidden(it.metricPrivacy) || anyMetricHidden(defHidden))
+      apiMembershipCandidates.add(ownerId);
+  }
+  const apiMembershipMap = await getValidCreatorMembershipMap([...apiMembershipCandidates]);
+
+  // Version-level meta isn't carried by dataForModelsCache, so fetch it to honor the
+  // version-OR-model-OR-user precedence for v1 version stats (a version-only hide).
+  const versionMetaRows = modelVersionIds.length
+    ? await dbRead.modelVersion.findMany({
+        where: { id: { in: modelVersionIds } },
+        select: { id: true, meta: true },
+      })
+    : [];
+  const versionMetaMap = new Map<number, unknown>(versionMetaRows.map((v) => [v.id, v.meta]));
+
+  function getStatsForModel(modelId: number, hidden: HiddenModelMetrics) {
     const stats = metrics.find((x) => x.modelId === modelId);
     return {
-      downloadCount: stats?.downloadCount ?? 0,
+      downloadCount: hidden.downloads ? null : stats?.downloadCount ?? 0,
       thumbsUpCount: stats?.thumbsUpCount ?? 0,
       thumbsDownCount: stats?.thumbsDownCount ?? 0,
       commentCount: stats?.commentCount ?? 0,
-      tippedAmountCount: stats?.tippedAmountCount ?? 0,
+      tippedAmountCount: hidden.buzz ? null : stats?.tippedAmountCount ?? 0,
     };
   }
 
-  function getStatsForVersion(versionId: number) {
+  function getStatsForVersion(versionId: number, hidden: HiddenModelMetrics) {
     const stats = versionMetrics.find((x) => x.modelVersionId === versionId);
     return {
-      downloadCount: stats?.downloadCount ?? 0,
+      downloadCount: hidden.downloads ? null : stats?.downloadCount ?? 0,
       thumbsUpCount: stats?.thumbsUpCount ?? 0,
       thumbsDownCount: stats?.thumbsDownCount ?? 0,
     };
@@ -3151,71 +3538,98 @@ export async function getModelsWithVersions({
         createdAt,
         lastVersionAt,
         user,
+        metricPrivacy,
         ...model
-      }) => ({
-        ...model,
-        user: user.username === 'civitai' ? undefined : user,
-        supportsGeneration: modelVersions.some((x) => x.covered),
-        modelVersions: modelVersions.map(({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
-          const stats = getStatsForVersion(version.id);
-          const vaeVersionId = vaeMap.get(version.id);
-          const vaeFile = vaeVersionId
-            ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)
-            : [];
-          const files = groupedFiles[version.id]?.files ?? [];
-          files.push(...vaeFile);
+      }) => {
+        const isOwner = isMod || user.id === viewerId;
+        const modelHidden = resolveModelHiddenMetrics({
+          modelMeta: {
+            hideBuzz: metricPrivacy.buzz,
+            hideDownloads: metricPrivacy.downloads,
+            hideGenerations: metricPrivacy.generations,
+          },
+          userSettings: apiOwnerSettingsMap.get(user.id),
+          isOwnerOrModerator: isOwner,
+          hasValidMembership: apiMembershipMap.get(user.id) ?? false,
+        });
+        return {
+          ...model,
+          user: user.username === 'civitai' ? undefined : user,
+          supportsGeneration: modelVersions.some((x) => x.covered),
+          modelVersions: modelVersions.map(
+            ({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
+              const versionHidden = resolveVersionHiddenMetrics({
+                versionMeta: versionMetaMap.get(version.id),
+                modelMeta: {
+                  hideBuzz: metricPrivacy.buzz,
+                  hideDownloads: metricPrivacy.downloads,
+                  hideGenerations: metricPrivacy.generations,
+                },
+                userSettings: apiOwnerSettingsMap.get(user.id),
+                isOwnerOrModerator: isOwner,
+                hasValidMembership: apiMembershipMap.get(user.id) ?? false,
+              });
+              const stats = getStatsForVersion(version.id, versionHidden);
+              const vaeVersionId = vaeMap.get(version.id);
+              const vaeFile = vaeVersionId
+                ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)
+                : [];
+              const files = groupedFiles[version.id]?.files ?? [];
+              files.push(...vaeFile);
 
-          let earlyAccessDeadline = getEarlyAccessDeadline({
-            versionCreatedAt: version.createdAt,
-            publishedAt: version.publishedAt,
-            earlyAccessTimeframe: earlyAccessTimeFrame,
-          });
-          if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
-            earlyAccessDeadline = undefined;
-
-          return {
-            ...version,
-            files: files.map(({ metadata: metadataRaw, modelVersionId, ...file }) => {
-              const metadata = metadataRaw as FileMetadata | undefined;
+              let earlyAccessDeadline = getEarlyAccessDeadline({
+                versionCreatedAt: version.createdAt,
+                publishedAt: version.publishedAt,
+                earlyAccessTimeframe: earlyAccessTimeFrame,
+              });
+              if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
+                earlyAccessDeadline = undefined;
 
               return {
-                ...file,
-                metadata: {
-                  format: metadata?.format,
-                  size: metadata?.size,
-                  fp: metadata?.fp,
-                  quantType: metadata?.quantType,
-                  isRequired: metadata?.isRequired,
-                },
+                ...version,
+                files: files.map(({ metadata: metadataRaw, modelVersionId, ...file }) => {
+                  const metadata = metadataRaw as FileMetadata | undefined;
+
+                  return {
+                    ...file,
+                    metadata: {
+                      format: metadata?.format,
+                      size: metadata?.size,
+                      fp: metadata?.fp,
+                      quantType: metadata?.quantType,
+                      isRequired: metadata?.isRequired,
+                    },
+                  };
+                }),
+                earlyAccessDeadline,
+                stats,
+                // images: images
+                //   .filter((image) => image.modelVersionId === version.id)
+                //   .map(
+                //     ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
+                //       ...image,
+                //     })
+                //   ),
+                images: (images[version.id]?.images ?? []).map(
+                  ({
+                    modelVersionId,
+                    name,
+                    userId,
+                    sizeKB,
+                    availability,
+                    metadata,
+                    tags,
+                    ...image
+                  }) => ({
+                    ...image,
+                  })
+                ),
               };
-            }),
-            earlyAccessDeadline,
-            stats,
-            // images: images
-            //   .filter((image) => image.modelVersionId === version.id)
-            //   .map(
-            //     ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
-            //       ...image,
-            //     })
-            //   ),
-            images: (images[version.id]?.images ?? []).map(
-              ({
-                modelVersionId,
-                name,
-                userId,
-                sizeKB,
-                availability,
-                metadata,
-                tags,
-                ...image
-              }) => ({
-                ...image,
-              })
-            ),
-          };
-        }),
-        stats: getStatsForModel(model.id),
-      })
+            }
+          ),
+          stats: getStatsForModel(model.id, modelHidden),
+        };
+      }
     ),
     nextCursor,
   };
@@ -3246,10 +3660,12 @@ export async function copyGallerySettingsToAllModelsByUser({
 
     userUpdateCounter?.inc({ location: 'model.service:updateGallerySettings' });
 
+    // Flagged models keep the SFW level a moderator forced on them — otherwise one
+    // "copy to all my models" re-opens every model the user has ever had flagged.
     await tx.$executeRaw`
       UPDATE "Model"
       SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
-        'level', ${settings.level},
+        'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${settings.level} END,
         'users', ${JSON.stringify(settings.users || [])}::jsonb,
         'tags', ${JSON.stringify(settings.tags || [])}::jsonb
                                                    )
@@ -3585,6 +4001,61 @@ export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }
 
+// Mod-only read of a model's moderation state — surfaces why a model is
+// locked / marked nsfw / hidden so mods can self-triage instead of escalating
+// (auto-actions like the profanity nsfw-lock are otherwise invisible to them).
+export async function getModelModerationDetail({ id }: { id: number }) {
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      nsfw: true,
+      nsfwLevel: true,
+      status: true,
+      availability: true,
+      minor: true,
+      poi: true,
+      lockedProperties: true,
+      deletedAt: true,
+      deletedBy: true,
+      meta: true,
+    },
+  });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+  const meta = (model.meta ?? {}) as ModelMeta;
+  return {
+    id: model.id,
+    name: model.name,
+    nsfw: model.nsfw,
+    nsfwLevel: model.nsfwLevel,
+    status: model.status,
+    availability: model.availability,
+    minor: model.minor,
+    poi: model.poi,
+    lockedProperties: model.lockedProperties ?? [],
+    cannotPromote: meta.cannotPromote ?? false,
+    cannotPublish: meta.cannotPublish ?? false,
+    commentsLocked: meta.commentsLocked ?? false,
+    deletedAt: model.deletedAt,
+    deletedBy: model.deletedBy,
+    profanity: meta.profanityMatches?.length
+      ? {
+          matches: meta.profanityMatches,
+          reason: meta.profanityEvaluation?.reason ?? null,
+          metrics: meta.profanityEvaluation?.metrics ?? null,
+        }
+      : null,
+    unpublishedAt: meta.unpublishedAt ?? null,
+    unpublishedBy: meta.unpublishedBy ?? null,
+    unpublishedReason: meta.unpublishedReason ?? null,
+    takenDownAt: meta.takenDownAt ?? null,
+    takenDownBy: meta.takenDownBy ?? null,
+    needsReview: meta.needsReview ?? false,
+  };
+}
+
 export async function getModelModRules() {
   const modRules = await fetchThroughCache(
     REDIS_KEYS.CACHES.MOD_RULES.MODELS,
@@ -3612,7 +4083,12 @@ export async function bustModelModRulesCache() {
 
 export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
   return await dbRead.model.count({
-    where: { userId, availability: Availability.Private },
+    where: {
+      userId,
+      availability: Availability.Private,
+      status: { not: ModelStatus.Deleted },
+      deletedAt: null,
+    },
   });
 };
 
@@ -3622,11 +4098,26 @@ export const privateModelFromTraining = async ({
 }: PrivateModelFromTrainingInput & {
   user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
 }) => {
-  if (!input.user.isModerator) {
-    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
-  }
-
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
+
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+      lockedProperties: true,
+    },
+  });
+
+  if (!model) return null;
+
+  const isOwner = model.userId === user.id || user.isModerator;
+  if (!isOwner) return null;
+
+  enforceLockedProperties({
+    data,
+    storedLockedProperties: model.lockedProperties,
+    isModerator: user.isModerator,
+  });
 
   const totalPrivateModels = await dbRead.model.count({
     where: {
@@ -3647,27 +4138,6 @@ export const privateModelFromTraining = async ({
   if (totalPrivateModels >= maxPrivateModels) {
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
-
-  // don't allow updating of locked properties
-  if (!user.isModerator) {
-    const lockedProperties = data.lockedProperties ?? [];
-    for (const prop of lockedProperties) {
-      const key = prop as keyof typeof data;
-      if (data[key] !== undefined) delete data[key];
-    }
-  }
-
-  const model = await dbRead.model.findUnique({
-    where: { id },
-    select: {
-      userId: true,
-    },
-  });
-
-  if (!model) return null;
-
-  const isOwner = model.userId === user.id || user.isModerator;
-  if (!isOwner) return null;
 
   try {
     const result = await dbWrite.model.update({
@@ -3980,6 +4450,30 @@ export const toggleCannotPublish = async ({
     id: updated.id,
     meta: updated.meta as ModelMeta | null,
   };
+};
+
+export const setModelOfficial = async ({
+  id,
+  isOfficial,
+  isModerator,
+}: SetModelOfficialInput & {
+  isModerator: boolean;
+}) => {
+  if (!isModerator) throw throwAuthorizationError();
+
+  const model = await getModel({ id, select: { id: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+  const updated = await dbWrite.model.update({
+    where: { id },
+    data: { isOfficial },
+    select: { id: true, isOfficial: true },
+  });
+
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.OFFICIAL_MODELS);
+
+  return updated;
 };
 
 export async function getTopWeeklyEarners(fresh = false) {

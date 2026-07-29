@@ -21,13 +21,18 @@ describe('TokenScope constants', () => {
     expect(Flags.hasFlag(TokenScope.Full, TokenScope.AppBlocksSubmit)).toBe(false);
   });
 
-  it('ALL_SCOPES includes every defined bit, including AppBlocksSubmit', () => {
+  it('ALL_SCOPES includes every defined bit, including the opt-in App Blocks scopes', () => {
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.AppBlocksSubmit)).toBe(true);
+    expect(Flags.hasFlag(ALL_SCOPES, TokenScope.AppBlocksDevTunnel)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.UserRead)).toBe(true);
     expect(Flags.hasFlag(ALL_SCOPES, TokenScope.VaultWrite)).toBe(true);
-    // ALL_SCOPES = Full | AppBlocksSubmit (the only opt-in bit today).
-    expect(ALL_SCOPES).toBe(TokenScope.Full | TokenScope.AppBlocksSubmit);
-    expect(ALL_SCOPES).toBe(67108863); // (1 << 26) - 1
+    // ALL_SCOPES = Full | the opt-in bits NOT folded into Full. AppBlocksDevTunnel
+    // (bit 26, 67108864) was added beyond AppBlocksSubmit (bit 25), so ALL_SCOPES
+    // is now the OR of bits 0..26 = (1 << 27) - 1.
+    expect(ALL_SCOPES).toBe(
+      TokenScope.Full | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel
+    );
+    expect(ALL_SCOPES).toBe(134217727); // (1 << 27) - 1
   });
 
   it('a UserRead|AppBlocksSubmit token (the civitai-cli scope) is within ALL_SCOPES but exceeds Full', () => {
@@ -48,6 +53,6 @@ describe('TokenScope constants', () => {
   });
 
   it('AppBlocksSubmit has a human-readable consent label', () => {
-    expect(tokenScopeLabels[TokenScope.AppBlocksSubmit]).toBe('Submit App Blocks for review');
+    expect(tokenScopeLabels[TokenScope.AppBlocksSubmit]).toBe('Submit Apps for review');
   });
 });

@@ -3,10 +3,8 @@ import { useSignalConnection, useSignalTopic } from '~/components/Signals/Signal
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityAccessPermission, SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { ModelVersionResourceCacheItem } from '~/server/redis/caches';
-import type {
-  ModelVersionEarlyAccessConfig,
-  ModelVersionEarlyAccessPurchase,
-} from '~/server/schema/model-version.schema';
+import type { ModelVersionEarlyAccessPurchase } from '~/server/schema/model-version.schema';
+import { type ModelVersionTerms, isFreeGeneration } from '@civitai/buzz';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
@@ -55,17 +53,18 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
       isSelectableInGenerator: true, // By default assume it is as it's our default behavior.
       canDownload: false,
       canGenerate: false,
-      earlyAccessEndsAt: undefined,
-      earlyAccessConfig: undefined,
+      paidAccess: undefined,
       modelVersion: undefined,
       isEarlyAccess: false,
     };
   }
 
   const [access] = entities ?? [];
+  const paidAccess = modelVersion?.paidAccess;
+  const paidAccessTerms = paidAccess?.terms as ModelVersionTerms | undefined;
+  // Active gate ⇔ permanent (endsAt null) or the timed window is still open.
   const isEarlyAccess =
-    modelVersion?.earlyAccessEndsAt && modelVersion?.earlyAccessEndsAt > new Date();
-  const earlyAccessConfig = modelVersion?.earlyAccessConfig as ModelVersionEarlyAccessConfig;
+    !!paidAccess && (paidAccess.endsAt == null || paidAccess.endsAt > new Date());
   const isOwnerOrMod =
     modelVersion?.model?.user?.id === currentUser?.id || currentUser?.isModerator;
   const isDownloadable =
@@ -84,12 +83,11 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
       : access?.hasAccess &&
         (access?.permissions & EntityAccessPermission.EarlyAccessDownload) !== 0,
     canGenerate:
-      !isEarlyAccess || earlyAccessConfig?.freeGeneration
+      !isEarlyAccess || (!!paidAccessTerms && isFreeGeneration(paidAccessTerms))
         ? true
         : access?.hasAccess &&
           (access?.permissions & EntityAccessPermission.EarlyAccessGeneration) != 0,
-    earlyAccessEndsAt: modelVersion?.earlyAccessEndsAt,
-    earlyAccessConfig: !isEarlyAccess ? undefined : earlyAccessConfig,
+    paidAccess: !isEarlyAccess ? undefined : paidAccess,
     modelVersion,
     isEarlyAccess,
   };
@@ -106,7 +104,7 @@ export const useMutateModelVersion = () => {
         });
 
         // Manage donation goals:
-        queryUtils.modelVersion.donationGoals.invalidate({ id: modelVersionId });
+        queryUtils.modelVersion.donationGoal.invalidate({ id: modelVersionId });
       },
       onError(error) {
         handleTRPCError(error, 'Failed to purchase early access');
@@ -124,12 +122,12 @@ export const useMutateModelVersion = () => {
   };
 };
 
-export const useQueryModelVersionDonationGoals = (
+export const useQueryModelVersionDonationGoal = (
   { modelVersionId }: { modelVersionId: number },
   options?: { enabled?: boolean }
 ) => {
   const currentUser = useCurrentUser();
-  const { data: donationGoals, ...other } = trpc.modelVersion.donationGoals.useQuery(
+  const { data: donationGoal, ...other } = trpc.modelVersion.donationGoal.useQuery(
     {
       id: modelVersionId,
     },
@@ -139,7 +137,7 @@ export const useQueryModelVersionDonationGoals = (
   );
 
   return {
-    donationGoals: donationGoals ?? [],
+    donationGoal: donationGoal ?? null,
     ...other,
   };
 };

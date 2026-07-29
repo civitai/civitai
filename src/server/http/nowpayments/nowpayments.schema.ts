@@ -88,6 +88,7 @@ export namespace NOWPayments {
       outcome_currency: z.string().nullish(),
       actually_paid: z.union([z.number(), z.string()]).nullish(),
       parent_payment_id: z.number().nullish(),
+      payin_hash: z.string().nullish(),
     })
     .passthrough();
 

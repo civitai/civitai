@@ -1,6 +1,7 @@
 import * as z from 'zod';
 
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH schemas + public DTOs.
@@ -57,6 +58,56 @@ export const listAppListingsSchema = z.object({
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
 
+/**
+ * REST-query variant of {@link listAppListingsSchema} for the public
+ * `GET /api/v1/apps` endpoint. Identical filter axes + bounds, but `limit`
+ * arrives as a STRING query param, so it is coerced (empty/absent → the default)
+ * and the parse output is exactly a {@link ListAppListingsInput} — the same
+ * object the listing service consumes. A factory (not a const) so the endpoint
+ * gets a fresh schema without pulling the whole read-schema module's eval graph
+ * at import time. NOTE: the store service supports no free-text search or slot
+ * filter, so neither is accepted here (they would be inert).
+ */
+export function getAppListingsListQuery() {
+  return z.object({
+    kind: listingKindFilterSchema.default('all'),
+    category: z.enum(MARKETPLACE_CATEGORIES).optional(),
+    sort: listingSortSchema.default('top-rated'),
+    cursor: z.string().max(128).optional(),
+    limit: z
+      .preprocess(
+        (v) => (v === undefined || v === null || v === '' ? undefined : Number(v)),
+        z.number().int().min(1).max(50)
+      )
+      .default(20),
+  });
+}
+
+/**
+ * W13 POST-APPROVAL MOD MANAGEMENT — the moderator all-status listings read.
+ *
+ * Backs `appListings.listAllListingsForModeration` (moderatorProcedure): unlike
+ * the public `listAvailable` (approved-only, public allowlist), this returns
+ * listings across EVERY lifecycle status for the mod management table. All filters
+ * are optional (omitted = the whole store); `search` matches name OR slug
+ * server-side (case-insensitive). Keyset-paginated by the ULID `id` (a stable
+ * total order), bounded `limit` ≤ 50 (mirrors `listListingReportsSchema`).
+ */
+export const listAllListingsForModerationSchema = z.object({
+  // Full AppListing lifecycle set (draft|pending|approved|rejected|removed).
+  status: z.enum(APP_LISTING_STATUSES).optional(),
+  kind: z.enum(['onsite', 'offsite']).optional(),
+  // Server-side name/slug substring filter (bounded; trimmed in the service).
+  search: z.string().max(200).optional(),
+  // Opaque keyset cursor = the last row's `id` (bounded, same as the sibling
+  // mod-read queues). A tampered value just yields a different/empty page.
+  cursor: z.string().min(1).max(64).optional(),
+  limit: z.number().int().min(1).max(50).default(25),
+});
+export type ListAllListingsForModerationInput = z.infer<
+  typeof listAllListingsForModerationSchema
+>;
+
 /** Detail lookup by EXACTLY ONE of slug or id (approved listings only). */
 export const getAppListingDetailSchema = z
   .object({
@@ -107,6 +158,14 @@ export type ListingCardKindData =
       appBlockId: string | null;
       /** True when the app declares a launch page (Open CTA) vs a model-slot install (Install CTA). */
       hasPage: boolean;
+      /**
+       * Already-public standalone block origin (no token/scope) — IDENTICAL in
+       * name + type to the detail projection's `liveUrl`, so a client can link an
+       * onsite app straight from the list card without an N+1 detail fetch. An
+       * onsite card only appears once its backing block has deployed (the same
+       * deploy-gate the detail read applies), so this origin is always live.
+       */
+      liveUrl: string;
     }
   | {
       kind: 'offsite';
@@ -159,6 +218,14 @@ export type ListingDetailKindData =
 /** Full public detail for one approved listing (card fields + gallery + body). */
 export type ListingDetail = {
   id: string;
+  /**
+   * Integer surrogate key (`app_listings.serial_id`). Carried so the detail page
+   * can mount the CommentsV2 discussion (`<CommentsProvider entityType="appListing"
+   * entityId={serialId} />`) — CommentsV2 is integer-keyed, the store `id` is a TEXT
+   * ULID. Public + non-sensitive (an opaque row number, like the numeric ids already
+   * exposed for images/models/posts).
+   */
+  serialId: number;
   slug: string;
   kind: ListingKind;
   name: string;

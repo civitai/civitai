@@ -33,7 +33,6 @@ export function ModerationNav() {
         },
         { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
-        { label: 'Generation', href: '/moderator/generation' },
         {
           label: 'Service Status',
           href: '/moderator/service-status',
@@ -54,6 +53,11 @@ export function ModerationNav() {
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
+        {
+          label: 'Creator Shop Review',
+          href: '/moderator/creator-shop',
+          hidden: !features.creatorShop,
+        },
         { label: 'Grant Cosmetics', href: '/moderator/cosmetics/grant' },
         // {
         //   label: 'Paddle Adjustments',
@@ -127,7 +131,12 @@ export function ModerationNav() {
           <IconBadge />
         </LegacyActionIcon>
       </Menu.Target>
-      <Menu.Dropdown>{menuItems}</Menu.Dropdown>
+      <Menu.Dropdown
+        className="overflow-y-auto"
+        style={{ maxHeight: 'calc(100dvh - 80px)' }}
+      >
+        {menuItems}
+      </Menu.Dropdown>
     </Menu>
   );
 }

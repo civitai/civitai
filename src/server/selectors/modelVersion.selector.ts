@@ -19,8 +19,6 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   trainingDetails: true,
   baseModel: true,
   baseModelType: true,
-  earlyAccessEndsAt: true,
-  earlyAccessConfig: true,
   description: true,
   uploadType: true,
   usageControl: true,
@@ -34,6 +32,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   },
   files: {
     select: modelFileSelect,
+    where: { replacedAt: null },
   },
 });
 
@@ -52,8 +51,8 @@ export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersi
   id: true,
   name: true,
   nsfwLevel: true,
-  earlyAccessEndsAt: true,
   createdAt: true,
+  flags: true,
   generationCoverage: { select: { covered: true } },
   trainedWords: true,
   baseModel: true,
