@@ -38,7 +38,6 @@ import {
   type ImagesAsPostsSource,
 } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -47,6 +46,7 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';

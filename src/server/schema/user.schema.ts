@@ -283,7 +283,7 @@ export const userSettingsSchema = z.object({
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
   // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
-  // the feed mounts hundreds of cards, so viewers choose to pay for the handlers.
+  // the feed mounts hundreds of cards and each one costs an embla engine.
   swipeGalleryCards: z.boolean().optional(),
   // Creator opt-out: when true, the public donation-goal display (progress + collected
   // amount) is hidden from non-owner/non-mod viewers on all of this user's models.

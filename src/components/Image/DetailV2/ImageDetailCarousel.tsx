@@ -15,6 +15,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
   videoRef?: React.ForwardedRef<EdgeVideoRef>;
@@ -75,19 +76,6 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
 // Comfortably longer than embla's scroll animation (duration 25), so it only
 // ever fires for a 'settle' that was genuinely dropped.
 const SETTLE_FALLBACK_MS = 800;
-
-// Touch and pen drags navigate; mouse drags don't, so click-dragging an image on
-// desktop still does nothing. At module scope so the body is identical every
-// render — embla compares function options by source string.
-function watchTouchDrag(
-  _emblaApi: EmblaCarouselType,
-  event: TouchEvent | MouseEvent | PointerEvent
-) {
-  // embla binds touchstart/mousedown today; the pointerType branch keeps this
-  // correct if it ever moves to pointer events
-  if ('pointerType' in event) return event.pointerType !== 'mouse';
-  return event.type.startsWith('touch');
-}
 
 export function ImageDetailCarousel({
   images,
