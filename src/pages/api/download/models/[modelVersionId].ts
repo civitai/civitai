@@ -133,14 +133,12 @@ export default PublicEndpoint(
           });
         else return res.redirect(`/model-versions/${modelVersionId}`);
       }
-      if (fileResult.status === 'no-access') {
-        if (!isBrowser)
-          return res.status(403).json({
-            error: 'Forbidden',
-            message: 'You do not have access to download this file',
-          });
-        else return res.redirect(`/model-versions/${modelVersionId}`);
-      }
+      // Answer in place rather than redirecting. `early-access` can bounce to the version page
+      // because that page renders a purchase CTA, but a plain missing grant has nothing actionable
+      // there — the redirect just lands the user back where they clicked, which is the exact
+      // "download button does nothing" symptom this status exists to eliminate.
+      if (fileResult.status === 'no-access')
+        return errorResponse(403, 'You do not have access to download this file');
       // Only reachable without a session — `getFileForModelVersion` reports a signed-in user's
       // missing grant as `no-access`, so sending someone to /login here can no longer loop them
       // back to the page they started on.
