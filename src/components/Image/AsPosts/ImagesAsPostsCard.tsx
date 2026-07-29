@@ -46,6 +46,7 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { mergePostImages, shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
@@ -495,6 +496,72 @@ function PostCarouselSlide({
   );
 }
 
+/**
+ * Picks the carousel engine for a post card.
+ *
+ * Default is `SimpleImageCarousel`: one slide in the DOM, no drag, no engine —
+ * what the feed was cut down to because it mounts hundreds of these at once.
+ *
+ * `swipe` (the `swipeGalleryCards` user setting) opts into Embla instead, which
+ * is what gives a drag that actually follows your finger. That costs an engine
+ * instance and every slide in the DOM per card, so only viewers who asked for it
+ * pay it. Both engines expose the same slots, so `renderSlide` is shared.
+ */
+function PostImagesCarousel({
+  total,
+  swipe,
+  onIndexChange,
+  renderSlide,
+}: {
+  total: number;
+  swipe?: boolean;
+  onIndexChange?: (index: number) => void;
+  renderSlide: (index: number) => React.ReactNode;
+}) {
+  if (swipe) {
+    return (
+      <Embla loop onSlideChange={onIndexChange} className="flex h-full flex-col">
+        <Embla.Viewport className="relative flex-1 touch-pan-y">
+          <Embla.Container className="flex h-full">
+            {Array.from({ length: total }).map((_, index) => (
+              <Embla.Slide
+                key={index}
+                index={index}
+                className="relative h-full min-w-0 flex-[0_0_100%]"
+              >
+                {renderSlide(index)}
+              </Embla.Slide>
+            ))}
+          </Embla.Container>
+          <Embla.Controls />
+        </Embla.Viewport>
+        <Embla.Indicators {...carouselIndicatorProps} />
+      </Embla>
+    );
+  }
+
+  return (
+    <SimpleImageCarousel
+      loop
+      total={total}
+      onIndexChange={onIndexChange}
+      className="flex h-full flex-col"
+    >
+      <SimpleImageCarousel.Viewport className="relative flex-1">
+        <SimpleImageCarousel.Container className="h-full">
+          {Array.from({ length: total }).map((_, index) => (
+            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
+              {renderSlide(index)}
+            </SimpleImageCarousel.Slide>
+          ))}
+        </SimpleImageCarousel.Container>
+        <SimpleImageCarousel.Controls />
+      </SimpleImageCarousel.Viewport>
+      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
+    </SimpleImageCarousel>
+  );
+}
+
 /** Today's carousel: every image is already in hand. Exported for component tests. */
 export function StaticPostImagesCarousel({
   images,
@@ -506,24 +573,13 @@ export function StaticPostImagesCarousel({
   enableSwipe?: boolean;
 }) {
   return (
-    <SimpleImageCarousel
-      loop
+    <PostImagesCarousel
       total={images.length}
-      enableSwipe={enableSwipe}
-      className="flex h-full flex-col"
-    >
-      <SimpleImageCarousel.Viewport className="relative flex-1">
-        <SimpleImageCarousel.Container className="h-full">
-          {images.map((image, index) => (
-            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
-              <PostCarouselSlide image={image} postId={postId} dialogImages={images} />
-            </SimpleImageCarousel.Slide>
-          ))}
-        </SimpleImageCarousel.Container>
-        <SimpleImageCarousel.Controls />
-      </SimpleImageCarousel.Viewport>
-      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
-    </SimpleImageCarousel>
+      swipe={enableSwipe}
+      renderSlide={(index) => (
+        <PostCarouselSlide image={images[index]} postId={postId} dialogImages={images} />
+      )}
+    />
   );
 }
 
@@ -619,30 +675,19 @@ export function LazyPostImagesCarousel({
   const effectiveTotal = fetched || tailError ? loaded.length : total;
 
   return (
-    <SimpleImageCarousel
-      loop
+    <PostImagesCarousel
       total={effectiveTotal}
+      swipe={enableSwipe}
       onIndexChange={handleIndexChange}
-      enableSwipe={enableSwipe}
-      className="flex h-full flex-col"
-    >
-      <SimpleImageCarousel.Viewport className="relative flex-1">
-        <SimpleImageCarousel.Container className="h-full">
-          {Array.from({ length: effectiveTotal }).map((_, index) => (
-            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
-              {loaded[index] ? (
-                <PostCarouselSlide image={loaded[index]} postId={postId} dialogImages={loaded} />
-              ) : (
-                <Center className="size-full">
-                  <Loader />
-                </Center>
-              )}
-            </SimpleImageCarousel.Slide>
-          ))}
-        </SimpleImageCarousel.Container>
-        <SimpleImageCarousel.Controls />
-      </SimpleImageCarousel.Viewport>
-      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
-    </SimpleImageCarousel>
+      renderSlide={(index) =>
+        loaded[index] ? (
+          <PostCarouselSlide image={loaded[index]} postId={postId} dialogImages={loaded} />
+        ) : (
+          <Center className="size-full">
+            <Loader />
+          </Center>
+        )
+      }
+    />
   );
 }

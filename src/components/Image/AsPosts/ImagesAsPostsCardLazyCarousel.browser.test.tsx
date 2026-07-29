@@ -66,7 +66,10 @@ const mocks = vi.hoisted(() => {
     if (!opts?.enabled) return { data: undefined, isError: false };
     if (state.error) return { data: undefined, isError: true };
     return {
-      data: { items: Array.from({ length: 14 }, (_, i) => tailImage(i + 7)), nextCursor: undefined },
+      data: {
+        items: Array.from({ length: 14 }, (_, i) => tailImage(i + 7)),
+        nextCursor: undefined,
+      },
       isError: false,
     };
   });
@@ -323,5 +326,31 @@ describe('StaticPostImagesCarousel', () => {
 
     // No lazy tail fetch on the static path.
     expect(mocks.getInfiniteUseQuery).not.toHaveBeenCalled();
+  });
+});
+
+// The `swipeGalleryCards` setting picks the engine. Off (the default) keeps the
+// cheap carousel: one slide in the DOM, no drag. On swaps in Embla, which needs
+// every slide mounted to drag between them — the cost the setting exists to gate.
+describe('swipe setting picks the carousel engine', () => {
+  const slidesInDom = () => document.querySelectorAll('[data-testid="slide"]').length;
+
+  test('off: only the active slide is mounted', async () => {
+    renderWithProviders(<StaticPostImagesCarousel images={slice(3)} postId={100} />);
+
+    await expect.element(activeSlideId()).toHaveAttribute('data-image-id', '1');
+    expect(slidesInDom()).toBe(1);
+  });
+
+  test('on: every slide is mounted, and navigation still works', async () => {
+    renderWithProviders(<StaticPostImagesCarousel images={slice(3)} postId={100} enableSwipe />);
+
+    await vi.waitFor(() => expect(slidesInDom()).toBe(3));
+    await clickNext();
+    // Embla scrolls the track rather than swapping which slide exists, so assert
+    // on the selected indicator instead of the mounted set.
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('button[aria-hidden][data-active]').length).toBe(1)
+    );
   });
 });
