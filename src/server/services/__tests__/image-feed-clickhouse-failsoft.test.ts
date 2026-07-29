@@ -13,7 +13,7 @@ import { TRPCError } from '@trpc/server';
 //   - a CH QUERY/SCHEMA error (UNKNOWN_TABLE) → still rethrows (→ 500, visible).
 //   - a non-CH error → still rethrows unchanged.
 //
-// Same minimal-seam mocking as image-metrics-timeout.test.ts: stub the private
+// Same minimal-seam mocking as image-metrics-timeout.test.ts: stub the
 // event-engine-common submodule + the infra clients + env so importing image.service
 // doesn't boot real infra.
 
@@ -36,7 +36,7 @@ vi.mock('~/server/logging/client', () => ({
   safeError: (e: unknown) => e,
 }));
 
-// event-engine-common is a private submodule not checked out here. ImagesFeed is the
+// event-engine-common is a submodule, not checked out by default. ImagesFeed is the
 // seam under test: its instance `.populatedQuery` is our spy.
 vi.mock('../../../../event-engine-common/feeds', () => ({
   ImagesFeed: class {

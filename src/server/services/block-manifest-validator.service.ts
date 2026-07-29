@@ -1,5 +1,7 @@
 import {
   isKnownBlockScope,
+  sensitiveScopeJustificationError,
+  unjustifiedSensitiveScopes,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
@@ -18,6 +20,27 @@ import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
+/**
+ * Options controlling WHICH validation rules run. Defaults to full enforcement
+ * (every rule on); a caller passes this only to RELAX a rule for a specific
+ * context. Currently the sole knob exempts the sensitive-scope-justification
+ * enforcement on the moderator APPROVE re-validation.
+ */
+export type ManifestValidationOptions = {
+  /**
+   * Enforce that every declared SENSITIVE scope carries a non-empty
+   * justification. Default `true` (the genuine submit / new-version paths). The
+   * moderator APPROVE re-validation passes `false` so a LEGACY pending request —
+   * submitted before this rule shipped, with a sensitive scope and no
+   * justification — stays approvable (grandfathered). No bypass is created: a
+   * post-deploy submission already passed this gate at submit time, so
+   * re-checking it on approve is redundant, and nothing can reach the approve
+   * queue post-deploy without first passing the submit gate. ALL OTHER
+   * validation still runs on approve.
+   */
+  enforceSensitiveScopeJustification?: boolean;
+};
+
 interface RawManifest {
   blockId?: unknown;
   version?: unknown;
@@ -34,6 +57,16 @@ interface RawManifest {
    * hasn't already curated one — see `approveRequest`). Absent is fine.
    */
   category?: unknown;
+  /**
+   * OPTIONAL one-line pitch shown under the app's name on its `/apps` store card
+   * + detail page. Manifest-governed (the onsite store listing has NO other
+   * author surface for it — see the "ONSITE = ASSETS-ONLY" invariant in
+   * `offsite-listing.service`), so it flows to the listing on approve and is
+   * re-synced on every subsequent approved version. When present it must be a
+   * string whose TRIMMED length is 1..{@link MANIFEST_TAGLINE_MAX_LENGTH}; absent
+   * is fine (the store simply shows no tagline).
+   */
+  tagline?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -126,6 +159,21 @@ const BLOCK_ID_MAX_LENGTH = 40;
 // CANONICAL version rule: semantic version `x.y.z` with an optional
 // `-prerelease` suffix. Single-sourced with the published schema + the CLI.
 const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+
+/**
+ * CANONICAL `tagline` length cap. Deliberately the SAME bound off-site listings
+ * use (`OFFSITE_TAGLINE_MAX` in `~/server/schema/blocks/offsite-listing.schema`)
+ * so the two store kinds render consistently in the same card/detail slots.
+ *
+ * It is re-declared here rather than imported because this module is
+ * CLIENT-BUNDLE-SAFE (see the `ssrf-hostname` note above — `ManifestEditForm.tsx`
+ * imports it), and `offsite-listing.schema` pulls in zod + the external-app
+ * schema graph. A drift-guard test
+ * (`manifest-tagline.schema-drift.test.ts`) asserts this const, the canonical
+ * published schema's `tagline.maxLength`, and `OFFSITE_TAGLINE_MAX` are all equal,
+ * so the duplication can never silently diverge.
+ */
+export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
 
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
@@ -276,7 +324,11 @@ export class BlockManifestValidator {
   // Back-compat overload: the existing test suite passes a bitmask number.
   // Real callers pass the AppContext shape (with allowedOrigins) so the
   // H8 binding check actually runs.
-  static validate(manifest: unknown, app: AppContext | number): ValidationResult {
+  static validate(
+    manifest: unknown,
+    app: AppContext | number,
+    opts?: ManifestValidationOptions
+  ): ValidationResult {
     const ctx: AppContext =
       typeof app === 'number'
         ? { allowedScopes: app, allowedOrigins: [] }
@@ -341,6 +393,25 @@ export class BlockManifestValidator {
     // submission path validates its taxonomy category.
     if (m.category !== undefined && !isMarketplaceCategory(m.category)) {
       errors.push(`category must be one of ${MARKETPLACE_CATEGORIES.join(', ')}`);
+    }
+
+    // Optional `tagline` (the one-line store pitch). Absent is fine. When
+    // present it must be a STRING whose TRIMMED length is 1..140 — trimmed so a
+    // whitespace-only value is rejected here rather than silently landing as a
+    // blank tagline on the store card, and so the cap can't be evaded with
+    // padding. The cap mirrors off-site listings (see
+    // MANIFEST_TAGLINE_MAX_LENGTH) so both store kinds render the same slot.
+    if (m.tagline !== undefined) {
+      if (typeof m.tagline !== 'string') {
+        errors.push('tagline must be a string');
+      } else {
+        const trimmed = m.tagline.trim();
+        if (trimmed.length === 0) {
+          errors.push('tagline must not be blank (omit it instead)');
+        } else if (trimmed.length > MANIFEST_TAGLINE_MAX_LENGTH) {
+          errors.push(`tagline must be ≤${MANIFEST_TAGLINE_MAX_LENGTH} chars`);
+        }
+      }
     }
 
     if (!Array.isArray(m.scopes)) {
@@ -413,6 +484,34 @@ export class BlockManifestValidator {
             );
           }
         }
+      }
+    }
+
+    // ENFORCEMENT (was presentation-only): every declared SENSITIVE scope — the
+    // subset that can spend/read the viewer's Buzz, read their PRIVATE data, or
+    // write data other users see (see SENSITIVE_BLOCK_SCOPES) — MUST carry a
+    // non-empty justification. `scopeJustifications` used to be fully optional;
+    // for sensitive scopes it is now REQUIRED, so a moderator always sees WHY an
+    // elevated-risk permission was requested. An entirely-absent
+    // `scopeJustifications` (previously valid) now fails when any sensitive scope
+    // is declared. Reuses the single-sourced sensitive set (never re-hardcodes
+    // it), and runs for every SUBMIT path because both the CLI submit-version and
+    // the web `updateManifest` funnel through `validateSubmission` → this
+    // `validate`.
+    //
+    // SUBMIT-ONLY (default on): the moderator APPROVE re-validation passes
+    // `enforceSensitiveScopeJustification:false` so a LEGACY pending request
+    // (submitted before this shipped, no justification) stays approvable. Only
+    // THIS rule is exempted on approve — every other check above still runs.
+    if (opts?.enforceSensitiveScopeJustification !== false) {
+      // DRY: the rule (which sensitive scopes are unjustified + the message) is
+      // single-sourced in block-scope.constants so this validator and the
+      // submit-time gate in `submitVersion` can never drift. The `!== false`
+      // gate (approve exemption for legacy pending requests) stays HERE; the
+      // helper is the pure rule and always evaluates.
+      const unjustifiedSensitive = unjustifiedSensitiveScopes(m);
+      if (unjustifiedSensitive.length > 0) {
+        errors.push(sensitiveScopeJustificationError(unjustifiedSensitive));
       }
     }
 
@@ -674,9 +773,10 @@ export class BlockManifestValidator {
    */
   static async validateSubmission(
     manifest: unknown,
-    app: AppContext | number
+    app: AppContext | number,
+    opts?: ManifestValidationOptions
   ): Promise<ValidationResult> {
-    const base = this.validate(manifest, app);
+    const base = this.validate(manifest, app, opts);
     const errors: string[] = base.valid ? [] : [...base.errors];
 
     const settings =

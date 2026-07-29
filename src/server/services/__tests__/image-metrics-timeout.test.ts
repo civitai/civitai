@@ -27,8 +27,8 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
   return { ...actual, registerCounter: () => ({ inc: counterIncMock }) };
 });
 
-// event-engine-common is a private git submodule not checked out in this
-// worktree — stub the value imports image.service pulls from it. MetricService
+// event-engine-common is a git submodule, not checked out by default — stub the
+// value imports image.service pulls from it. MetricService
 // is the seam under test: its `.fetch` is our spy.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {

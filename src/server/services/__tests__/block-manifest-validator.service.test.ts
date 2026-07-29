@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BlockManifestValidator } from '../block-manifest-validator.service';
+import {
+  BlockManifestValidator,
+  MANIFEST_TAGLINE_MAX_LENGTH,
+} from '../block-manifest-validator.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 
@@ -654,7 +657,10 @@ describe('BlockManifestValidator', () => {
       }
     );
 
-    it.each([
+    // `[unknown, string]` keeps the table's mixed-type cases in ONE tuple shape;
+    // otherwise each row infers its own tuple and the union is not assignable to
+    // a single callback signature.
+    it.each<[unknown, string]>([
       ['productivity', 'not in the taxonomy'],
       ['Generation', 'wrong case'],
       ['', 'empty string'],
@@ -666,6 +672,85 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(result.errors.some((e) => e.startsWith('category must be one of'))).toBe(true);
+      }
+    });
+  });
+
+  // The OPTIONAL one-line store `tagline`. Absent is fine (the store shows no
+  // tagline); present must be a string whose TRIMMED length is 1..140. This is
+  // the AUTHORITATIVE gate — the published JSON schema is a shape hint.
+  describe('tagline (optional store one-liner)', () => {
+    it('accepts a manifest with NO tagline (optional, backward-compatible)', () => {
+      // VALID_MANIFEST declares no tagline.
+      expect(BlockManifestValidator.validate(VALID_MANIFEST, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a normal tagline', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'The fastest way to remix a model' };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts a tagline EXACTLY at the cap', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH) };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('accepts an over-cap tagline whose TRIMMED length fits (padding is not counted)', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        tagline: `   ${'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH)}   `,
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('rejects a tagline one char OVER the cap', () => {
+      const manifest = { ...VALID_MANIFEST, tagline: 'a'.repeat(MANIFEST_TAGLINE_MAX_LENGTH + 1) };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e === `tagline must be ≤${MANIFEST_TAGLINE_MAX_LENGTH} chars`)
+        ).toBe(true);
+      }
+    });
+
+    it.each<[unknown, string]>([
+      [42, 'number'],
+      [null, 'null'],
+      [{ text: 'hi' }, 'object'],
+      [['hi'], 'array'],
+      [true, 'boolean'],
+    ])('rejects a non-string tagline %j (%s)', (tagline) => {
+      const manifest = { ...VALID_MANIFEST, tagline };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e === 'tagline must be a string')).toBe(true);
+      }
+    });
+
+    it.each([
+      ['', 'empty string'],
+      ['   ', 'spaces only'],
+      ['\n\t ', 'whitespace only'],
+    ])('rejects a blank tagline %j (%s) — omit it instead', (tagline) => {
+      const manifest = { ...VALID_MANIFEST, tagline };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')
+        ).toBe(true);
+      }
+    });
+
+    it('does not regress the other manifest rules (a bad blockId still fails alongside a good tagline)', () => {
+      const manifest = { ...VALID_MANIFEST, blockId: 'X', tagline: 'fine' };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.startsWith('blockId must be'))).toBe(true);
+        expect(result.errors.some((e) => e.startsWith('tagline'))).toBe(false);
       }
     });
   });
@@ -726,7 +811,7 @@ describe('BlockManifestValidator', () => {
       }
     });
 
-    it.each([
+    it.each<[unknown, string]>([
       ['', 'empty string'],
       [42, 'non-string'],
       [null, 'null'],
@@ -742,7 +827,7 @@ describe('BlockManifestValidator', () => {
       }
     });
 
-    it.each([
+    it.each<[unknown, string]>([
       [['models:read:self'], 'an array'],
       [null, 'null'],
       ['reason', 'a string'],
@@ -755,6 +840,192 @@ describe('BlockManifestValidator', () => {
           result.errors.some((e) => e.startsWith('scopeJustifications must be an object'))
         ).toBe(true);
       }
+    });
+  });
+
+  // ENFORCEMENT: a declared SENSITIVE scope (money / private data / cross-user
+  // write) now REQUIRES a non-empty justification — this used to be optional
+  // metadata. Runs in `validate`, so it covers every submit path (CLI
+  // submit-version + web updateManifest both funnel through validateSubmission →
+  // validate). `apps:storage:shared:write` / `collections:read:private` are
+  // sensitive AND SKIP_OAUTH_CHECK, so they need no extra OAuth bit; the
+  // AI context covers `ai:write:budgeted` (requires AIServicesWrite).
+  describe('scopeJustifications — ENFORCED for sensitive scopes', () => {
+    const AI_APP_CTX = {
+      allowedScopes: TokenScope.ModelsRead | TokenScope.AIServicesWrite,
+      allowedOrigins: ['https://blocks.civitai.com'],
+    };
+
+    it('REJECTS a sensitive scope with NO scopeJustifications (previously accepted)', () => {
+      // ai:write:budgeted can spend the viewer's Buzz — a justification is now required.
+      const manifest = { ...VALID_MANIFEST, scopes: ['ai:write:budgeted'] };
+      const result = BlockManifestValidator.validate(manifest, AI_APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some(
+            (e) => e.includes('sensitive scopes require a justification') && e.includes('ai:write:budgeted')
+          )
+        ).toBe(true);
+      }
+    });
+
+    it('REJECTS a sensitive scope when scopeJustifications is present but omits its key', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['models:read:self', 'apps:storage:shared:write'],
+        // Justifies the non-sensitive scope but not the sensitive one.
+        scopeJustifications: { 'models:read:self': 'We render the page model.' },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some(
+            (e) =>
+              e.includes('sensitive scopes require a justification') &&
+              e.includes('apps:storage:shared:write')
+          )
+        ).toBe(true);
+      }
+    });
+
+    it.each<[string, string]>([
+      ['', 'empty string'],
+      ['   ', 'whitespace-only'],
+      ['\t\n', 'tabs/newlines only'],
+    ])('REJECTS a sensitive scope justified with a %j (%s) value', (value) => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['apps:storage:shared:write'],
+        scopeJustifications: { 'apps:storage:shared:write': value },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('apps:storage:shared:write'))).toBe(true);
+      }
+    });
+
+    it('ACCEPTS a sensitive scope WITH a non-empty justification', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['apps:storage:shared:write'],
+        scopeJustifications: {
+          'apps:storage:shared:write': 'We persist shared gallery entries other users can see.',
+        },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('ACCEPTS a NON-sensitive scope with no justification (unchanged)', () => {
+      const manifest = { ...VALID_MANIFEST, scopes: ['models:read:self'] };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('lists ALL unjustified sensitive scopes when several are missing', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['collections:read:private', 'apps:storage:shared:write'],
+        // Neither sensitive scope justified.
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        const err = result.errors.find((e) =>
+          e.includes('sensitive scopes require a justification')
+        );
+        expect(err).toBeDefined();
+        expect(err).toContain('collections:read:private');
+        expect(err).toContain('apps:storage:shared:write');
+      }
+    });
+
+    it('rejects naming ONLY the unjustified sensitive scope when some are justified', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['collections:read:private', 'apps:storage:shared:write'],
+        scopeJustifications: { 'collections:read:private': 'We read the viewer’s private collections.' },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        const err = result.errors.find((e) =>
+          e.includes('sensitive scopes require a justification')
+        );
+        expect(err).toBeDefined();
+        expect(err).toContain('apps:storage:shared:write');
+        expect(err).not.toContain('collections:read:private');
+      }
+    });
+
+    it('still applies the shape rules (keys ⊆ scopes, ≤500, non-empty) alongside enforcement', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['apps:storage:shared:write'],
+        scopeJustifications: {
+          'apps:storage:shared:write': 'ok reason',
+          // A justification for a scope NOT declared — still rejected by the shape rule.
+          'user:read:self': 'dangling',
+        },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+        ).toBe(true);
+      }
+    });
+
+    // SUBMIT-vs-APPROVE: the enforcement is SUBMIT-only. The moderator approve
+    // re-validation passes `enforceSensitiveScopeJustification:false` so a LEGACY
+    // pending request (sensitive scope, no justification, valid under the old
+    // rules) stays approvable — but ALL OTHER manifest checks still run on approve.
+    describe('SUBMIT-only (approve exemption)', () => {
+      it('SUBMIT context (default) still REJECTS a sensitive scope with no justification', () => {
+        const manifest = { ...VALID_MANIFEST, scopes: ['apps:storage:shared:write'] };
+        // Default (no opts) = genuine submit = enforce.
+        expect(BlockManifestValidator.validate(manifest, APP_CTX).valid).toBe(false);
+      });
+
+      it('APPROVE context (enforceSensitiveScopeJustification:false) does NOT reject on the sensitive-scope rule', () => {
+        const manifest = { ...VALID_MANIFEST, scopes: ['apps:storage:shared:write'] };
+        const result = BlockManifestValidator.validate(manifest, APP_CTX, {
+          enforceSensitiveScopeJustification: false,
+        });
+        expect(result).toEqual({ valid: true });
+      });
+
+      it('APPROVE context is exempted through validateSubmission too', async () => {
+        const manifest = { ...VALID_MANIFEST, scopes: ['collections:read:private'] };
+        const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX, {
+          enforceSensitiveScopeJustification: false,
+        });
+        expect(result).toEqual({ valid: true });
+      });
+
+      it('APPROVE context STILL enforces every OTHER manifest rule (only this one is exempt)', () => {
+        // A sensitive scope with no justification (would pass the exempted rule)
+        // but also an UNKNOWN scope + a non-https iframe.src — both must still fail.
+        const manifest = {
+          ...VALID_MANIFEST,
+          scopes: ['apps:storage:shared:write', 'models:read:all'],
+          iframe: { ...VALID_MANIFEST.iframe, src: 'http://blocks.civitai.com/test' },
+        };
+        const result = BlockManifestValidator.validate(manifest, APP_CTX, {
+          enforceSensitiveScopeJustification: false,
+        });
+        expect(result.valid).toBe(false);
+        if (!result.valid) {
+          expect(result.errors.some((e) => e.includes('not a known block scope'))).toBe(true);
+          expect(result.errors.some((e) => e.includes('iframe.src'))).toBe(true);
+          // The exempted rule did NOT contribute an error.
+          expect(
+            result.errors.some((e) => e.includes('sensitive scopes require a justification'))
+          ).toBe(false);
+        }
+      });
     });
   });
 

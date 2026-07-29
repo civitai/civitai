@@ -75,15 +75,3 @@ export function getPresignedUrl({
   const url = `https://${hostHeader}${canonicalUri}?${queryParams}&X-Amz-Signature=${signature}`;
   return url;
 }
-
-// Example usage
-  const url = getPresignedUrl({
-    method: "GET",
-    bucket: "civitai-media-uploads",
-    key: "00000031-9449-4446-bde5-1bb624946aa9",
-    accessKeyId: "DO801KQ497UZQQ6QQ4WL",
-    secretAccessKey: "QHLd9wax61+cMcA9m+llDlRkhuddA9672k2r3GAmUZM",
-    host: "sfo3.digitaloceanspaces.com",
-  });
-
-  console.log("Presigned URL:", url);

@@ -4,9 +4,14 @@ import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from '~/types/session';
 import type { UserMeta } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getMaxEarlyAccessDays, getMaxEarlyAccessModels } from '~/server/utils/early-access-helpers';
+import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
 import { env } from '~/env/server';
+import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
+import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
   CacheTTL,
   constants,
@@ -123,10 +128,7 @@ import {
   ModelStatus,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import type {
-  LicensingFeeSettlementCurrency,
-  LicensingFeeType,
-} from '~/shared/utils/prisma/enums';
+import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
@@ -407,6 +409,52 @@ async function writeModelVersionGateAndGoal(
   ]);
 }
 
+// Entity-change audit shapes (docs/entity-change-tracking-plan.md): normalize the
+// PaidAccess row and the write input to one comparable shape so the differ only emits
+// when the effective gate config changes. `null` = no gate, matching
+// writePaidAccessForModelVersion (an ungated input clears the row). endsAt is excluded
+// on purpose — it's materialized at publish, which isn't a settings change.
+function toPaidAccessAuditState(input: ModelVersionPaidAccessInputSchema | null | undefined) {
+  const permanent = !!input?.permanent;
+  const timeframeDays = input?.timeframeDays ?? 0;
+  if (!input || (!permanent && timeframeDays <= 0)) return null;
+  return { permanent, timeframeDays: permanent ? null : timeframeDays, terms: input.terms };
+}
+
+async function readPaidAccessAuditState(versionId: number) {
+  const row = await dbWrite.paidAccess.findUnique({
+    where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+    select: { timeframeDays: true, terms: true },
+  });
+  if (!row) return null;
+  return {
+    permanent: row.timeframeDays == null,
+    timeframeDays: row.timeframeDays,
+    terms: row.terms,
+  };
+}
+
+function toMonetizationAuditShape(
+  m?: {
+    type?: string | null;
+    unitAmount?: number | null;
+    sponsorshipSettings?: { type?: string | null; unitAmount?: number | null } | null;
+  } | null
+) {
+  return m?.type
+    ? {
+        type: m.type,
+        unitAmount: m.unitAmount ?? null,
+        sponsorshipSettings: m.sponsorshipSettings
+          ? {
+              type: m.sponsorshipSettings.type ?? null,
+              unitAmount: m.sponsorshipSettings.unitAmount ?? null,
+            }
+          : null,
+      }
+    : null;
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -416,10 +464,16 @@ export const upsertModelVersion = async ({
   paidAccess,
   donationGoal,
   meta: metaInput,
+  tracker,
+  actorUserId,
+  isModerator,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
+  tracker?: Tracker;
+  actorUserId?: number;
+  isModerator?: boolean;
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
@@ -461,9 +515,7 @@ export const upsertModelVersion = async ({
   // versions on commercial base models can still monetize.
   if (isNonCommercialBaseModel(data.baseModel)) {
     const attemptsMonetization =
-      (data.licensingFee != null && data.licensingFee > 0) ||
-      !!monetization?.type ||
-      !!paidAccess;
+      (data.licensingFee != null && data.licensingFee > 0) || !!monetization?.type || !!paidAccess;
     if (attemptsMonetization) {
       throw throwBadRequestError(
         `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
@@ -581,6 +633,10 @@ export const upsertModelVersion = async ({
         trainedWords: true,
         publishedAt: true,
         meta: true,
+        baseModel: true,
+        usageControl: true,
+        flags: true,
+        licensingFee: true,
         model: {
           select: {
             id: true,
@@ -596,6 +652,8 @@ export const upsertModelVersion = async ({
             sponsorshipSettings: {
               select: {
                 id: true,
+                type: true,
+                unitAmount: true,
               },
             },
           },
@@ -703,7 +761,39 @@ export const upsertModelVersion = async ({
       },
     });
 
+    const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
+
+    if (tracker) {
+      const changeRows = diffEntityChanges({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        ownerId: model.userId,
+        before: {
+          ...existingVersion,
+          licensingFee:
+            existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null,
+          monetization: toMonetizationAuditShape(existingVersion.monetization),
+          paidAccess: paidAccessBefore,
+        },
+        after: {
+          ...data,
+          // Mirror the write semantics above: paidAccess + monetization are always
+          // applied (absent input = gate cleared / monetization deleted).
+          paidAccess: toPaidAccessAuditState(paidAccess),
+          monetization: toMonetizationAuditShape(monetization),
+          flags: flagsOverride,
+        },
+        actorRole: resolveActorRole({
+          actorUserId: actorUserId ?? 0,
+          ownerId: model.userId,
+          isModerator,
+        }),
+        systemFields:
+          flagsOverride !== undefined ? { flags: 'licensing-fee-disable-payout' } : undefined,
+      });
+      tracker.entityChanges(changeRows).catch(() => null);
+    }
 
     // Run it in the background to avoid blocking the request.
     ingestModelById({ id: version.modelId }).catch((error) =>
@@ -721,7 +811,14 @@ export const updateModelVersionPaidAccess = async ({
   id,
   paidAccess,
   donationGoal,
-}: UpdateModelVersionPaidAccessInput) => {
+  tracker,
+  actorUserId,
+  isModerator,
+}: UpdateModelVersionPaidAccessInput & {
+  tracker?: Tracker;
+  actorUserId?: number;
+  isModerator?: boolean;
+}) => {
   const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
     where: { id },
     select: {
@@ -760,9 +857,31 @@ export const updateModelVersionPaidAccess = async ({
   assertPaidAccessInput(paidAccess);
 
   const { modelId } = existingVersion;
+  const paidAccessBefore = tracker ? await readPaidAccessAuditState(id) : null;
   // Native: paid access + donation goal are written directly (a published version's existing goal is
   // never replaced — ensureDonationGoal is create-once). Shares upsertModelVersion's write+bust tail.
-  await writeModelVersionGateAndGoal({ id, modelId }, existingVersion.model.userId, paidAccess, donationGoal);
+  await writeModelVersionGateAndGoal(
+    { id, modelId },
+    existingVersion.model.userId,
+    paidAccess,
+    donationGoal
+  );
+
+  if (tracker) {
+    const changeRows = diffEntityChanges({
+      entityType: 'ModelVersion',
+      entityId: id,
+      ownerId: existingVersion.model.userId,
+      before: { paidAccess: paidAccessBefore },
+      after: { paidAccess: toPaidAccessAuditState(paidAccess) },
+      actorRole: resolveActorRole({
+        actorUserId: actorUserId ?? 0,
+        ownerId: existingVersion.model.userId,
+        isModerator,
+      }),
+    });
+    tracker.entityChanges(changeRows).catch(() => null);
+  }
 
   ingestModelById({ id: modelId }).catch((error) =>
     logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId })
@@ -1137,7 +1256,11 @@ export const publishModelVersionsWithEarlyAccess = async ({
           // only flips status here). Materialize the pending timed gate from the version's already-set
           // publishedAt — otherwise a scheduled EA version keeps endsAt NULL and becomes a PERMANENT
           // gate that never releases. materializePaidAccessEndsAt no-ops on permanent/tombstoned gates.
-          await materializePaidAccessEndsAt(currentVersion.id, currentVersion.publishedAt, dbClient);
+          await materializePaidAccessEndsAt(
+            currentVersion.id,
+            currentVersion.publishedAt,
+            dbClient
+          );
         }
 
         await bustMvCache(updatedVersion.id, updatedVersion.modelId);

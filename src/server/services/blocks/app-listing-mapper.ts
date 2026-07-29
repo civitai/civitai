@@ -54,6 +54,60 @@ export function resolveListingDescription(manifest: unknown): string | null {
 }
 
 /**
+ * Extract the optional one-line store tagline from the manifest (null when
+ * absent / blank / not a string). The manifest is the ONLY author surface for an
+ * onsite listing's tagline — see the "ONSITE = ASSETS-ONLY" invariant in
+ * `offsite-listing.service`, which keeps name/tagline/description/category
+ * manifest-governed. The submission validator already bounds the length
+ * (MANIFEST_TAGLINE_MAX_LENGTH); this resolver only normalises whitespace, so a
+ * legacy row that predates the validator can never crash the mapper.
+ */
+export function resolveListingTagline(manifest: unknown): string | null {
+  const m = (manifest ?? {}) as { tagline?: unknown };
+  const tagline = typeof m.tagline === 'string' ? m.tagline.trim() : '';
+  return tagline.length > 0 ? tagline : null;
+}
+
+/**
+ * The MANIFEST-GOVERNED scalar set of an onsite store listing, in the shape the
+ * approve path writes on a subsequent-version re-sync.
+ *
+ * SINGLE SOURCE with {@link mapAppBlockToListing} (which builds its own payload
+ * from the same resolvers), so the create path and the re-sync path can never
+ * drift into showing different copy for the same manifest.
+ *
+ * NOT included — these are curated/mod-owned and must never be clobbered by an
+ * approve: assets (icon/cover/screenshots), `featured`/`featuredOrder`,
+ * `contentRating` (mod override, floored at the derived rating), `status`,
+ * `slug`, `externalUrl`.
+ *
+ * `category` is passed in RATHER than read from the manifest on purpose: the
+ * approve path resolves it from `AppBlock.category`, which is the manifest value
+ * only when a moderator has NOT curated one (`setMarketplaceMeta` writes
+ * `AppBlock.category`). Reading the manifest directly here would silently undo
+ * mod curation on the next version bump.
+ */
+export type ListingScalarSync = {
+  name: string;
+  description: string | null;
+  tagline: string | null;
+  category: string | null;
+};
+
+export function buildListingScalarSync(args: {
+  manifest: unknown;
+  blockId: string;
+  category: string | null;
+}): ListingScalarSync {
+  return {
+    name: resolveListingName(args.manifest, args.blockId),
+    description: resolveListingDescription(args.manifest),
+    tagline: resolveListingTagline(args.manifest),
+    category: args.category,
+  };
+}
+
+/**
  * Pure mapping from an approved AppBlock to the AppListing create payload.
  * Requires a resolved owner (`app.userId`) — the callers guard the null-owner
  * case; a missing owner here is misuse, so throw loudly rather than silently
@@ -76,6 +130,9 @@ export function mapAppBlockToListing(ab: SourceAppBlock): Prisma.AppListingUnche
     slug: ab.blockId,
     name: resolveListingName(ab.manifest, ab.blockId),
     description: resolveListingDescription(ab.manifest),
+    // Manifest-governed one-liner for the store card/detail slot. Absent/blank in
+    // the manifest ⇒ NULL (the card renders no tagline) — same as description.
+    tagline: resolveListingTagline(ab.manifest),
     // Assets are P1 — left NULL here (no mandatory-asset enforcement in P0).
     iconId: null,
     coverId: null,

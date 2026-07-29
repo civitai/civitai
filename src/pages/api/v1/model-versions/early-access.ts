@@ -8,6 +8,7 @@ import {
 import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { Tracker } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
 import type { SessionUser } from '~/types/session';
 
@@ -57,7 +58,12 @@ export default AuthedEndpoint(
         versionId: input.id,
       });
 
-      const updated = await updateModelVersionPaidAccess(input);
+      const updated = await updateModelVersionPaidAccess({
+        ...input,
+        tracker: new Tracker(req, res),
+        actorUserId: user.id,
+        isModerator: user.isModerator,
+      });
 
       await queueModelEarlyAccessReindex({ id: updated.modelId }).catch((e) => {
         console.error('Unable to update model early access deadline', e);

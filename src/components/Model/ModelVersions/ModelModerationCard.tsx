@@ -1,6 +1,7 @@
 import {
   Accordion,
   Badge,
+  Button,
   Code,
   Group,
   Loader,
@@ -9,8 +10,10 @@ import {
   useComputedColorScheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconShieldCheck, IconShieldHalfFilled } from '@tabler/icons-react';
+import { IconHistory, IconShieldCheck, IconShieldHalfFilled } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import ModelChangeHistoryModal from '~/components/Model/ModelVersions/ModelChangeHistoryModal';
 import { getModelVersionFlagLabels } from '~/shared/constants/model-version-flags.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -194,6 +197,19 @@ export function ModelModerationCard({
               )}
             </>
           )}
+          <Group justify="flex-end" px="sm" py={6}>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="gray"
+              leftSection={<IconHistory size={14} />}
+              onClick={() =>
+                dialogStore.trigger({ component: ModelChangeHistoryModal, props: { modelId } })
+              }
+            >
+              Change history
+            </Button>
+          </Group>
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>
