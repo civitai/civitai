@@ -192,6 +192,21 @@ export default defineNextConfig(
       serverSourceMaps: true,
       // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
+      // Nested async chunking for the SERVER build. Next's own default table
+      // (node_modules/next/dist/docs/01-app/03-api-reference/08-turbopack.md) has
+      // `turbopackClientSideNestedAsyncChunking` defaulting to TRUE in build mode but
+      // `turbopackServerSideNestedAsyncChunking` defaulting to FALSE in *both* dev and
+      // build — so the server build never got the async-chunk dedup the client build has,
+      // and every async chunk group re-emits its whole module graph.
+      //
+      // Measured on the production server build: 21,247 emitted chunk files / 587 MB of
+      // chunk source across 7,844 distinct modules — ~150 copies per module, 96.7% of
+      // chunk bytes duplicated. Enabling this on the same commit: 5,830 files / 255 MB
+      // (-72.6% files, -316.7 MiB), page entries unchanged at 548.
+      //
+      // Cost: ~+37% build wall time. Keep build memory headroom in mind — the builder
+      // already peaks well above 8 GB.
+      turbopackServerSideNestedAsyncChunking: true,
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
