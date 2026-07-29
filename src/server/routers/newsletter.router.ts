@@ -11,14 +11,17 @@ export const newsletterRouter = router({
   getSubscription: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(({ ctx }) => getSubscription(ctx.user?.email)),
-  updateSubscription: publicProcedure
+  updateSubscription: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(updateSubscriptionSchema)
     .mutation(({ input, ctx }) =>
+      // The email is taken from the session, never from input: a client-supplied address let an
+      // anonymous caller unsubscribe anyone whose address they knew, or sign a stranger up and
+      // have Beehiiv mail them under our sender identity.
       updateSubscription({
         ...input,
-        email: input.email ?? ctx.user?.email,
-        userId: ctx.user?.id,
+        email: ctx.user.email,
+        userId: ctx.user.id,
       })
     ),
   postpone: protectedProcedure
