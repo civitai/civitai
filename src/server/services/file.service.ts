@@ -262,18 +262,22 @@ export const getFileForModelVersion = async ({
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
-  if (!(versionAccess?.hasAccess ?? true)) {
-    return { status: 'unauthorized' };
-  }
-
-  // Check the early access scenario:
+  // The paid gate is checked BEFORE the generic access check so a gated version routes the user to
+  // the purchase flow; the other order collapses it into a bare denial and loses the reason.
   if (
     inEarlyAccess &&
-    (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
+    ((versionAccess?.permissions ?? 0) & EntityAccessPermission.EarlyAccessDownload) == 0 &&
     !isMod &&
     !isOwner
   ) {
     return { status: 'early-access', details: { deadline } };
+  }
+
+  // `unauthorized` means "no session" and callers answer it with a login redirect. A signed-in user
+  // who lacks a grant must NOT get that — they bounce off /login straight back to the page they came
+  // from, which reads as the download button doing nothing at all.
+  if (!(versionAccess?.hasAccess ?? true)) {
+    return { status: userId ? 'no-access' : 'unauthorized' };
   }
 
   // Get the correct file
@@ -442,6 +446,7 @@ type ModelVersionFileResult =
         | 'not-found'
         | 'resolve-failed'
         | 'unauthorized'
+        | 'no-access'
         | 'archived'
         | 'downloads-disabled'
         | 'error';

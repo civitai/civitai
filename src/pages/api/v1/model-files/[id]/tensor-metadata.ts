@@ -143,6 +143,7 @@ function getStatusCode(
 ) {
   switch (status) {
     case 'unauthorized':
+    case 'no-access':
     case 'downloads-disabled':
     case 'early-access':
       return 403;
@@ -162,6 +163,8 @@ function getErrorMessage(
   switch (status) {
     case 'unauthorized':
       return 'Unauthorized';
+    case 'no-access':
+      return 'You do not have access to this file';
     case 'downloads-disabled':
       return 'Downloads are disabled for this file';
     case 'early-access':
