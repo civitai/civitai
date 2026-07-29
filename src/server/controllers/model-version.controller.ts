@@ -441,6 +441,9 @@ export const upsertModelVersionHandler = async ({
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,
+      tracker: ctx.track,
+      actorUserId: userId,
+      isModerator: ctx.user.isModerator,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 
