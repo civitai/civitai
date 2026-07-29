@@ -14,6 +14,7 @@
     "@internationalized/date": "^3.12.2",
     "@lucide/svelte": "^1.22.0",
     "bits-ui": "^2.18.1",
+    "chart.js": "^4.4.0",
     "clsx": "^2.1.1",
     "mode-watcher": "^1.1.0",
     "svelte-sonner": "^1.1.1",

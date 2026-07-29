@@ -531,6 +531,21 @@ export const upsertModelVersion = async ({
     );
   }
 
+  // Paid access is limited to downloadable or on-site-generation versions; API-only generation can't be
+  // gated, and a gen-only version can't charge for download (mirrors updateModelVersionPaidAccess).
+  if (
+    !!paidAccess &&
+    data.usageControl !== ModelUsageControl.Download &&
+    data.usageControl !== ModelUsageControl.Generation
+  ) {
+    throw throwBadRequestError('Paid access is not available for this version’s usage control.');
+  }
+  if (data.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
+    throw throwBadRequestError(
+      'Cannot charge for download if downloads are disabled for this model version'
+    );
+  }
+
   assertPaidAccessInput(paidAccess);
 
   if (!id || templateId) {
@@ -821,7 +836,19 @@ export const updateModelVersionPaidAccess = async ({
     );
   }
 
-  if (existingVersion.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
+  // Only downloadable or on-site-generation versions can be gated; API-only generation can't.
+  if (
+    !!paidAccess &&
+    existingVersion.usageControl !== ModelUsageControl.Download &&
+    existingVersion.usageControl !== ModelUsageControl.Generation
+  ) {
+    throw throwBadRequestError('Paid access is not available for this version’s usage control.');
+  }
+
+  if (
+    existingVersion.usageControl !== ModelUsageControl.Download &&
+    !!paidAccess?.terms.download
+  ) {
     throw throwBadRequestError(
       'Cannot charge for download if downloads are disabled for this model version'
     );

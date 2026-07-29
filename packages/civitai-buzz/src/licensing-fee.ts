@@ -32,6 +32,21 @@ export function feeToRatio(perImage: number | null | undefined): FeeRatio {
   return { buzz: Math.round((cents * images) / 100), images };
 }
 
+// "N ⚡ per M images" → per-image fee at 0.01 precision (0 clears). buzz(int) / images(∈ FEE_IMAGE_OPTIONS) is
+// always a multiple of 0.01, so it satisfies the column + the schema's multipleOf(0.01). Inverse of feeToRatio.
+export function ratioToFee(buzz: number, images: number): number {
+  if (!buzz || buzz <= 0 || !images) return 0;
+  return Math.round((buzz / images) * 100) / 100;
+}
+
+// Suggested per-image fee by model type — the seeded default for a NEW version. Checkpoints carry more value;
+// everything else is 0.1 ⚡/image (= 1 ⚡ per 10 images).
+export const SUGGESTED_FEE_PER_IMAGE: Record<string, number> = { Checkpoint: 1 };
+export const DEFAULT_SUGGESTED_FEE_PER_IMAGE = 0.1;
+export function suggestedFeePerImage(modelType: string | null | undefined): number {
+  return (modelType ? SUGGESTED_FEE_PER_IMAGE[modelType] : undefined) ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE;
+}
+
 // Fees can be charged per image, per video, etc., so the cadence noun stays media-agnostic:
 // one "generation" covers every output type without needing to know which.
 const FEE_UNIT_NOUN = 'generation';
