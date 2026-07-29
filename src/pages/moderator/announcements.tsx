@@ -59,6 +59,11 @@ export function AnnouncementsPage() {
               dismissible={false}
               moderatorActions={
                 <div className="flex items-center gap-1">
+                  {announcement.targetUserCount > 0 && (
+                    <Badge color="violet">
+                      Targeted · {announcement.targetUserCount.toLocaleString()}
+                    </Badge>
+                  )}
                   {announcement.disabled ? (
                     <Badge color="red">Disabled</Badge>
                   ) : active ? (
