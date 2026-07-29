@@ -8,6 +8,7 @@ import {
   Group,
   Loader,
   Stack,
+  Tabs,
   Text,
   Title,
 } from '@mantine/core';
@@ -15,7 +16,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconExternalLink } from '@tabler/icons-react';
 import type { MRT_ColumnDef } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { MinorHashReviewRow } from '~/server/services/minor-hash.service';
@@ -130,8 +131,203 @@ function DetailPanel({ row }: { row: MinorHashReviewRow }) {
   );
 }
 
+type AutoFlaggedRow = {
+  modelId: number;
+  modelName: string;
+  userId: number;
+  username: string | null;
+  status: string;
+  flaggedAt: Date;
+  prevNsfw: boolean | null;
+  prevGalleryLevel: number | null;
+};
+
+// Models the scan hook flagged with no human in the loop. Confirming records the
+// moderator's own setMinor, which both clears the row from here and stops a bulk
+// rollback from undoing it.
+function AutoFlaggedTable() {
+  const queryUtils = trpc.useUtils();
+  const { data, isLoading, isFetching } =
+    trpc.moderator.models.queryAutoFlaggedMinorModels.useQuery({ limit });
+  const items = useMemo(() => data?.items ?? [], [data]);
+
+  const onSettled = async () => {
+    await queryUtils.moderator.models.queryAutoFlaggedMinorModels.invalidate();
+    await queryUtils.moderator.models.queryMinorHashMatches.invalidate();
+  };
+  const onError = (error: { message: string }) =>
+    showErrorNotification({ title: 'Action failed', error });
+
+  const confirmMutation = trpc.moderator.models.confirmMinorHashAutoFlag.useMutation({
+    onSuccess: onSettled,
+    onError,
+  });
+  const revertMutation = trpc.moderator.models.revertMinorHashAutoFlag.useMutation({
+    onSuccess: onSettled,
+    onError,
+  });
+
+  const columns = useMemo<MRT_ColumnDef<AutoFlaggedRow>[]>(
+    () => [
+      {
+        id: 'modelName',
+        header: 'Model',
+        accessorKey: 'modelName',
+        size: 300,
+        Cell: ({ row: { original } }) => (
+          <Anchor
+            component={NextLink}
+            href={modelHref(original.modelId)}
+            target="_blank"
+            lineClamp={2}
+          >
+            {original.modelName}
+          </Anchor>
+        ),
+      },
+      {
+        id: 'username',
+        header: 'Uploader',
+        accessorKey: 'username',
+        size: 150,
+        Cell: ({ row: { original } }) =>
+          original.username ? (
+            <Anchor
+              component={NextLink}
+              href={`/user/${original.username}`}
+              target="_blank"
+              lineClamp={1}
+            >
+              {original.username}
+            </Anchor>
+          ) : (
+            <Text>{original.userId}</Text>
+          ),
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        accessorKey: 'status',
+        size: 170,
+        filterVariant: 'multi-select',
+        Cell: ({ row: { original } }) => (
+          <Badge
+            size="sm"
+            tt="none"
+            color={statusColors[original.status] ?? 'gray'}
+            variant="light"
+          >
+            {original.status}
+          </Badge>
+        ),
+      },
+      {
+        id: 'flaggedAt',
+        header: 'Auto-flagged',
+        accessorFn: (row) => new Date(row.flaggedAt),
+        sortingFn: 'datetime',
+        size: 140,
+        enableColumnFilter: false,
+        Cell: ({ row: { original } }) => (
+          <Text size="xs">{original.flaggedAt ? formatDate(original.flaggedAt) : '—'}</Text>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 200,
+        enableSorting: false,
+        enableColumnFilter: false,
+        enableColumnActions: false,
+        Cell: ({ row: { original } }) => (
+          <Group gap="xs" justify="flex-end" wrap="nowrap">
+            <Button
+              size="compact-sm"
+              loading={
+                confirmMutation.isPending && confirmMutation.variables?.id === original.modelId
+              }
+              onClick={() => confirmMutation.mutate({ id: original.modelId })}
+            >
+              Keep flagged
+            </Button>
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="red"
+              loading={
+                revertMutation.isPending && revertMutation.variables?.id === original.modelId
+              }
+              onClick={() =>
+                openConfirmModal({
+                  title: 'Revert automatic minor flag',
+                  centered: true,
+                  labels: { confirm: 'Revert', cancel: 'Cancel' },
+                  confirmProps: { color: 'red' },
+                  children: (
+                    <Text size="sm">
+                      Unflag <strong>{original.modelName}</strong> and restore the settings it had
+                      before the scan flagged it
+                      {original.prevNsfw ? ', including its NSFW flag' : ''}
+                      {original.prevGalleryLevel != null
+                        ? ` and gallery level ${original.prevGalleryLevel}`
+                        : ''}
+                      .
+                    </Text>
+                  ),
+                  onConfirm: () => revertMutation.mutate({ id: original.modelId }),
+                })
+              }
+            >
+              Revert
+            </Button>
+          </Group>
+        ),
+      },
+    ],
+    [confirmMutation, revertMutation]
+  );
+
+  return (
+    <>
+      {data?.truncated && (
+        <Alert color="yellow" title="List truncated">
+          Showing the first {limit} auto-flagged models.
+        </Alert>
+      )}
+      <MantineReactTable
+        columns={columns}
+        data={items}
+        enableStickyHeader
+        enableColumnPinning
+        enableSorting
+        enableColumnFilters
+        enableGlobalFilter
+        enableFacetedValues
+        layoutMode="grid"
+        renderEmptyRowsFallback={() => (
+          <Text p="xl" ta="center" c="dimmed">
+            Nothing auto-flagged awaiting review.
+          </Text>
+        )}
+        mantineTableContainerProps={{ style: { maxHeight: 600 } }}
+        initialState={{
+          density: 'xs',
+          columnPinning: { right: ['actions'] },
+          pagination: { pageIndex: 0, pageSize: 25 },
+          showGlobalFilter: true,
+          showColumnFilters: true,
+        }}
+        state={{ isLoading, showProgressBars: isFetching }}
+      />
+    </>
+  );
+}
+
 export default function MinorHashMatches() {
   const queryUtils = trpc.useUtils();
+  const [tab, setTab] = useState<string>('pending');
+  const { data: autoData } = trpc.moderator.models.queryAutoFlaggedMinorModels.useQuery({ limit });
+  const autoCount = autoData?.items.length ?? 0;
 
   const { data, isFetching, isLoading } = trpc.moderator.models.queryMinorHashMatches.useQuery({
     limit,
@@ -299,44 +495,58 @@ export default function MinorHashMatches() {
           <Title order={1}>Minor hash matches</Title>
           <Text c="dimmed" size="sm">
             Models sharing a byte-identical weight file with a model a moderator already flagged
-            minor, uploaded by a different user. Same-uploader matches are flagged automatically.
+            minor. Different-uploader matches wait for review here; same-uploader matches are
+            flagged automatically at scan time and are listed under Auto-flagged.
           </Text>
         </div>
 
-        {data?.truncated && (
-          <Alert color="yellow" title="Queue truncated">
-            Showing the first {limit} matches. Work the queue down to see the rest.
-          </Alert>
-        )}
+        <Tabs value={tab} onChange={(value) => setTab(value ?? 'pending')}>
+          <Tabs.List>
+            <Tabs.Tab value="pending">Pending review</Tabs.Tab>
+            <Tabs.Tab value="auto">Auto-flagged{autoCount ? ` (${autoCount})` : ''}</Tabs.Tab>
+          </Tabs.List>
+        </Tabs>
 
-        <MantineReactTable
-          columns={columns}
-          data={items}
-          enableStickyHeader
-          enableColumnPinning
-          // The whole queue is loaded, so client-side sorting, filtering and paging
-          // act on every row rather than on a partial window.
-          enableSorting
-          enableColumnFilters
-          enableGlobalFilter
-          enableFacetedValues
-          layoutMode="grid"
-          renderDetailPanel={({ row }) => <DetailPanel row={row.original} />}
-          renderEmptyRowsFallback={() => (
-            <Text p="xl" ta="center" c="dimmed">
-              No matches pending review.
-            </Text>
-          )}
-          mantineTableContainerProps={{ style: { maxHeight: 600 } }}
-          initialState={{
-            density: 'xs',
-            columnPinning: { right: ['actions'] },
-            pagination: { pageIndex: 0, pageSize: 25 },
-            showGlobalFilter: true,
-            showColumnFilters: true,
-          }}
-          state={{ isLoading, showProgressBars: isFetching }}
-        />
+        {tab === 'auto' && <AutoFlaggedTable />}
+
+        {tab === 'pending' && (
+          <>
+            {data?.truncated && (
+              <Alert color="yellow" title="Queue truncated">
+                Showing the first {limit} matches. Work the queue down to see the rest.
+              </Alert>
+            )}
+
+            <MantineReactTable
+              columns={columns}
+              data={items}
+              enableStickyHeader
+              enableColumnPinning
+              // The whole queue is loaded, so client-side sorting, filtering and paging
+              // act on every row rather than on a partial window.
+              enableSorting
+              enableColumnFilters
+              enableGlobalFilter
+              enableFacetedValues
+              layoutMode="grid"
+              renderDetailPanel={({ row }) => <DetailPanel row={row.original} />}
+              renderEmptyRowsFallback={() => (
+                <Text p="xl" ta="center" c="dimmed">
+                  No matches pending review.
+                </Text>
+              )}
+              mantineTableContainerProps={{ style: { maxHeight: 600 } }}
+              initialState={{
+                density: 'xs',
+                columnPinning: { right: ['actions'] },
+                pagination: { pageIndex: 0, pageSize: 25 },
+                showGlobalFilter: true,
+                showColumnFilters: true,
+              }}
+              state={{ isLoading, showProgressBars: isFetching }}
+            />
+          </>
+        )}
       </Stack>
     </Container>
   );

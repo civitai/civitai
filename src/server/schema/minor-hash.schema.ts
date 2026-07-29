@@ -10,6 +10,11 @@ export const getMinorHashMatchesSchema = z.object({
   limit: z.number().min(1).max(2000).default(1000),
 });
 
+export type GetAutoFlaggedMinorModelsInput = z.infer<typeof getAutoFlaggedMinorModelsSchema>;
+export const getAutoFlaggedMinorModelsSchema = z.object({
+  limit: z.number().min(1).max(2000).default(1000),
+});
+
 export type GetMinorHashMatchDetailInput = z.infer<typeof getMinorHashMatchDetailSchema>;
 export const getMinorHashMatchDetailSchema = z.object({
   modelId: z.number(),

@@ -36,6 +36,9 @@ import {
   getMinorHashMatchesForReview,
   dismissMinorHashMatch,
   rollbackMinorHashAutoFlags,
+  getAutoFlaggedMinorModels,
+  confirmMinorHashAutoFlag,
+  revertMinorHashAutoFlag,
   minorSrcCte,
   minorHashCandidatesCte,
   MINOR_HASH_FILE_TYPE,
@@ -527,6 +530,68 @@ describe('getMinorHashMatchesForReview', () => {
     const under = await getMinorHashMatchesForReview({ limit: 2 });
     expect(under.items).toHaveLength(1);
     expect(under.truncated).toBe(false);
+  });
+});
+
+describe('getAutoFlaggedMinorModels', () => {
+  it('lists only auto-sourced flags a moderator has not signed off yet', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getAutoFlaggedMinorModels({ limit: 1000 });
+
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain(`->>'source' = 'auto'`);
+    expect(text).toContain('AND NOT ');
+    // the human-confirmation gate is interpolated as a Prisma.Sql fragment
+    const rendered = values
+      .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .join('\n');
+    expect(rendered).toContain('"ModActivity" ma');
+    expect(rendered).toContain(`ma.activity = 'setMinor'`);
+    expect(values).toContain(1001); // limit + 1 truncation probe
+  });
+
+  it('flags truncation when the cap is exceeded', async () => {
+    const row = (modelId: number) => ({ modelId });
+    mockDbRead.$queryRaw.mockResolvedValueOnce([row(1), row(2), row(3)]);
+
+    const result = await getAutoFlaggedMinorModels({ limit: 2 });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.truncated).toBe(true);
+  });
+});
+
+describe('confirmMinorHashAutoFlag', () => {
+  it("records the moderator's own setMinor so a bulk rollback can no longer revert it", async () => {
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(4, {
+      entityType: 'model',
+      entityId: 100,
+      activity: 'setMinor',
+    });
+    // sign-off must not mutate the model itself
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('revertMinorHashAutoFlag', () => {
+  it('rolls back exactly that model and audits the revert', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 77 })]);
+
+    await revertMinorHashAutoFlag({ modelId: 77, userId: 4 });
+
+    expect(mockSetModelMinor).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 77, minor: false, activity: 'rollbackMinorAutoHash' })
+    );
+    expect(mockTrackModActivity).toHaveBeenCalledWith(4, {
+      entityType: 'model',
+      entityId: 77,
+      activity: 'rollbackMinorAutoHash',
+    });
   });
 });
 

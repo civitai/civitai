@@ -19,6 +19,7 @@ import {
   transferModelOwnershipSchema,
 } from '~/server/schema/model.schema';
 import {
+  getAutoFlaggedMinorModelsSchema,
   getMinorHashMatchDetailSchema,
   getMinorHashMatchesSchema,
 } from '~/server/schema/minor-hash.schema';
@@ -38,9 +39,12 @@ import {
   transferModelOwnership,
 } from '~/server/services/model.service';
 import {
+  confirmMinorHashAutoFlag,
   dismissMinorHashMatch,
+  getAutoFlaggedMinorModels,
   getMinorHashMatchDetail,
   getMinorHashMatchesForReview,
+  revertMinorHashAutoFlag,
 } from '~/server/services/minor-hash.service';
 import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
 import { throwDbError } from '~/server/utils/errorHandling';
@@ -80,6 +84,19 @@ export const modRouter = router({
       .input(getByIdSchema)
       .mutation(({ input, ctx }) =>
         dismissMinorHashMatch({ modelId: input.id, userId: ctx.user.id })
+      ),
+    queryAutoFlaggedMinorModels: moderatorProcedure
+      .input(getAutoFlaggedMinorModelsSchema)
+      .query(({ input }) => getAutoFlaggedMinorModels(input)),
+    confirmMinorHashAutoFlag: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        confirmMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
+      ),
+    revertMinorHashAutoFlag: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        revertMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
       ),
   }),
   modelVersions: router({

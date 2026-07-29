@@ -378,6 +378,78 @@ export async function getMinorHashMatchDetail({
   return detail ?? null;
 }
 
+export type AutoFlaggedMinorModel = {
+  modelId: number;
+  modelName: string;
+  userId: number;
+  username: string | null;
+  status: string;
+  flaggedAt: Date;
+  prevNsfw: boolean | null;
+  prevGalleryLevel: number | null;
+};
+
+// The scan hook flags same-uploader re-uploads with no human in the loop, so
+// this is the queue that makes those decisions reviewable. Confirmed ones drop
+// out: a later `setMinor` is the moderator signing off, and it also protects the
+// model from a bulk rollback.
+export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
+  const rows = await dbRead.$queryRaw<AutoFlaggedMinorModel[]>`
+    SELECT m.id AS "modelId", m.name AS "modelName", m."userId", u.username,
+           m.status::text AS status,
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz AS "flaggedAt",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel"
+    FROM "Model" m
+    LEFT JOIN "User" u ON u.id = m."userId"
+    WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
+      AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' = 'auto'
+      AND NOT ${humanConfirmedPredicate}
+    ORDER BY (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz DESC, m.id DESC
+    LIMIT ${limit + 1}
+  `;
+
+  return { items: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+// Sign-off: records the moderator's own setMinor so the model leaves the queue
+// and a bulk rollback can no longer revert it.
+export async function confirmMinorHashAutoFlag({
+  modelId,
+  userId,
+}: {
+  modelId: number;
+  userId: number;
+}) {
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: modelId,
+    activity: 'setMinor',
+  });
+}
+
+export async function revertMinorHashAutoFlag({
+  modelId,
+  userId,
+}: {
+  modelId: number;
+  userId: number;
+}) {
+  const report = await rollbackMinorHashAutoFlags({
+    dryRun: false,
+    limit: 1,
+    modelIds: [modelId],
+  });
+
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: modelId,
+    activity: 'rollbackMinorAutoHash',
+  });
+
+  return report;
+}
+
 export async function dismissMinorHashMatch({
   modelId,
   userId,
