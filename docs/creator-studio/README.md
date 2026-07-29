@@ -13,6 +13,7 @@ Per-page design docs for `creator.civitai.com`. These sit **under** the umbrella
 **Paid Access (early access + permanent paid access):**
 
 - [paid-access-current-state.md](paid-access-current-state.md) — **start here to continue paid-access work**: what's built (permanent + usage-control pricing), where the code lives across both apps, the verified purchase→access flow, gotchas, and open items (incl. the still-open findings consolidated from the phase-1 reviews).
+- [paid-access-followups.md](paid-access-followups.md) — the actionable **checklist** from the Justin/Ellie review + notes (button label, buzz-icon prefixes, badge pricing, studio CP-join, nav link, etc.).
 - [paid-access-schema.md](paid-access-schema.md) — the `PaidAccess` table + `terms` shapes (data reference).
 - [onsite-monetization-parity.md](onsite-monetization-parity.md) — the design rationale / staging behind the refactor.
 
