@@ -2607,14 +2607,6 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     );
     log('Prizes sent');
 
-    // Economy telemetry: total winner-prize Buzz paid this completion (paid in the challenge's
-    // stored currency). Entry-participation prizes below are a separate blue-Buzz reward, not counted.
-    recordChallengePrizePaidBuzz({
-      source: challenge.source,
-      buzzType: challenge.buzzType,
-      amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
-    });
-
     // Send entry participation prizes to all eligible users
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
     // even though it's only populated inside the conditional (participation prizes are optional).
@@ -2708,6 +2700,38 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
     log('Challenge status updated to Completed');
 
+    // Economy + funnel telemetry, emitted TOGETHER immediately after the Completed write.
+    //
+    // Why not at the payout call above (where the prize emit used to live): everything between the
+    // payout and this write is awaited and throwable (entry-prize `createBuzzTransactionMany`,
+    // `createNotification`, `logToAxiom`) and the catch below re-throws, leaving the challenge in
+    // `Completing`. `resetStuckCompletingChallenges` then flips it back to `Active`, the scheduled
+    // job claims it, takes the `existingWinners` branch and re-issues the same (already-settled,
+    // deterministic-id) payout before writing Completed and emitting. An emit at the payout site
+    // would count that Buzz once here and again there — one payout, two increments.
+    //
+    // Why the completed emit moved up here too (it used to sit after the winner-notification loop):
+    // a throw in that loop suppressed the completed emit while the prize emit had already fired, so
+    // the two counters silently diverged on this path. The challenge IS completed once this write
+    // lands — the notification loop is explicitly the non-critical tail — so anchoring both emits to
+    // the same successful write is the placement that makes them consistent by construction, and it
+    // matches the scheduled-job path. Observable consequence, deliberately accepted:
+    // `challenge_completed_total` now also counts a completion whose winner notifications threw.
+    // That completion is real and permanent (status is already Completed, so the time-based
+    // Completing reset can never retry it and the count would otherwise be lost forever), and both
+    // helpers are never-throw no-ops for business logic, so nothing outside telemetry changes.
+    //
+    // Prize amount is Buzz ATTEMPTED for winner prizes, not confirmed-settled:
+    // `createBuzzTransactionMany` silently drops any non-success, non-conflict result (e.g.
+    // insufficientFunds) from both result arrays, so a leg that never moved money is invisible here
+    // and is still counted. Entry-participation prizes are a separate blue-Buzz reward, not counted.
+    recordChallengeCompleted({ source: challenge.source });
+    recordChallengePrizePaidBuzz({
+      source: challenge.source,
+      buzzType: challenge.buzzType,
+      amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
+    });
+
     // Notify winners (non-critical, last)
     for (const entry of winningEntries) {
       await createNotification({
@@ -2733,7 +2757,6 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     });
     log('Winners notified');
 
-    recordChallengeCompleted({ source: challenge.source });
     return { success: true, winnersCount: winningEntries.length };
   } catch (error) {
     // On failure, challenge stays in 'Completing' for recovery to handle

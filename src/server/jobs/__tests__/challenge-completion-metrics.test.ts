@@ -54,7 +54,7 @@ const {
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
   mockGetActiveChallenges: vi.fn(),
   mockGenerateWinners: vi.fn(),
-  mockClaimChallengeForCompletion: vi.fn().mockResolvedValue(true),
+  mockClaimChallengeForCompletion: vi.fn().mockResolvedValue('2026-07-29T12:00:00.000Z'),
   mockGetExistingWinnersForRetry: vi.fn().mockResolvedValue([]),
   mockResolveEventContext: vi.fn().mockResolvedValue(undefined),
   mockUpdateChallengeStatus: vi.fn().mockResolvedValue(undefined),
@@ -262,14 +262,22 @@ const currentChallenge = {
   entryPrize: { buzz: 0, points: 0 },
 } as never;
 
-function challengeRecordWith(source: string) {
+// The stamp `claimChallengeForCompletion` writes to metadata.completingClaimedAt for THIS run.
+const CLAIM_STAMP = '2026-07-29T12:00:00.000Z';
+// The stamp a SECOND run would write after resetStuckCompletingChallenges revoked our claim.
+const TAKEOVER_STAMP = '2026-07-29T12:11:00.000Z';
+
+function challengeRecordWith(
+  source: string,
+  rowMetadata: Record<string, unknown> = { completingClaimedAt: CLAIM_STAMP }
+) {
   return {
     id: 1,
     collectionId: 100,
     source,
     entryFee: 0,
     operationSpent: 0,
-    metadata: {},
+    metadata: rowMetadata,
     prizes: [
       { buzz: 500, points: 10 },
       { buzz: 250, points: 5 },
@@ -278,11 +286,21 @@ function challengeRecordWith(source: string) {
   };
 }
 
-function mockChallengeJudgeRow(source: string | undefined) {
+function mockChallengeJudgeRow(
+  source: string | undefined,
+  rowMetadata: Record<string, unknown> = { completingClaimedAt: CLAIM_STAMP }
+) {
   mockDbReadQueryRaw.mockResolvedValueOnce([
     source === undefined
       ? undefined
-      : { judgeId: null, judgingPrompt: null, eventId: null, source, judgingCategories: null },
+      : {
+          judgeId: null,
+          judgingPrompt: null,
+          eventId: null,
+          source,
+          judgingCategories: null,
+          metadata: rowMetadata,
+        },
   ]);
 }
 
@@ -298,10 +316,15 @@ function mockJudgedEntryRows(rows: Array<{ imageId: number; userId: number; user
   );
 }
 
-/** Drive the fresh two-entrant LLM path to a winners completion with 2 of 3 places filled. */
-async function runTwoWinnerCompletion(source: string) {
-  mockGetChallengeById.mockResolvedValue(challengeRecordWith(source));
-  mockChallengeJudgeRow(source);
+/**
+ * Drive the fresh two-entrant LLM path to a winners completion with 2 of 3 places filled.
+ * `rowStamp` is the claim stamp the challenge row carries when it is re-read at step 7 — pass
+ * TAKEOVER_STAMP to simulate this run's claim being revoked and re-taken mid-flight.
+ */
+async function runTwoWinnerCompletion(source: string, rowStamp: string | undefined = CLAIM_STAMP) {
+  const rowMetadata = rowStamp === undefined ? {} : { completingClaimedAt: rowStamp };
+  mockGetChallengeById.mockResolvedValue(challengeRecordWith(source, rowMetadata));
+  mockChallengeJudgeRow(source, rowMetadata);
   mockJudgedEntryRows([
     { imageId: 1, userId: 100, username: 'alice' },
     { imageId: 2, userId: 200, username: 'bob' },
@@ -331,7 +354,7 @@ beforeEach(() => {
   mockGetChallengeConfig.mockResolvedValue(BASE_CONFIG);
   mockGetJudgingConfig.mockResolvedValue(JUDGING_CONFIG);
   mockEndChallenge.mockResolvedValue(undefined);
-  mockClaimChallengeForCompletion.mockResolvedValue(true);
+  mockClaimChallengeForCompletion.mockResolvedValue(CLAIM_STAMP);
   mockGetExistingWinnersForRetry.mockResolvedValue([]);
   mockResolveEventContext.mockResolvedValue(undefined);
   mockUpdateChallengeStatus.mockResolvedValue(undefined);
@@ -429,7 +452,7 @@ describe('pickWinnersForChallenge — winners completion telemetry', () => {
 
 describe('pickWinnersForChallenge — emit placement is retry-safe', () => {
   it('emits nothing when the atomic completion claim is lost (challenge not Active)', async () => {
-    mockClaimChallengeForCompletion.mockResolvedValue(false);
+    mockClaimChallengeForCompletion.mockResolvedValue(null);
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
@@ -465,6 +488,55 @@ describe('pickWinnersForChallenge — emit placement is retry-safe', () => {
 
     expect(recordChallengeCompleted).not.toHaveBeenCalled();
     expect(recordChallengePrizePaidBuzz).not.toHaveBeenCalled();
+  });
+});
+
+// The ENTRY guard (claim never acquired) is covered above. This block covers the case that guard
+// cannot reach: the claim WAS acquired, then revoked mid-flight by resetStuckCompletingChallenges
+// (purely time-based — no liveness check, no ownership token) and re-taken by a second run, while
+// this run keeps executing. Both Completed writes are unconditional `UPDATE ... WHERE id = $1` with
+// no status predicate, so this run's write still lands; without a claim re-check it would also emit,
+// on top of the takeover run's emit. The re-checked claim stamp is what holds the counters to one
+// increment per completion.
+describe('pickWinnersForChallenge — claim REVOKED mid-flight (write still runs)', () => {
+  it('winners path: still performs the Completed write but does NOT emit', async () => {
+    await runTwoWinnerCompletion(ChallengeSource.System, TAKEOVER_STAMP);
+
+    // The unconditional write really did execute — this is the whole point of the case.
+    expect(mockDbWriteChallengeUpdate).toHaveBeenCalledTimes(1);
+    expect(mockDbWriteChallengeUpdate.mock.calls[0][0]).toMatchObject({
+      data: { status: 'Completed' },
+    });
+    // The payout ran too (it is retry-safe, so the takeover run re-issued the same one).
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalled();
+
+    // ...and neither counter moved, so the takeover run's own emits are the only ones.
+    expect(recordChallengeCompleted).not.toHaveBeenCalled();
+    expect(recordChallengePrizePaidBuzz).not.toHaveBeenCalled();
+    expect(await allSeries(COMPLETED_METRIC)).toHaveLength(0);
+    expect(await allSeries(PRIZE_PAID_METRIC)).toHaveLength(0);
+  });
+
+  it('zero-entries path: still marks Completed but does NOT emit', async () => {
+    mockChallengeJudgeRow(ChallengeSource.User, { completingClaimedAt: TAKEOVER_STAMP });
+    mockDbReadQueryRaw.mockResolvedValueOnce([]);
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockUpdateChallengeStatus).toHaveBeenCalledWith(1, 'Completed');
+    expect(recordChallengeCompleted).not.toHaveBeenCalled();
+    expect(await allSeries(COMPLETED_METRIC)).toHaveLength(0);
+  });
+
+  it('fails OPEN when the row carries no claim stamp at all (replica lag is not a takeover)', async () => {
+    // A missing stamp is indistinguishable from a replica that has not caught up with our own claim
+    // write, so the gate must NOT suppress here — it may only ever drop a duplicate.
+    await runTwoWinnerCompletion(ChallengeSource.System, undefined);
+
+    expect(recordChallengeCompleted).toHaveBeenCalledTimes(1);
+    const series = await seriesFor(COMPLETED_METRIC, { source: 'System' });
+    expect(series).toBeDefined();
+    expect(series?.value).toBe(1);
   });
 });
 

@@ -788,22 +788,39 @@ export async function incrementOperationSpent(challengeId: number, amount: numbe
 /**
  * Atomically claim a challenge for completion processing.
  * Uses UPDATE ... WHERE status='Active' to prevent duplicate processing.
- * Returns true if this process owns the challenge, false if already claimed.
+ *
+ * Returns the claim stamp written to `metadata.completingClaimedAt` when this process owns the
+ * challenge, or `null` when the row was already claimed. The stamp is always a non-empty ISO
+ * string, so the historical `if (!claimed)` boolean reading is preserved exactly.
+ *
+ * Why the stamp is returned rather than a bare boolean: the claim is NOT held for the lifetime of
+ * the run. `resetStuckCompletingChallenges` below revokes a `Completing` claim purely on elapsed
+ * time — no liveness check, no ownership token — so a slow-but-alive run can have its claim taken
+ * over by a second run while it is still executing. A re-claim overwrites the stamp, so a run that
+ * re-reads the row and finds a DIFFERENT stamp knows it no longer owns the completion. That signal
+ * is used to suppress duplicate TELEMETRY only (see `claimStillHeld` in daily-challenge-processing);
+ * it does not gate any write, and the status writes remain unconditional as before.
  */
-export async function claimChallengeForCompletion(challengeId: number): Promise<boolean> {
+export async function claimChallengeForCompletion(challengeId: number): Promise<string | null> {
+  const claimedAt = new Date().toISOString();
   const result = await dbWrite.$executeRaw`
     UPDATE "Challenge"
     SET status = ${ChallengeStatus.Completing}::"ChallengeStatus",
-        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('completingClaimedAt', ${new Date().toISOString()})
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('completingClaimedAt', ${claimedAt})
     WHERE id = ${challengeId}
     AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
   `;
-  return result > 0;
+  return result > 0 ? claimedAt : null;
 }
 
 /**
  * Reset challenges stuck in 'Completing' status back to 'Active' for retry.
  * A challenge is considered stuck if it has been in Completing for longer than timeoutMinutes.
+ *
+ * 🔴 This is purely TIME-BASED: there is no liveness check and no ownership token, so it can revoke
+ * the claim of a run that is still executing (a run slower than `timeoutMinutes` is assumed dead).
+ * Callers must therefore not treat "I claimed it" as "I still own it" — re-check the claim stamp
+ * (see `claimChallengeForCompletion`) before doing anything that must not happen twice.
  */
 export async function resetStuckCompletingChallenges(timeoutMinutes = 10): Promise<number> {
   const result = await dbWrite.$executeRaw`
