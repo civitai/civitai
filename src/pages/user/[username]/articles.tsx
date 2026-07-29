@@ -110,6 +110,11 @@ function UserArticlesPage() {
                   includeDrafts: !!currentUser?.isModerator,
                   pending: true,
                 }}
+                // Filters here are URL-driven, so merging the global feed's
+                // persisted store leaked its `followed: true` into a user-scoped
+                // query — and nobody follows themselves, which hid every one of
+                // the owner's own articles.
+                disableStoreFilters
                 showEmptyCta={selfView}
               />
             ) : (
