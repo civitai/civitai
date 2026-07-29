@@ -843,6 +843,142 @@ describe('BlockManifestValidator', () => {
     });
   });
 
+  // ENFORCEMENT: a declared SENSITIVE scope (money / private data / cross-user
+  // write) now REQUIRES a non-empty justification — this used to be optional
+  // metadata. Runs in `validate`, so it covers every submit path (CLI
+  // submit-version + web updateManifest both funnel through validateSubmission →
+  // validate). `apps:storage:shared:write` / `collections:read:private` are
+  // sensitive AND SKIP_OAUTH_CHECK, so they need no extra OAuth bit; the
+  // AI context covers `ai:write:budgeted` (requires AIServicesWrite).
+  describe('scopeJustifications — ENFORCED for sensitive scopes', () => {
+    const AI_APP_CTX = {
+      allowedScopes: TokenScope.ModelsRead | TokenScope.AIServicesWrite,
+      allowedOrigins: ['https://blocks.civitai.com'],
+    };
+
+    it('REJECTS a sensitive scope with NO scopeJustifications (previously accepted)', () => {
+      // ai:write:budgeted can spend the viewer's Buzz — a justification is now required.
+      const manifest = { ...VALID_MANIFEST, scopes: ['ai:write:budgeted'] };
+      const result = BlockManifestValidator.validate(manifest, AI_APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some(
+            (e) => e.includes('sensitive scopes require a justification') && e.includes('ai:write:budgeted')
+          )
+        ).toBe(true);
+      }
+    });
+
+    it('REJECTS a sensitive scope when scopeJustifications is present but omits its key', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['models:read:self', 'apps:storage:shared:write'],
+        // Justifies the non-sensitive scope but not the sensitive one.
+        scopeJustifications: { 'models:read:self': 'We render the page model.' },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some(
+            (e) =>
+              e.includes('sensitive scopes require a justification') &&
+              e.includes('apps:storage:shared:write')
+          )
+        ).toBe(true);
+      }
+    });
+
+    it.each<[string, string]>([
+      ['', 'empty string'],
+      ['   ', 'whitespace-only'],
+      ['\t\n', 'tabs/newlines only'],
+    ])('REJECTS a sensitive scope justified with a %j (%s) value', (value) => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['apps:storage:shared:write'],
+        scopeJustifications: { 'apps:storage:shared:write': value },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors.some((e) => e.includes('apps:storage:shared:write'))).toBe(true);
+      }
+    });
+
+    it('ACCEPTS a sensitive scope WITH a non-empty justification', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['apps:storage:shared:write'],
+        scopeJustifications: {
+          'apps:storage:shared:write': 'We persist shared gallery entries other users can see.',
+        },
+      };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('ACCEPTS a NON-sensitive scope with no justification (unchanged)', () => {
+      const manifest = { ...VALID_MANIFEST, scopes: ['models:read:self'] };
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    it('lists ALL unjustified sensitive scopes when several are missing', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['collections:read:private', 'apps:storage:shared:write'],
+        // Neither sensitive scope justified.
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        const err = result.errors.find((e) =>
+          e.includes('sensitive scopes require a justification')
+        );
+        expect(err).toBeDefined();
+        expect(err).toContain('collections:read:private');
+        expect(err).toContain('apps:storage:shared:write');
+      }
+    });
+
+    it('rejects naming ONLY the unjustified sensitive scope when some are justified', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['collections:read:private', 'apps:storage:shared:write'],
+        scopeJustifications: { 'collections:read:private': 'We read the viewer’s private collections.' },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        const err = result.errors.find((e) =>
+          e.includes('sensitive scopes require a justification')
+        );
+        expect(err).toBeDefined();
+        expect(err).toContain('apps:storage:shared:write');
+        expect(err).not.toContain('collections:read:private');
+      }
+    });
+
+    it('still applies the shape rules (keys ⊆ scopes, ≤500, non-empty) alongside enforcement', () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['apps:storage:shared:write'],
+        scopeJustifications: {
+          'apps:storage:shared:write': 'ok reason',
+          // A justification for a scope NOT declared — still rejected by the shape rule.
+          'user:read:self': 'dangling',
+        },
+      };
+      const result = BlockManifestValidator.validate(manifest, APP_CTX);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(
+          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+        ).toBe(true);
+      }
+    });
+  });
+
   // SUBMISSION gate: validateSubmission = the synchronous shape/security checks
   // PLUS the accurate ReDoS + input-bound gate on settings-field patterns. This
   // is what every manifest-SUBMISSION path calls (git-push webhook, developer

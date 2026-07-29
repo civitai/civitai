@@ -1,5 +1,6 @@
 import {
   isKnownBlockScope,
+  isSensitiveBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
@@ -457,6 +458,44 @@ export class BlockManifestValidator {
             );
           }
         }
+      }
+    }
+
+    // ENFORCEMENT (was presentation-only): every declared SENSITIVE scope — the
+    // subset that can spend/read the viewer's Buzz, read their PRIVATE data, or
+    // write data other users see (see SENSITIVE_BLOCK_SCOPES) — MUST carry a
+    // non-empty justification. `scopeJustifications` used to be fully optional;
+    // for sensitive scopes it is now REQUIRED, so a moderator always sees WHY an
+    // elevated-risk permission was requested. An entirely-absent
+    // `scopeJustifications` (previously valid) now fails when any sensitive scope
+    // is declared. Reuses the single-sourced sensitive set (never re-hardcodes
+    // it), and runs for every submit path because both the CLI submit-version and
+    // the web `updateManifest` funnel through `validateSubmission` → this
+    // `validate`.
+    if (Array.isArray(m.scopes)) {
+      const justifications =
+        m.scopeJustifications &&
+        typeof m.scopeJustifications === 'object' &&
+        !Array.isArray(m.scopeJustifications)
+          ? (m.scopeJustifications as Record<string, unknown>)
+          : {};
+      const unjustifiedSensitive = [
+        ...new Set(
+          (m.scopes as unknown[])
+            .filter((s): s is string => typeof s === 'string')
+            .filter((scope) => isSensitiveBlockScope(scope))
+            .filter((scope) => {
+              const raw = justifications[scope];
+              return !(typeof raw === 'string' && raw.trim().length > 0);
+            })
+        ),
+      ];
+      if (unjustifiedSensitive.length > 0) {
+        errors.push(
+          `sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ${unjustifiedSensitive.join(
+            ', '
+          )}`
+        );
       }
     }
 

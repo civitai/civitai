@@ -149,10 +149,15 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
  *   - read the viewer's PRIVATE data   (`collections:read:private`)
  *   - write data OTHER users see       (`apps:storage:shared:write`)
  *
- * This is a PRESENTATION classification only — it changes how a scope is
- * displayed, never whether it is granted/enforced (that stays with the
- * server-side per-op gates + consent grant). Keeping it a set (not a per-scope
- * flag on the map) keeps the enforcement map and the UI emphasis decoupled.
+ * This set does two things. (1) PRESENTATION — it drives the distinct,
+ * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
+ * now also gates MANIFEST VALIDITY: at submit time the manifest validator
+ * REQUIRES a non-empty `scopeJustifications` entry for every declared sensitive
+ * scope (see `block-manifest-validator.service.ts`), so a moderator always sees
+ * WHY an elevated-risk permission was requested. It does NOT change whether a
+ * granted scope is enforced at call time — that stays with the server-side
+ * per-op gates + consent grant. Keeping it a set (not a per-scope flag on the
+ * map) keeps the enforcement map and this classification decoupled.
  *
  * INVARIANT (guarded by a test): every entry must be a currently-known scope in
  * `BLOCK_SCOPE_TO_OAUTH_BIT`. If a scope is renamed/removed (as
