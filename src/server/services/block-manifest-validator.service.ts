@@ -1,6 +1,7 @@
 import {
   isKnownBlockScope,
-  isSensitiveBlockScope,
+  sensitiveScopeJustificationError,
+  unjustifiedSensitiveScopes,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
@@ -502,30 +503,15 @@ export class BlockManifestValidator {
     // `enforceSensitiveScopeJustification:false` so a LEGACY pending request
     // (submitted before this shipped, no justification) stays approvable. Only
     // THIS rule is exempted on approve — every other check above still runs.
-    if (opts?.enforceSensitiveScopeJustification !== false && Array.isArray(m.scopes)) {
-      const justifications =
-        m.scopeJustifications &&
-        typeof m.scopeJustifications === 'object' &&
-        !Array.isArray(m.scopeJustifications)
-          ? (m.scopeJustifications as Record<string, unknown>)
-          : {};
-      const unjustifiedSensitive = [
-        ...new Set(
-          (m.scopes as unknown[])
-            .filter((s): s is string => typeof s === 'string')
-            .filter((scope) => isSensitiveBlockScope(scope))
-            .filter((scope) => {
-              const raw = justifications[scope];
-              return !(typeof raw === 'string' && raw.trim().length > 0);
-            })
-        ),
-      ];
+    if (opts?.enforceSensitiveScopeJustification !== false) {
+      // DRY: the rule (which sensitive scopes are unjustified + the message) is
+      // single-sourced in block-scope.constants so this validator and the
+      // submit-time gate in `submitVersion` can never drift. The `!== false`
+      // gate (approve exemption for legacy pending requests) stays HERE; the
+      // helper is the pure rule and always evaluates.
+      const unjustifiedSensitive = unjustifiedSensitiveScopes(m);
       if (unjustifiedSensitive.length > 0) {
-        errors.push(
-          `sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ${unjustifiedSensitive.join(
-            ', '
-          )}`
-        );
+        errors.push(sensitiveScopeJustificationError(unjustifiedSensitive));
       }
     }
 

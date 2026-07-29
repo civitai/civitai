@@ -17,7 +17,10 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
-import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
+import {
+  assertSensitiveScopesJustified,
+  deriveOauthBitmaskFromBlockScopes,
+} from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
@@ -1038,6 +1041,22 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
 
   const slug = manifest.blockId;
   const version = manifest.version;
+
+  // Sensitive-scope justification gate — enforced AT SUBMIT (fail-fast, before
+  // the MinIO upload + review-repo push). The primary submit path (CLI `app
+  // submit` + the web session-submit route) deliberately defers the deep
+  // BlockManifestValidator to APPROVE — and approve exempts THIS rule
+  // (`enforceSensitiveScopeJustification:false`, to grandfather legacy pending
+  // requests) — so without this call the sensitive-scope enforcement shipped in
+  // #3451 never fires for a CLI/web-session submit (a live dogfood submitted an
+  // `ai:write:budgeted` app with no scopeJustifications and it was accepted).
+  // The check needs only the manifest's `scopes` + `scopeJustifications`, both
+  // already present in the extracted manifest — no AppContext needed — so we run
+  // the targeted rule here via the SAME single-sourced helper the validator
+  // uses (DRY; identical message). `assertSensitiveScopesJustified` throws a
+  // plain Error, which the CLI route surfaces as a 400 and the web session
+  // route surfaces likewise. Deep validation stays deferred to approve.
+  assertSensitiveScopesJustified(manifest);
 
   // F-E E5 — validate publisher screenshots NOW (fail-fast) so a bundle with a
   // too-many / oversized / fake-image / odd-named screenshot is rejected inline
