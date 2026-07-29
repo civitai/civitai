@@ -379,6 +379,55 @@ type Gates = BaseGates & {
   engagerCount: number;
 };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Progressively widened until a registration is found. Civitai takes thousands of
+// signups a day, so the first bound effectively always hits; the rest exist so the
+// answer is correct rather than convenient.
+const AGE_THRESHOLD_WINDOW_DAYS = [1, 7, 30];
+
+/**
+ * The lowest `User.id` registered after `cutoff`, optionally within a bounded window.
+ *
+ * `MATERIALIZED` is doing the work. `User` carries a PARTIAL index —
+ * `User_createdAt_idx ON "User"("createdAt") WHERE "deletedAt" IS NULL` — which a
+ * query omitting the `deletedAt` predicate cannot use at all; and even with the
+ * predicate, `min(id)` tempts the planner into an ascending primary-key walk that
+ * discards ~12.7M rows before its first match. Forcing the candidate set to
+ * materialize off the index first turns that walk into a range scan.
+ *
+ * `deletedAt IS NULL` is safe here and the reasoning is not obvious. Skipping
+ * soft-deleted rows can only RAISE `min(id)`, so the threshold can only get more
+ * permissive — but every id in the resulting gap belongs, by definition, to a deleted
+ * account, and deleted accounts are already disqualified by the ban/delete rule. The
+ * gate is unchanged in effect.
+ *
+ * The one exception worth knowing: when the engager set blows `maxEngagers` that
+ * ban/delete refinement is SKIPPED, and in that degraded path a soft-deleted account
+ * in the gap would be admitted where the unfiltered query would have caught it via
+ * the age gate. Such a run is already flagged `bannedRefinementSkipped` and told not
+ * to decide a prize. The Postgres-side signals join `User` and check the ban columns
+ * inline, so they are unaffected either way.
+ */
+async function lowestUserIdAfter(cutoff: Date, windowDays: number | null) {
+  const upperBound =
+    windowDays === null
+      ? Prisma.empty
+      : Prisma.sql`AND u."createdAt" < ${utc(new Date(cutoff.getTime() + windowDays * DAY_MS))}`;
+
+  const [row] = await dbRead.$queryRaw<{ minId: number | null }[]>`
+    WITH candidates AS MATERIALIZED (
+      SELECT u.id
+      FROM "User" u
+      WHERE u."createdAt" > ${utc(cutoff)}
+        ${upperBound}
+        AND u."deletedAt" IS NULL
+    )
+    SELECT min(id)::int AS "minId" FROM candidates
+  `;
+
+  return row?.minId ?? null;
+}
+
 /**
  * `User.id` is autoincrement but NOT strictly monotonic with `createdAt` — at least
  * one backdated system account exists. `max(id) WHERE createdAt <= cutoff` would let
@@ -386,11 +435,9 @@ type Gates = BaseGates & {
  * since. `min(id) WHERE createdAt > cutoff` minus one can only ever be too strict,
  * which is the safe direction for an anti-cheat gate.
  *
- * `User` has no index on `createdAt`, so the planner walks the primary key from id 1
- * discarding ~12.7M rows: ~12s, and the single largest cost in a run. The answer is
- * a pure function of the cutoff and effectively immutable (a later registration
- * always has both a higher id and a later `createdAt`), so it is cached hard. An
- * index on `User."createdAt"` would make this instant and let the cache go.
+ * The answer is a pure function of the cutoff and effectively immutable (a later
+ * registration always has both a higher id and a later `createdAt`), so it stays
+ * cached for a week — that is now a cheap miss rather than a painful one.
  */
 async function loadAgeThreshold(ageCutoff: Date) {
   const key = `${
@@ -401,14 +448,30 @@ async function loadAgeThreshold(ageCutoff: Date) {
     key,
     () =>
       withSpan('contest-score.age-threshold', async () => {
-        // Two statements, not one: as a single CTE the planner materializes the band
-        // count against an unknown threshold and the query takes ~50s instead of ~12s.
-        const [{ threshold }] = await dbRead.$queryRaw<{ threshold: number }[]>`
-          SELECT COALESCE(
-            (SELECT min(id) FROM "User" WHERE "createdAt" > ${utc(ageCutoff)}) - 1,
-            (SELECT max(id) FROM "User")
-          )::int AS "threshold"
-        `;
+        let threshold: number | null = null;
+        for (const windowDays of AGE_THRESHOLD_WINDOW_DAYS) {
+          const minId = await lowestUserIdAfter(ageCutoff, windowDays);
+          if (minId !== null) {
+            threshold = minId - 1;
+            break;
+          }
+        }
+
+        if (threshold === null) {
+          // Only an UNBOUNDED miss means nobody registered after the cutoff. Treating
+          // an empty bounded window as "nobody" would COALESCE to max(id) and admit
+          // every account on the site — the same silent fail-open the age-gate bound
+          // exists to prevent.
+          const unbounded = await lowestUserIdAfter(ageCutoff, null);
+          if (unbounded !== null) threshold = unbounded - 1;
+          else {
+            const [{ maxId }] = await dbRead.$queryRaw<{ maxId: number }[]>`
+              SELECT max(id)::int AS "maxId" FROM "User"
+            `;
+            threshold = maxId;
+          }
+        }
+
         const [{ bandUsers }] = await dbRead.$queryRaw<{ bandUsers: number }[]>`
           SELECT count(*)::int AS "bandUsers"
           FROM "User" u
