@@ -263,8 +263,9 @@ export default function MinorHashMatches() {
                         SFW-only, resets its gallery browsing level, and locks those properties.
                       </Text>
                       <Text size="sm" c="dimmed">
-                        The rollback tool only reverses automated flags, so this manual change
-                        can&apos;t be undone with it.
+                        The current settings are saved first, so this can be undone — but only by a
+                        rollback naming this model specifically. A blanket rollback deliberately
+                        skips manual flags so it can&apos;t revert a moderator&apos;s decision.
                       </Text>
                     </Stack>
                   ),
