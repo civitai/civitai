@@ -235,7 +235,7 @@ export function ImagesAsPostsInfinite({
       hiddenImageIds: !showHidden ? hiddenImageIds : undefined,
       hiddenTags: !showHidden ? hiddenTags : undefined,
       hiddenUsers: !showHidden ? hiddenUsers : undefined,
-      swipeCards: swipeGalleryCards ?? false,
+      swipeGalleryCards,
     }),
     [
       filters,

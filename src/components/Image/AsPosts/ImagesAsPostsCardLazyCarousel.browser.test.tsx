@@ -334,6 +334,11 @@ describe('StaticPostImagesCarousel', () => {
 // every slide mounted to drag between them — the cost the setting exists to gate.
 describe('swipe setting picks the carousel engine', () => {
   const slidesInDom = () => document.querySelectorAll('[data-testid="slide"]').length;
+  // A sized box: Embla measures its viewport, and a zero-width one would make it
+  // report nothing scrollable — which would quietly void the assertions below.
+  const Sized = ({ children }: { children: React.ReactNode }) => (
+    <div style={{ width: 400, height: 400 }}>{children}</div>
+  );
 
   test('off: only the active slide is mounted', async () => {
     renderWithProviders(<StaticPostImagesCarousel images={slice(3)} postId={100} />);
@@ -343,7 +348,11 @@ describe('swipe setting picks the carousel engine', () => {
   });
 
   test('on: every slide is mounted, and navigation still works', async () => {
-    renderWithProviders(<StaticPostImagesCarousel images={slice(3)} postId={100} enableSwipe />);
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(3)} postId={100} enableSwipe />
+      </Sized>
+    );
 
     await vi.waitFor(() => expect(slidesInDom()).toBe(3));
     await clickNext();
@@ -352,5 +361,20 @@ describe('swipe setting picks the carousel engine', () => {
     await vi.waitFor(() =>
       expect(document.querySelectorAll('button[aria-hidden][data-active]').length).toBe(1)
     );
+  });
+
+  // `EmblaContainer` duplicates its children when `loop` is on and Embla decides it
+  // can't wrap cleanly — and `Embla.Indicators` counts Embla's snaps, not our images,
+  // so a duplicating post would render twice the indicator segments it should.
+  // Two 100%-width slides are the tightest case that still has to loop.
+  test('on: a two-image post is not duplicated by loop', async () => {
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(2)} postId={100} enableSwipe />
+      </Sized>
+    );
+
+    await vi.waitFor(() => expect(slidesInDom()).toBe(2));
+    expect(document.querySelectorAll('button[aria-hidden]').length).toBe(2);
   });
 });

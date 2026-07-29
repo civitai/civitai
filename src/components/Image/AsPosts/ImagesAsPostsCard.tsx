@@ -175,7 +175,8 @@ function ImagesAsPostsCardHeader({
   // The "OP" badge marks the post author as the entity's creator. Both
   // Model and Model3D galleries surface this — the source union narrows
   // to the right userId.
-  const creatorUserId = source.kind === 'model' ? source.model.user.id : source.creatorUserId;
+  const creatorUserId =
+    source.kind === 'model' ? source.model.user.id : source.creatorUserId;
   const isOP = data.user.id === creatorUserId;
 
   return (
@@ -267,7 +268,7 @@ function ImagesAsPostsCardHeader({
 
 function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
-  const { swipeCards } = useImagesAsPostsInfiniteContext();
+  const { swipeGalleryCards } = useImagesAsPostsInfiniteContext();
   const { trackAction } = useTrackEvent();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
@@ -374,17 +375,18 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
     data.imageCount > data.images.length ? (
     // LAZY: server sent a first slice + the true `imageCount`; load the tail on
     // approach so the initial feed payload stays small without truncating the UX.
-    <LazyPostImagesCarousel data={data} postId={postId} enableSwipe={swipeCards} />
+    <LazyPostImagesCarousel data={data} postId={postId} enableSwipe={swipeGalleryCards} />
   ) : (
     // Today's behaviour (flag OFF, or a post already within the slice): all images
     // are inline — render them directly, no lazy fetch.
-    <StaticPostImagesCarousel images={data.images} postId={postId} enableSwipe={swipeCards} />
+    <StaticPostImagesCarousel images={data.images} postId={postId} enableSwipe={swipeGalleryCards} />
   );
 }
 
 const carouselIndicatorProps = {
   className: 'flex w-full gap-px',
-  indicatorClassName: 'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
+  indicatorClassName:
+    'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
 } as const;
 
 /**
@@ -497,28 +499,24 @@ function PostCarouselSlide({
 }
 
 /**
- * Picks the carousel engine for a post card.
- *
- * Default is `SimpleImageCarousel`: one slide in the DOM, no drag, no engine —
- * what the feed was cut down to because it mounts hundreds of these at once.
- *
- * `swipe` (the `swipeGalleryCards` user setting) opts into Embla instead, which
- * is what gives a drag that actually follows your finger. That costs an engine
- * instance and every slide in the DOM per card, so only viewers who asked for it
- * pay it. Both engines expose the same slots, so `renderSlide` is shared.
+ * Two engines because a feed mounts hundreds of these at once. The default one
+ * is deliberately incapable of dragging — that is what keeps a card cheap. Embla
+ * is the only way to get a drag that follows your finger, and it costs an engine
+ * instance plus every slide in the DOM, so it is gated behind the viewer's
+ * `swipeGalleryCards` opt-in rather than paid for by everyone.
  */
 function PostImagesCarousel({
   total,
-  swipe,
+  enableSwipe,
   onIndexChange,
   renderSlide,
 }: {
   total: number;
-  swipe?: boolean;
+  enableSwipe?: boolean;
   onIndexChange?: (index: number) => void;
   renderSlide: (index: number) => React.ReactNode;
 }) {
-  if (swipe) {
+  if (enableSwipe) {
     return (
       <Embla loop onSlideChange={onIndexChange} className="flex h-full flex-col">
         <Embla.Viewport className="relative flex-1 touch-pan-y">
@@ -575,7 +573,7 @@ export function StaticPostImagesCarousel({
   return (
     <PostImagesCarousel
       total={images.length}
-      swipe={enableSwipe}
+      enableSwipe={enableSwipe}
       renderSlide={(index) => (
         <PostCarouselSlide image={images[index]} postId={postId} dialogImages={images} />
       )}
@@ -613,7 +611,8 @@ export function LazyPostImagesCarousel({
     (index: number) => {
       setFetchTail(
         (prev) =>
-          prev || shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
+          prev ||
+          shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
       );
     },
     [seed.length, total]
@@ -677,7 +676,7 @@ export function LazyPostImagesCarousel({
   return (
     <PostImagesCarousel
       total={effectiveTotal}
-      swipe={enableSwipe}
+      enableSwipe={enableSwipe}
       onIndexChange={handleIndexChange}
       renderSlide={(index) =>
         loaded[index] ? (
