@@ -370,7 +370,7 @@ optional:
 
 | Stage | Change | Notes |
 | --- | --- | --- |
-| 1 | Sweep reads onto `@civitai/buzz/paid-access` | Prereq for everything; no schema change. Inventory in [paid-access-query-sites.md](paid-access-query-sites.md) |
+| 1 | Sweep reads onto `@civitai/buzz/paid-access` | Prereq for everything; no schema change. (Read-site sweep done.) |
 | 2 | Add `ModelVersion.initialPublishedAt` (write-once); retire `earlyAccessTimeFrame` | Stable anchor kills the `publishedAt`-rewrite trap and the trigger's reason to exist; one duration source |
 | 3 | Create polymorphic `PaidAccess` (+ `ownerId`), dual-write, backfill | Backfill is derivational; **0 permanent rows in prod today**, so only timed rows convert |
 | 4 | Move reads onto the shared `resolveAccess`; compute `endsAt` in the service, drop the trigger | Trigger logic → service, testable in CI |
@@ -548,8 +548,7 @@ two do not compete — the predicate cases are exactly the dynamic, query-specif
 cannot serve anyway, so joining there does not defeat the cache.
 
 **The trap:** never use `getPaidAccess` to post-filter a paginated feed (fetch page → drop gated → return a
-short page). The moment access state changes *which* or *how many* rows, it must be a DB predicate. Per-site
-tagging (D = decorate, P = predicate) is in [paid-access-query-sites.md](paid-access-query-sites.md).
+short page). The moment access state changes *which* or *how many* rows, it must be a DB predicate.
 
 ---
 

@@ -10,6 +10,14 @@ Per-page design docs for `creator.civitai.com`. These sit **under** the umbrella
 
 - [implementation-checklist.md](implementation-checklist.md) — **everything open lives here**: per-page build status, open decisions, backend blockers, flagged bugs, deferred work. Start here.
 
+**Paid Access (early access + permanent paid access):**
+
+- [paid-access-current-state.md](paid-access-current-state.md) — **start here to continue paid-access work**: what's built (permanent + usage-control pricing), where the code lives across both apps, the verified purchase→access flow, gotchas, and open items (incl. the still-open findings consolidated from the phase-1 reviews).
+- [paid-access-schema.md](paid-access-schema.md) — the `PaidAccess` table + `terms` shapes (data reference).
+- [onsite-monetization-parity.md](onsite-monetization-parity.md) — the design rationale / staging behind the refactor.
+
+_The phase-1 plan/review/cutover process docs are done and were removed; the migration record is in `prisma/migrations/`._
+
 **Decisions & Q&A (answered — reference/rationale):**
 
 - [pre-implementation-decisions.md](pre-implementation-decisions.md) — the A/B/C decision log (mostly decided; the checklist tracks the few still-open ones).

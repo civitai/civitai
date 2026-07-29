@@ -1,9 +1,10 @@
 # PaidAccess — concrete schema plan
 
 The database changes for the paid-access refactor. Reasoning and staging live in
-[onsite-monetization-parity.md](onsite-monetization-parity.md); this doc is just the shapes, shown as diffs.
-The **buildable plan** — release order (main app first), module/signature contracts, literal migration SQL, and
-the UI plan for both surfaces — is in [paid-access-implementation.md](paid-access-implementation.md).
+[onsite-monetization-parity.md](onsite-monetization-parity.md); this doc is the shapes + `terms` semantics, shown
+as diffs. **The migration is applied** (see the record in `prisma/migrations/`); the Migration section below is
+kept as the design record. For where the code lives now + open items, see
+[paid-access-current-state.md](paid-access-current-state.md).
 
 Schema file: `packages/civitai-db-schema/prisma/schema.prisma`.
 
@@ -95,8 +96,7 @@ Schema file: `packages/civitai-db-schema/prisma/schema.prisma`.
 
 **Staging.** `initialPublishedAt` lands **first**, as its own slice (Slice 0, Migration §) — on `ModelVersion`
 *and* `ComicChapter`. The four removals happen **last** (Part 2), after `PaidAccess` is backfilled and the
-[read-site sweep](paid-access-query-sites.md) is done; until then they're dual-maintained. The diff shows the
-end state, not a single migration.
+read-site sweep is done; until then they're dual-maintained. The diff shows the end state, not a single migration.
 
 `initialPublishedAt` fixes a standalone defect on its own: the expiry job rewrites `publishedAt` to resurface
 lapsed versions as "New", and stashes `originalPublishedAt` in the jsonb to compensate. A stable, never-moving
@@ -329,6 +329,9 @@ promotions ship, this becomes `activePromotion?.price ?? grant.price` (the promo
 
 ## Migration — anchor → expand → flip → contract
 
+> **Applied.** This section is the design record; all slices (incl. the Part 2 column drops) shipped — the record
+> is in `prisma/migrations/`. Kept for the rationale, not as pending work.
+
 Shipped as independently-deployable slices. **Slice 0, Part 1, and Part 1.5 are additive and reversible; Part 2
 is the destructive cleanup**, run only after a soak. Migrations are hand-applied here, so the drops are hand-run
 SQL (preview → staging → prod). The gate for Part 2 is **"does prod behave identically before and after?"** —
@@ -410,15 +413,14 @@ boundary that lets the data source flip without editing every call site.
 
 Now the **main app's** reads come from `PaidAccess`; old columns are dual-written backup. Soak; confirm nothing
 in `src/` reads the old columns. **The creator-studio spoke does *not* ride this flip** — it has its own inline
-Kysely predicate + count queries and never imports the helper, so it's converted separately in Phase B (§E,
-[rollout](paid-access-implementation.md#1-rollout--sequencing-the-release-order)).
+Kysely predicate + count queries and never imports the helper, so it's converted separately in Phase B (§E).
 
 ### Part 2 — contract (destructive, after soak)
 
 > **Release gate — this is Phase C, not the "main app first" release.** Part 2 is a main-app change, but it
 > **must not deploy until the creator-studio spoke has been converted to read `PaidAccess` and deployed** (the
 > §E spoke sites). Dropping the old columns while the spoke still reads them breaks it instantly and removes
-> them from the shared Kysely types. See [rollout](paid-access-implementation.md#1-rollout--sequencing-the-release-order).
+> them from the shared Kysely types.
 
 1. **Stop dual-writing** the old columns; **stop writing `availability = 'EarlyAccess'`** from the paid path
    (the value goes vestigial — feeds that accept `Public | EarlyAccess` keep working on existing rows).

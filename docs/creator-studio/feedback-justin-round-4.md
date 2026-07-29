@@ -39,7 +39,7 @@ post-V1 · **[justin]** Justin-owned (not us). Owner is Briant unless noted.
 > Built across the main app (foundation PR #3279 + enforcement PR #3290, both merged to `main` and deployed) and
 > the spoke (`creator-studio-implementation`). Design decisions taken: **CP-member-only** gate, **edit freely /
 > protect buyers** post-publish policy, **tiered cap** (Bronze 3 / Silver 10 / Gold unlimited), explicit
-> `earlyAccessPermanent` column. Full detail: [permanent-pay-for-access-plan.md](permanent-pay-for-access-plan.md).
+> `earlyAccessPermanent` column. Full detail: [paid-access-current-state.md](paid-access-current-state.md) (implemented; this was the original plan).
 
 - [x] **[done]** **Early Access improvements** — `CU:868ke4944` (MNeMiC). EA terms are now **editable anytime**
   post-publish (price/charge/timeframe/permanent) — a purchase is a durable `entityAccess` entitlement not
