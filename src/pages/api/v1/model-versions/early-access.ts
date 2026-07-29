@@ -5,7 +5,7 @@ import {
   getVersionById,
   updateModelVersionPaidAccess,
 } from '~/server/services/model-version.service';
-import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
+import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { env } from '~/env/server';
@@ -59,7 +59,7 @@ export default AuthedEndpoint(
 
       const updated = await updateModelVersionPaidAccess(input);
 
-      await updateModelEarlyAccessDeadline({ id: updated.modelId }).catch((e) => {
+      await queueModelEarlyAccessReindex({ id: updated.modelId }).catch((e) => {
         console.error('Unable to update model early access deadline', e);
       });
 

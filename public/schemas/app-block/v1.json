@@ -28,6 +28,13 @@
       "description": "Human-readable display name. The server only requires a non-empty string (no length cap), so the CLI does not impose one either.",
       "minLength": 1
     },
+    "tagline": {
+      "type": "string",
+      "description": "Optional one-line pitch shown under the app's name on its `/apps` store card + detail page. Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version. Omit it and the store simply shows no tagline. Must contain a non-whitespace character and is capped at 140 characters — the same bound off-site listings use (OFFSITE_TAGLINE_MAX), kept in lockstep with MANIFEST_TAGLINE_MAX_LENGTH in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality). NOTE: the server measures the TRIMMED length, while this maxLength counts the raw string — so a value padded past 140 is rejected here but accepted server-side. That asymmetry is deliberate and one-directional: this schema is never more permissive than the server, so local validation can't green-light something submit would reject.",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "\\S"
+    },
     "type": {
       "type": "string",
       "description": "Free-form descriptor used by some examples (e.g. \"block\"). Not validated by the platform.",

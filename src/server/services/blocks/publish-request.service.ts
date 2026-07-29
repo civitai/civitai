@@ -2311,8 +2311,11 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // listing-create reads the just-written category (read-your-writes). A first-
   // version approve whose manifest declares a category therefore mints a listing
   // already categorised; a manifest with no category leaves it null (mod-curated
-  // later). The "category added in a LATER version" case (listing already exists,
-  // so (3b) skips it) is an accepted non-goal — recoverable via mod curation.
+  // later). The "category added in a LATER version" case (the listing already
+  // exists) is now HANDLED — the (3b-sync) re-sync below propagates this column
+  // onto the existing listing on a subsequent-version approve. This null-gate is
+  // also what makes sourcing the re-sync's `category` from HERE safe: a curated
+  // value is never overwritten above, so propagating it can't undo curation.
   if (manifestCategory !== null) {
     try {
       await dbWrite.appBlock.updateMany({
@@ -2354,10 +2357,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // listing and the flow converges. The listing is never permanently orphaned.
   //
   // IDEMPOTENT on `appBlockId` (the 1:1 unique): first-version approve CREATES it;
-  // a subsequent-version approve finds it present and SKIPS — it must NEVER clobber
-  // curator edits (category/featured/featuredOrder) made after the first approve.
-  // A concurrent create (a racing approve or the backfill) is absorbed by the
-  // P2002 catch. We NEVER update an existing listing here.
+  // a subsequent-version approve finds it present and RE-SYNCS only the
+  // MANIFEST-GOVERNED scalars (see (3b-sync) below). A concurrent create (a racing
+  // approve or the backfill) is absorbed by the P2002 catch.
   //
   // ONSITE ONLY: approveRequest only ever produces hosted (external_url IS NULL)
   // AppBlocks, so `mapAppBlockToListing` yields kind='onsite'. The offsite
@@ -2372,11 +2374,11 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // OauthClient owner are mirrored faithfully — important for the transition case
   // where an app approved BEFORE this feature (possibly already curated) has its
   // first listing minted now on a subsequent-version approve.
-  const { mapAppBlockToListing } = await import('./app-listing-mapper');
+  const { mapAppBlockToListing, buildListingScalarSync } = await import('./app-listing-mapper');
   try {
     const existingListing = await dbRead.appListing.findUnique({
       where: { appBlockId },
-      select: { id: true },
+      select: { id: true, kind: true },
     });
     if (!existingListing) {
       const ab = await dbWrite.appBlock.findUnique({
@@ -2403,6 +2405,77 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           select: { id: true },
         });
       }
+    } else {
+      // (3b-sync) MANIFEST-GOVERNED COPY RE-SYNC (subsequent-version approve).
+      //
+      // WHY: an onsite listing's name / tagline / description / category have NO
+      // author surface other than the manifest ("ONSITE = ASSETS-ONLY" — the
+      // `/apps/[appBlockId]/edit` Listing tab is media-only, and
+      // `applyApprovedRevision`'s onsite branch deliberately copies ONLY assets).
+      // Before this, those scalars were snapshotted ONCE at the FIRST approve and
+      // never refreshed, so a dev who added/edited a description (or the newly
+      // manifest-governed tagline) in a later version kept seeing "Missing
+      // description" forever and the store kept serving the v1 copy.
+      //
+      // WHEN: only on a MODERATOR APPROVE — never on a manifest save. A save
+      // parks a pending review; the mod is the gate, so store-visible copy never
+      // changes without re-review.
+      //
+      // WHAT WE DO NOT TOUCH (curated / mod-owned): assets (icon / cover /
+      // screenshots), `featured` / `featuredOrder`, `contentRating` (mod override,
+      // floored at the derived rating), `status`, `slug`, `externalUrl`.
+      //
+      // `category` comes from `AppBlock.category` — NOT the manifest — because
+      // step (3a) writes the manifest category onto that column ONLY when it is
+      // still null, so a moderator's curated category (via `setMarketplaceMeta`)
+      // survives. Reading the manifest here would silently undo mod curation on
+      // every version bump. When the column is null we still write null (the
+      // "Missing category" advisory stands, and a mod can curate later).
+      //
+      // Keyed on `appBlockId`, which is `@unique` and NULL on shadow revision
+      // rows — so a live media revision in flight cannot be hit by this write.
+      //
+      // 🔴 The `kind: 'onsite'` scope is LOAD-BEARING, not decorative: an
+      // OFF-SITE listing's name/tagline/description are AUTHOR-supplied through
+      // the submit wizard, NOT manifest-governed, so syncing manifest copy onto
+      // one would clobber the author's edits. approveRequest only ever produces
+      // hosted blocks, so a non-onsite row here is anomalous — but a filter that
+      // can silently disable the whole feature must never fail QUIETLY, so we
+      // log the skip and the zero-row outcome rather than no-op into the void.
+      if (existingListing.kind !== 'onsite') {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[approveRequest] skipping listing copy re-sync (slug=${request.slug}, appBlockId=${appBlockId}): ` +
+            `the backing listing is kind='${existingListing.kind}', whose copy is author-supplied, not manifest-governed`
+        );
+      } else {
+        const ab = await dbWrite.appBlock.findUnique({
+          where: { id: appBlockId },
+          select: { blockId: true, manifest: true, category: true },
+        });
+        if (ab) {
+          const synced = await dbWrite.appListing.updateMany({
+            where: { appBlockId, kind: 'onsite' },
+            data: buildListingScalarSync({
+              manifest: ab.manifest,
+              blockId: ab.blockId,
+              category: ab.category,
+            }),
+          });
+          if (synced.count === 0) {
+            // The replica said a listing exists but the PRIMARY matched no row —
+            // replica lag, or the row changed kind between the two reads. Benign
+            // (the next approve converges) but it must be VISIBLE: otherwise the
+            // store silently keeps serving the previously-approved copy, which is
+            // the exact symptom this re-sync exists to fix.
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[approveRequest] listing copy re-sync matched 0 rows (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+                `the store copy stays on the previously-approved version until the next approve`
+            );
+          }
+        }
+      }
     }
   } catch (err) {
     // The store listing is a CONVENIENCE — it must NEVER gate the approve/deploy.
@@ -2422,8 +2495,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     if (code !== 'P2002') {
       // eslint-disable-next-line no-console
       console.warn(
-        `[approveRequest] onsite AppListing auto-create failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
-          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run: ${
+        `[approveRequest] onsite AppListing auto-create/copy-sync failed (slug=${request.slug}, appBlockId=${appBlockId}); ` +
+          `approve/deploy CONTINUES — the app will not appear on /apps until a blocks.backfillAppListings run, ` +
+          `or (for an existing listing) its store copy stays on the previously-approved version until the next approve: ${
             err instanceof Error ? err.message : String(err)
           }`
       );

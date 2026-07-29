@@ -46,6 +46,8 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { mergePostImages, shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
@@ -174,8 +176,7 @@ function ImagesAsPostsCardHeader({
   // The "OP" badge marks the post author as the entity's creator. Both
   // Model and Model3D galleries surface this — the source union narrows
   // to the right userId.
-  const creatorUserId =
-    source.kind === 'model' ? source.model.user.id : source.creatorUserId;
+  const creatorUserId = source.kind === 'model' ? source.model.user.id : source.creatorUserId;
   const isOP = data.user.id === creatorUserId;
 
   return (
@@ -383,8 +384,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
 
 const carouselIndicatorProps = {
   className: 'flex w-full gap-px',
-  indicatorClassName:
-    'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
+  indicatorClassName: 'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
 } as const;
 
 /**
@@ -496,6 +496,75 @@ function PostCarouselSlide({
   );
 }
 
+/**
+ * Off by default: the feed mounts hundreds of these, so an embla engine per card
+ * is opt-in (`swipeGalleryCards`). SimpleImageCarousel is the cheap fallback.
+ */
+function PostImagesCarousel({
+  slides,
+  onIndexChange,
+}: {
+  slides: React.ReactNode[];
+  onIndexChange?: (index: number) => void;
+}) {
+  const { swipeGalleryCards } = useImagesAsPostsInfiniteContext();
+
+  if (swipeGalleryCards) {
+    return (
+      <Embla
+        loop
+        watchDrag={watchTouchDrag}
+        onSlideChange={onIndexChange}
+        className="flex h-full flex-col"
+      >
+        <Embla.Viewport className="relative flex-1 touch-pan-y">
+          <Embla.Container className="flex h-full">
+            {slides.map((slide, index) => (
+              <Embla.Slide key={index} index={index} className="relative flex-[0_0_100%]">
+                {slide}
+              </Embla.Slide>
+            ))}
+          </Embla.Container>
+          <Embla.Controls />
+        </Embla.Viewport>
+        {/* Not `Embla.Indicators`: it maps embla's snap list, which is empty until
+            the engine initialises, so a feed of cards would paint a frame with no
+            indicators and then pop them in. */}
+        <div className={carouselIndicatorProps.className}>
+          {slides.map((_, index) => (
+            <Embla.Indicator
+              key={index}
+              index={index}
+              className={carouselIndicatorProps.indicatorClassName}
+            />
+          ))}
+        </div>
+      </Embla>
+    );
+  }
+
+  return (
+    <SimpleImageCarousel
+      loop
+      total={slides.length}
+      onIndexChange={onIndexChange}
+      className="flex h-full flex-col"
+    >
+      <SimpleImageCarousel.Viewport className="relative flex-1">
+        <SimpleImageCarousel.Container className="h-full">
+          {slides.map((slide, index) => (
+            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
+              {slide}
+            </SimpleImageCarousel.Slide>
+          ))}
+        </SimpleImageCarousel.Container>
+        <SimpleImageCarousel.Controls />
+      </SimpleImageCarousel.Viewport>
+      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
+    </SimpleImageCarousel>
+  );
+}
+
 /** Today's carousel: every image is already in hand. Exported for component tests. */
 export function StaticPostImagesCarousel({
   images,
@@ -505,19 +574,11 @@ export function StaticPostImagesCarousel({
   postId: number;
 }) {
   return (
-    <SimpleImageCarousel loop total={images.length} className="flex h-full flex-col">
-      <SimpleImageCarousel.Viewport className="relative flex-1">
-        <SimpleImageCarousel.Container className="h-full">
-          {images.map((image, index) => (
-            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
-              <PostCarouselSlide image={image} postId={postId} dialogImages={images} />
-            </SimpleImageCarousel.Slide>
-          ))}
-        </SimpleImageCarousel.Container>
-        <SimpleImageCarousel.Controls />
-      </SimpleImageCarousel.Viewport>
-      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
-    </SimpleImageCarousel>
+    <PostImagesCarousel
+      slides={images.map((image) => (
+        <PostCarouselSlide key={image.id} image={image} postId={postId} dialogImages={images} />
+      ))}
+    />
   );
 }
 
@@ -549,8 +610,7 @@ export function LazyPostImagesCarousel({
     (index: number) => {
       setFetchTail(
         (prev) =>
-          prev ||
-          shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
+          prev || shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
       );
     },
     [seed.length, total]
@@ -612,29 +672,22 @@ export function LazyPostImagesCarousel({
   const effectiveTotal = fetched || tailError ? loaded.length : total;
 
   return (
-    <SimpleImageCarousel
-      loop
-      total={effectiveTotal}
+    <PostImagesCarousel
       onIndexChange={handleIndexChange}
-      className="flex h-full flex-col"
-    >
-      <SimpleImageCarousel.Viewport className="relative flex-1">
-        <SimpleImageCarousel.Container className="h-full">
-          {Array.from({ length: effectiveTotal }).map((_, index) => (
-            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
-              {loaded[index] ? (
-                <PostCarouselSlide image={loaded[index]} postId={postId} dialogImages={loaded} />
-              ) : (
-                <Center className="size-full">
-                  <Loader />
-                </Center>
-              )}
-            </SimpleImageCarousel.Slide>
-          ))}
-        </SimpleImageCarousel.Container>
-        <SimpleImageCarousel.Controls />
-      </SimpleImageCarousel.Viewport>
-      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
-    </SimpleImageCarousel>
+      slides={Array.from({ length: effectiveTotal }, (_, index) =>
+        loaded[index] ? (
+          <PostCarouselSlide
+            key={loaded[index].id}
+            image={loaded[index]}
+            postId={postId}
+            dialogImages={loaded}
+          />
+        ) : (
+          <Center key={index} className="size-full">
+            <Loader />
+          </Center>
+        )
+      )}
+    />
   );
 }

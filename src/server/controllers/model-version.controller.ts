@@ -47,7 +47,7 @@ import {
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
-import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
+import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
   handleLogError,
@@ -446,7 +446,7 @@ export const upsertModelVersionHandler = async ({
 
     // Just update early access deadline if updating the model version
     if (input.id)
-      await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+      await queueModelEarlyAccessReindex({ id: version.modelId }).catch((e) => {
         console.error('Unable to update model early access deadline');
         console.error(e);
       });
@@ -532,7 +532,7 @@ export const deleteModelVersionHandler = async ({
     const version = await deleteVersionById({ ...input, isModerator: ctx.user.isModerator });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
-    await updateModelEarlyAccessDeadline({ id: version.modelId }).catch((e) => {
+    await queueModelEarlyAccessReindex({ id: version.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });
@@ -597,7 +597,7 @@ export const publishModelVersionHandler = async ({
       republishing,
     });
 
-    await updateModelEarlyAccessDeadline({ id: updatedVersion.modelId }).catch((e) => {
+    await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
       console.error(e);
     });

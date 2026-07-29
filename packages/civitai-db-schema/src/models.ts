@@ -797,7 +797,6 @@ export interface Model {
   uploadType: ModelUploadType;
   locked: boolean;
   underAttack: boolean;
-  earlyAccessDeadline: Date | null;
   mode: ModelModifier | null;
   unlisted: boolean;
   gallerySettings: JsonValue;
@@ -923,9 +922,6 @@ export interface ModelVersion {
   settings: JsonValue | null;
   availability: Availability;
   nsfwLevel: number;
-  earlyAccessEndsAt: Date | null;
-  earlyAccessConfig: JsonValue | null;
-  earlyAccessPermanent: boolean;
   uploadType: ModelUploadType;
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
@@ -3427,13 +3423,11 @@ export interface DonationGoal {
   title: string;
   description: string | null;
   goalAmount: number;
-  paidAmount: number;
   entityType: PaidAccessEntityType | null;
   entityId: number | null;
   modelVersionId: number | null;
   modelVersion?: ModelVersion | null;
   createdAt: Date;
-  isEarlyAccess: boolean;
   active: boolean;
   donations?: Donation[];
 }

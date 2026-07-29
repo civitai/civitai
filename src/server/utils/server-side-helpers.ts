@@ -105,8 +105,11 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
-    // `.red` is exempt — it serves direct ads, no GAM auction, no policy center.
-    const adsGated = !!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating);
+    // `.red` is exempt from the rating check — it serves direct ads, no GAM auction, no
+    // policy center.
+    const adsGated =
+      !!result.suppressAds ||
+      (!!result.gating && !features.canViewNsfw && isAdGatedContent(result.gating));
 
     return {
       props: {
@@ -152,6 +155,7 @@ type GetPropsFnResult<P> = {
   redirect: Redirect;
   notFound: true;
   gating: AdGatingDeclaration;
+  suppressAds: boolean;
 };
 
 type CreateServerSidePropsProps<P> = {
@@ -161,9 +165,15 @@ type CreateServerSidePropsProps<P> = {
   /** Gate the page to moderators (replaces the edge `/moderator` route-guard). Resolves the session and
    *  redirects non-moderators before the resolver runs. */
   requireModerator?: boolean;
-  resolver?: (
-    context: CustomGetServerSidePropsContext
-  ) => Promise<(GetServerSidePropsResult<P> & { gating?: AdGatingDeclaration }) | void>;
+  resolver?: (context: CustomGetServerSidePropsContext) => Promise<
+    | (GetServerSidePropsResult<P> & {
+        gating?: AdGatingDeclaration;
+        /** Suppress ads for a reason unrelated to content rating — e.g. an unpublished model,
+         *  visible only to its owner and moderators, so there is no audience to monetize. */
+        suppressAds?: boolean;
+      })
+    | void
+  >;
 };
 
 type CustomGetServerSidePropsContext = {

@@ -46,6 +46,7 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -95,6 +96,7 @@ export function ImagesAsPostsInfinite({
   const limit = isMobile ? LIMIT / 2 : LIMIT;
 
   const [showHidden, setShowHidden] = useState(false);
+  const { swipeGalleryCards } = useCurrentUserSettings();
 
   const imageFilters = useImageFilters('modelImages');
   const filters = useMemo(() => {
@@ -233,6 +235,7 @@ export function ImagesAsPostsInfinite({
       hiddenImageIds: !showHidden ? hiddenImageIds : undefined,
       hiddenTags: !showHidden ? hiddenTags : undefined,
       hiddenUsers: !showHidden ? hiddenUsers : undefined,
+      swipeGalleryCards,
     }),
     [
       filters,
@@ -244,6 +247,7 @@ export function ImagesAsPostsInfinite({
       hiddenImageIds,
       hiddenTags,
       hiddenUsers,
+      swipeGalleryCards,
     ]
   );
 
@@ -294,9 +298,7 @@ export function ImagesAsPostsInfinite({
                   (source.kind === 'model' || source.kind === 'model3d') && (
                     <>
                       {!!hiddenImageIds.length && (
-                        <ButtonTooltip
-                          label={`${showHidden ? 'Hide' : 'Show'} hidden images`}
-                        >
+                        <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
                           <LegacyActionIcon
                             variant="light"
                             radius="xl"

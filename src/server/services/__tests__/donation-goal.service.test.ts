@@ -51,7 +51,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: mockBustMvCache }));
 vi.mock('~/server/services/model.service', () => ({
-  updateModelEarlyAccessDeadline: mockUpdateEaDeadline,
+  queueModelEarlyAccessReindex: mockUpdateEaDeadline,
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/paid-access.service', () => ({
@@ -166,9 +166,8 @@ describe('checkDonationGoalComplete — goal completion', () => {
     expect(mockEndPaidAccessNow).toHaveBeenCalledWith('ModelVersion', 5); // PaidAccess.endsAt = NOW()
     expect(mockBustPaidAccess).toHaveBeenCalledWith('ModelVersion', [5]);
     expect(mockDonationGoalsBust).toHaveBeenCalledWith(5);
-    // Early end must recompute Model.earlyAccessDeadline + refresh card/feed caches (parity with the
-    // old completion path) so the model drops out of EA filters/badge immediately, not at the original
-    // deadline.
+    // Early end queues a re-index + refreshes card/feed caches so the now-free model drops out of EA
+    // filters/badge immediately, not at the original deadline.
     expect(mockUpdateEaDeadline).toHaveBeenCalledWith({ id: 2 });
     expect(mockBustMvCache).toHaveBeenCalledWith(5, 2);
     expect(mockDataForModelsRefresh).toHaveBeenCalledWith(2);

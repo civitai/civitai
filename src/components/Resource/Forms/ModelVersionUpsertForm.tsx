@@ -562,9 +562,8 @@ export function ModelVersionUpsertForm({
     ? MAX_EARLY_ACCCESS
     : version?.paidAccess?.timeframeDays ?? 0;
 
-  // Mirror the server-side concurrent-EA cap (assertUserEarlyAccessLimits) so the user sees their
-  // usage and is blocked at the form instead of at submit. Editing a version that already holds a
-  // slot doesn't count against the cap — same carve-out the server applies.
+  // Editing a version that already holds an EA slot doesn't count against the cap — mirrors the
+  // server carve-out in assertUserEarlyAccessLimits.
   const { data: userEarlyAccessVersions } = trpc.modelVersion.getUserEarlyAccessVersions.useQuery(
     undefined,
     { enabled: showEarlyAccessInput && !currentUser?.isModerator }

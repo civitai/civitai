@@ -214,8 +214,7 @@ export function DumbModelFiltersDropdown({
               }
             >
               <Group gap={8} mb={4}>
-                {/* EarlyAccess is never a model-level availability — gating lives in PaidAccess and is
-                    surfaced by the Early Access toggle above, so the chip would always match nothing. */}
+                {/* EarlyAccess is never a model-level availability (gating is in PaidAccess); use the toggle above. */}
                 {Object.values(Availability)
                   .filter((availability) => availability !== Availability.EarlyAccess)
                   .map((availability) => (

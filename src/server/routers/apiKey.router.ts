@@ -13,11 +13,11 @@ import {
   getUserApiKeysInputSchema,
   setBuzzLimitInputSchema,
 } from '~/server/schema/api-key.schema';
-import { protectedProcedure, publicProcedure, router, verifiedProcedure } from '~/server/trpc';
+import { protectedProcedure, router, verifiedProcedure } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const apiKeyRouter = router({
-  verifyKey: publicProcedure
+  verifyKey: protectedProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(getApiKeyInputSchema)
     .query(getApiKeyHandler),

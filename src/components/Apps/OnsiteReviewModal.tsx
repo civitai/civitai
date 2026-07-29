@@ -937,6 +937,12 @@ const HANDLED_MANIFEST_KEYS = new Set([
   'version',
   'name',
   'description',
+  // Store-visible copy: both are MANIFEST-GOVERNED and flow to the app's `/apps`
+  // listing on approve, so the reviewer must see them INLINE next to name +
+  // description — not buried in the "Other manifest fields" raw-JSON disclosure.
+  // The mod is the only gate on store-visible copy changing.
+  'tagline',
+  'category',
   'type',
   'minApiVersion',
   'contentRating',
@@ -1014,6 +1020,8 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
   const name = typeof manifest.name === 'string' ? manifest.name : null;
   const description =
     typeof manifest.description === 'string' ? manifest.description : null;
+  const tagline = typeof manifest.tagline === 'string' ? manifest.tagline : null;
+  const category = typeof manifest.category === 'string' ? manifest.category : null;
   const blockId = typeof manifest.blockId === 'string' ? manifest.blockId : null;
   const version = typeof manifest.version === 'string' ? manifest.version : null;
   const contentRating =
@@ -1031,12 +1039,25 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
                 {name}
               </Text>
             )}
+            {/* Store-visible one-liner (manifest-governed — goes live on approve). */}
+            {tagline && (
+              <Text size="sm" c="dimmed">
+                {tagline}
+              </Text>
+            )}
             <Group gap={6}>
               {blockId && <Code>{blockId}</Code>}
               {version && (
                 <Badge color="gray" variant="light">
                   v{version}
                 </Badge>
+              )}
+              {category && (
+                <Tooltip label="Marketplace category">
+                  <Badge color="gray" variant="light">
+                    {category}
+                  </Badge>
+                </Tooltip>
               )}
             </Group>
           </Stack>

@@ -111,6 +111,36 @@ the blob and PaidAccess must itself represent "configured, not yet published." `
   - **Naming:** the now-dead `ModelVersionEarlyAccessPurchase` / `earlyAccessPurchase` names still say
     "early access" though they write a generic gate — rename to PaidAccess when the copy churn is worth it.
 
+### Phase 2 progress (branch `feat/paid-access-phase2`, uncommitted — hold until cutover complete)
+
+**Done — schema + code, all verified (`db:generate` clean, `typecheck` 0 errors, 1820 unit tests green).
+All drops live in one hand-applied migration `20260728120000_phase2_drop_legacy_early_access`:**
+- `Model.earlyAccessDeadline`.
+- `DonationGoal.paidAmount` + `isEarlyAccess`.
+- `ModelVersion.earlyAccessConfig` / `earlyAccessEndsAt` / `earlyAccessPermanent` **+ the `early_access`
+  trigger + `early_access_ends_at()` function**. Model-only; **ComicChapter's own columns/trigger are left
+  intact** (comics stay on the legacy path until stage 5, per decision 2). Verified the native publish path
+  sets `availability='Public'` itself (`publishModelVersionsWithEarlyAccess`) and the column defaults to
+  Public, so dropping the trigger does not change publish behavior.
+
+**Blocked on prod data (NOT a plan decision — the planned migration cannot run as-is):**
+- **`DonationGoal` → `(entityType, entityId)` PK + `Donation` re-key.** `ADD PRIMARY KEY (entityType,
+  entityId)` fails against current prod: of 21,944 goals, **482 are orphans** (version hard-deleted →
+  `modelVersionId` and entity-ref both NULL; **90 have real `Donation` rows**, **473 are still `active`**),
+  and **15 entities carry duplicate goals** (**32 active goals** among them, so the pair isn't unique).
+  Resolving means deleting/merging goals that have **donation records attached** — a data-cleanup call on
+  financial rows, not something to auto-apply. Everything downstream (drop `modelVersionId`+FK, drop the
+  `donation_goal_fill_entity` trigger, re-key `Donation` off `donationGoalId`) waits on that cleanup.
+
+**Skipped — plan marks optional:**
+- **Delete the dead `availability='EarlyAccess'` clauses** (§1 "Optional:"). Left in place — the
+  `hidePrivateModels` filter (`model.service.ts:~1051`) still *includes* `EarlyAccess`, so removing it
+  would hide migrated versions that legitimately carry that availability until their gate expires. Harmless
+  to leave; removal is a net-zero that isn't worth the risk.
+- **Rename `earlyAccessPurchase` / `ModelVersionEarlyAccessPurchase` → PaidAccess** ("when the copy churn
+  is worth it"). Touches `track.schema.ts` analytics event *strings* (historical events key on the old
+  name) — a rename must preserve those string values, so it's deferred as a deliberate follow-up.
+
 ## 6. Verification
 
 - Two-pass adversarial review on the native write path + comics money paths (as with the read-flip).

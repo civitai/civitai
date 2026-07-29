@@ -82,6 +82,7 @@ export function SettingsCard() {
             disabled={isLoading}
           />
         </Group>
+        <SwipeGalleryCardsToggle />
 
         <Divider label="Model File Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
@@ -210,6 +211,23 @@ function AutoplayGifsToggle() {
       label="Autoplay GIFs"
       checked={autoplayGifs}
       onChange={(e) => setState({ autoplayGifs: e.target.checked })}
+    />
+  );
+}
+
+function SwipeGalleryCardsToggle() {
+  const { swipeGalleryCards } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="swipeGalleryCards"
+      label="Swipe between images on gallery cards"
+      description="Drag left or right on a gallery post to move through its images instead of using the arrows. May feel slower on long feeds or older devices."
+      checked={swipeGalleryCards ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ swipeGalleryCards: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
     />
   );
 }

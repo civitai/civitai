@@ -68,7 +68,7 @@ pnpm run db:migrate:empty  # Create an empty migration file
 ```
 
 **CRITICAL: We do NOT use `prisma migrate deploy`. Migrations are applied manually.**
-- Migration files in `prisma/migrations/` exist for review/history but are never auto-run
+- Migration files in `packages/civitai-db-schema/prisma/migrations/` exist for review/history but are never auto-run. That is the only directory Prisma reads — the `prisma/migrations/` path at the repo root predates the monorepo, no longer exists, and CI blocks re-creating it.
 - Each environment's DB is updated by a human running the SQL directly (psql, retool, etc.)
 - The `_prisma_migrations` table is not the source of truth — do not rely on it
 - When you add a new migration: write the SQL, commit it, and surface to the user that it needs to be applied manually to wherever they want it (preview / staging / prod)
@@ -202,7 +202,8 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 
 ### Git Worktrees
 When you create a new worktree (`git worktree add …`), **always initialize the `event-engine-common` submodule
-in it**: `git submodule update --init event-engine-common`. Worktrees don't check out submodules automatically,
+in it**: `git submodule sync --recursive && git submodule update --init event-engine-common`.
+Worktrees don't check out submodules automatically,
 and without it `pnpm typecheck`/`build` fail with a wall of `Cannot find module '.../event-engine-common/...'`
 errors (and the missing types cascade into unrelated `implicitly has an 'any' type` errors) — noise that looks
 like your change broke something when it didn't.
