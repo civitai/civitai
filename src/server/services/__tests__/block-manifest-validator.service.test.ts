@@ -977,6 +977,56 @@ describe('BlockManifestValidator', () => {
         ).toBe(true);
       }
     });
+
+    // SUBMIT-vs-APPROVE: the enforcement is SUBMIT-only. The moderator approve
+    // re-validation passes `enforceSensitiveScopeJustification:false` so a LEGACY
+    // pending request (sensitive scope, no justification, valid under the old
+    // rules) stays approvable — but ALL OTHER manifest checks still run on approve.
+    describe('SUBMIT-only (approve exemption)', () => {
+      it('SUBMIT context (default) still REJECTS a sensitive scope with no justification', () => {
+        const manifest = { ...VALID_MANIFEST, scopes: ['apps:storage:shared:write'] };
+        // Default (no opts) = genuine submit = enforce.
+        expect(BlockManifestValidator.validate(manifest, APP_CTX).valid).toBe(false);
+      });
+
+      it('APPROVE context (enforceSensitiveScopeJustification:false) does NOT reject on the sensitive-scope rule', () => {
+        const manifest = { ...VALID_MANIFEST, scopes: ['apps:storage:shared:write'] };
+        const result = BlockManifestValidator.validate(manifest, APP_CTX, {
+          enforceSensitiveScopeJustification: false,
+        });
+        expect(result).toEqual({ valid: true });
+      });
+
+      it('APPROVE context is exempted through validateSubmission too', async () => {
+        const manifest = { ...VALID_MANIFEST, scopes: ['collections:read:private'] };
+        const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX, {
+          enforceSensitiveScopeJustification: false,
+        });
+        expect(result).toEqual({ valid: true });
+      });
+
+      it('APPROVE context STILL enforces every OTHER manifest rule (only this one is exempt)', () => {
+        // A sensitive scope with no justification (would pass the exempted rule)
+        // but also an UNKNOWN scope + a non-https iframe.src — both must still fail.
+        const manifest = {
+          ...VALID_MANIFEST,
+          scopes: ['apps:storage:shared:write', 'models:read:all'],
+          iframe: { ...VALID_MANIFEST.iframe, src: 'http://blocks.civitai.com/test' },
+        };
+        const result = BlockManifestValidator.validate(manifest, APP_CTX, {
+          enforceSensitiveScopeJustification: false,
+        });
+        expect(result.valid).toBe(false);
+        if (!result.valid) {
+          expect(result.errors.some((e) => e.includes('not a known block scope'))).toBe(true);
+          expect(result.errors.some((e) => e.includes('iframe.src'))).toBe(true);
+          // The exempted rule did NOT contribute an error.
+          expect(
+            result.errors.some((e) => e.includes('sensitive scopes require a justification'))
+          ).toBe(false);
+        }
+      });
+    });
   });
 
   // SUBMISSION gate: validateSubmission = the synchronous shape/security checks

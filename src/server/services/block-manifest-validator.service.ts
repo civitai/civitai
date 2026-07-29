@@ -19,6 +19,27 @@ import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
 
+/**
+ * Options controlling WHICH validation rules run. Defaults to full enforcement
+ * (every rule on); a caller passes this only to RELAX a rule for a specific
+ * context. Currently the sole knob exempts the sensitive-scope-justification
+ * enforcement on the moderator APPROVE re-validation.
+ */
+export type ManifestValidationOptions = {
+  /**
+   * Enforce that every declared SENSITIVE scope carries a non-empty
+   * justification. Default `true` (the genuine submit / new-version paths). The
+   * moderator APPROVE re-validation passes `false` so a LEGACY pending request —
+   * submitted before this rule shipped, with a sensitive scope and no
+   * justification — stays approvable (grandfathered). No bypass is created: a
+   * post-deploy submission already passed this gate at submit time, so
+   * re-checking it on approve is redundant, and nothing can reach the approve
+   * queue post-deploy without first passing the submit gate. ALL OTHER
+   * validation still runs on approve.
+   */
+  enforceSensitiveScopeJustification?: boolean;
+};
+
 interface RawManifest {
   blockId?: unknown;
   version?: unknown;
@@ -302,7 +323,11 @@ export class BlockManifestValidator {
   // Back-compat overload: the existing test suite passes a bitmask number.
   // Real callers pass the AppContext shape (with allowedOrigins) so the
   // H8 binding check actually runs.
-  static validate(manifest: unknown, app: AppContext | number): ValidationResult {
+  static validate(
+    manifest: unknown,
+    app: AppContext | number,
+    opts?: ManifestValidationOptions
+  ): ValidationResult {
     const ctx: AppContext =
       typeof app === 'number'
         ? { allowedScopes: app, allowedOrigins: [] }
@@ -469,10 +494,15 @@ export class BlockManifestValidator {
     // elevated-risk permission was requested. An entirely-absent
     // `scopeJustifications` (previously valid) now fails when any sensitive scope
     // is declared. Reuses the single-sourced sensitive set (never re-hardcodes
-    // it), and runs for every submit path because both the CLI submit-version and
+    // it), and runs for every SUBMIT path because both the CLI submit-version and
     // the web `updateManifest` funnel through `validateSubmission` → this
     // `validate`.
-    if (Array.isArray(m.scopes)) {
+    //
+    // SUBMIT-ONLY (default on): the moderator APPROVE re-validation passes
+    // `enforceSensitiveScopeJustification:false` so a LEGACY pending request
+    // (submitted before this shipped, no justification) stays approvable. Only
+    // THIS rule is exempted on approve — every other check above still runs.
+    if (opts?.enforceSensitiveScopeJustification !== false && Array.isArray(m.scopes)) {
       const justifications =
         m.scopeJustifications &&
         typeof m.scopeJustifications === 'object' &&
@@ -757,9 +787,10 @@ export class BlockManifestValidator {
    */
   static async validateSubmission(
     manifest: unknown,
-    app: AppContext | number
+    app: AppContext | number,
+    opts?: ManifestValidationOptions
   ): Promise<ValidationResult> {
-    const base = this.validate(manifest, app);
+    const base = this.validate(manifest, app, opts);
     const errors: string[] = base.valid ? [] : [...base.errors];
 
     const settings =
