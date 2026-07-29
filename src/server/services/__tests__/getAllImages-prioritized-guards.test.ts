@@ -12,7 +12,7 @@ import { TRPCError } from '@trpc/server';
 // prioritizedUserIds, ~27 500s/12h).
 //
 // The mock block mirrors the established image.service unit-test recipe
-// (image-metrics-timeout.test.ts): stub env + infra clients + the private
+// (image-metrics-timeout.test.ts): stub env + infra clients + the
 // event-engine-common submodule so importing image.service boots no real infra.
 // On top of that we stub `enforceBlockedBrowsingTags` (so the guard is reachable)
 // and force `isFlipt` true so the model-version-cache branch (which holds both
@@ -23,8 +23,8 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
   return { ...actual, registerCounter: () => ({ inc: vi.fn() }) };
 });
 
-// event-engine-common is a private git submodule not checked out in this
-// worktree — stub the value imports image.service pulls from it.
+// event-engine-common is a git submodule, not checked out by default — stub the
+// value imports image.service pulls from it.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
