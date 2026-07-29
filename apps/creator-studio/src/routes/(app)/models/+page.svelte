@@ -59,7 +59,7 @@
 
   // Off / Active / Paused — a fee is "paused" (kept but not charged) when the owner isn't currently a CP member.
   function feeStatus(fee: number | null): { label: string; cls: string } {
-    if (fee == null) return { label: 'Off', cls: 'text-dark-3' };
+    if (fee == null || fee <= 0) return { label: 'Off', cls: 'text-dark-3' };
     return data.canSetFee
       ? { label: 'Active', cls: 'text-green-5' }
       : { label: 'Paused', cls: 'text-yellow-5' };
@@ -67,7 +67,7 @@
 
   // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / yellow Paused / dim Off).
   function feeChip(fee: number | null): { label: string; cls: string } {
-    if (fee == null) return { label: 'Fee off', cls: 'border-dark-4 text-dark-3' };
+    if (fee == null || fee <= 0) return { label: 'Fee off', cls: 'border-dark-4 text-dark-3' };
     const { buzz, images } = feeToRatio(fee);
     const label = images === 1 ? `${buzz} ⚡ / gen` : `${buzz} ⚡ / ${images}`;
     return data.canSetFee
@@ -81,6 +81,27 @@
   // Permanent (sold indefinitely) is a different product from a timed early-access window — distinct colour so
   // the two never read as the same thing.
   const permChipCls = 'border-blue-4/30 bg-blue-4/10 text-blue-3';
+
+  // The access badge for a scan row — folds the Buzz access price into the label so the price is visible on
+  // mobile without opening the drawer. accessPrice is undefined for a free grant, so the price is omitted then.
+  function accessBadge(config: NonNullable<CreatorModelVersion['earlyAccessConfig']>): {
+    label: string;
+    cls: string;
+    title: string;
+  } {
+    const price = config.accessPrice ? ` · ${config.accessPrice.toLocaleString()} ⚡` : '';
+    return config.permanent
+      ? {
+          label: `Permanent${price}`,
+          cls: permChipCls,
+          title: 'Sold indefinitely — paid access with no end date',
+        }
+      : {
+          label: `Early access${price}`,
+          cls: eaChipCls,
+          title: 'Timed early access — becomes free when the window ends',
+        };
+  }
   // Permanent access is capped by CP tier (null cap = unlimited); concurrent early access by models score.
   const permAtCap = $derived(
     data.permanentCap !== null && data.permanentCap > 0 && data.permanentUsed >= data.permanentCap
@@ -629,35 +650,25 @@
                     <button
                       type="button"
                       onclick={() => openEditor(version, model.type)}
-                      class="flex w-full cursor-pointer items-center gap-3 px-5 py-3 text-left hover:bg-dark-6/40"
+                      class="flex w-full cursor-pointer flex-col gap-1.5 px-5 py-3 text-left hover:bg-dark-6/40 sm:flex-row sm:items-center sm:gap-3"
                     >
-                      <span class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <span class="flex min-w-0 items-center gap-2 sm:flex-1">
                         <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <Badge variant="outline" class="{statusBadgeCls(version.status)} text-[10px] uppercase tracking-wide">
+                        <Badge variant="secondary" class="shrink-0 text-[10px]">{version.baseModel}</Badge>
+                        <Badge
+                          variant="outline"
+                          class="{statusBadgeCls(version.status)} ml-auto shrink-0 text-[10px] uppercase tracking-wide sm:ml-0"
+                        >
                           {version.status}
                         </Badge>
-                        <Badge variant="secondary" class="text-[10px]">{version.baseModel}</Badge>
                       </span>
                       <span class="flex shrink-0 items-center gap-2">
-                        {#if version.earlyAccessConfig?.permanent}
-                          <Badge
-                            variant="outline"
-                            class={permChipCls}
-                            title="Sold indefinitely — paid access with no end date"
-                          >
-                            Permanent
-                          </Badge>
-                        {:else if version.hasEarlyAccess}
-                          <Badge
-                            variant="outline"
-                            class={eaChipCls}
-                            title="Timed early access — becomes free when the window ends"
-                          >
-                            Early access
-                          </Badge>
+                        {#if version.earlyAccessConfig}
+                          {@const ab = accessBadge(version.earlyAccessConfig)}
+                          <Badge variant="outline" class={ab.cls} title={ab.title}>{ab.label}</Badge>
                         {/if}
                         <Badge variant="outline" class={chip.cls}>{chip.label}</Badge>
-                        <IconChevronRight size={16} class="text-dark-3" />
+                        <IconChevronRight size={16} class="ml-auto shrink-0 text-dark-3 sm:ml-0" />
                       </span>
                     </button>
                   {/if}

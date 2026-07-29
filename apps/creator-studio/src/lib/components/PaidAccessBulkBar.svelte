@@ -131,30 +131,47 @@
       class="contents"
     >
       <input type="hidden" name="versionIds" value={[...selected].join(',')} />
-      <label class="flex items-center gap-1.5 text-xs text-dark-1">
-        {bulkGenOnly ? 'Generation' : 'Access'}
-        <NumberInput
-          name="accessPrice"
-          min={MIN_ACCESS_PRICE}
-          bind:value={bulkAccessPrice}
-          aria-label={bulkGenOnly ? 'Generation price' : 'Price for access'}
-          class="h-7 w-24"
-        />
+      <label
+        class="flex items-center gap-1.5 text-xs text-dark-1"
+        title={bulkGenOnly
+          ? 'Buzz a buyer pays to generate with this version on-site.'
+          : 'Buzz a buyer pays to unlock this version — download + generation.'}
+      >
+        {bulkGenOnly ? 'Generation fee' : 'Access fee'}
+        <span class="relative">
+          <span class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs">⚡</span>
+          <NumberInput
+            name="accessPrice"
+            min={MIN_ACCESS_PRICE}
+            bind:value={bulkAccessPrice}
+            aria-label={bulkGenOnly ? 'Generation fee (Buzz)' : 'Access fee (Buzz)'}
+            class="h-7 w-24 pl-6"
+          />
+        </span>
       </label>
       {#if !bulkGenOnly}
-        <label class="flex items-center gap-1.5 text-xs text-dark-1">
-          Gen-only
-          <NumberInput
-            name="generationPrice"
-            min={MIN_GENERATION_PRICE}
-            max={bulkAccessPrice}
-            bind:value={bulkGenerationPrice}
-            aria-label="Generation-only price (optional)"
-            class="h-7 w-24"
-          />
+        <label
+          class="flex items-center gap-1.5 text-xs text-dark-1"
+          title="Optional cheaper Buzz price for generation-only access; defaults to the access fee if left blank."
+        >
+          Gen-only fee
+          <span class="relative">
+            <span class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs">⚡</span>
+            <NumberInput
+              name="generationPrice"
+              min={MIN_GENERATION_PRICE}
+              max={bulkAccessPrice}
+              bind:value={bulkGenerationPrice}
+              aria-label="Gen-only fee (Buzz, optional)"
+              class="h-7 w-24 pl-6"
+            />
+          </span>
         </label>
       {/if}
-      <label class="flex items-center gap-1.5 text-xs text-dark-1">
+      <label
+        class="flex items-center gap-1.5 text-xs text-dark-1"
+        title="Free preview generations a buyer gets before purchase is required (0 = none)."
+      >
         Free prev
         <NumberInput
           name="freePreviewGenerations"

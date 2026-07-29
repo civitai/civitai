@@ -289,10 +289,10 @@
       {/if}
 
       <SheetFooter class="flex-col gap-2 p-0">
-        <Button type="submit">Save early access</Button>
+        <Button type="submit">{ea.permanent ? 'Save paid access' : 'Save early access'}</Button>
         {#if version.earlyAccessConfig}
           <Button type="submit" name="clear" value="true" variant="outline">
-            Turn off early access
+            {ea.permanent ? 'Turn off paid access' : 'Turn off early access'}
           </Button>
         {/if}
       </SheetFooter>
