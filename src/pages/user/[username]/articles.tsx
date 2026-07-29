@@ -103,6 +103,10 @@ function UserArticlesPage() {
             </Group>
             {viewingPublished ? (
               <ArticlesInfinite
+                // Filters here are URL-driven. Merging the global feed's persisted
+                // store leaked its `followed: true` into this user-scoped query, and
+                // nobody follows themselves, so every one of the owner's own articles
+                // was hidden. Do not drop this as redundant.
                 disableStoreFilters
                 filters={{
                   ...query,
