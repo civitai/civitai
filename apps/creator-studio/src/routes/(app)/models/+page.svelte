@@ -174,12 +174,44 @@
   const bulkUsage = $derived(data.query.usage === 'generation' ? 'generation' : 'download');
   // A reactive Set — in-place add/delete/clear stay fine-grained (no reassign-to-mutate).
   const selected = new SvelteSet<number>();
-  // Permanent slots the creator can still fill (null cap = unlimited). Caps how many can be selected in
-  // paid-access mode so a batch can never exceed the tier — "max minus current".
+  // Permanent slots the creator can still fill (null cap = unlimited).
   const remainingPermanentSlots = $derived(
     data.permanentCap === null ? Infinity : Math.max(0, data.permanentCap - data.permanentUsed)
   );
-  const maxSelectable = $derived(paidAccessMode ? remainingPermanentSlots : Infinity);
+  // Versions already sold permanently don't consume a NEW slot when re-priced — mirrors the server's
+  // countPermanentAccessVersionsExcluding baseline, so re-pricing stays possible even at the cap.
+  const alreadyPermanentIds = $derived(
+    new Set(
+      data.models
+        .flatMap((m) => m.versions)
+        .filter((v) => v.earlyAccessConfig?.permanent)
+        .map((v) => v.id)
+    )
+  );
+  // New slots the current selection would consume (already-permanent picks are free). A plain function so it
+  // reads `selected` live and stays correct mid-loop in the bulk selectors below.
+  function newSlotsUsed(): number {
+    let n = 0;
+    for (const id of selected) if (!alreadyPermanentIds.has(id)) n++;
+    return n;
+  }
+  // Whether a version may be added: no cap (fee mode), already permanent (free re-price), or a free slot left.
+  function canSelect(id: number): boolean {
+    if (!paidAccessMode) return true;
+    if (alreadyPermanentIds.has(id)) return true;
+    return newSlotsUsed() < remainingPermanentSlots;
+  }
+  // How many matching versions "Select all" would actually pick: every already-permanent one plus as many
+  // new ones as free slots allow.
+  const selectableMatchingCount = $derived.by(() => {
+    let already = 0;
+    let fresh = 0;
+    for (const id of data.matchingVersionIds) {
+      if (alreadyPermanentIds.has(id)) already++;
+      else fresh++;
+    }
+    return already + Math.min(fresh, remainingPermanentSlots);
+  });
   // The suggested fee is per model type, so surface a bulk "use suggested" only when the type filter pins one.
   const bulkSuggested = $derived(data.query.mt ? suggestedFeePerImage(data.query.mt) : undefined);
 
@@ -190,8 +222,11 @@
 
   function toggleVersion(id: number) {
     if (selected.has(id)) selected.delete(id);
-    else if (selected.size < maxSelectable) selected.add(id);
-    else toast.error(`You can select up to ${maxSelectable} version${maxSelectable === 1 ? '' : 's'} for permanent access.`);
+    else if (canSelect(id)) selected.add(id);
+    else
+      toast.error(
+        `You can add up to ${remainingPermanentSlots} more permanent-access version${remainingPermanentSlots === 1 ? '' : 's'}.`
+      );
   }
   function allSelected(model: CreatorModel) {
     return model.versions.length > 0 && model.versions.every((v) => selected.has(v.id));
@@ -200,15 +235,12 @@
     const all = allSelected(model);
     for (const v of model.versions) {
       if (all) selected.delete(v.id);
-      else if (selected.size < maxSelectable) selected.add(v.id);
+      else if (!selected.has(v.id) && canSelect(v.id)) selected.add(v.id);
     }
   }
   function selectAll(ids: number[]) {
     selected.clear();
-    for (const id of ids) {
-      if (selected.size >= maxSelectable) break;
-      selected.add(id);
-    }
+    for (const id of ids) if (canSelect(id)) selected.add(id);
   }
   // Switch the paid-access usage scope: clears the (now off-list) selection and re-filters the list.
   function setBulkUsage(usage: 'download' | 'generation') {
@@ -562,6 +594,8 @@
     permanentCap={data.permanentCap}
     permanentUsed={data.permanentUsed}
     matchingVersionIds={data.matchingVersionIds}
+    selectableCount={selectableMatchingCount}
+    slotsConsumed={newSlotsUsed()}
     usage={bulkUsage}
     {selected}
     onSetUsage={setBulkUsage}

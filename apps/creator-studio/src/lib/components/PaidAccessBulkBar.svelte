@@ -29,6 +29,8 @@
     permanentCap,
     permanentUsed,
     matchingVersionIds,
+    selectableCount,
+    slotsConsumed,
     usage,
     selected,
     onSetUsage,
@@ -38,6 +40,10 @@
     permanentCap: number | null;
     permanentUsed: number;
     matchingVersionIds: number[];
+    // How many matching versions "Select all" would pick (already-permanent re-prices are free; see the parent).
+    selectableCount: number;
+    // New permanent slots the current selection consumes (already-permanent picks don't count).
+    slotsConsumed: number;
     usage: string;
     selected: SvelteSet<number>;
     onSetUsage: (usage: 'download' | 'generation') => void;
@@ -106,18 +112,18 @@
         {#if permanentCap === null}
           {permanentUsed} permanent · unlimited on your tier
         {:else}
-          {selected.size} of {remainingPermanentSlots} available slot{remainingPermanentSlots === 1 ? '' : 's'} ({permanentUsed} of {permanentCap} used)
+          {slotsConsumed} of {remainingPermanentSlots} available slot{remainingPermanentSlots === 1 ? '' : 's'} ({permanentUsed} of {permanentCap} used)
         {/if}
       </span>
     </div>
-    {#if matchingVersionIds.length > 0 && remainingPermanentSlots > 0}
+    {#if selectableCount > 0}
       <Button
         variant="outline"
         size="sm"
         onclick={() => onSelectAll(matchingVersionIds)}
-        title="Select up to your available permanent slots"
+        title="Select every matching version you can price (re-pricing versions you already sell is always allowed)"
       >
-        Select {Math.min(matchingVersionIds.length, remainingPermanentSlots)}
+        Select {selectableCount}
       </Button>
     {/if}
     {#if selected.size > 0}
@@ -204,7 +210,7 @@
         {bulkGenOnly
           ? `Buyers pay ${bulkAccessPrice ?? 0} ⚡ to generate on-site.`
           : `Buyers unlock download + generation for ${bulkAccessPrice ?? 0} ⚡.`}
-        This uses {selected.size} of your permanent slots.
+        This uses {slotsConsumed} of your permanent slots.
       </AlertDialogDescription>
     </AlertDialogHeader>
     <AlertDialogFooter>

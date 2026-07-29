@@ -561,7 +561,7 @@ export function ModelVersionUpsertForm({
   };
 
   useEffect(() => {
-    if (version)
+    if (version) {
       form.reset({
         ...version,
         licensingFee: Number(version.licensingFee ?? 0),
@@ -584,6 +584,9 @@ export function ModelVersionUpsertForm({
           hideGenerations: (version.meta as ModelVersionMeta | null)?.hideGenerations ?? false,
         },
       });
+      // Keep the ratio inputs in step with the form value reset (they're local state, not form-bound).
+      setFeeRatio(feeToRatio(Number(version.licensingFee ?? 0)));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
@@ -1073,9 +1076,15 @@ export function ModelVersionUpsertForm({
                   <Select
                     aria-label="Number of generations"
                     value={String(feeRatio.images)}
-                    onChange={(v) =>
-                      applyFeeRatio({ buzz: feeRatio.buzz, images: Number(v) || DEFAULT_FEE_IMAGES })
-                    }
+                    onChange={(v) => {
+                      const images = Number(v) || DEFAULT_FEE_IMAGES;
+                      // Clamp buzz so a smaller denominator can't silently push the per-generation fee
+                      // past MAX_LICENSING_FEE (which the schema would reject with no visible field error).
+                      applyFeeRatio({
+                        buzz: Math.min(feeRatio.buzz, MAX_LICENSING_FEE * images),
+                        images,
+                      });
+                    }}
                     data={FEE_IMAGE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
                     allowDeselect={false}
                     w={90}

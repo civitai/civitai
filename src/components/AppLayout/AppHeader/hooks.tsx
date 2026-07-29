@@ -156,7 +156,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Buzz Dashboard',
         },
         {
-          // The Creator Studio spoke (creator.civitai.com) — earnings/analytics + per-version
+          // The Creator Studio spoke (creator-studio.civitai.com) — earnings/analytics + per-version
           // licensing-fee and paid-access management. Shared session, so a plain cross-subdomain link.
           href: 'https://creator-studio.civitai.com',
           visible: !!currentUser,
