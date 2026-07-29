@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { LISTING_GRID_SPAN } from '~/components/Apps/appListingGrid';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -31,6 +30,21 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
         ? { kind: 'onsite', appBlockId: `blk-${id}`, hasPage: false, liveUrl: `https://slug-${id}.civit.ai` }
         : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
   };
+}
+
+/**
+ * The whitespace-stripped CSS Mantine generated for THIS element's own responsive
+ * class. `Grid.Col` renders an `InlineStyles` <style> block keyed on a random
+ * per-instance class, so scoping to that class keeps the assertions immune to
+ * style blocks left behind by other tests in the same document.
+ */
+function generatedCssFor(el: HTMLElement): string {
+  const classes = Array.from(el.classList);
+  return Array.from(document.querySelectorAll('style'))
+    .map((s) => s.textContent ?? '')
+    .filter((text) => classes.some((c) => text.includes(`.${c}`)))
+    .join('\n')
+    .replace(/\s+/g, '');
 }
 
 const mocks = vi.hoisted(() => ({
@@ -119,17 +133,19 @@ describe('AppListingsMarketplaceBody', () => {
     // sensitive assertion that the five-column xl layout is gone — flip the span
     // back to 2.4 and this fails. The exact per-breakpoint numbers are pinned in
     // the blocking unit suite (__tests__/appListingGrid.test.ts).
-    const css = Array.from(document.querySelectorAll('style'))
-      .map((s) => s.textContent ?? '')
-      .join('\n')
-      .replace(/\s+/g, '');
-    expect(css).toContain('--col-flex-basis:25%'); // 3/12 — the lg + xl columns
-    expect(css).not.toContain('--col-flex-basis:20%'); // 2.4/12 — the retired 5-col xl
+    //
+    // Scoped to the styles Mantine generated for THIS column's own random class,
+    // not every <style> in the document — a document-wide scan would make the
+    // negative assertion below sensitive to style leakage from other tests.
+    const css = generatedCssFor(cols[0] as HTMLElement);
 
-    // …and the grid is wired to the SHARED constant, so the unit pins above
-    // actually govern what renders.
-    expect(LISTING_GRID_SPAN.xl).toBe(3);
-    expect(12 / LISTING_GRID_SPAN.xl).toBe(4);
-    expect(LISTING_GRID_SPAN).toMatchObject({ base: 12, sm: 6, md: 4, lg: 3 });
+    // Every basis Mantine emitted for this column — the base rule first, then one
+    // per breakpoint in ascending order: base 12 → 100% (1 col), sm 6 → 50% (2),
+    // md 4 → 33.3% (3), lg 3 → 25% (4), xl 3 → 25% (4). The OLD `xl: 2.4` compiled
+    // to a 20% basis, so this pins the whole responsive sequence AND proves the
+    // retired 5-column xl is gone. Flipping the span back to 2.4 fails here.
+    const bases = Array.from(css.matchAll(/--col-flex-basis:([\d.]+)%/g)).map((m) => m[1]);
+    expect(bases).toEqual(['100', '50', '33.333333333333336', '25', '25']);
+    expect(css).not.toContain('--col-flex-basis:20%'); // 2.4/12 — the retired 5-col xl
   });
 });

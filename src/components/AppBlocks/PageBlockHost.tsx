@@ -144,7 +144,7 @@ const TOKEN_WAIT_TIMEOUT_MS = 15_000;
  * a `next/dynamic` ChatWindow chunk), so importing it here would pull a new
  * animation runtime into the run-page bundle for one cross-fade.
  */
-const LAUNCH_REVEAL_MS = 260;
+export const LAUNCH_REVEAL_MS = 260;
 
 // Hard cap on a block-suggested Buy-Buzz amount (mirrors IframeHost) — clamps a
 // malicious/huge `suggestedAmount` so the spend modal can't be pre-seeded with
@@ -305,9 +305,16 @@ export function PageBlockHost({
   }, [status]);
 
   // LAUNCH REVEAL — `prefers-reduced-motion: reduce` collapses the whole thing to
-  // 0ms: no transitions are emitted and the overlay is dropped in the same commit
-  // the block turns ready (identical to the pre-animation behaviour).
-  const reduceMotion = useReducedMotion();
+  // 0ms: no transition is ever emitted, and the overlay is dropped on the effect
+  // tick right after the block turns ready rather than being held for a fade.
+  // (Not literally the same commit as the status flip — but with `opacity: 0` and
+  // no transition it is already invisible, so there is nothing to perceive.)
+  // `initialValue: true` is deliberate and fail-SAFE: `useMediaQuery` commits the
+  // real value in a post-mount effect, so render 1 has to assume something.
+  // Assuming "reduced" means a viewer who opted out of motion never gets a single
+  // frame with a transition/transform applied; a viewer who didn't loses nothing,
+  // because the reveal only runs on BLOCK_READY, long after that first commit.
+  const reduceMotion = useReducedMotion(true);
   const revealMs = reduceMotion ? 0 : LAUNCH_REVEAL_MS;
   // The branded launch overlay stays mounted for ONE fade-out after BLOCK_READY,
   // then unmounts. It is only ever rendered inside the `showIframe` branch, so
@@ -2400,6 +2407,13 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
 
+  // ONE sanitized label for the whole launch surface — the avatar initial, the
+  // Loader's accessible name and the visible "Starting …" copy all derive from
+  // this, so they can never disagree about the fallback. Same sanitizer the
+  // visible chrome uses (anti-spoof: strips control/bidi/zalgo from a
+  // publisher-controlled name); 'app' when nothing legible remains.
+  const launchName = sanitizeAppChromeName(appName) || 'app';
+
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';
 
@@ -2588,14 +2602,18 @@ export function PageBlockHost({
                   legible remains. */}
               <Stack align="center" gap="sm">
                 <Avatar radius="md" size={56} alt="" aria-hidden>
-                  {(sanitizeAppChromeName(appName) || blockId).charAt(0).toUpperCase()}
+                  {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
+                      surrogate pair, so an emoji-leading app name would render a
+                      broken half-glyph. Falls back to the SAME string as the
+                      visible copy below so the two can't disagree. */}
+                  {(Array.from(launchName)[0] ?? '').toUpperCase()}
                 </Avatar>
                 <Loader
                   size="sm"
-                  aria-label={`Loading ${sanitizeAppChromeName(appName) || 'app'}`}
+                  aria-label={`Loading ${launchName}`}
                 />
                 <Text size="sm" c="dimmed">
-                  {`Starting ${sanitizeAppChromeName(appName) || 'app'}…`}
+                  {`Starting ${launchName}…`}
                 </Text>
               </Stack>
             </Center>

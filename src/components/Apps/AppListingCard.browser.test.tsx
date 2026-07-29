@@ -206,8 +206,9 @@ describe('AppListingCard', () => {
   //   (b) the `onError` → category-glyph placeholder occupies the SAME box, so a
   //       dangling cover URL swaps art with zero layout shift (CLS).
   // NOTE: the browser project does not load Mantine's stylesheet, so these assert
-  // the inline ratio contract (`aspect-ratio` on the box, which is what reserves
-  // the height) rather than measured pixels — measured geometry would be
+  // the INLINE ratio contract the component writes itself (`aspect-ratio` on the
+  // box, which is what reserves the height, plus the absolute fill on whichever
+  // art is inside it) rather than measured pixels — measured geometry would be
   // meaningless without the stylesheet.
 
   // A 1x1 transparent PNG. A real (non-network) src that LOADS, so the <img>
@@ -230,6 +231,11 @@ describe('AppListingCard', () => {
     expect(img).not.toBeNull();
     expect(img?.getAttribute('src')).toBe(LOADABLE_PNG);
     expect(img?.getAttribute('alt')).toBe('My App cover image');
+    // Absolutely filling the box — NOT a percentage height, which would have to
+    // resolve against a ratio-derived block size and could silently crop the art
+    // under `overflow: hidden` if it ever resolved to `auto`.
+    expect((img as HTMLElement).style.position).toBe('absolute');
+    expect((img as HTMLElement).style.inset).toBe('0px');
     // No fixed pixel height anywhere on the box — the whole point of the change
     // (it was `h={140}`); the height now comes from the ratio.
     expect(box.style.height).toBe('');
@@ -247,6 +253,10 @@ describe('AppListingCard', () => {
     expect(placeholder.parentElement).toBe(box);
     // Decorative only — it carries no information the title/CTA don't.
     expect(placeholder.getAttribute('aria-hidden')).toBe('true');
+    // Same absolute-fill encoding as the <img>, so the two are interchangeable
+    // without any geometry change.
+    expect((placeholder as HTMLElement).style.position).toBe('absolute');
+    expect((placeholder as HTMLElement).style.inset).toBe('0px');
     expect(box.querySelector('img')).toBeNull();
   });
 
@@ -301,6 +311,31 @@ describe('AppListingCard', () => {
     expect(visit.tagName).toBe('A');
     expect(visit.getAttribute('target')).toBe('_blank');
     expect(visit.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  test('the action row does NOT wrap — actions stay right-aligned and never shrink', async () => {
+    // 🔴 Regression guard for the obvious-but-wrong fix to the taller `sm` buttons.
+    // Letting this row wrap would (a) left-align the actions, because a wrapped
+    // line with one item sits at flex-start under `justify="space-between"`, and
+    // (b) make an OWNER card (Edit + CTA) wrap at a wider column than a non-owner
+    // card, growing the height of the whole `h-full` grid row for everyone.
+    mocks.currentUser = { id: 5, username: 'alice' }; // owner → widest action set
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-owner-edit')).toBeInTheDocument();
+
+    const edit = page.getByTestId('apps-listing-owner-edit').element() as HTMLElement;
+    // The group holding Edit + the primary CTA.
+    const actions = edit.parentElement as HTMLElement;
+    expect(actions.style.getPropertyValue('--group-wrap')).toBe('nowrap');
+    // The actions are the rigid side: they never shrink…
+    expect(actions.style.flexShrink).toBe('0');
+    // …and the row itself never wraps, so the actions can't jump to the left.
+    const row = actions.parentElement as HTMLElement;
+    expect(row.style.getPropertyValue('--group-wrap')).toBe('nowrap');
+    // The recommend rollup is the flexible side that absorbs the pressure.
+    const rollup = row.firstElementChild as HTMLElement;
+    expect(rollup).not.toBe(actions);
+    expect(rollup.style.minWidth).toBe('0px');
   });
 
   test('the owner "Edit" secondary CTA also renders at size "sm"', async () => {

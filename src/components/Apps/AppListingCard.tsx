@@ -121,6 +121,7 @@ function ListingCover({
           // The ratio box. `aspect-ratio` derives the height from the (fluid)
           // column width, so the cover grows with the card AND its height is
           // reserved before any image bytes arrive — that's the CLS guard.
+          position: 'relative',
           width: '100%',
           aspectRatio: '16 / 9',
           overflow: 'hidden',
@@ -130,10 +131,16 @@ function ListingCover({
           <Image
             src={coverUrl}
             alt={`${name} cover image`}
-            h="100%"
-            w="100%"
             fit="cover"
             onError={() => setBroken(true)}
+            // Absolutely filling the ratio box, NOT `h="100%"`: a percentage
+            // height has to resolve against a block size that is itself derived
+            // from `aspect-ratio`. Every current engine does that, but if it ever
+            // resolved to `auto` the image would render at its intrinsic size and
+            // `overflow: hidden` would silently CROP it — a failure no test that
+            // reads style strings could catch. `inset: 0` needs no such
+            // resolution.
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
           />
         ) : (
           <Box
@@ -142,10 +149,10 @@ function ListingCover({
             data-listing-cover-placeholder=""
             className="flex items-center justify-center"
             style={{
-              // Fills the ratio box exactly, so swapping art on `onError` cannot
-              // change the card's geometry.
-              width: '100%',
-              height: '100%',
+              // Fills the ratio box exactly (same absolute encoding as the image),
+              // so swapping art on `onError` cannot change the card's geometry.
+              position: 'absolute',
+              inset: 0,
               // Per-app SEEDED gradient (#3465) — NOT the old uniform grey, so two
               // coverless listings never look identical and a listing keeps its
               // colour identity if it later gains a generated cover SVG.
@@ -317,23 +324,32 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
 
         {/* Feedback #2: the action row's buttons stepped up a notch on the Mantine
             size scale (xs → sm), so the primary CTA reads as the card's call to
-            action rather than a footnote. Because `sm` buttons are taller/wider,
-            the OUTER row is allowed to WRAP (the actions drop to their own line on
-            a narrow column) instead of overflowing the card — the inner action
-            group still stays nowrap so Edit + CTA never split from each other. */}
-        <Group justify="space-between" mt="auto" pt="xs" gap="xs" wrap="wrap">
-          {/* Recommend rollup — "N% recommend (M)" or "No reviews yet". */}
-          <Group gap={4} wrap="nowrap">
+            action rather than a footnote.
+            🔴 The row deliberately stays `nowrap`. Letting it wrap looks like the
+            obvious way to stop the taller buttons overflowing a narrow column, but
+            it breaks two things: (1) under `justify="space-between"` a wrapped line
+            holding a single item sits at flex-START, so the actions would jump from
+            right-aligned to LEFT-aligned; and (2) an OWNER card (Edit + CTA) wraps
+            at a wider column than a non-owner card, so inside a `h-full` grid row
+            one owner card would grow the height of the whole row. Instead the
+            actions never shrink and the recommend rollup absorbs the pressure by
+            truncating — so every card in a row keeps the same geometry regardless
+            of who is looking at it. */}
+        <Group justify="space-between" mt="auto" pt="xs" gap="xs" wrap="nowrap">
+          {/* Recommend rollup — "N% recommend (M)" or "No reviews yet". This is the
+              flexible side: it may truncate so the actions never do. */}
+          <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
             <IconThumbUp
               size={13}
+              style={{ flexShrink: 0 }}
               className={card.recommend.recommendPct == null ? 'text-gray-500' : 'text-green-500'}
             />
-            <Text size="xs" c="dimmed">
+            <Text size="xs" c="dimmed" truncate>
               {recommendLabel}
             </Text>
           </Group>
 
-          <Group gap="xs" wrap="nowrap">
+          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
             {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
                 owner + editable status (mod-removed listings hide it). Routes by
                 kind (manifest editor for on-site, submit editor for off-site). */}

@@ -98,7 +98,7 @@ vi.mock('~/utils/trpc', () => ({
 }));
 
 // eslint-disable-next-line import/first
-import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+import { LAUNCH_REVEAL_MS, PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 
 // Same-origin so trustTier='internal' yields a pinned (non-opaque) transport
 // whose expectedOrigin equals this frame's origin — see PageBlockHost.browser.test.
@@ -273,18 +273,25 @@ describe('PageBlockHost launch reveal — the reveal must NOT gate the error pat
     await driveToReady();
     // Fire the error IMMEDIATELY — inside the cross-fade window, before the veil
     // has finished fading out. The fallback must not wait on the animation.
+    const firedAt = Date.now();
     postFromBlock('BLOCK_ERROR', { fatal: true });
 
-    // 🔴 PROMPTNESS, deterministically: wait a fixed window that is comfortably
-    // longer than a React commit + its passive effects, but comfortably SHORTER
-    // than LAUNCH_REVEAL_MS (260ms) — then require the fallback to ALREADY be on
-    // screen. A reveal wrapper that held the error until the fade finished (the
-    // exact bug class this suite exists for) would still be showing the launch
-    // veil at this point and would fail here, where a generous `waitFor` would
-    // happily wait out the animation and pass. Mutation-verified: gating the
-    // fallback on the reveal timer fails THIS assertion.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+    // 🔴 PROMPTNESS. Measured against a captured timestamp rather than a bare
+    // sleep: `driveToReady()` above can itself consume part of the reveal window
+    // on a slow box, so "sleep 50ms then assert" could accidentally land AFTER a
+    // reveal-gated fallback had already faded in and pass despite the bug. Here
+    // we poll for the fallback and then assert it arrived in well under
+    // LAUNCH_REVEAL_MS as measured from the moment the error was fired — which a
+    // reveal-gated fallback cannot satisfy no matter how the earlier steps were
+    // scheduled. Mutation-verified: gating the fallback on the reveal timer fails
+    // this assertion.
+    await vi.waitFor(
+      () => {
+        expect(page.getByTestId('app-page-fallback').query()).not.toBeNull();
+      },
+      { timeout: 2000, interval: 5 }
+    );
+    expect(Date.now() - firedAt).toBeLessThan(LAUNCH_REVEAL_MS);
     // FRAME-1: provenance chrome still wraps the fallback.
     await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
     // The launch surface is gone — no spinner, no lingering veil, no iframe.
