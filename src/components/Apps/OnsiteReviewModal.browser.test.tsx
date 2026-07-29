@@ -240,6 +240,47 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
   });
 });
 
+describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mod', () => {
+  // `tagline` + `category` are MANIFEST-GOVERNED and go live on the app's /apps
+  // listing the moment this request is approved. The mod is the ONLY gate on
+  // store-visible copy changing, so they must render beside name/description —
+  // not be buried in the collapsed "Other manifest fields" raw-JSON disclosure.
+  test('renders the manifest tagline + category in the identity card, not the raw-JSON fallback', async () => {
+    const withCopy = {
+      ...ONSITE_PENDING,
+      manifest: {
+        ...ONSITE_PENDING.manifest,
+        tagline: 'The fastest way to remix a model',
+        category: 'generation',
+      },
+    };
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: withCopy, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    // Both are visible WITHOUT expanding any disclosure.
+    await expect
+      .element(page.getByText('The fastest way to remix a model'))
+      .toBeInTheDocument();
+    await expect.element(page.getByText('generation')).toBeInTheDocument();
+    // They are HANDLED keys, so the "Other manifest fields" count is unchanged
+    // (still just the one novel key from the base fixture) — i.e. they did not
+    // fall through to the raw-JSON dump.
+    await expect
+      .element(page.getByRole('button', { name: 'Other manifest fields (1)' }))
+      .toBeInTheDocument();
+  });
+
+  test('omitting them renders no empty tagline/category chrome', async () => {
+    // The base fixture declares neither.
+    renderWithProviders(
+      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByText('My Onsite Block')).toBeInTheDocument();
+    expect(page.getByText('The fastest way to remix a model').elements()).toHaveLength(0);
+    expect(page.getByText('generation').elements()).toHaveLength(0);
+  });
+});
+
 describe('OnsiteReviewModal — per-scope justifications shown to the mod', () => {
   test('renders each declared permission with its dev-supplied justification, and a "No justification provided" fallback when absent', async () => {
     const withJustifications = {

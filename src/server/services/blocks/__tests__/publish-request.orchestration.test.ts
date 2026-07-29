@@ -2169,7 +2169,9 @@ describe('approveRequest', () => {
       // Idempotency guard: checked for an existing listing by appBlockId first.
       expect(mockDbRead.appListing.findUnique).toHaveBeenCalledWith({
         where: { appBlockId: result.appBlockId },
-        select: { id: true },
+        // `kind` is selected so the (3b-sync) re-sync can refuse to write
+        // manifest copy onto an off-site listing (whose copy is author-supplied).
+        select: { id: true, kind: true },
       });
       // Exactly one listing minted — onsite, approved, slug=blockId, appBlockId
       // set, name/contentRating derived from the manifest, owner = submitter.
@@ -2208,7 +2210,7 @@ describe('approveRequest', () => {
       expect(data.connectClientId).toBeNull();
     });
 
-    it('subsequent-version approve does NOT duplicate or clobber an existing listing', async () => {
+    it('subsequent-version approve does NOT duplicate the listing, and re-syncs ONLY the manifest-governed scalars', async () => {
       const { approveRequest } = await import('../publish-request.service');
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
         pendingRequest({ manifest: manifest({ version: '0.2.0' }) })
@@ -2220,8 +2222,12 @@ describe('approveRequest', () => {
         app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
       });
       // A listing already exists (minted on the first approve; a mod may since
-      // have set category/featured). The guard must SKIP, never update.
-      mockDbRead.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
+      // have set category/featured). The guard must never CREATE a second one —
+      // and the (3b-sync) re-sync must touch ONLY the manifest-governed scalars.
+      mockDbRead.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'onsite' });
+      // The (3b-sync) re-sync runs FIRST and matches the row; the later
+      // (3b-reset) restore keeps the default 0 (no reset is in flight here).
+      mockDbWrite.appListing.updateMany.mockResolvedValueOnce({ count: 1 });
       mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
 
       const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
@@ -2229,12 +2235,26 @@ describe('approveRequest', () => {
       expect(result.appBlockId).toBe('apb_existing');
       expect(mockDbRead.appListing.findUnique).toHaveBeenCalledWith({
         where: { appBlockId: 'apb_existing' },
-        select: { id: true },
+        select: { id: true, kind: true },
       });
-      // Skip-if-exists: no create. There is NO appListing.update path at all in
-      // the approve flow, so curated fields (category/featured/featuredOrder)
-      // cannot be clobbered on a re-approve.
+      // Never a second listing for the same app.
       expect(mockDbWrite.appListing.create).not.toHaveBeenCalled();
+      // The approve DOES update the existing listing — but ONLY the four
+      // manifest-governed scalars. Curated / mod-owned columns
+      // (iconId/coverId/featured/featuredOrder/contentRating/status/slug) must
+      // never appear in the payload; asserting the exact key set is what stops a
+      // future edit from widening this write into a clobber.
+      const syncCalls = mockDbWrite.appListing.updateMany.mock.calls.filter(
+        (c: [{ data?: Record<string, unknown> }]) =>
+          c[0]?.data != null && !('status' in c[0].data) // exclude the (3b-reset) status flip
+      );
+      expect(syncCalls).toHaveLength(1);
+      expect(Object.keys(syncCalls[0][0].data).sort()).toEqual([
+        'category',
+        'description',
+        'name',
+        'tagline',
+      ]);
       // The approve itself still completes (build triggered, request finalised).
       expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
       expect(mockTriggerBuild).toHaveBeenCalledOnce();
