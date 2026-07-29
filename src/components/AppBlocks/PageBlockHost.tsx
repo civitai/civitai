@@ -1,4 +1,5 @@
-import { Box, Center, Loader } from '@mantine/core';
+import { Avatar, Box, Center, Loader, Stack, Text } from '@mantine/core';
+import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -121,6 +122,29 @@ function storageErrorMessage(err: unknown): string {
 
 const BLOCK_READY_TIMEOUT_MS = 10_000;
 const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+
+/**
+ * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly
+ * animated"). How long the branded launch overlay cross-fades out while the block
+ * fades in, once the block signals BLOCK_READY.
+ *
+ * 🔴 This is a PURELY COSMETIC, ready-path-only window. It can never delay, mask
+ * or swallow an error, because every terminal state (`timeout` / `fatal` /
+ * `no_token` / `error`) flips `showIframe` to false, which unmounts the entire
+ * iframe+overlay branch and renders `BlockFallback` in the SAME commit — the
+ * fade-out timer below is simply cleaned up. Nothing about the fallback render is
+ * gated on animation state. (Regression-tested: see the "the reveal must NOT gate
+ * the error path" cases in PageBlockHostLaunchReveal.browser.test.tsx, which
+ * assert every terminal state still reaches BlockFallback — promptly, and still
+ * wrapped in AppBlockChrome.)
+ *
+ * Implemented with a plain CSS opacity/transform transition rather than the
+ * `motion` package: `motion` is NOT in the `/apps` route graph today (its only
+ * importers are `src/components/Chat/*` + `src/utils/lazy-motion.ts`, reached via
+ * a `next/dynamic` ChatWindow chunk), so importing it here would pull a new
+ * animation runtime into the run-page bundle for one cross-fade.
+ */
+const LAUNCH_REVEAL_MS = 260;
 
 // Hard cap on a block-suggested Buy-Buzz amount (mirrors IframeHost) — clamps a
 // malicious/huge `suggestedAmount` so the spend modal can't be pre-seeded with
@@ -279,6 +303,30 @@ export function PageBlockHost({
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+
+  // LAUNCH REVEAL — `prefers-reduced-motion: reduce` collapses the whole thing to
+  // 0ms: no transitions are emitted and the overlay is dropped in the same commit
+  // the block turns ready (identical to the pre-animation behaviour).
+  const reduceMotion = useReducedMotion();
+  const revealMs = reduceMotion ? 0 : LAUNCH_REVEAL_MS;
+  // The branded launch overlay stays mounted for ONE fade-out after BLOCK_READY,
+  // then unmounts. It is only ever rendered inside the `showIframe` branch, so
+  // every terminal state removes it structurally regardless of this flag — this
+  // state exists solely to give the ready path something to fade.
+  const [overlayMounted, setOverlayMounted] = useState<boolean>(true);
+  useEffect(() => {
+    if (status === 'loading') {
+      setOverlayMounted(true);
+      return;
+    }
+    // Terminal states (or reduced motion) → drop it immediately, no timer.
+    if (status !== 'ready' || revealMs === 0) {
+      setOverlayMounted(false);
+      return;
+    }
+    const t = setTimeout(() => setOverlayMounted(false), revealMs);
+    return () => clearTimeout(t);
+  }, [status, revealMs]);
 
   const expectedOrigin = useMemo(() => {
     try {
@@ -455,30 +503,45 @@ export function PageBlockHost({
   // BLOCK_READY → ready.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_READY', () => {
-      let acked = false;
-      setStatus((current) => {
-        if (current === 'loading') {
-          acked = true;
-          return 'ready';
-        }
-        return current;
-      });
-      if (acked) {
-        controllerRef.current?.notifyReady();
-        // Analytics Phase 2: one render/impression per mount. The `acked` gate
-        // flips on the loading→ready transition; the emit-once ref makes it
-        // deterministic even if duplicate acks land before React commits 'ready'
-        // (so it fires exactly once per mount and never on re-render).
-        // Fire-and-forget beacon — failures are a no-op (and a harmless no-op
-        // until the `blockRenders` ClickHouse table exists; see PR body).
-        if (!blockRenderEmittedRef.current) {
-          blockRenderEmittedRef.current = true;
-          sendBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
-        }
-      }
+      setStatus((current) => (current === 'loading' ? 'ready' : current));
+      // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
+      // timeout. Called UNCONDITIONALLY (not behind a "did this ack win the
+      // transition" flag): `notifyReady()` is documented-idempotent
+      // (IframeInitController.notifyReady → stop(), a no-op once stopped), and
+      // making it unconditional removes the only remaining dependence on
+      // observing the updater's side effect (see the note below).
+      controllerRef.current?.notifyReady();
     });
     return off;
-  }, [onMessage, appBlockId, blockInstanceId]);
+  }, [onMessage]);
+
+  // Analytics Phase 2 — render/impression beacon: ONE per host mount, fired on
+  // the loading→ready transition and mutually exclusive with the render-FAILURE
+  // beacon below (they share `blockRenderEmittedRef`).
+  //
+  // 🔴 WHY THIS IS AN EFFECT AND NOT A SIDE EFFECT INSIDE THE BLOCK_READY
+  // HANDLER (a real bug this fixes, not a refactor): it used to live inside the
+  // handler behind an `acked` flag that the `setStatus` UPDATER set —
+  //     let acked = false;
+  //     setStatus((current) => { if (current === 'loading') { acked = true; … } });
+  //     if (acked) { …sendBlockRender… }
+  // — which only works because React *eagerly* evaluates an updater when the
+  // fiber has no other pending update. As soon as ANY unrelated state update is
+  // already queued on this component when BLOCK_READY lands, React skips that
+  // eager path, the updater runs later during render, `acked` is still false at
+  // the `if`, and **the impression is silently dropped**. The host has plenty of
+  // such updates in flight in the real world (token rotation, the image-scan
+  // poller list, the launch-reveal state) — this was latent analytics loss, and
+  // was reproduced deterministically the moment the launch-reveal work added one
+  // more post-mount state update. Keying off the COMMITTED `status` is immune to
+  // batching. Mirrors the failure-beacon effect immediately below.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    if (blockRenderEmittedRef.current) return;
+    blockRenderEmittedRef.current = true;
+    // Fire-and-forget beacon — failures are a no-op.
+    sendBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
+  }, [status, appBlockId, blockInstanceId]);
 
   // BLOCK_ERROR{fatal:true} → fatal.
   useEffect(() => {
@@ -2473,26 +2536,68 @@ export function PageBlockHost({
               width: '100%',
               border: 0,
               pointerEvents: isReady ? 'auto' : 'none',
+              // LAUNCH REVEAL: the block fades + settles up as it becomes ready,
+              // cross-fading with the branded overlay below. Under reduced motion
+              // `revealMs` is 0 → no transition is emitted and the opacity flip is
+              // instantaneous (the pre-animation behaviour).
+              opacity: isReady ? 1 : 0,
+              transform: isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
+              transition:
+                revealMs === 0
+                  ? undefined
+                  : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
             }}
           />
-          {status === 'loading' && (
+          {overlayMounted && (
             <Center
               data-testid="app-page-loading"
               // Announce the loading state on the REGION, not just the graphic:
               // role="status" + aria-busy mark the overlay container as a live
               // busy region so a screen reader announces "loading" when it
               // appears (the bare <Loader> below only exposes a labeled graphic).
-              role="status"
-              aria-busy={true}
-              aria-live="polite"
-              style={{ position: 'absolute', inset: 0, background: 'var(--mantine-color-body)' }}
+              // Once the block IS ready the overlay is a purely decorative
+              // fading-out veil, so it drops the live-region roles and hides from
+              // the a11y tree instead of announcing a stale "loading".
+              {...(isReady
+                ? { 'aria-hidden': true }
+                : { role: 'status', 'aria-busy': true, 'aria-live': 'polite' as const })}
+              // Observable reveal state (DevTools / manual QA): 'false' while the
+              // block is still handshaking, 'true' for the one cross-fade after
+              // BLOCK_READY, then the node unmounts.
+              data-revealing={isReady ? 'true' : 'false'}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'var(--mantine-color-body)',
+                // Never intercept clicks: during loading the iframe is already
+                // pointer-inert, and during the fade-out the block is live
+                // underneath — the veil must not swallow that first click.
+                pointerEvents: 'none',
+                opacity: isReady ? 0 : 1,
+                transition: revealMs === 0 ? undefined : `opacity ${revealMs}ms ease-out`,
+              }}
             >
-              {/* Run the publisher-controlled appName through the SAME sanitizer
-                  the visible chrome uses (sanitizeAppChromeName) so the accessible
-                  name a screen reader reads can't carry control/bidi/zalgo
-                  spoofing — consistency with AppBlockChrome, not a new gate. Falls
-                  back to 'app' when nothing legible remains. */}
-              <Loader aria-label={`Loading ${sanitizeAppChromeName(appName) || 'app'}`} />
+              {/* Branded launch state. The app's initial in the same Avatar
+                  treatment the store card uses gives a visual through-line from
+                  card → run page, so opening an app feels continuous rather than
+                  landing on a bare spinner. Purely presentational: every string is
+                  run through the SAME sanitizer the visible chrome uses
+                  (sanitizeAppChromeName) so the publisher-controlled appName can't
+                  carry control/bidi/zalgo spoofing here either — consistency with
+                  AppBlockChrome, not a new gate. Falls back to 'app' when nothing
+                  legible remains. */}
+              <Stack align="center" gap="sm">
+                <Avatar radius="md" size={56} alt="" aria-hidden>
+                  {(sanitizeAppChromeName(appName) || blockId).charAt(0).toUpperCase()}
+                </Avatar>
+                <Loader
+                  size="sm"
+                  aria-label={`Loading ${sanitizeAppChromeName(appName) || 'app'}`}
+                />
+                <Text size="sm" c="dimmed">
+                  {`Starting ${sanitizeAppChromeName(appName) || 'app'}…`}
+                </Text>
+              </Stack>
             </Center>
           )}
         </Box>

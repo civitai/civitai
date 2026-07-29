@@ -1,4 +1,17 @@
-import { Anchor, Avatar, Badge, Box, Button, Card, Group, Image, Stack, Text, Title, Tooltip } from '@mantine/core';
+import {
+  Anchor,
+  Avatar,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Group,
+  Image,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
 import { IconApps, IconExternalLink, IconPencil, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -63,6 +76,21 @@ function categoryIcon(category: string): Icon {
  * broken/empty `<img>` and two coverless listings never look identical.
  * Decorative (aria-hidden) — the placeholder carries no info the title/category
  * chip don't.
+ *
+ * GEOMETRY (feedback #1: "make cover images larger"): the cover is a RESPONSIVE
+ * 16:9 box (a `Box` with a CSS `aspect-ratio`), not the former fixed `h={140}`.
+ * Two reasons:
+ *   1. It scales with the column, so widening the grid (5 → 4 cols at `xl`)
+ *      actually makes the art bigger instead of leaving a short letterbox. The
+ *      server already serves the cover at `width: 1200` (app-listing.service),
+ *      so there is ~8× resolution headroom — this is a pure client-side change,
+ *      no DTO/pipeline work.
+ *   2. CLS: `aspect-ratio` derives the box height from the (already-known) column
+ *      width BEFORE the image loads, so a slow or failed cover never shifts the
+ *      card. The old fixed height did too — the point is that the responsive box
+ *      KEEPS that property rather than trading it away for scale.
+ * The image branch and the placeholder branch render inside the SAME box, so the
+ * `onError` fallback swaps art without ANY reflow.
  */
 function ListingCover({
   coverUrl,
@@ -79,19 +107,7 @@ function ListingCover({
   // screenshot fallback, whose Image can dangle) — fall back to the category
   // glyph placeholder on load error instead of a broken <img>.
   const [broken, setBroken] = useState(false);
-  if (coverUrl && !broken) {
-    return (
-      <Card.Section>
-        <Image
-          src={coverUrl}
-          alt={`${name} cover image`}
-          h={140}
-          fit="cover"
-          onError={() => setBroken(true)}
-        />
-      </Card.Section>
-    );
-  }
+  const showImage = !!coverUrl && !broken;
   const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
   // Per-app SEEDED gradient (not one uniform grey for every coverless listing) —
   // same seed + stops the generated cover SVG uses, so a listing that later gets
@@ -100,13 +116,45 @@ function ListingCover({
   return (
     <Card.Section>
       <Box
-        aria-hidden
-        h={140}
-        className="flex items-center justify-center"
-        data-listing-cover-placeholder=""
-        style={{ background: listingPlaceholderGradient({ slug, category, surface: 'cover' }) }}
+        data-testid="apps-listing-cover"
+        style={{
+          // The ratio box. `aspect-ratio` derives the height from the (fluid)
+          // column width, so the cover grows with the card AND its height is
+          // reserved before any image bytes arrive — that's the CLS guard.
+          width: '100%',
+          aspectRatio: '16 / 9',
+          overflow: 'hidden',
+        }}
       >
-        <PlaceholderIcon size={44} className="opacity-60" />
+        {showImage ? (
+          <Image
+            src={coverUrl}
+            alt={`${name} cover image`}
+            h="100%"
+            w="100%"
+            fit="cover"
+            onError={() => setBroken(true)}
+          />
+        ) : (
+          <Box
+            aria-hidden
+            data-testid="apps-listing-cover-placeholder"
+            data-listing-cover-placeholder=""
+            className="flex items-center justify-center"
+            style={{
+              // Fills the ratio box exactly, so swapping art on `onError` cannot
+              // change the card's geometry.
+              width: '100%',
+              height: '100%',
+              // Per-app SEEDED gradient (#3465) — NOT the old uniform grey, so two
+              // coverless listings never look identical and a listing keeps its
+              // colour identity if it later gains a generated cover SVG.
+              background: listingPlaceholderGradient({ slug, category, surface: 'cover' }),
+            }}
+          >
+            <PlaceholderIcon size={56} className="opacity-60" />
+          </Box>
+        )}
       </Box>
     </Card.Section>
   );
@@ -267,7 +315,13 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
           </Text>
         )}
 
-        <Group justify="space-between" mt="auto" pt="xs" wrap="nowrap">
+        {/* Feedback #2: the action row's buttons stepped up a notch on the Mantine
+            size scale (xs → sm), so the primary CTA reads as the card's call to
+            action rather than a footnote. Because `sm` buttons are taller/wider,
+            the OUTER row is allowed to WRAP (the actions drop to their own line on
+            a narrow column) instead of overflowing the card — the inner action
+            group still stays nowrap so Edit + CTA never split from each other. */}
+        <Group justify="space-between" mt="auto" pt="xs" gap="xs" wrap="wrap">
           {/* Recommend rollup — "N% recommend (M)" or "No reviews yet". */}
           <Group gap={4} wrap="nowrap">
             <IconThumbUp
@@ -279,7 +333,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             </Text>
           </Group>
 
-          <Group gap={6} wrap="nowrap">
+          <Group gap="xs" wrap="nowrap">
             {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
                 owner + editable status (mod-removed listings hide it). Routes by
                 kind (manifest editor for on-site, submit editor for off-site). */}
@@ -287,9 +341,9 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               <Button
                 component={Link}
                 href={editHref}
-                size="xs"
+                size="sm"
                 variant="default"
-                leftSection={<IconPencil size={14} />}
+                leftSection={<IconPencil size={16} />}
                 data-testid="apps-listing-owner-edit"
                 onClick={(e: MouseEvent) => e.stopPropagation()}
               >
@@ -306,9 +360,9 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 href={cta.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                size="xs"
+                size="sm"
                 variant="light"
-                rightSection={<IconExternalLink size={14} />}
+                rightSection={<IconExternalLink size={16} />}
               >
                 {cta.label}
               </Button>
@@ -316,7 +370,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               <Button
                 component={Link}
                 href={cta.href}
-                size="xs"
+                size="sm"
                 variant={cta.action === 'open' ? 'filled' : 'light'}
               >
                 {cta.label}

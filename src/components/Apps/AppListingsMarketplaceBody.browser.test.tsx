@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { LISTING_GRID_SPAN } from '~/components/Apps/appListingGrid';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -98,5 +99,37 @@ describe('AppListingsMarketplaceBody', () => {
     mocks.items = [];
     renderWithProviders(<AppListingsMarketplaceBody />);
     await expect.element(page.getByText('No apps yet')).toBeInTheDocument();
+  });
+
+  // ── Larger covers (feedback #1): the grid geometry ──────────────────────────
+  // The numbers themselves are pinned in the blocking unit suite
+  // (__tests__/appListingGrid.test.ts). What this asserts is the WIRING: the grid
+  // actually renders with that shared span object, so the two can't drift.
+  test('the grid renders each card with the shared LISTING_GRID_SPAN (xl = 4 columns)', async () => {
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
+
+    const cols = page.getByTestId('apps-listing-grid-col').elements();
+    expect(cols).toHaveLength(mocks.items.length);
+
+    // Mantine Grid.Col compiles the responsive span into a generated <style>
+    // block of `--col-flex-basis` percentages (one media rule per breakpoint).
+    // The OLD `xl: 2.4` (five columns) compiled to a 20% basis; the NEW `xl: 3`
+    // compiles to 25%. So the absence of a 20% basis is a direct, mutation-
+    // sensitive assertion that the five-column xl layout is gone — flip the span
+    // back to 2.4 and this fails. The exact per-breakpoint numbers are pinned in
+    // the blocking unit suite (__tests__/appListingGrid.test.ts).
+    const css = Array.from(document.querySelectorAll('style'))
+      .map((s) => s.textContent ?? '')
+      .join('\n')
+      .replace(/\s+/g, '');
+    expect(css).toContain('--col-flex-basis:25%'); // 3/12 — the lg + xl columns
+    expect(css).not.toContain('--col-flex-basis:20%'); // 2.4/12 — the retired 5-col xl
+
+    // …and the grid is wired to the SHARED constant, so the unit pins above
+    // actually govern what renders.
+    expect(LISTING_GRID_SPAN.xl).toBe(3);
+    expect(12 / LISTING_GRID_SPAN.xl).toBe(4);
+    expect(LISTING_GRID_SPAN).toMatchObject({ base: 12, sm: 6, md: 4, lg: 3 });
   });
 });
