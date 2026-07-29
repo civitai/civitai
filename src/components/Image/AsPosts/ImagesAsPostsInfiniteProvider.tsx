@@ -45,6 +45,12 @@ type ImagesAsPostsInfiniteState = {
   hiddenImageIds?: number[];
   hiddenTags?: number[];
   hiddenUsers?: number[];
+  /**
+   * The viewer's `swipeGalleryCards` opt-in, resolved once here rather than per
+   * card — every card would otherwise register its own `user.getSettings`
+   * observer, which is exactly the kind of per-card cost this feed avoids.
+   */
+  swipeCards?: boolean;
 };
 const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
 export const useImagesAsPostsInfiniteContext = () => {

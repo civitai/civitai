@@ -1,7 +1,23 @@
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+
+type ViewportSwipeHandlers = {
+  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerCancel: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onClickCapture: (event: React.MouseEvent<HTMLDivElement>) => void;
+};
 
 type SimpleCarouselContextType = {
   currentIndex: number;
@@ -11,6 +27,7 @@ type SimpleCarouselContextType = {
   goTo: (index: number) => void;
   canScrollNext: boolean;
   canScrollPrev: boolean;
+  swipeHandlers: ViewportSwipeHandlers | null;
 };
 
 const SimpleCarouselContext = createContext<SimpleCarouselContextType | null>(null);
@@ -36,7 +53,18 @@ type SimpleImageCarouselProps = {
    * carousel to prefetch the tail on approach.
    */
   onIndexChange?: (index: number) => void;
+  /**
+   * Opt-in horizontal drag on the viewport. Off by default: the gallery feed
+   * mounts hundreds of these at once, so no card pays for touch handling unless
+   * the viewer asked for it (`swipeGalleryCards` user setting).
+   */
+  enableSwipe?: boolean;
 };
+
+/** Horizontal travel (px) before a gesture is claimed as a swipe rather than a page scroll. */
+const AXIS_LOCK_THRESHOLD = 10;
+/** Horizontal travel (px) required to actually change slides. */
+const SWIPE_DISTANCE_THRESHOLD = 45;
 
 export function SimpleImageCarousel({
   children,
@@ -46,6 +74,7 @@ export function SimpleImageCarousel({
   total,
   initialIndex = 0,
   onIndexChange,
+  enableSwipe = false,
 }: SimpleImageCarouselProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
 
@@ -102,10 +131,21 @@ export function SimpleImageCarousel({
     [next, prev]
   );
 
+  const swipeHandlers = useSwipeHandlers({
+    enabled: enableSwipe && total > 1,
+    next,
+    prev,
+    canScrollNext,
+    canScrollPrev,
+  });
+
+  const contextValue = useMemo(
+    () => ({ currentIndex, total, next, prev, goTo, canScrollNext, canScrollPrev, swipeHandlers }),
+    [currentIndex, total, next, prev, goTo, canScrollNext, canScrollPrev, swipeHandlers]
+  );
+
   return (
-    <SimpleCarouselContext.Provider
-      value={{ currentIndex, total, next, prev, goTo, canScrollNext, canScrollPrev }}
-    >
+    <SimpleCarouselContext.Provider value={contextValue}>
       <div
         className={clsx('relative', className)}
         style={style}
@@ -116,6 +156,134 @@ export function SimpleImageCarousel({
       </div>
     </SimpleCarouselContext.Provider>
   );
+}
+
+// Pointer capture throws when the id isn't an active pointer (a released touch,
+// a synthesized event). Losing capture only costs us a gesture, so never let it
+// take down the render.
+function capturePointer(element: Element, pointerId: number) {
+  try {
+    element.setPointerCapture(pointerId);
+  } catch {
+    // no capture — the gesture still tracks via events on this element
+  }
+}
+
+function releasePointer(element: Element, pointerId: number) {
+  try {
+    if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
+  } catch {
+    // already released
+  }
+}
+
+/**
+ * Pointer-event swipe. Deliberately library-free and allocation-light: one ref
+ * holds the whole gesture, and nothing is subscribed while the finger is down.
+ *
+ * The gesture locks to an axis on first movement — horizontal drives the
+ * carousel, vertical is released back to the browser so the feed still scrolls.
+ * A completed horizontal drag swallows the click that follows it, otherwise
+ * lifting your finger would also open the image detail dialog behind the slide.
+ */
+function useSwipeHandlers({
+  enabled,
+  next,
+  prev,
+  canScrollNext,
+  canScrollPrev,
+}: {
+  enabled: boolean;
+  next: () => void;
+  prev: () => void;
+  canScrollNext: boolean;
+  canScrollPrev: boolean;
+}): ViewportSwipeHandlers | null {
+  const gesture = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    axis: 'none' | 'horizontal' | 'vertical';
+  } | null>(null);
+  const suppressClick = useRef(false);
+
+  const navRef = useRef({ next, prev, canScrollNext, canScrollPrev });
+  navRef.current = { next, prev, canScrollNext, canScrollPrev };
+
+  return useMemo(() => {
+    if (!enabled) return null;
+
+    const end = (event: React.PointerEvent<HTMLDivElement>) => {
+      const current = gesture.current;
+      gesture.current = null;
+      if (!current || current.pointerId !== event.pointerId) return null;
+      releasePointer(event.currentTarget, event.pointerId);
+      return current;
+    };
+
+    return {
+      onPointerDown: (event) => {
+        // Secondary/right mouse buttons are not gestures.
+        if (event.button !== 0) return;
+        // A drag that never produced a click (touch pointers don't always emit
+        // one) must not swallow the next real tap.
+        suppressClick.current = false;
+        gesture.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          axis: 'none',
+        };
+      },
+      onPointerMove: (event) => {
+        const current = gesture.current;
+        if (!current || current.pointerId !== event.pointerId || current.axis === 'vertical')
+          return;
+
+        if (current.axis === 'none') {
+          const dx = Math.abs(event.clientX - current.startX);
+          const dy = Math.abs(event.clientY - current.startY);
+          if (dx < AXIS_LOCK_THRESHOLD && dy < AXIS_LOCK_THRESHOLD) return;
+          if (dy >= dx) {
+            // Vertical intent: hand the gesture back so the feed scrolls normally.
+            current.axis = 'vertical';
+            gesture.current = null;
+            return;
+          }
+          current.axis = 'horizontal';
+          capturePointer(event.currentTarget, event.pointerId);
+        }
+      },
+      onPointerUp: (event) => {
+        const current = end(event);
+        if (!current || current.axis !== 'horizontal') return;
+
+        const dx = event.clientX - current.startX;
+        // The drag moved far enough to be intentional, so it owns the click that
+        // follows regardless of whether we end up changing slides.
+        if (Math.abs(dx) >= AXIS_LOCK_THRESHOLD) suppressClick.current = true;
+        if (Math.abs(dx) < SWIPE_DISTANCE_THRESHOLD) return;
+
+        const {
+          next: goNext,
+          prev: goPrev,
+          canScrollNext: fwd,
+          canScrollPrev: back,
+        } = navRef.current;
+        if (dx < 0 && fwd) goNext();
+        else if (dx > 0 && back) goPrev();
+      },
+      onPointerCancel: (event) => {
+        end(event);
+      },
+      onClickCapture: (event) => {
+        if (!suppressClick.current) return;
+        suppressClick.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      },
+    };
+  }, [enabled]);
 }
 
 type SlideProps = {
@@ -242,7 +410,18 @@ type ViewportProps = {
 };
 
 function Viewport({ children, className }: ViewportProps) {
-  return <div className={clsx('relative overflow-hidden', className)}>{children}</div>;
+  const { swipeHandlers } = useSimpleCarousel();
+
+  return (
+    <div
+      // `touch-pan-y` is what makes the horizontal drag reach us at all — without
+      // it the browser claims the gesture for scrolling and no pointermove lands.
+      className={clsx('relative overflow-hidden', swipeHandlers && 'touch-pan-y', className)}
+      {...swipeHandlers}
+    >
+      {children}
+    </div>
+  );
 }
 
 type ContainerProps = {

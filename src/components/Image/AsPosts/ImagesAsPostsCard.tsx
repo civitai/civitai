@@ -174,8 +174,7 @@ function ImagesAsPostsCardHeader({
   // The "OP" badge marks the post author as the entity's creator. Both
   // Model and Model3D galleries surface this — the source union narrows
   // to the right userId.
-  const creatorUserId =
-    source.kind === 'model' ? source.model.user.id : source.creatorUserId;
+  const creatorUserId = source.kind === 'model' ? source.model.user.id : source.creatorUserId;
   const isOP = data.user.id === creatorUserId;
 
   return (
@@ -267,6 +266,7 @@ function ImagesAsPostsCardHeader({
 
 function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
+  const { swipeCards } = useImagesAsPostsInfiniteContext();
   const { trackAction } = useTrackEvent();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
@@ -373,18 +373,17 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
     data.imageCount > data.images.length ? (
     // LAZY: server sent a first slice + the true `imageCount`; load the tail on
     // approach so the initial feed payload stays small without truncating the UX.
-    <LazyPostImagesCarousel data={data} postId={postId} />
+    <LazyPostImagesCarousel data={data} postId={postId} enableSwipe={swipeCards} />
   ) : (
     // Today's behaviour (flag OFF, or a post already within the slice): all images
     // are inline — render them directly, no lazy fetch.
-    <StaticPostImagesCarousel images={data.images} postId={postId} />
+    <StaticPostImagesCarousel images={data.images} postId={postId} enableSwipe={swipeCards} />
   );
 }
 
 const carouselIndicatorProps = {
   className: 'flex w-full gap-px',
-  indicatorClassName:
-    'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
+  indicatorClassName: 'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
 } as const;
 
 /**
@@ -500,12 +499,19 @@ function PostCarouselSlide({
 export function StaticPostImagesCarousel({
   images,
   postId,
+  enableSwipe,
 }: {
   images: ImagesAsPostModel['images'];
   postId: number;
+  enableSwipe?: boolean;
 }) {
   return (
-    <SimpleImageCarousel loop total={images.length} className="flex h-full flex-col">
+    <SimpleImageCarousel
+      loop
+      total={images.length}
+      enableSwipe={enableSwipe}
+      className="flex h-full flex-col"
+    >
       <SimpleImageCarousel.Viewport className="relative flex-1">
         <SimpleImageCarousel.Container className="h-full">
           {images.map((image, index) => (
@@ -534,9 +540,11 @@ export function StaticPostImagesCarousel({
 export function LazyPostImagesCarousel({
   data,
   postId,
+  enableSwipe,
 }: {
   data: ImagesAsPostModel;
   postId: number;
+  enableSwipe?: boolean;
 }) {
   const { filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers } =
     useImagesAsPostsInfiniteContext();
@@ -549,8 +557,7 @@ export function LazyPostImagesCarousel({
     (index: number) => {
       setFetchTail(
         (prev) =>
-          prev ||
-          shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
+          prev || shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
       );
     },
     [seed.length, total]
@@ -616,6 +623,7 @@ export function LazyPostImagesCarousel({
       loop
       total={effectiveTotal}
       onIndexChange={handleIndexChange}
+      enableSwipe={enableSwipe}
       className="flex h-full flex-col"
     >
       <SimpleImageCarousel.Viewport className="relative flex-1">

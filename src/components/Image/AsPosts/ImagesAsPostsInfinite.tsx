@@ -38,6 +38,7 @@ import {
   type ImagesAsPostsSource,
 } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -95,6 +96,7 @@ export function ImagesAsPostsInfinite({
   const limit = isMobile ? LIMIT / 2 : LIMIT;
 
   const [showHidden, setShowHidden] = useState(false);
+  const { swipeGalleryCards } = useCurrentUserSettings();
 
   const imageFilters = useImageFilters('modelImages');
   const filters = useMemo(() => {
@@ -233,6 +235,7 @@ export function ImagesAsPostsInfinite({
       hiddenImageIds: !showHidden ? hiddenImageIds : undefined,
       hiddenTags: !showHidden ? hiddenTags : undefined,
       hiddenUsers: !showHidden ? hiddenUsers : undefined,
+      swipeCards: swipeGalleryCards ?? false,
     }),
     [
       filters,
@@ -244,6 +247,7 @@ export function ImagesAsPostsInfinite({
       hiddenImageIds,
       hiddenTags,
       hiddenUsers,
+      swipeGalleryCards,
     ]
   );
 
@@ -294,9 +298,7 @@ export function ImagesAsPostsInfinite({
                   (source.kind === 'model' || source.kind === 'model3d') && (
                     <>
                       {!!hiddenImageIds.length && (
-                        <ButtonTooltip
-                          label={`${showHidden ? 'Hide' : 'Show'} hidden images`}
-                        >
+                        <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
                           <LegacyActionIcon
                             variant="light"
                             radius="xl"
