@@ -33,8 +33,15 @@ vi.mock('~/server/services/blocks/app-review-report.service', () => ({
   getAgentReport: mockGetAgentReport,
 }));
 // The OpenRouter client civitai now calls directly for the grounded reply.
+// AI_MODELS has to be stubbed too: agent-review.service reads
+// `AI_MODELS.CLAUDE_HAIKU` at module scope, so omitting it fails the whole file
+// at import (which vitest reports as zero tests collected, not as a failure).
+// Stubbed rather than importOriginal'd because the real module pulls in
+// ~/env/server — the reason it's mocked at all. The model assertion compares
+// against AGENT_REVIEW_CHAT_MODEL, so it stays self-consistent.
 vi.mock('~/server/services/ai/openrouter', () => ({
   openrouter: { getTextCompletion: mockGetTextCompletion },
+  AI_MODELS: { CLAUDE_HAIKU: 'anthropic/claude-3-5-haiku' },
 }));
 
 import {
