@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { WorkflowEvent } from '@civitai/client';
 import { getWorkflow } from '@civitai/client';
 import type { NextApiRequest } from 'next';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -13,10 +14,7 @@ import {
   findOfficialFileByHash,
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
-import {
-  checkMinorHashOnScan,
-  MINOR_HASH_FILE_TYPE,
-} from '~/server/services/minor-hash.service';
+import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   createModelFileScanRequest,
@@ -226,7 +224,10 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       scannedSha256 &&
       scannedModelId &&
       scannedUserId &&
-      file.type === MINOR_HASH_FILE_TYPE
+      file.type === MINOR_HASH_FILE_TYPE &&
+      // Checked last so the kill switch is the only thing evaluated per scan
+      // once the cheap local gates have already excluded the file.
+      (await isFlipt(FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG))
     ) {
       await checkMinorHashOnScan({
         modelId: scannedModelId,
@@ -267,7 +268,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       }
     } catch (e) {
       logToAxiom(
-        { type: 'warning', name: 'post-scan-official-dedup', message: (e as Error).message, fileId },
+        {
+          type: 'warning',
+          name: 'post-scan-official-dedup',
+          message: (e as Error).message,
+          fileId,
+        },
         'webhooks'
       ).catch(() => null);
     }
