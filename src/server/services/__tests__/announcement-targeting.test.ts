@@ -7,14 +7,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // see a targeted announcement, members do, the internal `targeted` flag never
 // leaks into the returned DTOs, and the membership query is skipped entirely
 // when nothing is targeted.
-const { redisGet, membershipFindMany, announcementCreate, userFindMany, createNotificationMock } =
-  vi.hoisted(() => ({
-    redisGet: vi.fn(),
-    membershipFindMany: vi.fn(),
-    announcementCreate: vi.fn(),
-    userFindMany: vi.fn(),
-    createNotificationMock: vi.fn(),
-  }));
+const {
+  redisGet,
+  membershipFindMany,
+  announcementCreate,
+  userFindMany,
+  createNotificationMock,
+  targetDeleteMany,
+  targetCreateMany,
+} = vi.hoisted(() => ({
+  redisGet: vi.fn(),
+  membershipFindMany: vi.fn(),
+  announcementCreate: vi.fn(),
+  userFindMany: vi.fn(),
+  createNotificationMock: vi.fn(),
+  targetDeleteMany: vi.fn(),
+  targetCreateMany: vi.fn(),
+}));
 
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { day: 86400 } }));
 vi.mock('~/server/services/notification.service', () => ({
@@ -28,7 +37,7 @@ vi.mock('~/server/db/client', () => ({
   },
   dbWrite: {
     announcement: { findMany: vi.fn(), create: announcementCreate, update: vi.fn() },
-    announcementUser: { deleteMany: vi.fn(), createMany: vi.fn() },
+    announcementUser: { deleteMany: targetDeleteMany, createMany: targetCreateMany },
     user: { findMany: userFindMany },
     $transaction: vi.fn(),
   },
@@ -167,6 +176,20 @@ describe('upsertAnnouncement target notifications', () => {
     await upsertAnnouncement({ title: 'Hello', content: 'c', targetUserIds: [1] } as never);
 
     expect(createNotificationMock).not.toHaveBeenCalled();
+  });
+
+  it('clears the target set when [] is passed, and leaves it untouched when omitted', async () => {
+    const { upsertAnnouncement } = await loadService();
+
+    await upsertAnnouncement({ title: 'Hello', content: 'c', targetUserIds: [] } as never);
+    expect(targetDeleteMany).toHaveBeenCalledWith({ where: { announcementId: 7 } });
+    expect(targetCreateMany).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    announcementCreate.mockResolvedValue({ id: 7, title: 'Hello', metadata: {} });
+    await upsertAnnouncement({ title: 'Hello', content: 'c' } as never);
+    expect(targetDeleteMany).not.toHaveBeenCalled();
+    expect(targetCreateMany).not.toHaveBeenCalled();
   });
 
   it('rejects the whole save when target ids do not exist, naming them', async () => {

@@ -28,14 +28,16 @@ export async function upsertAnnouncement({
 }: UpsertAnnouncementSchema) {
   // Validated BEFORE the announcement is written: a bad target list must reject the
   // whole save, not persist an announcement whose targeting silently differs from
-  // what the moderator submitted.
-  const targets = targetUserIds ? await validateTargetUserIds(targetUserIds) : undefined;
+  // what the moderator submitted. Explicitly undefined-checked: [] is a meaningful
+  // value here (clear targeting), only an omitted field means "leave unchanged".
+  const targets =
+    targetUserIds !== undefined ? await validateTargetUserIds(targetUserIds) : undefined;
 
   const result = data.id
     ? await dbWrite.announcement.update({ where: { id: data.id }, data })
     : await dbWrite.announcement.create({ data });
 
-  if (targets) {
+  if (targets !== undefined) {
     await setAnnouncementTargets(result.id, targets);
     if (notifyTargetedUsers && targets.length) {
       await notifyAnnouncementTargets(result, targets);
