@@ -148,13 +148,16 @@ see [Calling All Developers: Join Civitai's Community Development Team](https://
 
 Over the course of development, you may need to change the structure of the database. To do this:
 
-1. Make your changes to the `schema.prisma` file
-2. Create a folder in the `prisma/migrations folder` named with the convention `YYYYMMDDHHmmss_brief_description_here`
-3. In this folder, create a file called `migration.sql`
-4. In that file, put your sql changes
+1. Make your changes to the `packages/civitai-db-schema/prisma/schema.prisma` file
+2. Run `pnpm run db:migrate:empty "brief description here"`. This creates
+   `packages/civitai-db-schema/prisma/migrations/YYYYMMDDHHmmss_brief_description_here/migration.sql`
+   for you, in the one directory Prisma reads.
+   To create it by hand instead, use that same path — **not** the `prisma/migrations`
+   directory at the repo root, which predates the monorepo layout and is no longer read.
+3. Put your sql changes in the generated `migration.sql`
     - These are usually simple sql commands like `ALTER TABLE ...`
-5. Run `make run-migrations` and `make gen-prisma`
-6. If you are adding/changing a column or table, please try to keep the `gen_seed.ts` file up to date with these changes.
+4. Run `make run-migrations` and `make gen-prisma`
+5. If you are adding/changing a column or table, please try to keep the `gen_seed.ts` file up to date with these changes.
 
 ## Sponsors
 

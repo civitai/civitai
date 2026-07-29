@@ -28,6 +28,13 @@
       "description": "Human-readable display name. The server only requires a non-empty string (no length cap), so the CLI does not impose one either.",
       "minLength": 1
     },
+    "tagline": {
+      "type": "string",
+      "description": "Optional one-line pitch shown under the app's name on its `/apps` store card + detail page. Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version. Omit it and the store simply shows no tagline. Must contain a non-whitespace character and is capped at 140 characters — the same bound off-site listings use (OFFSITE_TAGLINE_MAX), kept in lockstep with MANIFEST_TAGLINE_MAX_LENGTH in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality). NOTE: the server measures the TRIMMED length, while this maxLength counts the raw string — so a value padded past 140 is rejected here but accepted server-side. That asymmetry is deliberate and one-directional: this schema is never more permissive than the server, so local validation can't green-light something submit would reject.",
+      "minLength": 1,
+      "maxLength": 140,
+      "pattern": "\\S"
+    },
     "type": {
       "type": "string",
       "description": "Free-form descriptor used by some examples (e.g. \"block\"). Not validated by the platform.",
@@ -85,7 +92,7 @@
     },
     "scopeJustifications": {
       "type": "object",
-      "description": "OPTIONAL per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. Backward-compatible — omit it and the manifest stays valid; `scopes` is unchanged. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. NOTE: this captures the developer's STATED rationale only; the platform does not verify the claims.",
+      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
       "additionalProperties": {
         "type": "string",
         "minLength": 1,

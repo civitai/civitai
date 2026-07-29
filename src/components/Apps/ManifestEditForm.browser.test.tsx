@@ -164,6 +164,26 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
     expect(arg.patch.targets).toBeUndefined();
   });
 
+  test('preserves the existing name / description / content-rating / version fields', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{ ...BASE_MANIFEST, description: 'Does a thing.' }}
+      />
+    );
+    await expect.element(page.getByRole('textbox', { name: 'Name' })).toHaveValue('My Block');
+    await expect
+      .element(page.getByRole('textbox', { name: 'Description' }))
+      .toHaveValue('Does a thing.');
+    // New version defaults to a patch bump of the current version.
+    await expect.element(page.getByRole('textbox', { name: 'New version' })).toHaveValue('1.0.1');
+    await expect.element(page.getByRole('textbox', { name: 'Block ID (immutable)' })).toHaveValue(
+      'my-block'
+    );
+  });
+
   test('clearing all justification inputs submits an explicit empty object (not undefined) so stored rationale is overwritten', async () => {
     renderWithProviders(
       <ManifestEditForm
@@ -187,5 +207,139 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
     // previously-stored justifications instead of retaining stale rationale.
     expect(arg.patch.scopeJustifications).toEqual({});
     expect(arg.patch.scopeJustifications).not.toBeUndefined();
+  });
+});
+
+/**
+ * Tagline + Category — the two MANIFEST-GOVERNED store fields the onsite author
+ * had no surface for at all. Without them an onsite listing was permanently
+ * `tagline = null` / `category = null`, which is exactly what made
+ * /apps/my-submissions warn "Missing tagline / category" for a field the
+ * developer could not set anywhere.
+ */
+describe('ManifestEditForm — tagline + category (manifest-governed store fields)', () => {
+  test('renders both controls, seeded from the stored manifest', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{ ...BASE_MANIFEST, tagline: 'Does the thing', category: 'utility' }}
+      />
+    );
+    await expect.element(page.getByRole('textbox', { name: 'Tagline' })).toHaveValue(
+      'Does the thing'
+    );
+    // Mantine Select renders as a combobox whose display value is the LABEL.
+    await expect.element(page.getByRole('textbox', { name: 'Category' })).toHaveValue('Utility');
+  });
+
+  test('Save includes the trimmed tagline + selected category on the patch', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{ ...BASE_MANIFEST, category: 'utility' }}
+      />
+    );
+    await userEvent.fill(page.getByRole('textbox', { name: 'Tagline' }), '  A crisp one-liner  ');
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    const arg = mocks.mutate.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect(arg.patch.tagline).toBe('A crisp one-liner');
+    expect(arg.patch.category).toBe('utility');
+  });
+
+  test('an EMPTY tagline / unset category submit as explicit null (so the server clears the manifest key)', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{ ...BASE_MANIFEST, tagline: 'Old pitch' }}
+      />
+    );
+    await userEvent.clear(page.getByRole('textbox', { name: 'Tagline' }));
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+
+    const arg = mocks.mutate.mock.calls[0][0] as { patch: Record<string, unknown> };
+    // NOT undefined — an undefined may be dropped in transit and the server's
+    // {...stored, ...patch} merge would then retain the stale value.
+    expect(arg.patch.tagline).toBeNull();
+    expect(arg.patch.category).toBeNull();
+  });
+
+  test('lets the author PICK a category from the marketplace taxonomy', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    await userEvent.click(page.getByRole('textbox', { name: 'Category' }));
+    await userEvent.click(page.getByRole('option', { name: 'Games' }));
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+
+    const arg = mocks.mutate.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect(arg.patch.category).toBe('games');
+  });
+
+  test('an over-length tagline shows an error and DISABLES Save (advisory client gate)', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    await userEvent.fill(page.getByRole('textbox', { name: 'Tagline' }), 'a'.repeat(141));
+
+    await expect
+      .element(page.getByText('Tagline must be at most 140 characters'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: 'Save & submit for review' }))
+      .toBeDisabled();
+  });
+
+  test('an exactly-at-cap tagline is accepted (Save stays enabled)', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    await userEvent.fill(page.getByRole('textbox', { name: 'Tagline' }), 'a'.repeat(140));
+    await expect
+      .element(page.getByRole('button', { name: 'Save & submit for review' }))
+      .toBeEnabled();
+  });
+
+  test('still OMITS targets from the patch when tagline/category are present (no slot clobber)', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{
+          ...BASE_MANIFEST,
+          targets: [{ slotId: 'model.sidebar_top' }],
+          tagline: 'Pitch',
+          category: 'games',
+        }}
+      />
+    );
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+    const arg = mocks.mutate.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect('targets' in arg.patch).toBe(false);
+    expect(arg.patch.tagline).toBe('Pitch');
+    expect(arg.patch.category).toBe('games');
   });
 });

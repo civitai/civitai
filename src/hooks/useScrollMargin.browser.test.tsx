@@ -1,4 +1,5 @@
-import React, { useRef, useState } from 'react';
+import React, { Component, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
@@ -171,5 +172,136 @@ describe('useScrollMargin', () => {
     await settle();
 
     expect(renders).toBeLessThan(6);
+  });
+
+  describe('when the layout reacts to the margin the hook publishes', () => {
+    // The margin is fed to `useVirtualizer`, which decides what renders inside the scroll
+    // container. If any of that lands above the measured element — directly, or through a
+    // container the virtualizer sizes — measuring on every commit re-measures a position
+    // that the last measurement moved, and there is no offset that holds still.
+    //
+    // Re-measuring per commit with no bound turns that into an unbroken chain of
+    // synchronous re-renders: React counts 50 nested updates and throws "Maximum update
+    // depth exceeded", which is not recoverable — the nearest error boundary replaces the
+    // page. So the hook has to give up on a moving target rather than chase it.
+
+    /** Offset flips between two values, so no published margin is ever the measured one. */
+    function TwoCycle({ onRender }: { onRender?: () => void }) {
+      const ref = useRef<HTMLDivElement>(null);
+      const scrollMargin = useScrollMargin(ref);
+      onRender?.();
+
+      return (
+        <>
+          <div data-testid="feedback-spacer" style={{ height: scrollMargin > 200 ? 100 : 400 }} />
+          <div ref={ref} data-testid={TARGET} data-margin={scrollMargin} style={{ height: 100 }} />
+        </>
+      );
+    }
+
+    function CoupledHarness({ children }: { children: ReactNode }) {
+      const scrollRef = useRef<HTMLDivElement>(null);
+
+      return (
+        <ScrollAreaContext.Provider value={{ ref: scrollRef as React.RefObject<HTMLDivElement> }}>
+          <div
+            ref={scrollRef}
+            data-testid="scroll-area"
+            style={{ height: 200, overflowY: 'auto', position: 'relative' }}
+          >
+            {children}
+          </div>
+        </ScrollAreaContext.Provider>
+      );
+    }
+
+    class Boundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+      state = { error: null as Error | null };
+      static getDerivedStateFromError(error: Error) {
+        return { error };
+      }
+      render() {
+        return this.state.error ? (
+          <div data-testid="crashed">{this.state.error.message}</div>
+        ) : (
+          this.props.children
+        );
+      }
+    }
+
+    const crashed = () => document.querySelector('[data-testid="crashed"]')?.textContent ?? null;
+
+    test('gives up instead of exceeding the update depth', async () => {
+      renderWithProviders(
+        <Boundary>
+          <CoupledHarness>
+            <TwoCycle />
+          </CoupledHarness>
+        </Boundary>
+      );
+
+      await settle();
+
+      expect(crashed()).toBeNull();
+    });
+
+    test('stops re-rendering once it has given up', async () => {
+      let renderCount = 0;
+      renderWithProviders(
+        <Boundary>
+          <CoupledHarness>
+            <TwoCycle onRender={() => renderCount++} />
+          </CoupledHarness>
+        </Boundary>
+      );
+
+      await settle();
+      const afterSettle = renderCount;
+      await settle();
+
+      expect(crashed()).toBeNull();
+      expect(renderCount).toBe(afterSettle);
+    });
+
+    test('a real resize above it still re-measures after it has given up', async () => {
+      // Giving up must not deafen the hook to the case #3426 exists for: the budget is
+      // spent on chasing our own output, and a resize above the list is not that.
+      function Coupled() {
+        const ref = useRef<HTMLDivElement>(null);
+        const scrollMargin = useScrollMargin(ref);
+
+        return (
+          <>
+            <div data-testid={SPACER} style={{ height: 0 }} />
+            <div
+              data-testid="feedback-spacer"
+              style={{ height: scrollMargin % 2 === 0 ? 401 : 100 }}
+            />
+            <div
+              ref={ref}
+              data-testid={TARGET}
+              data-margin={scrollMargin}
+              style={{ height: 100 }}
+            />
+          </>
+        );
+      }
+
+      renderWithProviders(
+        <Boundary>
+          <CoupledHarness>
+            <Coupled />
+          </CoupledHarness>
+        </Boundary>
+      );
+      await settle();
+      expect(crashed()).toBeNull();
+      const givenUpAt = margin();
+
+      setSpacerHeight(1000);
+
+      await vi.waitFor(() => expect(margin()).not.toBe(givenUpAt));
+      expect(crashed()).toBeNull();
+    });
   });
 });

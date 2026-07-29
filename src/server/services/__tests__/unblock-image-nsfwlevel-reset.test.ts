@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // the recompute (update_nsfw_levels_new) still fires afterward.
 //
 // image.service is the graph root; the mock scaffold mirrors the established
-// recipe (image-metrics-timeout.test.ts): stub env + infra clients + the private
+// recipe (image-metrics-timeout.test.ts): stub env + infra clients + the
 // event-engine-common submodule so importing it boots no real infra. On top of
 // that, dbRead/dbWrite are permissive proxies that capture the raw SQL, and the
 // few fan-out helpers that actually run are overridden to no-ops.
@@ -76,7 +76,7 @@ const dbRead = makePermissive({
 
 vi.mock('~/server/db/client', () => ({ dbRead, dbWrite }));
 
-// event-engine-common is a private git submodule not checked out in this worktree.
+// event-engine-common is a git submodule, not checked out by default.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();

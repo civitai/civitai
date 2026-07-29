@@ -20,6 +20,7 @@ type HomeBlockForCache = {
   id: number;
   type: HomeBlockType;
   metadata: HomeBlockMetaSchema;
+  sourceId?: number | null;
 };
 
 const log = createLogger('home-block-cache', 'green');
@@ -27,12 +28,16 @@ const log = createLogger('home-block-cache', 'green');
 function getHomeBlockIdentifier(homeBlock: HomeBlockForCache) {
   switch (homeBlock.type) {
     case HomeBlockType.Collection:
+      // Keyed by collection id so the ~110k clones of a system block share one entry and stay
+      // reachable by homeBlockCacheBust(Collection, collectionId) when the collection changes.
       return homeBlock.metadata.collection?.id;
     case HomeBlockType.Leaderboard:
     case HomeBlockType.Announcement:
       return homeBlock.id;
     case HomeBlockType.CosmeticShop:
-      return homeBlock.metadata.cosmeticShopSection?.id;
+      // Clones read the section through to their source, so a section-id key would store source
+      // data under the clone's stale snapshot id and poison blocks genuinely on that section.
+      return homeBlock.sourceId ? homeBlock.id : homeBlock.metadata.cosmeticShopSection?.id;
     case HomeBlockType.FeaturedModelVersion:
       return 'default';
     case HomeBlockType.FeaturedCollections:
@@ -58,6 +63,9 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
   const parsedHomeBlock = {
     ...(homeBlockWithData || {}),
     ...homeBlock,
+    // ...but metadata may have been resolved through to the source block, so it can't come from
+    // the clone's snapshot.
+    metadata: homeBlockWithData?.metadata ?? homeBlock.metadata,
   };
 
   if (homeBlockWithData) {

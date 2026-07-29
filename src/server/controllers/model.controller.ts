@@ -709,6 +709,7 @@ export const upsertModelHandler = async ({
         ...gallerySettings,
         level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
       },
+      tracker: ctx.track,
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id as number}`);
 

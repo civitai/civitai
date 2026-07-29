@@ -38,7 +38,9 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
     },
     appListing: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ id: 'apl_existing' })),
+      findUnique: vi.fn(
+        async (..._a: unknown[]): Promise<unknown> => ({ id: 'apl_existing', kind: 'onsite' })
+      ),
       create: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
@@ -87,6 +89,16 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-listing-mapper', () => ({
   mapAppBlockToListing: () => ({ id: 'apl_mapped' }),
+  // The approve path also imports the manifest-governed copy re-sync builder
+  // (subsequent-version approve). Stubbed so this suite stays focused on the
+  // notification emission; the re-sync itself has its own suite
+  // (publish-request.listingSync.test.ts).
+  buildListingScalarSync: () => ({
+    name: 'Cool App',
+    description: null,
+    tagline: null,
+    category: null,
+  }),
 }));
 vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
@@ -146,7 +158,7 @@ beforeEach(() => {
   db.write.appBlock.findUnique.mockResolvedValue({ id: 'apb_existing' });
   db.write.oauthClient.update.mockResolvedValue({});
   db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
-  db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
+  db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'onsite' });
   s3.send.mockImplementation(async () => ({
     Body: { transformToByteArray: async () => holder.zipBytes },
   }));

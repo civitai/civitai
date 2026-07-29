@@ -113,7 +113,7 @@ export const upsertCommentHandler = async ({
     const { ownerId, locked } = ctx;
     const { modelId } = input;
 
-    if (!input.commentId && !ctx.user.isModerator) {
+    if (!input.id) {
       const parentAuthorId = input.parentId
         ? (
             await dbRead.comment.findUnique({

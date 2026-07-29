@@ -14,7 +14,7 @@
  * for the human rule-#8 manual-apply step.
  *
  * P0 shipped `draft|pending|approved|rejected`
- * (`prisma/migrations/20260701120000_w13_p0_app_listing/migration.sql`).
+ * (`packages/civitai-db-schema/prisma/migrations/20260701120000_w13_p0_app_listing/migration.sql`).
  * P3b adds `removed` (the delist target) — see
  * `claudedocs/app-blocks-p3b-delist-claim-scope-2026-07-06.md`.
  */
