@@ -7,6 +7,7 @@ import {
   IconBookmark,
   IconBookmarkEdit,
   IconBrush,
+  IconChartHistogram,
   IconCloudLock,
   IconCode,
   IconCube,
@@ -153,6 +154,16 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconProgressBolt,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Buzz Dashboard',
+        },
+        {
+          // The Creator Studio spoke (creator.civitai.com) — earnings/analytics + per-version
+          // licensing-fee and paid-access management. Shared session, so a plain cross-subdomain link.
+          href: 'https://creator-studio.civitai.com',
+          visible: !!currentUser,
+          icon: IconChartHistogram,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Creator Studio',
+          newUntil: new Date('2026-09-01'),
         },
         {
           href: '/user/vault',

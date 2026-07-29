@@ -111,8 +111,12 @@ const formEarlyAccessConfigSchema = z.object({
   accessPrice: z.number().optional(),
   // Optional cheaper generation-only tier; defaults to the access price when unset.
   generationPrice: z.number().optional(),
-  // Free preview generations before purchase is required (the trial limit; integer — see trialLimit).
-  freePreviewGenerations: z.number().int().default(DEFAULT_GENERATION_TRIAL_LIMIT),
+  // Free preview generations before purchase is required (the trial limit). Cleared/empty = 0 (no trial),
+  // matching Creator Studio; a new gate seeds the default via the enable switch.
+  freePreviewGenerations: z.preprocess(
+    (v) => (v === '' || v == null || (typeof v === 'number' && Number.isNaN(v)) ? 0 : v),
+    z.number().int()
+  ),
   donationGoalEnabled: z.boolean().default(false),
   donationGoal: z.number().optional(),
 });
