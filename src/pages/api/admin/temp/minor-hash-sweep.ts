@@ -11,11 +11,17 @@
  * Params:
  *   action  - default 'sweep'.
  *             'sweep'    flags same-uploader hash matches (see sweepMinorHashMatches).
- *             'rollback' undoes prior auto-flags that captured pre-state (see
- *                        captureMinorHashAutoFlagState), restoring nsfw/sfwOnly/
- *                        gallery level/lockedProperties and previously-minor
- *                        images — unless a moderator has since confirmed the flag
- *                        by hand (see rollbackMinorHashAutoFlags).
+ *             'rollback' undoes prior flags using the snapshot setModelMinor records,
+ *                        restoring nsfw/sfwOnly/gallery level/lockedProperties and
+ *                        previously-minor images. Without `modelIds` it covers only
+ *                        AUTOMATED flags, and skips any a moderator has since
+ *                        confirmed by hand (see rollbackMinorHashAutoFlags).
+ *   modelIds - rollback only. Comma-separated model ids for a targeted undo, e.g.
+ *              `&modelIds=123,456`. Rolls back exactly those models whatever the
+ *              flag source (including a moderator's manual "Set as Minor") and
+ *              without the human-confirmation skip — naming the model is itself the
+ *              deliberate decision. This is the escape hatch for a mis-click; a
+ *              blanket rollback will never touch a manual flag.
  *   dryRun  - default true for BOTH actions. When true, nothing is written; the
  *             report shows the candidate split and a sample of up to 20 rows.
  *   limit   - default 100, max 1000. Caps models WRITTEN per call (sweep: flagged;
@@ -50,18 +56,32 @@ const schema = z.object({
   dryRun: booleanString().default(true),
   limit: z.coerce.number().min(1).max(1000).default(100),
   concurrency: z.coerce.number().min(1).max(10).default(5),
+  modelIds: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value
+        ? value
+            .split(',')
+            .map((id) => Number(id.trim()))
+            .filter((id) => Number.isInteger(id) && id > 0)
+        : undefined
+    ),
 });
 
 export default WebhookEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const parsed = schema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { action, dryRun, limit, concurrency } = parsed.data;
+  const { action, dryRun, limit, concurrency, modelIds } = parsed.data;
+
+  if (modelIds && action !== 'rollback')
+    return res.status(400).json({ error: 'modelIds is only valid with action=rollback' });
 
   try {
     const report =
       action === 'rollback'
-        ? await rollbackMinorHashAutoFlags({ dryRun, limit, concurrency })
+        ? await rollbackMinorHashAutoFlags({ dryRun, limit, concurrency, modelIds })
         : await sweepMinorHashMatches({ dryRun, limit, concurrency });
     return res.status(200).json(report);
   } catch (error) {

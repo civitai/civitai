@@ -2116,6 +2116,50 @@ export type ModelMinorActivity =
   | 'setMinorAutoHash'
   | 'rollbackMinorAutoHash';
 
+export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
+
+// Flagging minor overwrites nsfw/sfwOnly/gallerySettings.level and propagates
+// `minor` to every image, keeping no record of what was there before — so without
+// this the change is unrecoverable, whether a job or a moderator made it.
+// `source` is what lets a bulk rollback undo only the automated flags and leave
+// deliberate moderator decisions alone.
+// Idempotent via the WHERE guard: a re-flag can never clobber the original
+// pre-state. Best-effort — losing the snapshot must block a later rollback, not
+// the flag itself, so failures are logged rather than thrown.
+async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manual') {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+        ${MINOR_FLAG_SNAPSHOT_KEY}, jsonb_build_object(
+          'at', now(),
+          'source', ${source},
+          'prevNsfw', m.nsfw,
+          'prevSfwOnly', m."sfwOnly",
+          'prevGalleryLevel', (m."gallerySettings"->>'level')::int,
+          'prevLockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[])),
+          'prevMinorImageIds', COALESCE((
+            SELECT jsonb_agg(i.id)
+            FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            JOIN "Image" i ON i."postId" = p.id
+            WHERE mv."modelId" = m.id AND i.minor
+          ), '[]'::jsonb)
+        )
+      )
+      WHERE m.id = ${modelId}
+        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY})
+    `;
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'minor-flag-snapshot',
+      message: error instanceof Error ? error.message : String(error),
+      modelId,
+    }).catch(() => null);
+  }
+}
+
 export async function setModelMinor({
   id,
   minor,
@@ -2134,6 +2178,11 @@ export async function setModelMinor({
     },
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  // Must run before the update below and before side effects propagate `minor`
+  // to images, or the snapshot records post-flag state.
+  if (minor)
+    await captureMinorFlagSnapshot(id, activity === 'setMinorAutoHash' ? 'auto' : 'manual');
 
   const prevLockedProperties = before.lockedProperties ?? [];
   const lockedProperties = minor

@@ -18,7 +18,10 @@ import {
   getTrainingModerationFeedSchema,
   transferModelOwnershipSchema,
 } from '~/server/schema/model.schema';
-import { getMinorHashMatchesSchema } from '~/server/schema/minor-hash.schema';
+import {
+  getMinorHashMatchDetailSchema,
+  getMinorHashMatchesSchema,
+} from '~/server/schema/minor-hash.schema';
 import { getModeratorArticles } from '~/server/services/article.service';
 import {
   getCash,
@@ -36,6 +39,7 @@ import {
 } from '~/server/services/model.service';
 import {
   dismissMinorHashMatch,
+  getMinorHashMatchDetail,
   getMinorHashMatchesForReview,
 } from '~/server/services/minor-hash.service';
 import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
@@ -69,6 +73,9 @@ export const modRouter = router({
     queryMinorHashMatches: moderatorProcedure
       .input(getMinorHashMatchesSchema)
       .query(({ input }) => getMinorHashMatchesForReview(input)),
+    queryMinorHashMatchDetail: moderatorProcedure
+      .input(getMinorHashMatchDetailSchema)
+      .query(({ input }) => getMinorHashMatchDetail(input)),
     dismissMinorHashMatch: moderatorProcedure
       .input(getByIdSchema)
       .mutation(({ input, ctx }) =>

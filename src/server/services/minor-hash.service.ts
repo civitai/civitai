@@ -4,7 +4,7 @@ import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
-import { setModelMinor } from '~/server/services/model.service';
+import { MINOR_FLAG_SNAPSHOT_KEY, setModelMinor } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -69,49 +69,6 @@ const SYSTEM_USER_ID = constants.system.user.id;
 
 export type MinorHashOutcome = 'flagged' | 'queued' | 'skipped';
 
-// `setModelMinor` overwrites nsfw/sfwOnly/gallerySettings.level and propagates
-// `minor` to every image without recording what was there before, which makes the
-// auto-flag paths (unlike a moderator's deliberate click) effectively irreversible.
-// Captured atomically in one statement — the WHERE guard makes it idempotent (a
-// re-flag can never clobber the original pre-state) without a separate read.
-// Best-effort: losing pre-state must block the ability to roll back later, not the
-// auto-flag itself, so failures are logged rather than thrown.
-export async function captureMinorHashAutoFlagState(modelId: number): Promise<void> {
-  try {
-    await dbWrite.$executeRaw`
-      UPDATE "Model" m
-      SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
-        'minorHashAutoFlag', jsonb_build_object(
-          'at', now(),
-          'prevNsfw', m.nsfw,
-          'prevSfwOnly', m."sfwOnly",
-          'prevGalleryLevel', (m."gallerySettings"->>'level')::int,
-          'prevLockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[])),
-          'prevMinorImageIds', COALESCE((
-            SELECT jsonb_agg(i.id)
-            FROM "ModelVersion" mv
-            JOIN "Post" p ON p."modelVersionId" = mv.id
-            JOIN "Image" i ON i."postId" = p.id
-            WHERE mv."modelId" = m.id AND i.minor
-          ), '[]'::jsonb)
-        )
-      )
-      WHERE m.id = ${modelId}
-        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? 'minorHashAutoFlag')
-    `;
-  } catch (error) {
-    logToAxiom(
-      {
-        type: 'error',
-        name: 'minor-hash-capture',
-        message: error instanceof Error ? error.message : String(error),
-        modelId,
-      },
-      'webhooks'
-    ).catch(() => null);
-  }
-}
-
 export async function applyMinorHashMatch({
   modelId,
   userId,
@@ -127,7 +84,7 @@ export async function applyMinorHashMatch({
   if (!others.length) return 'skipped';
   if (!others.some((match) => match.userId === userId)) return 'queued';
 
-  await captureMinorHashAutoFlagState(modelId);
+  // setModelMinor snapshots pre-state itself (source 'auto' for this activity).
   await setModelMinor({
     id: modelId,
     minor: true,
@@ -242,7 +199,6 @@ export async function sweepMinorHashMatches({
 
   const tasks = rows.map((row) => async () => {
     try {
-      await captureMinorHashAutoFlagState(row.modelId);
       await setModelMinor({
         id: row.modelId,
         minor: true,
@@ -292,23 +248,22 @@ export type MinorHashReviewRow = {
   username: string | null;
   status: string;
   hash: string;
+  createdAt: Date;
   minorModelId: number;
+  minorModelName: string | null;
   minorUserId: number;
 };
 
-export async function getMinorHashMatchesForReview({
-  page,
-  limit,
-}: {
-  page: number;
-  limit: number;
-}) {
-  const offset = (page - 1) * limit;
+export async function getMinorHashMatchesForReview({ limit }: { limit: number }) {
+  // One extra row tells us the cap truncated the queue, so the UI can say so
+  // rather than silently presenting a partial list as the whole thing.
+  const take = limit + 1;
 
-  const items = await dbRead.$queryRaw<MinorHashReviewRow[]>`
+  const rows = await dbRead.$queryRaw<MinorHashReviewRow[]>`
     WITH ${minorSrcCte},
     candidates AS (
       SELECT m.id AS "modelId", m.name AS "modelName", m."userId", m.status::text AS status,
+             m."createdAt",
              bool_or(EXISTS (
                SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
              )) AS "sameUploader",
@@ -322,10 +277,10 @@ export async function getMinorHashMatchesForReview({
         AND NOT m.minor
         AND m.status <> 'Deleted'
         AND NOT (m.meta ? 'minorHashDismissed')
-      GROUP BY m.id, m.name, m."userId", m.status
+      GROUP BY m.id, m.name, m."userId", m.status, m."createdAt"
     )
-    SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash,
-           s."minorModelId", s."userId" AS "minorUserId"
+    SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash, c."createdAt",
+           s."minorModelId", mm.name AS "minorModelName", s."userId" AS "minorUserId"
     FROM candidates c
     JOIN LATERAL (
       SELECT s2."minorModelId", s2."userId"
@@ -334,13 +289,77 @@ export async function getMinorHashMatchesForReview({
       ORDER BY s2."minorModelId"
       LIMIT 1
     ) s ON TRUE
+    LEFT JOIN "Model" mm ON mm.id = s."minorModelId"
     LEFT JOIN "User" u ON u.id = c."userId"
     WHERE NOT c."sameUploader"
     ORDER BY c."modelId"
-    LIMIT ${limit} OFFSET ${offset}
+    LIMIT ${take}
   `;
 
-  return { items };
+  // The client sorts and filters this set, so the server order is just a stable
+  // default.
+  return { items: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+export type MinorHashMatchDetail = {
+  modelCoverUrl: string | null;
+  modelCoverType: string | null;
+  modelCreatedAt: Date | null;
+  uploaderModelCount: number;
+  uploaderJoinedAt: Date | null;
+  minorModelCoverUrl: string | null;
+  minorModelCoverType: string | null;
+  minorModelStatus: string | null;
+  minorUsername: string | null;
+  minorFlaggedAt: Date | null;
+  minorFlaggedByUsername: string | null;
+};
+
+// Fetched per-row on expand rather than joined into the list query: covers,
+// uploader counts and flag provenance are all per-model lookups that would turn
+// a 25-row page into 25x that work for detail most rows never show.
+export async function getMinorHashMatchDetail({
+  modelId,
+  minorModelId,
+}: {
+  modelId: number;
+  minorModelId: number;
+}) {
+  const coverSql = (id: number, field: 'url' | 'type') => Prisma.sql`
+    (SELECT i.${Prisma.raw(`"${field}"`)}::text
+     FROM "ModelVersion" mv
+     JOIN "Post" p ON p."modelVersionId" = mv.id
+     JOIN "Image" i ON i."postId" = p.id
+     WHERE mv."modelId" = ${id}
+     ORDER BY i.index NULLS LAST, i.id
+     LIMIT 1)
+  `;
+
+  const [detail] = await dbRead.$queryRaw<MinorHashMatchDetail[]>`
+    SELECT
+      ${coverSql(modelId, 'url')} AS "modelCoverUrl",
+      ${coverSql(modelId, 'type')} AS "modelCoverType",
+      m."createdAt" AS "modelCreatedAt",
+      (SELECT count(*)::int FROM "Model" om WHERE om."userId" = m."userId" AND om.status <> 'Deleted')
+        AS "uploaderModelCount",
+      u."createdAt" AS "uploaderJoinedAt",
+      ${coverSql(minorModelId, 'url')} AS "minorModelCoverUrl",
+      ${coverSql(minorModelId, 'type')} AS "minorModelCoverType",
+      mm.status::text AS "minorModelStatus",
+      mu.username AS "minorUsername",
+      ma."createdAt" AS "minorFlaggedAt",
+      fu.username AS "minorFlaggedByUsername"
+    FROM "Model" m
+    LEFT JOIN "User" u ON u.id = m."userId"
+    LEFT JOIN "Model" mm ON mm.id = ${minorModelId}
+    LEFT JOIN "User" mu ON mu.id = mm."userId"
+    LEFT JOIN "ModActivity" ma
+      ON ma."entityType" = 'model' AND ma."entityId" = ${minorModelId} AND ma.activity = 'setMinor'
+    LEFT JOIN "User" fu ON fu.id = ma."userId"
+    WHERE m.id = ${modelId}
+  `;
+
+  return detail ?? null;
 }
 
 export async function dismissMinorHashMatch({
@@ -371,10 +390,31 @@ type RollbackCandidateRow = {
   prevGalleryLevel: number | null;
   prevLockedProperties: string[];
   prevMinorImageIds: number[];
-  // A moderator has since reviewed and affirmed the flag by hand (a later
-  // `ModActivity` row with activity = 'setMinor') — their decision must stand.
-  humanConfirmed: boolean;
 };
+
+// A moderator has since reviewed and affirmed the flag by hand (a later
+// `ModActivity` row with activity = 'setMinor') — their decision must stand.
+// Excluded in SQL rather than filtered after the fact: these rows keep their
+// meta key forever, so leaving them inside the `ORDER BY id LIMIT n` window
+// would let them permanently occupy slots and stall the drain once enough of
+// them accumulate below the limit.
+const humanConfirmedPredicate = Prisma.sql`
+  EXISTS (
+    SELECT 1 FROM "ModActivity" ma
+    WHERE ma."entityType" = 'model'
+      AND ma."entityId" = m.id
+      AND ma.activity = 'setMinor'
+      AND ma."createdAt" > (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'at')::timestamptz
+  )
+`;
+
+// A blanket rollback undoes the automation's decisions only. Manual flags are
+// snapshotted too (so they CAN be undone), but only ever by an explicit
+// `modelIds` request — a moderator's deliberate call must never be reverted as
+// collateral of "undo the backfill".
+const autoFlaggedPredicate = Prisma.sql`
+  m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'manual'
+`;
 
 export type RollbackOutcome = 'rolledBack' | 'skipped' | 'failed';
 export type RollbackSample = { modelId: number; outcome: RollbackOutcome };
@@ -391,31 +431,59 @@ export async function rollbackMinorHashAutoFlags({
   dryRun,
   limit,
   concurrency = DEFAULT_SWEEP_CONCURRENCY,
+  modelIds,
 }: {
   dryRun: boolean;
   limit: number;
   concurrency?: number;
+  /**
+   * Targeted mode. Rolls back exactly these models regardless of flag source,
+   * and without the human-confirmation skip — naming a model IS the deliberate
+   * decision that skip exists to protect.
+   */
+  modelIds?: number[];
 }): Promise<RollbackReport> {
+  const targeted = Boolean(modelIds?.length);
+
+  // Counted uncapped and separately from the candidate window: `skipped` describes
+  // the whole confirmed population, so an operator draining in batches can tell
+  // "nothing left to undo" (candidates 0) from "everything left is a human call".
+  // Targeted runs skip nothing, so the count is moot there.
+  const [confirmed] = targeted
+    ? [{ total: 0, ids: [] as number[] }]
+    : await dbRead.$queryRaw<{ total: number; ids: number[] }[]>`
+        WITH confirmed AS (
+          SELECT m.id
+          FROM "Model" m
+          WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
+            AND ${autoFlaggedPredicate}
+            AND ${humanConfirmedPredicate}
+        )
+        SELECT (SELECT count(*)::int FROM confirmed) AS total,
+               COALESCE(
+                 (SELECT array_agg(id ORDER BY id) FROM (SELECT id FROM confirmed ORDER BY id LIMIT 20) t),
+                 ARRAY[]::int[]
+               ) AS ids
+      `;
+
+  const scope = targeted
+    ? Prisma.sql`m.id = ANY(${modelIds}::int[])`
+    : Prisma.sql`${autoFlaggedPredicate} AND NOT ${humanConfirmedPredicate}`;
+
   const rows = await dbRead.$queryRaw<RollbackCandidateRow[]>`
     SELECT m.id AS "modelId",
-           (m.meta->'minorHashAutoFlag'->>'prevNsfw')::boolean AS "prevNsfw",
-           (m.meta->'minorHashAutoFlag'->>'prevSfwOnly')::boolean AS "prevSfwOnly",
-           (m.meta->'minorHashAutoFlag'->>'prevGalleryLevel')::int AS "prevGalleryLevel",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevSfwOnly')::boolean AS "prevSfwOnly",
+           (m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel",
            ARRAY(
-             SELECT jsonb_array_elements_text(m.meta->'minorHashAutoFlag'->'prevLockedProperties')
+             SELECT jsonb_array_elements_text(m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->'prevLockedProperties')
            ) AS "prevLockedProperties",
            ARRAY(
-             SELECT (jsonb_array_elements_text(m.meta->'minorHashAutoFlag'->'prevMinorImageIds'))::int
-           ) AS "prevMinorImageIds",
-           EXISTS (
-             SELECT 1 FROM "ModActivity" ma
-             WHERE ma."entityType" = 'model'
-               AND ma."entityId" = m.id
-               AND ma.activity = 'setMinor'
-               AND ma."createdAt" > (m.meta->'minorHashAutoFlag'->>'at')::timestamptz
-           ) AS "humanConfirmed"
+             SELECT (jsonb_array_elements_text(m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->'prevMinorImageIds'))::int
+           ) AS "prevMinorImageIds"
     FROM "Model" m
-    WHERE m.meta ? 'minorHashAutoFlag'
+    WHERE m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
+      AND ${scope}
     ORDER BY m.id
     LIMIT ${limit}
   `;
@@ -423,7 +491,7 @@ export async function rollbackMinorHashAutoFlags({
   const report: RollbackReport = {
     candidates: rows.length,
     rolledBack: 0,
-    skipped: 0,
+    skipped: confirmed?.total ?? 0,
     failed: 0,
     sample: [],
   };
@@ -432,26 +500,21 @@ export async function rollbackMinorHashAutoFlags({
     if (report.sample.length < 20) report.sample.push({ modelId, outcome });
   };
 
+  // Appended last so processed models keep priority on the 20 sample slots.
+  const addConfirmedSamples = () => {
+    for (const modelId of confirmed?.ids ?? []) addSample(modelId, 'skipped');
+  };
+
   if (dryRun) {
     for (const row of rows) {
-      if (row.humanConfirmed) {
-        report.skipped++;
-        addSample(row.modelId, 'skipped');
-      } else {
-        report.rolledBack++;
-        addSample(row.modelId, 'rolledBack');
-      }
+      report.rolledBack++;
+      addSample(row.modelId, 'rolledBack');
     }
+    addConfirmedSamples();
     return report;
   }
 
   const tasks = rows.map((row) => async () => {
-    if (row.humanConfirmed) {
-      report.skipped++;
-      addSample(row.modelId, 'skipped');
-      return;
-    }
-
     try {
       // Reuses setModelMinor's own machinery (search index, caches, image
       // propagation) instead of hand-rolling the unset — it also clears every
@@ -475,7 +538,7 @@ export async function rollbackMinorHashAutoFlags({
                 || jsonb_build_object('level', ${row.prevGalleryLevel}::int)
             END,
             "lockedProperties" = ${row.prevLockedProperties}::text[],
-            meta = COALESCE(meta, '{}'::jsonb) - 'minorHashAutoFlag'
+            meta = COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY}
         WHERE id = ${row.modelId}
       `;
 
@@ -507,6 +570,7 @@ export async function rollbackMinorHashAutoFlags({
   });
 
   await limitConcurrency(tasks, concurrency);
+  addConfirmedSamples();
 
   await logToAxiom(
     {

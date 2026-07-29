@@ -164,7 +164,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockResolvedValue([]);
+  mockDbWrite.$executeRaw.mockResolvedValue(undefined);
   mockTrackModActivity.mockResolvedValue(undefined);
+  // Callers chain .catch() on the result, so the mock must return a promise.
+  mockLogToAxiom.mockResolvedValue(undefined);
   mockUpdateReturns();
 });
 
@@ -357,6 +360,87 @@ describe('setModelMinor — not found', () => {
     ).rejects.toThrow();
 
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+});
+
+// The snapshot is what makes any minor flag reversible — without it nsfw/sfwOnly/
+// gallery level are overwritten with no record of the prior values.
+describe('setModelMinor — pre-state snapshot', () => {
+  const snapshotCall = () =>
+    mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('minorFlagSnapshot')
+    ) ??
+    mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      call.slice(1).includes('minorFlagSnapshot')
+    );
+
+  it('snapshots before the update so it records pre-flag state', async () => {
+    mockBefore({});
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('marks a moderator flag as manual so a bulk rollback leaves it alone', async () => {
+    mockBefore({});
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    const [, ...values] = snapshotCall()!;
+    expect(values).toContain('manual');
+    expect(values).not.toContain('auto');
+  });
+
+  it('marks an auto-hash flag as auto', async () => {
+    mockBefore({});
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+    });
+
+    const [, ...values] = snapshotCall()!;
+    expect(values).toContain('auto');
+  });
+
+  it('guards against overwriting an existing snapshot', async () => {
+    mockBefore({});
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    const text = Array.from(snapshotCall()![0] as TemplateStringsArray).join('?');
+    expect(text).toContain(`NOT (COALESCE(m.meta, '{}'::jsonb) ?`);
+    expect(text).toContain('"ModelVersion" mv');
+    expect(text).toContain('i.minor');
+  });
+
+  it('does not snapshot when unsetting minor', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(snapshotCall()).toBeUndefined();
+  });
+
+  it('still flags when the snapshot write fails — losing it must not block the flag', async () => {
+    mockBefore({});
+    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('db exploded'));
+
+    await expect(
+      setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID })
+    ).resolves.toEqual(expect.objectContaining({ id: MODEL_ID }));
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'minor-flag-snapshot', modelId: MODEL_ID })
+    );
   });
 });
 

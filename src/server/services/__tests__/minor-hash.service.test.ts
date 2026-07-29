@@ -15,7 +15,13 @@ const { mockSetModelMinor, mockTrackModActivity, mockLogToAxiom, mockQueueImageS
   }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/services/model.service', () => ({ setModelMinor: mockSetModelMinor }));
+// MINOR_FLAG_SNAPSHOT_KEY is read at module scope by the service's Prisma.sql
+// fragments — omitting it from the mock makes the whole file fail to import
+// (which vitest reports as a passing run with zero tests collected).
+vi.mock('~/server/services/model.service', () => ({
+  setModelMinor: mockSetModelMinor,
+  MINOR_FLAG_SNAPSHOT_KEY: 'minorFlagSnapshot',
+}));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: mockTrackModActivity }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/image.service', () => ({
@@ -29,7 +35,6 @@ import {
   sweepMinorHashMatches,
   getMinorHashMatchesForReview,
   dismissMinorHashMatch,
-  captureMinorHashAutoFlagState,
   rollbackMinorHashAutoFlags,
   minorSrcCte,
   minorHashCandidatesCte,
@@ -185,62 +190,25 @@ describe('applyMinorHashMatch', () => {
   });
 });
 
-describe('captureMinorHashAutoFlagState', () => {
-  it('guards against overwriting an existing capture', async () => {
-    await captureMinorHashAutoFlagState(100);
-
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain(`NOT (COALESCE(m.meta, '{}'::jsonb) ? 'minorHashAutoFlag')`);
-  });
-
-  it('merges into meta via || rather than overwriting the column', async () => {
-    await captureMinorHashAutoFlagState(100);
-
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('COALESCE(m.meta');
-    expect(text).toContain('||');
-    expect(text).toContain(`'minorHashAutoFlag'`);
-  });
-
-  it('derives prevMinorImageIds via the ModelVersion -> Post -> Image join', async () => {
-    await captureMinorHashAutoFlagState(100);
-
-    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('"ModelVersion" mv');
-    expect(text).toContain('"Post" p');
-    expect(text).toContain('"Image" i');
-    expect(text).toContain('i.minor');
-  });
-
-  it('swallows a write failure and logs instead of throwing', async () => {
-    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('db exploded'));
-
-    await expect(captureMinorHashAutoFlagState(100)).resolves.toBeUndefined();
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'minor-hash-capture', modelId: 100 }),
-      'webhooks'
-    );
-  });
-});
-
-describe('applyMinorHashMatch — pre-state capture', () => {
-  it('captures pre-state before flagging', async () => {
+// Pre-state capture now lives inside setModelMinor so manual moderator flags are
+// snapshotted too — covered in set-model-minor.service.test.ts.
+describe('applyMinorHashMatch — flag delegation', () => {
+  it('delegates to setModelMinor with the auto-hash activity', async () => {
     await applyMinorHashMatch({
       modelId: 100,
       userId: 5,
       matches: [{ modelId: 50, userId: 5 }],
     });
 
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    const captureOrder = mockDbWrite.$executeRaw.mock.invocationCallOrder[0];
-    const flagOrder = mockSetModelMinor.mock.invocationCallOrder[0];
-    expect(captureOrder).toBeLessThan(flagOrder);
+    expect(mockSetModelMinor).toHaveBeenCalledWith({
+      id: 100,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+    });
   });
 
-  it('does not capture when the outcome is only queued', async () => {
+  it('does not flag when the outcome is only queued', async () => {
     await applyMinorHashMatch({
       modelId: 100,
       userId: 5,
@@ -479,12 +447,17 @@ describe('sweepMinorHashMatches', () => {
     expect(values).not.toContain(250);
   });
 
-  it('captures pre-state for every flagged row before setModelMinor', async () => {
+  // Pre-state capture moved into setModelMinor so manual flags get it too; the
+  // sweep no longer snapshots directly.
+  it('flags every candidate row via setModelMinor', async () => {
     mockSweepQueries();
 
     await sweepMinorHashMatches({ dryRun: false, limit: 100 });
 
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(sweepRows.length);
+    expect(mockSetModelMinor).toHaveBeenCalledTimes(sweepRows.length);
+    expect(mockSetModelMinor).toHaveBeenCalledWith(
+      expect.objectContaining({ minor: true, userId: -1, activity: 'setMinorAutoHash' })
+    );
   });
 
   it('does not capture pre-state on a dry run', async () => {
@@ -497,10 +470,10 @@ describe('sweepMinorHashMatches', () => {
 });
 
 describe('getMinorHashMatchesForReview', () => {
-  it('excludes dismissed models and paginates', async () => {
+  it('excludes dismissed models and different-uploader-only, without OFFSET', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([]);
 
-    await getMinorHashMatchesForReview({ page: 3, limit: 25 });
+    await getMinorHashMatchesForReview({ limit: 1000 });
 
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
     const text = Array.from(strings as TemplateStringsArray).join('?');
@@ -508,8 +481,24 @@ describe('getMinorHashMatchesForReview', () => {
     expect(text).toContain('WHERE NOT c."sameUploader"');
     expect(text).toContain('bool_or(EXISTS (');
     expect(text).toContain(`s2."userId" <> c."userId"`);
-    expect(values).toContain(25); // limit
-    expect(values).toContain(50); // offset = (page - 1) * limit
+    // No server-side window at all: an OFFSET page skips rows as the queue is
+    // actioned, and any window would confine client sorting to a partial set.
+    expect(text).not.toContain('OFFSET');
+    expect(values).toContain(1001); // limit + 1 truncation probe
+  });
+
+  it('flags truncation only when the cap is exceeded', async () => {
+    const row = (modelId: number) => ({ modelId, modelName: `m${modelId}` });
+
+    mockDbRead.$queryRaw.mockResolvedValueOnce([row(1), row(2), row(3)]);
+    const over = await getMinorHashMatchesForReview({ limit: 2 });
+    expect(over.items).toHaveLength(2);
+    expect(over.truncated).toBe(true);
+
+    mockDbRead.$queryRaw.mockResolvedValueOnce([row(1)]);
+    const under = await getMinorHashMatchesForReview({ limit: 2 });
+    expect(under.items).toHaveLength(1);
+    expect(under.truncated).toBe(false);
   });
 });
 
@@ -538,7 +527,6 @@ function rollbackRow(
     prevGalleryLevel: number | null;
     prevLockedProperties: string[];
     prevMinorImageIds: number[];
-    humanConfirmed: boolean;
   }> = {}
 ) {
   return {
@@ -548,9 +536,24 @@ function rollbackRow(
     prevGalleryLevel: 31,
     prevLockedProperties: ['poi'],
     prevMinorImageIds: [123, 456],
-    humanConfirmed: false,
     ...overrides,
   };
+}
+
+// rollbackMinorHashAutoFlags issues the confirmed-count query first, then the
+// candidate window.
+function mockRollbackQueries({
+  rows,
+  confirmedTotal = 0,
+  confirmedIds = [],
+}: {
+  rows: ReturnType<typeof rollbackRow>[];
+  confirmedTotal?: number;
+  confirmedIds?: number[];
+}) {
+  mockDbRead.$queryRaw
+    .mockResolvedValueOnce([{ total: confirmedTotal, ids: confirmedIds }])
+    .mockResolvedValueOnce(rows);
 }
 
 describe('rollbackMinorHashAutoFlags', () => {
@@ -577,7 +580,7 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(text).toContain('"sfwOnly"');
     expect(text).toContain('"gallerySettings"');
     expect(text).toContain('"lockedProperties"');
-    expect(text).toContain(`meta = COALESCE(meta, '{}'::jsonb) - 'minorHashAutoFlag'`);
+    expect(text).toContain(`meta = COALESCE(meta, '{}'::jsonb) - `);
     expect(values).toContain(31); // prevGalleryLevel
     expect(values).toContainEqual(['poi']); // prevLockedProperties
 
@@ -618,42 +621,119 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
   });
 
-  it('skips a model with a later human setMinor confirmation', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ humanConfirmed: true })]);
+  it('reports human-confirmed flags as skipped without processing them', async () => {
+    mockRollbackQueries({ rows: [], confirmedTotal: 3, confirmedIds: [201, 202, 203] });
 
     const report = await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
 
     expect(mockSetModelMinor).not.toHaveBeenCalled();
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
-    expect(report).toMatchObject({ candidates: 1, rolledBack: 0, skipped: 1, failed: 0 });
+    expect(report).toMatchObject({ candidates: 0, rolledBack: 0, skipped: 3, failed: 0 });
+    expect(report.sample).toEqual([
+      { modelId: 201, outcome: 'skipped' },
+      { modelId: 202, outcome: 'skipped' },
+      { modelId: 203, outcome: 'skipped' },
+    ]);
   });
 
-  it('queries the human-confirmation gate against a later ModActivity setMinor row', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue([]);
+  // Regression: confirmed rows keep their meta key forever, so leaving them in the
+  // `ORDER BY id LIMIT n` window let them occupy slots on every call and stall the
+  // drain once as many accumulated as the limit.
+  it('excludes human-confirmed flags from the candidate window so the drain can progress', async () => {
+    mockRollbackQueries({ rows: [], confirmedTotal: 1, confirmedIds: [201] });
 
     await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
 
-    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
-    const text = Array.from(strings as TemplateStringsArray).join('?');
-    expect(text).toContain('"ModActivity" ma');
-    expect(text).toContain(`ma.activity = 'setMinor'`);
-    expect(text).toContain('"createdAt" >');
-    expect(text).toContain(`m.meta ? 'minorHashAutoFlag'`);
+    const [confirmedStrings] = mockDbRead.$queryRaw.mock.calls[0];
+    const confirmedText = Array.from(confirmedStrings as TemplateStringsArray).join('?');
+    expect(confirmedText).toContain('m.meta ? ');
+
+    const [candidateStrings, ...candidateValues] = mockDbRead.$queryRaw.mock.calls[1];
+    const candidateText = Array.from(candidateStrings as TemplateStringsArray).join('?');
+    expect(candidateText).toContain('m.meta ? ');
+    expect(candidateText).toContain('LIMIT ');
+    // The scope is interpolated as a Prisma.Sql fragment, so it lands in values.
+    const scopeText = candidateValues
+      .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .join('\n');
+    expect(scopeText).toContain('NOT ');
+    expect(scopeText).toContain('"ModActivity" ma');
+  });
+
+  // A blanket rollback must never revert a moderator's deliberate "Set as Minor".
+  it('scopes a bulk rollback to auto flags, excluding manual ones', async () => {
+    mockRollbackQueries({ rows: [] });
+
+    await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
+
+    const rendered = mockDbRead.$queryRaw.mock.calls
+      .flatMap((call) => call.slice(1))
+      .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .join('\n');
+    expect(rendered).toContain(`->>'source' IS DISTINCT FROM 'manual'`);
+  });
+
+  it('targets exact modelIds regardless of source, bypassing the human-confirmation skip', async () => {
+    mockDbRead.$queryRaw.mockResolvedValueOnce([rollbackRow({ modelId: 77 })]);
+
+    const report = await rollbackMinorHashAutoFlags({
+      dryRun: true,
+      limit: 100,
+      modelIds: [77, 88],
+    });
+
+    // targeted mode issues only the candidate query - no confirmed-count query
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    const [, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const rendered = values
+      .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
+      .join('\n');
+    expect(rendered).toContain('m.id = ANY(');
+    expect(rendered).not.toContain('IS DISTINCT FROM');
+    expect(rendered).not.toContain('"ModActivity" ma');
+    expect(report).toMatchObject({ candidates: 1, rolledBack: 1, skipped: 0 });
+  });
+
+  it('queries the human-confirmation gate against a later ModActivity setMinor row', async () => {
+    mockRollbackQueries({ rows: [] });
+
+    await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
+
+    // The gate is interpolated as a Prisma.Sql fragment, so it lands in the call's
+    // values rather than its template strings — render both.
+    const renderValue = (value: unknown): string => {
+      const fragment = value as { strings?: readonly string[] } | null;
+      return fragment && Array.isArray(fragment.strings) ? fragment.strings.join('?') : '';
+    };
+    const gateText = mockDbRead.$queryRaw.mock.calls
+      .flatMap((call) => [
+        Array.from(call[0] as TemplateStringsArray).join('?'),
+        ...call.slice(1).map(renderValue),
+      ])
+      .join('\n');
+    expect(gateText).toContain('"ModActivity" ma');
+    expect(gateText).toContain(`ma.activity = 'setMinor'`);
+    expect(gateText).toContain('"createdAt" >');
+    expect(gateText).toContain('m.meta ? ');
   });
 
   it('writes nothing on a dry run but reports the anticipated split', async () => {
-    mockDbRead.$queryRaw.mockResolvedValue([
-      rollbackRow({ modelId: 200, humanConfirmed: false }),
-      rollbackRow({ modelId: 201, humanConfirmed: true }),
-    ]);
+    mockRollbackQueries({
+      rows: [rollbackRow({ modelId: 200 })],
+      confirmedTotal: 1,
+      confirmedIds: [201],
+    });
 
     const report = await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
 
     expect(mockSetModelMinor).not.toHaveBeenCalled();
     expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(mockQueueImageSearchIndexUpdate).not.toHaveBeenCalled();
-    expect(report).toMatchObject({ candidates: 2, rolledBack: 1, skipped: 1, failed: 0 });
-    expect(report.sample).toHaveLength(2);
+    expect(report).toMatchObject({ candidates: 1, rolledBack: 1, skipped: 1, failed: 0 });
+    expect(report.sample).toEqual([
+      { modelId: 200, outcome: 'rolledBack' },
+      { modelId: 201, outcome: 'skipped' },
+    ]);
   });
 
   it('reports a per-model failure without aborting the batch', async () => {
