@@ -68,7 +68,7 @@ pnpm run db:migrate:empty  # Create an empty migration file
 ```
 
 **CRITICAL: We do NOT use `prisma migrate deploy`. Migrations are applied manually.**
-- Migration files in `prisma/migrations/` exist for review/history but are never auto-run
+- Migration files in `packages/civitai-db-schema/prisma/migrations/` exist for review/history but are never auto-run. That is the only directory Prisma reads — the `prisma/migrations/` path at the repo root predates the monorepo, no longer exists, and CI blocks re-creating it.
 - Each environment's DB is updated by a human running the SQL directly (psql, retool, etc.)
 - The `_prisma_migrations` table is not the source of truth — do not rely on it
 - When you add a new migration: write the SQL, commit it, and surface to the user that it needs to be applied manually to wherever they want it (preview / staging / prod)
