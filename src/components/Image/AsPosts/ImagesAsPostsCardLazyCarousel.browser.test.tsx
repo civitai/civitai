@@ -343,11 +343,21 @@ describe('swipeGalleryCards picks the carousel engine', () => {
   );
   const indicators = () => Array.from(document.querySelectorAll('button[aria-hidden]'));
   const activeIndicator = () => indicators().findIndex((el) => el.hasAttribute('data-active'));
+  // Only `EmblaSlide` carries this class, so counting it identifies the engine
+  // AND its track length. Asserting on rendered images instead would not: with a
+  // degenerate viewport embla reports nothing in view and mounts one slide's
+  // content, which is indistinguishable from the cheap carousel.
+  const emblaSlides = () => document.querySelectorAll('.transform-3d').length;
 
-  test('off: only the active slide is mounted', async () => {
-    renderWithProviders(<StaticPostImagesCarousel images={slice(3)} postId={100} />);
+  test('off: the cheap engine, mounting only the active slide', async () => {
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(3)} postId={100} />
+      </Sized>
+    );
 
     await expect.element(activeSlideId()).toHaveAttribute('data-image-id', '1');
+    expect(emblaSlides()).toBe(0);
     expect(document.querySelectorAll('[data-testid="slide"]').length).toBe(1);
   });
 
@@ -361,15 +371,17 @@ describe('swipeGalleryCards picks the carousel engine', () => {
 
     // Nothing is passed as a prop — this only works if the setting travelled
     // through the gallery context to the card.
-    await vi.waitFor(() => expect(indicators().length).toBe(3));
+    await vi.waitFor(() => expect(emblaSlides()).toBe(3));
     await vi.waitFor(() => expect(activeIndicator()).toBe(0));
     await clickNext();
     await vi.waitFor(() => expect(activeIndicator()).toBe(1));
   });
 
-  // `EmblaContainer` duplicates its children when embla reports it can't loop
-  // cleanly. Two full-width slides is the tightest case that still has to loop —
-  // it clears embla's threshold by exactly zero, so pin it.
+  // `EmblaContainer` re-renders its children a second time when embla reports it
+  // can't loop cleanly. Two full-width slides is the tightest case that still has
+  // to loop — it clears embla's threshold by exactly zero, so pin it. Counting
+  // slides rather than indicators is deliberate: indicators are driven by our own
+  // list, so they'd read 2 either way.
   test('on: a two-image post is not duplicated by loop', async () => {
     mocks.ctx.swipeGalleryCards = true;
     renderWithProviders(
@@ -378,6 +390,10 @@ describe('swipeGalleryCards picks the carousel engine', () => {
       </Sized>
     );
 
-    await vi.waitFor(() => expect(indicators().length).toBe(2));
+    await vi.waitFor(() => expect(emblaSlides()).toBe(2));
+    // `shouldDuplicate` lands in an effect, so 2 at first paint proves nothing on
+    // its own — settle, then confirm it stayed 2.
+    await vi.waitFor(() => expect(activeIndicator()).toBe(0));
+    expect(emblaSlides()).toBe(2);
   });
 });
