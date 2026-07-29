@@ -20,11 +20,19 @@ import { dbRead } from '~/server/db/client';
 import { getBuzzSpendForSubjects, type Subject } from '~/server/http/orchestrator/api-key-spend';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
-export async function getApiKeyHandler({ input }: { input: GetAPIKeyInput }) {
+export async function getApiKeyHandler({
+  input,
+  ctx,
+}: {
+  input: GetAPIKeyInput;
+  ctx: ProtectedContext;
+}) {
   const { id } = input;
 
   try {
-    const apiKey = await getApiKey({ id });
+    // Scoped to the caller: an id belonging to someone else must be indistinguishable from one
+    // that doesn't exist, or this enumerates the key table by owner and scope.
+    const apiKey = await getApiKey({ id, userId: ctx.user.id });
     if (!apiKey) throw throwNotFoundError(`No api key with id ${id}`);
 
     return { success: !!apiKey, data: apiKey };
