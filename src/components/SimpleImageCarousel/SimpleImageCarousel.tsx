@@ -185,10 +185,10 @@ function releasePointer(element: Element, pointerId: number) {
  * Pointer-event swipe. Deliberately library-free and allocation-light: one ref
  * holds the whole gesture, and nothing is subscribed while the finger is down.
  *
- * The gesture locks to an axis on first movement — horizontal drives the
- * carousel, vertical is released back to the browser so the feed still scrolls.
- * A completed horizontal drag swallows the click that follows it, otherwise
- * lifting your finger would also open the image detail dialog behind the slide.
+ * First movement decides: horizontal claims the gesture, anything else abandons
+ * it so the browser scrolls the feed. A drag long enough to move the carousel
+ * swallows the click that follows, otherwise lifting your finger would also open
+ * the image detail dialog behind the slide.
  */
 function useSwipeHandlers({
   enabled,
