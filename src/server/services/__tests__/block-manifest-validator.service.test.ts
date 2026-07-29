@@ -657,7 +657,10 @@ describe('BlockManifestValidator', () => {
       }
     );
 
-    it.each([
+    // `[unknown, string]` keeps the table's mixed-type cases in ONE tuple shape;
+    // otherwise each row infers its own tuple and the union is not assignable to
+    // a single callback signature.
+    it.each<[unknown, string]>([
       ['productivity', 'not in the taxonomy'],
       ['Generation', 'wrong case'],
       ['', 'empty string'],
@@ -711,7 +714,7 @@ describe('BlockManifestValidator', () => {
       }
     });
 
-    it.each([
+    it.each<[unknown, string]>([
       [42, 'number'],
       [null, 'null'],
       [{ text: 'hi' }, 'object'],
@@ -808,7 +811,7 @@ describe('BlockManifestValidator', () => {
       }
     });
 
-    it.each([
+    it.each<[unknown, string]>([
       ['', 'empty string'],
       [42, 'non-string'],
       [null, 'null'],
@@ -824,7 +827,7 @@ describe('BlockManifestValidator', () => {
       }
     });
 
-    it.each([
+    it.each<[unknown, string]>([
       [['models:read:self'], 'an array'],
       [null, 'null'],
       ['reason', 'a string'],
