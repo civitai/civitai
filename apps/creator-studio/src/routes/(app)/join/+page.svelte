@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { enhance } from '$app/forms';
   import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { IconCheck, IconX, IconTrendingUp, IconBolt } from '@tabler/icons-svelte';
   import {
-    CREATOR_PROGRAM_URL,
     CIVITAI_MEMBERSHIP_URL,
     MIN_CREATOR_SCORE,
     CREATOR_PROGRAM_PERKS,
@@ -13,6 +15,16 @@
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
+
+  let joining = $state(false);
+  const joinEnhance = () => {
+    joining = true;
+    return async ({ result }: { result: { type: string; data?: { error?: string } } }) => {
+      joining = false;
+      // Success redirects server-side (to /dashboard) — only surface failures.
+      if (result.type === 'failure') toast.error(String(result.data?.error ?? 'Could not join.'));
+    };
+  };
 
   const scoreLabel = MIN_CREATOR_SCORE.toLocaleString();
   const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
@@ -125,8 +137,7 @@
   </div>
   <p class="mt-3 text-sm text-dark-2">
     {#if isMember && qualifiesScore}
-      You meet both requirements —
-      <a href={CREATOR_PROGRAM_URL} class="underline">join the Creator Program</a> to unlock monetization.
+      You meet both requirements — join the Creator Program to unlock monetization.
     {:else if isMember}
       You have a Civitai membership; reach a creator score of <strong>{scoreLabel}</strong> to qualify.
     {:else if qualifiesScore}
@@ -138,6 +149,13 @@
       score of <strong>{scoreLabel}</strong>.
     {/if}
   </p>
+  {#if isMember && qualifiesScore}
+    <form method="POST" action="?/join" use:enhance={joinEnhance} class="mt-3">
+      <Button type="submit" disabled={joining}>
+        {joining ? 'Joining…' : 'Join the Creator Program'}
+      </Button>
+    </form>
+  {/if}
 </div>
 
 {#if !qualifiesScore}
