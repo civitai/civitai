@@ -7,6 +7,7 @@ import {
 import {
   deleteAnnouncement,
   getAnnouncementsPaged,
+  getAnnouncementTargetUserIds,
   getCurrentAnnouncements,
   upsertAnnouncement,
 } from '~/server/services/announcement.service';
@@ -29,4 +30,7 @@ export const announcementRouter = router({
   getAnnouncementsPaged: moderatorProcedure
     .input(getAnnouncementsPagedSchema)
     .query(({ input }) => getAnnouncementsPaged(input)),
+  getAnnouncementTargets: moderatorProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getAnnouncementTargetUserIds(input.id)),
 });

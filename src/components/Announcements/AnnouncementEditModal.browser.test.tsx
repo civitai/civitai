@@ -59,6 +59,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       upsertAnnouncement: {
         useMutation: () => ({ mutate: mocks.mutate, isPending: false }),
       },
+      getAnnouncementTargets: {
+        useQuery: () => ({ data: [], isSuccess: true }),
+      },
     },
   },
 }));

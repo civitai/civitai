@@ -649,6 +649,7 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  targetedAnnouncements?: AnnouncementUser[];
 }
 
 export interface CustomerSubscription {
@@ -2534,6 +2535,14 @@ export interface Announcement {
   endsAt: Date | null;
   metadata: JsonValue | null;
   disabled: boolean;
+  targetUsers?: AnnouncementUser[];
+}
+
+export interface AnnouncementUser {
+  announcementId: number;
+  userId: number;
+  announcement?: Announcement;
+  user?: User;
 }
 
 export interface RewardsBonusEvent {

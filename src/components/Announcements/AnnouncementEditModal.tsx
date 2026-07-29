@@ -1,7 +1,7 @@
 import type { SelectProps } from '@mantine/core';
 import { Button, ColorSwatch, Modal, useMantineTheme } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
@@ -23,8 +23,10 @@ import {
   toAnnouncementImageKey,
 } from '~/components/Announcements/announcement-image';
 import type { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
+import { MAX_ANNOUNCEMENT_TARGET_USERS } from '~/server/schema/announcement.schema';
 import { DomainColor } from '~/shared/utils/prisma/enums';
 import { dateWithoutTimezone, endOfDay, startOfDay } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { capitalize } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -39,9 +41,23 @@ const schema = z.object({
   disabled: z.boolean().optional(),
   linkText: z.string().optional(),
   linkUrl: z.string().optional(),
+  targetUserIds: z.string().optional(),
+  notifyTargetedUsers: z.boolean().optional(),
 });
 
 export const UPLOAD_IN_FLIGHT_MESSAGE = 'Wait for the banner image to finish uploading.';
+
+export function parseTargetUserIds(value?: string) {
+  const tokens = (value ?? '').split(/[\s,;]+/).filter(Boolean);
+  const ids = new Set<number>();
+  const invalid: string[] = [];
+  for (const token of tokens) {
+    const id = Number(token);
+    if (Number.isInteger(id) && id > 0) ids.add(id);
+    else invalid.push(token);
+  }
+  return { ids: [...ids], invalid };
+}
 
 const domainColorOptions = Object.values(DomainColor).map((domain) => ({
   value: domain,
@@ -86,6 +102,24 @@ export function AnnouncementEditModal({
   const theme = useMantineTheme();
   const colors = Object.keys(theme.colors);
 
+  // Existing target set, loaded lazily when editing. Until it resolves the textarea is
+  // disabled and `targetUserIds` is sent as undefined (leave targeting unchanged), so a
+  // quick save can never silently wipe an announcement's targeting.
+  const targetsQuery = trpc.announcement.getAnnouncementTargets.useQuery(
+    { id: announcement?.id as number },
+    { enabled: !!announcement?.id }
+  );
+  const targetsReady = !announcement?.id || targetsQuery.isSuccess;
+  useEffect(() => {
+    if (targetsQuery.data) form.setValue('targetUserIds', targetsQuery.data.join(', '));
+  }, [targetsQuery.data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const watchedTargets = form.watch('targetUserIds');
+  const targetCount = useMemo(
+    () => parseTargetUserIds(watchedTargets).ids.length,
+    [watchedTargets]
+  );
+
   // Last banner key the form actually held. Replacing a banner is a two-step gesture —
   // remove (which clears form state) then drop — so at the moment an upload fails the
   // form no longer remembers what it is about to overwrite. Keeping the last non-empty
@@ -111,9 +145,38 @@ export function AnnouncementEditModal({
       dialog.onClose();
       queryUtils.announcement.getAnnouncementsPaged.invalidate();
     },
+    onError: (error) => {
+      // A bad target list rejects the whole save server-side; pin that message to the
+      // field the moderator has to fix.
+      if (error.message.includes('target user id'))
+        form.setError('targetUserIds', { type: 'manual', message: error.message });
+      showErrorNotification({ title: 'Failed to save announcement', error });
+    },
   });
 
-  function handleSubmit({ image, ...data }: z.infer<typeof schema>) {
+  function handleSubmit({
+    image,
+    targetUserIds: targetUserIdsRaw,
+    ...data
+  }: z.infer<typeof schema>) {
+    const { ids: targetUserIds, invalid } = parseTargetUserIds(targetUserIdsRaw);
+    if (invalid.length) {
+      form.setError('targetUserIds', {
+        type: 'manual',
+        message: `Not valid user ids: ${invalid.slice(0, 5).join(', ')}${
+          invalid.length > 5 ? ` (+${invalid.length - 5} more)` : ''
+        }`,
+      });
+      return;
+    }
+    if (targetUserIds.length > MAX_ANNOUNCEMENT_TARGET_USERS) {
+      form.setError('targetUserIds', {
+        type: 'manual',
+        message: `Too many target users (${targetUserIds.length.toLocaleString()}). Max is ${MAX_ANNOUNCEMENT_TARGET_USERS.toLocaleString()}.`,
+      });
+      return;
+    }
+
     // 🔴 A submit must not land while a banner upload is in flight. The upload widget
     // only writes the new key into form state once the upload reaches `success`, and
     // replacing a banner means removing the old one first — so a save mid-upload
@@ -134,6 +197,8 @@ export function AnnouncementEditModal({
     mutate({
       ...announcement,
       ...data,
+      targetUserIds: targetsReady ? targetUserIds : undefined,
+      notifyTargetedUsers: targetsReady && targetUserIds.length > 0 && data.notifyTargetedUsers,
       title: data.title.trim(),
       content: data.content.trim(),
       startsAt: isToday
@@ -178,6 +243,28 @@ export function AnnouncementEditModal({
           searchable
           clearable
         />
+
+        <InputTextArea
+          name="targetUserIds"
+          label="Target User IDs"
+          description={
+            targetCount > 0
+              ? `Targeting ${targetCount.toLocaleString()} user${targetCount === 1 ? '' : 's'}`
+              : 'Optional. Comma, space, or newline separated user ids. Leave empty to show the announcement to everyone.'
+          }
+          placeholder={targetsReady ? 'e.g. 123, 456, 789' : 'Loading current targets...'}
+          disabled={!targetsReady}
+          autosize
+          maxRows={6}
+        />
+
+        {targetCount > 0 && (
+          <InputCheckbox
+            name="notifyTargetedUsers"
+            label="Send a notification to targeted users"
+            description="On save, each targeted user also gets a system notification linking to the first announcement action (if any). Saving again with this checked sends it again."
+          />
+        )}
 
         {/*
           Banner upload — deliberately does NOT create an `Image` row.

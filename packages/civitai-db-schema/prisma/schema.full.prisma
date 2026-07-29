@@ -589,6 +589,7 @@ model User {
   appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
+  targetedAnnouncements              AnnouncementUser[]
 
   @@index([deletedAt])
 }
@@ -3751,18 +3752,30 @@ enum DomainColor {
 }
 
 model Announcement {
-  id        Int           @id @default(autoincrement())
-  title     String
-  content   String
-  emoji     String?
-  color     String        @default("blue")
-  domain    DomainColor[] @default([all])
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  startsAt  DateTime?
-  endsAt    DateTime?
-  metadata  Json?
-  disabled  Boolean       @default(false)
+  id          Int                @id @default(autoincrement())
+  title       String
+  content     String
+  emoji       String?
+  color       String             @default("blue")
+  domain      DomainColor[]      @default([all])
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  startsAt    DateTime?
+  endsAt      DateTime?
+  metadata    Json?
+  disabled    Boolean            @default(false)
+  targetUsers AnnouncementUser[]
+}
+
+/// Allowlist of users an announcement targets. No rows = shown to everyone.
+model AnnouncementUser {
+  announcementId Int
+  userId         Int
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, announcementId])
+  @@index([announcementId])
 }
 
 model RewardsBonusEvent {
