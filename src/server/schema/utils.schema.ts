@@ -16,4 +16,3 @@ export const getSanitizedStringSchema = (options?: santizeHtmlOptions) =>
       });
     }
   }, z.string());
-
