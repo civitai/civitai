@@ -30,6 +30,11 @@ export const getServerSideProps = createServerSideProps({ requireModerator: true
 // The full queue is fetched in one request; this is a safety cap, not a page size.
 const limit = 1000;
 
+// Deep-links to the version whose file actually carries the matching hash — a
+// model's default version is often not the one that matched.
+const modelHref = (modelId: number, versionId?: number | null) =>
+  `/models/${modelId}?view=basic${versionId ? `&modelVersionId=${versionId}` : ''}`;
+
 // Published is the one that still needs a decision — the copy is live and
 // downloadable right now — so it reads as active rather than resolved.
 const statusColors: Record<string, string> = {
@@ -70,7 +75,7 @@ function DetailPanel({ row }: { row: MinorHashReviewRow }) {
           </Text>
           <Anchor
             component={NextLink}
-            href={`/models/${row.modelId}?view=basic`}
+            href={modelHref(row.modelId, row.modelVersionId)}
             target="_blank"
             size="xs"
           >
@@ -104,7 +109,7 @@ function DetailPanel({ row }: { row: MinorHashReviewRow }) {
           )}
           <Anchor
             component={NextLink}
-            href={`/models/${row.minorModelId}?view=basic`}
+            href={modelHref(row.minorModelId, row.minorModelVersionId)}
             target="_blank"
             size="xs"
           >
@@ -156,7 +161,7 @@ export default function MinorHashMatches() {
         Cell: ({ row: { original } }) => (
           <Anchor
             component={NextLink}
-            href={`/models/${original.modelId}?view=basic`}
+            href={modelHref(original.modelId, original.modelVersionId)}
             target="_blank"
             lineClamp={2}
           >
@@ -216,7 +221,7 @@ export default function MinorHashMatches() {
         Cell: ({ row: { original } }) => (
           <Anchor
             component={NextLink}
-            href={`/models/${original.minorModelId}?view=basic`}
+            href={modelHref(original.minorModelId, original.minorModelVersionId)}
             target="_blank"
             lineClamp={2}
           >

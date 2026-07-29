@@ -249,9 +249,11 @@ export type MinorHashReviewRow = {
   status: string;
   hash: string;
   createdAt: Date;
+  modelVersionId: number | null;
   minorModelId: number;
   minorModelName: string | null;
   minorUserId: number;
+  minorModelVersionId: number | null;
 };
 
 export async function getMinorHashMatchesForReview({ limit }: { limit: number }) {
@@ -267,7 +269,11 @@ export async function getMinorHashMatchesForReview({ limit }: { limit: number })
              bool_or(EXISTS (
                SELECT 1 FROM minor_src s WHERE s.hash = mfh.hash AND s."userId" = m."userId"
              )) AS "sameUploader",
-             min(mfh.hash) AS hash
+             -- Same ORDER BY in both aggregates so element [1] of each comes from
+             -- the same row: the reported version is the one carrying the
+             -- reported hash, not just any version of the model.
+             (array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1] AS hash,
+             (array_agg(mv.id ORDER BY mfh.hash, mv.id))[1] AS "modelVersionId"
       FROM "ModelFileHash" mfh
       JOIN "ModelFile" mf ON mf.id = mfh."fileId" AND mf.type = ${MINOR_HASH_FILE_TYPE}
       JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
@@ -280,7 +286,17 @@ export async function getMinorHashMatchesForReview({ limit }: { limit: number })
       GROUP BY m.id, m.name, m."userId", m.status, m."createdAt"
     )
     SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash, c."createdAt",
-           s."minorModelId", mm.name AS "minorModelName", s."userId" AS "minorUserId"
+           c."modelVersionId",
+           s."minorModelId", mm.name AS "minorModelName", s."userId" AS "minorUserId",
+           -- Resolved here rather than carried through minor_src: that CTE is shared
+           -- with the sweep, and widening its DISTINCT would change its cardinality.
+           (SELECT mv2.id
+            FROM "ModelFileHash" h2
+            JOIN "ModelFile" f2 ON f2.id = h2."fileId" AND f2.type = ${MINOR_HASH_FILE_TYPE}
+            JOIN "ModelVersion" mv2 ON mv2.id = f2."modelVersionId"
+            WHERE h2.type = 'SHA256' AND h2.hash = c.hash AND mv2."modelId" = s."minorModelId"
+            ORDER BY mv2.id
+            LIMIT 1) AS "minorModelVersionId"
     FROM candidates c
     JOIN LATERAL (
       SELECT s2."minorModelId", s2."userId"

@@ -487,6 +487,34 @@ describe('getMinorHashMatchesForReview', () => {
     expect(values).toContain(1001); // limit + 1 truncation probe
   });
 
+  // A model's matched version is often not its default (51 of 411 on prod-scale
+  // data), so the hash and the version must come from the same aggregated row —
+  // otherwise the link points at a version that never carried the hash.
+  it('pairs the reported hash and modelVersionId via a matching ORDER BY', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getMinorHashMatchesForReview({ limit: 25 });
+
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('(array_agg(mfh.hash ORDER BY mfh.hash, mv.id))[1]');
+    expect(text).toContain('(array_agg(mv.id ORDER BY mfh.hash, mv.id))[1]');
+    // min(hash) would not identify which version carried it
+    expect(text).not.toContain('min(mfh.hash)');
+  });
+
+  it('resolves the flagged model version from the shared hash', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+
+    await getMinorHashMatchesForReview({ limit: 25 });
+
+    const [strings] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('"minorModelVersionId"');
+    expect(text).toContain('h2.hash = c.hash');
+    expect(text).toContain('mv2."modelId" = s."minorModelId"');
+  });
+
   it('flags truncation only when the cap is exceeded', async () => {
     const row = (modelId: number) => ({ modelId, modelName: `m${modelId}` });
 
