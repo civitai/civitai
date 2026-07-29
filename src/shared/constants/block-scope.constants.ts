@@ -177,6 +177,77 @@ export function isSensitiveBlockScope(scope: string): boolean {
 }
 
 /**
+ * Manifest-shaped input for the sensitive-scope-justification gate. Only the two
+ * fields the rule actually reads are needed, and both are `unknown` because
+ * callers pass raw, not-yet-fully-validated manifests — the ZIP-extracted blob
+ * at submit (`submitVersion`) and the stored/deep-validated manifest at
+ * `validate`. Keeping the shape this loose is what lets ONE helper back both
+ * enforcement sites.
+ */
+export type SensitiveScopeManifestInput = {
+  scopes?: unknown;
+  scopeJustifications?: unknown;
+};
+
+/**
+ * Returns the DECLARED sensitive scopes that lack a non-empty
+ * `scopeJustifications` entry (deduped, in declaration order). Empty when the
+ * manifest is compliant, declares no sensitive scope, or has a non-array
+ * `scopes`. A justification "counts" only when it is a string with non-whitespace
+ * content — an empty/whitespace value, a non-string value, or a missing key all
+ * leave the sensitive scope unjustified.
+ *
+ * SINGLE SOURCE OF TRUTH for the "sensitive scopes must be justified" rule: the
+ * manifest validator (`validate`) and the submit path (`submitVersion`) both
+ * call this so the two enforcement sites can never drift. Pure + client-safe.
+ */
+export function unjustifiedSensitiveScopes(manifest: SensitiveScopeManifestInput): string[] {
+  if (!Array.isArray(manifest.scopes)) return [];
+  const justifications =
+    manifest.scopeJustifications &&
+    typeof manifest.scopeJustifications === 'object' &&
+    !Array.isArray(manifest.scopeJustifications)
+      ? (manifest.scopeJustifications as Record<string, unknown>)
+      : {};
+  return [
+    ...new Set(
+      (manifest.scopes as unknown[])
+        .filter((s): s is string => typeof s === 'string')
+        .filter((scope) => isSensitiveBlockScope(scope))
+        .filter((scope) => {
+          const raw = justifications[scope];
+          return !(typeof raw === 'string' && raw.trim().length > 0);
+        })
+    ),
+  ];
+}
+
+/**
+ * The exact operator-facing message both enforcement sites raise for an
+ * unjustified sensitive scope. Single-sourced so the validator's
+ * `errors.push(...)` string and `submitVersion`'s `throw` stay byte-identical.
+ */
+export function sensitiveScopeJustificationError(unjustifiedScopes: string[]): string {
+  return `sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ${unjustifiedScopes.join(
+    ', '
+  )}`;
+}
+
+/**
+ * Throws (with `sensitiveScopeJustificationError`) when any declared sensitive
+ * scope lacks a justification; a no-op when the manifest is compliant. This is
+ * the imperative form used by `submitVersion` at submit time — the validator
+ * uses `unjustifiedSensitiveScopes` directly so it can accumulate the message
+ * into its `errors[]` alongside the other checks.
+ */
+export function assertSensitiveScopesJustified(manifest: SensitiveScopeManifestInput): void {
+  const unjustifiedScopes = unjustifiedSensitiveScopes(manifest);
+  if (unjustifiedScopes.length > 0) {
+    throw new Error(sensitiveScopeJustificationError(unjustifiedScopes));
+  }
+}
+
+/**
  * Validates that every requested block scope either declares no OAuth-bit
  * requirement (SKIP_OAUTH_CHECK) or has its OAuth bit set in the
  * OauthClient.allowedScopes bitmask.
