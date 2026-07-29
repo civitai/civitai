@@ -203,7 +203,7 @@ function useSwipeHandlers({
     pointerId: number;
     startX: number;
     startY: number;
-    axis: 'none' | 'horizontal' | 'vertical';
+    axis: 'none' | 'horizontal';
   } | null>(null);
   const suppressClick = useRef(false);
 
@@ -215,8 +215,8 @@ function useSwipeHandlers({
 
     const end = (event: React.PointerEvent<HTMLDivElement>) => {
       const current = gesture.current;
-      gesture.current = null;
       if (!current || current.pointerId !== event.pointerId) return null;
+      gesture.current = null;
       releasePointer(event.currentTarget, event.pointerId);
       return current;
     };
@@ -225,6 +225,15 @@ function useSwipeHandlers({
       onPointerDown: (event) => {
         // Secondary/right mouse buttons are not gestures.
         if (event.button !== 0) return;
+        // A second finger means the user is pinching, not swiping — drop the
+        // gesture rather than letting the new pointer hijack it. A primary
+        // pointer arriving on top of an existing gesture instead means the last
+        // one was stranded (it left the element before we captured it), so this
+        // one replaces it.
+        if (gesture.current && !event.isPrimary) {
+          gesture.current = null;
+          return;
+        }
         // A drag that never produced a click (touch pointers don't always emit
         // one) must not swallow the next real tap.
         suppressClick.current = false;
@@ -237,22 +246,19 @@ function useSwipeHandlers({
       },
       onPointerMove: (event) => {
         const current = gesture.current;
-        if (!current || current.pointerId !== event.pointerId || current.axis === 'vertical')
-          return;
+        if (!current || current.pointerId !== event.pointerId) return;
+        if (current.axis === 'horizontal') return;
 
-        if (current.axis === 'none') {
-          const dx = Math.abs(event.clientX - current.startX);
-          const dy = Math.abs(event.clientY - current.startY);
-          if (dx < AXIS_LOCK_THRESHOLD && dy < AXIS_LOCK_THRESHOLD) return;
-          if (dy >= dx) {
-            // Vertical intent: hand the gesture back so the feed scrolls normally.
-            current.axis = 'vertical';
-            gesture.current = null;
-            return;
-          }
-          current.axis = 'horizontal';
-          capturePointer(event.currentTarget, event.pointerId);
+        const dx = Math.abs(event.clientX - current.startX);
+        const dy = Math.abs(event.clientY - current.startY);
+        if (dx < AXIS_LOCK_THRESHOLD && dy < AXIS_LOCK_THRESHOLD) return;
+        if (dy >= dx) {
+          // Vertical intent: drop the gesture so the browser scrolls the feed.
+          gesture.current = null;
+          return;
         }
+        current.axis = 'horizontal';
+        capturePointer(event.currentTarget, event.pointerId);
       },
       onPointerUp: (event) => {
         const current = end(event);
@@ -414,9 +420,14 @@ function Viewport({ children, className }: ViewportProps) {
 
   return (
     <div
-      // `touch-pan-y` is what makes the horizontal drag reach us at all — without
-      // it the browser claims the gesture for scrolling and no pointermove lands.
-      className={clsx('relative overflow-hidden', swipeHandlers && 'touch-pan-y', className)}
+      // `pan-y` is what makes the horizontal drag reach us at all — without it the
+      // browser claims the gesture for scrolling and no pointermove lands.
+      // `pinch-zoom` is kept so opting into swipe doesn't cost you zooming an image.
+      className={clsx(
+        'relative overflow-hidden',
+        swipeHandlers && 'touch-pan-y touch-pinch-zoom',
+        className
+      )}
       {...swipeHandlers}
     >
       {children}
