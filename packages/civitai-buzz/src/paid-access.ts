@@ -134,8 +134,8 @@ export const grantsGeneration = (
 // assertion in the main app is the enforcement point; these constants also drive the "X of Y set"
 // capacity hints in both UIs.
 export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
-  bronze: 3,
-  silver: 10,
+  bronze: 10,
+  silver: 25,
   gold: Infinity,
 };
 
