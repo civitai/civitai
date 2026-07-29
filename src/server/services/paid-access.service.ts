@@ -1,4 +1,5 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import {
   type ModelVersionTerms,
   type PaidAccessEntityType,
@@ -116,6 +117,26 @@ export async function getPaidAccess(
     };
   }
   return out;
+}
+
+// Permanent = timeframeDays IS NULL (a timed gate on an unpublished version also has endsAt NULL until
+// publish, so endsAt can't distinguish the two). Excludes soft-deleted models and the version being
+// edited. Enforces the per-tier permanent cap on the write path — see maxPermanentAccessModels.
+export async function countUserPermanentAccessVersions(
+  userId: number,
+  excludeVersionId?: number
+): Promise<number> {
+  const rows = await dbRead.$queryRaw<{ count: bigint }[]>`
+    SELECT COUNT(*)::bigint AS count
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    JOIN "PaidAccess" pa ON pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+    WHERE m."userId" = ${userId}
+      AND m."deletedAt" IS NULL
+      AND pa."timeframeDays" IS NULL
+      ${excludeVersionId != null ? Prisma.sql`AND mv.id <> ${excludeVersionId}` : Prisma.empty}
+  `;
+  return Number(rows[0]?.count ?? 0);
 }
 
 /** Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). */

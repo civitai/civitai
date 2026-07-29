@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { sql } from '@civitai/db/kysely';
+import { buildModelVersionTerms } from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
 import { dbRead } from '$lib/server/db';
+import { checkbox, optionalBuzz, freePreviewsField } from './form-fields';
 import type { EarlyAccessConfig } from '$lib/monetization/early-access';
-import { DEFAULT_GENERATION_TRIAL_LIMIT } from '$lib/monetization/early-access';
 
 // Early access is written through the MAIN APP, not kysely: the write has real
 // side effects (donation-goal rows, buzzTransactionId bookkeeping, publish-state
@@ -18,46 +19,63 @@ export { DEFAULT_GENERATION_TRIAL_LIMIT } from '$lib/monetization/early-access';
 
 export type EarlyAccessResult = { ok: true } | { ok: false; status: number; error: string };
 
-// Checkbox → boolean ('on'/'true' checked, absent = false); empty/absent number field → undefined.
-const checkbox = z.preprocess((v) => v === 'on' || v === 'true', z.boolean());
-const optionalBuzz = z.preprocess(
-  (v) => (v === '' || v == null ? undefined : Number(v)),
-  z.number().optional()
-);
-
 // Validates the early-access editor form → an EarlyAccessConfig. Light shape validation only; the main-app
 // endpoint (updateEarlyAccessConfigSchema) is the source of truth for prices, per-user limits, side effects.
 export const earlyAccessFormSchema = z
   .object({
     timeframe: z.coerce.number().int().min(0),
     permanent: checkbox,
-    chargeForDownload: checkbox,
-    downloadPrice: optionalBuzz,
-    chargeForGeneration: checkbox,
+    // On-site-generation-only versions charge via the generation price (no download tier).
+    usageControl: z.string().optional(),
+    accessPrice: optionalBuzz,
     generationPrice: optionalBuzz,
-    generationTrialLimit: z.preprocess(
-      (v) => (v === '' || v == null ? DEFAULT_GENERATION_TRIAL_LIMIT : Number(v)),
-      z.number().int().min(0)
-    ),
+    freePreviewGenerations: freePreviewsField(),
     donationGoalEnabled: checkbox,
     donationGoal: optionalBuzz,
-    freeGeneration: checkbox,
   })
   .refine((v) => v.permanent || v.timeframe > 0, {
     message: 'Set an early access duration, or make it permanent.',
   })
-  .refine((v) => v.chargeForDownload || v.chargeForGeneration, {
-    message: 'Charge for downloads and/or generations to enable paid access.',
-  });
+  // Every gated version needs an access price. For a gen-only version it's written as the generation price.
+  .refine((v) => v.accessPrice != null && v.accessPrice > 0, {
+    message: 'Enter a price for access.',
+  })
+  .refine(
+    (v) => v.generationPrice == null || v.accessPrice == null || v.generationPrice <= v.accessPrice,
+    { message: 'Generation-only price cannot be greater than the access price.' }
+  );
 
-// versionId + config (null clears early access). `cookie` is the incoming request's
-// raw Cookie header, forwarded verbatim for auth.
+// versionId + config (null clears early access). `cookie` is the incoming request's raw Cookie header,
+// forwarded verbatim for auth. `genOnly` = the version is on-site-generation-only (no download tier), so
+// the single "price for access" (accessPrice) is written as the generation price instead.
 export async function setEarlyAccessConfig(
   cookie: string,
   versionId: number,
-  config: EarlyAccessConfig | null
+  config: EarlyAccessConfig | null,
+  genOnly = false
 ): Promise<EarlyAccessResult> {
   try {
+    // Map the editor's EarlyAccessConfig to the endpoint's PaidAccess contract ({ id, paidAccess,
+    // donationGoal }). A null config clears the gate. Permanent carries no timeframe.
+    const terms =
+      config && config.accessPrice != null
+        ? buildModelVersionTerms({
+            accessPrice: config.accessPrice,
+            generationPrice: config.generationPrice,
+            freePreviewGenerations: config.freePreviewGenerations ?? 0,
+            genOnly,
+          })
+        : {};
+    const paidAccess = !config
+      ? null
+      : config.permanent
+      ? { permanent: true, terms }
+      : { permanent: false, timeframeDays: config.timeframe, terms };
+    const donationGoal =
+      config && !config.permanent && config.donationGoalEnabled && config.donationGoal
+        ? { amount: config.donationGoal }
+        : null;
+
     // The main app only accepts a permanent config with the shared webhook token, so a direct user call can't.
     const url = config?.permanent
       ? `${MAIN_APP_URL}${ENDPOINT}?token=${encodeURIComponent(env.WEBHOOK_TOKEN ?? '')}`
@@ -65,7 +83,7 @@ export async function setEarlyAccessConfig(
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ id: versionId, earlyAccessConfig: config }),
+      body: JSON.stringify({ id: versionId, paidAccess, donationGoal }),
     });
 
     if (res.ok) return { ok: true };
@@ -85,8 +103,9 @@ export async function setEarlyAccessConfig(
   }
 }
 
-// Counts the creator's permanent paid-access versions (via the config flag — the spoke's kysely lacks the column
-// until it merges main), excluding the one being edited. Feeds the tier cap in the setEarlyAccess action.
+// Counts the creator's permanent paid-access versions, excluding the one being edited. Permanent =
+// timeframeDays IS NULL (endsAt stays NULL on unpublished timed gates too, so it can't distinguish
+// them). Feeds the tier cap in the setEarlyAccess action.
 export async function countPermanentAccessVersions(
   userId: number,
   excludeVersionId?: number
@@ -94,15 +113,107 @@ export async function countPermanentAccessVersions(
   let query = dbRead
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .innerJoin('PaidAccess as pa', (join) =>
+      join.onRef('pa.entityId', '=', 'mv.id').on('pa.entityType', '=', 'ModelVersion')
+    )
     .where('m.userId', '=', userId)
-    .where(sql<boolean>`mv."earlyAccessConfig"->>'permanent' = 'true'`);
+    .where('m.deletedAt', 'is', null)
+    .where('pa.timeframeDays', 'is', null);
   if (excludeVersionId != null) query = query.where('mv.id', '!=', excludeVersionId);
   const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
   return Number(row?.count ?? 0);
 }
 
-// Counts versions in a *currently running* timed early-access window (permanent ones are capped separately, by
-// tier). Score gates how many can run at once — EARLY_ACCESS_CONFIG.scoreQuantityUnlock.
+// Permanent versions the creator owns that are NOT in `excludeIds` — the baseline for the tier cap when
+// bulk-setting permanent access (the selected versions replace their own slots, so they're excluded).
+export async function countPermanentAccessVersionsExcluding(
+  userId: number,
+  excludeIds: number[]
+): Promise<number> {
+  let query = dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .innerJoin('PaidAccess as pa', (join) =>
+      join.onRef('pa.entityId', '=', 'mv.id').on('pa.entityType', '=', 'ModelVersion')
+    )
+    .where('m.userId', '=', userId)
+    .where('m.deletedAt', 'is', null)
+    .where('pa.timeframeDays', 'is', null);
+  if (excludeIds.length) query = query.where('mv.id', 'not in', excludeIds);
+  const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
+export type BulkPaidAccessResult =
+  | { ok: true; updated: number; failed: number }
+  | { ok: false; status: number; error: string };
+
+// Applies the same permanent paid-access pricing to every selected version, one main-app write each
+// (the endpoint owns ownership + side effects). Sequential so a shared failure surfaces once and we
+// don't hammer the endpoint. Cap/membership are enforced by the caller before this runs. Terms adapt to
+// each version's usage control: gen-only versions price via generation (falling back to the access
+// price); versions that can't be gated (internal/external API) are skipped and counted as failed.
+export async function bulkSetPermanentAccess(
+  cookie: string,
+  versionIds: number[],
+  pricing: { accessPrice: number; generationPrice?: number; freePreviewGenerations: number }
+): Promise<BulkPaidAccessResult> {
+  const usageRows = await dbRead
+    .selectFrom('ModelVersion')
+    .select(['id', 'usageControl'])
+    .where('id', 'in', versionIds)
+    .execute();
+  const usageById = new Map(usageRows.map((r) => [r.id, r.usageControl as string]));
+
+  let updated = 0;
+  let failed = 0;
+  let firstError: { status: number; error: string } | null = null;
+  for (const id of versionIds) {
+    const usage = usageById.get(id);
+    if (usage && usage !== 'Download' && usage !== 'Generation') {
+      failed++;
+      firstError ??= { status: 400, error: "Some versions can't be gated for their usage control." };
+      continue;
+    }
+    const genOnly = usage === 'Generation';
+    const config: EarlyAccessConfig = {
+      timeframe: 0,
+      permanent: true,
+      // The access price is the single charge; for gen-only versions setEarlyAccessConfig writes it as the
+      // generation price. The optional cheaper generation tier only applies to downloadable versions.
+      accessPrice: pricing.accessPrice,
+      generationPrice: pricing.generationPrice,
+      freePreviewGenerations: pricing.freePreviewGenerations,
+      donationGoalEnabled: false,
+      donationGoal: undefined,
+    };
+    const res = await setEarlyAccessConfig(cookie, id, config, genOnly);
+    if (res.ok) updated++;
+    else {
+      failed++;
+      firstError ??= { status: res.status, error: res.error };
+    }
+  }
+  if (updated === 0 && firstError) return { ok: false, ...firstError };
+  return { ok: true, updated, failed };
+}
+
+// Whether a version currently has a permanent gate (timeframeDays IS NULL). Lets the save action skip
+// the membership/cap gates when re-saving an already-permanent version, so a lapsed or at-cap creator
+// can't be locked out of editing their own version (mirrors the main-app carve-out).
+export async function isVersionPermanent(versionId: number): Promise<boolean> {
+  const row = await dbRead
+    .selectFrom('PaidAccess')
+    .select('timeframeDays')
+    .where('entityType', '=', 'ModelVersion')
+    .where('entityId', '=', versionId)
+    .executeTakeFirst();
+  return row != null && row.timeframeDays == null;
+}
+
+// Counts versions in a *currently running* timed early-access window (permanent ones are capped separately,
+// by tier). A timed gate is a PaidAccess row whose endsAt is still in the future (permanent = null endsAt,
+// excluded by `> now`). Score gates how many can run at once — EARLY_ACCESS_CONFIG.scoreQuantityUnlock.
 export async function countActiveEarlyAccessVersions(
   userId: number,
   excludeVersionId?: number
@@ -110,9 +221,12 @@ export async function countActiveEarlyAccessVersions(
   let query = dbRead
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .innerJoin('PaidAccess as pa', (join) =>
+      join.onRef('pa.entityId', '=', 'mv.id').on('pa.entityType', '=', 'ModelVersion')
+    )
     .where('m.userId', '=', userId)
-    .where('mv.earlyAccessEndsAt', '>', new Date())
-    .where(sql<boolean>`coalesce(mv."earlyAccessConfig"->>'permanent', 'false') != 'true'`);
+    .where('m.deletedAt', 'is', null)
+    .where('pa.endsAt', '>', new Date());
   if (excludeVersionId != null) query = query.where('mv.id', '!=', excludeVersionId);
   const row = await query.select((eb) => eb.fn.countAll<string>().as('count')).executeTakeFirst();
   return Number(row?.count ?? 0);

@@ -1,19 +1,33 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from '$lib/server/db';
 import type { ModelType } from '@civitai/db-schema';
-import type { EarlyAccessConfig } from '$lib/monetization/early-access';
+import type { ModelVersionTerms } from '@civitai/buzz';
+import { DEFAULT_GENERATION_TRIAL_LIMIT, type EarlyAccessConfig } from '$lib/monetization/early-access';
 
-// The access filter means "sold in any form": a timed early-access window OR permanent. Permanent is
-// intentionally no-end-date, so filtering on earlyAccessEndsAt alone silently drops those versions.
-function paidAccessFilter(alias?: string) {
-  const p = alias ? sql.raw(`${alias}.`) : sql.raw('');
-  return sql<boolean>`(${p}"earlyAccessEndsAt" is not null or ${p}"earlyAccessConfig"->>'permanent' = 'true')`;
+// "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
+function paidAccessFilter(alias: string) {
+  const p = sql.raw(`${alias}.`);
+  return sql<boolean>`exists (select 1 from "PaidAccess" pa where pa."entityType" = 'ModelVersion' and pa."entityId" = ${p}"id" and (pa."endsAt" is null or pa."endsAt" > now()))`;
 }
 
-// The `earlyAccessConfig` column is `{}` (or JSON null) for versions that never configured early access.
-// Only treat it as a real config when it actually carries the timeframe an EA setup always writes.
-function isRealEarlyAccessConfig(value: unknown): value is EarlyAccessConfig {
-  return !!value && typeof value === 'object' && 'timeframe' in value;
+// Rebuild the UI-facing EarlyAccessConfig from an active PaidAccess row (terms bundle + timeframeDays).
+// timeframeDays null => permanent. Donation-goal fields are sourced separately, not from PaidAccess.
+function paidAccessToConfig(timeframeDays: number | null, terms: unknown): EarlyAccessConfig | null {
+  const t = terms as ModelVersionTerms | null;
+  if (!t) return null;
+  const gen = t.generation;
+  const paidGen = gen && !('free' in gen) ? gen : undefined;
+  // "Price for access" is the download price when downloadable; for a gen-only version (no download tier)
+  // it's the generation price. The separate generation-only tier only exists alongside a download bundle.
+  return {
+    timeframe: timeframeDays ?? 0,
+    permanent: timeframeDays == null,
+    accessPrice: t.download?.price ?? paidGen?.price,
+    generationPrice: t.download ? paidGen?.price : undefined,
+    freePreviewGenerations: paidGen?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
+    donationGoalEnabled: false,
+    donationGoal: undefined,
+  };
 }
 
 export type CreatorModelVersion = {
@@ -23,6 +37,9 @@ export type CreatorModelVersion = {
   status: string;
   publishedAt: Date | null;
   licensingFee: number | null;
+  // Governs whether the version can be gated: Download (download + gen), Generation (on-site gen only,
+  // no download charge), or other (no paid access). See paidAccessUsageOk in the models page.
+  usageControl: string;
   hasEarlyAccess: boolean;
   earlyAccessConfig: EarlyAccessConfig | null;
 };
@@ -52,6 +69,8 @@ export type ModelsQuery = {
   type?: string;
   status?: StatusFilter;
   access?: boolean; // has early / paid access on a version
+  /** Usage-control filter (bulk paid-access scoping): 'download' or 'generation'. */
+  usage?: 'download' | 'generation';
   sort?: ModelsSort;
   page?: number;
   /** Rows per page (defaults to MODELS_PER_PAGE); the page's cookie-backed size selector sets it. */
@@ -130,9 +149,10 @@ export const PAGE_SIZE_COOKIE = 'cs-page-size';
 // sort + pagination. Version-level filters (fee/baseModel/access) both narrow the model list (models with ≥1
 // matching version) AND restrict the versions shown, so "select all" selects exactly what's on screen.
 export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModelsResult> {
-  const { userId, q, fee, baseModel, type, status, access, sort = 'recent' } = query;
+  const { userId, q, fee, baseModel, type, status, access, usage, sort = 'recent' } = query;
   const page = Math.max(1, query.page ?? 1);
   const perPage = query.perPage ?? MODELS_PER_PAGE;
+  const usageValue = usage === 'generation' ? 'Generation' : usage === 'download' ? 'Download' : null;
 
   // Model-list filter (shared by count + page query; kysely builders are immutable, so branch off one).
   let filtered = dbRead
@@ -144,7 +164,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   if (status === 'published') filtered = filtered.where('status', '=', 'Published');
   else if (status === 'draft') filtered = filtered.where('status', '=', 'Draft');
   else if (status !== 'all') filtered = filtered.where('status', '!=', 'Draft'); // default: hide drafts
-  const hasVersionFilter = !!baseModel || !!access || !!fee;
+  const hasVersionFilter = !!baseModel || !!access || !!fee || !!usageValue;
   if (hasVersionFilter)
     filtered = filtered.where((eb) =>
       eb.exists(
@@ -154,6 +174,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
           .whereRef('mv.modelId', '=', 'Model.id')
           .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
           .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
+          .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
           .$if(fee === 'set', (b) => b.where('mv.licensingFee', 'is not', null))
           .$if(fee === 'off', (b) => b.where('mv.licensingFee', 'is', null))
       )
@@ -196,28 +217,40 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     return { models: [], total, page, pageCount, baseModels, modelTypes, matchingVersionIds: [] };
 
   const versions = await dbRead
-    .selectFrom('ModelVersion')
+    .selectFrom('ModelVersion as mv')
+    .leftJoin('PaidAccess as pa', (join) =>
+      join
+        .onRef('pa.entityId', '=', 'mv.id')
+        .on('pa.entityType', '=', 'ModelVersion')
+        .on((eb) => eb.or([eb('pa.endsAt', 'is', null), eb('pa.endsAt', '>', new Date())]))
+    )
+    .leftJoin('DonationGoal as dg', (join) =>
+      join.onRef('dg.entityId', '=', 'mv.id').on('dg.entityType', '=', 'ModelVersion')
+    )
     .select([
-      'id',
-      'modelId',
-      'name',
-      'baseModel',
-      'status',
-      'publishedAt',
-      'licensingFee',
-      'earlyAccessEndsAt',
-      'earlyAccessConfig',
+      'mv.id',
+      'mv.modelId',
+      'mv.name',
+      'mv.baseModel',
+      'mv.status',
+      'mv.publishedAt',
+      'mv.licensingFee',
+      'mv.usageControl',
+      'pa.timeframeDays as paTimeframeDays',
+      'pa.terms as paTerms',
+      'dg.goalAmount as donationGoalAmount',
     ])
     .where(
-      'modelId',
+      'mv.modelId',
       'in',
       models.map((m) => m.id)
     )
-    .$if(!!baseModel, (b) => b.where('baseModel', '=', baseModel!))
-    .$if(!!access, (b) => b.where(paidAccessFilter()))
-    .$if(fee === 'set', (b) => b.where('licensingFee', 'is not', null))
-    .$if(fee === 'off', (b) => b.where('licensingFee', 'is', null))
-    .orderBy('index', 'asc')
+    .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
+    .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
+    .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
+    .$if(fee === 'set', (b) => b.where('mv.licensingFee', 'is not', null))
+    .$if(fee === 'off', (b) => b.where('mv.licensingFee', 'is', null))
+    .orderBy('mv.index', 'asc')
     .execute();
 
   // Select-all set: every version matching the filter across ALL pages (bulk mode only — it can be large).
@@ -237,6 +270,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       )
       .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
       .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
+      .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
       .$if(fee === 'set', (b) => b.where('mv.licensingFee', 'is not', null))
       .$if(fee === 'off', (b) => b.where('mv.licensingFee', 'is', null))
       .select('mv.id')
@@ -247,6 +281,14 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const byModel = new Map<number, CreatorModelVersion[]>();
   for (const v of versions) {
     const list = byModel.get(v.modelId) ?? [];
+    // The left join only matched an ACTIVE gate, so a rebuilt config means the version is currently sold.
+    const earlyAccessConfig = paidAccessToConfig(v.paTimeframeDays, v.paTerms);
+    // A donation goal (create-once, timed-only) is a separate row from the gate — fold the existing one
+    // into the config so the editor reflects it. Permanent gates never carry a goal.
+    if (earlyAccessConfig && !earlyAccessConfig.permanent && v.donationGoalAmount != null) {
+      earlyAccessConfig.donationGoalEnabled = true;
+      earlyAccessConfig.donationGoal = Number(v.donationGoalAmount);
+    }
     list.push({
       id: v.id,
       name: v.name,
@@ -255,12 +297,9 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       publishedAt: v.publishedAt,
       // kysely types the DECIMAL column as string (prisma-kysely maps Decimal→string); the app carries a number.
       licensingFee: v.licensingFee == null ? null : Number(v.licensingFee),
-      hasEarlyAccess: v.earlyAccessEndsAt !== null,
-      // The column defaults to an empty object `{}` (or JSON null) for versions that never set up early
-      // access — treat those as "no config" so the UI doesn't show every version as configured.
-      earlyAccessConfig: isRealEarlyAccessConfig(v.earlyAccessConfig)
-        ? (v.earlyAccessConfig as EarlyAccessConfig)
-        : null,
+      usageControl: v.usageControl,
+      hasEarlyAccess: earlyAccessConfig !== null,
+      earlyAccessConfig,
     });
     byModel.set(v.modelId, list);
   }

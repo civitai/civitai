@@ -2,9 +2,9 @@
 // write client lives in $lib/server/monetization/early-access.ts; keep this file
 // free of server imports so the editor UI can import it too.
 //
-// Constraints mirror the main app's modelVersionEarlyAccessConfigSchema — UI hints
-// only; the /api/v1/model-versions/early-access endpoint is the source of truth.
-export const MIN_DOWNLOAD_PRICE = 100;
+// Constraints mirror the main app's paid-access form (formEarlyAccessConfigSchema) — UI hints only;
+// the /api/v1/model-versions/early-access endpoint is the source of truth.
+export const MIN_ACCESS_PRICE = 100;
 export const MIN_GENERATION_PRICE = 50;
 export const DEFAULT_GENERATION_TRIAL_LIMIT = 10;
 export const MAX_GENERATION_TRIAL_LIMIT = 1000;
@@ -57,12 +57,12 @@ export { PERMANENT_ACCESS_LIMIT_BY_TIER, maxPermanentAccessModels } from '@civit
 export type EarlyAccessConfig = {
   timeframe: number;
   permanent?: boolean;
-  chargeForDownload: boolean;
-  downloadPrice?: number;
-  chargeForGeneration: boolean;
+  // "Price for access" — buying it unlocks download + generation (the bundle). Required when gating.
+  accessPrice?: number;
+  // Optional cheaper generation-only tier; defaults to the access price when unset.
   generationPrice?: number;
-  generationTrialLimit: number;
+  // Free generations a non-buyer gets before purchase is required.
+  freePreviewGenerations: number;
   donationGoalEnabled: boolean;
   donationGoal?: number;
-  freeGeneration?: boolean;
 };

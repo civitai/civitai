@@ -33,12 +33,6 @@
   import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import {
-    MIN_DOWNLOAD_PRICE,
-    MIN_GENERATION_PRICE,
-    DEFAULT_GENERATION_TRIAL_LIMIT,
-    MAX_GENERATION_TRIAL_LIMIT,
-  } from '$lib/monetization/early-access';
-  import {
     feeToRatio,
     formatFeeRatio,
     suggestedFeePerImage,
@@ -47,6 +41,9 @@
   } from '$lib/monetization/fee';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import NumberInput from '$lib/components/NumberInput.svelte';
+  import PaidAccessBulkBar from '$lib/components/PaidAccessBulkBar.svelte';
+  import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
+  import BulkLicensingFeesBar from '$lib/components/BulkLicensingFeesBar.svelte';
   import {
     IconSearch,
     IconFilter,
@@ -145,24 +142,35 @@
 
   // --- Bulk mode ---
   const bulkMode = $derived(data.canSetFee && page.url.searchParams.get('mode') === 'bulk');
+  // Bulk permanent paid-access pricing — a separate mode/bar from fees, members only.
+  const paidAccessMode = $derived(
+    data.canSellIndefinitely && page.url.searchParams.get('mode') === 'paid-access'
+  );
+  // Either mode shares the same version-selection UI.
+  const selectionMode = $derived(bulkMode || paidAccessMode);
+  // Paid-access bulk is scoped to one usage type — the toggle drives a `usage` list filter so the price
+  // fields are unambiguous and "select all" is exact. Defaults to downloadable.
+  const bulkUsage = $derived(data.query.usage === 'generation' ? 'generation' : 'download');
   // A reactive Set — in-place add/delete/clear stay fine-grained (no reassign-to-mutate).
   const selected = new SvelteSet<number>();
-  // Bulk editor defaults to 1 ⚡ per DEFAULT_FEE_IMAGES (10) images.
-  let bulkBuzz = $state<number | undefined>(1);
-  let bulkImages = $state(String(DEFAULT_FEE_IMAGES));
-  let showBulkConfirm = $state(false);
-  let bulkForm = $state<HTMLFormElement>();
+  // Permanent slots the creator can still fill (null cap = unlimited). Caps how many can be selected in
+  // paid-access mode so a batch can never exceed the tier — "max minus current".
+  const remainingPermanentSlots = $derived(
+    data.permanentCap === null ? Infinity : Math.max(0, data.permanentCap - data.permanentUsed)
+  );
+  const maxSelectable = $derived(paidAccessMode ? remainingPermanentSlots : Infinity);
   // The suggested fee is per model type, so surface a bulk "use suggested" only when the type filter pins one.
   const bulkSuggested = $derived(data.query.mt ? suggestedFeePerImage(data.query.mt) : undefined);
 
-  // Leaving bulk mode (Cancel, or any URL change that drops ?mode=bulk) discards a pending selection.
+  // Leaving bulk mode (Cancel, or any URL change that drops the mode) discards a pending selection.
   $effect(() => {
-    if (!bulkMode && selected.size > 0) selected.clear();
+    if (!selectionMode && selected.size > 0) selected.clear();
   });
 
   function toggleVersion(id: number) {
     if (selected.has(id)) selected.delete(id);
-    else selected.add(id);
+    else if (selected.size < maxSelectable) selected.add(id);
+    else toast.error(`You can select up to ${maxSelectable} version${maxSelectable === 1 ? '' : 's'} for permanent access.`);
   }
   function allSelected(model: CreatorModel) {
     return model.versions.length > 0 && model.versions.every((v) => selected.has(v.id));
@@ -171,12 +179,21 @@
     const all = allSelected(model);
     for (const v of model.versions) {
       if (all) selected.delete(v.id);
-      else selected.add(v.id);
+      else if (selected.size < maxSelectable) selected.add(v.id);
     }
   }
   function selectAll(ids: number[]) {
     selected.clear();
-    for (const id of ids) selected.add(id);
+    for (const id of ids) {
+      if (selected.size >= maxSelectable) break;
+      selected.add(id);
+    }
+  }
+  // Switch the paid-access usage scope: clears the (now off-list) selection and re-filters the list.
+  function setBulkUsage(usage: 'download' | 'generation') {
+    if (usage === bulkUsage) return;
+    selected.clear();
+    navigate({ usage, page: null });
   }
 
   const setFeeEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
@@ -244,17 +261,6 @@
     }
   };
 
-  const bulkEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
-    await event.update({ reset: false });
-    if (event.result.type === 'success') {
-      const n = Number(event.result.data?.updated ?? 0);
-      toast.success(`Updated ${n} version${n === 1 ? '' : 's'}`);
-      selected.clear();
-    } else if (event.result.type === 'failure') {
-      toast.error(String(event.result.data?.error ?? 'Failed'));
-    }
-  };
-
   const filterActive = $derived(
     !!data.query.q || !!data.query.fee || !!data.query.bm || !!data.query.status || data.query.access
   );
@@ -266,52 +272,16 @@
   // Fee inputs are bound (not just seeded) so "Use this" can populate them from the reference.
   let feeBuzz = $state<number | undefined>();
   let feeImages = $state(String(DEFAULT_FEE_IMAGES));
-  let ea = $state({
-    timeframe: 7,
-    permanent: false,
-    chargeForDownload: false,
-    downloadPrice: MIN_DOWNLOAD_PRICE,
-    chargeForGeneration: true,
-    generationPrice: MIN_GENERATION_PRICE,
-    generationTrialLimit: DEFAULT_GENERATION_TRIAL_LIMIT,
-    donationGoalEnabled: false,
-    donationGoal: undefined as number | undefined,
-    freeGeneration: false,
-  });
 
+  // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
+  // editor (EarlyAccessEditor) owns its own state, seeded from the version on mount.
   function openEditor(version: CreatorModelVersion, modelType: string) {
     editingType = modelType;
     const r = feeToRatio(version.licensingFee);
     feeBuzz = r.buzz || undefined;
     feeImages = String(r.images);
-    const c = version.earlyAccessConfig;
-    // Clamp the seeded duration to the creator's score-based max so the field starts in-range.
-    const maxDays = data.maxEarlyAccessDays;
-    ea = {
-      timeframe: Math.min(c?.timeframe ?? 7, maxDays || Infinity),
-      permanent: c?.permanent ?? false,
-      chargeForDownload: c?.chargeForDownload ?? false,
-      downloadPrice: c?.downloadPrice ?? MIN_DOWNLOAD_PRICE,
-      chargeForGeneration: c?.chargeForGeneration ?? false,
-      generationPrice: c?.generationPrice ?? MIN_GENERATION_PRICE,
-      generationTrialLimit: c?.generationTrialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
-      donationGoalEnabled: c?.donationGoalEnabled ?? false,
-      donationGoal: c?.donationGoal,
-      freeGeneration: c?.freeGeneration ?? false,
-    };
     editing = version;
   }
-
-  const eaEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
-    await event.update({ reset: false });
-    if (event.result.type === 'success') {
-      toast.success(event.result.data?.earlyAccessCleared ? 'Early access turned off' : 'Early access saved');
-      editing = null;
-      await invalidateAll();
-    } else if (event.result.type === 'failure') {
-      toast.error(String(event.result.data?.error ?? 'Failed to save early access'));
-    }
-  };
 </script>
 
 <header class="page-header">
@@ -493,7 +463,7 @@
       <Select.Item value="name" label="Name" />
     </Select.Content>
   </Select.Root>
-  {#if data.total > 0 && !bulkMode}
+  {#if data.total > 0 && !selectionMode}
     <div class="ml-auto flex items-center gap-2">
       <Button href={exportHref} data-sveltekit-reload variant="outline" size="sm">Export CSV</Button>
       {#if data.canSetFee}
@@ -515,6 +485,16 @@
           />
         </form>
         <Button variant="outline" size="sm" onclick={() => fileInput?.click()}>Import CSV</Button>
+        {#if data.canSellIndefinitely}
+          <Button
+            href={buildHref({ mode: 'paid-access', usage: 'download' })}
+            data-sveltekit-replacestate
+            variant="outline"
+            size="sm"
+          >
+            Bulk Paid Access
+          </Button>
+        {/if}
         <Button href={buildHref({ mode: 'bulk' })} data-sveltekit-replacestate variant="outline" size="sm">
           Bulk Edit Fees
         </Button>
@@ -547,75 +527,26 @@
 </div>
 
 {#if bulkMode}
-  <div
-    class="sticky top-2 z-10 mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-blue-8/40 bg-dark-6 p-3 shadow-lg"
-  >
-    <span class="text-sm font-medium text-white">
-      {selected.size > 0 ? `${selected.size} selected` : 'Select versions to edit'}
-    </span>
-    {#if data.matchingVersionIds.length > 0}
-      <Button
-        variant="outline"
-        size="sm"
-        onclick={() => selectAll(data.matchingVersionIds)}
-        title="Select every version matching the current filters (all pages)"
-      >
-        Select all {data.matchingVersionIds.length}
-      </Button>
-    {/if}
-    {#if selected.size > 0}
-      <Button variant="outline" size="sm" onclick={() => selected.clear()}>Clear</Button>
-    {/if}
-    <form bind:this={bulkForm} method="POST" action="?/bulkSetFee" use:enhance={bulkEnhance} class="contents">
-      <input type="hidden" name="versionIds" value={[...selected].join(',')} />
-      <NumberInput
-        name="buzz"
-        min={0}
-        bind:value={bulkBuzz}
-        placeholder="Buzz"
-        aria-label="Buzz (leave empty to clear the fee)"
-        title="Leave empty to clear the fee"
-        class="h-7 w-20"
-      />
-      <span class="text-sm text-dark-1">⚡ per</span>
-      <input type="hidden" name="images" value={bulkImages} />
-      <Select.Root type="single" value={bulkImages} onValueChange={(v: string) => { if (v) bulkImages = v; }}>
-        <Select.Trigger size="sm" class="w-16 text-white" aria-label="Images">
-          {bulkImages}
-        </Select.Trigger>
-        <Select.Content>
-          {#each FEE_IMAGE_OPTIONS as opt (opt)}
-            <Select.Item value={String(opt)} label={String(opt)} />
-          {/each}
-        </Select.Content>
-      </Select.Root>
-      <span class="text-sm text-dark-1">images</span>
-      <Button
-        size="sm"
-        disabled={selected.size === 0}
-        onclick={() => (showBulkConfirm = true)}
-      >
-        Apply{selected.size > 0 ? ` to ${selected.size}` : ''}
-      </Button>
-      <Button href={buildHref({ mode: null })} data-sveltekit-replacestate variant="outline" size="sm">
-        Cancel
-      </Button>
-      {#if bulkSuggested !== undefined}
-        {@const sr = feeToRatio(bulkSuggested)}
-        <button
-          type="button"
-          class="text-xs text-dark-1 hover:text-white hover:underline"
-          onclick={() => {
-            bulkBuzz = sr.buzz;
-            bulkImages = String(sr.images);
-          }}
-        >
-          Use suggested ({formatFeeRatio(bulkSuggested)})
-        </button>
-      {/if}
-      <span class="text-xs text-dark-1">Empty buzz clears the fee.</span>
-    </form>
-  </div>
+  <BulkLicensingFeesBar
+    matchingVersionIds={data.matchingVersionIds}
+    {selected}
+    suggestedFee={bulkSuggested}
+    cancelHref={buildHref({ mode: null })}
+    onSelectAll={selectAll}
+  />
+{/if}
+
+{#if paidAccessMode}
+  <PaidAccessBulkBar
+    permanentCap={data.permanentCap}
+    permanentUsed={data.permanentUsed}
+    matchingVersionIds={data.matchingVersionIds}
+    usage={bulkUsage}
+    {selected}
+    onSetUsage={setBulkUsage}
+    onSelectAll={selectAll}
+    cancelHref={buildHref({ mode: null, usage: null })}
+  />
 {/if}
 
 {#if data.models.length === 0}
@@ -635,7 +566,7 @@
       <Card>
         <CardHeader>
           <div class="flex items-center gap-3">
-            {#if bulkMode && model.versions.length > 0}
+            {#if selectionMode && model.versions.length > 0}
               {@const mId = `m-${model.id}`}
               <Checkbox
                 id={mId}
@@ -653,7 +584,7 @@
             <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
               {model.status}
             </Badge>
-            {#if !bulkMode}
+            {#if !selectionMode}
               <a
                 href={modelUrl(model.id, model)}
                 target="_blank"
@@ -675,7 +606,7 @@
               {#each model.versions as version (version.id)}
                 {@const chip = feeChip(version.licensingFee)}
                 <li>
-                  {#if bulkMode}
+                  {#if selectionMode}
                     {@const cbId = `v-${version.id}`}
                     <div class="flex w-full items-center gap-3 px-5 py-3">
                       <Checkbox
@@ -777,26 +708,6 @@
     </Pagination.Root>
   {/if}
 {/if}
-
-<AlertDialog bind:open={showBulkConfirm}>
-  <AlertDialogContent>
-    <AlertDialogHeader>
-      <AlertDialogTitle>Apply fee to {selected.size} version{selected.size === 1 ? '' : 's'}?</AlertDialogTitle>
-      <AlertDialogDescription>
-        This changes what creators are charged to generate with these versions. An empty value clears the fee.
-      </AlertDialogDescription>
-    </AlertDialogHeader>
-    <AlertDialogFooter>
-      <AlertDialogCancel>Cancel</AlertDialogCancel>
-      <AlertDialogAction
-        onclick={() => {
-          showBulkConfirm = false;
-          bulkForm?.requestSubmit();
-        }}>Apply</AlertDialogAction
-      >
-    </AlertDialogFooter>
-  </AlertDialogContent>
-</AlertDialog>
 
 <AlertDialog bind:open={showPreview}>
   <AlertDialogContent class="max-w-2xl">
@@ -940,151 +851,19 @@
           {/if}
         </section>
 
-        <!-- Early & paid access -->
-        <section class="flex flex-col gap-4 border-t border-dark-4 pt-6">
-          <div class="flex flex-col gap-1">
-            <span class="text-sm font-medium text-white">Early &amp; paid access</span>
-            <span class="text-xs text-dark-2">
-              Gate this version behind payment for a limited time. When the window ends it becomes free and public.
-            </span>
-          </div>
-
-          {#if data.maxEarlyAccessDays === 0}
-            <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
-              Early access isn't available for your account yet — it unlocks as your creator score grows.
-            </p>
-          {:else}
-            <form method="POST" action="?/setEarlyAccess" use:enhance={eaEnhance} class="flex flex-col gap-4">
-              <input type="hidden" name="versionId" value={editing.id} />
-
-              {#if data.canSellIndefinitely}
-                {@const permBlocked = permAtCap && !editing.earlyAccessConfig?.permanent}
-                <div class="flex flex-col gap-1 rounded-lg border border-dark-4 p-3">
-                  <div class="flex items-center gap-2">
-                    <Checkbox id="ea-perm" name="permanent" bind:checked={ea.permanent} />
-                    <Label for="ea-perm" class="cursor-pointer text-sm font-normal text-white">
-                      Make permanent (no end date)
-                    </Label>
-                  </div>
-                  <span class="text-xs text-dark-3">
-                    Members-only. Access never expires until you turn it off; buyers keep what they paid for.
-                  </span>
-                  <span class="text-xs {permBlocked ? 'text-yellow-5' : 'text-dark-3'}">
-                    {#if data.permanentCap === null}
-                      {data.permanentUsed} set · unlimited on your tier
-                    {:else}
-                      {data.permanentUsed} of {data.permanentCap} permanent versions set{permBlocked
-                        ? ' — limit reached for your tier'
-                        : ''}
-                    {/if}
-                  </span>
-                </div>
-              {/if}
-
-              {#if ea.permanent}
-                <input type="hidden" name="timeframe" value="0" />
-              {:else}
-                <label class="flex flex-col gap-1 text-sm">
-                  <span class="text-dark-1">Early access duration (days)</span>
-                  <NumberInput
-                    name="timeframe"
-                    min={0}
-                    max={data.maxEarlyAccessDays}
-                    bind:value={ea.timeframe}
-                    class="w-32"
-                  />
-                  <span class="text-xs text-dark-3">
-                    Up to {data.maxEarlyAccessDays} day{data.maxEarlyAccessDays === 1 ? '' : 's'} at your creator level — set 0 to turn early access off.
-                  </span>
-                </label>
-              {/if}
-
-              <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-                <div class="flex items-center gap-2">
-                  <Checkbox id="ea-cd" name="chargeForDownload" bind:checked={ea.chargeForDownload} />
-                  <Label for="ea-cd" class="cursor-pointer text-sm font-normal text-white">Charge to download</Label>
-                </div>
-                {#if ea.chargeForDownload}
-                  <label class="flex flex-col gap-1 text-sm">
-                    <span class="text-dark-2">Download price (⚡, min {MIN_DOWNLOAD_PRICE})</span>
-                    <NumberInput
-                      name="downloadPrice"
-                      min={MIN_DOWNLOAD_PRICE}
-                      bind:value={ea.downloadPrice}
-                      class="w-40"
-                    />
-                  </label>
-                {/if}
-              </div>
-
-              <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-                <div class="flex items-center gap-2">
-                  <Checkbox id="ea-cg" name="chargeForGeneration" bind:checked={ea.chargeForGeneration} />
-                  <Label for="ea-cg" class="cursor-pointer text-sm font-normal text-white">Charge to generate</Label>
-                </div>
-                {#if ea.chargeForGeneration}
-                  <label class="flex flex-col gap-1 text-sm">
-                    <span class="text-dark-2">Generation price (⚡, min {MIN_GENERATION_PRICE})</span>
-                    <NumberInput
-                      name="generationPrice"
-                      min={MIN_GENERATION_PRICE}
-                      bind:value={ea.generationPrice}
-                      class="w-40"
-                    />
-                  </label>
-                  <label class="flex flex-col gap-1 text-sm">
-                    <span class="text-dark-2">Free trial generations (0–{MAX_GENERATION_TRIAL_LIMIT})</span>
-                    <NumberInput
-                      name="generationTrialLimit"
-                      min={0}
-                      max={MAX_GENERATION_TRIAL_LIMIT}
-                      bind:value={ea.generationTrialLimit}
-                      class="w-32"
-                    />
-                  </label>
-                  <div class="flex items-center gap-2">
-                    <Checkbox id="ea-fg" name="freeGeneration" bind:checked={ea.freeGeneration} />
-                    <Label for="ea-fg" class="cursor-pointer text-sm font-normal text-white">Allow free generation</Label>
-                  </div>
-                {/if}
-              </div>
-
-              <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
-                <div class="flex items-center gap-2">
-                  <Checkbox id="ea-dg" name="donationGoalEnabled" bind:checked={ea.donationGoalEnabled} />
-                  <Label for="ea-dg" class="cursor-pointer text-sm font-normal text-white">Enable a donation goal</Label>
-                </div>
-                {#if ea.donationGoalEnabled}
-                  <label class="flex flex-col gap-1 text-sm">
-                    <span class="text-dark-2">Goal amount (⚡)</span>
-                    <NumberInput name="donationGoal" min={0} bind:value={ea.donationGoal} class="w-40" />
-                  </label>
-                {/if}
-              </div>
-
-              {#if ea.permanent}
-                {#if !ea.chargeForDownload && !ea.chargeForGeneration}
-                  <p class="text-xs text-yellow-5">
-                    Enable a download or generation charge — permanent access needs a price.
-                  </p>
-                {/if}
-              {:else if !ea.timeframe}
-                <p class="text-xs text-dark-3">A duration of 0 turns early access off when you save.</p>
-              {:else if !ea.chargeForDownload && !ea.chargeForGeneration}
-                <p class="text-xs text-yellow-5">Enable a download or generation charge to turn on early access.</p>
-              {/if}
-
-              <SheetFooter class="flex-col gap-2 p-0">
-                <Button type="submit">Save early access</Button>
-                {#if editing.earlyAccessConfig}
-                  <Button type="submit" name="clear" value="true" variant="outline">
-                    Turn off early access
-                  </Button>
-                {/if}
-              </SheetFooter>
-            </form>
-          {/if}
-        </section>
+        {#key editing.id}
+          <PaidAccessEditor
+            version={editing}
+            onClose={() => (editing = null)}
+            maxEarlyAccessDays={data.maxEarlyAccessDays}
+            canSellIndefinitely={data.canSellIndefinitely}
+            permanentCap={data.permanentCap}
+            permanentUsed={data.permanentUsed}
+            earlyAccessUsed={data.earlyAccessUsed}
+            earlyAccessCap={data.earlyAccessCap}
+            tier={data.tier}
+          />
+        {/key}
       </div>
     {/if}
   </SheetContent>

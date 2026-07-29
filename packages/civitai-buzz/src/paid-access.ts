@@ -49,6 +49,32 @@ export const generationPrice = (terms: ModelVersionTerms): number | undefined =>
   if (!paid) return undefined;
   return paid.price ?? (terms.download?.price as number | undefined);
 };
+/**
+ * Build a ModelVersion's `terms` from an editor's pricing. "Price for access" (accessPrice) is the one
+ * required charge; for a `genOnly` version (no download tier) it IS the generation price, otherwise it's
+ * the download bundle price and `generationPrice` is an optional cheaper generation-only tier. The
+ * generation tier always carries `trialLimit` so free preview generations apply. Shared so the onsite
+ * form and Creator Studio map pricing identically.
+ */
+export function buildModelVersionTerms({
+  accessPrice,
+  generationPrice,
+  freePreviewGenerations,
+  genOnly = false,
+}: {
+  accessPrice: number;
+  generationPrice?: number;
+  freePreviewGenerations?: number;
+  genOnly?: boolean;
+}): ModelVersionTerms {
+  const trial = freePreviewGenerations != null ? { trialLimit: freePreviewGenerations } : {};
+  if (genOnly) return { generation: { price: accessPrice, ...trial } };
+  return {
+    download: { price: accessPrice },
+    generation: { ...(generationPrice != null ? { price: generationPrice } : {}), ...trial },
+  };
+}
+
 /** ComicChapter — one grant: unlock/read the chapter. */
 export type ComicChapterTerms = { access: Grant };
 
@@ -102,4 +128,19 @@ export const grantsGeneration = (
   terms: ModelVersionTerms,
   { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
 ): boolean => isOwnerOrMod || hasBought || generationOpenToNonBuyers(terms);
+
+// Permanent pay-for-access caps (CU 868ke4949). Shared because two surfaces set permanent access — the
+// onsite model-version form and Creator Studio — and they must agree on the limit. The server-side
+// assertion in the main app is the enforcement point; these constants also drive the "X of Y set"
+// capacity hints in both UIs.
+export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
+  bronze: 3,
+  silver: 10,
+  gold: Infinity,
+};
+
+/** Concurrent permanent-access versions allowed for a Creator-Program tier. 0 = not permitted (no/free tier). */
+export function maxPermanentAccessModels(tier: string | null | undefined): number {
+  return tier ? PERMANENT_ACCESS_LIMIT_BY_TIER[tier] ?? 0 : 0;
+}
 
