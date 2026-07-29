@@ -23,7 +23,7 @@ import { page, userEvent } from 'vitest/browser';
 // exhaustive per-dimension `images`-filter drop cases are covered by node unit
 // tests (lazyPostImages.test.ts, images-as-posts-wire.test.ts,
 // useApplyHiddenPreferences.test.ts). Here we boundary-stub the slide's heavy
-// leaves and drive the REAL SimpleImageCarousel + REAL hidden-prefs filter.
+// leaves and drive the REAL carousel (either engine) + REAL hidden-prefs filter.
 // =============================================================================
 
 const mocks = vi.hoisted(() => {
@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => {
     hiddenImageIds: [] as number[],
     hiddenTags: [] as number[],
     hiddenUsers: [] as number[],
+    swipeGalleryCards: false,
   };
   // getInfinite returns the tail ONLY when enabled (mirrors react-query gating), so
   // asserting on the returned data also proves the enable-on-approach wiring; on
@@ -66,7 +67,10 @@ const mocks = vi.hoisted(() => {
     if (!opts?.enabled) return { data: undefined, isError: false };
     if (state.error) return { data: undefined, isError: true };
     return {
-      data: { items: Array.from({ length: 14 }, (_, i) => tailImage(i + 7)), nextCursor: undefined },
+      data: {
+        items: Array.from({ length: 14 }, (_, i) => tailImage(i + 7)),
+        nextCursor: undefined,
+      },
       isError: false,
     };
   });
@@ -89,6 +93,7 @@ vi.mock('~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider', () => ({
     hiddenImageIds: mocks.ctx.hiddenImageIds,
     hiddenTags: mocks.ctx.hiddenTags,
     hiddenUsers: mocks.ctx.hiddenUsers,
+    swipeGalleryCards: mocks.ctx.swipeGalleryCards,
     source: { kind: 'model', model: { id: 1, user: { id: 9 } } },
     modelVersions: [],
   }),
@@ -209,6 +214,7 @@ beforeEach(() => {
   mocks.ctx.hiddenImageIds = [];
   mocks.ctx.hiddenTags = [];
   mocks.ctx.hiddenUsers = [];
+  mocks.ctx.swipeGalleryCards = false;
 });
 
 describe('LazyPostImagesCarousel', () => {
@@ -323,5 +329,71 @@ describe('StaticPostImagesCarousel', () => {
 
     // No lazy tail fetch on the static path.
     expect(mocks.getInfiniteUseQuery).not.toHaveBeenCalled();
+  });
+});
+
+// The `swipeGalleryCards` setting picks the carousel engine. Off (the default)
+// keeps the cheap one, which mounts only the active slide. On swaps in embla,
+// which owns a scrollable track — the cost the setting exists to gate.
+describe('swipeGalleryCards picks the carousel engine', () => {
+  // Embla measures its viewport; a zero-width one reports every slide in view and
+  // would quietly void these assertions.
+  const Sized = ({ children }: { children: React.ReactNode }) => (
+    <div style={{ width: 400, height: 400 }}>{children}</div>
+  );
+  const indicators = () => Array.from(document.querySelectorAll('button[aria-hidden]'));
+  const activeIndicator = () => indicators().findIndex((el) => el.hasAttribute('data-active'));
+  // Only `EmblaSlide` carries this class, so counting it identifies the engine
+  // AND its track length. Asserting on rendered images instead would not: with a
+  // degenerate viewport embla reports nothing in view and mounts one slide's
+  // content, which is indistinguishable from the cheap carousel.
+  const emblaSlides = () => document.querySelectorAll('.transform-3d').length;
+
+  test('off: the cheap engine, mounting only the active slide', async () => {
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(3)} postId={100} />
+      </Sized>
+    );
+
+    await expect.element(activeSlideId()).toHaveAttribute('data-image-id', '1');
+    expect(emblaSlides()).toBe(0);
+    expect(document.querySelectorAll('[data-testid="slide"]').length).toBe(1);
+  });
+
+  test('on: the setting reaches the card and navigation moves the track', async () => {
+    mocks.ctx.swipeGalleryCards = true;
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(3)} postId={100} />
+      </Sized>
+    );
+
+    // Nothing is passed as a prop — this only works if the setting travelled
+    // through the gallery context to the card.
+    await vi.waitFor(() => expect(emblaSlides()).toBe(3));
+    await vi.waitFor(() => expect(activeIndicator()).toBe(0));
+    await clickNext();
+    await vi.waitFor(() => expect(activeIndicator()).toBe(1));
+  });
+
+  // `EmblaContainer` re-renders its children a second time when embla reports it
+  // can't loop cleanly. Two full-width slides is the tightest case that still has
+  // to loop — it clears embla's threshold by exactly zero, so pin it. Counting
+  // slides rather than indicators is deliberate: indicators are driven by our own
+  // list, so they'd read 2 either way.
+  test('on: a two-image post is not duplicated by loop', async () => {
+    mocks.ctx.swipeGalleryCards = true;
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(2)} postId={100} />
+      </Sized>
+    );
+
+    await vi.waitFor(() => expect(emblaSlides()).toBe(2));
+    // `shouldDuplicate` lands in an effect, so 2 at first paint proves nothing on
+    // its own — settle, then confirm it stayed 2.
+    await vi.waitFor(() => expect(activeIndicator()).toBe(0));
+    expect(emblaSlides()).toBe(2);
   });
 });
