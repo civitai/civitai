@@ -223,7 +223,7 @@ function SwipeGalleryCardsToggle() {
     <Switch
       name="swipeGalleryCards"
       label="Swipe between images on gallery cards"
-      description="Drag left or right on a gallery post to change its image instead of using the arrows. Off by default because it adds work to every card in a feed."
+      description="Drag left or right on a gallery post to move through its images instead of using the arrows."
       checked={swipeGalleryCards ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ swipeGalleryCards: e.target.checked })}

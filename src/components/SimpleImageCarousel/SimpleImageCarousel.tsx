@@ -16,6 +16,7 @@ type ViewportSwipeHandlers = {
   onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerCancel: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onLostPointerCapture: (event: React.PointerEvent<HTMLDivElement>) => void;
   onClickCapture: (event: React.MouseEvent<HTMLDivElement>) => void;
 };
 
@@ -27,10 +28,14 @@ type SimpleCarouselContextType = {
   goTo: (index: number) => void;
   canScrollNext: boolean;
   canScrollPrev: boolean;
-  swipeHandlers: ViewportSwipeHandlers | null;
 };
 
 const SimpleCarouselContext = createContext<SimpleCarouselContextType | null>(null);
+
+// The swipe handlers ride their own context because they are stable for the life
+// of the carousel. Reading them off the main context would make the Viewport
+// re-render on every slide change — for opted-out viewers too.
+const SimpleCarouselSwipeContext = createContext<ViewportSwipeHandlers | null>(null);
 
 function useSimpleCarousel() {
   const context = useContext(SimpleCarouselContext);
@@ -139,21 +144,20 @@ export function SimpleImageCarousel({
     canScrollPrev,
   });
 
-  const contextValue = useMemo(
-    () => ({ currentIndex, total, next, prev, goTo, canScrollNext, canScrollPrev, swipeHandlers }),
-    [currentIndex, total, next, prev, goTo, canScrollNext, canScrollPrev, swipeHandlers]
-  );
-
   return (
-    <SimpleCarouselContext.Provider value={contextValue}>
-      <div
-        className={clsx('relative', className)}
-        style={style}
-        onKeyDownCapture={handleKeyDown}
-        tabIndex={0}
-      >
-        {children}
-      </div>
+    <SimpleCarouselContext.Provider
+      value={{ currentIndex, total, next, prev, goTo, canScrollNext, canScrollPrev }}
+    >
+      <SimpleCarouselSwipeContext.Provider value={swipeHandlers}>
+        <div
+          className={clsx('relative', className)}
+          style={style}
+          onKeyDownCapture={handleKeyDown}
+          tabIndex={0}
+        >
+          {children}
+        </div>
+      </SimpleCarouselSwipeContext.Provider>
     </SimpleCarouselContext.Provider>
   );
 }
@@ -207,8 +211,15 @@ function useSwipeHandlers({
   } | null>(null);
   const suppressClick = useRef(false);
 
-  const navRef = useRef({ next, prev, canScrollNext, canScrollPrev });
-  navRef.current = { next, prev, canScrollNext, canScrollPrev };
+  // Only allocated while swipe is on, so an opted-out card in the feed pays
+  // nothing per render.
+  const navRef = useRef<{
+    next: () => void;
+    prev: () => void;
+    canScrollNext: boolean;
+    canScrollPrev: boolean;
+  } | null>(null);
+  if (enabled) navRef.current = { next, prev, canScrollNext, canScrollPrev };
 
   return useMemo(() => {
     if (!enabled) return null;
@@ -247,6 +258,14 @@ function useSwipeHandlers({
       onPointerMove: (event) => {
         const current = gesture.current;
         if (!current || current.pointerId !== event.pointerId) return;
+        // No button down means the gesture already ended somewhere we never saw
+        // (released outside the element). Without this a later hover would lock
+        // the axis against a stale origin and take pointer capture with nothing
+        // pressed, which then swallows an unrelated click elsewhere on the page.
+        if (event.buttons === 0) {
+          gesture.current = null;
+          return;
+        }
         if (current.axis === 'horizontal') return;
 
         const dx = Math.abs(event.clientX - current.startX);
@@ -265,22 +284,23 @@ function useSwipeHandlers({
         if (!current || current.axis !== 'horizontal') return;
 
         const dx = event.clientX - current.startX;
-        // The drag moved far enough to be intentional, so it owns the click that
-        // follows regardless of whether we end up changing slides.
-        if (Math.abs(dx) >= AXIS_LOCK_THRESHOLD) suppressClick.current = true;
+        // Only a drag that actually moves the carousel swallows the click behind
+        // it. Anything shorter stays a tap — the reaction bar, the meta button
+        // and the chevrons all sit inside this same surface, and a slightly
+        // sloppy finger on one of them must still register.
         if (Math.abs(dx) < SWIPE_DISTANCE_THRESHOLD) return;
+        suppressClick.current = true;
 
-        const {
-          next: goNext,
-          prev: goPrev,
-          canScrollNext: fwd,
-          canScrollPrev: back,
-        } = navRef.current;
-        if (dx < 0 && fwd) goNext();
-        else if (dx > 0 && back) goPrev();
+        const nav = navRef.current;
+        if (!nav) return;
+        if (dx < 0 && nav.canScrollNext) nav.next();
+        else if (dx > 0 && nav.canScrollPrev) nav.prev();
       },
       onPointerCancel: (event) => {
         end(event);
+      },
+      onLostPointerCapture: () => {
+        gesture.current = null;
       },
       onClickCapture: (event) => {
         if (!suppressClick.current) return;
@@ -416,10 +436,11 @@ type ViewportProps = {
 };
 
 function Viewport({ children, className }: ViewportProps) {
-  const { swipeHandlers } = useSimpleCarousel();
+  const swipeHandlers = useContext(SimpleCarouselSwipeContext);
 
   return (
     <div
+      data-carousel-viewport=""
       // `pan-y` is what makes the horizontal drag reach us at all — without it the
       // browser claims the gesture for scrolling and no pointermove lands.
       // `pinch-zoom` is kept so opting into swipe doesn't cost you zooming an image.
