@@ -2119,7 +2119,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           o.toLowerCase()
         ),
       };
-  const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx);
+  // APPROVE is a re-validation of the ALREADY-SUBMITTED manifest, not a new
+  // submit — exempt ONLY the new sensitive-scope-justification enforcement so a
+  // LEGACY pending request (submitted before that rule shipped, sensitive scope
+  // + no justification) stays approvable. Every OTHER manifest check still runs
+  // here (the H-4 invariant). A post-deploy submission already passed this gate
+  // at submit time, and nothing reaches the approve queue without the submit
+  // gate first, so skipping the re-check creates no bypass.
+  const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx, {
+    enforceSensitiveScopeJustification: false,
+  });
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
