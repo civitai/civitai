@@ -81,6 +81,9 @@ export type ParsedFeeCsv =
   | { ok: true; rows: ParsedFeeEntry[]; errors: { row: number; reason: string }[] };
 
 export function parseFeeCsv(text: string): ParsedFeeCsv {
+  // The literal below IS a U+FEFF BOM: Excel prepends one to CSV exports and it must be stripped or
+  // the first header cell never matches.
+  // eslint-disable-next-line no-irregular-whitespace
   const grid = tokenize(text.replace(/^﻿/, ''));
   if (grid.length < 2) return { ok: false, error: 'The file has no data rows.' };
   const header = grid[0].map((h) => h.trim().toLowerCase());
