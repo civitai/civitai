@@ -28,6 +28,9 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import type { EntityChangeRow } from '~/server/common/entity-change.constants';
+import { ENTITY_CHANGE_TRACKING_FLAG } from '~/server/common/entity-change.constants';
+import { isFlipt } from '~/server/flipt/client';
 
 export type ViewType =
   | 'ProfileView'
@@ -731,6 +734,18 @@ export class Tracker {
     valid?: boolean;
   }) {
     return this.track('moderationRequest', { ...values }, { skipActorMeta: true });
+  }
+
+  // Entity change/audit log (docs/entity-change-tracking-plan.md). One row per
+  // changed field, one insert per save (batched via trackMany → direct CH
+  // insert). Flag-gated so the app can deploy before the table exists.
+  public async entityChanges(rows: EntityChangeRow[]) {
+    if (!rows.length) return;
+    if (!(await isFlipt(ENTITY_CHANGE_TRACKING_FLAG))) return;
+    return this.trackMany(
+      'entityChangeEvents',
+      rows.map((row) => ({ ...row, via: this.provenance.via }))
+    );
   }
 
   public retoolAudit(values: {

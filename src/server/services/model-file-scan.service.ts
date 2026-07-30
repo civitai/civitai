@@ -30,6 +30,8 @@ import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '~/server/common/constants';
 import { addLinkedComponent } from '~/server/services/model-version.service';
+import { Tracker } from '~/server/clickhouse/client';
+import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -211,6 +213,25 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
         dbWrite.modelFileHash.createMany({ data: hashRows }),
       ]);
+
+      // Entity-change audit: record the file's SHA256 lineage. First scan writes
+      // '' → hash; a re-upload writes old → new. "Did the file change after
+      // upload" = more than one distinct newValue for this fileId. Rescans of
+      // unchanged bytes diff equal and emit nothing.
+      const newSha256 = outcome.hashes.SHA256;
+      if (newSha256) {
+        const existingSha256 = existingHashes.find((h) => h.type === ModelHashType.SHA256)?.hash;
+        const changeRows = diffEntityChanges({
+          entityType: 'ModelFile',
+          entityId: fileId,
+          ownerId: file.modelVersion?.model?.userId ?? 0,
+          before: { 'hash.SHA256': existingSha256 },
+          after: { 'hash.SHA256': newSha256 },
+          actorRole: 'system',
+          reason: 'file-scan',
+        });
+        new Tracker().entityChanges(changeRows).catch(() => null);
+      }
     }
 
     const scannedSha256 = outcome.hashes.SHA256;

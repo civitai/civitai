@@ -163,6 +163,10 @@ export type Announcement = {
   metadata: unknown | null;
   disabled: Generated<boolean>;
 };
+export type AnnouncementUser = {
+  announcementId: number;
+  userId: number;
+};
 export type Answer = {
   id: Generated<number>;
   questionId: number;
@@ -3884,6 +3888,7 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementUser: AnnouncementUser;
   Answer: Answer;
   AnswerMetric: AnswerMetric;
   AnswerRank: AnswerRank;

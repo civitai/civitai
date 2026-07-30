@@ -42,6 +42,8 @@ export const announcementMetaSchema = z
   })
   .partial();
 
+export const MAX_ANNOUNCEMENT_TARGET_USERS = 50_000;
+
 export type UpsertAnnouncementSchema = z.infer<typeof upsertAnnouncementSchema>;
 export const upsertAnnouncementSchema = z.object({
   id: z.number().optional(),
@@ -53,6 +55,13 @@ export const upsertAnnouncementSchema = z.object({
   endsAt: z.date().nullish(),
   disabled: z.boolean().optional(),
   metadata: announcementMetaSchema,
+  // Replace-set semantics: undefined leaves targeting unchanged, [] clears it
+  // (announcement shows to everyone), a non-empty array restricts the
+  // announcement to exactly those users.
+  targetUserIds: z.array(z.number().int().positive()).max(MAX_ANNOUNCEMENT_TARGET_USERS).optional(),
+  // Only acted on when targetUserIds resolves to a non-empty set: sends a
+  // system-announcement notification to each targeted user on this save.
+  notifyTargetedUsers: z.boolean().optional(),
 });
 
 export type GetAnnouncementsPagedSchema = z.infer<typeof getAnnouncementsPagedSchema>;

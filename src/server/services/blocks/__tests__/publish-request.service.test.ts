@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
 import {
   computeBundleLineDiff,
   computeFileDiff,
   computeManifestDiff,
   extractBundleMetadata,
+  submitVersion,
   type FileMeta,
 } from '../publish-request.service';
 import {
@@ -13,6 +14,44 @@ import {
   MAX_FILE_SIZE_BYTES,
   MAX_TOTAL_DECOMPRESSED_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
+
+// submitVersion dynamically imports these; mock them so the sensitive-scope
+// gate can be exercised end-to-end without a real DB / MinIO / Forgejo. The
+// gate itself runs BEFORE any of these are touched (fail-fast), so the
+// rejection test never reaches them; the "accepts" tests drive the full
+// happy-path insert through the mocks.
+const dbMocks = vi.hoisted(() => ({
+  createPublishRequest: vi.fn(),
+  pubReqFindFirst: vi.fn(),
+  appBlockFindFirst: vi.fn(),
+  userFindUnique: vi.fn(),
+}));
+
+vi.mock('~/server/db/client', () => ({
+  dbRead: {
+    appBlockPublishRequest: { findFirst: dbMocks.pubReqFindFirst },
+    appBlock: { findFirst: dbMocks.appBlockFindFirst },
+    user: { findUnique: dbMocks.userFindUnique },
+  },
+  dbWrite: {
+    appBlockPublishRequest: { create: dbMocks.createPublishRequest },
+  },
+}));
+
+vi.mock('~/env/server', () => ({
+  env: { APPS_DOMAIN: 'civit.ai', DISCORD_WEBHOOK_MOD_ALERTS: undefined },
+}));
+
+vi.mock('~/utils/bundle-s3', () => ({
+  bundleKey: (sha: string) => `bundles/${sha}.zip`,
+  getBundleBucket: () => 'test-bucket',
+  getBundleS3Client: () => ({ send: vi.fn().mockResolvedValue({}) }),
+}));
+
+vi.mock('~/server/services/blocks/forgejo.service', () => ({
+  ensureReviewRepo: vi.fn().mockResolvedValue(undefined),
+  commitFiles: vi.fn().mockResolvedValue(undefined),
+}));
 
 /**
  * Deterministic-input coverage for the W1 publish-request flow's diff
@@ -481,5 +520,63 @@ describe('computeBundleLineDiff', () => {
     const curr = [f('z.ts', 'z\n'), f('a.ts', 'a\n'), f('m.ts', 'm\n')];
     const result = computeBundleLineDiff(curr, null);
     expect(result.files.map((x) => x.path)).toEqual(['a.ts', 'm.ts', 'z.ts']);
+  });
+});
+
+describe('submitVersion — sensitive-scope justification gate (enforced AT SUBMIT)', () => {
+  async function makeBundle(manifest: Record<string, unknown>): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file('block.manifest.json', JSON.stringify(manifest));
+    zip.file('index.html', '<!doctype html><html><body>hi</body></html>');
+    return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+  }
+
+  const baseManifest = { blockId: 'my-app', version: '0.1.0', name: 'My App' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.pubReqFindFirst.mockResolvedValue(null);
+    dbMocks.appBlockFindFirst.mockResolvedValue(null);
+    dbMocks.userFindUnique.mockResolvedValue({ username: 'dev' });
+    dbMocks.createPublishRequest.mockResolvedValue({});
+  });
+
+  it('rejects a NEW sensitive-scope submit with NO scopeJustifications (was: accepted → pending)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: ['ai:write:budgeted'] });
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 1 })).rejects.toThrow(
+      'sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ai:write:budgeted'
+    );
+    // Fail-fast: rejected before any DB insert — it never enters the mod queue.
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+  });
+
+  it('names every unjustified sensitive scope in the rejection message', async () => {
+    const buf = await makeBundle({
+      ...baseManifest,
+      scopes: ['ai:write:budgeted', 'buzz:read:self', 'models:read:self'],
+    });
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 1 })).rejects.toThrow(
+      'sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ai:write:budgeted, buzz:read:self'
+    );
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+  });
+
+  it('accepts a sensitive-scope submit WITH a non-empty justification → pending pubreq', async () => {
+    const buf = await makeBundle({
+      ...baseManifest,
+      scopes: ['ai:write:budgeted'],
+      scopeJustifications: { 'ai:write:budgeted': 'runs the generation the user requested' },
+    });
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+    expect(result.slug).toBe('my-app');
+    expect(result.version).toBe('0.1.0');
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a NON-sensitive-scope submit with no justification → pending pubreq', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: ['models:read:self'] });
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+    expect(result.slug).toBe('my-app');
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
   });
 });

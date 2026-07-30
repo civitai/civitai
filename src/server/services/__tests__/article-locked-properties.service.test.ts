@@ -39,6 +39,25 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
 
+// upsertArticle's UPDATE path does post-commit work that reaches Redis: the
+// count-cache refresh and the replication-lag markers. With no live Redis these
+// awaits never settle and the tests hang. Stub the Redis-backed helpers so the
+// tests exercise the lockedProperties enforcement (which happens before commit)
+// instead of blocking on infra. `importOriginal` keeps every other export real
+// so the rest of the large import graph is untouched.
+vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/db/db-lag-helpers')>()),
+  preventReplicationLag: vi.fn(async () => {}),
+  getDbWithoutLag: vi.fn(async () => mockDbRead),
+}));
+vi.mock('~/server/redis/caches', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/redis/caches')>();
+  return {
+    ...actual,
+    userArticleCountCache: { ...actual.userArticleCountCache, refresh: vi.fn(async () => {}) },
+  };
+});
+
 import { upsertArticle } from '~/server/services/article.service';
 
 const ARTICLE_ID = 21;

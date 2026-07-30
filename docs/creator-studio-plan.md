@@ -286,8 +286,8 @@ per-version fee — the two are independent, so a creator can always set their o
 
 The design has cross-team dependencies — surface these early (likely with **Koen / backend**):
 
-- **ClickHouse / data** — the earnings **`source`** split (compensation / licenseFee / tip) already exists in
-  `orchestration.resourceCompensations`; the real add is the **owner-keyed earnings rollup**
+- **ClickHouse / data** — the earnings **`source`** split (compensation / licenseFee) already exists in
+  `orchestration.resourceCompensations` (tips + access/cosmetic sit in *other* tables — see §7.6 / A5); the real add is the **owner-keyed earnings rollup**
   ([§7.6](#76-clickhouse-analytics--materialized-views)). *(The earlier concern about tagging the buzz-service report
   endpoints is moot — analytics read from ClickHouse, not the buzz service.)*
 - **Main-app owner** — sign-off on the [§7.2](#72-new-package--creator-studio-modules) **consolidation** refactor:
@@ -297,8 +297,9 @@ The design has cross-team dependencies — surface these early (likely with **Ko
 
 ### 7.5 Engineering to-dos (not Justin — eng verification)
 
-- Earnings **by source** is already available: `orchestration.resourceCompensations.source` = comp / licenseFee / tip
-  (confirmed by the live audit). The remaining gap is the **owner-keyed rollup** ([§7.6](#76-clickhouse-analytics--materialized-views)).
+- Earnings **by source** is partly available: `orchestration.resourceCompensations.source` = comp / licenseFee
+  **only** (CH audit 2026-07-14 — no `tip` there; tips live in `default.buzz_resource_compensation`, access/cosmetic
+  are buzz txns → A5). The remaining gaps are the **owner-keyed rollup** and unioning A1+A5 sources ([§7.6](#76-clickhouse-analytics--materialized-views)).
 - The `earlyAccessPurchase()` **dependency-map** is now **optional** — with Q1 minimal and the extraction deferred to
   the post-v1 consolidation, it's off any critical path. Do it when scoping the consolidation.
 
@@ -311,7 +312,7 @@ aggregates**, never individual rows (the buzz service is too slow). Inventory fr
 
 | Need | Table |
 |---|---|
-| Earnings by resource + **source** (comp / licenseFee / tip) | `orchestration.resourceCompensations` (SummingMergeTree; +`accountType`, `source`) |
+| Earnings by resource + **source** (comp / licenseFee — no tip here) | `orchestration.resourceCompensations` (SummingMergeTree; +`accountType`, `source`) |
 | Earnings mirror (comp/tip split) | `default.buzz_resource_compensation` |
 | Generations per resource | `default.daily_resource_generation_counts` |
 | Downloads | `default.daily_downloads`, `daily_downloads_unique`, `modelVersionUniqueDownloads` |
@@ -323,7 +324,12 @@ never the owner's `userId` (the `userId` columns that exist — `daily_user_reso
 
 1. **Owner-keyed earnings rollup** — an MV aggregating `(ownerUserId, date, source) → sum(amount)` off
    `resourceCompensations` (+ a `modelVersion → ownerUserId` dictionary in CH). Scales better than app-side
-   `WHERE modelVersionId IN (…)`, which balloons for prolific creators.
+   `WHERE modelVersionId IN (…)`, which balloons for prolific creators. Full spec + open decisions:
+   [owner-rollup-handoff.md](creator-studio/owner-rollup-handoff.md). **Two design decisions flagged there
+   (CH audit 2026-07-14):** (D1) the key likely needs **`accountType`/currency** so buzz-color vs cash stay
+   separable (B8); (D2) `resourceCompensations` holds **comp + license only** — tips + access/cosmetic come from
+   *other* MVs (A5), so the `/earnings` source filter must union A1+A5 on a shared source vocabulary. Also: `amount`
+   is fractional — the MV must not `FLOOR` it.
 2. **Per-creator access/cosmetic-sale earnings** (only if v1 needs them) — those are buzz *transactions*, not in
    `resourceCompensations`; `buzz.transactions_daily_stats` is platform-wide (no account dimension). Would need a
    per-`toAccountId` daily buzz-earnings-by-type MV.
@@ -408,22 +414,26 @@ ships **~1 week before** it (Justin), so comp-retirement is **not** a v1 item.
 ### Decided — Q1: minimal monetization scope for v1
 
 The creator-studio **monetization module** ships the **minimal creator-side writes only** — `setLicensingFee` /
-`bulkSetLicensingFee` with a member-`tier` gate and the `active` flag ([§7.1](#71-schema--data-main-app-db)), plus
-`setUnlimitedAccess` (same shape). These are plain `ModelVersion` writes — no buzz call, no domain co-write. The risky
+`bulkSetLicensingFee` with a **Creator Program membership** gate (decided 2026-07-09) and the `active` flag
+([§7.1](#71-schema--data-main-app-db)), plus `setUnlimitedAccess` (same shape). These are plain `ModelVersion` writes — no buzz call, no domain co-write. The risky
 buyer-side paths (`earlyAccessPurchase`, cosmetic purchase) **stay in the main app**; they don't move for v1. It's a
 **module, not a package** (single caller in v1 — [§2](#2-architecture--tooling)); with the cutover decoupled (Q5) the
 extraction is off the critical path, so the dependency-map (§7.5) is no longer a blocker.
 
-### To confirm (surfaced in review)
+### Member gate — DECIDED (2026-07-09)
 
-- **Member gate: subscription `tier` vs full Creator Program membership — possibly feature-specific.** Justin said the
-  fee gate is **`tier`** (any active bronze/silver/gold subscription); the HackMD said "active **Creator Program**
-  members" (tier **+** creator score ≥40k). And Justin scoped **indefinite-sale specifically to CP members** — which
-  suggests the gates may **differ by feature** (licensing fee = `tier`; indefinite-sale = CP membership) rather than one
-  bar. Confirm both — it changes who can set a fee, who can sell indefinitely, and the `/join` upsell copy
-  ([§5.2](#52-reuse-existing-main-app-endpointsservices)).
+- **Full Creator Program membership is the single bar for ALL member-only actions** (fee-set *and*
+  sell-indefinitely) — not a tier-only or feature-specific split. Rationale: tier-only would let a brand-new
+  bronze subscriber fee-gate other people's models; CP requires creator score. Resolved from the `onboarding`
+  CP flag. See [questions-justin-product.md B1](creator-studio/questions-justin-product.md) /
+  [pre-implementation-decisions.md B1](creator-studio/pre-implementation-decisions.md).
 
-### Questions for Justin — review pass (2026-07-02)
+### Questions for Justin — review pass (2026-07-02) · ANSWERED 2026-07-09
+
+> Full responses in [questions-justin-product.md](creator-studio/questions-justin-product.md) (B1–B11) and the
+> reconciled [pre-implementation-decisions.md](creator-studio/pre-implementation-decisions.md). Notable changes
+> from the assumptions below: single CP-membership gate (Q1), indefinite-sale = uncapped early access (Q2), all
+> earnings sources in v1 (Q3), two-section analytics (Q4), notify on fee pause (Q5), bulk editing is v1 (Q9).
 
 Consolidated **product/business** calls for Justin's doc review. (Eng/design-owned items — charting lib, `/licensing`
 separate-vs-mode, owner-keyed rollup, etc. — are in [creator-studio/README.md](creator-studio/README.md#cross-cutting-decisions-needed-answer-once--they-recur-across-pages).)

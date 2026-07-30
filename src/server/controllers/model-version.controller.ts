@@ -1,5 +1,11 @@
 import { TRPCError } from '@trpc/server';
-import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
+import { maxPermanentAccessModels } from '@civitai/buzz';
+import {
+  countUserPermanentAccessVersions,
+  getPaidAccess,
+  toModelVersionPaidAccessDto,
+} from '~/server/services/paid-access.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
@@ -378,12 +384,29 @@ export const upsertModelVersionHandler = async ({
       input.trainingDetails = undefined;
     }
 
-    // A permanent (never-expiring) gate carries no timeframeDays, so it skips every timed-window cap
-    // below (max-days, max-concurrent EA models, and the CP tier check). Restrict it to moderators on
-    // this path — the Creator Studio sets permanent gates via the WEBHOOK_TOKEN-gated early-access
-    // endpoint, never through modelVersion.upsert.
+    // A permanent (never-expiring) gate skips the timed-window caps below; it's a Creator Program
+    // member perk (moderators always), capped per tier. Only NEW permanent grants are gated —
+    // re-saving an already-permanent version stays allowed even if the creator's membership lapsed,
+    // so an edit can't lock them out of their own version.
     if (input.paidAccess?.permanent && !ctx.user.isModerator) {
-      throw throwBadRequestError('Permanent access can only be set from the Creator Studio.');
+      const existing = input.id ? (await getPaidAccess('ModelVersion', [input.id]))[input.id] : undefined;
+      const alreadyPermanent = existing != null && existing.timeframeDays == null;
+      if (!alreadyPermanent) {
+        const tier = (await getHighestTierSubscription(ctx.user.id))?.tier;
+        const isMember = !!tier && tier !== 'free' && tier !== 'founder';
+        if (!isMember)
+          throw throwBadRequestError(
+            'Permanent paid access requires an active Creator Program membership.'
+          );
+        const limit = maxPermanentAccessModels(tier);
+        const used = await countUserPermanentAccessVersions(ctx.user.id, input.id);
+        if (used + 1 > limit)
+          throw throwBadRequestError(
+            `Your Creator Program tier allows up to ${limit} permanent paid-access model${
+              limit === 1 ? '' : 's'
+            }.`
+          );
+      }
     }
 
     await assertUserEarlyAccessLimits({
@@ -441,6 +464,9 @@ export const upsertModelVersionHandler = async ({
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,
+      tracker: ctx.track,
+      actorUserId: userId,
+      isModerator: ctx.user.isModerator,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
 

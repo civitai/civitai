@@ -39,6 +39,7 @@ import {
 } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
+import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
   dataForModelsCache,
   modelTagCache,
@@ -2242,6 +2243,7 @@ export const upsertModel = async (
     // meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
     isModerator?: boolean;
     gallerySettings?: Partial<ModelGallerySettingsSchema>;
+    tracker?: Tracker;
   }
 ) => {
   if (input.description) await throwOnBlockedLinkDomain(input.description);
@@ -2255,6 +2257,7 @@ export const upsertModel = async (
     isModerator,
     status,
     gallerySettings,
+    tracker,
     ...data
   } = input;
   let { meta } = input;
@@ -2274,6 +2277,12 @@ export const upsertModel = async (
             lockedProperties: true,
             gallerySettings: true,
             meta: true,
+            availability: true,
+            mode: true,
+            allowNoCredit: true,
+            allowCommercialUse: true,
+            allowDerivatives: true,
+            allowDifferentLicense: true,
           },
         })
       : null;
@@ -2281,6 +2290,7 @@ export const upsertModel = async (
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
 
+  let profanityAutoNsfw = false;
   if (!isModerator) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
@@ -2301,6 +2311,7 @@ export const upsertModel = async (
       if (!storedLockedProperties.includes('nsfw')) {
         data.nsfw = true;
         data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
+        profanityAutoNsfw = true;
       }
     }
   }
@@ -2446,6 +2457,25 @@ export const upsertModel = async (
     });
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
+
+    if (tracker) {
+      const changeRows = diffEntityChanges({
+        entityType: 'Model',
+        entityId: id as number,
+        ownerId: beforeUpdate.userId,
+        before: beforeUpdate,
+        after: data as Record<string, unknown>,
+        actorRole: resolveActorRole({
+          actorUserId: userId,
+          ownerId: beforeUpdate.userId,
+          isModerator,
+        }),
+        systemFields: profanityAutoNsfw
+          ? { nsfw: 'profanity-filter', lockedProperties: 'profanity-filter' }
+          : undefined,
+      });
+      tracker.entityChanges(changeRows).catch(() => null);
+    }
 
     const modelMeta = result.meta as ModelMeta | null;
     const showcaseCollectionChanged =
@@ -3721,7 +3751,9 @@ export async function copyGallerySettingsToAllModelsByUser({
     await tx.$executeRaw`
       UPDATE "Model"
       SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
-        'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${settings.level} END,
+        'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${
+      settings.level
+    } END,
         'users', ${JSON.stringify(settings.users || [])}::jsonb,
         'tags', ${JSON.stringify(settings.tags || [])}::jsonb
                                                    )

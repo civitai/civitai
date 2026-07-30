@@ -17,7 +17,10 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
-import { deriveOauthBitmaskFromBlockScopes } from '~/shared/constants/block-scope.constants';
+import {
+  assertSensitiveScopesJustified,
+  deriveOauthBitmaskFromBlockScopes,
+} from '~/shared/constants/block-scope.constants';
 // Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
 import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
 // Zero-runtime-graph helper (its ONLY static import is a type; it DYNAMICALLY imports
@@ -1038,6 +1041,22 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
 
   const slug = manifest.blockId;
   const version = manifest.version;
+
+  // Sensitive-scope justification gate — enforced AT SUBMIT (fail-fast, before
+  // the MinIO upload + review-repo push). The primary submit path (CLI `app
+  // submit` + the web session-submit route) deliberately defers the deep
+  // BlockManifestValidator to APPROVE — and approve exempts THIS rule
+  // (`enforceSensitiveScopeJustification:false`, to grandfather legacy pending
+  // requests) — so without this call the sensitive-scope enforcement shipped in
+  // #3451 never fires for a CLI/web-session submit (a live dogfood submitted an
+  // `ai:write:budgeted` app with no scopeJustifications and it was accepted).
+  // The check needs only the manifest's `scopes` + `scopeJustifications`, both
+  // already present in the extracted manifest — no AppContext needed — so we run
+  // the targeted rule here via the SAME single-sourced helper the validator
+  // uses (DRY; identical message). `assertSensitiveScopesJustified` throws a
+  // plain Error, which the CLI route surfaces as a 400 and the web session
+  // route surfaces likewise. Deep validation stays deferred to approve.
+  assertSensitiveScopesJustified(manifest);
 
   // F-E E5 — validate publisher screenshots NOW (fail-fast) so a bundle with a
   // too-many / oversized / fake-image / odd-named screenshot is rejected inline
@@ -2119,7 +2138,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
           o.toLowerCase()
         ),
       };
-  const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx);
+  // APPROVE is a re-validation of the ALREADY-SUBMITTED manifest, not a new
+  // submit — exempt ONLY the new sensitive-scope-justification enforcement so a
+  // LEGACY pending request (submitted before that rule shipped, sensitive scope
+  // + no justification) stays approvable. Every OTHER manifest check still runs
+  // here (the H-4 invariant). A post-deploy submission already passed this gate
+  // at submit time, and nothing reaches the approve queue without the submit
+  // gate first, so skipping the re-check creates no bypass.
+  const validation = await BlockManifestValidator.validateSubmission(manifest, validationCtx, {
+    enforceSensitiveScopeJustification: false,
+  });
   if (!validation.valid) {
     throw new Error(
       `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
