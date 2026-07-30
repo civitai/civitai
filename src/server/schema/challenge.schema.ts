@@ -121,6 +121,15 @@ export type ChallengeCompletionSummary = z.infer<typeof challengeCompletionSumma
 // the metadata and then write the parsed object back wholesale, which deletes anything missing from
 // this list. Two fields written by raw SQL elsewhere were lost that way; see the notes below. When
 // adding a key to Challenge.metadata anywhere in the codebase, add it here in the same change.
+//
+// 🔴 DECLARING A KEY RAISES THE STAKES ON ITS TYPE. An undeclared key with a bad value is merely
+// stripped and its siblings survive; a DECLARED key with a bad value fails the whole `safeParse`,
+// and `parseChallengeMetadata` then returns `{}` — so the write-back sites above would wipe the
+// ENTIRE metadata column, including `reconciliation.paidUserIds`, which gates participation
+// back-pay. There is no live exposure today (every writer is type-safe by construction —
+// `Date.now()` for the numbers, `toISOString()` for the strings — and all production rows conform),
+// but a new key whose writer can emit a wrong type is a much bigger liability declared than
+// undeclared. Prefer a permissive type over an exact one when the writer is not provably narrow.
 export const challengeMetadataSchema = z.object({
   challengeType: z.string().optional(),
   resourceUserId: z.number().optional(),
@@ -141,8 +150,10 @@ export const challengeMetadataSchema = z.object({
   // so the strip never affected a read — what it cost was durability across a parse-then-write-back.
   // The one concrete case: a slow run whose claim was reset would strip the stamp on its late write,
   // so the run that re-claimed saw none, failed open, and both emitted. Declaring it makes that a
-  // single emit. A stampless Completing row would also be unrecoverable (the reset's comparison is
-  // NULL-propagating, so it is never selected) — no known write produces one, and this keeps it so.
+  // single emit. NOTE this does NOT make a stampless Completing row impossible — that row is
+  // unrecoverable (the reset's comparison is NULL-propagating, so it is never selected), and it is
+  // still reachable via a stale full-column metadata replace that was never carrying the stamp to
+  // begin with. See the note on the completing-stuck gauge in challenge.metrics.ts.
   completingClaimedAt: z.string().optional(),
   // Written once by the admin/temp challenge migration endpoint. No reader today, so losing it is
   // cosmetic — declared because the rule above is only worth anything if it is applied uniformly.

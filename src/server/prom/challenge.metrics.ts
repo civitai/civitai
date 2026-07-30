@@ -336,15 +336,23 @@ const COMPLETING_STUCK_MINUTES = 30;
  * compares `(metadata->>'completingClaimedAt')::timestamptz`, which is NULL-propagating, so a
  * stampless row is never selected and never reset — it stays `Completing` forever.
  *
- * No CURRENTLY KNOWN write produces one. `completingClaimedAt` is declared in
- * `challengeMetadataSchema`, so a parse-then-write-back no longer strips it, and every such write
- * site is either status-predicated away from `Completing` or sets a terminal status in the same
- * statement. (An earlier version of this comment cited the strip as a live reachable cause; that
- * was true when written and is no longer.) The design stands anyway, because it is the cheap
- * direction to be wrong in: a legacy or malformed stamp still lands here, and treating such rows as
- * "not stuck" would make the gauge silently blind to the only permanently-wedged state — the same
- * fail-open the zero-emit note below exists to prevent. The competing worry, legacy rows pinning
- * the gauge high, does not apply: there are no `Completing` rows in prod today.
+ * IT IS STILL REACHABLE, and declaring `completingClaimedAt` in `challengeMetadataSchema` does not
+ * close it. The destroyer is not the zod strip — it is a STALE FULL-COLUMN REPLACE. Two sites read
+ * a challenge (from the REPLICA), spend real time, then write the whole metadata column back keyed
+ * only on `id`, with no status predicate: `backfill-theme-elements.ts` (a multi-second LLM call
+ * sits between its read and its write, and `?force=true` widens it to every themed Active/Scheduled
+ * challenge) and `challenge.service.ts`'s `upsertChallenge`. If `claimChallengeForCompletion` lands
+ * in that window, the pre-claim snapshot overwrites the fresh stamp. The stamp was never IN that
+ * snapshot, so there is nothing for the schema to have preserved — behaviour is identical before
+ * and after this field was declared. Closing it for real means predicating those writes
+ * (`AND status <> 'Completing'`, or the `updateMany` + `count === 0` pattern already used
+ * elsewhere in that service); that is a separate change and has not been made.
+ *
+ * So the design is not merely the cheap direction to be wrong in — it is load-bearing. A legacy or
+ * malformed stamp lands here too, and treating such rows as "not stuck" would make the gauge
+ * silently blind to the only permanently-wedged state — the same fail-open the zero-emit note below
+ * exists to prevent. The competing worry, legacy rows pinning the gauge high, does not apply: there
+ * are no `Completing` rows in prod today.
  *
  * TEXT COMPARISON, NOT `::timestamptz`. The cast is not an option here: `('garbage')::timestamptz`
  * RAISES, which would fail the whole gauge query, get swallowed by the never-throw catch, and freeze

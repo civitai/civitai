@@ -50,9 +50,22 @@ describe('parseChallengeMetadata round-trip', () => {
     expect(parsed).not.toHaveProperty('notARealField');
   });
 
-  it('ignores a wrong-typed value instead of throwing', () => {
-    // A bad value must not blow up a completion run; the whole parse falls back to {}.
-    expect(() => parseChallengeMetadata({ reviewedAt: 'not-a-number' })).not.toThrow();
-    expect(parseChallengeMetadata({ reviewedAt: 'not-a-number' })).toEqual({});
+  it('does not throw on a wrong-typed value — but loses the WHOLE object, siblings included', () => {
+    // A bad value must not blow up a completion run. What it does instead is worse than the
+    // one-key fixture this test used to carry would suggest: `parseChallengeMetadata` returns `{}`
+    // for the entire object, and the call sites that write the parsed result back would persist
+    // that — taking `reconciliation.paidUserIds` (which gates participation back-pay) with it.
+    // Asserted with siblings present precisely so the blast radius is visible in the test, not just
+    // in a comment. This is the cost of DECLARING a key: undeclared, a bad value is merely stripped
+    // and its siblings survive.
+    const withSiblings = {
+      challengeType: 'daily',
+      articleId: 42,
+      reconciliation: { paidUserIds: [1, 2, 3] },
+      reviewedAt: 'not-a-number',
+    };
+
+    expect(() => parseChallengeMetadata(withSiblings)).not.toThrow();
+    expect(parseChallengeMetadata(withSiblings)).toEqual({});
   });
 });
