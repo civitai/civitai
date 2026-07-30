@@ -118,7 +118,8 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
 
 /**
  * Token-scope gate for the listing-media authoring procs the civitai CLI drives
- * (`civitai app listing set-icon/set-cover/add-screenshot/status`, civitai/cli#186).
+ * (`civitai app listing set-icon/set-cover/add-screenshot/rm-screenshot/reorder/status`,
+ * civitai/cli#186).
  *
  * The CLI acts as the caller over the SCOPED OAuth access token `civitai login` mints
  * (`UserRead | AppBlocksSubmit | AppBlocksDevTunnel`) — NOT a Full personal API key.
@@ -323,6 +324,7 @@ export const appListingsRouter = router({
     }),
 
   reorderScreenshots: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(reorderListingScreenshotsSchema)
     .mutation(async ({ ctx, input }) => {
@@ -333,6 +335,7 @@ export const appListingsRouter = router({
     }),
 
   updateScreenshotCaption: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(updateListingScreenshotCaptionSchema)
     .mutation(async ({ ctx, input }) => {
@@ -343,6 +346,7 @@ export const appListingsRouter = router({
     }),
 
   removeScreenshot: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(removeListingScreenshotSchema)
     .mutation(async ({ ctx, input }) => {
