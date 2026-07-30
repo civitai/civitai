@@ -329,6 +329,62 @@ describe('buildWinnerPayoutTransactions', () => {
     });
     expect(tx.toAccountType).toBe('yellow');
   });
+
+  // The choke point's own dedupe is a no-op while both callers dedupe first, so nothing else in the
+  // suite reaches it. Without these two it could be deleted with every test still green — and it
+  // guards a batch of duplicate transaction ids being handed to an external ledger whose
+  // within-batch behaviour we cannot observe.
+  it('never emits the same transaction id twice, even if a caller passes a duplicated creator', () => {
+    const txs = buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      // One creator named at two places — the shape an un-deduped caller would produce.
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+        { userId: 22, position: 3, prize: 1000 },
+      ],
+    });
+
+    const ids = txs.map((tx) => tx.externalTransactionId);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The better place survives: dropping the first would silently under-pay.
+    expect(ids).toEqual([
+      'challenge-winner-prize-7-11-place-1',
+      'challenge-winner-prize-7-22-place-3',
+    ]);
+  });
+
+  it('records the drop, so money vanishing here can never be silent', async () => {
+    const client = (await import('prom-client')).default;
+    const metric = client.register.getSingleMetric(
+      'civitai_app_challenge_winner_duplicate_pick_total'
+    ) as unknown as {
+      get: () => Promise<{ values: Array<{ value: number; labels: Record<string, string> }> }>;
+    } | null;
+    const readUnknownSource = async () => {
+      if (!metric) return undefined;
+      const data = await metric.get();
+      // `source: unknown` is the signal that the choke point caught what a caller missed — the
+      // caller-level emits always carry a real source.
+      return data.values.find((v) => v.labels.source === 'unknown')?.value;
+    };
+
+    const before = (await readUnknownSource()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+      ],
+    });
+
+    expect(await readUnknownSource()).toBe(before + 1);
+  });
 });
 
 describe('refundUserChallengeFunds — void refunds pool legs only', () => {

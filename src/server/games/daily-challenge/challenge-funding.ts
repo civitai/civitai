@@ -50,6 +50,7 @@ import {
   recordChallengeEntryFeesBuzz,
   recordChallengeRefundBuzz,
   recordChallengeRefundFailure,
+  recordChallengeWinnerDuplicatePick,
 } from '~/server/prom/challenge.metrics';
 
 const log = createLogger('challenge-funding', 'yellow');
@@ -384,7 +385,12 @@ export function winnerPayoutExternalId(challengeId: number, userId: number, posi
   return `challenge-winner-prize-${challengeId}-${userId}-place-${position}`;
 }
 
-/** Build the winner-prize transactions for a challenge, paid in its stored currency. Pure. */
+/**
+ * Build the winner-prize transactions for a challenge, paid in its stored currency.
+ *
+ * Pure apart from one never-throwing counter increment on the duplicate-drop branch — see below for
+ * why a silent drop here would be the worst possible failure.
+ */
 export function buildWinnerPayoutTransactions({
   challengeId,
   title,
@@ -402,7 +408,15 @@ export function buildWinnerPayoutTransactions({
   // duplicate id inside one batch is handed to an external Buzz service whose within-batch
   // behaviour is not observable from this repo. Guaranteeing the invariant here costs one pass and
   // removes the need to trust that a future caller remembers.
-  const { winners: payable } = dedupeWinnersForPayout(winners);
+  //
+  // If this branch ever fires, a caller reached the money path with duplicates and did NOT report
+  // it — the drop is real money not paid, and this counter is the only trace it leaves. It records
+  // `source: unknown` because the challenge's source is not in scope here; that is deliberate and
+  // diagnostic, since the caller-level emits always carry a real source. An `unknown` sample means
+  // "the choke point caught what a caller missed", which is a different and more alarming event
+  // than a duplicate the caller already handled.
+  const { winners: payable, dropped } = dedupeWinnersForPayout(winners);
+  if (dropped.length) recordChallengeWinnerDuplicatePick({ count: dropped.length });
   return payable.map((entry) => ({
     type: TransactionType.Reward,
     toAccountId: entry.userId,

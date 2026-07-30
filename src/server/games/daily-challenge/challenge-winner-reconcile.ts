@@ -80,8 +80,9 @@ export function reconcileWinnerToPersisted<T extends WinnerPayoutEntry>(
  * then. If reconciliation did not happen (`createChallengeWinner` returned `null`, its
  * unresolved-conflict branch) the entries keep their distinct places, produce two distinct
  * never-before-seen ids, and an id-keyed dedupe would pass both through to be minted twice. Keying
- * on the creator closes that case too, and cannot itself over-drop: the id embeds the creator, so
- * two ids that differ must have different creators.
+ * on the creator closes that case too, and cannot itself over-drop — for the reason given above:
+ * the unique key means a creator has at most one row per challenge, so a repeat of that creator is
+ * always a duplicate of the same award and never a second one they were owed.
  *
  * The FIRST occurrence wins. Entries are built in placement order, so the first holds the best
  * place and therefore the largest prize — keeping a later, worse placement instead would turn a

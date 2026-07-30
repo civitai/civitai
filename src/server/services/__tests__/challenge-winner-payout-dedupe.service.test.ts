@@ -176,6 +176,27 @@ vi.mock('~/utils/logging', () => ({ createLogger: vi.fn(() => vi.fn()) }));
 const { endChallengeAndPickWinners } = await import('~/server/services/challenge.service');
 const { ChallengeSource, ChallengeStatus } = await import('~/shared/utils/prisma/enums');
 const { __resetChallengeMetricsForTest } = await import('~/server/prom/challenge.metrics');
+const client = (await import('prom-client')).default;
+
+const DUPLICATE_PICK_METRIC = 'civitai_app_challenge_winner_duplicate_pick_total';
+
+/**
+ * Read one series off the REAL prom registry. Returns `undefined` for an absent series rather than
+ * defaulting to 0, so "never emitted" can never be mistaken for "emitted zero".
+ */
+async function counterValue(
+  name: string,
+  labels: Record<string, string>
+): Promise<number | undefined> {
+  const metric = client.register.getSingleMetric(name) as unknown as {
+    get: () => Promise<{ values: Array<{ value: number; labels: Record<string, string> }> }>;
+  } | null;
+  if (!metric) return undefined;
+  const data = await metric.get();
+  return data.values.find((v) =>
+    Object.entries(labels).every(([key, val]) => v.labels[key] === val)
+  )?.value;
+}
 
 const CHALLENGE_ID = 42;
 
@@ -378,6 +399,10 @@ describe('endChallengeAndPickWinners — one creator named twice is paid once', 
     // just inserted — a conflict that would otherwise fire the place-divergence signal for
     // something that is not a re-pick at all.
     expect(mockCreateChallengeWinner).toHaveBeenCalledTimes(2);
+    // The anomaly must be visible on the mod path too. Without this the emit could be deleted with
+    // the suite still green — and this is the human-triggered path, so its signal is the one most
+    // likely to be wanted and, until now, the only one unprotected.
+    expect(await counterValue(DUPLICATE_PICK_METRIC, { source: ChallengeSource.System })).toBe(1);
   });
 
   it('leaves a clean pick alone — the guard does not over-trigger', async () => {
