@@ -131,15 +131,22 @@ export const challengeMetadataSchema = z.object({
   // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
   // daily-challenge-processing, and read back by getActiveChallengesFromDb's
   // `cast(metadata->>'reviewedAt' as bigint)` round-robin ordering. Dropping it made a reviewed
-  // challenge sort as never-reviewed (NULLS FIRST), so it was picked again ahead of its peers —
-  // defeating the rotation that ordering exists to provide.
+  // challenge sort as never-reviewed (NULLS FIRST). That ordering only decides anything once the
+  // Active set exceeds CHALLENGE_JOB_BATCH_SIZE, which it does not today (200 vs ~31), so the
+  // observable impact is currently nil — this keeps the key alive for when it isn't.
   reviewedAt: z.number().optional(),
   // ISO timestamp stamped by claimChallengeForCompletion when a run claims a challenge into
   // Completing. Read back two ways: the time-based stuck-challenge reset, and the completion job's
-  // claim-ownership check that gates its telemetry. Dropping it made the ownership check fail open,
-  // and a stampless Completing row is never selected by the reset (its comparison is
-  // NULL-propagating), so such a row is wedged rather than recovered.
+  // claim-ownership check that gates its telemetry. Both read the RAW jsonb, not a parsed object,
+  // so the strip never affected a read — what it cost was durability across a parse-then-write-back.
+  // The one concrete case: a slow run whose claim was reset would strip the stamp on its late write,
+  // so the run that re-claimed saw none, failed open, and both emitted. Declaring it makes that a
+  // single emit. A stampless Completing row would also be unrecoverable (the reset's comparison is
+  // NULL-propagating, so it is never selected) — no known write produces one, and this keeps it so.
   completingClaimedAt: z.string().optional(),
+  // Written once by the admin/temp challenge migration endpoint. No reader today, so losing it is
+  // cosmetic — declared because the rule above is only worth anything if it is applied uniformly.
+  migratedAt: z.string().optional(),
   reconciliation: z
     .object({
       paidUserIds: z.array(z.number()).optional(),

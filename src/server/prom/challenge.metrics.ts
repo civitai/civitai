@@ -334,13 +334,17 @@ const COMPLETING_STUCK_MINUTES = 30;
  * MISSING / MALFORMED STAMP COUNTS AS STUCK. A `Completing` row without a usable stamp is the most
  * broken state there is, and the one thing nothing can recover: `resetStuckCompletingChallenges`
  * compares `(metadata->>'completingClaimedAt')::timestamptz`, which is NULL-propagating, so a
- * stampless row is never selected and never reset — it stays `Completing` forever. It is reachable:
- * a metadata write that rebuilds the object from `parseChallengeMetadata` drops the stamp (the zod
- * object strips unknown keys and `completingClaimedAt` is not in the schema), and at least one such
- * write is neither status-predicated nor status-setting. Treating those rows as "not stuck" would
- * make the gauge silently blind to the only permanently-wedged state — the same fail-open the
- * zero-emit note below exists to prevent. The competing worry, legacy rows predating the stamp
- * pinning the gauge high, does not apply: there are no `Completing` rows in prod today.
+ * stampless row is never selected and never reset — it stays `Completing` forever.
+ *
+ * No CURRENTLY KNOWN write produces one. `completingClaimedAt` is declared in
+ * `challengeMetadataSchema`, so a parse-then-write-back no longer strips it, and every such write
+ * site is either status-predicated away from `Completing` or sets a terminal status in the same
+ * statement. (An earlier version of this comment cited the strip as a live reachable cause; that
+ * was true when written and is no longer.) The design stands anyway, because it is the cheap
+ * direction to be wrong in: a legacy or malformed stamp still lands here, and treating such rows as
+ * "not stuck" would make the gauge silently blind to the only permanently-wedged state — the same
+ * fail-open the zero-emit note below exists to prevent. The competing worry, legacy rows pinning
+ * the gauge high, does not apply: there are no `Completing` rows in prod today.
  *
  * TEXT COMPARISON, NOT `::timestamptz`. The cast is not an option here: `('garbage')::timestamptz`
  * RAISES, which would fail the whole gauge query, get swallowed by the never-throw catch, and freeze
