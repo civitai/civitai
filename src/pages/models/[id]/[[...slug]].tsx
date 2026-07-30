@@ -1396,6 +1396,23 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
+              {isOwner && model.minorAutoFlagged && (
+                <Alert color="red">
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="sm" mt={-3}>
+                      Your model {model.name} has been marked as depicting a minor. If you believe
+                      this is a mistake, please{' '}
+                      <Text component="a" c="blue.4" href="/contact" target="_blank">
+                        contact support
+                      </Text>
+                      .
+                    </Text>
+                  </Group>
+                </Alert>
+              )}
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
