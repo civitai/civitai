@@ -43,6 +43,7 @@ import {
 import {
   checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
+  checkSharedReportRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 
@@ -808,17 +809,39 @@ export const appsSharedRouter = router({
         'report'
       );
       const uid = userId as number;
+
+      // F1 (pre-GA): `report` is now block-reachable (PageBlockHost / IframeHost),
+      // and each report files a row AND fires a mod-channel Discord webhook. Every
+      // OTHER shared write op is rate-limited; this one was not — so a trusted user
+      // could loop it into report-table growth + mod-channel flooding. Bound the
+      // per-(user, app) report velocity on its own daily bucket (fail-open, like the
+      // other buckets — the containment is defence-in-depth, not the auth boundary).
+      const rl = await checkSharedReportRateLimit(uid, appBlockId);
+      if (!rl.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: `Too many reports — retry in ${rl.retryAfterSeconds}s`,
+        });
+      }
+
       const pool = requireAppsDb();
       const exists = (
         await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [input.key])
       ).rowCount;
       if (!exists) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
       const reason = input.reason ?? 'user-report';
-      await insertSharedReport(schema, {
+
+      // F1 dedup: a repeat report of the SAME row by the SAME reporter is a no-op —
+      // no 2nd row, no 2nd webhook, no 2nd alert. `filed` is false when this
+      // (reporter, key) pair already has a report row, and the observability +
+      // mod-notify side effects below are skipped entirely. Only a genuinely-new
+      // report fires them (distinct keys / distinct reporters are unaffected).
+      const filed = await insertUserSharedReportDeduped(schema, {
         key: input.key,
         reporterUserId: uid,
         reason,
       });
+      if (!filed) return { ok: true as const };
 
       // FIX 1 (pre-GA gate 1 — make abuse OBSERVABLE): a user report previously
       // filed a `shared_kv_reports` row that NOTHING reads, so ordinary abuse
@@ -1153,6 +1176,38 @@ async function insertSharedReport(
      VALUES ($1, $2, $3, $4)`,
     [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
   );
+}
+
+/**
+ * F1 — file a USER report row with per-(reporter, key) dedup. A single
+ * conditional INSERT that no-ops when this reporter already has a report row for
+ * this key. Returns true iff a NEW row was filed — the caller then emits the
+ * abuse alert + fires the mod webhook; false on a duplicate (skip both, so a
+ * re-report can't grow the table or re-ping the mod channel).
+ *
+ * `reporter_user_id` and `key` are both non-null on the user-report path (the
+ * subject uid + a validated key), so `WHERE NOT EXISTS` is exact. It is scoped to
+ * the (reporter, key) pair, so it never collides with the auto-report rows
+ * (`key IS NULL`) or another user's report of the same key. NOTE (honest bound):
+ * under two TRULY-simultaneous identical reports READ COMMITTED can admit both —
+ * the per-(user, app) report rate limit is the hard ceiling; this collapses the
+ * common repeat-click / retry case, which is the actual webhook-spam vector.
+ */
+async function insertUserSharedReportDeduped(
+  schema: string,
+  args: { key: string; reporterUserId: number; reason: string }
+): Promise<boolean> {
+  const pool = requireAppsDb();
+  const res = await pool.query(
+    `INSERT INTO ${schema}.shared_kv_reports (id, key, reporter_user_id, reason)
+     SELECT $1, $2, $3, $4
+     WHERE NOT EXISTS (
+       SELECT 1 FROM ${schema}.shared_kv_reports
+       WHERE reporter_user_id = $3 AND key = $2
+     )`,
+    [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
+  );
+  return (res.rowCount ?? 0) > 0;
 }
 
 /**

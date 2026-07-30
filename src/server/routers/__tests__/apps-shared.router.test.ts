@@ -21,6 +21,7 @@ const {
   mockGetSessionUser,
   mockCheckAppendRl,
   mockCheckVoteRl,
+  mockCheckReportRl,
   mockThrowOnBlockedLinkDomain,
   mockAuditPromptServer,
   mockIsRevoked,
@@ -44,6 +45,7 @@ const {
     mockGetSessionUser: vi.fn(),
     mockCheckAppendRl: vi.fn(async () => ({ allowed: true })),
     mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
+    mockCheckReportRl: vi.fn(async () => ({ allowed: true })),
     mockThrowOnBlockedLinkDomain: vi.fn(async () => undefined),
     mockAuditPromptServer: vi.fn(async () => undefined),
     mockIsRevoked: vi.fn(async () => false),
@@ -66,6 +68,7 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
   checkSharedAppendRateLimit: (...a: unknown[]) => mockCheckAppendRl(...a),
   checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
+  checkSharedReportRateLimit: (...a: unknown[]) => mockCheckReportRl(...a),
 }));
 // Keep the content-safety belt REAL; mock only its redis-backed deps.
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -155,6 +158,7 @@ beforeEach(() => {
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockCheckAppendRl.mockResolvedValue({ allowed: true });
   mockCheckVoteRl.mockResolvedValue({ allowed: true });
+  mockCheckReportRl.mockResolvedValue({ allowed: true });
   mockThrowOnBlockedLinkDomain.mockResolvedValue(undefined);
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);
@@ -757,6 +761,76 @@ describe('H4 rate limits', () => {
     await expect(caller().vote({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
     });
+  });
+});
+
+// F1 (pre-GA): `report` is now block-reachable and each report files a row + fires
+// a mod-channel webhook, so — like every other shared write op — it MUST be
+// rate-limited, AND a repeat report of the same row by the same reporter must be a
+// no-op (no 2nd row, no 2nd alert, no 2nd webhook). The Discord webhook is
+// co-gated with the Axiom report emit in the SAME `if (!filed) return` branch, so
+// the emit count is the faithful observable for "was the mod-notify fired".
+describe('F1 report rate-limit + per-(reporter,key) dedup', () => {
+  function auditEmits(name: string) {
+    return (mockLogToAxiom.mock.calls as Array<[Record<string, unknown>, string?]>)
+      .filter((c) => c[1] === 'block-audit' && c[0]?.name === name)
+      .map((c) => c[0]);
+  }
+  // The row-exists SELECT (on shared_kv) resolves truthy; the dedup INSERT (on
+  // shared_kv_reports) resolves with the caller-supplied rowCount so we can pin
+  // "new" (1) vs "duplicate" (0) independently of the existence check.
+  function mockReportPath(insertRowCount: number) {
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('shared_kv_reports')) return { rows: [], rowCount: insertRowCount };
+      return { rows: [{ x: 1 }], rowCount: 1 }; // the row-exists pre-check
+    });
+  }
+
+  it('report over the daily cap → TOO_MANY_REQUESTS (before any DB write)', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCheckReportRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 3600 });
+    await expect(
+      caller().report({ blockToken: 't', key: 'req-1', reason: 'spam' })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    // Rate-limited before it touches the DB or emits.
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(0);
+  });
+
+  it('a NEW (reporter,key) report files exactly one row + emits once', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockReportPath(1); // insert affected a row → genuinely new
+    const out = await caller().report({ blockToken: 't', key: 'req-new', reason: 'harassment' });
+    expect(out).toEqual({ ok: true });
+    // exactly one dedup-INSERT against shared_kv_reports, and it is a WHERE NOT
+    // EXISTS conditional insert (the structural dedup) — not an unconditional VALUES.
+    const inserts = (mockPool.query.mock.calls as Array<[string, unknown[]?]>).filter((c) =>
+      c[0].includes('INSERT INTO') && c[0].includes('shared_kv_reports')
+    );
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0][0]).toMatch(/WHERE NOT EXISTS/i);
+    // the alert (and its co-gated Discord notify) fired exactly once
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(1);
+  });
+
+  it('a DUPLICATE (reporter,key) report is a no-op: no 2nd row, no 2nd webhook/emit', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockReportPath(0); // WHERE NOT EXISTS matched an existing row → nothing inserted
+    const out = await caller().report({ blockToken: 't', key: 'req-dup', reason: 'again' });
+    // still succeeds (idempotent from the caller's view) …
+    expect(out).toEqual({ ok: true });
+    // … but the report alert + its co-gated mod-Discord notify are SKIPPED.
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(0);
+  });
+
+  it('distinct keys from the same reporter each file + emit (dedup is per-key)', async () => {
+    // Two distinct keys → the WHERE NOT EXISTS admits both (rowCount 1 each).
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockReportPath(1);
+    await caller().report({ blockToken: 't', key: 'k1' });
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await caller().report({ blockToken: 't', key: 'k2' });
+    expect(auditEmits('app-blocks-shared-storage-report')).toHaveLength(2);
   });
 });
 

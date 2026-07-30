@@ -37,6 +37,43 @@ export const CIVITAI_IMAGE_HOSTS: readonly string[] = [
 export const SAVE_IMAGE_MAX_BYTES = 200 * 1024 * 1024; // 200 MB
 
 /**
+ * F2 — max concurrent host-side SAVE_IMAGE downloads per host frame. The host
+ * fetches on the block's behalf in the unsandboxed top frame; without a cap a
+ * hostile block could fire a burst of SAVE_IMAGEs and download-bomb the viewer's
+ * tab (memory / bandwidth). The host gates on this and replies `busy` past it.
+ */
+export const SAVE_IMAGE_MAX_CONCURRENT = 3;
+
+/**
+ * F2 — canonical download extension per resolved content type. Bytes fetched
+ * host-side are constrained to a SAFE MEDIA extension (see
+ * {@link enforceImageExtension}) so a block can't save an orchestration blob under
+ * an arbitrary/executable name (`render.html`, `x.exe`). Deliberately EXCLUDES
+ * `image/svg+xml` — an SVG is scriptable, so it never gets an `.svg` download name.
+ */
+const CONTENT_TYPE_TO_EXT: Readonly<Record<string, string>> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif',
+  'image/apng': 'apng',
+  'image/bmp': 'bmp',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+};
+
+/** Extensions we allow a supplied filename to KEEP when the content type is unknown. */
+const SAFE_MEDIA_EXTENSIONS: ReadonlySet<string> = new Set(
+  Object.values(CONTENT_TYPE_TO_EXT).concat('jpeg')
+);
+
+/** Fallback download extension when the content type is unknown and the name has no safe one. */
+const DEFAULT_SAFE_EXTENSION = 'jpg';
+
+/**
  * True iff `rawUrl` is a civitai-served image/blob URL the host may fetch+download.
  *
  * Rules (fail-closed): must PARSE as a URL, must be `https:` (rejects
@@ -96,6 +133,41 @@ export function sanitizeDownloadFilename(name: string | undefined | null, url: s
   return cleanFilename.length > 0 ? cleanFilename : 'download';
 }
 
+/**
+ * F2 — constrain a (already-sanitized) download filename to a SAFE MEDIA extension
+ * derived from the RESOLVED content type of the fetched bytes. This is the
+ * download-name analogue of the origin allowlist: the origin gate stops the host
+ * fetching an attacker URL; this stops a block naming allowlisted image/blob bytes
+ * `render.html` / `x.exe` so a "Save image" can never write an executable/markup
+ * extension the OS or a later open would treat as such.
+ *
+ * Rules:
+ *   • Known content type → force its canonical extension (`image/png` → `.png`),
+ *     unless the name already carries that exact/alias extension (jpeg≡jpg), in
+ *     which case the name is kept verbatim. Internal dots are preserved.
+ *   • Unknown content type → keep the name IFF its current extension is already a
+ *     safe media extension; otherwise coerce to {@link DEFAULT_SAFE_EXTENSION}.
+ * `sanitizeDownloadFilename` (traversal/query strip) runs FIRST; this only touches
+ * the extension.
+ */
+export function enforceImageExtension(filename: string, contentType?: string | null): string {
+  const name = filename && filename.trim().length > 0 ? filename.trim() : 'download';
+  const m = name.match(/^(.*)\.([a-zA-Z0-9]{1,5})$/);
+  const base = m ? m[1] : name;
+  const currentExt = m ? m[2].toLowerCase() : '';
+
+  const normalizedType = (contentType ?? '').split(';')[0].trim().toLowerCase();
+  const canonical = CONTENT_TYPE_TO_EXT[normalizedType];
+
+  if (canonical) {
+    const aliasOk = currentExt === canonical || (canonical === 'jpg' && currentExt === 'jpeg');
+    return aliasOk ? name : `${base}.${canonical}`;
+  }
+  // Unknown content type: keep an already-safe extension, else force the default.
+  if (currentExt && SAFE_MEDIA_EXTENSIONS.has(currentExt)) return name;
+  return `${base}.${DEFAULT_SAFE_EXTENSION}`;
+}
+
 /** Parsed, validated SAVE_IMAGE request. Exactly one of url / imageId is set. */
 export type SaveImageRequest =
   | { requestId: string; kind: 'url'; url: string; filename?: string }
@@ -130,6 +202,14 @@ export function resolveSaveImageRequest(raw: unknown): SaveImageRequest | { requ
  * success, throws on failure (non-200, over-size, network). The CALLER is
  * responsible for having validated the origin ({@link isAllowedSaveImageUrl}) or
  * resolved it via the gated read BEFORE calling this.
+ *
+ * F3 (documented client-side limitation): XHR transparently FOLLOWS HTTP
+ * redirects, and {@link isAllowedSaveImageUrl} only gates the INITIAL url — a
+ * first-party (allowlisted) host that itself issues an open redirect could land
+ * the fetch on another origin. This is accepted for v1: the allowlist is the
+ * civitai image/blob CDN, which does not open-redirect; a stricter check would
+ * need a HEAD/redirect-manual pre-flight (not worth it for the same-origin CDN).
+ * The bytes are additionally bounded by the size cap + the safe-extension gate.
  */
 export async function downloadUrlAsBlob(
   url: string,
@@ -165,11 +245,14 @@ export async function downloadUrlAsBlob(
     xhr.send();
   });
 
+  // F2: constrain the saved name to a safe media extension keyed on the RESOLVED
+  // content type of the fetched bytes (a block can't save a blob as render.html).
+  const safeFilename = enforceImageExtension(filename, blob?.type);
   const href = URL.createObjectURL(blob);
   try {
     const a = document.createElement('a');
     a.href = href;
-    a.download = filename;
+    a.download = safeFilename;
     a.target = '_blank';
     document.body.appendChild(a);
     a.click();

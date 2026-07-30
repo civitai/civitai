@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { SAVE_IMAGE_MAX_CONCURRENT } from '~/components/AppBlocks/saveImageDownload';
 
 /**
  * App Blocks SHARED (cross-user / app-global) storage bridge — host side (Phase 2b).
@@ -877,6 +878,37 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
     expect(mocks.saveDownload).not.toHaveBeenCalled();
     expect(mocks.getImagesByIds).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test(`F2: caps concurrent SAVE_IMAGE downloads — the (N+1)th gets busy (N=${SAVE_IMAGE_MAX_CONCURRENT})`, async () => {
+    // Make the host-side download hang so the first N requests each hold an
+    // in-flight slot; the (N+1)th must be refused `busy` BEFORE it fetches (so a
+    // hostile block can't download-bomb the tab).
+    mocks.saveDownload.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    for (let i = 0; i < SAVE_IMAGE_MAX_CONCURRENT; i++) {
+      postFromBlock('SAVE_IMAGE', {
+        requestId: `rq_c${i}`,
+        url: 'https://image.civitai.com/xG/77/original.jpeg',
+      });
+    }
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_overflow',
+      url: 'https://image.civitai.com/xG/77/original.jpeg',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_overflow', ok: false, error: 'busy' });
+    });
+    // Only the N that acquired a slot reached the downloader; the overflow
+    // short-circuited to busy BEFORE fetching a byte.
+    expect(mocks.saveDownload).toHaveBeenCalledTimes(SAVE_IMAGE_MAX_CONCURRENT);
     replies.stop();
   });
 

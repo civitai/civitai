@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CIVITAI_IMAGE_HOSTS,
+  enforceImageExtension,
   isAllowedSaveImageUrl,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
@@ -79,6 +80,55 @@ describe('sanitizeDownloadFilename', () => {
     );
     expect(sanitizeDownloadFilename(null, 'https://image.civitai.com/')).toBe('download');
     expect(sanitizeDownloadFilename('   ', 'https://image.civitai.com/')).toBe('download');
+  });
+});
+
+// F2 — the saved download name is constrained to a SAFE MEDIA extension derived
+// from the RESOLVED content type of the fetched bytes, so a block can't save an
+// (allowlisted) orchestration blob under render.html / x.exe / .svg.
+describe('enforceImageExtension (F2 safe-extension gate)', () => {
+  it('forces the canonical extension for a KNOWN content type (replaces a hostile ext)', () => {
+    expect(enforceImageExtension('render.html', 'image/png')).toBe('render.png');
+    expect(enforceImageExtension('x.exe', 'image/jpeg')).toBe('x.jpg');
+    expect(enforceImageExtension('clip.txt', 'video/mp4')).toBe('clip.mp4');
+    // content type may carry parameters — only the media type is read
+    expect(enforceImageExtension('a.sh', 'image/webp; charset=binary')).toBe('a.webp');
+  });
+
+  it('appends the canonical extension when the name has NONE', () => {
+    expect(enforceImageExtension('render', 'image/png')).toBe('render.png');
+    expect(enforceImageExtension('download', 'video/webm')).toBe('download.webm');
+  });
+
+  it('keeps a name that already carries the matching / alias extension', () => {
+    expect(enforceImageExtension('photo.png', 'image/png')).toBe('photo.png');
+    // jpeg ≡ jpg — do not churn the name
+    expect(enforceImageExtension('photo.jpeg', 'image/jpeg')).toBe('photo.jpeg');
+    expect(enforceImageExtension('photo.jpg', 'image/jpeg')).toBe('photo.jpg');
+  });
+
+  it('preserves internal dots when replacing the extension', () => {
+    expect(enforceImageExtension('my.render.v2.html', 'image/png')).toBe('my.render.v2.png');
+  });
+
+  it('NEVER yields an .svg name even for an svg content type (svg is scriptable)', () => {
+    // image/svg+xml is intentionally not mapped → unknown branch → default .jpg
+    expect(enforceImageExtension('x.svg', 'image/svg+xml')).toBe('x.jpg');
+    expect(enforceImageExtension('x.html', 'image/svg+xml')).toBe('x.jpg');
+  });
+
+  it('unknown content type: keeps an already-safe media extension', () => {
+    expect(enforceImageExtension('a.png', undefined)).toBe('a.png');
+    expect(enforceImageExtension('a.mp4', '')).toBe('a.mp4');
+    expect(enforceImageExtension('a.jpeg', null)).toBe('a.jpeg');
+  });
+
+  it('unknown content type + unsafe/absent extension: coerces to the safe default', () => {
+    expect(enforceImageExtension('a.html', undefined)).toBe('a.jpg');
+    expect(enforceImageExtension('a.exe', '')).toBe('a.jpg');
+    expect(enforceImageExtension('noext', undefined)).toBe('noext.jpg');
+    // empty name falls back to a safe default too
+    expect(enforceImageExtension('', 'application/octet-stream')).toBe('download.jpg');
   });
 });
 

@@ -39,6 +39,7 @@ import {
   isAllowedSaveImageUrl,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
+  SAVE_IMAGE_MAX_CONCURRENT,
 } from './saveImageDownload';
 import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -1962,6 +1963,12 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send, token, sharedReportMutation, reviewMode]);
 
+  // F2 concurrency-cap counter for SAVE_IMAGE (see the handler below). A ref (not
+  // state) so increment/decrement never re-renders and the count is read
+  // synchronously in the message handler (single-threaded ⇒ check→increment before
+  // the first await is atomic per message), mirroring wildcardInFlightRef.
+  const saveImageInFlightRef = useRef<number>(0);
+
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
   // has no allow-downloads). TWO variants, each with its own security gate:
@@ -1984,6 +1991,16 @@ export function PageBlockHost({
         send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'invalid save-image request' });
         return;
       }
+      // F2 concurrency cap (host-side backpressure): bound concurrent host-side
+      // image downloads so a hostile block can't download-bomb the viewer's tab
+      // (memory/bandwidth). check→increment runs synchronously before the first
+      // await (single-threaded), so N concurrent SAVE_IMAGEs can't all pass the
+      // gate; excess replies `busy` (the block retries) rather than fetching.
+      if (saveImageInFlightRef.current >= SAVE_IMAGE_MAX_CONCURRENT) {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'busy' });
+        return;
+      }
+      saveImageInFlightRef.current += 1;
       try {
         if (req.kind === 'url') {
           if (!isAllowedSaveImageUrl(req.url, env.NEXT_PUBLIC_IMAGE_LOCATION)) {
@@ -2014,6 +2031,10 @@ export function PageBlockHost({
         send('SAVE_IMAGE_RESULT', { requestId, ok: true });
       } catch (err) {
         send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+      } finally {
+        // Release the slot on EVERY exit that acquired one (success / refusal /
+        // error) so the gate can't leak slots and wedge shut.
+        saveImageInFlightRef.current -= 1;
       }
     });
     return off;
