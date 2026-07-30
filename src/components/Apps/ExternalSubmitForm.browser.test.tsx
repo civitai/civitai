@@ -420,7 +420,14 @@ describe('ExternalSubmitForm — OAuth step: mod global-search + create deeplink
     mocks.currentUser = { id: 1, username: 'mod', isModerator: true };
     renderWithProviders(<ExternalSubmitForm />);
     await advanceFromUrl();
-    const link = page.getByTestId('apps-offsite-create-client-link');
+    // ExternalSubmitForm renders `createClientLink` in TWO places by design — persistently
+    // below the picker AND as the Select's `nothingFoundMessage`. For a moderator the
+    // global-search Select has no results, so the nothingFound copy is mounted too and a
+    // bare testid query matches 2 elements (strict-mode violation). Scope to the persistent
+    // in-form one — the affordance this test is about — not the dropdown's copy.
+    const link = page
+      .getByTestId('apps-offsite-submit-form')
+      .getByTestId('apps-offsite-create-client-link');
     await expect.element(link).toBeInTheDocument();
     await expect.element(link).toHaveAttribute('href', '/user/account');
     await expect.element(link).toHaveAttribute('target', '_blank');
@@ -474,6 +481,11 @@ describe('ExternalSubmitForm — auto-trigger, status, re-pull, data-URI icon', 
     await expect
       .element(page.getByTestId('apps-offsite-submit-autofill-applied'))
       .toBeInTheDocument();
+    // The OAuth picker lives on the SECOND (App) step — advance before `pickClient()`,
+    // which otherwise waits out its timeout on a control that is not mounted yet. (The
+    // fill+blur above is deliberately inlined rather than using `fillUrlAndAdvance` so the
+    // assertion above proves the pull fired on BLUR, with no button click.)
+    await page.getByTestId('apps-offsite-wizard-next-url').click();
     await pickClient();
     await page.getByTestId('apps-offsite-wizard-next-app').click();
     await expect

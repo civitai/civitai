@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -22,7 +23,6 @@ const mocks = vi.hoisted(() => ({
     isLoading: false,
     error: null as unknown,
   },
-  routerQuery: { appBlockId: 'blk-1', tab: undefined as string | undefined },
 }));
 
 // The page statically imports createServerSideProps — stub it so importing the page
@@ -35,14 +35,12 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 
-vi.mock('next/router', () => ({
-  useRouter: () => ({
-    query: mocks.routerQuery,
-    replace: vi.fn(),
-    push: vi.fn(),
-    back: vi.fn(),
-  }),
-}));
+// NOTE: this file used to carry its own `vi.mock('next/router', ...)`. It SILENTLY LOST to
+// the scaffold's mock in `test/component-setup.tsx` (a setup-file mock the per-file one does
+// not override here), so `router.query` was always `{}` — `?tab=media` could never select the
+// media tab. Use the scaffold's SHARED router object and seed `query` per test instead, which
+// is the established idiom (see `src/tests/pages/payment/success.browser.test.tsx`).
+const router = useRouter();
 
 vi.mock('~/utils/trpc', () => ({
   trpc: {
@@ -67,13 +65,19 @@ vi.mock('~/components/Apps/ListingMediaEditor', () => ({
 vi.mock('~/components/AppLayout/NotFound', () => ({
   NotFound: () => <div data-testid="mock-notfound">not found</div>,
 }));
+// The page renders `<Meta>`, which calls `useBrowserRouter()` — that hook THROWS
+// ("missing context") without a BrowserRouterProvider, which `renderWithProviders`
+// deliberately doesn't mount. Unmocked it takes the whole page render down (empty
+// <body>), so every assertion here fails by burning its 5s timeout. Same stub the
+// review-queue-nav page test uses.
+vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 
 const AppEditPage = (await import('../../pages/apps/[appBlockId]/edit')).default;
 
 beforeEach(() => {
   mocks.manifestQuery.error = null;
   mocks.manifestQuery.isLoading = false;
-  mocks.routerQuery = { appBlockId: 'blk-1', tab: undefined };
+  router.query = { appBlockId: 'blk-1' };
 });
 
 describe('AppEditPage (/apps/[appBlockId]/edit)', () => {
@@ -88,7 +92,7 @@ describe('AppEditPage (/apps/[appBlockId]/edit)', () => {
   });
 
   test('?tab=media selects the media tab (renders the media editor)', async () => {
-    mocks.routerQuery = { appBlockId: 'blk-1', tab: 'media' };
+    router.query = { appBlockId: 'blk-1', tab: 'media' };
     renderWithProviders(<AppEditPage />);
     await expect.element(page.getByTestId('mock-media-editor')).toBeInTheDocument();
     await expect.element(page.getByText(/media editor for blk-1/i)).toBeInTheDocument();

@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
   setCoverAsync: vi.fn(),
   addScreenshotAsync: vi.fn(),
   removeAsync: vi.fn(),
+  // `ListingAssetStep` rasterises a data-URI (e.g. SVG) icon through this procedure.
+  ingestDataUriAsync: vi.fn(),
   persistAsync: vi.fn(),
   uploadToCF: vi.fn(),
   // Item 1: the per-asset scan-status poll (utils.appListings.getAssetScanStatuses.fetch).
@@ -57,6 +59,18 @@ vi.mock('~/utils/trpc', () => {
         },
         ingestAssetFromUrl: {
           useMutation: () => ({ mutate: vi.fn(), mutateAsync: mocks.ingestAsync, isPending: false }),
+        },
+        // `ListingAssetStep` calls `trpc.appListings.ingestAssetFromDataUri.useMutation()`
+        // unconditionally at the top of the component. A wholesale `vi.mock` of
+        // `~/utils/trpc` that omits it makes that read `undefined.useMutation` — an
+        // unhandled THROW during render, so nothing mounts and all 13 tests fail by
+        // burning their 5s timeout (~178s of wall clock).
+        ingestAssetFromDataUri: {
+          useMutation: () => ({
+            mutate: vi.fn(),
+            mutateAsync: mocks.ingestDataUriAsync,
+            isPending: false,
+          }),
         },
         setIcon: {
           useMutation: () => ({ mutate: vi.fn(), mutateAsync: mocks.setIconAsync, isPending: false }),

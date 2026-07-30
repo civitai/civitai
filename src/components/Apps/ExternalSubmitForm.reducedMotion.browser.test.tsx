@@ -36,14 +36,30 @@ vi.mock('~/utils/trpc', () => {
         fetchListingMetaFromUrl: { useQuery: () => mocks.meta },
         persistAssetImage: { useMutation: mutation },
         ingestAssetFromUrl: { useMutation: mutation },
+        ingestAssetFromDataUri: { useMutation: mutation },
         setIcon: { useMutation: mutation },
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
+        removeScreenshot: { useMutation: mutation },
       },
-      oauthClient: { getAll: { useQuery: () => mocks.clients } },
+      oauthClient: {
+        getAll: { useQuery: () => mocks.clients },
+        // The OAuth picker is role-aware and calls BOTH hooks unconditionally (rules of
+        // hooks) — the moderator global-search one too, even for a non-mod caller. Omitted
+        // from a wholesale trpc mock it reads `undefined.useQuery` and throws during
+        // render, so nothing mounts. Mirrors ExternalSubmitForm.browser.test.tsx.
+        searchForModerator: { useQuery: () => ({ data: { items: [] }, isFetching: false }) },
+      },
     },
   };
 });
+
+// `ExternalSubmitForm` reads `useCurrentUser` to pick which OAuth-client picker to render,
+// and that hook THROWS ("missing CivitaiSessionContext") because the harness mounts no
+// session context. Unmocked it takes the whole render down (empty <body>) and every
+// assertion below fails by burning its timeout. `null` = the non-moderator path, which is
+// the own-clients `apps-offsite-client-select` dropdown this test drives.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
   useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn(), removeImage: vi.fn() }),
