@@ -42,6 +42,7 @@ import {
   minorSrcCte,
   minorHashCandidatesCte,
   MINOR_HASH_FILE_TYPE,
+  MINOR_HASH_CLEARED_KEY,
 } from '~/server/services/minor-hash.service';
 
 beforeEach(() => {
@@ -155,6 +156,15 @@ describe('minor-hash CTE predicates', () => {
     expect(minorSrcCte.sql).not.toContain(`? 'minorFlagSnapshot'`);
   });
 
+  // Rollback deletes the snapshot, so without the clear stamp the model is an
+  // ordinary candidate again and the next sweep re-flags what a human just undid.
+  it('excludes models a rollback cleared, scoped to files that predate the clear', () => {
+    expect(minorHashCandidatesCte.values).toContain(MINOR_HASH_CLEARED_KEY);
+    // time-scoped, not a blanket exclusion: a file uploaded after the clear is a
+    // fresh act by the uploader and must still be catchable
+    expect(minorHashCandidatesCte.sql).toContain(`mf."createdAt" >`);
+  });
+
   it('restricts candidates to non-minor, non-deleted models of the gated file type', () => {
     expect(minorHashCandidatesCte.sql).toContain('NOT m.minor');
     expect(minorHashCandidatesCte.sql).toContain(`m.status <> 'Deleted'`);
@@ -170,6 +180,7 @@ describe('applyMinorHashMatch', () => {
     const result = await applyMinorHashMatch({
       modelId: 100,
       userId: 5,
+      fileId: 900,
       matches: [{ modelId: 50, userId: 5 }],
     });
 
@@ -186,6 +197,7 @@ describe('applyMinorHashMatch', () => {
     const result = await applyMinorHashMatch({
       modelId: 100,
       userId: 5,
+      fileId: 900,
       matches: [{ modelId: 50, userId: 9 }],
     });
 
@@ -199,6 +211,7 @@ describe('applyMinorHashMatch', () => {
     const result = await applyMinorHashMatch({
       modelId: 100,
       userId: 5,
+      fileId: 900,
       matches: [
         { modelId: 50, userId: 9 },
         { modelId: 51, userId: 5 },
@@ -215,16 +228,64 @@ describe('applyMinorHashMatch', () => {
   });
 
   it('skips when there are no matches', async () => {
-    const result = await applyMinorHashMatch({ modelId: 100, userId: 5, matches: [] });
+    const result = await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      matches: [],
+    });
 
     expect(result).toBe('skipped');
     expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+
+  // The scan path can't get this from the candidate CTE — the match query's `m` is
+  // the seed side — so the check lives here, and without it a moderator's revert
+  // survives only until the next scan of the same file.
+  it('skips a same-uploader match on a file a rollback already cleared', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ cleared: true }]);
+
+    const result = await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      matches: [{ modelId: 50, userId: 5 }],
+    });
+
+    expect(result).toBe('skipped');
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+
+  it('still flags when the clear predates the file being scanned', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([{ cleared: false }]);
+
+    const result = await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      matches: [{ modelId: 50, userId: 5 }],
+    });
+
+    expect(result).toBe('flagged');
+  });
+
+  // One extra round trip per flag is fine; one per scan is not.
+  it('does not look up the clear stamp on a path that will not write', async () => {
+    await applyMinorHashMatch({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      matches: [{ modelId: 50, userId: 9 }],
+    });
+
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('skips when the candidate is itself in the seed set', async () => {
     const result = await applyMinorHashMatch({
       modelId: 100,
       userId: 5,
+      fileId: 900,
       matches: [
         { modelId: 100, userId: 5 },
         { modelId: 50, userId: 5 },
@@ -243,6 +304,7 @@ describe('applyMinorHashMatch — flag delegation', () => {
     await applyMinorHashMatch({
       modelId: 100,
       userId: 5,
+      fileId: 900,
       matches: [{ modelId: 50, userId: 5 }],
     });
 
@@ -258,6 +320,7 @@ describe('applyMinorHashMatch — flag delegation', () => {
     await applyMinorHashMatch({
       modelId: 100,
       userId: 5,
+      fileId: 900,
       matches: [{ modelId: 50, userId: 9 }],
     });
 
@@ -270,7 +333,7 @@ describe('checkMinorHashOnScan', () => {
   it('flags a same-uploader match end to end', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 5 }]);
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
 
     expect(result).toBe('flagged');
     expect(mockSetModelMinor).toHaveBeenCalledTimes(1);
@@ -279,7 +342,7 @@ describe('checkMinorHashOnScan', () => {
   it('logs auto-flags so they are countable without querying ModActivity', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 5 }]);
 
-    await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+    await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
 
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'minor-hash-scan-check', message: 'flagged', modelId: 100 }),
@@ -290,7 +353,7 @@ describe('checkMinorHashOnScan', () => {
   it('does not log when the outcome is only queued', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 9 }]);
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
 
     expect(result).toBe('queued');
     expect(mockLogToAxiom).not.toHaveBeenCalled();
@@ -299,7 +362,7 @@ describe('checkMinorHashOnScan', () => {
   it('swallows and logs a lookup failure instead of throwing', async () => {
     mockDbRead.$queryRaw.mockRejectedValue(new Error('db exploded'));
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
 
     expect(result).toBe('skipped');
     expect(mockLogToAxiom).toHaveBeenCalled();
@@ -309,7 +372,7 @@ describe('checkMinorHashOnScan', () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 5 }]);
     mockSetModelMinor.mockRejectedValue(new Error('update failed'));
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
 
     expect(result).toBe('skipped');
     expect(mockLogToAxiom).toHaveBeenCalled();
@@ -318,7 +381,7 @@ describe('checkMinorHashOnScan', () => {
   it('swallows a non-Error throw (a rejected string) and logs a readable message', async () => {
     mockDbRead.$queryRaw.mockRejectedValue('db exploded');
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
 
     expect(result).toBe('skipped');
     expect(mockLogToAxiom).toHaveBeenCalledWith(
@@ -330,7 +393,7 @@ describe('checkMinorHashOnScan', () => {
   it('does not throw when the rejection value is null (property access on a non-Error cast)', async () => {
     mockDbRead.$queryRaw.mockRejectedValue(null);
 
-    await expect(checkMinorHashOnScan({ modelId: 100, userId: 5, sha256: 'ABC' })).resolves.toBe(
+    await expect(checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' })).resolves.toBe(
       'skipped'
     );
     expect(mockLogToAxiom).toHaveBeenCalledWith(
@@ -525,6 +588,11 @@ describe('getMinorHashMatchesForReview', () => {
     const text = Array.from(strings as TemplateStringsArray).join('?');
     expect(text).toContain(`NOT (m.meta ? 'minorHashDismissed')`);
     expect(text).toContain('WHERE NOT c."sameUploader"');
+    // A targeted rollback of a flag applied from this queue must not put the model
+    // straight back on it. The gate is a nested Prisma.Sql fragment, so its own
+    // values sit one level down from the template's.
+    const nested = values.flatMap((v) => (v as { values?: unknown[] })?.values ?? []);
+    expect(nested).toContain(MINOR_HASH_CLEARED_KEY);
     expect(text).toContain('bool_or(EXISTS (');
     expect(text).toContain(`s2."userId" <> c."userId"`);
     // No server-side window at all: an OFFSET page skips rows as the queue is
@@ -615,9 +683,36 @@ describe('confirmMinorHashAutoFlag', () => {
       entityId: 100,
       activity: 'setMinor',
     });
-    // sign-off must not mutate the model itself
+    // sign-off must not re-run the flag itself
     expect(mockSetModelMinor).not.toHaveBeenCalled();
-    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  // The ModActivity row alone took the model out of the queue but left the
+  // snapshot source='auto', which the seed predicate excludes — so an affirmed
+  // minor model's hashes never matched anything afterwards.
+  it("promotes the snapshot to source='manual' so the affirmed model seeds", async () => {
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
+
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('jsonb_set');
+    expect(text).toContain(`'source', 'manual'`);
+    // provenance survives the promotion
+    expect(text).toContain(`'confirmedFrom'`);
+    expect(values).toContain(100);
+    expect(values).toContain(4);
+  });
+
+  // Snapshot capture is best-effort, so a model can be flagged without one. The
+  // promotion has to no-op there rather than write a snapshot with no pre-state.
+  it('only promotes a model that actually has a snapshot', async () => {
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
+
+    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('WHERE m.id =');
+    expect(text).toContain('AND m.meta ?');
   });
 });
 
@@ -716,11 +811,30 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(text).toContain('"sfwOnly"');
     expect(text).toContain('"gallerySettings"');
     expect(text).toContain('"lockedProperties"');
-    expect(text).toContain(`meta = COALESCE(meta, '{}'::jsonb) - `);
+    expect(text).toContain(`meta = (COALESCE(meta, '{}'::jsonb) - `);
     expect(values).toContain(31); // prevGalleryLevel
     expect(values).toContainEqual(['poi']); // prevLockedProperties
 
     expect(report).toMatchObject({ candidates: 1, rolledBack: 1, skipped: 0, failed: 0 });
+  });
+
+  // Deleting the snapshot is what made a rollback forgettable: the model became an
+  // ordinary candidate again and the next unattended run re-flagged it.
+  it('stamps the model as cleared in the same write that drops the snapshot', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 200 })]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    const restoreCall = mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('SET nsfw')
+    );
+    const [strings, ...values] = restoreCall!;
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('|| jsonb_build_object');
+    expect(text).toContain(`jsonb_build_object('at', now())`);
+    expect(values).toContain(MINOR_HASH_CLEARED_KEY);
   });
 
   it('re-marks prevMinorImageIds back to minor and queues them for search-index update', async () => {

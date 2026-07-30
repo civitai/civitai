@@ -39,6 +39,24 @@ const moderatorMinorSeedPredicate = Prisma.sql`
   AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
 `;
 
+export const MINOR_HASH_CLEARED_KEY = 'minorHashCleared';
+
+// A rollback is a human deciding the model is NOT minor, and the rollback deletes
+// the snapshot — so without a separate record of it the model drops straight back
+// into the candidate set and the next unattended run flags it again. Verified on
+// dev: rolled a model back, the scan hook re-flagged it five minutes later.
+//
+// Scoped by time rather than excluding the model outright: a file uploaded AFTER
+// the rollback is a fresh act by the uploader, not the decision that was
+// reverted, so it can still be caught. Otherwise one revert would blind the
+// automation to that model permanently.
+const notMinorHashClearedPredicate = Prisma.sql`
+  (
+    NOT (m.meta ? ${MINOR_HASH_CLEARED_KEY})
+    OR mf."createdAt" > (m.meta->${MINOR_HASH_CLEARED_KEY}->>'at')::timestamptz
+  )
+`;
+
 export const minorSrcCte = Prisma.sql`
   minor_src AS (
     SELECT DISTINCT mfh.hash, m."userId", m.id AS "minorModelId"
@@ -66,6 +84,7 @@ export const minorHashCandidatesCte = Prisma.sql`
       AND mfh.hash IN (SELECT hash FROM minor_src)
       AND NOT m.minor
       AND m.status <> 'Deleted'
+      AND ${notMinorHashClearedPredicate}
     GROUP BY m.id, m."userId"
   )
 `;
@@ -90,13 +109,36 @@ const SYSTEM_USER_ID = constants.system.user.id;
 
 export type MinorHashOutcome = 'flagged' | 'queued' | 'skipped';
 
+// The sweep gets this via `notMinorHashClearedPredicate` inside its candidate CTE,
+// but the scan path can't: the match query's `m` is the SEED side, while the model
+// a clear applies to is the one being scanned.
+async function isMinorHashClearedForFile({
+  modelId,
+  fileId,
+}: {
+  modelId: number;
+  fileId: number;
+}): Promise<boolean> {
+  const rows = await dbRead.$queryRaw<{ cleared: boolean }[]>`
+    SELECT mf."createdAt" <= (m.meta->${MINOR_HASH_CLEARED_KEY}->>'at')::timestamptz AS cleared
+    FROM "Model" m
+    JOIN "ModelFile" mf ON mf.id = ${fileId}
+    WHERE m.id = ${modelId}
+      AND m.meta ? ${MINOR_HASH_CLEARED_KEY}
+  `;
+
+  return rows[0]?.cleared === true;
+}
+
 export async function applyMinorHashMatch({
   modelId,
   userId,
+  fileId,
   matches,
 }: {
   modelId: number;
   userId: number;
+  fileId: number;
   matches: MinorHashMatch[];
 }): Promise<MinorHashOutcome> {
   if (matches.some((match) => match.modelId === modelId)) return 'skipped';
@@ -104,6 +146,10 @@ export async function applyMinorHashMatch({
   const others = matches.filter((match) => match.modelId !== modelId);
   if (!others.length) return 'skipped';
   if (!others.some((match) => match.userId === userId)) return 'queued';
+
+  // Only the write path pays for the clear lookup — nearly every scan has already
+  // returned above.
+  if (await isMinorHashClearedForFile({ modelId, fileId })) return 'skipped';
 
   // setModelMinor snapshots pre-state itself (source 'auto' for this activity).
   await setModelMinor({
@@ -119,15 +165,17 @@ export async function applyMinorHashMatch({
 export async function checkMinorHashOnScan({
   modelId,
   userId,
+  fileId,
   sha256,
 }: {
   modelId: number;
   userId: number;
+  fileId: number;
   sha256: string;
 }): Promise<MinorHashOutcome> {
   try {
     const matches = await findMinorHashMatches(sha256);
-    const outcome = await applyMinorHashMatch({ modelId, userId, matches });
+    const outcome = await applyMinorHashMatch({ modelId, userId, fileId, matches });
 
     if (outcome === 'flagged') {
       logToAxiom(
@@ -304,6 +352,9 @@ export async function getMinorHashMatchesForReview({ limit }: { limit: number })
         AND NOT m.minor
         AND m.status <> 'Deleted'
         AND NOT (m.meta ? 'minorHashDismissed')
+        -- A targeted rollback of a manual flag applied from this very queue would
+        -- otherwise put the model straight back on it.
+        AND ${notMinorHashClearedPredicate}
       GROUP BY m.id, m.name, m."userId", m.status, m."createdAt"
     )
     SELECT c."modelId", c."modelName", c."userId", u.username, c.status, c.hash, c."createdAt",
@@ -433,8 +484,15 @@ export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
   return { items: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
-// Sign-off: records the moderator's own setMinor so the model leaves the queue
-// and a bulk rollback can no longer revert it.
+// Sign-off. Promoting the snapshot to source='manual' is what carries the whole
+// decision: the model leaves this queue, a blanket rollback can no longer revert
+// it, and — the part the ModActivity row alone never did — its hashes start
+// seeding future matches, which is the point of a moderator affirming the flag.
+// `confirmedFrom` keeps the record that it began as an automated flag.
+//
+// The ModActivity row is still written: it is the audit trail of who signed off,
+// and it remains the only protection from a blanket rollback for a model whose
+// snapshot capture failed (best-effort) and therefore can't be promoted.
 export async function confirmMinorHashAutoFlag({
   modelId,
   userId,
@@ -442,6 +500,22 @@ export async function confirmMinorHashAutoFlag({
   modelId: number;
   userId: number;
 }) {
+  await dbWrite.$executeRaw`
+    UPDATE "Model" m
+    SET meta = jsonb_set(
+      m.meta,
+      ARRAY[${MINOR_FLAG_SNAPSHOT_KEY}],
+      m.meta->${MINOR_FLAG_SNAPSHOT_KEY} || jsonb_build_object(
+        'source', 'manual',
+        'confirmedFrom', m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->'source',
+        'confirmedAt', now(),
+        'confirmedBy', ${userId}
+      )
+    )
+    WHERE m.id = ${modelId}
+      AND m.meta ? ${MINOR_FLAG_SNAPSHOT_KEY}
+  `;
+
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: modelId,
@@ -647,7 +721,12 @@ export async function rollbackMinorHashAutoFlags({
                 || jsonb_build_object('level', ${row.prevGalleryLevel}::int)
             END,
             "lockedProperties" = ${row.prevLockedProperties}::text[],
-            meta = COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY}
+            -- The snapshot goes, so the clear stamp is the only surviving record
+            -- that a human said "not minor" — see notMinorHashClearedPredicate.
+            meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY})
+              || jsonb_build_object(
+                   ${MINOR_HASH_CLEARED_KEY}, jsonb_build_object('at', now())
+                 )
         WHERE id = ${row.modelId}
       `;
 

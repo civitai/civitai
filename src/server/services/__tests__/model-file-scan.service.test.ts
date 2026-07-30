@@ -1346,7 +1346,7 @@ describe('model-file-scan.service', () => {
   // applyScanOutcome — minor-hash-detection wiring
   // ==========================================================================
   describe('applyScanOutcome — minor-hash wiring', () => {
-    it('calls checkMinorHashOnScan with the modelId/userId/sha256 derived from the scanned file', async () => {
+    it('calls checkMinorHashOnScan with the fileId/modelId/userId/sha256 derived from the scanned file', async () => {
       mockDbWrite.modelFile.findUnique.mockResolvedValue({
         id: 700,
         type: 'Model',
@@ -1363,6 +1363,9 @@ describe('model-file-scan.service', () => {
       });
 
       expect(mockCheckMinorHashOnScan).toHaveBeenCalledWith({
+        // the scanned file, not just its model: the clear stamp is time-scoped
+        // against this file's createdAt
+        fileId: 700,
         modelId: 55,
         userId: 777,
         sha256: 'deadbeef',

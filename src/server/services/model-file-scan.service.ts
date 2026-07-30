@@ -251,6 +251,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       (await isFlipt(FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG))
     ) {
       await checkMinorHashOnScan({
+        fileId,
         modelId: scannedModelId,
         userId: scannedUserId,
         sha256: scannedSha256,
