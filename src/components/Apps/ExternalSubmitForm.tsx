@@ -363,7 +363,8 @@ function ExternalCreateForm() {
 
   // Create-client deeplink for EVERYONE (mods + regular devs) — opens the OAuth-apps
   // card on /user/account in a NEW TAB so the in-progress wizard isn't lost. Rendered
-  // persistently below the picker AND reused as the Select's `nothingFoundMessage`.
+  // ONCE, persistently below the picker. Deliberately NOT reused as the mod Select's
+  // `nothingFoundMessage` — see `noClientsFoundMessage` for why.
   const createClientLink = (
     <Anchor
       href="/user/account"
@@ -376,6 +377,23 @@ function ExternalCreateForm() {
       Don’t see your app? Create an OAuth client
       <IconExternalLink size={12} />
     </Anchor>
+  );
+
+  // Empty-state copy for the mod global-search Select. Mantine renders
+  // `nothingFoundMessage` via `Combobox.Empty` INSIDE `Combobox.Options`, which carries
+  // `role="listbox"` — and because setting `nothingFoundMessage` flips `hiddenWhenEmpty`
+  // to false while `Combobox` defaults to `keepMounted: true`, that node stays in the DOM
+  // (merely `display:none`) whenever the option list is empty, open or not. So this must
+  // stay NON-INTERACTIVE prose: an <a> here would be a `link` inside a `listbox` (not a
+  // permitted child role, and it breaks combobox arrow/Enter semantics while the dropdown
+  // is open), and it would duplicate `createClientLink` — two identical controls with the
+  // same accessible name reachable at once on exactly the no-results path this message
+  // exists for. The actionable affordance is the persistent link rendered below.
+  const noClientsFoundMessage = (
+    <Text size="xs" c="dimmed" data-testid="apps-offsite-client-search-empty">
+      No matching apps. Use the “Create an OAuth client” link below the picker to register
+      one.
+    </Text>
   );
 
   return (
@@ -533,7 +551,7 @@ function ExternalCreateForm() {
                   error={errors.connectClientId}
                   disabled={busy}
                   required
-                  nothingFoundMessage={createClientLink}
+                  nothingFoundMessage={noClientsFoundMessage}
                   rightSection={modSearchQuery.isFetching ? <Loader size={14} /> : undefined}
                   data-testid="apps-offsite-client-search"
                 />
