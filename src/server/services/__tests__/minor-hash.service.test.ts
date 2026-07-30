@@ -333,7 +333,12 @@ describe('checkMinorHashOnScan', () => {
   it('flags a same-uploader match end to end', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 5 }]);
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      sha256: 'ABC',
+    });
 
     expect(result).toBe('flagged');
     expect(mockSetModelMinor).toHaveBeenCalledTimes(1);
@@ -353,7 +358,12 @@ describe('checkMinorHashOnScan', () => {
   it('does not log when the outcome is only queued', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 9 }]);
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      sha256: 'ABC',
+    });
 
     expect(result).toBe('queued');
     expect(mockLogToAxiom).not.toHaveBeenCalled();
@@ -362,7 +372,12 @@ describe('checkMinorHashOnScan', () => {
   it('swallows and logs a lookup failure instead of throwing', async () => {
     mockDbRead.$queryRaw.mockRejectedValue(new Error('db exploded'));
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      sha256: 'ABC',
+    });
 
     expect(result).toBe('skipped');
     expect(mockLogToAxiom).toHaveBeenCalled();
@@ -372,7 +387,12 @@ describe('checkMinorHashOnScan', () => {
     mockDbRead.$queryRaw.mockResolvedValue([{ id: 50, userId: 5 }]);
     mockSetModelMinor.mockRejectedValue(new Error('update failed'));
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      sha256: 'ABC',
+    });
 
     expect(result).toBe('skipped');
     expect(mockLogToAxiom).toHaveBeenCalled();
@@ -381,7 +401,12 @@ describe('checkMinorHashOnScan', () => {
   it('swallows a non-Error throw (a rejected string) and logs a readable message', async () => {
     mockDbRead.$queryRaw.mockRejectedValue('db exploded');
 
-    const result = await checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' });
+    const result = await checkMinorHashOnScan({
+      modelId: 100,
+      userId: 5,
+      fileId: 900,
+      sha256: 'ABC',
+    });
 
     expect(result).toBe('skipped');
     expect(mockLogToAxiom).toHaveBeenCalledWith(
@@ -393,9 +418,9 @@ describe('checkMinorHashOnScan', () => {
   it('does not throw when the rejection value is null (property access on a non-Error cast)', async () => {
     mockDbRead.$queryRaw.mockRejectedValue(null);
 
-    await expect(checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' })).resolves.toBe(
-      'skipped'
-    );
+    await expect(
+      checkMinorHashOnScan({ modelId: 100, userId: 5, fileId: 900, sha256: 'ABC' })
+    ).resolves.toBe('skipped');
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'null', modelId: 100, userId: 5, sha256: 'ABC' }),
       'webhooks'

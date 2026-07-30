@@ -6,7 +6,11 @@ const def = (minorFlagNotifications as Record<string, Def>)['model-flagged-minor
 
 const LAST_SENT = '2026-07-30 00:00:00';
 const query = () =>
-  def.prepareQuery!({ lastSent: LAST_SENT, lastSentDate: new Date(0), clickhouse: undefined }) as string;
+  def.prepareQuery!({
+    lastSent: LAST_SENT,
+    lastSentDate: new Date(0),
+    clickhouse: undefined,
+  }) as string;
 
 describe('model-flagged-minor — registration shape', () => {
   it('is a non-toggleable System notification', () => {
@@ -69,7 +73,7 @@ describe('model-flagged-minor — prepareQuery', () => {
 
   it('emits the notification type and a key scoped to model + window', () => {
     const sql = query();
-    expect(sql).toContain("'model-flagged-minor' \"type\"");
+    expect(sql).toContain('\'model-flagged-minor\' "type"');
     expect(sql).toContain("concat('model-flagged-minor:', details->>'modelId'");
   });
 
