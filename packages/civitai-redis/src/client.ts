@@ -1624,6 +1624,21 @@ export const REDIS_SYS_KEYS = {
     // each tip amount pre-transaction (reserve-and-refund), TTL set on first write.
     TIP_CAP: 'system:blocks:tip-cap',
     /**
+     * Idempotency record for the block TIP endpoint (`POST /api/v1/blocks/tip`),
+     * keyed `system:blocks:tip-idem:${userId}:${clientIdempotencyKey}`. A tip
+     * moves REAL Buzz to a third party and is IRREVERSIBLE, so a timeout /
+     * lost-response retry that re-POSTs the same logical tip must NOT move money
+     * twice. The endpoint claims this key with `SET NX` before it reserves/charges;
+     * a replay that finds it set either (a) replays the cached TERMINAL result
+     * (200/4xx/5xx) verbatim — no second reserve, no second charge — or (b) gets a
+     * 409 while the first attempt is still in flight. DISTINCT from TIP_CAP (the
+     * daily-aggregate cap): this dedupes a SINGLE logical tip across retries;
+     * TIP_CAP bounds the day's total. Short TTL (covers realistic retry windows);
+     * a genuinely-new tip uses a fresh client key. On `sysRedis`, like the sibling
+     * BLOCKS caps/limiters; fail-CLOSED on a redis error at claim time (money path).
+     */
+    TIP_IDEM: 'system:blocks:tip-idem',
+    /**
      * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
      * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
      * bounds a single USER's daily Buzz SPEND; this one bounds the daily

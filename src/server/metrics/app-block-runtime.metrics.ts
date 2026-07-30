@@ -36,6 +36,7 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
  */
 export type AppBlockEndpoint =
   | 'tip'
+  | 'tip_allowance'
   | 'images'
   | 'models'
   | 'model_detail'

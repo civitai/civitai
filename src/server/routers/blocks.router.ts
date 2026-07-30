@@ -3657,7 +3657,23 @@ export const blocksRouter = router({
   submitWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
-    .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        body: blockWorkflowBodySchema,
+        // OPTIONAL client idempotency key (item 2, gen half). Threaded to
+        // `body.externalId` (namespaced `block:<appBlockId>:<key>`) so a
+        // lost-response / timeout RETRY that re-submits with the SAME key collapses
+        // to the existing workflow instead of a second orchestrator submit — the
+        // orchestrator dedupes on `(userId, externalId)` and returns the ORIGINAL
+        // transactions (no second Buzz charge). Absent → no externalId → today's
+        // behavior (additive/backward-compatible). NOTE: the civitai-side Redis
+        // spend-CAP counters (per-user daily / per-app) still INCR on a replay —
+        // they are keyed on `(userId, day)`, not externalId — which over-counts the
+        // ABUSE cap (stricter direction), never a real double-debit.
+        idempotencyKey: z.string().min(1).max(200).optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       const claims = await verifyBlockToken(input.blockToken);
       if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
@@ -3673,8 +3689,20 @@ export const blocksRouter = router({
       // below stays byte-identical (we only ADD a branch); after this early
       // return `input.body` narrows to the textToImage member for the rest.
       if (input.body.kind === 'customComfy') {
-        return await submitCustomComfyWorkflow({ ctx, claims, body: input.body });
+        return await submitCustomComfyWorkflow({
+          ctx,
+          claims,
+          body: input.body,
+          idempotencyKey: input.idempotencyKey,
+        });
       }
+      // Namespaced idempotency externalId for the orchestrator dedupe (item 2, gen
+      // half). Per-app + per-user-scoped (the orchestrator additionally prefixes
+      // `userId-`), so a key can never collide across apps or users. Undefined when
+      // the block sends no key → no externalId → today's non-deduped behavior.
+      const blockExternalId = input.idempotencyKey
+        ? `block:${claims.appBlockId}:${input.idempotencyKey}`
+        : undefined;
       // `input.body` is now the textToImage member. Capture it so the narrowing
       // survives into the fire-and-forget spend-attribution CLOSURE below (TS
       // drops discriminated-union property narrowing at nested-function
@@ -4062,6 +4090,11 @@ export const blocksRouter = router({
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived.
             ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+            // Idempotency (item 2, gen half): a same-key retry collapses to the
+            // existing workflow on the orchestrator (dedupe on (userId, externalId))
+            // → no second Buzz charge. Only set on the REAL submit — the whatIf
+            // preflight stays keyless (it never creates a workflow).
+            ...(blockExternalId ? { externalId: blockExternalId } : {}),
           },
         });
         snapshot = snapshotFromWorkflow(submitted);
@@ -5591,8 +5624,15 @@ async function submitCustomComfyWorkflow(opts: {
   ctx: Context;
   claims: BlockClaims;
   body: CustomComfyBody;
+  /** OPTIONAL client idempotency key (item 2, gen half) → orchestrator externalId. */
+  idempotencyKey?: string;
 }) {
-  const { ctx, claims, body } = opts;
+  const { ctx, claims, body, idempotencyKey } = opts;
+  // Namespaced idempotency externalId (item 2, gen half) — same shape as the
+  // txt2img branch. Undefined when no key is sent → today's non-deduped behavior.
+  const blockExternalId = idempotencyKey
+    ? `block:${claims.appBlockId}:${idempotencyKey}`
+    : undefined;
 
   // ── Page-only guard (mirror the model-token sourceImage rejection ~:3294).
   if (!isPageToken(claims)) {
@@ -5837,6 +5877,9 @@ async function submitCustomComfyWorkflow(opts: {
         currencies,
         // Authoritative maturity clamp on the real submit — token-claim derived.
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        // Idempotency (item 2, gen half): a same-key retry collapses to the
+        // existing workflow on the orchestrator → no second Buzz charge.
+        ...(blockExternalId ? { externalId: blockExternalId } : {}),
       },
     });
     snapshot = snapshotFromWorkflow(submitted);

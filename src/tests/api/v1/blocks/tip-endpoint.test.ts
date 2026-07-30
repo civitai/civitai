@@ -67,16 +67,29 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 
-const { mockTip, mockHydrate, mockRate, mockReserve, mockRefund, mockUserFind, mockStash } =
-  vi.hoisted(() => ({
-    mockTip: vi.fn(),
-    mockHydrate: vi.fn(),
-    mockRate: vi.fn(),
-    mockReserve: vi.fn(),
-    mockRefund: vi.fn(),
-    mockUserFind: vi.fn(),
-    mockStash: vi.fn(),
-  }));
+const {
+  mockTip,
+  mockHydrate,
+  mockRate,
+  mockReserve,
+  mockRefund,
+  mockUserFind,
+  mockStash,
+  mockClaim,
+  mockFinalize,
+  mockRelease,
+} = vi.hoisted(() => ({
+  mockTip: vi.fn(),
+  mockHydrate: vi.fn(),
+  mockRate: vi.fn(),
+  mockReserve: vi.fn(),
+  mockRefund: vi.fn(),
+  mockUserFind: vi.fn(),
+  mockStash: vi.fn(),
+  mockClaim: vi.fn(),
+  mockFinalize: vi.fn(),
+  mockRelease: vi.fn(),
+}));
 
 vi.mock('~/server/controllers/buzz.controller', () => ({
   createBuzzTipTransactionHandler: mockTip,
@@ -91,6 +104,9 @@ vi.mock('~/server/utils/block-tip-rate-limit', () => ({
   checkBlockTipRateLimit: mockRate,
   reserveBlockTipSpend: mockReserve,
   refundBlockTipSpend: mockRefund,
+  claimTipIdempotency: mockClaim,
+  finalizeTipIdempotency: mockFinalize,
+  releaseTipIdempotency: mockRelease,
   BLOCK_TIP_MAX_PER_TIP: 5_000,
   BLOCK_TIP_CAP_PER_DAY: 25_000,
 }));
@@ -126,6 +142,10 @@ beforeEach(() => {
   mockRefund.mockResolvedValue(undefined);
   // Default: the recipient exists and is not deleted.
   mockUserFind.mockResolvedValue({ id: 5, deletedAt: null });
+  // Idempotency defaults: first attempt acquires the claim; finalize/release no-op.
+  mockClaim.mockResolvedValue({ state: 'acquired', key: 'system:blocks:tip-idem:42:k1' });
+  mockFinalize.mockResolvedValue(undefined);
+  mockRelease.mockResolvedValue(undefined);
 });
 
 describe('POST /api/v1/blocks/tip', () => {
@@ -324,5 +344,114 @@ describe('POST /api/v1/blocks/tip', () => {
     const { req, res } = createMocks({ body: { toUserId: 5, amount: 10 } });
     await handler(req as never, res as never);
     expect(res._status()).toBe(500);
+  });
+
+  // ── Idempotency (item 2, tip half) ──────────────────────────────────────────
+  describe('idempotencyKey', () => {
+    it('absent key → today\'s behavior: the idempotency claim is NEVER consulted', async () => {
+      const { req, res } = createMocks({ body: { toUserId: 5, amount: 25 } });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      expect(mockClaim).not.toHaveBeenCalled();
+      expect(mockFinalize).not.toHaveBeenCalled();
+    });
+
+    it('present key, first attempt: claims, tips ONCE, and FINALIZES the 200 for replay', async () => {
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      expect(mockClaim).toHaveBeenCalledWith(42, 'idem-abc');
+      expect(mockTip).toHaveBeenCalledTimes(1);
+      // The terminal 200 (status+body) is cached under the key so a replay repeats it.
+      expect(mockFinalize).toHaveBeenCalledWith(
+        'system:blocks:tip-idem:42:k1',
+        200,
+        expect.objectContaining({ ok: true })
+      );
+      expect(mockRelease).not.toHaveBeenCalled();
+    });
+
+    it('REPLAY (lost-response retry): returns the cached result WITHOUT a 2nd charge', async () => {
+      mockClaim.mockResolvedValueOnce({
+        state: 'replay',
+        status: 200,
+        body: { ok: true, tip: { toUserId: 5, amount: 25, entityType: null, entityId: null } },
+      });
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      expect(res._json()).toEqual({
+        ok: true,
+        tip: { toUserId: 5, amount: 25, entityType: null, entityId: null },
+      });
+      // 🔴 The load-bearing assertion: NO second reserve, NO second charge.
+      expect(mockTip).not.toHaveBeenCalled();
+      expect(mockReserve).not.toHaveBeenCalled();
+      expect(mockFinalize).not.toHaveBeenCalled();
+    });
+
+    it('IN PROGRESS (concurrent duplicate): 409, never races into a 2nd charge', async () => {
+      mockClaim.mockResolvedValueOnce({ state: 'in_progress' });
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(409);
+      expect(mockTip).not.toHaveBeenCalled();
+      expect(mockReserve).not.toHaveBeenCalled();
+    });
+
+    it('FAIL-CLOSED: a redis error at claim time → 503, no charge', async () => {
+      mockClaim.mockRejectedValueOnce(new Error('redis down'));
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(503);
+      expect(mockTip).not.toHaveBeenCalled();
+    });
+
+    it('a TRANSIENT 429 (rate limit) RELEASES the claim (a retry may re-run) — not finalized', async () => {
+      mockRate.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 30 });
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(429);
+      expect(mockRelease).toHaveBeenCalledWith('system:blocks:tip-idem:42:k1');
+      expect(mockFinalize).not.toHaveBeenCalled();
+    });
+
+    it('a TRANSIENT 503 (limiter reserve threw) RELEASES the claim — not finalized', async () => {
+      mockReserve.mockRejectedValueOnce(new Error('redis down'));
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(503);
+      expect(mockRelease).toHaveBeenCalledWith('system:blocks:tip-idem:42:k1');
+      expect(mockFinalize).not.toHaveBeenCalled();
+    });
+
+    it('a terminal 400 (insufficient funds) is FINALIZED (cached) so a replay repeats it', async () => {
+      mockTip.mockRejectedValueOnce(
+        new TRPCError({ code: 'BAD_REQUEST', message: "you don't have enough funds" })
+      );
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 999, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(400);
+      expect(mockFinalize).toHaveBeenCalledWith(
+        'system:blocks:tip-idem:42:k1',
+        400,
+        expect.objectContaining({ ok: false })
+      );
+      expect(mockRelease).not.toHaveBeenCalled();
+    });
   });
 });

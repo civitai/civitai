@@ -898,6 +898,119 @@ describe('blocks.submitWorkflow', () => {
     });
   });
 
+  // ---- Item 2 (gen half): idempotency key → orchestrator externalId dedupe ----
+  //
+  // STEP-1 GATE TEST. Verifies the load-bearing property: a same-key RETRY collapses
+  // to ONE Buzz charge. The orchestrator dedupes on `(userId, externalId)` (see the
+  // `submitWorkflowWithRetry` docstring in `~/server/services/orchestrator/workflows`)
+  // and, on a replay, returns the EXISTING workflow with its ORIGINAL transactions
+  // (no second debit). Here the orchestrator submit is mocked to model that dedupe,
+  // and we assert the client key threads to `body.externalId` and that a replay mints
+  // NO second charge.
+  describe('idempotency key → externalId dedupe (item 2, gen half)', () => {
+    // A stateful orchestrator mock: whatIf calls return a cost preview; a REAL submit
+    // dedupes on `body.externalId` — a cache HIT returns the original workflow +
+    // original transactions and mints NO new charge (mirrors the orchestrator).
+    function installDedupingOrchestrator() {
+      let chargeCount = 0;
+      const byExternalId = new Map<string, unknown>();
+      mockSubmitWorkflow.mockImplementation(async (arg: any) => {
+        const isWhatif = arg?.query?.whatif === true;
+        if (isWhatif) return { id: '', status: 'succeeded', cost: { total: 25 }, steps: [] };
+        // REAL submit.
+        const extId: string | undefined = arg?.body?.externalId;
+        if (extId && byExternalId.has(extId)) {
+          return byExternalId.get(extId); // replay → original workflow, NO new charge
+        }
+        chargeCount += 1;
+        const wf = {
+          id: `wf_${chargeCount}`,
+          status: 'unassigned',
+          cost: { total: 25 },
+          steps: [],
+          // The realized per-account Buzz DEBIT — one set per distinct charge.
+          transactions: [{ id: `txn_${chargeCount}`, type: 'debit', amount: -25 }],
+        };
+        if (extId) byExternalId.set(extId, wf);
+        return wf;
+      });
+      // Real-submit calls only (drop the interleaved whatIf calls).
+      const realSubmitBodies = () =>
+        mockSubmitWorkflow.mock.calls
+          .map((c: any[]) => c[0])
+          .filter((a: any) => a?.query?.whatif !== true)
+          .map((a: any) => a.body);
+      return { chargeCount: () => chargeCount, realSubmitBodies };
+    }
+
+    it('FORCED RETRY: two submits with the SAME key → ONE charge, same externalId, same workflow', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const orch = installDedupingOrchestrator();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const first = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody(),
+        idempotencyKey: 'gate-key',
+      });
+      // happyVersionLookup/happyUser are consumed per-call in some setups; re-arm so
+      // the SECOND submit resolves the same checkpoint/user as the first.
+      happyVersionLookup();
+      happyUser();
+      const second = await caller.submitWorkflow({
+        blockToken: 'tok',
+        body: validBody(),
+        idempotencyKey: 'gate-key',
+      });
+
+      // 🔴 THE load-bearing assertion: exactly ONE Buzz charge across both submits.
+      expect(orch.chargeCount()).toBe(1);
+      // Both real submits carried the SAME namespaced externalId (userId is added
+      // orchestrator-side; the namespace is per-app + per-key).
+      const bodies = orch.realSubmitBodies();
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0].externalId).toBe('block:apb_gate:gate-key');
+      expect(bodies[1].externalId).toBe('block:apb_gate:gate-key');
+      // The replay returned the SAME workflow the first submit created.
+      expect(first.snapshot.workflowId).toBe('wf_1');
+      expect(second.snapshot.workflowId).toBe('wf_1');
+    });
+
+    it('CONTROL: two DIFFERENT keys → two externalIds → TWO charges (distinct gens are not deduped)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const orch = installDedupingOrchestrator();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'key-A' });
+      happyVersionLookup();
+      happyUser();
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody(), idempotencyKey: 'key-B' });
+
+      expect(orch.chargeCount()).toBe(2);
+      const bodies = orch.realSubmitBodies();
+      expect(bodies[0].externalId).toBe('block:apb_gate:key-A');
+      expect(bodies[1].externalId).toBe('block:apb_gate:key-B');
+    });
+
+    it('BACKWARD COMPAT: no idempotencyKey → real submit carries NO externalId (today\'s behavior)', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100, appBlockId: 'apb_gate' }));
+      happyVersionLookup();
+      happyUser();
+      const orch = installDedupingOrchestrator();
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      const bodies = orch.realSubmitBodies();
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).not.toHaveProperty('externalId');
+    });
+  });
+
   // ---- G8: per-app aggregate spend + velocity cap -------------------------
   describe('per-app aggregate spend/velocity cap (G8)', () => {
     function setupSubmit(workflowId = 'wf_real') {
