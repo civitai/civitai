@@ -103,7 +103,9 @@ function editViewRow(ssRowId: string, overrides: Record<string, unknown> = {}) {
     coverId: 137918011,
     icon: { url: 'icon-key' },
     cover: { url: 'cover-key' },
-    screenshots: [{ id: ssRowId, imageId: 30, order: 0, caption: null, image: { url: 'shot-key' } }],
+    screenshots: [
+      { id: ssRowId, imageId: 30, order: 0, caption: null, image: { url: 'shot-key' } },
+    ],
     ...overrides,
   };
 }
@@ -435,17 +437,30 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
       status: 'draft',
       contentRating: 'g',
     });
+    // A draft is NOT approved → no shadow revision; it is its own EFFECTIVE edit target,
+    // so the edit-view assets are read straight off `apl_draft` (#3476 projection).
+    wireFindUnique({ entry: null, viewByListingId: { apl_draft: editViewRow('apls_draft') } });
 
     const res = await getMyListingForApp({ slug: 'my-app', userId: OWNER });
 
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       appListingId: 'apl_draft',
       status: 'draft',
       contentRating: 'g',
       hasPendingRevision: false,
+      // Edited in place while pending — no shadow is minted for a draft.
+      shadowId: null,
     });
-    // Never touches the appBlockId path when no appBlockId is supplied.
-    expect(mockRead.appListing.findUnique).not.toHaveBeenCalled();
+    // The media editor can SEE the icon/cover it is about to edit on a pending draft.
+    expect(res.assets.icon).not.toBeNull();
+    expect(res.assets.cover).not.toBeNull();
+    // The only findUnique is the edit-view read — never the appBlockId entry resolve.
+    expect(editViewReads(mockRead)).toEqual(['apl_draft']);
+    expect(
+      mockRead.appListing.findUnique.mock.calls.some(
+        ([a]) => (a as { where?: { appBlockId?: string } })?.where?.appBlockId != null
+      )
+    ).toBe(false);
     // Scoped to the EXACT pre-approval-draft shape (onsite / null appBlockId / draft).
     expect(mockRead.appListing.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -455,7 +470,8 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
   });
 
   it('falls back to the slug draft when the appBlockId lookup misses', async () => {
-    mockRead.appListing.findUnique.mockResolvedValue(null); // no approved listing yet
+    // Entry resolve by appBlockId MISSES (no approved listing yet) → slug fallback wins.
+    wireFindUnique({ entry: null, viewByListingId: { apl_draft: editViewRow('apls_draft') } });
     mockRead.appListing.findFirst.mockResolvedValue({
       id: 'apl_draft',
       userId: OWNER,
@@ -466,11 +482,11 @@ describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no A
     const res = await getMyListingForApp({ appBlockId: 'maybe', slug: 'my-app', userId: OWNER });
 
     expect(res.appListingId).toBe('apl_draft');
-    expect(mockRead.appListing.findUnique).toHaveBeenCalledOnce();
     expect(mockRead.appListing.findFirst).toHaveBeenCalledOnce();
+    expect(editViewReads(mockRead)).toEqual(['apl_draft']);
   });
 
-  it("a draft owned by ANOTHER user → NOT_OWNED (ownership still enforced on the slug path)", async () => {
+  it('a draft owned by ANOTHER user → NOT_OWNED (ownership still enforced on the slug path)', async () => {
     mockRead.appListing.findFirst.mockResolvedValue({
       id: 'apl_draft',
       userId: OTHER,
