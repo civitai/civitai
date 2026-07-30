@@ -93,9 +93,11 @@ function categoryIcon(category: string): Icon {
 
 /**
  * Hero cover — the listing cover (`coverUrl`, already a CDN URL). Falls back to a
- * category-glyph placeholder over a neutral gradient when absent OR the image
- * 404s (a coverUrl derived from a first-screenshot fallback can dangle) — never
- * a broken `<img>`. Decorative (aria-hidden placeholder).
+ * category-glyph placeholder over the listing's DETERMINISTIC PER-APP seeded
+ * gradient (shared with the server-generated cover SVG — see
+ * `~/shared/constants/app-listing-placeholder.constants`) when absent OR the
+ * image 404s (a coverUrl derived from a first-screenshot fallback can dangle) —
+ * never a broken `<img>`. Decorative (aria-hidden placeholder).
  */
 function HeroCover({
   coverUrl,
@@ -129,7 +131,7 @@ function HeroCover({
       aria-hidden
       h={260}
       className="flex items-center justify-center"
-      data-listing-cover-placeholder
+      data-listing-cover-placeholder=""
       style={{
         borderRadius: 'var(--mantine-radius-md)',
         background: listingPlaceholderGradient({ slug, category, surface: 'cover' }),

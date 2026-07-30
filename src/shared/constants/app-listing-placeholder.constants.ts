@@ -65,13 +65,31 @@ export function seededHue(seed: string): number {
 }
 
 /**
- * The app's display initial (first alphanumeric of name, else slug), uppercased.
- * A whitespace-only name must fall through to the slug (not resolve to '?').
+ * The app's display initial — the first LETTER-or-DIGIT of the name, else of the
+ * slug, uppercased; `'?'` only when neither yields one.
+ *
+ * 🔴 The class is Unicode `\p{L}\p{N}`, NOT `[A-Za-z0-9]`. An ASCII-only class
+ * silently renders a literal `?` for every non-Latin app name (日本語アプリ,
+ * Привет, العربية) and strips the accent off `Émile` → `M` — i.e. exactly the
+ * "this listing looks broken" outcome these placeholders exist to prevent. App
+ * names are unrestricted free text (`offsite-listing.schema` bounds only length),
+ * so non-Latin names are reachable, not hypothetical.
+ *
+ * The `u` flag is load-bearing: it makes the match code-point-based, so an
+ * astral-plane first character returns a WHOLE code point rather than a lone
+ * broken surrogate half.
+ *
+ * A name that is blank OR yields no letter/digit (e.g. "—", "🎨") falls through
+ * to the slug before giving up — the slug is DNS-label-shaped, so it almost
+ * always yields one.
  */
+const INITIAL_CHAR = /[\p{L}\p{N}]/u;
+
 export function appInitial(name: string, slug: string): string {
-  const src = (name?.trim() || slug?.trim() || '?').trim();
-  const m = src.match(/[A-Za-z0-9]/);
-  return (m ? m[0] : '?').toUpperCase();
+  const m = name?.trim().match(INITIAL_CHAR) ?? null;
+  if (m) return m[0].toUpperCase();
+  const s = slug?.trim().match(INITIAL_CHAR) ?? null;
+  return (s ? s[0] : '?').toUpperCase();
 }
 
 /**

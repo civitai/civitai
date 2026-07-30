@@ -56,10 +56,13 @@ function categoryIcon(category: string): Icon {
 
 /**
  * Card cover — the listing's cover image (`coverUrl`, already a CDN URL, with the
- * first screenshot as a server-side fallback). When absent, a tasteful
- * category-glyph placeholder over a neutral gradient (mirrors AppBlockCard) so a
- * card is never a broken/empty `<img>`. Decorative (aria-hidden) — the placeholder
- * carries no info the title/category chip don't.
+ * first screenshot as a server-side fallback). When absent, a category-glyph
+ * placeholder over the listing's DETERMINISTIC PER-APP seeded gradient (shared
+ * with the server-generated cover SVG — see
+ * `~/shared/constants/app-listing-placeholder.constants`), so a card is never a
+ * broken/empty `<img>` and two coverless listings never look identical.
+ * Decorative (aria-hidden) — the placeholder carries no info the title/category
+ * chip don't.
  */
 function ListingCover({
   coverUrl,
@@ -100,7 +103,7 @@ function ListingCover({
         aria-hidden
         h={140}
         className="flex items-center justify-center"
-        data-listing-cover-placeholder
+        data-listing-cover-placeholder=""
         style={{ background: listingPlaceholderGradient({ slug, category, surface: 'cover' }) }}
       >
         <PlaceholderIcon size={44} className="opacity-60" />

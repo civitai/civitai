@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -44,10 +46,38 @@ describe('seededHue', () => {
 });
 
 describe('appInitial', () => {
-  it('takes the first alphanumeric of the name, uppercased', () => {
+  it('takes the first letter/digit of the name, uppercased', () => {
     expect(appInitial('Cool App', 'slug')).toBe('C');
     expect(appInitial('123abc', 'x')).toBe('1');
     expect(appInitial('  spaced', 'x')).toBe('S');
+  });
+
+  // 🔴 REGRESSION GUARD. An ASCII-only [A-Za-z0-9] class renders a literal '?'
+  // for every non-Latin app name — the exact "looks broken" outcome these
+  // placeholders exist to prevent. App names are unrestricted free text, so
+  // these are reachable inputs, not hypotheticals.
+  it('handles non-Latin scripts instead of collapsing them to ?', () => {
+    expect(appInitial('日本語アプリ', 'jp-app')).toBe('日');
+    expect(appInitial('Привет', 'ru-app')).toBe('П');
+    expect(appInitial('العربية', 'ar-app')).toBe('ا');
+  });
+
+  it('preserves accented Latin rather than skipping to the next ASCII letter', () => {
+    expect(appInitial('Émile', 'e-app')).toBe('É');
+    expect(appInitial('Ünicode App', 'u-app')).toBe('Ü');
+  });
+
+  it('skips a leading emoji / punctuation to the first real letter', () => {
+    // Must be the WHOLE code point, never a lone broken surrogate half.
+    expect(appInitial('🎨 Canvas', 'c-app')).toBe('C');
+    expect(appInitial('-dash', 'd-app')).toBe('D');
+  });
+
+  it('returns a single whole code point for an astral-plane first letter', () => {
+    // 𝐀 (U+1D400) is \p{L} and is a surrogate PAIR in UTF-16.
+    const out = appInitial('𝐀pp', 'x');
+    expect([...out]).toHaveLength(1);
+    expect(out).toBe('𝐀'.toUpperCase());
   });
 
   it('falls through to the slug for a blank/whitespace-only name', () => {
@@ -55,7 +85,12 @@ describe('appInitial', () => {
     expect(appInitial('', 'df-qwen-canvas')).toBe('D');
   });
 
-  it("resolves to '?' only when neither name nor slug has an alphanumeric", () => {
+  it('falls through to the slug when the NAME yields no letter/digit', () => {
+    expect(appInitial('—', 'cool-app')).toBe('C');
+    expect(appInitial('🎨', 'panorama-360')).toBe('P');
+  });
+
+  it("resolves to '?' only when neither name nor slug has a letter/digit", () => {
     expect(appInitial('', '')).toBe('?');
     expect(appInitial('—', '—')).toBe('?');
   });
@@ -159,4 +194,48 @@ describe('listingPlaceholderGradient', () => {
       listingPlaceholderGradient({ slug: 'x', category: 'other', surface: 'icon' })
     );
   });
+});
+
+/**
+ * 🔴 COMPONENT RE-COUPLING GUARD (source-level, mirrors the
+ * `block-scope.schema-drift` readFileSync convention).
+ *
+ * A value-equality test can only prove the numbers agree — it CANNOT see a
+ * component going back to its own hardcoded gradient, because a re-hardcoded
+ * literal that happens to match still passes every value assertion. That is the
+ * precise regression this whole module exists to prevent, and the store card /
+ * detail hero have NO blocking test coverage of their own (their `.browser.test.tsx`
+ * suites are report-only and assert nothing about the placeholder).
+ *
+ * So assert it structurally: these two components must derive their placeholder
+ * from the shared helper and must NOT carry the old uniform `--mantine-color-dark-*`
+ * gradient that made every below-floor listing look identical.
+ */
+const REPO_ROOT = path.resolve(__dirname, '../../../..');
+const COMPONENTS = [
+  'src/components/Apps/AppListingCard.tsx',
+  'src/components/Apps/AppListingDetailBody.tsx',
+];
+
+describe('listing placeholder ⇄ component re-coupling guard', () => {
+  for (const rel of COMPONENTS) {
+    describe(rel, () => {
+      const src = readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+
+      it('imports the shared placeholder helper', () => {
+        expect(src).toContain('~/shared/constants/app-listing-placeholder.constants');
+        expect(src).toContain('listingPlaceholderGradient');
+      });
+
+      it('does not re-hardcode the old uniform dark gradient', () => {
+        expect(src).not.toMatch(/linear-gradient\([^)]*--mantine-color-dark-/);
+      });
+
+      it('does not hand-roll an initial via charAt for the APP name', () => {
+        // `creator.username.charAt(0)` is a DIFFERENT, legitimate use (usernames
+        // are not app names), so scope the ban to the app-name/detail-name forms.
+        expect(src).not.toMatch(/\b(card|detail)\.name\.charAt\(/);
+      });
+    });
+  }
 });
