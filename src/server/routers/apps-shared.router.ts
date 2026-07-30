@@ -71,6 +71,7 @@ const REQUIRE_PAID_TIER = false;
 
 type SharedOp =
   | 'list'
+  | 'get'
   | 'getCount'
   | 'append'
   // Author-scoped in-place edit of an OWN published row (write-gated exactly like
@@ -85,7 +86,7 @@ type SharedOp =
   //   - 'getTop' is a READ (anon-allowed like list/getCount)
   | 'increment'
   | 'getTop';
-const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'getCount', 'getTop']);
+const READ_OPS: ReadonlySet<SharedOp> = new Set<SharedOp>(['list', 'get', 'getCount', 'getTop']);
 
 const SHARED_READ_SCOPE = 'apps:storage:shared:read';
 const SHARED_WRITE_SCOPE = 'apps:storage:shared:write';
@@ -292,7 +293,9 @@ export const appsSharedRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const { schema } = await resolveSharedContext(input.blockToken, 'list');
+      // `userId` is the RESOLVED token subject (null for anon) — used ONLY to
+      // hydrate the per-viewer `viewerVoted` flag below. It is never client input.
+      const { schema, userId } = await resolveSharedContext(input.blockToken, 'list');
       const pool = requireAppsDb();
 
       const afterKey = input.cursor
@@ -301,6 +304,12 @@ export const appsSharedRouter = router({
       const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
       const prefixPattern = `${escapedPrefix}%`;
 
+      // Per-viewer vote hydration (item 3): LEFT JOIN the viewer's OWN vote row
+      // ($4 = resolved subject uid, or NULL for anon). `v.user_id = $4` is UNKNOWN
+      // (never true) for a NULL param, so an anonymous viewer always reads
+      // `viewer_voted = false`. The join keys on votes' PK `(key, user_id)`, so it
+      // is index-covered and adds no scan to the hot list path. The raw vote rows
+      // are NEVER returned — only the boolean derived from the viewer's own row.
       const rows = (
         await pool.query<{
           key: string;
@@ -309,17 +318,20 @@ export const appsSharedRouter = router({
           count: string;
           created_at: Date;
           updated_at: Date;
+          viewer_voted: boolean;
         }>(
           `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
-                  s.created_at, s.updated_at
+                  s.created_at, s.updated_at,
+                  (v.user_id IS NOT NULL) AS viewer_voted
              FROM ${schema}.shared_kv s
              LEFT JOIN ${schema}.counters c ON c.key = s.key
+             LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $4::int
             WHERE s.hidden_at IS NULL
               AND s.key LIKE $1 ESCAPE '\\'
               AND ($2::text IS NULL OR s.key < $2)
             ORDER BY s.key DESC
             LIMIT $3`,
-          [prefixPattern, afterKey, input.limit]
+          [prefixPattern, afterKey, input.limit, userId]
         )
       ).rows;
 
@@ -336,8 +348,59 @@ export const appsSharedRouter = router({
           count: Number(r.count),
           createdAt: r.created_at,
           updatedAt: r.updated_at,
+          viewerVoted: r.viewer_voted,
         })),
         nextCursor,
+      };
+    }),
+
+  /**
+   * Single-row fetch by key (item 6 — deep-link resolution). Returns the SAME
+   * item shape as `list` (incl. `count` + the per-viewer `viewerVoted`), or
+   * `null` when the key is missing OR hidden — applying the identical
+   * `hidden_at IS NULL` visibility gate as `list`, so a direct key fetch can
+   * NOT leak a withdrawn / moderator-hidden row that the paged list excludes.
+   * READ op (anon-allowed like `list`/`getCount`). Reuses `resolveSharedContext`
+   * so per-app isolation, the approved-block + revocation checks, the read scope,
+   * and the fail-closed kill-switch all hold verbatim. The `votes`/`kv` rows are
+   * never returned — only the aggregate count + the viewer's own vote boolean.
+   */
+  get: publicProcedure
+    .input(blockTokenInput.extend({ key: sharedKeyInput }))
+    .query(async ({ input }) => {
+      const { schema, userId } = await resolveSharedContext(input.blockToken, 'get');
+      const pool = requireAppsDb();
+      const row = (
+        await pool.query<{
+          key: string;
+          author_user_id: number;
+          value: unknown;
+          count: string;
+          created_at: Date;
+          updated_at: Date;
+          viewer_voted: boolean;
+        }>(
+          `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
+                  s.created_at, s.updated_at,
+                  (v.user_id IS NOT NULL) AS viewer_voted
+             FROM ${schema}.shared_kv s
+             LEFT JOIN ${schema}.counters c ON c.key = s.key
+             LEFT JOIN ${schema}.votes v ON v.key = s.key AND v.user_id = $2::int
+            WHERE s.key = $1 AND s.hidden_at IS NULL`,
+          [input.key, userId]
+        )
+      ).rows[0];
+      if (!row) return { item: null };
+      return {
+        item: {
+          key: row.key,
+          authorUserId: row.author_user_id,
+          value: row.value,
+          count: Number(row.count),
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          viewerVoted: row.viewer_voted,
+        },
       };
     }),
 

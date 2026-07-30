@@ -459,6 +459,47 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Single-row fetch-by-key (Batch-D item 6) — the deep-link companion to
+  // SHARED_LIST's paged read. Same REQUEST-style hang class + same both-host
+  // placement as its SHARED_* siblings (the shared datastore is a per-APP surface
+  // a model-slot block can also read). Ahead of the published SDK dist union
+  // (forward-looking coverage, like the SHARED_* siblings were) — the one-
+  // directional compile-time gate allows the extra key.
+  SHARED_GET: {
+    request: true,
+    reply: 'SHARED_GET_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // User report of a posted shared row (Batch-D item 5) — the server procedure
+  // `apps.shared.report` already exists; this is the postMessage seam. Same both-
+  // host placement as SHARED_WITHDRAW (its reply is the SHARED_WITHDRAW-style
+  // `{ ok, error? }`: the error path MUST carry `ok: false` or the SDK drops it →
+  // hang). Ahead of the published SDK dist union — forward-looking coverage.
+  SHARED_REPORT: {
+    request: true,
+    reply: 'SHARED_REPORT_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Host download bridge (Batch-D item 1) — the host fetches an image in its
+  // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
+  // no `allow-downloads`). Two variants: an origin-allowlisted OWN-output `url`,
+  // or a cross-user `imageId` routed through the gated per-viewer read. PAGE-ONLY
+  // affordance today (the paid-output apps — gen-matrix / custom-generators /
+  // model-benchmarking — are all page apps), so N/A for the model host, mirroring
+  // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.
+  // Ahead of the published SDK dist union — forward-looking coverage.
+  SAVE_IMAGE: {
+    request: true,
+    reply: 'SAVE_IMAGE_RESULT',
+    IframeHost:
+      'download bridge is a page-only affordance today; the paid-output apps are page apps, the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // ── Wildcard-pack import (W13, page-host bridge) ───────────────────────────
   // A page block asks the HOST to resolve + fetch + unzip + parse a wildcard
   // pack's list files, as the logged-in user (the host holds the real session).

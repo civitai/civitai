@@ -38,6 +38,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 const mocks = vi.hoisted(() => ({
   // shared reads
   list: vi.fn(),
+  get: vi.fn(),
   getCount: vi.fn(),
   getCounts: vi.fn(),
   // shared writes
@@ -46,6 +47,12 @@ const mocks = vi.hoisted(() => ({
   vote: vi.fn(),
   unvote: vi.fn(),
   withdraw: vi.fn(),
+  report: vi.fn(),
+  // gated cross-user image read (backs the SAVE_IMAGE id variant)
+  getImagesByIds: vi.fn(),
+  // the top-frame blob download (stubbed so no real network fetch in the test);
+  // the origin allowlist + request parse stay REAL (see the partial mock below).
+  saveDownload: vi.fn(),
   // per-user storage reads/writes (also wired at render; inert here)
   storageGet: vi.fn(),
   storageSet: vi.fn(),
@@ -57,6 +64,14 @@ const mocks = vi.hoisted(() => ({
 // AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
 // moderator gate; these suites render the real host without a CivitaiSessionProvider.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+// Partial mock: keep the REAL origin allowlist + filename sanitizer + request
+// parser (the security-critical pure logic), stub ONLY the top-frame blob
+// download so the SAVE_IMAGE tests never hit the network.
+vi.mock('~/components/AppBlocks/saveImageDownload', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./saveImageDownload')>();
+  return { ...actual, downloadUrlAsBlob: mocks.saveDownload };
+});
 
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
@@ -81,7 +96,7 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getImagesByIds: { useMutation: () => ({ mutateAsync: mocks.getImagesByIds }) },
     },
     apps: {
       storage: {
@@ -94,6 +109,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: mocks.vote }) },
         unvote: { useMutation: () => ({ mutateAsync: mocks.unvote }) },
         withdraw: { useMutation: () => ({ mutateAsync: mocks.withdraw }) },
+        report: { useMutation: () => ({ mutateAsync: mocks.report }) },
       },
     },
     useUtils: () => ({
@@ -105,6 +121,7 @@ vi.mock('~/utils/trpc', () => ({
         },
         shared: {
           list: { fetch: mocks.list },
+          get: { fetch: mocks.get },
           getCount: { fetch: mocks.getCount },
           getCounts: { fetch: mocks.getCounts },
         },
@@ -187,6 +204,7 @@ async function driveToReady() {
 describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', () => {
   beforeEach(() => {
     mocks.list.mockReset();
+    mocks.get.mockReset();
     mocks.getCount.mockReset();
     mocks.getCounts.mockReset();
     mocks.append.mockReset();
@@ -194,6 +212,9 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     mocks.vote.mockReset();
     mocks.unvote.mockReset();
     mocks.withdraw.mockReset();
+    mocks.report.mockReset();
+    mocks.getImagesByIds.mockReset();
+    mocks.saveDownload.mockReset();
     useDialogStore.getState().closeAll();
   });
 
@@ -566,6 +587,296 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_wd_err', error: 'storage unavailable' });
     });
+    replies.stop();
+  });
+
+  // ── item 3: viewerVoted passes through SHARED_LIST ───────────────────────────
+  test('SHARED_LIST passes the per-viewer viewerVoted flag through to the block', async () => {
+    mocks.list.mockResolvedValue({
+      items: [
+        {
+          key: '01ABC',
+          authorUserId: 7,
+          value: { title: 'voted' },
+          count: 3,
+          createdAt: new Date('2026-06-17T00:00:00.000Z'),
+          updatedAt: new Date('2026-06-17T00:00:00.000Z'),
+          viewerVoted: true,
+        },
+      ],
+    });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_LIST', { requestId: 'rq_vv' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_LIST_RESULT');
+      if (!r) throw new Error('no reply yet');
+      const payload = r.payload as { items: Array<{ viewerVoted?: boolean }> };
+      expect(payload.items[0].viewerVoted).toBe(true);
+    });
+    replies.stop();
+  });
+
+  // ── item 6: SHARED_GET (single-row fetch-by-key) ─────────────────────────────
+  test('SHARED_GET forwards key + host token and posts SHARED_GET_RESULT (item incl. viewerVoted)', async () => {
+    mocks.get.mockResolvedValue({
+      item: {
+        key: '01ABC',
+        authorUserId: 7,
+        value: { title: 'Add dark mode' },
+        count: 5,
+        createdAt: new Date('2026-06-17T00:00:00.000Z'),
+        updatedAt: new Date('2026-06-18T00:00:00.000Z'),
+        viewerVoted: true,
+      },
+    });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_GET', { requestId: 'rq_get', key: '01ABC', blockToken: 'SPOOFED' });
+
+    await vi.waitFor(() => {
+      expect(mocks.get).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: '01ABC' });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_GET_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_get',
+        item: {
+          key: '01ABC',
+          authorUserId: 7,
+          value: { title: 'Add dark mode' },
+          count: 5,
+          createdAt: '2026-06-17T00:00:00.000Z',
+          updatedAt: '2026-06-18T00:00:00.000Z',
+          viewerVoted: true,
+        },
+      });
+    });
+    replies.stop();
+  });
+
+  test('SHARED_GET returns item:null for a missing/hidden key', async () => {
+    mocks.get.mockResolvedValue({ item: null });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_GET', { requestId: 'rq_get_null', key: 'gone' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_GET_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_get_null', item: null });
+    });
+    replies.stop();
+  });
+
+  test('SHARED_GET error path posts { requestId, item:null, error } (no hang)', async () => {
+    mocks.get.mockRejectedValue(new Error('shared storage is not enabled'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_GET', { requestId: 'rq_get_err', key: 'k' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_GET_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_get_err',
+        item: null,
+        error: 'shared storage is not enabled',
+      });
+    });
+    replies.stop();
+  });
+
+  // ── item 5: SHARED_REPORT ────────────────────────────────────────────────────
+  test('SHARED_REPORT forwards key + reason + host token and posts SHARED_REPORT_RESULT {ok:true}', async () => {
+    mocks.report.mockResolvedValue({ ok: true });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_REPORT', {
+      requestId: 'rq_rep',
+      key: '01ABC',
+      reason: 'harassment',
+      blockToken: 'SPOOFED',
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.report).toHaveBeenCalledWith({
+        blockToken: 'tok_abc',
+        key: '01ABC',
+        reason: 'harassment',
+      });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_REPORT_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_rep', ok: true });
+    });
+    replies.stop();
+  });
+
+  test('SHARED_REPORT error path posts { requestId, ok:false, error } (no hang)', async () => {
+    mocks.report.mockRejectedValue(new Error('request not found'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_REPORT', { requestId: 'rq_rep_err', key: 'missing' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_REPORT_RESULT');
+      if (!r) throw new Error('no reply yet');
+      // ok:false REQUIRED (the SDK validator drops a reply without a boolean ok).
+      expect(r.payload).toEqual({ requestId: 'rq_rep_err', ok: false, error: 'request not found' });
+    });
+    replies.stop();
+  });
+
+  // ── item 1: SAVE_IMAGE (host download bridge) ────────────────────────────────
+  test('SAVE_IMAGE url variant: an ALLOWLISTED civitai origin downloads + replies ok', async () => {
+    mocks.saveDownload.mockResolvedValue(undefined);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_url',
+      url: 'https://image.civitai.com/xG/77/original.jpeg',
+      filename: 'render.png',
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.saveDownload).toHaveBeenCalledWith(
+        'https://image.civitai.com/xG/77/original.jpeg',
+        'render.png'
+      );
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_url', ok: true });
+    });
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE url variant: an ARBITRARY origin is REFUSED (ok:false, NO download)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_evil', url: 'https://evil.example/x.png' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_evil', ok: false, error: 'image url is not allowed' });
+    });
+    // The disallowed URL was NEVER fetched host-side.
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE id variant: a VISIBLE image routes through the gated read + downloads', async () => {
+    mocks.getImagesByIds.mockResolvedValue({
+      images: [
+        {
+          imageId: 55,
+          status: 'visible',
+          nsfwLevel: 1,
+          contentRating: 'g',
+          url: 'https://image.civitai.com/edge/55.jpeg',
+          width: 512,
+          height: 512,
+        },
+      ],
+    });
+    mocks.saveDownload.mockResolvedValue(undefined);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_id', imageId: 55 });
+
+    await vi.waitFor(() => {
+      // Routed through the SAME gated per-viewer read (host token bound).
+      expect(mocks.getImagesByIds).toHaveBeenCalledWith({ blockToken: 'tok_abc', imageIds: [55] });
+    });
+    await vi.waitFor(() => {
+      expect(mocks.saveDownload).toHaveBeenCalledWith('https://image.civitai.com/edge/55.jpeg', '55.jpeg');
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_id', ok: true });
+    });
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE id variant: a WITHHELD (hidden) image is NEVER downloaded (ok:false)', async () => {
+    mocks.getImagesByIds.mockResolvedValue({ images: [{ imageId: 55, status: 'hidden' }] });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_hidden', imageId: 55 });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_hidden', ok: false, error: 'image is not available' });
+    });
+    // The gated read ran, but a hidden image is never handed to the downloader.
+    expect(mocks.getImagesByIds).toHaveBeenCalled();
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE id variant: an UNRESOLVABLE id (omitted from the gated read) is refused', async () => {
+    mocks.getImagesByIds.mockResolvedValue({ images: [] });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_gone', imageId: 999 });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_gone', ok: false, error: 'image is not available' });
+    });
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE with BOTH url and imageId is an invalid request (ok:false, no download)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_both',
+      url: 'https://image.civitai.com/x.jpeg',
+      imageId: 5,
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_both', ok: false, error: 'invalid save-image request' });
+    });
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    expect(mocks.getImagesByIds).not.toHaveBeenCalled();
     replies.stop();
   });
 
