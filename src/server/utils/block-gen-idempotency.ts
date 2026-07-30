@@ -54,8 +54,10 @@ const GEN_IDEM_IN_PROGRESS = ' in-progress';
  * Compose the per-(user, app, key) redis key. INJECTIVE because: `userId` is
  * numeric (colon-free), `appBlockId` is a real `apb_<ULID>` or a synthetic
  * `ephemeral-<slug>` dev id (both colon-free), and `idempotencyKey` is charset-
- * restricted to `^[A-Za-z0-9_-]{1,200}$` at the zod input (colon-free). So no two
- * distinct (user, app, key) triples can ever collide on the delimiter.
+ * restricted to `^[A-Za-z0-9_-]{1,64}$` at the zod input (colon-free). So no two
+ * distinct (user, app, key) triples can ever collide on the delimiter. (A colon
+ * IS a safe delimiter here — this is an internal redis key, not the orchestrator
+ * `externalId`, whose charset excludes it. See composeBlockExternalId.)
  */
 function genIdemRedisKey(userId: number, appBlockId: string, idempotencyKey: string): string {
   return `${REDIS_SYS_KEYS.BLOCKS.GEN_IDEM}:${userId}:${appBlockId}:${idempotencyKey}`;
@@ -66,40 +68,69 @@ function genIdemRedisKey(userId: number, appBlockId: string, idempotencyKey: str
  * audit 🟢). Restricting to a UUID-ish alphabet at the zod input keeps control
  * chars / newlines / colons out of the orchestrator `externalId` and the tip
  * `externalTransactionId` derived from the key. The SDK mints `crypto.randomUUID()`
- * (`[0-9a-f-]`) or an `idem-<base36>-<base36>` fallback — both match. The `{1,200}`
- * bound stops a key from bloating the redis key or pushing the composed externalId
- * past the orchestrator's accepted length (see ORCHESTRATOR_EXTERNAL_ID_MAX).
+ * (36 chars, `[0-9a-f-]`) or an `idem-<base36>-<base36>-<base36>` fallback (~35) —
+ * both match comfortably. The `{1,64}` bound keeps the composed externalId under
+ * the orchestrator's REAL 128-char ceiling (see ORCHESTRATOR_EXTERNAL_ID_MAX).
  */
-export const BLOCK_IDEMPOTENCY_KEY_REGEX = /^[A-Za-z0-9_-]{1,200}$/;
+export const BLOCK_IDEMPOTENCY_KEY_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
- * Conservative assumed ceiling for the orchestrator `externalId` (audit 🟢). The
- * orchestrator dedupes on `(userId, externalId)` and PREFIXES `${userId}-` server-
- * side; this repo does not carry the orchestrator's exact column/index limit, so we
- * assume a typical indexed-varchar ceiling of 512. With a charset+length-bounded
- * key (≤200) and an `apb_<26-ULID>` appBlockId (~30 chars), the composed
- * `block:<appBlockId>:<key>` maxes ~237 chars + a ≤~12-char `userId-` prefix —
- * comfortably under. The guard documents the assumption and fails CLOSED (throws,
- * before any reservation → no money moves) if a future longer id/key approaches it.
+ * The orchestrator's ACTUAL `externalId` contract, read from the source of truth
+ * `civitai-orchestration:src/Civitai.Orchestration.Grains.Abstractions/Workflows/
+ * WorkflowTemplate.cs` (`[StringLength(128, MinimumLength = 1)]` +
+ * `[RegularExpression("^[A-Za-z0-9_-]+$")]`). `ConsumerControllerBase` carries
+ * `[ApiController]`, so a violation is an automatic **400 before the action body
+ * runs** — not a truncation. Verified present in the deployed
+ * `orchestration-api:v2.26.11` (added by orchestration `c023ed9dd`).
+ *
+ * 🔴 An earlier revision ASSUMED a 512 ceiling and a colon-delimited id; both were
+ * wrong (colons are outside the charset), which would have 400'd every keyed block
+ * generation submit. Do not reintroduce a delimiter outside `[A-Za-z0-9_-]`.
+ *
+ * NOTE the orchestrator additionally PREFIXES `${userId}-` server-side when it
+ * stores the value, but validation runs on the RAW client field — so this ceiling
+ * applies to what we send, pre-prefix.
  */
-export const ORCHESTRATOR_EXTERNAL_ID_MAX = 512;
+export const ORCHESTRATOR_EXTERNAL_ID_MAX = 128;
+export const ORCHESTRATOR_EXTERNAL_ID_REGEX = /^[A-Za-z0-9_-]+$/;
+
+/** 2 fixed digits encode the appBlockId length, so it must be 1..99 chars. */
+const APP_BLOCK_ID_MAX_FOR_ENCODING = 99;
 
 /**
  * Compose the namespaced orchestrator `externalId` for a block generation submit.
- * INJECTIVE under the input contract (colon-free numeric prefix boundary is the
- * orchestrator's `userId-`; `appBlockId` and the charset-restricted key are both
- * colon-free), so `block:<appBlockId>:<key>` can never self-collide across apps or
- * keys. Throws if the composed id would exceed the assumed orchestrator ceiling.
+ *
+ * Shape: `blk<NN><appBlockId><key>`, where `NN` is the zero-padded 2-digit length
+ * of `appBlockId`. A DELIMITER cannot be used — the orchestrator charset is
+ * `[A-Za-z0-9_-]` and BOTH components may legitimately contain `_` and `-`
+ * (`apb_<ULID>`, `ephemeral-<slug>`, `local-<slug>`, `pending-<pubreq>`; keys are
+ * UUIDs). The length prefix pins the split point instead, which is INJECTIVE: two
+ * inputs colliding would need the same `NN` (⇒ same appBlockId length ⇒ same
+ * appBlockId prefix ⇒ same key).
+ *
+ * Worst case is well inside the ceiling: 3 + 2 + 50 (`ephemeral-<40-slug>`) + 64
+ * = 119 ≤ 128. Typical is 3 + 2 + 30 (`apb_<26-ULID>`) + 36 (UUID) = 71.
+ *
+ * Fails CLOSED (throws before any cap reservation → no money moves) on anything
+ * the orchestrator would reject, so a violation can never be silently truncated
+ * into a BROKEN `(userId, externalId)` dedupe.
  */
 export function composeBlockExternalId(appBlockId: string, idempotencyKey: string): string {
-  const externalId = `block:${appBlockId}:${idempotencyKey}`;
+  if (appBlockId.length < 1 || appBlockId.length > APP_BLOCK_ID_MAX_FOR_ENCODING) {
+    throw new Error(
+      `block externalId: appBlockId length ${appBlockId.length} outside 1..${APP_BLOCK_ID_MAX_FOR_ENCODING}`
+    );
+  }
+  const externalId = `blk${String(appBlockId.length).padStart(2, '0')}${appBlockId}${idempotencyKey}`;
   if (externalId.length > ORCHESTRATOR_EXTERNAL_ID_MAX) {
-    // Defense-in-depth: unreachable given the zod length/charset bounds, but a
-    // fail-closed assert beats silently sending an over-long id the orchestrator
-    // might truncate (which would BREAK the `(userId, externalId)` dedupe).
     throw new Error(
       `block externalId too long (${externalId.length} > ${ORCHESTRATOR_EXTERNAL_ID_MAX})`
     );
+  }
+  if (!ORCHESTRATOR_EXTERNAL_ID_REGEX.test(externalId)) {
+    // The key is charset-bounded at the zod input; this catches an appBlockId
+    // shape that ever strays outside the orchestrator alphabet.
+    throw new Error('block externalId contains characters the orchestrator rejects');
   }
   return externalId;
 }

@@ -39,6 +39,7 @@ vi.mock('~/server/redis/client', () => ({
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
   ORCHESTRATOR_EXTERNAL_ID_MAX,
+  ORCHESTRATOR_EXTERNAL_ID_REGEX,
   claimGenIdempotency,
   composeBlockExternalId,
   finalizeGenIdempotency,
@@ -149,20 +150,59 @@ describe('charset + externalId guards (audit 🟢)', () => {
     expect(BLOCK_IDEMPOTENCY_KEY_REGEX.test('new\nline')).toBe(false);
     expect(BLOCK_IDEMPOTENCY_KEY_REGEX.test('has:colon')).toBe(false);
     expect(BLOCK_IDEMPOTENCY_KEY_REGEX.test('')).toBe(false);
-    expect(BLOCK_IDEMPOTENCY_KEY_REGEX.test('a'.repeat(201))).toBe(false);
+    expect(BLOCK_IDEMPOTENCY_KEY_REGEX.test('a'.repeat(65))).toBe(false);
+    // The bound is 64 so the composed externalId can never approach the REAL
+    // orchestrator ceiling of 128.
+    expect(BLOCK_IDEMPOTENCY_KEY_REGEX.test('a'.repeat(64))).toBe(true);
   });
 
-  it('composeBlockExternalId namespaces per-(app, key) and stays within the assumed ceiling', () => {
-    expect(composeBlockExternalId('apb_x', 'key-1')).toBe('block:apb_x:key-1');
-    // A max-length key on a real appBlockId is comfortably under the ceiling.
-    const composed = composeBlockExternalId('apb_0123456789abcdefghijklmnop', 'k'.repeat(200));
-    expect(composed.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
+  it('composeBlockExternalId emits an id the ORCHESTRATOR accepts (charset + length)', () => {
+    // 🔴 The orchestrator validates `^[A-Za-z0-9_-]+$` (max 128) behind
+    // [ApiController] → an out-of-charset id is a 400, not a truncation. A
+    // colon-delimited shape (the pre-fix behavior) would 400 every keyed submit.
+    expect(composeBlockExternalId('apb_x', 'key-1')).toBe('blk05apb_xkey-1');
+    expect(composeBlockExternalId('apb_x', 'key-1')).not.toContain(':');
+
+    const realistic = composeBlockExternalId(
+      'apb_0123456789abcdefghijklmnop',
+      '3f1a9c2e-5b6d-4e7f-8a90-1b2c3d4e5f60'
+    );
+    expect(ORCHESTRATOR_EXTERNAL_ID_REGEX.test(realistic)).toBe(true);
+    expect(realistic.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
+
+    // Worst realistic case: an `ephemeral-<40-char slug>` dev id + a max-length key.
+    const worst = composeBlockExternalId(`ephemeral-${'s'.repeat(40)}`, 'k'.repeat(64));
+    expect(ORCHESTRATOR_EXTERNAL_ID_REGEX.test(worst)).toBe(true);
+    expect(worst.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
   });
 
-  it('composeBlockExternalId throws (fail-closed) if the composed id would exceed the ceiling', () => {
-    // Defense-in-depth guard: a pathological over-long appBlockId trips it before
-    // any reservation (no money moves). Real ids can never reach this.
-    const hugeApp = 'a'.repeat(ORCHESTRATOR_EXTERNAL_ID_MAX);
-    expect(() => composeBlockExternalId(hugeApp, 'k')).toThrow(/too long/);
+  it('composeBlockExternalId is INJECTIVE across (app, key) even when both contain - and _', () => {
+    // No delimiter is safe (both components may contain `-`/`_`), so the 2-digit
+    // length prefix is what pins the split. These pairs concatenate to the same
+    // raw string and MUST still produce distinct externalIds.
+    const a = composeBlockExternalId('ephemeral-my', 'app-key');
+    const b = composeBlockExternalId('ephemeral-my-app', 'key');
+    expect(a).not.toBe(b);
+
+    const seen = new Set(
+      (
+        [
+          ['apb_a', 'b-c'],
+          ['apb_a-b', 'c'],
+          ['apb_a_b', 'c'],
+          ['apb_a', 'b_c'],
+        ] as const
+      ).map(([app, key]) => composeBlockExternalId(app, key))
+    );
+    expect(seen.size).toBe(4);
+  });
+
+  it('composeBlockExternalId throws (fail-closed) rather than emit an id the orchestrator rejects', () => {
+    // Each guard trips BEFORE any cap reservation → no money moves.
+    expect(() => composeBlockExternalId('a'.repeat(100), 'k')).toThrow(/outside 1\.\.99/);
+    expect(() => composeBlockExternalId('', 'k')).toThrow(/outside 1\.\.99/);
+    expect(() => composeBlockExternalId('a'.repeat(99), 'k'.repeat(64))).toThrow(/too long/);
+    // An appBlockId straying outside the orchestrator alphabet is caught too.
+    expect(() => composeBlockExternalId('apb:bad', 'k')).toThrow(/characters the orchestrator/);
   });
 });

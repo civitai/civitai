@@ -1025,7 +1025,9 @@ describe('blocks.submitWorkflow', () => {
       // real submit ever happened, carrying the namespaced externalId.
       const bodies = orch.realSubmitBodies();
       expect(bodies).toHaveLength(1);
-      expect(bodies[0].externalId).toBe('block:apb_gate:gate-key');
+      // Shape is `blk<NN><appBlockId><key>` — NO colon. The orchestrator validates
+      // `^[A-Za-z0-9_-]+$` behind [ApiController], so a colon-delimited id is a 400.
+      expect(bodies[0].externalId).toBe('blk08apb_gategate-key');
       // The first submit's snapshot was cached (finalize) and REPLAYED verbatim.
       expect(first.snapshot.workflowId).toBe('wf_1');
       expect(second.snapshot.workflowId).toBe('wf_1');
@@ -1051,8 +1053,8 @@ describe('blocks.submitWorkflow', () => {
 
       expect(orch.chargeCount()).toBe(2);
       const bodies = orch.realSubmitBodies();
-      expect(bodies[0].externalId).toBe('block:apb_gate:key-A');
-      expect(bodies[1].externalId).toBe('block:apb_gate:key-B');
+      expect(bodies[0].externalId).toBe('blk08apb_gatekey-A');
+      expect(bodies[1].externalId).toBe('blk08apb_gatekey-B');
     });
 
     it('BACKWARD COMPAT: no idempotencyKey → real submit carries NO externalId (today\'s behavior)', async () => {
@@ -5003,7 +5005,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockReserveAppSpend).toHaveBeenCalledTimes(1);
       expect(mockFinalizeGen).toHaveBeenCalledTimes(1);
       // The (single) real submit carried the namespaced externalId (2nd defense layer).
-      expect(mockSubmitWorkflow.mock.calls[0][0].body.externalId).toBe('block:apb_test:cc-key');
+      expect(mockSubmitWorkflow.mock.calls[0][0].body.externalId).toBe('blk08apb_testcc-key');
     });
 
     it('IDEMPOTENCY (audit 🔴-1): a concurrent claim in-progress → 409 CONFLICT, NO reserve, NO submit', async () => {
