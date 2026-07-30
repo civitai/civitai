@@ -6,9 +6,8 @@ import { getRedis } from './redis';
 import { syncSearchIndex } from './search-index';
 import { bustImageTagCaches } from './cache';
 
-// A single (imageId, tagId) tag row plus the attribute bits to set. Unset fields are left NULL and the
-// `upsert_tag_on_image` DB function preserves the existing value on conflict — so a moderation flip can
-// pass just `{ imageId, tagId, disabled, needsReview }` without clobbering source/confidence.
+// Unset fields stay NULL; upsert_tag_on_image preserves the existing value on conflict — so a flip can pass
+// just { imageId, tagId, disabled, needsReview } without clobbering source/confidence.
 export type TagOnImageArgs = {
   imageId: number;
   tagId: number;
@@ -21,9 +20,8 @@ export type TagOnImageArgs = {
 
 type TagRule = { fromId: number; toId: number; type: string };
 
-// Replace/Append tag relationships (`TagsOnTags`). The main app caches them at `system:tag-rules`; we
-// read that same key and fall back to the source table on a miss (without repopulating — the main app
-// owns the cache's TTL/format).
+// Reads the main app's system:tag-rules cache; falls back to the table on a miss WITHOUT repopulating (the
+// main app owns the cache).
 async function getTagRules(): Promise<TagRule[]> {
   try {
     const cached = await getRedis().get(REDIS_KEYS.SYSTEM.TAG_RULES);
@@ -39,9 +37,6 @@ async function getTagRules(): Promise<TagRule[]> {
   return rows.map((r) => ({ fromId: r.fromId, toId: r.toId, type: String(r.type) }));
 }
 
-// Port of the main app's applyTagRules: a Replace rule rewrites the target tag to its `fromId`; an
-// Append rule keeps it and adds `fromId` (Computed, confidence 70). Deduped by (imageId, tagId), keeping
-// the first occurrence. Only fires when a supplied tag is a rule's `toId`.
 function applyTagRules(args: TagOnImageArgs[], rules: TagRule[]): TagOnImageArgs[] {
   let applied = [...args];
   for (const rule of rules) {
@@ -68,10 +63,8 @@ function applyTagRules(args: TagOnImageArgs[], rules: TagRule[]): TagOnImageArgs
   return [...seen.values()];
 }
 
-// Kysely port of main-app `upsertTagsOnImageNew`: expand through tag rules, upsert each row via the
-// shared `upsert_tag_on_image` DB function, then run the shared side effects — bust the image-tag
-// caches, recompute nsfwLevel for the touched images, and enqueue a search-index update. Bind params are
-// cast (::int / ::"TagSource" / …) so the function's overload resolves; NULLs preserve existing bits.
+// Bind params are cast (::int / ::"TagSource" / …) so upsert_tag_on_image's overload resolves; NULLs
+// preserve existing bits.
 export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void> {
   if (!args.length) return;
   const items = applyTagRules(args, await getTagRules());

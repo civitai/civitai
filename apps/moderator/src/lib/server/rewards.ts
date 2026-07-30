@@ -3,18 +3,13 @@ import { getClickhouse } from './clickhouse';
 import { getRedis } from './redis';
 import { dbRead } from './db';
 
-// Global rewards-bonus cap, mirroring MAX_GLOBAL_BONUS in the main app's buzz.service.
 const MAX_GLOBAL_BONUS = 5;
 
-// reportAccepted award — mirrors src/server/rewards/passive/reportAccepted.reward.ts. Must match it so the
-// main-app process-rewards cron caps (1500/month/reporter) + grants identically.
+// Must equal reportAccepted.reward.ts's award, or the shared process-rewards cron grants inconsistently.
 const REPORT_ACCEPTED_AWARD = 50;
 
-// Reward the reporters of a report that was just actioned — parity with the main app's bulkSetReportStatus
-// reward branch. `reportAccepted` is a *processable* reward: the inline path only writes a `pending`
-// buzzEvents row (no money moves); the main-app process-rewards cron reads pending rows — regardless of which
-// app wrote them — enforces the per-reporter cap, and grants the buzz. So the spoke rewards reporters simply
-// by writing that row. Best-effort: a failure here must never fail the moderation action.
+// `reportAccepted` is a processable reward: writing a `pending` buzzEvents row is the whole action — the
+// main-app process-rewards cron reads pending rows (from any app), caps per reporter, and grants the buzz.
 export async function rewardReportReporters(input: {
   reportId: number;
   reporterIds: number[];
@@ -22,15 +17,12 @@ export async function rewardReportReporters(input: {
 }): Promise<void> {
   if (!input.reporterIds.length) return;
   try {
-    // The bonus event is global, so resolve it once and reuse it for every reporter.
     const globalBonus = await getGlobalRewardsBonus();
     const rows = await Promise.all(
       input.reporterIds.map(async (reporterId) => {
         const base = await getBaseRewardsMultiplier(reporterId);
-        // The `buzzEvents` pending row — field set + status + ip/transactionDetails normalization copied from
-        // base.reward.ts's inline `apply`. An accepted report rewards the reporter, so toUserId === byUserId
-        // (parity with reportAccepted.getKey). ip is omitted for localhost/empty so the CH column falls back
-        // to its '' default.
+        // toUserId === byUserId (an accepted report rewards its reporter); ip omitted for localhost/empty
+        // so the ClickHouse column falls back to its '' default.
         return {
           type: 'reportAccepted',
           toUserId: reporterId,
@@ -50,9 +42,7 @@ export async function rewardReportReporters(input: {
   }
 }
 
-// Base per-user rewards multiplier (supporter tier), read from the SHARED cache the main app populates
-// (createCachedObject at MULTIPLIERS_FOR_USER, one key per user). A cold miss or a `notFound` marker falls
-// back to 1 (base user) — the same default getMultipliersForUser uses when the id isn't cached.
+// Reads the shared MULTIPLIERS_FOR_USER cache (populated by the main app); a miss falls back to base 1.
 async function getBaseRewardsMultiplier(userId: number): Promise<number> {
   try {
     const cached = await getRedis().packed.get<{ rewardsMultiplier?: number; notFound?: boolean }>(
@@ -65,9 +55,7 @@ async function getBaseRewardsMultiplier(userId: number): Promise<number> {
   return 1;
 }
 
-// Active global rewards-bonus multiplier, mirroring getActiveRewardsBonusEvent + the /10 scaling in
-// getMultipliersForUser. Picks the highest-multiplier currently-active enabled event; its stored value
-// (multiplier * 10) is scaled back and clamped to [1, MAX_GLOBAL_BONUS].
+// The stored multiplier is ×10 — scale back by /10 and clamp to [1, MAX_GLOBAL_BONUS].
 async function getGlobalRewardsBonus(): Promise<number> {
   const events = await dbRead
     .selectFrom('RewardsBonusEvent')

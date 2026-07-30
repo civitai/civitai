@@ -3,12 +3,9 @@ import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
 import { modActions } from '$lib/server/mod-actions/registry';
 
-// Cross-app moderator-action ingress: the main app POSTs here to delegate a mutation the spoke owns
-// (the reverse of the spoke's syncSearchIndex call INTO the main app). Authenticated by the shared
-// WEBHOOK_TOKEN — the same secret the syncSearchIndex boundary already relies on — NOT a moderator
-// session cookie, so hooks.server.ts bypasses its session guard for `/api/mod/*`. The caller (the main
-// app) has already gated the action behind `moderatorProcedure`; the asserted `userId` in the body is
-// trusted here, exactly like any internal service-to-service call.
+// Ingress the main app POSTs to, delegating a mutation the spoke owns. Auth = shared WEBHOOK_TOKEN (not a
+// session cookie; hooks.server.ts bypasses its session guard for `/api/mod/*`). The caller already gated on
+// `moderatorProcedure`, so the body's `userId` is trusted here.
 export const POST: RequestHandler = async ({ params, request }) => {
   const secret = env.WEBHOOK_TOKEN;
   const provided = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');

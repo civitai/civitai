@@ -1,16 +1,9 @@
 import { env } from '$env/dynamic/private';
 
-// Trigger a Meilisearch re-index in the main app for an entity we just mutated in Postgres. The main
-// app owns the search-index client + per-entity logic (src/pages/api/internal/search-index-update.ts);
-// this spoke just pings its callback. Fire-and-forget — call it WITHOUT `await` so a slow/down main app
-// can't stall the moderator action; it self-bounds with a timeout and never throws.
-//
 // HARD RULE: spoke→main callbacks are a closed set of TWO, each for a capability the spoke fundamentally
 // lacks — (1) this Meilisearch enqueue (main owns the search-index client), and (2) the KoNO finalize in
-// `kono.ts` (main owns the new-order game engine + WebSocket signals). Everything else — restore/delete/
-// resolve, nsfwLevel writes, etc. — is a direct Kysely mutation in this app. Do NOT add a third callback or
-// a shim to run main-app services; port the logic here, and defer infra-bound side effects
-// (notifications/S3/Redis) to their wave with a TODO(moderator-migration).
+// `kono.ts` (main owns the new-order game engine + WebSocket signals). Do NOT add a third: port the logic
+// here as a direct Kysely mutation instead.
 export async function syncSearchIndex(entity: {
   entityType: string;
   entityId: number;

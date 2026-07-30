@@ -60,10 +60,7 @@
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 
-  // Sidebar triage counts are fetched client-side (see $lib/sidebar-counts.svelte) so the aggregates never
-  // sit in the page-load path — the nav paints immediately and badges fill in when the fetch resolves.
   const counts = sidebarCounts();
-  // Refetch (TTL-deduped) on each navigation so badges drop as queues are cleared.
   $effect(() => {
     page.url.pathname;
     refreshSidebarCounts();
@@ -73,7 +70,6 @@
   const rollupFor = (item: NavLink) =>
     item.children ? (item.children.reduce((sum, c) => sum + (countFor(c.countKey) ?? 0), 0) || null) : null;
 
-  // Group expand/collapse (default open); toggled by the user.
   let openGroups = $state<Record<string, boolean>>({});
   const isOpen = (label: string) => openGroups[label] ?? true;
 

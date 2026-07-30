@@ -1,9 +1,8 @@
 import { createCivitaiClient } from '@civitai/client';
 import { env } from '$env/dynamic/private';
 
-// Internal orchestrator client (system account). The orchestrator is an external generation service —
-// NOT the main civitai app — so the spoke calling it directly is fine (it is not a main-app callback).
-// Lazily constructed (like the ClickHouse client) so an unconfigured dev env doesn't crash at import.
+// The orchestrator is an external service (NOT the main app), so calling it directly isn't a main-app
+// callback. Lazy so an unconfigured dev env doesn't crash at import.
 type OrchestratorClient = ReturnType<typeof createCivitaiClient>;
 let client: OrchestratorClient | undefined;
 

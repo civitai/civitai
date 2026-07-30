@@ -1,10 +1,8 @@
 import { sql } from '@civitai/db/kysely';
 import { dbWrite } from './db';
 
-// Record a moderator action for the audit trail (Postgres `ModActivity`). Upserts on
-// (entityType, activity, entityId): repeating the same action refreshes `createdAt` + the acting
-// moderator rather than inserting a duplicate. Best-effort — failures are logged, never thrown, so an
-// audit-write hiccup can't break the moderation action that triggered it.
+// Upserts on (entityType, activity, entityId) — repeating an action refreshes it rather than inserting a
+// duplicate. Best-effort: failures are logged, never thrown.
 export async function recordModActivity(input: {
   userId: number;
   entityType: string;

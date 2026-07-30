@@ -25,7 +25,6 @@
   const current = $derived(items[cursor]);
   const done = $derived(items.length === 0 || cursor >= items.length);
 
-  // Content cache (resolved lazily per item + prefetch a few ahead).
   const contentCache = new SvelteMap<string, ScanContent>();
   const inflight = new Set<string>();
 
@@ -108,7 +107,6 @@
     return () => window.removeEventListener('keydown', handler);
   });
 
-  // Raw workflow drawer.
   let rawOpen = $state(false);
   let rawJson = $state<unknown>(undefined);
   let rawLoading = $state(false);

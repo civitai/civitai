@@ -34,11 +34,6 @@ export type ImageReviewItem = {
   reviewTags: ReviewTag[];
 };
 
-// The AI-flagged moderation review queue for a single `needsReview` type (minor/tag/newUser/modRule/
-// remixSource). Ported from image.service `getImageModerationReviewQueue` (needsReview branch). The
-// `needsReview = value AND ingestion = 'Scanned'` filter rides the partial index `Image_needsReview_index`
-// — fast (the whole queue is a few hundred rows). ImageConnection is joined LATERAL-LIMIT-1 so a
-// multiply-connected image can't duplicate rows (which would also break cursor paging).
 export async function getImageReviewQueue({
   needsReview,
   tagIds,
@@ -146,7 +141,6 @@ export async function getImageReviewQueue({
   };
 }
 
-// ModerationRule.definition (jsonb) keyed by id, for the modRule card's "rule definition" popover.
 export async function getModerationRuleDefinitions(
   ruleIds: number[]
 ): Promise<Record<number, unknown>> {
@@ -160,8 +154,6 @@ export async function getModerationRuleDefinitions(
   return Object.fromEntries(rows.map((r) => [r.id, r.definition]));
 }
 
-// Distinct review tags present on images in a given review queue — the include/exclude filter options
-// (ported from tag.getTagsForReview). Capped at 100 like the legacy.
 export async function getReviewQueueTags(
   needsReview: ImageReviewType
 ): Promise<{ id: number; name: string }[]> {
@@ -177,9 +169,7 @@ export async function getReviewQueueTags(
     .execute();
 }
 
-// Tab badge counts for the /images sub-tabs only — the needsReview values. The main app's counts query
-// also UNIONs a `reported` bucket (a ~200K-row seq scan on Report — no status index) and `appeal`; those
-// live on their own pages now, so dropping them here takes this from ~445ms to ~2ms.
+// Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
 export async function getImageReviewCounts(): Promise<Record<string, number>> {
   const rows = await dbRead
     .selectFrom('Image')
@@ -215,11 +205,8 @@ export type ReportedImageItem = {
   };
 };
 
-// The "Reported" queue: images with a PENDING user report, oldest-first. Ported from
-// getImageModerationReviewQueue (reportReview branch). One row PER report (an image with several pending
-// reports appears once per report, as in the main app). Ordered by report.id ASC (monotonic with creation
-// → oldest-first + a clean unique cursor) — needs the `Report_pending_id_idx` partial index (see the
-// migration) or it seq-scans ~400k pending rows.
+// One row PER report (an image with N pending reports appears N times). Ordered by report.id ASC needs the
+// `Report_pending_id_idx` partial index, or it seq-scans ~400k pending rows.
 export async function getReportedImageQueue({
   browsingLevel,
   cursor,
@@ -316,10 +303,7 @@ export type AppealImageItem = {
   reports: AppealReportRow[];
 };
 
-// The "Appeals" queue (senior): images the owner appealed (needsReview='appeal' — no ingestion gate, so
-// blocked images stay visible). Ported from getImageModerationReviewQueue (appeal branch): newest Appeal
-// per image + appellant, plus the moderator + removedAt from the 'review' ModActivity. Enriched with the
-// ClickHouse `tosReason` (why it was removed) and the reports that triggered removal (capped 5/image).
+// needsReview='appeal' with no ingestion gate — blocked images stay visible so they can be appealed.
 export async function getAppealImageQueue({
   browsingLevel,
   cursor,
@@ -385,8 +369,6 @@ export async function getAppealImageQueue({
   const tosByImage = new Map<number, string>();
   const reportsByImage = new Map<number, AppealReportRow[]>();
   if (ids.length) {
-    // Why the image was removed (DeleteTOS scan event) — ClickHouse. Best-effort: an appeal card without
-    // the tosReason is still usable.
     try {
       const resp = await getClickhouse().query({
         query: `SELECT imageId, tosReason FROM images WHERE imageId IN ({ids:Array(Int32)}) AND type = 'DeleteTOS' AND tosReason IS NOT NULL`,

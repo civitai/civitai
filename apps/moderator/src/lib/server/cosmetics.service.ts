@@ -44,10 +44,6 @@ export async function getPaginatedCosmetics({
 
 export type GrantResult = { totalPairs: number; alreadyOwned: number; newlyGranted: number };
 
-// Grant the full cross-product (every cosmetic to every user). Validates ids exist (reports which are
-// missing), counts already-owned pairs, then inserts idempotently (ON CONFLICT DO NOTHING). Pure internal
-// Kysely write — no main-app call (cosmetics aren't in the search index). Mirrors the main app's
-// grantCosmeticsToUsers.
 export async function grantCosmeticsToUsers({
   cosmeticIds,
   userIds,

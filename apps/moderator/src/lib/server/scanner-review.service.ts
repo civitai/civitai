@@ -10,9 +10,7 @@ import {
 } from './scanner-content.service';
 import type { QueueView, ReviewVerdict, Scanner } from '$lib/scanner-audit';
 
-// Reads ClickHouse `scanner_label_results` (AggregatingMergeTree) + Postgres `ScannerLabelReview`
-// (moderator verdicts) for the scanner-audit table. Dedup unit is (contentHash, version, label). Ported
-// from the main app's scanner-review.service; read-only (verdict writes are the Wave-6 focused page).
+// Dedup unit is (contentHash, version, label).
 
 const DEFAULT_LOOKBACK_DAYS = 30;
 const ACTIVE_LABEL_WINDOW_DAYS = 7;
@@ -166,7 +164,6 @@ export async function listScans(
 
   if (rows.length === 0) return { rows: [], total };
 
-  // Enrich with Postgres review state.
   const keys = rows.map((r) => ({ contentHash: r.contentHash, version: r.version, label: r.label }));
   const verdicts = await dbRead
     .selectFrom('ScannerLabelReview')
@@ -270,7 +267,6 @@ export async function getLabelReviewStats(input: {
   return { active, retired };
 }
 
-// --- Focused review (one scanner+label) ---
 
 export async function focusedRun(input: {
   scanner: Scanner;

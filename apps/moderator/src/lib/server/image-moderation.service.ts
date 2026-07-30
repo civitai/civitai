@@ -15,30 +15,13 @@ import { bustCachedObject } from './cache';
 import { REDIS_KEYS } from '@civitai/redis';
 import { NsfwLevel } from '@civitai/shared';
 
-// Image review-queue verdicts, ported from the main app's `moderateImages` / `resolveEntityAppeal`
-// (image.service + report.service). Spoke owns the writes via Kysely; the ONLY main-app call is the
-// Meilisearch enqueue (syncSearchIndex, fire-and-forget). Covered side effects (see
-// image-moderation-effects): pHash blocklist (ClickHouse), comic re-queue, feed-existence bust,
-// model-gallery cache busts (feed tags + per-version showcase cache), thumbnail-cache bust, DeleteTOS
-// ClickHouse event, tos-violation notification, appeal auto-resolve, and the full appeal-resolution
-// cascade — buzz refund (@civitai/buzz), entity-appeal-resolved notification, and email (@civitai/email).
-
 const BLOCKED_REASON_MODERATED = 'moderated';
 
-// Recompute the real nsfwLevel, then bust the thumbnail cache — mirrors the main app's updateNsfwLevel,
-// which wraps the SQL fn + thumbnailCache.refresh. The cache is keyed by parentId (the video's id), so
-// del `${THUMBNAILS}:${imageId}`; the reader re-fetches on miss.
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, imageId);
 };
 
-// ACCEPT (unblock): clear the review flag, restore visibility, and recompute the real nsfwLevel. Ports
-// handleUnblockImages for a single image. `removeMinorFlag` picks the minor-queue verdict: FALSE (plain
-// "Accept") = the smart default — keep the flag for SFW, auto-clear for R+ (a minor flag on mature content
-// is contradictory); TRUE ("Accept + clear minor") = force-clear even for SFW. It's a spoke-internal
-// option, set only by the minor-review page's second button — the generic cross-app image-moderate action
-// never sends it, so a delegated accept always gets the smart default.
 export async function acceptImage({
   imageId,
   removeMinorFlag = false,
@@ -48,7 +31,6 @@ export async function acceptImage({
   imageId: number;
   removeMinorFlag?: boolean;
   userId: number;
-  // Bulk callers defer the per-image appeal email; they send one deduped email per user instead.
   deferAppealEmail?: boolean;
 }): Promise<void> {
   const img = await dbRead
@@ -59,9 +41,8 @@ export async function acceptImage({
   if (!img) return;
   const nr = img.needsReview;
 
-  // Strip the rule keys; on remixSource also stamp remixSourceReviewed so the audit job doesn't re-flag
-  // it. COALESCE because remixSource images usually have metadata=NULL (the audit job never writes it),
-  // and both `-` and `||` NULL-propagate — without it the stamp silently vanishes.
+  // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
+  // metadata=NULL — both `-` and `||` NULL-propagate, silently dropping the stamp otherwise.
   const metadataExpr =
     nr === 'remixSource'
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
@@ -75,8 +56,6 @@ export async function acceptImage({
       ingestion: 'Scanned',
       metadata: metadataExpr,
       ...(nr === 'poi' ? { poi: false } : {}),
-      // `minor` = the persistent SFW-gate. "Remove minor flag" force-clears; otherwise keep it for SFW and
-      // auto-clear for R+ (nsfwLevel >= R), since a minor flag on mature content is contradictory.
       ...(nr === 'minor'
         ? {
             minor: removeMinorFlag
@@ -91,10 +70,8 @@ export async function acceptImage({
     .where('id', '=', imageId)
     .execute();
 
-  // Rating-locked Blocked rows are skipped by update_nsfw_levels_new (WHERE NOT "nsfwLevelLocked"), so a
-  // mod-unblock would otherwise leave them hidden at Blocked. Reset them first — clear the lock + zero the
-  // level so the recompute below can restore the real one. Parity with the main app's resetBlockedNsfwLevel
-  // in handleUnblockImages (restored by #3355 / c371fcbc16).
+  // update_nsfw_levels_new skips nsfwLevelLocked rows, so without this a rating-locked Blocked image would
+  // stay hidden after unblock. Clear the lock + zero the level so the recompute below restores the real one.
   await dbWrite
     .updateTable('Image')
     .set({ nsfwLevel: 0, nsfwLevelLocked: false })
@@ -102,8 +79,6 @@ export async function acceptImage({
     .where('nsfwLevel', '=', NsfwLevel.Blocked)
     .execute();
 
-  // Disable + clear the moderation tags that flagged the image (upsertTagsOnImageNew recomputes
-  // nsfwLevel + enqueues the search sync). No review tags → do those two steps directly.
   const reviewTags = await dbRead
     .selectFrom('ImageTagForReview')
     .select('tagId')
@@ -120,9 +95,8 @@ export async function acceptImage({
       }))
     );
     await dbWrite.deleteFrom('ImageTagForReview').where('imageId', '=', imageId).execute();
-    // upsertTagsOnImageNew recomputes nsfwLevel + syncs search but, unlike recompute(), does NOT bust the
-    // thumbnail cache. Do it here so an unblocked thumbnail-child image can't serve a stale (Blocked) level
-    // until TTL — main's handleUnblockImages busts on every unblock, not just the no-review-tags path.
+    // upsertTagsOnImageNew does NOT bust the thumbnail cache (recompute() does), so bust it here or an
+    // unblocked thumbnail-child image serves a stale Blocked level until TTL.
     await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, imageId);
   } else {
     await recompute(imageId);
@@ -131,11 +105,8 @@ export async function acceptImage({
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
 
-  // Re-admit the pHash + propagate the now-visible image to galleries/comics.
   await applyAcceptSideEffects(img, imageId);
 
-  // If it was in appeal review, approving the image resolves the appeal — close it and run the appellant
-  // cascade (refund + notify + email), same as the appeals page (legacy handleUnblockImages did this too).
   if (nr === 'appeal') {
     const appeal = await dbRead
       .selectFrom('Appeal')
@@ -155,8 +126,6 @@ export async function acceptImage({
   }
 }
 
-// DELETE (block/TOS): soft-hide the image — Blocked ingestion + Blocked nsfwLevel + blockedFor. Ports
-// handleBlockImages for a single image. Does NOT delete the row.
 export async function blockImage({
   imageId,
   userId,
@@ -165,7 +134,6 @@ export async function blockImage({
 }: {
   imageId: number;
   userId: number;
-  // Moderator request provenance for the DeleteTOS analytics row (optional; defaults to 'unknown').
   ip?: string;
   userAgent?: string;
 }): Promise<void> {
@@ -174,7 +142,7 @@ export async function blockImage({
     .select(['needsReview', 'pHash', 'blockedFor', 'postId', 'nsfwLevel', 'userId'])
     .where('id', '=', imageId)
     .executeTakeFirst();
-  if (!img) return; // legacy no-ops on an empty findMany — don't log activity / enqueue for a missing id.
+  if (!img) return;
 
   await dbWrite
     .updateTable('Image')
@@ -184,8 +152,7 @@ export async function blockImage({
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BLOCKED_REASON_MODERATED,
       updatedAt: new Date(),
-      // On remixSource, stamp remixSourceReviewed so the audit job doesn't re-flag it (COALESCE — the
-      // column is usually NULL and `||` NULL-propagates).
+      // remixSource: COALESCE guards the usual metadata=NULL — `||` NULL-propagates, dropping the stamp.
       ...(img.needsReview === 'remixSource'
         ? {
             metadata: sql`COALESCE("metadata", '{}'::jsonb) || '{"remixSourceReviewed": true}'::jsonb`,
@@ -198,24 +165,18 @@ export async function blockImage({
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
 
-  // Everything a block cascades to (pHash blocklist, feed-existence + gallery + comic invalidation,
-  // DeleteTOS analytics, owner notification) — fanned out concurrently. `img` is the pre-block row.
+  // `img` is the pre-block row (read above, before the update).
   await applyBlockSideEffects(img, { imageId, actorUserId: userId, ip, userAgent });
 }
 
 export type AppealDecision = 'Approved' | 'Rejected';
 
-// The appellant cascade shared by both appeal-resolution paths (the appeals page and acceptImage's
-// appeal-queue auto-approve): refund the appeal fee on approve, notify the appellant in-app, and email the
-// decision. Each step is best-effort inside its effect. `appeal` must be read while still Pending (before
-// the row is closed) so the buzz txn id is available.
+// `appeal` must be read while still Pending (before the row is closed) — the buzz txn id is needed here.
 async function runAppealCascade(
   appeal: { id: number; userId: number; buzzTransactionId: string | null },
   imageId: number,
   approved: boolean,
   resolvedMessage?: string,
-  // Bulk callers pass false and send one deduped email per user via sendBulkAppealEmails instead of one
-  // email per image. Refund + notify still run per-image (matching legacy, which only dedups the email).
   sendEmail = true
 ): Promise<void> {
   if (approved)
@@ -246,8 +207,7 @@ async function runAppealCascade(
   }
 }
 
-// Snapshot the appellants of the pending Image appeals in `imageIds` (userId per image), read BEFORE the
-// bulk resolution closes the rows. Feeds sendBulkAppealEmails so the per-user email dedup can happen after.
+// Call BEFORE the bulk resolution closes the rows — the status='Pending' filter needs them still open.
 export async function getPendingImageAppealAppellants(
   imageIds: number[]
 ): Promise<{ userId: number; imageId: number }[]> {
@@ -262,8 +222,6 @@ export async function getPendingImageAppealAppellants(
   return rows.map((r) => ({ userId: r.userId, imageId: r.entityId }));
 }
 
-// One appeal-resolution email per appellant for a bulk resolution: group the resolved images by user and
-// email each user once, listing all their items. Mirrors the legacy per-user email dedup.
 export async function sendBulkAppealEmails(
   appellants: { userId: number; imageId: number }[],
   approved: boolean
@@ -293,11 +251,6 @@ export async function sendBulkAppealEmails(
   }
 }
 
-// Resolve an image appeal. Ports resolveEntityAppeal (single image): close the pending Appeal, then on
-// Approved restore the image (recompute nsfwLevel) or on Rejected just clear the appeal review flag
-// (image stays blocked). Both directions flip needsReview/ingestion, so — like the legacy — both re-queue
-// the parent comic(s) and bust the model galleries, then run the appellant cascade: refund the appeal fee
-// on approve (buzz), notify the appellant (entity-appeal-resolved), and email them the decision.
 export async function resolveImageAppeal({
   imageId,
   status,
@@ -309,7 +262,6 @@ export async function resolveImageAppeal({
   status: AppealDecision;
   resolvedMessage?: string;
   userId: number;
-  // Bulk callers defer the per-image appeal email; they send one deduped email per user instead.
   deferAppealEmail?: boolean;
 }): Promise<void> {
   const approved = status === 'Approved';

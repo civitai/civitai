@@ -7,12 +7,8 @@ import { recordModActivity } from './mod-activity';
 
 type ReportStatus = 'Pending' | 'Processing' | 'Actioned' | 'Unactioned';
 
-// Moderator sets an image's nsfwLevel (locks it), stamps the reason into metadata, optionally resolves its
-// pending rating requests, rolls the change up to any Model3D that uses the image as its thumbnail, and
-// records the mod activity. Shared by image-rating-review + downleveled-review.
-//
-// The main app's Meilisearch single-image index update is intentionally not mirrored here (that index
-// locks specially on a single-image change).
+// Don't mirror the main app's single-image Meilisearch update: that index locks specially on a single-image
+// change.
 export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
@@ -57,10 +53,7 @@ export async function updateImageNsfwLevel({
       .execute();
   }
 
-  // Roll the pinned level up to any Model3D using this image as its thumbnail. A thumbnail is always a
-  // standalone image (never posted), so a posted image provably isn't one — skip the query. Model3D rows
-  // with a manual nsfwLevel lock (nsfwLevel in lockedProperties) are excluded so the lock isn't clobbered.
-  // Mirrors the main app's updateModel3DNsfwLevelForThumbnailImage → updateModel3DNsfwLevels.
+  // Thumbnails are never posted, so a non-null postId means this image can't be a Model3D thumbnail.
   if (image.postId == null) {
     await sql`
       WITH level AS (
@@ -85,12 +78,7 @@ export async function updateImageNsfwLevel({
 
   await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 
-  // Bust the image-metadata cache so a reader re-fetches the pinned nsfwLevel/reason instead of the
-  // pre-update metadata until TTL (parity with the main app's imageMetadataCache.refresh).
   await bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id);
 
-  // Delegate the Knights-of-New-Order finalization (finalize pending votes + smites + player counters +
-  // review-pool reset + WebSocket player-stat signals) to the main app — game-engine + signals the spoke
-  // can't run. Fire-and-forget, mirroring the isModerator branch of handleUpdateImageNsfwLevel.
   void syncKonoFinalize(id, nsfwLevel);
 }

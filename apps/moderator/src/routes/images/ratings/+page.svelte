@@ -10,7 +10,6 @@
   let { data }: { data: PageData } = $props();
   type Item = PageData['items'][number];
 
-  // Severity tint per level (green → red); used on the chip label when the chip isn't the set one.
   const LEVEL_COLOR: Record<number, string> = {
     [NsfwLevel.PG]: 'text-emerald-400',
     [NsfwLevel.PG13]: 'text-lime-400',
@@ -29,14 +28,12 @@
     acted.clear();
   });
 
-  // Highest-severity level anyone requested (owner or community), from the per-level request weights.
   function highestRequested(votes: Record<string, number>): number | null {
     let hi: number | null = null;
     for (const lv of browsingLevels) if ((votes[lv] ?? 0) > 0) hi = lv;
     return hi;
   }
 
-  // One click commits the level. Optimistic — the card dims but stays editable, so a re-click re-commits.
   const submit: SubmitFunction = ({ formData }) => {
     acted.set(Number(formData.get('id')), Number(formData.get('nsfwLevel')));
     return async ({ update }) => update({ invalidateAll: false });

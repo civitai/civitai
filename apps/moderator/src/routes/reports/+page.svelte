@@ -54,7 +54,6 @@
   const totalPages = $derived(Math.max(1, Math.ceil(data.totalItems / data.limit)));
   const fmtDate = (d: Date) => new Date(d).toLocaleString();
 
-  // Build a URL off the current one, overriding the given params (null deletes).
   function urlWith(params: Record<string, string | number | null>) {
     const url = new URL(page.url);
     for (const [k, v] of Object.entries(params)) {
@@ -64,7 +63,6 @@
     return url.pathname + url.search;
   }
 
-  // Replace a multi-valued filter (status/reason) with the given set and navigate, resetting to page 1.
   function applyMulti(key: string, values: string[]) {
     const url = new URL(page.url);
     url.searchParams.delete(key);
@@ -115,7 +113,6 @@
       value={data.statuses}
       onValueChange={(vals) => applyMulti('status', vals)}
       placeholder="Search statuses…"
-      // class="w-64"
     />
   </div>
 
@@ -126,7 +123,6 @@
       value={data.reasons}
       onValueChange={(vals) => applyMulti('reason', vals)}
       placeholder="Search reasons…"
-      // class="w-64"
     />
   </div>
 

@@ -21,7 +21,6 @@ export type RatingReviewRow = {
   userComment: string | null;
   modComment: string | null;
   user: RatingReviewUser;
-  // Null for auto-approved / system-resolved rows.
   resolver: RatingReviewUser | null;
   article: {
     id: number;
@@ -106,7 +105,6 @@ export async function getArticleRatingReviews({
     .offset(offset)
     .execute()) as RawRow[];
 
-  // Resolve covers from coverId (the legacy `Article.cover` string is null for current articles).
   const coverIds = [
     ...new Set(rows.map((r) => r.articleCoverId).filter((v): v is number => v != null)),
   ];
@@ -167,10 +165,7 @@ export async function getArticleRatingReviewCounts(): Promise<RatingReviewCounts
   return counts;
 }
 
-// Content-derived nsfwLevel from cover + content images + moderation floor, mirroring the main app's
-// `computeArticleDerivedNsfwLevel`. Runs on the read replica (it reads committed image/report state,
-// which our resolve write doesn't touch). Returns null if the article row is missing, 0 for a
-// text-only/no-signal article, else the bitwise level. Snapshotted as `moderatorNsfwLevelBasis`.
+// dbRead is safe here — the resolve write doesn't touch the image/report state this reads.
 export async function computeArticleDerivedNsfwLevel(articleId: number): Promise<number | null> {
   const result = await sql<{ derived: number | null }>`
     WITH level AS (
@@ -232,13 +227,6 @@ export type ResolveResult = {
   articleTitle: string;
 };
 
-// Moderator resolution — ported from the main app's `resolveArticleRatingReview`. Pins the article at
-// `appliedLevel` via a moderator override: the review row is closed (status-guarded so racing mods
-// can't double-resolve), `userNsfwLevel` is locked, and the content-derived basis is snapshotted so a
-// later down-direction dispute can only auto-clear the override if content genuinely drops below it.
-// Because the override wins unconditionally (COALESCE(moderatorNsfwLevel, ...)), we write `nsfwLevel`
-// directly rather than running the full recompute. Search-index + analytics + the (deferred) owner
-// notification are handled by the caller.
 export async function resolveArticleRatingReview(input: {
   reviewId: number;
   appliedLevel: number;
@@ -256,8 +244,7 @@ export async function resolveArticleRatingReview(input: {
       .executeTakeFirst();
     if (!review) throw new Error('Review already resolved');
 
-    // Actioned = the applied level matches the owner's suggestion (granted); Unactioned = the mod
-    // applied a different level (overrode). Both pin the override either way.
+    // Actioned = applied level matches the owner's suggestion; Unactioned = mod overrode with a different level.
     const status =
       appliedLevel === review.suggestedLevel ? ReportStatus.Actioned : ReportStatus.Unactioned;
 

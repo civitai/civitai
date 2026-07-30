@@ -9,8 +9,6 @@ import { ReportStatus } from '$lib/article-rating-review';
 type ResolveOk = { ok: true; status: ReportStatus };
 type ResolveErr = { ok: false; error: string };
 
-// Resolve an article rating review, pinning it to `appliedLevel`. The DB mutation runs INTERNALLY via
-// Kysely (see resolveArticleRatingReview). The only main-app hit is the approved Meilisearch enqueue.
 export async function resolveRatingReview(input: {
   reviewId: number;
   appliedLevel: number;
@@ -29,7 +27,6 @@ export async function resolveRatingReview(input: {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
-  // Keep Meilisearch in sync — the one main-app callback the spoke is allowed to make.
   void syncSearchIndex({ entityType: 'article', entityId: result.articleId, action: 'update' });
 
   void recordRatingReviewResolved({
@@ -54,9 +51,6 @@ export async function resolveRatingReview(input: {
   return { ok: true, status: result.status };
 }
 
-// Owner notification, ported from the legacy resolveArticleRatingReview. Actioned = the mod granted the
-// owner's suggested level (approved); Unactioned = the mod applied a different level (rejected). Sent via
-// @civitai/notifications (best-effort — a delivery failure never fails the resolution).
 async function notifyRatingReviewResolved(v: {
   ownerUserId: number;
   reviewId: number;
@@ -100,8 +94,6 @@ async function notifyRatingReviewResolved(v: {
   }
 }
 
-// ClickHouse analytics parity with the legacy tRPC path's `ctx.track.articleRatingReviewResolved`. The
-// spoke owns ClickHouse (see page-visits). Fire-and-forget; failures are swallowed.
 async function recordRatingReviewResolved(values: {
   reviewId: number;
   articleId: number;

@@ -33,8 +33,7 @@ export const load: PageServerLoad = async ({ url }) => {
     needsReview: needsReview === 'all' ? undefined : needsReview,
   });
   return {
-    // Highlight each panel's prompt server-side (word lists are server-only) so the card can render the
-    // matched-term excerpt + "view full prompt" popover, same as the image review pages.
+    // Highlight the prompt server-side — the word lists are server-only.
     items: items.map((panel) => ({
       ...panel,
       promptHighlight: panel.prompt ? getPromptHighlightSegments(panel.prompt) : null,
@@ -48,9 +47,8 @@ export const load: PageServerLoad = async ({ url }) => {
   };
 };
 
-// Reuse the ported image moderation. Approving (acceptImage) clears the image's needsReview/ingestion so
-// the comic flips back to visible; blocking (blockImage) soft-hides it. Both already re-queue every parent
-// comic for the Meilisearch refresh (queueComicsForImages), so nothing comic-specific is needed here.
+// acceptImage/blockImage already re-queue every parent comic (queueComicsForImages), so nothing
+// comic-specific is needed here.
 async function moderatePanel(
   run: (args: {
     imageId: number;

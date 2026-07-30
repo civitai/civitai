@@ -25,10 +25,7 @@ export type ImageTagReviewItem = {
   tags: ImageTagReviewTag[];
 };
 
-// tagReview queue: images carrying a Moderation tag that's been flagged needsReview (the community voted
-// to remove it) and isn't already disabled. Ported from image.service `getImageModerationReviewQueue`
-// (tagReview branch). needsReview/disabled live in TagsOnImageNew.attributes as a bitmask — bit 9 =
-// needsReview, bit 10 = disabled; TagsOnImageDetails / ImageTag are read-only views over that table.
+// needsReview/disabled live in TagsOnImageNew.attributes as a bitmask: bit 9 = needsReview, bit 10 = disabled.
 export async function getImageTagReviewQueue({
   cursor,
   limit,
@@ -100,12 +97,6 @@ export async function getImageTagReviewQueue({
   };
 }
 
-// A moderator's decision on flagged tags is authoritative, so we write the outcome directly rather than
-// routing it through the weighted-vote tally + apply-voted-tags cron the main app uses for community
-// votes: approve removal → disabled=true; keep → disabled=false. Either way needsReview clears. source /
-// confidence are omitted so `upsert_tag_on_image` preserves them; automated is forced false (manual
-// decision). The shared write + side effects (tag-rule expansion, cache busts, nsfwLevel recompute,
-// search-index enqueue) live in `upsertTagsOnImageNew` — the Kysely port of the main-app helper.
 export async function moderateImageTags({
   imageId,
   tagIds,
@@ -129,8 +120,7 @@ export async function moderateImageTags({
   }
   if (!targets.length) return { tagIds: [] };
 
-  // automated:false marks it a manual decision; source/confidence omitted so the upsert preserves them.
-  // upsertTagsOnImageNew handles the shared side effects (cache busts, nsfwLevel recompute, search-index).
+  // source/confidence omitted so upsert_tag_on_image preserves them; automated:false = manual decision.
   await upsertTagsOnImageNew(
     targets.map((tagId) => ({
       imageId,

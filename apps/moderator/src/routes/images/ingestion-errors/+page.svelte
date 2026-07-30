@@ -10,8 +10,7 @@
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
-  // These images are all nsfwLevel 0 (unrated) — strip it so the grid doesn't draw a meaningless
-  // rating badge; the mod is here to assign the level.
+  // All nsfwLevel 0 here — strip it so the grid doesn't draw a meaningless rating badge.
   type Item = Omit<PageData['items'][number], 'nsfwLevel'>;
 
   // Chosen level per resolved image — dims the card + highlights the pick, no refetch (mods blast the

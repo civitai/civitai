@@ -29,9 +29,8 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // Local copies so resolving a review prunes it (and adjusts the counts) client-side WITHOUT re-running
-  // the load — moderators blast through this queue and a refetch per resolve would stall that. A real
-  // navigation (filter/page change) gives a new data.* and resyncs these.
+  // Local copies so a resolve prunes the row + adjusts counts client-side without a refetch (mods blast the
+  // queue); a real navigation resyncs.
   let items = $state(untrack(() => data.items));
   let counts = $state(untrack(() => data.counts));
   $effect(() => {
@@ -43,9 +42,7 @@
   const totalPages = $derived(Math.max(1, Math.ceil(total / data.limit)));
   const fmtDate = (d: Date | null) => (d ? new Date(d).toLocaleString() : '—');
 
-  // On success: prune the resolved review + adjust counts locally, no invalidate/refetch. On failure:
-  // surface the error via the form prop. The applied level determines Approved (matched suggestion) vs
-  // Rejected (overrode) — the action returns which.
+  // Applied level → Approved (matched the suggestion) vs Rejected (overrode); the action returns which.
   const resolveReview =
     (reviewId: number): SubmitFunction =>
     () =>

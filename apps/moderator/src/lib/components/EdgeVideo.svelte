@@ -6,12 +6,8 @@
     EdgeUrlOptions & {
       /** Cloudflare-images key — the Image row's `url`/GUID column (NOT the numeric id). */
       src: string;
-      /** Optional still-frame key/url for the poster; defaults to a frame of `src`. */
       thumbnailUrl?: string | null;
-      /**
-       * Fraction of the video that must be visible before it auto-plays (and below which it
-       * pauses). Defaults to 0.5 — play only when at least half the video is in the viewport.
-       */
+      /** Visibility fraction to auto-play/pause at (default 0.5). */
       threshold?: number;
       /** Muted is required for reliable autoplay; override only if you also surface controls. */
       muted?: boolean;

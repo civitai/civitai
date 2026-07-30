@@ -7,10 +7,6 @@ import type { ScanContent } from '$lib/scanner-audit';
 
 export type { ScanContent };
 
-// Content resolution for scanner-audit items. Ported from the main app's scanner-content.service. Each
-// scan is keyed by contentHash; the content lives in the orchestrator for ~30 days, after which a
-// moderator-reviewed item keeps a Postgres snapshot. Resolution: snapshot first, orchestrator fallback
-// (xguard), imageId lookup (media). Axiom diagnostics are dropped for console.warn in the spoke.
 
 export type ScanContentItem = {
   contentHash: string;
@@ -158,7 +154,6 @@ export async function getScanContents(items: ScanContentItem[]): Promise<ScanCon
 
   const results = await Promise.all(items.map((item) => resolveScanContent(item, snapshotMap)));
 
-  // Resolve image URLs in one round trip.
   const imageIds = [
     ...new Set(results.map((r) => r.imageId).filter((id): id is number => typeof id === 'number')),
   ];
@@ -210,7 +205,6 @@ export async function snapshotScanContent(input: {
     compact[k] = v;
   }
 
-  // First verdict per contentHash writes the snapshot; subsequent are no-ops.
   await dbWrite
     .insertInto('ScannerContentSnapshot')
     .values({

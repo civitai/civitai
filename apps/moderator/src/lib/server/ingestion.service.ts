@@ -21,8 +21,6 @@ const pendingCutoff = () => {
   return cutoff;
 };
 
-// Images stuck in 'Pending' ingestion within the last 5 days (mirrors the main app's
-// getImagesPendingIngestion). Keyset-paginated on id desc. Read-only.
 export async function getImagesPendingIngestion({
   cursor,
   limit,
@@ -45,7 +43,6 @@ export async function getImagesPendingIngestion({
   return { items: rows, nextCursor };
 }
 
-// Total pending count for the page header (the queue's whole size, not just the current page).
 export async function countImagesPendingIngestion(): Promise<number> {
   const row = await dbRead
     .selectFrom('Image')
@@ -67,8 +64,6 @@ export type IngestionErrorImage = {
   createdAt: Date;
 };
 
-// Images that errored during ingestion and have no derived nsfwLevel yet — the review queue. Keyset
-// cursor on id, newest first, within a 1h–2d age window (mirrors the main app's getIngestionErrorImages).
 export async function getIngestionErrorImages({
   limit,
   cursor,
@@ -95,9 +90,6 @@ export async function getIngestionErrorImages({
   return { items, nextCursor };
 }
 
-// Moderator resolves an ingestion error by pinning the image's nsfwLevel and marking it Scanned. Runs
-// INTERNALLY via Kysely (nsfwLevel setter) + Redis cache busts; the one main-app hit is the Meilisearch
-// enqueue. Faithful to the legacy resolveIngestionError.
 export async function resolveIngestionError({
   id,
   nsfwLevel,
@@ -131,19 +123,15 @@ export async function resolveIngestionError({
     .where('id', '=', id)
     .execute();
 
-  // Roll the change up to the post's nsfwLevel (DB function, same as the main app's updatePostNsfwLevel).
-  // Cast the bound array to int[] — Postgres infers a bare `ARRAY[$1]` param array as text[], which
-  // wouldn't match the function's int[] signature.
+  // Cast to int[] — Postgres infers a bare `ARRAY[$1]` param array as text[], which won't match the
+  // function's int[] signature.
   if (image.postId != null)
     await sql`SELECT update_post_nsfw_levels(ARRAY[${image.postId}]::int[])`.execute(dbWrite);
 
-  // Keep the image search indexes in sync — the one sanctioned main-app call.
   void syncSearchIndex({ entityType: 'image', entityId: id, action: 'update' });
 
   await recordModActivity({ userId, entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 
-  // Bust the post-scan caches the main app refreshes here (imageMetadataCache + tagIdsForImagesCache) so a
-  // reader re-fetches the pinned nsfwLevel/tags instead of serving the pre-resolve state until TTL.
   await Promise.all([
     bustCachedObject(REDIS_KEYS.CACHES.IMAGE_METADATA, id),
     bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, id),

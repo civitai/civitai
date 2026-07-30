@@ -1,7 +1,5 @@
 import { ReportReason, ReportStatus } from '@civitai/db-schema/enums';
 
-// Enums are the shared canonical contract; ReportEntity (which join table a report points through) is
-// moderator-only, so it's re-authored here rather than shared.
 export { ReportReason, ReportStatus };
 
 export const ReportEntity = {
@@ -38,7 +36,6 @@ export const reportReasonLabels: Record<ReportReason, string> = {
   Spam: 'Spam',
 };
 
-// The manual-review default view — reasons a moderator triages by hand (excludes NSFW/CSAM/Automated).
 export const DEFAULT_REPORT_REASONS: ReportReason[] = [
   ReportReason.AdminAttention,
   ReportReason.Claim,
@@ -72,9 +69,7 @@ export const reportStatusBadgeClass: Record<ReportStatus, string> = {
   Unactioned: 'bg-green-500/15 text-green-300',
 };
 
-// Absolute (reported items live on the main site; `base` comes from CIVITAI_APP_URL via layout data).
-// Only id-URL-clean types are linkable; the rest (comment threads, chat, user, bounty entries) return
-// null until their richer URL shapes are ported.
+// Only id-URL-clean types are linkable; the rest return null until their richer URL shapes are ported.
 const entityPath: Partial<Record<ReportEntity, (id: number) => string>> = {
   model: (id) => `/models/${id}`,
   image: (id) => `/images/${id}`,

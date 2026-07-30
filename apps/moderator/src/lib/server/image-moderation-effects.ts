@@ -13,15 +13,9 @@ import { getSysRedis } from './redis';
 import { syncSearchIndex } from './search-index';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 
-// Side effects the main app's moderateImages runs alongside the Image row write. Ported so the spoke's
-// accept/block are faithful. Meilisearch stays the callback (syncSearchIndex); ClickHouse + comic re-queue
-// run here directly against the spoke's own clients.
-
-// `blocked_images.reason`. The main app's getReviewTypeToBlockedReason switches on needsReview-style keys
-// ('csam'/'newUser'/…) but its ONE caller feeds it `blockedFor ?? 'moderated'` — which never matches those
-// keys — so the legacy always stores 'TOS' here (a latent bug). We deliberately key off needsReview
-// (blockedFor is null on the review path) to store the intended CSAM/Ownership; do NOT "fix" this back to
-// match the legacy always-TOS behavior.
+// The legacy always stored 'TOS' here — its one caller fed `blockedFor ?? 'moderated'`, which never matched
+// the CSAM/newUser keys (a latent bug). We key off needsReview to store the intended reason; do NOT "fix"
+// this back to always-'TOS'.
 function reviewTypeToBlockReason(reason: string | null | undefined): 'Ownership' | 'CSAM' | 'TOS' {
   switch (reason) {
     case 'csam':
@@ -33,10 +27,6 @@ function reviewTypeToBlockReason(reason: string | null | undefined): 'Ownership'
   }
 }
 
-// Re-queue every comic project that contains any of these images for a Meilisearch refresh. Comic
-// visibility is derived from Image.needsReview/ingestion/tosViolation, but the scan-workflow re-queue isn't
-// on the moderator path — so mirror the main app's queueComicsForPanelImages. Covers the multi-comic case
-// (an image reused across projects), unlike a single posted projectId.
 export async function queueComicsForImages(imageIds: number[]): Promise<void> {
   if (!imageIds.length) return;
   const rows = await dbRead
@@ -49,9 +39,7 @@ export async function queueComicsForImages(imageIds: number[]): Promise<void> {
     syncSearchIndex({ entityType: 'comic', entityId: projectId, action: 'update' });
 }
 
-// Mark images as non-existent in the shared feed existence cache (sysRedis) so embeds/references stop
-// treating a just-blocked image as live before the 5-min TTL. Mirrors invalidateManyImageExistence; set
-// per-key to avoid CROSSSLOT, and write the same `'false'` value the main app's reader expects.
+// Per-key set to avoid CROSSSLOT; write the exact `'false'` value the main app's existence reader expects.
 export async function invalidateImagesExistence(imageIds: number[]): Promise<void> {
   if (!imageIds.length) return;
   const sys = getSysRedis();
@@ -62,18 +50,7 @@ export async function invalidateImagesExistence(imageIds: number[]): Promise<voi
   );
 }
 
-// Bust the model-gallery caches for every post touched by a moderation write, so a blocked/accepted image
-// drops out of (or reappears in) those galleries immediately, not after the TTL — matters most for fast
-// removal (DMCA/CSAM). Ports the main app's bustCachesForPosts. Two cache families:
-//   - the getAllImages feed galleries, keyed by tag (`images-modelVersion:X` / `images-model:X` /
-//     `images-model3d:X`) → bustCacheTag;
-//   - the per-version showcase gallery (imagesForModelVersionsCache), one packed key per version → bust it
-//     like any other cached object.
-// The main app "refreshes" (re-populates from primary) the showcase cache rather than busting, purely to
-// dodge a replication-lag re-cache window — but lag routing is off by default and it busts every OTHER
-// gallery cache anyway, so a plain bust here is the consistent, faithful choice (reader re-fetches on the
-// next miss). dbRead is fine: the Image write has committed and Post→version/model links don't change on
-// moderation.
+// dbRead is safe here: Post→version/model links don't change on a moderation write.
 export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
   const ids = [...new Set(postIds.filter((id) => id != null))];
   if (!ids.length) return;
@@ -107,11 +84,8 @@ export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
   ]);
 }
 
-// pHash blocklist (ClickHouse `blocked_images`, `hash` = Int64). Add on block so re-uploads of the same
-// image auto-block; soft-remove (disabled=true) on accept. Ports bulkAddBlockedImages /
-// bulkRemoveBlockedImages, but keeps the FULL-precision pHash: it's a signed 64-bit value that overflows
-// JS `number` (the main app's `Number(hash)` truncates the low digits), and the re-upload check matches on
-// the full bigint. `pHash` is already a string in Kysely; ClickHouse parses a quoted Int64 exactly.
+// Keep pHash as the full-precision string: it's a signed 64-bit value that overflows JS `number`
+// (`Number(hash)` truncates), and the re-upload match needs the exact bigint. ClickHouse parses the Int64.
 type BlockableImage = {
   pHash: string | null;
   needsReview: string | null;
@@ -148,11 +122,6 @@ export async function removeImagesFromBlocklist(pHashes: (string | null)[]): Pro
   });
 }
 
-// DeleteTOS analytics — one row per blocked image in the ClickHouse `images` table (feeds appeal
-// `tosReason` + strike/leaderboard analytics). Ports the block-only branch of moderateImageHandler +
-// Tracker.images. The two mapping tables mirror src/server/common/tos-reasons.ts; the nsfw enum mirrors
-// getNsfwLevelDeprecatedReverseMapping. Purely additive analytics, so a ClickHouse failure is logged and
-// swallowed rather than failing the block.
 const NSFW_LEVEL_TO_DEPRECATED: Record<number, 'None' | 'Soft' | 'Mature' | 'X' | 'Blocked'> = {
   [NsfwLevel.PG]: 'None',
   [NsfwLevel.PG13]: 'Soft',
@@ -198,7 +167,7 @@ function mapToViolationType(
 export type ImageDeleteTosInput = {
   imageId: number;
   ownerId: number;
-  // The image's nsfwLevel BEFORE the block write (mapped to the deprecated enum for the `nsfw` column).
+  // nsfwLevel BEFORE the block write.
   nsfwLevel: number;
   needsReview: string | null;
   actorUserId: number;
@@ -224,7 +193,6 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
         .select('modelVersionId')
         .where('imageId', '=', imageId)
         .execute(),
-      // Latest TOS-violation report's structured detail (DISTINCT ON via LIMIT 1). jsonb `->>` on details.
       sql<{ violation: string | null; comment: string | null }>`
         SELECT r.details->>'violation' AS violation, r.details->>'comment' AS comment
         FROM "Report" r
@@ -264,10 +232,6 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
   }
 }
 
-// tos-violation notification to the image owner. Ports the `user-notification` branch of
-// handleBlockImages (the handler hardcodes that include). Delivery is best-effort — the notifications
-// client logs its own failures via onFailure and we swallow here so a blocked image is never held up by
-// notification delivery (matching the monolith's `.catch()`).
 export async function notifyImageTosViolation(image: {
   imageId: number;
   ownerId: number;
@@ -290,9 +254,6 @@ export async function notifyImageTosViolation(image: {
   }
 }
 
-// The side effects every verdict shares: an image's visibility flipped, so drop/re-add it in the model
-// galleries and re-index its parent comic(s). Composed by the accept/block bundles; it's also the whole
-// bundle for an appeal resolution.
 export async function applyVisibilitySideEffects(
   imageId: number,
   postId: number | null
@@ -303,10 +264,7 @@ export async function applyVisibilitySideEffects(
   ]);
 }
 
-// The post-write side effects of a block, run together. These are all independent of one another, so —
-// like the legacy handleBlockImages' `Promise.all` — they fan out concurrently. `img` is the PRE-block
-// row (pHash/nsfwLevel/needsReview/postId/owner captured before the update). DeleteTOS + the notification
-// swallow their own failures; the rest reject, so a genuine infra failure surfaces to the moderator.
+// `img` is the PRE-block row (captured before the update).
 export type BlockedImageRow = {
   pHash: string | null;
   needsReview: string | null;
@@ -340,8 +298,6 @@ export async function applyBlockSideEffects(
   ]);
 }
 
-// The post-write side effects of an accept: re-admit the pHash (re-uploads stop auto-blocking) and
-// propagate the now-visible image to galleries + comics. Independent → concurrent.
 export async function applyAcceptSideEffects(
   img: { pHash: string | null; postId: number | null },
   imageId: number
@@ -352,13 +308,9 @@ export async function applyAcceptSideEffects(
   ]);
 }
 
-// --- Appeal-resolution effects (resolveImageAppeal) — ports resolveEntityAppeal's per-user cascade ------
-
 const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 
-// Refund the appeal fee via the buzz service. Best-effort — an old transaction may no longer exist in the
-// buzz service, and a refund failure must never block the appeal resolution (mirrors the legacy
-// withRetries + catch). A multi-account appeal charge uses a `appeal-`-prefixed external id.
+// A multi-account appeal charge uses an `appeal-`-prefixed external id → refundMultiTransaction.
 export async function refundAppealFee(appeal: {
   id: number;
   buzzTransactionId: string | null;
@@ -378,8 +330,6 @@ export async function refundAppealFee(appeal: {
   }
 }
 
-// entity-appeal-resolved notification to the appellant (best-effort). The moderator's free-text
-// `resolvedMessage` IS surfaced in-app here (unlike the email).
 export async function notifyAppealResolved(input: {
   userId: number;
   entityId: number;
@@ -404,9 +354,7 @@ export async function notifyAppealResolved(input: {
   }
 }
 
-// Appeal-resolution email to the appellant (best-effort). `resolvedMessage` is intentionally NOT emailed —
-// only the decision + the affected item links. Takes a LIST of image ids so a bulk resolution emails the
-// user once, listing every item, instead of one email per image (matching the legacy per-user dedup).
+// resolvedMessage is intentionally NOT emailed — only the decision + item links.
 export async function emailAppealResolution(input: {
   to: string;
   username: string;

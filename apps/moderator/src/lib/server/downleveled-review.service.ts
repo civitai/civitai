@@ -14,9 +14,7 @@ export type DownleveledImageItem = {
 
 type ChRow = { imageId: number; originalLevel: number; createdAt: string };
 
-// Queue of images the Knights of New Order game DOWNLEVELED (reduced the rating on). Sourced from
-// ClickHouse `knights_new_order_downleveled` (originalLevel = the level before the downlevel), enriched
-// with the current image row from Postgres. A moderator restores/corrects the level via updateImageNsfwLevel.
+// originalLevel = the level before the KoNO downlevel.
 export async function getDownleveledImages({
   cursor,
   limit,

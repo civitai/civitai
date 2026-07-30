@@ -8,9 +8,7 @@
   let { data }: { data: PageData } = $props();
   type Item = PageData['items'][number];
 
-  // `${imageId}:${tagId}` → the mod's decision (optimistic; dims the chip / card).
   const resolved = new SvelteMap<string, 'removed' | 'kept'>();
-  // Multiselect for the bulk bar — selected image ids.
   const selected = new SvelteSet<string | number>();
   $effect(() => {
     data.items;
@@ -37,7 +35,6 @@
     return async ({ update }) => update({ invalidateAll: false });
   };
 
-  // Bulk bar — apply one verdict to every flagged tag on all selected images.
   const bulkSubmit: SubmitFunction = ({ formData }) => {
     const outcome = formData.get('disable') === 'true' ? 'removed' : 'kept';
     selectedImageIds

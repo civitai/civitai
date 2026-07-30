@@ -2,9 +2,8 @@ import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 
-// Blocklist CRUD for the moderator page. The spoke owns the mutation, writing BOTH the `Blocklist` table
-// and the shared Redis cache under the SAME key/shape/TTL the main app reads (its link/message/email
-// validators + the sync-email-blocklist cron) — so main-app readers see edits with no callback.
+// Writes BOTH the Blocklist table AND the shared Redis cache (same key/shape/TTL the main app reads), so
+// main-app validators see edits with no callback.
 
 export type BlocklistDTO = { id?: number; type: string; data: string[] };
 

@@ -1,6 +1,4 @@
-// Moderator request provenance for analytics rows (e.g. the DeleteTOS ClickHouse event). getClientAddress
-// throws when the adapter can't resolve an address, so guard it; both fields fall back to 'unknown' at the
-// ClickHouse layer when undefined.
+// getClientAddress throws when the adapter can't resolve an address — guard it.
 export function getActorMeta(event: {
   request: Request;
   getClientAddress: () => string;

@@ -1,10 +1,6 @@
 import { browser } from '$app/environment';
 
-// Sidebar triage counts, fetched CLIENT-SIDE (not via SSR load) so the count aggregates never sit in the
-// page-load request path. One shared store: the layout and the /images hub both read `value` (null until
-// the first fetch resolves — badges just don't render yet). The layout calls refresh() on navigation so
-// counts drop as queues are cleared; a client-side TTL dedupes rapid navigation (the endpoint also caches
-// 60s server-side).
+// Fetched client-side (not via SSR load) so the count aggregates never sit in the page-load request path.
 const TTL_MS = 60_000;
 const store = $state<{ value: Record<string, number> | null }>({ value: null });
 let lastFetch = 0;

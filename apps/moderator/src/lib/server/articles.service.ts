@@ -65,7 +65,6 @@ export async function getModeratorArticles({
   return { items, totalItems, page, limit };
 }
 
-// Sidebar-badge count: all unpublished articles awaiting a moderator decision (no username filter).
 export async function countModeratorArticles(): Promise<number> {
   const row = await dbRead
     .selectFrom('Article')

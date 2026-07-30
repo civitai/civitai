@@ -53,7 +53,6 @@
     else for (const c of data.items) selectedCosmetics.set(c.id, c.name);
   }
 
-  // User typeahead — debounced fetch of the same-app search endpoint.
   let userQuery = $state('');
   let userResults = $state<{ id: number; username: string | null; image: string | null }[]>([]);
   let timer: ReturnType<typeof setTimeout>;
@@ -113,7 +112,6 @@
         selectedCosmetics.clear();
         selectedUsers.clear();
       }
-      // Apply the action result (banner) without refetching the cosmetics list — grant doesn't change it.
       await update({ invalidateAll: false });
     };
   };

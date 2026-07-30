@@ -10,9 +10,6 @@
   import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
   import type { MediaType } from '$lib/media/edge-url';
 
-  // nsfwLevel → rating-badge color, matching the legacy `nsfwLevelColors`
-  // (PG green, PG13 yellow, R orange, X red, XXX grape). Solid backgrounds so the badge reads over
-  // any image; unknown/unrated levels fall back to neutral.
   const RATING_BADGE: Record<number, string> = {
     [NsfwLevel.PG]: 'bg-green-600 text-white',
     [NsfwLevel.PG13]: 'bg-yellow-500 text-black',
@@ -22,9 +19,6 @@
     [NsfwLevel.Blocked]: 'bg-rose-800 text-white',
   };
 
-  // The shared image-queue card + grid: a 300px auto-fill grid of large aspect-[4/5] cards (image links
-  // to the main app) with cursor-paged Next. The card body is the consumer's — moderation review detail,
-  // action forms, whatever — supplied via the `card` snippet. Header/filters live in the page, above this.
   let {
     items,
     civitaiUrl,
@@ -37,16 +31,12 @@
   }: {
     items: T[];
     civitaiUrl: string;
-    // Number (id-based queues) or string (e.g. ClickHouse offset cursors).
     nextCursor?: number | string;
-    // Key accessor — defaults to the image id (the reported queue keys by report id).
+    /** Key accessor — defaults to the image id (the reported queue keys by report id). */
     keyOf?: (item: T) => string | number;
-    // Optional per-card class (e.g. optimistic dimming on an actioned card).
     itemClass?: (item: T) => string;
-    // Card body, rendered inside CardContent under the image.
     card: Snippet<[T]>;
-    // Pass a set to enable multiselect: a top-right checkbox per card, and once anything is selected an
-    // image click toggles instead of navigating. The set (page-owned) is keyed the same as `keyOf`.
+    /** Pass a set to enable multiselect; once anything is selected an image click toggles instead of navigating. */
     selected?: SvelteSet<string | number>;
     empty?: string;
   } = $props();
@@ -59,7 +49,6 @@
     else selected!.add(k);
   }
 
-  // In selection mode (≥1 selected) an image click toggles the card instead of opening the link.
   function onImageClick(e: MouseEvent, item: T) {
     if (selected && selected.size > 0) {
       e.preventDefault();

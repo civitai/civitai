@@ -14,15 +14,9 @@ const UNPUBLISHED: ArticleStatus[] = [
   ArticleStatus.UnpublishedViolation,
 ];
 
-// Restore or delete an article. The DB mutations run INTERNALLY via Kysely; the only main-app hit is the
-// Meilisearch enqueue. Restore is faithful (status + nsfwLevel re-derive + ingestion recompute +
-// userArticleCountCache bust). Delete also cleans up the cover + orphaned content images (Image row + S3 via
-// @civitai/storage + Meili + collections + caches), and recomputes any post those images belonged to — see
-// deleteImagesByIds.
 export async function moderateArticle(input: {
   action: 'restore' | 'delete';
   articleId: number;
-  // Acting moderator — access is already enforced globally; kept for parity / future audit.
   userId: number;
 }): Promise<ModerateResult> {
   try {
@@ -43,9 +37,6 @@ export async function moderateArticle(input: {
   return { ok: true };
 }
 
-// ClickHouse analytics parity with the main app's `ctx.track.article({ type: 'Delete' })` (article.router:110).
-// Best-effort: a failed insert must never surface as a failed moderation. `nsfw: false` matches the main app
-// (it hardcodes false on delete); actor userId is the moderator, matching the spoke's other CH inserts.
 async function recordArticleDeleted(articleId: number, moderatorId: number): Promise<void> {
   try {
     await getClickhouse().insert({
@@ -96,8 +87,8 @@ async function restoreArticle(id: number): Promise<void> {
       .where('id', '=', id)
       .execute();
 
-    // Re-derive nsfwLevel (ported from updateArticleNsfwLevels) so a cover raised to X/Blocked while the
-    // article sat unpublished can't leak into an SFW feed on republish. A moderator override still wins.
+    // Re-derive nsfwLevel so a cover raised to X/Blocked while unpublished can't leak into an SFW feed on
+    // republish; a moderator override still wins (the COALESCE).
     await sql`
       WITH level AS (
         SELECT a.id, GREATEST(
@@ -144,11 +135,8 @@ async function restoreArticle(id: number): Promise<void> {
         ) != a."nsfwLevel"
     `.execute(trx);
 
-    // Re-derive Article.ingestion from ground truth (content/cover image scan states + text moderation),
-    // ported from recomputeArticleIngestionInTx. The legacy also flips status + notifies the owner, but
-    // both are gated on status='Processing'; restore already set status='Published' above, so here this
-    // only fixes `ingestion` — a restored article whose cover/content image is Blocked (or still unscanned)
-    // stays Blocked/Pending (hidden) instead of silently going live.
+    // Re-derive ingestion from image scan states + text moderation so a restored article whose cover/content
+    // image is Blocked or still unscanned stays hidden instead of silently going live.
     const conn = await trx
       .selectFrom('ImageConnection as ic')
       .innerJoin('Image as i', 'i.id', 'ic.imageId')
@@ -186,9 +174,8 @@ async function restoreArticle(id: number): Promise<void> {
       hasText && !!textMod && ['Failed', 'Expired', 'Canceled'].includes(textMod.status);
     const textDone = !hasText || textMod?.status === 'Succeeded';
 
-    // A moderator override (moderatorNsfwLevel pinned) is authoritative — the article stays Scanned/visible
-    // even if a cover/content image is still non-terminal (Pending/Error). This is the top-precedence branch
-    // in deriveArticleIngestionState; without it a restored mod-pinned article would be wrongly hidden.
+    // A moderator override must keep the article Scanned even if an image is still non-terminal, else a
+    // restored mod-pinned article is wrongly hidden.
     const hasModeratorOverride = article.moderatorNsfwLevel != null;
     const next = hasModeratorOverride
       ? 'Scanned'
@@ -214,14 +201,11 @@ async function restoreArticle(id: number): Promise<void> {
     return article.userId;
   });
 
-  // The owner gained a published article — refresh their cached article count (createCachedObject: one key
-  // per user at `${OVERVIEW_USERS}:articleCount:${userId}`).
   await bustCachedObject(`${REDIS_KEYS.CACHES.OVERVIEW_USERS}:articleCount`, userId);
 }
 
 async function deleteArticle(id: number): Promise<void> {
-  // Capture the content image ids BEFORE the transaction removes the connections, so we can clean up the
-  // orphaned images afterward (parity with the main app's deleteArticleById).
+  // Capture the content image ids before the transaction deletes the connections, or they're lost.
   const contentImageIds = (
     await dbWrite
       .selectFrom('ImageConnection')
@@ -254,11 +238,7 @@ async function deleteArticle(id: number): Promise<void> {
     return article.coverId;
   });
 
-  // Delete the cover + any content image now orphaned (no remaining connection to ANY entity) — full image
-  // delete (row + S3 + Meili + collections + caches). Mirrors deleteArticleById's post-transaction cleanup:
-  // it deletes the cover + truly-orphaned content images unconditionally, and deleteImagesByIds recomputes
-  // any post those images belonged to. "Orphaned" is about ImageConnection only — a post membership (postId)
-  // does NOT keep an image alive here (matching the main app's `connections: { none: {} }`).
+  // "Orphaned" means no remaining ImageConnection; a post membership (postId) does NOT keep an image alive.
   const toDelete: number[] = [];
 
   if (coverId) toDelete.push(coverId);

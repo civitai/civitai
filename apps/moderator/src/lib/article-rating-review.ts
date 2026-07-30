@@ -2,8 +2,7 @@ import { ReportStatus } from '@civitai/db-schema/enums';
 
 export { ReportStatus };
 
-// The queue is filtered by a single status. Labels diverge from the raw enum: Actioned = the owner's
-// suggested level was granted; Unactioned = a moderator applied a different level (overrode).
+// Actioned = the owner's suggested level was granted; Unactioned = a moderator overrode with a different level.
 export type RatingReviewStatusFilter = 'Pending' | 'Actioned' | 'Unactioned';
 
 export const ratingReviewStatusFilters: { value: RatingReviewStatusFilter; label: string }[] = [

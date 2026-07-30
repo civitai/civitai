@@ -1,8 +1,6 @@
 import { getClickhouse } from './clickhouse';
 
-// Today's prohibited (audit-blocked) generation requests, read from ClickHouse. Ported from the main app's
-// user-restriction router; the spoke reads ClickHouse directly (no main-app call). The legacy page's
-// "flag as suspicious" write is intentionally dropped, so this is read-only.
+// The legacy page's "flag as suspicious" write is intentionally dropped — this is read-only.
 
 export type ProhibitedPrompt = {
   userId: number;

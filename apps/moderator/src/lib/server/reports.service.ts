@@ -4,8 +4,6 @@ import { recordModActivity } from './mod-activity';
 import { rewardReportReporters } from './rewards';
 import { ReportEntity, ReportStatus, type ReportReason } from '$lib/reports';
 
-// Each report points at its entity through a per-type join table (`<Entity>Report`: `{ reportId, <x>Id }`).
-// The page queries one type at a time, so we join only the active type rather than all 15.
 const reportEntityJoin: Record<ReportEntity, { table: string; fk: string }> = {
   model: { table: 'ModelReport', fk: 'modelId' },
   comment: { table: 'CommentReport', fk: 'commentId' },
@@ -123,7 +121,6 @@ export async function setReportStatus({
       status,
       statusSetAt: new Date(),
       statusSetBy: userId,
-      // On Actioned, stamp how many reporters this resolved.
       ...(status === ReportStatus.Actioned
         ? {
             previouslyReviewedCount: sql<number>`coalesce(array_length("alsoReportedBy", 1), 0) + 1`,
@@ -137,9 +134,8 @@ export async function setReportStatus({
 
   await recordModActivity({ userId, entityType: 'report', entityId: id, activity: 'review' });
 
-  // On a real transition to Actioned, reward every reporter (original + alsoReportedBy) — parity with the
-  // main app's bulkSetReportStatus. `updated` is set only when the row actually changed (the status != guard
-  // matched), so re-actioning an already-Actioned report never double-rewards.
+  // `updated` is set only when the row actually changed, so re-actioning an already-Actioned report never
+  // double-rewards.
   if (status === ReportStatus.Actioned && updated) {
     const reporterIds = [updated.userId, ...(updated.alsoReportedBy ?? [])];
     await rewardReportReporters({ reportId: id, reporterIds, ip });

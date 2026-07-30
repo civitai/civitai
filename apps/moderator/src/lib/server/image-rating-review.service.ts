@@ -5,9 +5,9 @@ import type { MediaType } from '$lib/media/edge-url';
 
 export type ImageRatingItem = {
   id: number;
-  votes: Record<string, number>; // jsonb keys are strings ("1","2","4","8","16")
-  total: number; // summed request weight (owner requests weigh 3)
-  requests: number; // distinct request rows (owner + community)
+  votes: Record<string, number>;
+  total: number; // summed request weight — owner requests weigh 3
+  requests: number;
   url: string;
   nsfwLevel: number;
   nsfwLevelLocked: boolean;
@@ -17,9 +17,6 @@ export type ImageRatingItem = {
   createdAt: Date;
 };
 
-// Community-rating review queue: images whose pending ImageRatingRequest votes disagree enough with the
-// current level (total weight >= 3) to warrant a moderator decision. Ported from image.service. Votable
-// tags are intentionally omitted here (that UI belongs with the image-tags migration).
 export async function getImageRatingRequests({
   cursor,
   limit,
@@ -75,8 +72,6 @@ export async function getImageRatingRequests({
   return { items: rows, nextCursor };
 }
 
-// Sidebar-badge count for the rating-review queue — the same predicate as getImageRatingRequests, sans
-// paging. Streamed with the other sidebar counts, so its cost stays off render.
 export async function getImageRatingReviewCount(): Promise<number> {
   const { rows } = await sql<{ count: number }>`
     WITH image_rating_requests AS (

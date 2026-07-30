@@ -4,23 +4,12 @@ import { dbRead } from './db';
 const TABLE = 'moderator_page_views';
 
 export type PageVisit = {
-  /** The visiting moderator's user id. */
   userId: number;
-  /**
-   * SvelteKit route id of the visited page, e.g. `/images` or `/challenges/[id]/edit` — the route
-   * pattern, not the resolved pathname, so dynamic-segment pages roll up to one row in summaries.
-   */
+  /** Route id (the pattern, not the resolved pathname) so dynamic pages roll up to one row. */
   location: string;
 };
 
-/**
- * Append a moderator page visit to ClickHouse. Call this ONLY once the auth guard has authorized a
- * moderator (see src/routes/+layout.server.ts) so unauthorized/redirected requests never record.
- *
- * Fire-and-forget: the underlying client uses async inserts (server-side batching), and any failure
- * is swallowed — visit logging must never break or delay a page render. `visitedAt` is filled by the
- * table's `DEFAULT now()`.
- */
+// Call ONLY after the auth guard has authorized the moderator, or unauthorized requests get recorded.
 export async function recordPageVisit({ userId, location }: PageVisit): Promise<void> {
   try {
     await getClickhouse().insert({
@@ -40,10 +29,6 @@ export type PageVisitSummaryRow = {
   lastVisit: string;
 };
 
-/**
- * Visit counts per page over the last `days` days, ascending — the bottom of the list (and any known
- * moderator route absent from it entirely) are dead-page candidates.
- */
 export async function getPageVisitSummary(days = 30): Promise<PageVisitSummaryRow[]> {
   return getClickhouse().$query<PageVisitSummaryRow>`
     SELECT location,
@@ -64,11 +49,7 @@ export type RouteUserBreakdownRow = {
   lastVisit: string;
 };
 
-/**
- * Per-user visit breakdown for a single route over the last `days` days, busiest first. `location` is
- * user-supplied (a query param), so it's passed as a bound ClickHouse parameter, not interpolated.
- * Usernames are resolved from Postgres since ClickHouse only stores the user id.
- */
+// `location` is user-supplied — pass it as a bound ClickHouse parameter, never interpolated.
 export async function getRouteUserBreakdown(
   location: string,
   days = 30

@@ -2,8 +2,6 @@ import { ReviewVerdict } from '@civitai/db-schema/enums';
 
 export { ReviewVerdict };
 
-// Resolved display content for one audit item (client-safe shape; the server resolver lives in
-// $lib/server/scanner-content.service).
 export type ScanContent = {
   contentHash: string;
   scanner: string;
@@ -44,7 +42,6 @@ export const verdictShort: Record<string, string> = {
   [ReviewVerdict.Unsure]: '?',
 };
 
-// Green = the scanner was right (TP/TN), red = wrong (FP/FN), gray = unsure.
 export const verdictClass: Record<string, string> = {
   [ReviewVerdict.TruePositive]: 'bg-teal-500/15 text-teal-300',
   [ReviewVerdict.TrueNegative]: 'bg-teal-500/15 text-teal-300',
@@ -53,7 +50,6 @@ export const verdictClass: Record<string, string> = {
   [ReviewVerdict.Unsure]: 'bg-muted text-muted-foreground',
 };
 
-// The (model triggered?, moderator says it should trigger?) → verdict matrix.
 export function verdictFromAnswer(
   modelTriggered: boolean,
   modSaysShouldTrigger: boolean

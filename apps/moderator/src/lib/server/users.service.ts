@@ -3,9 +3,6 @@ import { dbRead } from './db';
 
 export type UserSearchResult = { id: number; username: string | null; image: string | null };
 
-// Prefix username search — mirrors the main app's getUsers: `username LIKE 'query%'`, excludes deleted
-// users + the system user (-1), shortest username first (best prefix hits), limited. Reusable across
-// moderator pages that need a user picker.
 export async function searchUsers({
   query,
   limit = 10,
