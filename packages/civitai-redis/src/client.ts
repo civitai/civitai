@@ -1783,6 +1783,12 @@ export const REDIS_SYS_KEYS = {
       deploy.
      */
     IMAGE_SCANNER_NEW: 'system:image-scanner-new',
+    /*
+      Per-run image cap for the remove-deleted-user-images job. Set to '0' to
+      pause the drain without a deploy. Missing key means the job's compiled
+      default applies.
+     */
+    DELETED_USER_IMAGE_PURGE_LIMIT: 'system:deleted-user-image-purge-limit',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

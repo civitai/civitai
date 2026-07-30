@@ -92,3 +92,52 @@ describe('removeDeletedUserImages', () => {
     );
   });
 });
+
+describe('removeDeletedUserImages budget', () => {
+  it('does nothing when the Redis limit is 0', async () => {
+    mockSysRedis.get.mockResolvedValue('0');
+
+    const result = await run();
+
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(result.paused).toBe(true);
+  });
+
+  it('coerces a Buffer reply from the HA sysRedis', async () => {
+    mockSysRedis.get.mockResolvedValue(Buffer.from('200'));
+    mockDbRead.$queryRaw
+      .mockResolvedValueOnce([{ id: 7 }])
+      .mockResolvedValueOnce(Array.from({ length: 200 }, (_, i) => ({ id: i + 1 })));
+    mockDeleteImages.mockImplementation(async (ids: number[]) => ids.map((id) => ({ id })));
+
+    const result = await run();
+
+    // Budget of 200 honoured: 2 batches of 100, nothing more.
+    expect(mockDeleteImages).toHaveBeenCalledTimes(2);
+    expect(result.deletedImages).toBe(200);
+  });
+
+  it('stops at the budget and leaves later users for the next run', async () => {
+    mockSysRedis.get.mockResolvedValue('100');
+    mockDbRead.$queryRaw
+      .mockResolvedValueOnce([{ id: 7 }, { id: 8 }])
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => ({ id: i + 1 })));
+    mockDeleteImages.mockImplementation(async (ids: number[]) => ids.map((id) => ({ id })));
+
+    const result = await run();
+
+    // Budget exhausted by user 7; user 8 is never fetched.
+    expect(mockDeleteImages).toHaveBeenCalledTimes(1);
+    expect(result.deletedImages).toBe(100);
+  });
+
+  it('falls back to the default when the key is unset', async () => {
+    mockSysRedis.get.mockResolvedValue(null);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([]);
+
+    const result = await run();
+
+    expect(result.paused).toBeUndefined();
+  });
+});
