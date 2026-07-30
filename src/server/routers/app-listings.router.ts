@@ -542,8 +542,12 @@ export const appListingsRouter = router({
    * read for the owner-facing on-site listing-media page (`/apps/<appBlockId>/listing`).
    * Returns the `AppListing.id` the page passes to `beginListingRevision` + the asset
    * procs, plus the listing status / content rating / whether a revision is already
-   * under review. Owner-bound in the service; typed failures map via `mapOffsiteError`
-   * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
+   * under review, AND the EDITABLE target's current assets (`assets` + `shadowId`) so
+   * the media editor can prefill the icon/cover/screenshots it is about to edit and
+   * evaluate its publish floor. Owner-bound in the service (the assets are the
+   * CALLER'S OWN listing only — nothing here is exposed to a public listing DTO);
+   * typed failures map via `mapOffsiteError` (NOT_OWNED→FORBIDDEN, NOT_FOUND when no
+   * listing row exists for the app).
    */
   getMyListingForApp: appDeveloperProcedure
     .meta(listingMediaCliScope)
