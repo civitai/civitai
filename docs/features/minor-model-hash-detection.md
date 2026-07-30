@@ -20,7 +20,10 @@ Both unattended paths are behind one Flipt kill switch and ship **default-off**.
 |------|---------|
 | `src/server/services/minor-hash.service.ts` | All matching, sweep, review-queue and rollback logic |
 | `src/server/services/model-file-scan.service.ts` | `applyScanOutcome` — the scan-time hook |
-| `src/server/services/model.service.ts` | `setModelMinor`, `captureMinorFlagSnapshot`, `applyModelFlagSideEffects` |
+| `src/server/services/model.service.ts` | `setModelMinor`, `captureMinorFlagSnapshot`, `applyModelFlagSideEffects`, `withoutMinorHashMeta` |
+| `src/server/utils/minor-flag-meta.ts` | `isMinorAutoFlagged`, `stripMinorHashMeta`, `filterModelMetaForClient` |
+| `src/server/notifications/minor-flag.notifications.ts` | `model-flagged-minor` owner notification |
+| `src/pages/models/[id]/[[...slug]].tsx` | Owner-facing alert on the model page |
 | `src/server/jobs/minor-hash-sweep.ts` | Nightly sweep job (`45 3 * * *`) |
 | `src/pages/api/admin/temp/minor-hash-sweep.ts` | Backfill + rollback endpoint (`WEBHOOK_TOKEN`) |
 | `src/pages/moderator/minor-hash-matches.tsx` | Moderator review page (two tabs) |
@@ -195,6 +198,9 @@ excluded from the queue).
 
 - **Keep flagged** (`confirmMinorHashAutoFlag`) — promotes the snapshot to `source='manual'` (keeping
   `confirmedFrom`/`confirmedAt`/`confirmedBy`) and records the moderator's own `setMinor` `ModActivity`.
+  `confirmedFrom` is written as `COALESCE(existing confirmedFrom, current source)`, so confirming a
+  second time reads the already-promoted `'manual'` without erasing the fact that the flag began as
+  `'auto'` — the owner alert and notification both key off that origin.
   That one promotion carries the whole decision: the row leaves the queue, a blanket rollback can no
   longer revert it, and the model's hashes start seeding future matches. The snapshot's pre-state is
   kept, so a targeted undo stays possible. If snapshot capture had failed, the promotion no-ops and the
@@ -214,6 +220,75 @@ query (`queryMinorHashMatchDetail`) fetched on expand, so the list query stays l
 Flag provenance is barely recorded historically — only 2 of ~13.5K minor-locked prod models have a
 `setMinor` `ModActivity` row. "Set minor by/at" is blank almost always; render it conditionally.
 
+## Telling the owner
+
+An automated flag restricts someone's model with no human in the loop, so the owner is told twice: a
+notification when it happens, and an alert whenever they open the model page.
+
+Both use the same sentence, and both are deliberately vague:
+
+> Your model **{name}** has been marked as depicting a minor. If you believe this is a mistake,
+> contact support.
+
+It names no hash, no matched model, and no source, and it does not enumerate the restrictions
+applied. Each of those details would tell a repeat uploader exactly which bytes to change. There is
+no in-app appeal: the Auto-flagged tab already *is* a moderator review of every automated flag, so an
+appeal queue would duplicate it — owners are routed to support, and a moderator actions it from that
+tab.
+
+**Notification** — `model-flagged-minor` (`minor-flag.notifications.ts`), `NotificationCategory.System`,
+`toggleable: false`. It polls for a snapshot whose `at` is newer than the job cursor, gated on:
+
+```sql
+COALESCE(meta->'minorFlagSnapshot'->>'confirmedFrom', meta->'minorFlagSnapshot'->>'source') = 'auto'
+```
+
+`COALESCE`, not `source` — confirming an automated flag rewrites `source` to `'manual'`, so polling
+`source` alone would silently skip every flag a moderator affirmed before the next run, which is
+exactly the case where the flag sticks for good. The query also requires `m.minor` (the snapshot is
+written *before* the flag lands, and survives an ordinary unflag, so its presence alone doesn't prove
+the model is currently minor) and excludes `userId = -1` (where `deleteUser` reassigns models).
+
+It also carries `m.meta ? 'minorFlagSnapshot'`, which looks redundant and is not — see the index
+section below.
+
+**Alert** — rendered on `/models/[id]` when `isCreator && model.minorAutoFlagged`. The server
+computes `minorAutoFlagged` in `getModelHandler` as `isOwner && model.minor && isMinorAutoFlagged(meta)`,
+from the *raw* meta before redaction. It is owner-gated on the server because `model.getById` is a
+`publicProcedure` and the page server-side-renders — whether a flag came from automation or a human
+is not a visitor's business. The alert persists through **Keep flagged** (the model is still minor)
+and clears on **Revert**, which deletes the snapshot.
+
+## What never reaches the client
+
+The three `Model.meta` keys this system writes are moderation-only. `minorFlagSnapshot` carries
+`prevMinorImageIds` — every image on the model that was already minor — plus `source` and timestamps;
+`minorHashDismissed` carries a moderator's `userId`.
+
+`stripMinorHashMeta` (`minor-flag-meta.ts`) is the single definition of which keys are secret.
+`filterModelMetaForClient` composes it with the existing profanity filter; note the asymmetry —
+profanity data is kept for moderators, the minor-hash keys are stripped for **everyone**, because the
+moderator UI reads them through its own procedures (`queryAutoFlaggedMinorModels`,
+`queryMinorHashMatchDetail`) and never through `model.getById`.
+
+Redaction happens at both the controller and the service layer, because `updateModelById` calls
+`dbWrite.model.update` with no `select` and therefore returns every column — so any handler returning
+its result would otherwise hand the snapshot straight back:
+
+| Site | Reached by |
+|------|-----------|
+| `getModelHandler` | `model.getById` |
+| `getModelsPagedSimpleHandler` | `model.getAllPagedSimple` (public, 60s cache) |
+| `updateModelById` | `requestReview`, `changeMode`, `reorderVersions`, `updateGallerySettings`, `setCollectionShowcase` |
+| `upsertModel` (both branches) | `model.upsert` |
+| `privateModelFromTraining` | private-model-from-training flow |
+| `getTrainingModelsForModerators` | `mod.models.queryTraining` (a **grant** flag, not `isModerator`) |
+
+Without the service-layer half, an owner could click **Request review** on their own auto-flagged
+model and read `source: 'auto'`, the timestamp, and `prevMinorImageIds` out of the response — which
+defeats the point of the vague copy. Anything new that returns a `Model` row to a client belongs in
+this list.
+
 ## Feature flag
 
 `minor-hash-auto-flag` (`FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG`) gates **both** unattended paths.
@@ -229,6 +304,51 @@ creating or enabling the flag needs a config push, not an API write.
 
 The admin endpoint is deliberately **not** gated: rollback has to stay usable after the switch is
 thrown, which is exactly when it's needed.
+
+**The notification is not gated either, and has no off switch.** The flag stops models being
+*flagged*; the notification poll runs every 60s regardless, and fires whenever a fresh `source='auto'`
+snapshot appears. With the flag off that's nothing, because nothing writes one — the safety is
+second-order, not a gate. Two consequences worth stating plainly:
+
+- **Running the backfill is the same act as notifying every owner it flags.** There is no "backfill
+  quietly, then switch notifications on". To stage it, set the `KeyValue` row
+  `last-sent-notification-model-flagged-minor` forward before draining, then restore it.
+- The admin endpoint's ungated `action=sweep` can write auto snapshots while the flag reads "off",
+  and owners are notified within a minute.
+
+Deploying is safe on its own: a brand-new notification type has no cursor row, so `getJobDate` falls
+back to the global `last-sent-notifications` value (~1 minute old) rather than the epoch
+(`send-notifications.ts`). Pre-existing snapshots have an older `at` and can never fire.
+
+## The partial index
+
+```sql
+CREATE INDEX CONCURRENTLY "Model_minorFlagSnapshot_source_idx"
+  ON "Model" (((meta->'minorFlagSnapshot'->>'source')))
+  WHERE meta ? 'minorFlagSnapshot';
+```
+
+Migration `20260730120000_model_minor_flag_snapshot_index`, applied by hand like every migration here.
+**It is a deploy prerequisite, not a follow-up** — the notification polls every 60s whether or not the
+Flipt flag is on.
+
+The notification query repeats `m.meta ? 'minorFlagSnapshot'` even though `COALESCE(...) = 'auto'`
+already implies it. That clause is load-bearing. To use a partial index Postgres must *prove* the
+query's `WHERE` implies the index predicate, and `predicate_implied_by` only reasons over `equal()`
+clauses and btree opfamilies. `?` is `jsonb_exists`, which lives in GIN `jsonb_ops` and has no btree
+opfamily, so nothing else in the query can derive it — without the literal clause `predOK` is false
+and the index is excluded from planning outright. Measured on a prod-scale clone:
+
+| | With the clause | Without |
+|---|---|---|
+| Plan | Index Scan | Parallel Seq Scan, 3 workers |
+| Buffers | 1 | 112,491 |
+| Execution | 0.047 ms | 237 ms |
+
+The index key does *not* serve the notification: a `CoalesceExpr` never matches an indexed
+expression, so `COALESCE(...)`, `at`, `minor` and `userId` all apply as a post-index Filter. All of
+the win is the partial predicate pruning `Model` down to the snapshot subset. The moderator
+Auto-flagged queue does match the key (it filters `source` directly) and gets a true Index Cond.
 
 ## Admin endpoint
 
@@ -255,7 +375,11 @@ repeated small calls (`limit=50`) is preferable to one large run that risks a ga
 `DO UPDATE SET createdAt = NOW()` — so there's only ever one row per (model, activity), and confirming
 bumps its timestamp rather than failing.
 
-No schema migration: everything rides on existing `Model.meta` and `ModActivity`.
+All three `Model.meta` keys are stripped from every client-facing response — see "What never reaches
+the client".
+
+No schema change: everything rides on existing `Model.meta` and `ModActivity` columns. The one
+migration is an index (`20260730120000_model_minor_flag_snapshot_index`), which adds no state.
 
 ## Deletes and re-uploads
 
@@ -283,6 +407,10 @@ becomes unsafe rather than merely wrong:
 | Every flag is reversible | `captureMinorFlagSnapshot` before any mutation, for manual flags too |
 | A minor-hash failure never fails a scan | `checkMinorHashOnScan` swallows and logs |
 | Both unattended paths stop together, without a deploy | one Flipt flag, checked in both |
+| The snapshot never reaches a client | `stripMinorHashMeta` at both controller and service returns |
+| An owner is told when a machine flags their model | `model-flagged-minor` + the model-page alert |
+| Confirming never erases that a flag began automated | `COALESCE(confirmedFrom, source)` on promotion |
+| The owner copy can't tell a re-uploader what to change | one generic sentence, shared by both surfaces |
 
 ## Caveats
 
@@ -296,3 +424,13 @@ becomes unsafe rather than merely wrong:
   `setMinor` `ModActivity` row exists.
 - **The clear stamp is never cleaned up.** A model can carry `minorHashCleared` indefinitely; it only
   ever narrows what the automation acts on, so it's inert rather than stale.
+- **The notification has no off switch** — see the feature-flag section. Backfilling *is* notifying.
+- **Dismissal is permanent and model-wide.** `minorHashDismissed` is checked only in the pending-review
+  query, so a dismissed model never returns to that queue even on a later, unrelated hash match — while
+  the scan hook will still auto-flag it on a same-uploader match. Match-scoping it is a known follow-up.
+- **`prevMinorImageIds` is unbounded.** It holds only images already minor *before* the flag (measured:
+  median 3, p99 64, max 1,174), but the largest gallery on the platform is ~226K images, so a
+  pathological model would put a multi-MB array in a `Model.meta` row read on every page load.
+- **`applyModelFlagSideEffects` cross-writes `poi` and `minor`.** One UPDATE sets both whenever either
+  changes, so flagging minor overwrites each image's independently-scanned `poi` and vice versa, and
+  neither is in the other's snapshot — rollback can't restore it. Pre-existing, shared with the poi path.
