@@ -8,6 +8,7 @@ import { auctionNotifications } from '~/server/notifications/auction.notificatio
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
+import { membershipGiftNotifications } from '~/server/notifications/membership-gift.notifications';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
@@ -59,6 +60,7 @@ export const notificationProcessors = {
   ...comicNotifications,
   ...strikeNotifications,
   ...referralNotifications,
+  ...membershipGiftNotifications,
 };
 
 // Sort notifications by priority and group them by priority

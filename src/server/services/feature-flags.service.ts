@@ -354,6 +354,7 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
+  giftMemberships: { availability: ['mod'], fliptKey: 'gift-memberships' },
   coinbasePayments: [],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],

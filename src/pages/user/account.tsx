@@ -10,6 +10,7 @@ import { DeleteCard } from '~/components/Account/DeleteCard';
 
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
+import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -54,6 +55,7 @@ export default function Account() {
           <AccountsCard />
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
+          <MembershipGiftsCard />
           <PaymentMethodsCard />
           {/* {buzz && <UserReferralCodesCard />} */}
           <NotificationsCard />
