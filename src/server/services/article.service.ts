@@ -44,8 +44,8 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
-  createImage,
   deleteImageById,
   enqueueImageIngestion,
   resolveIngestionError,
@@ -829,19 +829,24 @@ export const upsertArticle = async ({
     // create image entity to be attached to article
     let coverId = coverImage?.id;
     if (coverImage) {
-      if (!coverId) {
-        const result = await createImage({ ...coverImage, userId });
-        coverId = result.id;
-      } else {
-        // Skip ownership check when the cover image hasn't changed (e.g. mod-uploaded covers)
-        const isExistingCover = article != null && coverId === article.coverId;
-        if (!isExistingCover) {
-          const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverId });
-          if (!isImgOwner) {
-            throw throwAuthorizationError('Invalid cover image');
+      // `id` present -> the ownership rule below runs, unchanged. `id` absent -> reuse an
+      // existing row for this url, else verify the object is still in the uploads bucket
+      // before minting a row (a stale client draft can replay a key whose object is gone).
+      coverId = await resolveCoverImageId({
+        coverImage,
+        userId,
+        currentCoverId: article?.coverId,
+        assertOwnership: async (imageId) => {
+          // Skip ownership check when the cover image hasn't changed (e.g. mod-uploaded covers)
+          const isExistingCover = article != null && imageId === article.coverId;
+          if (!isExistingCover) {
+            const isImgOwner = await isImageOwner({ userId, isModerator, imageId });
+            if (!isImgOwner) {
+              throw throwAuthorizationError('Invalid cover image');
+            }
           }
-        }
-      }
+        },
+      });
     }
 
     if (!id) {

@@ -73,10 +73,10 @@ import {
   PrizeMode,
 } from '~/shared/utils/prisma/enums';
 import {
-  createImage,
   enqueueImageIngestion,
   imagesForModelVersionsCache,
 } from '~/server/services/image.service';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
   amIBlockedByUser,
   getCosmeticsForUsers,
@@ -1302,16 +1302,9 @@ export async function upsertChallenge({
   // misconfigured judge must not leave an orphaned cover Image behind.
   const collectionOwnerId = id ? undefined : await resolveChallengeCollectionOwnerId(judgeId);
 
-  // Handle cover image - create Image record if needed (like Article does)
-  let coverImageId: number;
-  if (coverImage.id) {
-    // Use existing image ID
-    coverImageId = coverImage.id;
-  } else {
-    // Create new Image record from uploaded file
-    const result = await createImage({ ...coverImage, userId });
-    coverImageId = result.id;
-  }
+  // Handle cover image - reuse the supplied id, else reuse/verify-then-create (like Article
+  // does). No ownership check here: this is the moderator path, as before.
+  const coverImageId = await resolveCoverImageId({ coverImage, userId });
 
   // Helper: resolve judging config and generate theme elements.
   async function tryGenerateThemeElements(theme: string): Promise<string[] | undefined> {
@@ -1634,20 +1627,20 @@ export async function upsertUserChallenge({
   // A reused id must belong to the caller — otherwise anyone could surface another user's
   // (possibly unpublished/blocked) image on a public challenge card, and the challenge scan
   // only covers text.
-  let coverImageId: number;
-  if (coverImage.id != null) {
-    // Regular users must own the reused image. Moderators skip the ownership check entirely
-    // (trusted role — typically re-saving the creator's existing cover during a mod edit).
-    const ownedImage = await dbRead.image.findFirst({
-      where: isModerator ? { id: coverImage.id } : { id: coverImage.id, userId },
-      select: { id: true },
-    });
-    if (!ownedImage)
-      throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cover image not found.' });
-    coverImageId = ownedImage.id;
-  } else {
-    coverImageId = (await createImage({ ...coverImage, userId })).id;
-  }
+  const coverImageId = await resolveCoverImageId({
+    coverImage,
+    userId,
+    assertOwnership: async (imageId) => {
+      // Regular users must own the reused image. Moderators skip the ownership check entirely
+      // (trusted role — typically re-saving the creator's existing cover during a mod edit).
+      const ownedImage = await dbRead.image.findFirst({
+        where: isModerator ? { id: imageId } : { id: imageId, userId },
+        select: { id: true },
+      });
+      if (!ownedImage)
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cover image not found.' });
+    },
+  });
 
   // Fields shared by create + update. Entry-fee funded pools are modeled with the existing
   // Dynamic prize machinery: pool grows by `buzzPerAction` (net of the house cut) per entry.
@@ -3357,7 +3350,7 @@ export async function upsertChallengeEvent({
   let coverImageId: number | null | undefined;
   if (coverImage === null) coverImageId = null;
   else if (coverImage) {
-    coverImageId = coverImage.id ?? (await createImage({ ...coverImage, userId })).id;
+    coverImageId = await resolveCoverImageId({ coverImage, userId });
   }
 
   return dbWrite.$transaction(async (tx) => {
