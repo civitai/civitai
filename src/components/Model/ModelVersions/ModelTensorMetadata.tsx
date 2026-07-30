@@ -42,6 +42,7 @@ const MIN_VRAM_INFO =
   'Rough lower bound to run this model, estimated from its tensor sizes and precision plus typical runtime overhead. At this level weights are streamed onto the GPU as needed, so it runs but more slowly. Actual usage varies by the tool and settings you use.';
 const RECOMMENDED_VRAM_INFO =
   'Rough target for smooth performance, estimated from its tensor sizes and precision plus typical runtime overhead. At this level the full set of weights can stay resident on the GPU at once. Actual usage varies by the tool and settings you use.';
+const TENSOR_METADATA_RESPONSE_VERSION = 3;
 
 export function ModelTensorMetadata({ files, userPreferences, enabled, selectedFileId }: Props) {
   const theme = useMantineTheme();
@@ -84,6 +85,8 @@ export function ModelTensorMetadata({ files, userPreferences, enabled, selectedF
 
   const vramEstimate = summaryQuery.data?.vramEstimate ?? null;
   const tensorCount = summaryQuery.data?.tensorCount ?? null;
+  const weightPrecision =
+    summaryQuery.data?.weightPrecision ?? selectedFile?.metadata?.weightPrecision;
 
   return (
     <Accordion.Item value="tensor-metadata">
@@ -98,6 +101,11 @@ export function ModelTensorMetadata({ files, userPreferences, enabled, selectedF
             )}
           </Group>
           <Group gap={6} wrap="nowrap">
+            {weightPrecision && (
+              <Badge size="sm" variant="light" color="gray" title="Weight precision">
+                {weightPrecision}
+              </Badge>
+            )}
             {vramEstimate ? (
               <VramSegmentedBadge vramEstimate={vramEstimate} />
             ) : summaryQuery.isFetching ? (
@@ -378,7 +386,9 @@ function formatShape(shape: number[]) {
 }
 
 async function fetchTensorSummary(fileId: number) {
-  const response = await fetch(`/api/v1/model-files/${fileId}/tensor-metadata?summaryOnly=true`);
+  const response = await fetch(
+    `/api/v1/model-files/${fileId}/tensor-metadata?summaryOnly=true&v=${TENSOR_METADATA_RESPONSE_VERSION}`
+  );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? 'Failed to load tensor metadata');
@@ -388,7 +398,9 @@ async function fetchTensorSummary(fileId: number) {
 }
 
 async function fetchTensorMetadata(fileId: number) {
-  const response = await fetch(`/api/v1/model-files/${fileId}/tensor-metadata`);
+  const response = await fetch(
+    `/api/v1/model-files/${fileId}/tensor-metadata?v=${TENSOR_METADATA_RESPONSE_VERSION}`
+  );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? 'Failed to load tensor metadata');

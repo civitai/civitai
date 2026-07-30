@@ -67,13 +67,15 @@ import { CacheTTL } from '~/server/common/constants';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 
 const FULL_KEY = 'packed:caches:tensor-metadata:42';
-const SUMMARY_KEY = 'packed:caches:tensor-metadata-summary:42';
+const SUMMARY_KEY = 'packed:caches:tensor-metadata-summary:2:42';
 
 const makeAnalysis = () => ({
   format: 'SafeTensor' as const,
   tensorCount: 2,
   totalTensorBytes: 100,
   dtypeCounts: [{ dtype: 'F16', count: 2, bytes: 100 }],
+  weightPrecision: 'FP16',
+  detectedModelType: null,
   largestTensor: { name: 'a.weight', shape: [10, 10], dtype: 'F16', sizeBytes: 50 },
   vramEstimate: null,
   tensors: [
