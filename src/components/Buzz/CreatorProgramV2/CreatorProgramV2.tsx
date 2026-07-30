@@ -143,7 +143,7 @@ export const CreatorProgramV2 = () => {
           <h2 className="text-2xl font-bold">Get Paid</h2>
           <CreatorProgramPhase />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <p>Generating a lot of Buzz? Bank it to earn cash!</p>
           <Anchor href="/creator-program">Learn more</Anchor>
         </div>
@@ -335,7 +335,7 @@ const JoinCreatorProgramCard = () => {
         <p className="font-bold">Program requirements</p>
         <Divider />
 
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 sm:flex-row">
           <CreatorProgramRequirement
             isMet={hasEnoughCreatorScore}
             title={`Have a Creator Score higher than ${abbreviateNumber(

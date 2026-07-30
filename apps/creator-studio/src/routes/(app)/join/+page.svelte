@@ -1,6 +1,11 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
+  import {
+    Card,
+    CardHeader,
+    CardTitle,
+    CardContent,
+  } from '@civitai/ui/components/ui/card/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { IconCheck, IconX, IconTrendingUp, IconBolt } from '@tabler/icons-svelte';
@@ -58,11 +63,13 @@
           {/each}
         </div>
         {#if estimate.rows.length > 1}
-          <p class="mt-1.5 text-sm text-green-3">~{usd.format(estimate.totalUsd)} total this month</p>
+          <p class="mt-1.5 text-sm text-green-3">
+            ~{usd.format(estimate.totalUsd)} total this month
+          </p>
         {/if}
         <p class="mt-2 text-xs text-green-3">
-          Estimated at this month's Creator Program pool rate (capped at $1 per 1,000 Buzz). Join to start
-          earning — actual payouts vary with the pool.
+          Estimated at this month's Creator Program pool rate (capped at $1 per 1,000 Buzz). Join to
+          start earning — actual payouts vary with the pool.
         </p>
       </div>
     </div>
@@ -145,8 +152,8 @@
       <a href={CIVITAI_MEMBERSHIP_URL} class="underline">Civitai membership</a>.
     {:else}
       The Creator Program requires an active
-      <a href={CIVITAI_MEMBERSHIP_URL} class="underline">Civitai membership</a> <strong>and</strong> a creator
-      score of <strong>{scoreLabel}</strong>.
+      <a href={CIVITAI_MEMBERSHIP_URL} class="underline">Civitai membership</a> <strong>and</strong>
+      a creator score of <strong>{scoreLabel}</strong>.
     {/if}
   </p>
   {#if isMember && qualifiesScore}

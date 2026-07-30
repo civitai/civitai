@@ -66,6 +66,7 @@
         aria-label="Civitai Creator Studio"
         class="flex items-center gap-2 px-2 py-1 [&>span>svg]:block [&>span>svg]:h-6 [&>span>svg]:w-auto"
       >
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -- buildWordmarkSvg output; no user input -->
         <span>{@html wordmark}</span>
         <span
           class="rounded bg-sidebar-accent px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-sidebar-accent-foreground"
@@ -149,8 +150,14 @@
             value={data.testMembership ?? ''}
             onValueChange={(v: string) => setTestMembership(v)}
           >
-            <Select.Trigger id="cs-sim-membership" size="sm" class="w-full text-xs text-white" aria-label="Simulate membership">
-              {membershipOptions.find((o) => o.value === (data.testMembership ?? ''))?.label ?? 'Default'}
+            <Select.Trigger
+              id="cs-sim-membership"
+              size="sm"
+              class="w-full text-xs text-white"
+              aria-label="Simulate membership"
+            >
+              {membershipOptions.find((o) => o.value === (data.testMembership ?? ''))?.label ??
+                'Default'}
             </Select.Trigger>
             <Select.Content>
               {#each membershipOptions as opt (opt.value)}

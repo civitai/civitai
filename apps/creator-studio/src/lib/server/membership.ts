@@ -37,5 +37,7 @@ export function resolveMembership(user: SessionUser | undefined, testCookie?: st
 
 // Member-only actions require an ACTIVE Creator Program membership: joined the program (onboarding flag) AND a
 // current paid subscription — a lapsed membership revokes access.
-export const canSetLicensingFee = (m: Membership): boolean => m.isCreatorProgramMember && m.isMember;
-export const canSellIndefinitely = (m: Membership): boolean => m.isCreatorProgramMember && m.isMember;
+export const canSetLicensingFee = (m: Membership): boolean =>
+  m.isCreatorProgramMember && m.isMember;
+export const canSellIndefinitely = (m: Membership): boolean =>
+  m.isCreatorProgramMember && m.isMember;

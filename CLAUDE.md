@@ -184,6 +184,12 @@ Comments are not type-checked, so they rot silently and become misleading. Write
 - No process/banner noise: no change-log narration (`// added to fix...`), no "I changed X", no section-divider banners, no commented-out code.
 - When you do comment, keep it to a line or two. A long block almost always means the code or naming should be clearer instead.
 
+**Explain decisions in your response, not in the file.** Rationale for a choice you just made — why you picked this shape, what you deliberately left out, what you considered and rejected — belongs in your reply to us, where we're already reading it. A comment justifying your work to a reviewer is the single most common way this section gets violated. If you catch yourself writing something you'd also say in chat, say it in chat only.
+
+**Comment in a separate pass.** Write the code first with no comments, then reread it and add back only what's needed. Comments written while authoring never get evaluated — the reasoning is fresh, so it feels non-obvious when it isn't. Judge them against code you're reading, not code you're writing.
+
+**The keep test.** For every comment that survives, you should be able to name the specific future edit that goes wrong without it. If the answer is "it's helpful context" or "it explains why this is correct," delete it. Being unable to name the failure means the code already says it — or should.
+
 **Clean up as you go.** When you edit code that already has stale, redundant, or what-narrating comments, delete or fix them — don't preserve them just because they were there. The repo already has many such comments (a lot of them mine); treat touching nearby code as license to remove the noise, but keep edits scoped to what you're already working on rather than going on a separate comment-cleanup sweep.
 
 ## Environment Setup

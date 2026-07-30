@@ -17,7 +17,9 @@
 {#if pct != null && Math.round(pct) !== 0}
   {@const up = pct > 0}
   <span
-    class="inline-flex items-center gap-0.5 text-xs font-medium {up ? 'text-green-5' : 'text-red-5'}"
+    class="inline-flex items-center gap-0.5 text-xs font-medium {up
+      ? 'text-green-5'
+      : 'text-red-5'}"
     title="{up ? '+' : ''}{Math.round(pct)}% {label}"
   >
     {#if up}<IconArrowUpRight size={12} />{:else}<IconArrowDownRight size={12} />{/if}

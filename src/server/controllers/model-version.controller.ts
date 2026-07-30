@@ -1,11 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { maxPermanentAccessModels } from '@civitai/buzz';
-import {
-  countUserPermanentAccessVersions,
-  getPaidAccess,
-  toModelVersionPaidAccessDto,
-} from '~/server/services/paid-access.service';
-import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
@@ -382,31 +376,6 @@ export const upsertModelVersionHandler = async ({
 
     if (input.trainingDetails === null) {
       input.trainingDetails = undefined;
-    }
-
-    // A permanent (never-expiring) gate skips the timed-window caps below; it's a Creator Program
-    // member perk (moderators always), capped per tier. Only NEW permanent grants are gated —
-    // re-saving an already-permanent version stays allowed even if the creator's membership lapsed,
-    // so an edit can't lock them out of their own version.
-    if (input.paidAccess?.permanent && !ctx.user.isModerator) {
-      const existing = input.id ? (await getPaidAccess('ModelVersion', [input.id]))[input.id] : undefined;
-      const alreadyPermanent = existing != null && existing.timeframeDays == null;
-      if (!alreadyPermanent) {
-        const tier = (await getHighestTierSubscription(ctx.user.id))?.tier;
-        const isMember = !!tier && tier !== 'free' && tier !== 'founder';
-        if (!isMember)
-          throw throwBadRequestError(
-            'Permanent paid access requires an active Creator Program membership.'
-          );
-        const limit = maxPermanentAccessModels(tier);
-        const used = await countUserPermanentAccessVersions(ctx.user.id, input.id);
-        if (used + 1 > limit)
-          throw throwBadRequestError(
-            `Your Creator Program tier allows up to ${limit} permanent paid-access model${
-              limit === 1 ? '' : 's'
-            }.`
-          );
-      }
     }
 
     await assertUserEarlyAccessLimits({

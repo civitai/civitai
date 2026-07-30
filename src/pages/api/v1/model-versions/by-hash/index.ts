@@ -5,6 +5,7 @@ import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]'
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getPublicPaidAccessForModelVersions } from '~/server/services/paid-access.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z
@@ -42,6 +43,7 @@ export default PublicEndpoint(
       imagesPerVersion: 10,
       include: ['meta'],
     });
+    const paidAccess = await getPublicPaidAccessForModelVersions(modelVersionIds);
 
     const baseUrl = new URL(isProd ? `https://${req.headers.posthost}` : 'http://localhost:3000');
     const modelVersions = await Promise.all(
@@ -49,7 +51,8 @@ export default PublicEndpoint(
         prepareModelVersionResponse(
           file.modelVersion,
           baseUrl,
-          images.filter((x) => x.modelVersionId === file.modelVersion.id)
+          images.filter((x) => x.modelVersionId === file.modelVersion.id),
+          paidAccess[file.modelVersion.id] ?? null
         )
       )
     );

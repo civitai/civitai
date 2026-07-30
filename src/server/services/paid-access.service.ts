@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
+  isPaidAccessActive,
   type ModelVersionTerms,
   type PaidAccessEntityType,
   type PaidAccessRow,
@@ -151,6 +152,33 @@ export function toModelVersionPaidAccessDto(
   };
 }
 
+// Public v1 API view of the gate. Omits `terms` (pricing belongs to the purchase flow) and
+// `timeframeDays` (= endsAt - publishedAt, both already in the response). `permanent` earns its
+// place by separating a never-expiring gate from a timed one whose endsAt is pending publish.
+export type PublicPaidAccessDto = {
+  permanent: boolean;
+  endsAt: Date | null;
+};
+
+/** An expired gate keeps its row as a tombstone, so presence alone doesn't mean gated. */
+export function toPublicPaidAccessDto(row: PaidAccessRow | undefined): PublicPaidAccessDto | null {
+  if (!row || !isPaidAccessActive(row)) return null;
+  return { permanent: row.timeframeDays == null, endsAt: row.endsAt };
+}
+
+export async function getPublicPaidAccessForModelVersions(
+  versionIds: number[]
+): Promise<Record<number, PublicPaidAccessDto>> {
+  if (!versionIds.length) return {};
+  const rows = await getPaidAccess('ModelVersion', versionIds);
+  const out: Record<number, PublicPaidAccessDto> = {};
+  for (const id of versionIds) {
+    const dto = toPublicPaidAccessDto(rows[id]);
+    if (dto) out[id] = dto;
+  }
+  return out;
+}
+
 export async function bustPaidAccessCache(entityType: PaidAccessEntityType, entityIds: number[]) {
   if (entityIds.length) await paidAccessCache(entityType).bust(entityIds);
 }
@@ -264,4 +292,3 @@ export async function materializePaidAccessEndsAt(
   });
   await bustPaidAccessCache('ModelVersion', [versionId]);
 }
-

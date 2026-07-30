@@ -55,8 +55,8 @@
       permanent: c?.permanent ?? (!timedNewOk && canSellIndefinitely),
       accessPrice: (c?.accessPrice ?? MIN_ACCESS_PRICE) as number | undefined,
       generationPrice: c?.generationPrice as number | undefined,
-      freePreviewGenerations: (c?.freePreviewGenerations ??
-        DEFAULT_GENERATION_TRIAL_LIMIT) as number | undefined,
+      freePreviewGenerations: (c?.freePreviewGenerations ?? DEFAULT_GENERATION_TRIAL_LIMIT) as
+        number | undefined,
       donationGoalEnabled: c?.donationGoalEnabled ?? false,
       donationGoal: c?.donationGoal as number | undefined,
     };
@@ -90,8 +90,7 @@
   const usageLabel = $derived(isGenOnly ? 'Generation only' : 'Download + generation');
 
   const eaEnhance =
-    () =>
-    async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
+    () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
       await event.update({ reset: false });
       if (event.result.type === 'success') {
         toast.success(
@@ -115,8 +114,8 @@
 
   {#if !paidAccessUsageOk}
     <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
-      Paid access isn't available for this version — it's set to API-only generation, not download or
-      on-site generation.
+      Paid access isn't available for this version — it's set to API-only generation, not download
+      or on-site generation.
     </p>
   {:else if !canChooseTimed && !canChoosePermanent && !version.earlyAccessConfig}
     <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
@@ -129,7 +128,12 @@
       {/if}
     </p>
   {:else}
-    <form method="POST" action="?/setEarlyAccess" use:enhance={eaEnhance} class="flex flex-col gap-4">
+    <form
+      method="POST"
+      action="?/setEarlyAccess"
+      use:enhance={eaEnhance}
+      class="flex flex-col gap-4"
+    >
       <input type="hidden" name="versionId" value={version.id} />
       <input type="hidden" name="usageControl" value={usageControl ?? 'Download'} />
 
@@ -146,7 +150,10 @@
               ? 'cursor-not-allowed opacity-50'
               : ''}"
           >
-            <span class="w-fit rounded-full bg-blue-4/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-3">Timed</span>
+            <span
+              class="w-fit rounded-full bg-blue-4/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-3"
+              >Timed</span
+            >
             <span class="text-sm font-semibold text-white">Early Access</span>
             <span class="text-xs text-dark-3">Becomes free when the window ends.</span>
           </button>
@@ -160,14 +167,18 @@
               ? 'cursor-not-allowed opacity-50'
               : ''}"
           >
-            <span class="w-fit rounded-full bg-[#9775fa]/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#d0bfff]">Permanent</span>
+            <span
+              class="w-fit rounded-full bg-[#9775fa]/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#d0bfff]"
+              >Permanent</span
+            >
             <span class="text-sm font-semibold text-white">Paid Access</span>
             <span class="text-xs text-dark-3">Always requires purchase.</span>
           </button>
         </div>
         {#if !canChooseTimed && version.status === 'Published'}
           <span class="text-xs text-dark-3">
-            Early access can't be started after a version is published — use permanent paid access instead.
+            Early access can't be started after a version is published — use permanent paid access
+            instead.
           </span>
         {/if}
         {#if !canChoosePermanent}
@@ -195,13 +206,23 @@
       {:else}
         <label class="flex flex-col gap-1 text-sm">
           <span class="text-dark-1">Early access duration (days)</span>
-          <NumberInput name="timeframe" min={0} max={maxEarlyAccessDays} bind:value={ea.timeframe} class="w-32" />
+          <NumberInput
+            name="timeframe"
+            min={0}
+            max={maxEarlyAccessDays}
+            bind:value={ea.timeframe}
+            class="w-32"
+          />
           <span class="text-xs text-dark-3">
-            Up to {maxEarlyAccessDays} day{maxEarlyAccessDays === 1 ? '' : 's'} at your creator level — set 0 to turn early access off.
+            Up to {maxEarlyAccessDays} day{maxEarlyAccessDays === 1 ? '' : 's'} at your creator level
+            — set 0 to turn early access off.
           </span>
         </label>
         <div class="text-xs text-dark-3">
-          Early access {earlyAccessUsed} of {earlyAccessCap} active · up to {maxEarlyAccessDays} day{maxEarlyAccessDays === 1 ? '' : 's'}
+          Early access {earlyAccessUsed} of {earlyAccessCap} active · up to {maxEarlyAccessDays} day{maxEarlyAccessDays ===
+          1
+            ? ''
+            : 's'}
         </div>
       {/if}
 
@@ -217,7 +238,12 @@
         </div>
         <label class="flex flex-col gap-1 text-sm">
           <span class="text-dark-1">Price for access <span class="text-red-6">*</span></span>
-          <NumberInput name="accessPrice" min={MIN_ACCESS_PRICE} bind:value={ea.accessPrice} class="w-40" />
+          <NumberInput
+            name="accessPrice"
+            min={MIN_ACCESS_PRICE}
+            bind:value={ea.accessPrice}
+            class="w-40"
+          />
           <span class="text-xs text-dark-3">
             {isGenOnly
               ? 'What buyers pay to generate with this version on-site.'
@@ -258,18 +284,30 @@
       {#if !ea.permanent}
         <div class="flex flex-col gap-2 rounded-lg border border-dark-4 p-3">
           <div class="flex items-center gap-2">
-            <Checkbox id="ea-dg" name="donationGoalEnabled" bind:checked={ea.donationGoalEnabled} disabled={hadDonationGoal} />
+            <Checkbox
+              id="ea-dg"
+              name="donationGoalEnabled"
+              bind:checked={ea.donationGoalEnabled}
+              disabled={hadDonationGoal}
+            />
             <Label for="ea-dg" class="cursor-pointer text-sm font-normal text-white">
               Let the community unlock this early
             </Label>
           </div>
           <span class="text-xs text-dark-3">
-            If the goal is met before the window ends, early access ends and the version becomes free for everyone.
+            If the goal is met before the window ends, early access ends and the version becomes
+            free for everyone.
           </span>
           {#if ea.donationGoalEnabled}
             <label class="flex flex-col gap-1 text-sm">
               <span class="text-dark-2">Goal amount (⚡)</span>
-              <NumberInput name="donationGoal" min={0} bind:value={ea.donationGoal} disabled={hadDonationGoal} class="w-40" />
+              <NumberInput
+                name="donationGoal"
+                min={0}
+                bind:value={ea.donationGoal}
+                disabled={hadDonationGoal}
+                class="w-40"
+              />
             </label>
             {#if hadDonationGoal}
               <span class="text-xs text-dark-3">

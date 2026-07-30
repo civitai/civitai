@@ -1,6 +1,7 @@
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { AppListingsMarketplaceBody } from '~/components/Apps/AppListingsMarketplaceBody';
+import { LISTING_STORE_CONTAINER_SIZE } from '~/components/Apps/appListingGrid';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -47,10 +48,11 @@ export default function AppsPage() {
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,
           a separate post-deploy op step) — the empty state renders sanely
           ("No apps yet"); expected + fine while dark. */}
-      <AppsPageLayout size={1600}>
-        {/* Widened past the default `xl` (1320px) token — a 5-across grid at this
-            container width needs the extra room to keep card text from
-            truncating (see AppListingsMarketplaceBody's `xl` column span). */}
+      <AppsPageLayout size={LISTING_STORE_CONTAINER_SIZE}>
+        {/* Widened past the default `xl` (1320px) token. The width is UNCHANGED by
+            the larger-cover pass — the store now runs a 4-across grid at `xl` (see
+            `LISTING_GRID_SPAN`), and the container/grid pair is pinned together in
+            `appListingGrid.ts` so neither can drift alone. */}
         <AppListingsMarketplaceBody />
       </AppsPageLayout>
     </>

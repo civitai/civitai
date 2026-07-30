@@ -4,7 +4,12 @@
   import { page } from '$app/state';
   import { SvelteSet } from 'svelte/reactivity';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
-  import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
+  import {
+    Card,
+    CardHeader,
+    CardTitle,
+    CardContent,
+  } from '@civitai/ui/components/ui/card/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
     AlertDialog,
@@ -249,20 +254,21 @@
     navigate({ usage, page: null });
   }
 
-  const setFeeEnhance = () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
-    await event.update({ reset: false });
-    if (event.result.type === 'success') {
-      toast.success('Licensing fee saved');
-      // Refresh so the row chip reflects the new fee; keep the sheet open on the (now fresh) version.
-      await invalidateAll();
-      if (editing) {
-        const id = editing.id;
-        editing = data.models.flatMap((m) => m.versions).find((v) => v.id === id) ?? editing;
+  const setFeeEnhance =
+    () => async (event: { result: any; update: (o?: { reset?: boolean }) => Promise<void> }) => {
+      await event.update({ reset: false });
+      if (event.result.type === 'success') {
+        toast.success('Licensing fee saved');
+        // Refresh so the row chip reflects the new fee; keep the sheet open on the (now fresh) version.
+        await invalidateAll();
+        if (editing) {
+          const id = editing.id;
+          editing = data.models.flatMap((m) => m.versions).find((v) => v.id === id) ?? editing;
+        }
+      } else if (event.result.type === 'failure') {
+        toast.error(String(event.result.data?.error ?? 'Failed to save'));
       }
-    } else if (event.result.type === 'failure') {
-      toast.error(String(event.result.data?.error ?? 'Failed to save'));
-    }
-  };
+    };
 
   // --- CSV import/export ---
   // Export mirrors the current filters; drop the transient bulk/page params.
@@ -285,7 +291,11 @@
   let fileInput = $state<HTMLInputElement>();
   let previewForm = $state<HTMLFormElement>();
   let applyForm = $state<HTMLFormElement>();
-  let preview = $state<{ changes: FeeChange[]; unchanged: number; skipped: { row?: number; reason: string }[] } | null>(null);
+  let preview = $state<{
+    changes: FeeChange[];
+    unchanged: number;
+    skipped: { row?: number; reason: string }[];
+  } | null>(null);
   let showPreview = $state(false);
   let applying = $state(false);
 
@@ -315,7 +325,11 @@
   };
 
   const filterActive = $derived(
-    !!data.query.q || !!data.query.fee || !!data.query.bm || !!data.query.status || data.query.access
+    !!data.query.q ||
+      !!data.query.fee ||
+      !!data.query.bm ||
+      !!data.query.status ||
+      data.query.access
   );
 
   // --- Early/paid-access editor (per-version drawer) ---
@@ -434,7 +448,12 @@
           value={data.query.mt ?? ''}
           onValueChange={(v: string) => navigate({ mt: v || null, page: null })}
         >
-          <Select.Trigger id="filter-mt" size="default" class="w-full text-white" aria-label="Model type">
+          <Select.Trigger
+            id="filter-mt"
+            size="default"
+            class="w-full text-white"
+            aria-label="Model type"
+          >
             {data.query.mt || 'All types'}
           </Select.Trigger>
           <Select.Content>
@@ -454,7 +473,12 @@
           value={data.query.bm ?? ''}
           onValueChange={(v: string) => navigate({ bm: v || null, page: null })}
         >
-          <Select.Trigger id="filter-bm" size="default" class="w-full text-white" aria-label="Base model">
+          <Select.Trigger
+            id="filter-bm"
+            size="default"
+            class="w-full text-white"
+            aria-label="Base model"
+          >
             {data.query.bm || 'All base models'}
           </Select.Trigger>
           <Select.Content>
@@ -471,10 +495,13 @@
           checked={data.query.access}
           onCheckedChange={(c) => navigate({ access: c ? '1' : null, page: null })}
         />
-        <Label for="filter-access" class="cursor-pointer font-normal">Has early / paid access</Label>
+        <Label for="filter-access" class="cursor-pointer font-normal">Has early / paid access</Label
+        >
       </div>
       <fieldset>
-        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-2">Licensing fee</legend>
+        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-2"
+          >Licensing fee</legend
+        >
         <RadioGroup
           value={data.query.fee ?? ''}
           onValueChange={(v) => navigate({ fee: v || null, page: null })}
@@ -518,7 +545,8 @@
   </Select.Root>
   {#if data.total > 0 && !selectionMode}
     <div class="ml-auto flex items-center gap-2">
-      <Button href={exportHref} data-sveltekit-reload variant="outline" size="sm">Export CSV</Button>
+      <Button href={exportHref} data-sveltekit-reload variant="outline" size="sm">Export CSV</Button
+      >
       {#if data.canSetFee}
         <form
           bind:this={previewForm}
@@ -548,7 +576,12 @@
             Bulk Paid Access
           </Button>
         {/if}
-        <Button href={buildHref({ mode: 'bulk' })} data-sveltekit-replacestate variant="outline" size="sm">
+        <Button
+          href={buildHref({ mode: 'bulk' })}
+          data-sveltekit-replacestate
+          variant="outline"
+          size="sm"
+        >
           Bulk Edit Fees
         </Button>
       {/if}
@@ -609,10 +642,14 @@
     {#if filterActive}
       No models match your filters. <button
         class="underline"
-        onclick={() => navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
-      >Clear</button>
+        onclick={() =>
+          navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
+        >Clear</button
+      >
     {:else}
-      You have no models yet. <a href="https://civitai.com/models/create">Upload one on civitai.com</a> to get started.
+      You have no models yet. <a href="https://civitai.com/models/create"
+        >Upload one on civitai.com</a
+      > to get started.
     {/if}
   </div>
 {:else}
@@ -671,9 +708,17 @@
                         aria-label="Select {version.name}"
                         class="shrink-0"
                       />
-                      <Label for={cbId} class="flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-2 font-normal">
+                      <Label
+                        for={cbId}
+                        class="flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-2 font-normal"
+                      >
                         <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <Badge variant="outline" class="{statusBadgeCls(version.status)} text-[10px] uppercase tracking-wide">
+                        <Badge
+                          variant="outline"
+                          class="{statusBadgeCls(
+                            version.status
+                          )} text-[10px] uppercase tracking-wide"
+                        >
                           {version.status}
                         </Badge>
                         <Badge variant="secondary" class="text-[10px]">{version.baseModel}</Badge>
@@ -688,10 +733,14 @@
                     >
                       <span class="flex min-w-0 items-center gap-2 sm:flex-1">
                         <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <Badge variant="secondary" class="shrink-0 text-[10px]">{version.baseModel}</Badge>
+                        <Badge variant="secondary" class="shrink-0 text-[10px]"
+                          >{version.baseModel}</Badge
+                        >
                         <Badge
                           variant="outline"
-                          class="{statusBadgeCls(version.status)} ml-auto shrink-0 text-[10px] uppercase tracking-wide sm:ml-0"
+                          class="{statusBadgeCls(
+                            version.status
+                          )} ml-auto shrink-0 text-[10px] uppercase tracking-wide sm:ml-0"
                         >
                           {version.status}
                         </Badge>
@@ -699,7 +748,8 @@
                       <span class="flex shrink-0 items-center gap-2">
                         {#if version.earlyAccessConfig}
                           {@const ab = accessBadge(version.earlyAccessConfig)}
-                          <Badge variant="outline" class={ab.cls} title={ab.title}>{ab.label}</Badge>
+                          <Badge variant="outline" class={ab.cls} title={ab.title}>{ab.label}</Badge
+                          >
                         {/if}
                         <Badge variant="outline" class={chip.cls}>{chip.label}</Badge>
                         <IconChevronRight size={16} class="ml-auto shrink-0 text-dark-3 sm:ml-0" />
@@ -761,7 +811,10 @@
         Review changes · {preview?.changes.length ?? 0} to update
       </AlertDialogTitle>
       <AlertDialogDescription>
-        {preview?.changes.length ?? 0} fee{preview?.changes.length === 1 ? '' : 's'} will change · {preview?.unchanged ?? 0} unchanged{(preview?.skipped.length ?? 0) > 0 ? ` · ${preview?.skipped.length} skipped` : ''}. Nothing is saved until you confirm.
+        {preview?.changes.length ?? 0} fee{preview?.changes.length === 1 ? '' : 's'} will change · {preview?.unchanged ??
+          0} unchanged{(preview?.skipped.length ?? 0) > 0
+          ? ` · ${preview?.skipped.length} skipped`
+          : ''}. Nothing is saved until you confirm.
       </AlertDialogDescription>
     </AlertDialogHeader>
 
@@ -782,15 +835,21 @@
                   <span class="text-white">{c.modelName}</span>
                   <span class="text-dark-3">· {c.versionName} · {c.baseModel}</span>
                 </td>
-                <td class="px-3 py-1.5 text-right tabular-nums text-dark-3">{formatFeeRatio(c.current)}</td>
-                <td class="px-3 py-1.5 text-right tabular-nums font-medium text-white">{formatFeeRatio(c.next)}</td>
+                <td class="px-3 py-1.5 text-right tabular-nums text-dark-3"
+                  >{formatFeeRatio(c.current)}</td
+                >
+                <td class="px-3 py-1.5 text-right tabular-nums font-medium text-white"
+                  >{formatFeeRatio(c.next)}</td
+                >
               </tr>
             {/each}
           </tbody>
         </table>
       </div>
       {#if (preview?.changes.length ?? 0) > 100}
-        <p class="text-xs text-dark-3">Showing the first 100 of {preview?.changes.length} changes — all will be applied.</p>
+        <p class="text-xs text-dark-3">
+          Showing the first 100 of {preview?.changes.length} changes — all will be applied.
+        </p>
       {/if}
     {:else}
       <p class="rounded-lg border border-dark-4 p-3 text-sm text-dark-2">No fees would change.</p>
@@ -798,7 +857,9 @@
 
     {#if (preview?.skipped.length ?? 0) > 0}
       <details class="rounded-lg border border-dark-4 p-3 text-sm">
-        <summary class="cursor-pointer text-yellow-5">{preview?.skipped.length} row(s) skipped</summary>
+        <summary class="cursor-pointer text-yellow-5"
+          >{preview?.skipped.length} row(s) skipped</summary
+        >
         <ul class="mt-2 max-h-40 space-y-1 overflow-y-auto text-dark-1">
           {#each preview?.skipped ?? [] as s (s.row)}
             <li><span class="text-dark-3">Row {s.row}:</span> {s.reason}</li>
@@ -814,7 +875,13 @@
       use:enhance={applyEnhance}
       class="contents"
     >
-      <input type="hidden" name="changes" value={JSON.stringify((preview?.changes ?? []).map((c) => ({ versionId: c.versionId, fee: c.next })))} />
+      <input
+        type="hidden"
+        name="changes"
+        value={JSON.stringify(
+          (preview?.changes ?? []).map((c) => ({ versionId: c.versionId, fee: c.next }))
+        )}
+      />
     </form>
     <AlertDialogFooter>
       <AlertDialogCancel onclick={() => (preview = null)}>Cancel</AlertDialogCancel>
@@ -832,7 +899,12 @@
   </AlertDialogContent>
 </AlertDialog>
 
-<Sheet open={editing != null} onOpenChange={(o) => { if (!o) editing = null; }}>
+<Sheet
+  open={editing != null}
+  onOpenChange={(o) => {
+    if (!o) editing = null;
+  }}
+>
   <SheetContent side="right" class="w-full gap-0 overflow-y-auto p-0 sm:max-w-md">
     {#if editing}
       {@const st = feeStatus(editing.licensingFee)}
@@ -850,7 +922,12 @@
           </div>
           {#if data.canSetFee}
             {@const suggested = feeToRatio(suggestedFeePerImage(editingType))}
-            <form method="POST" action="?/setFee" use:enhance={setFeeEnhance} class="flex flex-wrap items-center gap-1.5">
+            <form
+              method="POST"
+              action="?/setFee"
+              use:enhance={setFeeEnhance}
+              class="flex flex-wrap items-center gap-1.5"
+            >
               <input type="hidden" name="versionId" value={editing.id} />
               <NumberInput
                 name="buzz"
@@ -862,8 +939,18 @@
               />
               <span class="text-xs text-dark-3">⚡ per</span>
               <input type="hidden" name="images" value={feeImages} />
-              <Select.Root type="single" value={feeImages} onValueChange={(v: string) => { if (v) feeImages = v; }}>
-                <Select.Trigger size="default" class="w-16 text-white" aria-label="Generations for {editing.name}">
+              <Select.Root
+                type="single"
+                value={feeImages}
+                onValueChange={(v: string) => {
+                  if (v) feeImages = v;
+                }}
+              >
+                <Select.Trigger
+                  size="default"
+                  class="w-16 text-white"
+                  aria-label="Generations for {editing.name}"
+                >
                   {feeImages}
                 </Select.Trigger>
                 <Select.Content>

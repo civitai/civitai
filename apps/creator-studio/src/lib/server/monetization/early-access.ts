@@ -69,8 +69,8 @@ export async function setEarlyAccessConfig(
     const paidAccess = !config
       ? null
       : config.permanent
-      ? { permanent: true, terms }
-      : { permanent: false, timeframeDays: config.timeframe, terms };
+        ? { permanent: true, terms }
+        : { permanent: false, timeframeDays: config.timeframe, terms };
     const donationGoal =
       config && !config.permanent && config.donationGoalEnabled && config.donationGoal
         ? { amount: config.donationGoal }
@@ -145,8 +145,7 @@ export async function countPermanentAccessVersionsExcluding(
 }
 
 export type BulkPaidAccessResult =
-  | { ok: true; updated: number; failed: number }
-  | { ok: false; status: number; error: string };
+  { ok: true; updated: number; failed: number } | { ok: false; status: number; error: string };
 
 // Applies the same permanent paid-access pricing to every selected version, one main-app write each
 // (the endpoint owns ownership + side effects). Sequential so a shared failure surfaces once and we
@@ -172,7 +171,10 @@ export async function bulkSetPermanentAccess(
     const usage = usageById.get(id);
     if (usage && usage !== 'Download' && usage !== 'Generation') {
       failed++;
-      firstError ??= { status: 400, error: "Some versions can't be gated for their usage control." };
+      firstError ??= {
+        status: 400,
+        error: "Some versions can't be gated for their usage control.",
+      };
       continue;
     }
     const genOnly = usage === 'Generation';

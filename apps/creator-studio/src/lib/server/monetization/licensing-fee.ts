@@ -50,8 +50,7 @@ const NON_COMMERCIAL_BASE_MODELS = new Set(['Ideogram 4.0']);
 
 export type SetFeeResult = { ok: true } | { ok: false; status: 400 | 403; error: string };
 export type BulkFeeResult =
-  | { ok: true; updated: number }
-  | { ok: false; status: 400 | 403; error: string };
+  { ok: true; updated: number } | { ok: false; status: 400 | 403; error: string };
 
 // Clamp/round a raw fee to a valid 2-decimal buzz amount in [0, MAX], null to clear. undefined = invalid input.
 function normalizeFee(raw: number | null): number | null | undefined {

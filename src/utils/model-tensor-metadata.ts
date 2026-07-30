@@ -179,6 +179,24 @@ export function inferTensorMetadataFormat(file: {
   return null;
 }
 
+/**
+ * Part of the cache key, so bumping it orphans every edge entry stored under the old value. At 1,
+ * a transient 422 inherited a 1-year `immutable` header (CU 868khnkuc) and ~200K responses are
+ * still poisoned at the edge — they can only be reached under `v=1`.
+ */
+export const TENSOR_METADATA_CACHE_VERSION = 2;
+
+export function buildTensorMetadataUrl(
+  fileId: number,
+  { summaryOnly = false }: { summaryOnly?: boolean } = {}
+) {
+  const params = new URLSearchParams();
+  if (summaryOnly) params.set('summaryOnly', 'true');
+  params.set('v', String(TENSOR_METADATA_CACHE_VERSION));
+
+  return `/api/v1/model-files/${fileId}/tensor-metadata?${params.toString()}`;
+}
+
 function estimateComfyDynamicOffloadVram(tensors: ModelTensorInfo[]): ModelVramEstimate {
   const layerGroups = buildLayerGroups(tensors);
   let residentWeightsBytes = 0;
@@ -443,14 +461,58 @@ async function fetchByteRange(
   });
 
   if (!response.ok) throw new Error(`Failed to fetch model metadata range: ${response.status}`);
-  if (response.status !== 206) {
-    throw new Error('Model host does not support byte-range requests');
-  }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes =
+    response.status === 206
+      ? new Uint8Array(await response.arrayBuffer())
+      : await readRangeFromFullBody(response, start, end);
+
   const expectedLength = end - start + 1;
   if (!allowShort && bytes.length < expectedLength) {
     throw new Error('Model metadata range response was shorter than expected');
+  }
+
+  return bytes;
+}
+
+/**
+ * The delivery hosts intermittently answer a `Range` request with 200 and the whole file. The
+ * bytes we want are still there at their real offsets, so slice them off the stream and abort —
+ * never buffer the body, these files run to 24 GB.
+ */
+async function readRangeFromFullBody(response: Response, start: number, end: number) {
+  if (!response.body) throw new Error('Model host does not support byte-range requests');
+
+  const wanted = end - start + 1;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let collected = 0;
+  let position = 0;
+
+  try {
+    while (collected < wanted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = value as Uint8Array;
+      if (position + chunk.length > start) {
+        const from = Math.max(0, start - position);
+        const to = Math.min(chunk.length, from + wanted - collected);
+        const slice = chunk.subarray(from, to);
+        chunks.push(slice);
+        collected += slice.length;
+      }
+      position += chunk.length;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+
+  const bytes = new Uint8Array(collected);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
   }
 
   return bytes;

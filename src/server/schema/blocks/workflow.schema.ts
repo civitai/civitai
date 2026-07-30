@@ -36,10 +36,12 @@ const blockAccountTypeSchema = z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzS
 // `WorkflowBodyCustomComfy` (civitai-app-starters PR #171) — keep the two in
 // lockstep.
 //
-// INERT/DARK: blocks.router still handles ONLY `textToImage` — the submit /
-// estimate branch on `kind==='customComfy'` (+ the post-paid budget belt) is the
-// separate PR6. This member only widens the accepted wire shape; no live code
-// path reads it yet.
+// LIVE: blocks.router now branches on `kind==='customComfy'` in BOTH
+// `estimateWorkflow` and `submitWorkflow` (see `estimateCustomComfyWorkflow` /
+// `submitCustomComfyWorkflow`), backed by the post-paid budget belt
+// (`settleCustomComfySpend`) and the `buildCustomComfyWorkflowInput` translator.
+// The earlier "INERT/DARK — router handles ONLY textToImage" note is obsolete;
+// both members of this union are wired end-to-end.
 //
 // Caps are intentionally tighter than the platform-wide generateImageSchema —
 // blocks run in untrusted iframes and the token issuer caps per-call buzz at

@@ -2,6 +2,7 @@
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
   import { IconChevronDown, IconCheck, IconLogout } from '@tabler/icons-svelte';
+  import { getEdgeUrl } from '$lib/media/edge-url';
 
   type DeviceAccount = {
     userId: number;
@@ -16,8 +17,12 @@
     image,
     logoutUrl,
     tier = null,
-  }: { name: string; image: string | null; logoutUrl: string | null; tier?: string | null } =
-    $props();
+  }: {
+    name: string;
+    image: string | null;
+    logoutUrl: string | null;
+    tier?: string | null;
+  } = $props();
 
   const TIER_LABEL: Record<string, string> = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' };
   const tierLabel = $derived.by(() => {
@@ -76,7 +81,7 @@
     class="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-sidebar-accent"
   >
     <Avatar class="size-8">
-      {#if image}<AvatarImage src={image} alt={name} />{/if}
+      {#if image}<AvatarImage src={getEdgeUrl(image, { width: 96 })} alt={name} />{/if}
       <AvatarFallback>{initial(name)}</AvatarFallback>
     </Avatar>
     <span class="flex min-w-0 flex-1 flex-col">
@@ -94,7 +99,9 @@
     <IconChevronDown size={14} class="shrink-0 text-dark-3" />
   </Popover.Trigger>
   <Popover.Content align="start" side="top" class="w-56 border-dark-4 bg-dark-7 p-1">
-    <p class="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-dark-3">Accounts on this device</p>
+    <p class="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-dark-3">
+      Accounts on this device
+    </p>
     {#if loading}
       <p class="px-2 py-2 text-xs text-dark-3">Loading…</p>
     {:else if others.length === 0}
@@ -110,10 +117,15 @@
           class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-white hover:bg-dark-6 disabled:opacity-60"
         >
           <Avatar class="size-6">
-            {#if acct.image}<AvatarImage src={acct.image} alt={acct.username ?? ''} />{/if}
+            {#if acct.image}<AvatarImage
+                src={getEdgeUrl(acct.image, { width: 96 })}
+                alt={acct.username ?? ''}
+              />{/if}
             <AvatarFallback>{initial(acct.username)}</AvatarFallback>
           </Avatar>
-          <span class="min-w-0 flex-1 truncate text-left">{acct.username ?? `User ${acct.userId}`}</span>
+          <span class="min-w-0 flex-1 truncate text-left"
+            >{acct.username ?? `User ${acct.userId}`}</span
+          >
           {#if switching === acct.userId}<span class="text-xs text-dark-3">…</span>{/if}
         </button>
       {/each}

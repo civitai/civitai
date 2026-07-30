@@ -94,6 +94,7 @@ import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
+import { getModelVersionActionLayout } from '~/components/Model/ModelVersions/model-version-layout';
 import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -506,6 +507,58 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       !model.allowDerivatives ||
       model.allowDifferentLicense);
 
+  const { branch, showDownloadSection } = getModelVersionActionLayout({
+    showRequestReview,
+    showPublishButton: !!showPublishButton,
+    hideDownload,
+    isComponentOnlyModel,
+    hasVisibleFiles,
+  });
+
+  const downloadSection = showDownloadSection ? (
+      <Card withBorder>
+        <Card.Section withBorder inheritPadding py="xs" px="sm">
+          <Group justify="space-between">
+            <Text size="sm" fw={600}>
+              Download
+            </Text>
+            <Group gap="xs">
+              {isOwnerOrMod && (
+                <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
+                  <Text c="blue.4" size="xs">
+                    Manage
+                  </Text>
+                </RoutedDialogLink>
+              )}
+              <Text size="xs" c="dimmed">
+                {modelFilesVisible.length} variant
+                {modelFilesVisible.length !== 1 ? 's' : ''} available
+              </Text>
+            </Group>
+          </Group>
+        </Card.Section>
+        <Card.Section>
+          <DownloadVariantDropdown
+            files={filesVisible}
+            versionId={version.id}
+            modelType={model.type}
+            userPreferences={user?.filePreferences}
+            selectedFileId={selectedFileId}
+            onSelectFileId={setSelectedFileId}
+            canDownload={canDownload}
+            downloadPrice={
+              !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
+                ? paidAccessTerms.download.price
+                : undefined
+            }
+            isLoadingAccess={isLoadingAccess}
+            archived={archived}
+            onPurchase={() => onPurchase('download')}
+          />
+        </Card.Section>
+      </Card>
+    ) : null;
+
   return (
     <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
@@ -549,7 +602,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               theme: colorScheme === 'dark' ? 'dark' : 'light',
             }}
           />
-          {showRequestReview ? (
+          {branch === 'request-review' ? (
             <Button
               color="yellow"
               onClick={handleRequestReviewClick}
@@ -559,7 +612,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             >
               Request a Review
             </Button>
-          ) : showPublishButton ? (
+          ) : branch === 'publish-pending' ? (
             <Stack gap={4}>
               {canGenerate && isOwnerOrMod && (
                 <GenerateButton
@@ -630,6 +683,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </Group>
                 </Stack>
               )}
+              {downloadSection}
             </Stack>
           ) : (
             <Stack gap="md">
@@ -896,49 +950,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </AlertWithIcon>
               )}
               {/* Download Section */}
-              {!hideDownload && !isComponentOnlyModel && hasVisibleFiles && (
-                <Card withBorder>
-                  <Card.Section withBorder inheritPadding py="xs" px="sm">
-                    <Group justify="space-between">
-                      <Text size="sm" fw={600}>
-                        Download
-                      </Text>
-                      <Group gap="xs">
-                        {isOwnerOrMod && (
-                          <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
-                            <Text c="blue.4" size="xs">
-                              Manage
-                            </Text>
-                          </RoutedDialogLink>
-                        )}
-                        <Text size="xs" c="dimmed">
-                          {modelFilesVisible.length} variant
-                          {modelFilesVisible.length !== 1 ? 's' : ''} available
-                        </Text>
-                      </Group>
-                    </Group>
-                  </Card.Section>
-                  <Card.Section>
-                    <DownloadVariantDropdown
-                      files={filesVisible}
-                      versionId={version.id}
-                      modelType={model.type}
-                      userPreferences={user?.filePreferences}
-                      selectedFileId={selectedFileId}
-                      onSelectFileId={setSelectedFileId}
-                      canDownload={canDownload}
-                      downloadPrice={
-                        !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
-                          ? paidAccessTerms.download.price
-                          : undefined
-                      }
-                      isLoadingAccess={isLoadingAccess}
-                      archived={archived}
-                      onPurchase={() => onPurchase('download')}
-                    />
-                  </Card.Section>
-                </Card>
-              )}
+              {downloadSection}
             </Stack>
           )}
           {/* Download-related alert */}

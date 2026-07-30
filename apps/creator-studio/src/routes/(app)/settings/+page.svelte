@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { Card, CardHeader, CardTitle, CardContent } from '@civitai/ui/components/ui/card/index.js';
+  import {
+    Card,
+    CardHeader,
+    CardTitle,
+    CardContent,
+  } from '@civitai/ui/components/ui/card/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
@@ -65,7 +70,9 @@
             Manage membership
           </Button>
         {:else}
-          <Button href={CIVITAI_MEMBERSHIP_URL} variant="secondary" size="sm">Get a membership</Button>
+          <Button href={CIVITAI_MEMBERSHIP_URL} variant="secondary" size="sm"
+            >Get a membership</Button
+          >
         {/if}
         {#if !isCP}
           <Button href={CREATOR_PROGRAM_URL} variant="secondary" size="sm">Creator Program</Button>
@@ -90,14 +97,19 @@
     <CardContent class="flex flex-col gap-3">
       <p class="text-sm text-dark-0">
         {#if data.payout === 'active'}
-          Your Tipalti payout account is active. Manage it and withdraw earnings on the Buzz dashboard.
+          Your Tipalti payout account is active. Manage it and withdraw earnings on the Buzz
+          dashboard.
         {:else if data.payout === 'pending'}
-          Your payout onboarding is started but not finished — complete it to withdraw earnings as cash.
+          Your payout onboarding is started but not finished — complete it to withdraw earnings as
+          cash.
         {:else if canSetUpPayout}
-          You have <strong class="text-green-5">{formatAmount(data.cash?.settled ?? 0, 'cashSettled')}</strong> in
-          settled cash ready to withdraw. Set up payouts to cash out.
+          You have <strong class="text-green-5"
+            >{formatAmount(data.cash?.settled ?? 0, 'cashSettled')}</strong
+          > in settled cash ready to withdraw. Set up payouts to cash out.
         {:else}
-          Payout setup unlocks once you have <strong class="text-white">${PAYOUT_UNLOCK_USD} in settled cash</strong>
+          Payout setup unlocks once you have <strong class="text-white"
+            >${PAYOUT_UNLOCK_USD} in settled cash</strong
+          >
           ready to withdraw — so there's nothing to set up yet.
         {/if}
       </p>
@@ -128,8 +140,8 @@
     <CardContent>
       <p class="text-sm text-dark-2">
         Licensing fees stay off until you set one. We suggest a fee by model type — Checkpoints
-        <strong>1</strong> ⚡ / generation, LoRAs <strong>1</strong> ⚡ / 10 generations — which you can apply or
-        override per version on <a href="/models" class="underline">Models</a>.
+        <strong>1</strong> ⚡ / generation, LoRAs <strong>1</strong> ⚡ / 10 generations — which you
+        can apply or override per version on <a href="/models" class="underline">Models</a>.
       </p>
     </CardContent>
   </Card>

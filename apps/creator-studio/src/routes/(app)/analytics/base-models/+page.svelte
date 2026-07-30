@@ -26,8 +26,26 @@
   // plus a dashed comparison-month line (aligned day-for-day). The creator's own base models are starred, and the
   // selection persists to localStorage.
   const TREND_COLORS = [
-    '#4dabf7', '#f783ac', '#ffa94d', '#69db7c', '#a78bfa', '#63e6be', '#ff8787', '#ffd43b', '#4dd4c4', '#e599f7',
-    '#74c0fc', '#faa2c1', '#ffc078', '#8ce99a', '#b197fc', '#96f2d7', '#ffa8a8', '#ffe066', '#66d9e8', '#eebefa',
+    '#4dabf7',
+    '#f783ac',
+    '#ffa94d',
+    '#69db7c',
+    '#a78bfa',
+    '#63e6be',
+    '#ff8787',
+    '#ffd43b',
+    '#4dd4c4',
+    '#e599f7',
+    '#74c0fc',
+    '#faa2c1',
+    '#ffc078',
+    '#8ce99a',
+    '#b197fc',
+    '#96f2d7',
+    '#ffa8a8',
+    '#ffe066',
+    '#66d9e8',
+    '#eebefa',
   ];
   const DEFAULT_SHOWN = 6;
   const mmdd = (d: string) => (d.length >= 10 ? d.slice(5, 10) : d);
@@ -45,7 +63,9 @@
     return saved.length ? saved : universe.slice(0, DEFAULT_SHOWN);
   });
   // Colour keyed to a base model's position in the selected set, so its chip dot matches its line.
-  const colorOf = $derived(new Map(selected.map((bm, i) => [bm, TREND_COLORS[i % TREND_COLORS.length]])));
+  const colorOf = $derived(
+    new Map(selected.map((bm, i) => [bm, TREND_COLORS[i % TREND_COLORS.length]]))
+  );
   const shownTrends = $derived(
     selected
       .map((bm) => trends.find((t) => t.baseModel === bm))
@@ -74,7 +94,9 @@
     });
     const compare = shownTrends.map((t) => {
       const color = colorOf.get(t.baseModel);
-      const byDate = new Map((compareByBase.get(t.baseModel)?.points ?? []).map((p) => [p.date, p[trendMetric]]));
+      const byDate = new Map(
+        (compareByBase.get(t.baseModel)?.points ?? []).map((p) => [p.date, p[trendMetric]])
+      );
       return {
         type: 'line' as const,
         label: `${t.baseModel} (${data.compare.label})`,
@@ -106,16 +128,22 @@
         labels: {
           boxWidth: 12,
           font: { size: 11 },
-          filter: (item: { datasetIndex?: number }) => (item.datasetIndex ?? 0) < shownTrends.length,
+          filter: (item: { datasetIndex?: number }) =>
+            (item.datasetIndex ?? 0) < shownTrends.length,
         },
       },
     },
-    scales: { x: { ticks: { maxTicksLimit: 8, autoSkip: true, maxRotation: 0 } }, y: { beginAtZero: true } },
+    scales: {
+      x: { ticks: { maxTicksLimit: 8, autoSkip: true, maxRotation: 0 } },
+      y: { beginAtZero: true },
+    },
   });
 
   const currencies = $derived(
     data.baseModels
-      ? [...new Set(data.baseModels.flatMap((b) => b.currencies.map((c) => c.currency)))].sort(currencySort)
+      ? [...new Set(data.baseModels.flatMap((b) => b.currencies.map((c) => c.currency)))].sort(
+          currencySort
+        )
       : []
   );
   const cell = (b: NonNullable<PageData['baseModels']>[number], currency: string) =>
@@ -151,7 +179,8 @@
       <p class="text-sm font-medium text-white">
         Civitai-wide base-model usage
         <span class="text-xs text-dark-3">
-          · {trendMetric} {periodLabel} · dashed = {data.compare.label} · ★ marks yours
+          · {trendMetric}
+          {periodLabel} · dashed = {data.compare.label} · ★ marks yours
         </span>
       </p>
       <div class="flex flex-wrap items-center gap-2">
@@ -254,13 +283,17 @@
         {#each pageRows as b (b.baseModel)}
           <Table.Row>
             <Table.Cell class="align-top text-dark-1">{b.baseModel}</Table.Cell>
-            <Table.Cell class="align-top text-right tabular-nums text-dark-2">{num(b.modelCount)}</Table.Cell>
+            <Table.Cell class="align-top text-right tabular-nums text-dark-2"
+              >{num(b.modelCount)}</Table.Cell
+            >
             <Table.Cell class="align-top text-right">
               <div class="tabular-nums {b.generations ? 'text-white' : 'text-dark-4'}">
                 {b.generations ? num(b.generations) : '—'}
               </div>
               {#if b.generations}
-                <div class="mt-0.5"><DeltaChip current={b.generations} previous={b.prevGenerations} /></div>
+                <div class="mt-0.5">
+                  <DeltaChip current={b.generations} previous={b.prevGenerations} />
+                </div>
               {/if}
             </Table.Cell>
             <Table.Cell class="align-top text-right">
@@ -268,7 +301,9 @@
                 {b.downloads ? num(b.downloads) : '—'}
               </div>
               {#if b.downloads}
-                <div class="mt-0.5"><DeltaChip current={b.downloads} previous={b.prevDownloads} /></div>
+                <div class="mt-0.5">
+                  <DeltaChip current={b.downloads} previous={b.prevDownloads} />
+                </div>
               {/if}
             </Table.Cell>
             {#each currencies as c (c)}
@@ -295,7 +330,9 @@
     {/if}
   </div>
 {:else if data.baseModels === null}
-  <div class="placeholder">Base-model performance is temporarily unavailable — please try again shortly.</div>
+  <div class="placeholder">
+    Base-model performance is temporarily unavailable — please try again shortly.
+  </div>
 {:else}
   <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
     <strong class="text-dark-2">Your base models</strong> — no model activity {periodLabel} yet.

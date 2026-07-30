@@ -256,7 +256,8 @@ export const actions: Actions = {
   bulkSetPaidAccess: async ({ request, locals, cookies }) => {
     const form = await request.formData();
     const versionIds = versionIdsSchema.safeParse(String(form.get('versionIds') ?? ''));
-    if (!versionIds.success) return fail(400, { paidAccess: true, error: firstError(versionIds.error) });
+    if (!versionIds.success)
+      return fail(400, { paidAccess: true, error: firstError(versionIds.error) });
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
     if (!locals.user.isModerator && !canSellIndefinitely(membership))
@@ -275,7 +276,10 @@ export const actions: Actions = {
     if (!locals.user.isModerator) {
       const cap = maxPermanentAccessModels(membership.tier);
       if (Number.isFinite(cap)) {
-        const baseline = await countPermanentAccessVersionsExcluding(locals.user.id, versionIds.data);
+        const baseline = await countPermanentAccessVersionsExcluding(
+          locals.user.id,
+          versionIds.data
+        );
         if (baseline + versionIds.data.length > cap)
           return fail(400, {
             paidAccess: true,

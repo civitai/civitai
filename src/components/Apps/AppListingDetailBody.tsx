@@ -28,6 +28,10 @@ import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import {
+  appInitial,
+  listingPlaceholderGradient,
+} from '~/shared/constants/app-listing-placeholder.constants';
 import { getRecommendLabel } from '~/components/Apps/appListingCardView';
 import {
   canOwnerEditListing,
@@ -89,18 +93,22 @@ function categoryIcon(category: string): Icon {
 
 /**
  * Hero cover — the listing cover (`coverUrl`, already a CDN URL). Falls back to a
- * category-glyph placeholder over a neutral gradient when absent OR the image
- * 404s (a coverUrl derived from a first-screenshot fallback can dangle) — never
- * a broken `<img>`. Decorative (aria-hidden placeholder).
+ * category-glyph placeholder over the listing's DETERMINISTIC PER-APP seeded
+ * gradient (shared with the server-generated cover SVG — see
+ * `~/shared/constants/app-listing-placeholder.constants`) when absent OR the
+ * image 404s (a coverUrl derived from a first-screenshot fallback can dangle) —
+ * never a broken `<img>`. Decorative (aria-hidden placeholder).
  */
 function HeroCover({
   coverUrl,
   category,
   name,
+  slug,
 }: {
   coverUrl: string | null;
   category: string | null;
   name: string;
+  slug: string;
 }) {
   const [broken, setBroken] = useState(false);
   if (coverUrl && !broken) {
@@ -116,18 +124,20 @@ function HeroCover({
     );
   }
   const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
+  // Per-app SEEDED gradient — same seed/stops as the generated cover SVG and the
+  // store card, so one listing reads as one identity across every surface.
   return (
     <Box
       aria-hidden
       h={260}
       className="flex items-center justify-center"
+      data-listing-cover-placeholder=""
       style={{
         borderRadius: 'var(--mantine-radius-md)',
-        background:
-          'linear-gradient(135deg, var(--mantine-color-dark-5) 0%, var(--mantine-color-dark-7) 100%)',
+        background: listingPlaceholderGradient({ slug, category, surface: 'cover' }),
       }}
     >
-      <PlaceholderIcon size={72} className="opacity-40" />
+      <PlaceholderIcon size={72} className="opacity-60" />
     </Box>
   );
 }
@@ -323,13 +333,35 @@ export function AppListingDetailBody({
         </Anchor>
       )}
 
-      <HeroCover coverUrl={detail.coverUrl} category={detail.category} name={detail.name} />
+      <HeroCover
+        coverUrl={detail.coverUrl}
+        category={detail.category}
+        name={detail.name}
+        slug={detail.slug}
+      />
 
       {/* Header: icon + name + tagline + creator + content-rating badge + action. */}
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <Group gap="md" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
-          <Avatar src={detail.iconUrl ?? undefined} alt="" radius="md" size={64}>
-            {detail.name.charAt(0).toUpperCase()}
+          <Avatar
+            src={detail.iconUrl ?? undefined}
+            alt=""
+            radius="md"
+            size={64}
+            data-listing-icon-placeholder={detail.iconUrl == null ? '' : undefined}
+            styles={{
+              placeholder: {
+                background: listingPlaceholderGradient({
+                  slug: detail.slug,
+                  category: detail.category,
+                  surface: 'icon',
+                }),
+                color: 'var(--mantine-color-white)',
+                fontWeight: 700,
+              },
+            }}
+          >
+            {appInitial(detail.name, detail.slug)}
           </Avatar>
           <Stack gap={6} style={{ minWidth: 0 }}>
             <Title order={2} className="line-clamp-2">

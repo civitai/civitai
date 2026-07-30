@@ -12,6 +12,7 @@ import {
 import { downloadGeneratedImages } from '~/components/ImageGeneration/utils/downloadGeneratedImages';
 import type { UpdateImageStepMetadataArgs } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
+  matchesMarkerTags,
   useGetTextToImageRequests,
   useUpdateImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -40,9 +41,13 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
-  const { data } = useGetTextToImageRequests();
+  const { data, markerTags } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
-  const selectableImages = useMemo(() => data.flatMap((wf) => wf.succeededOutput), [data]);
+  const selectableImages = useMemo(
+    () =>
+      data.flatMap((wf) => wf.succeededOutput.filter((img) => matchesMarkerTags(img, markerTags))),
+    [data, markerTags]
+  );
   const selected = useSelection();
   const { setSelected } = useActions();
   const deselect = () => setSelected([]);

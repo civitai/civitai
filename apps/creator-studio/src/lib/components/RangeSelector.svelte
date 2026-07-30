@@ -12,14 +12,22 @@
     range,
     compare,
     showCompare = true,
-  }: { range: DateRange; compare: { key: string; label: string }; showCompare?: boolean } = $props();
+  }: {
+    range: DateRange;
+    compare: { key: string; label: string };
+    showCompare?: boolean;
+  } = $props();
 
   const months = recentMonths(18);
 
   type Period = { from: string; cmp: string };
-  const period = new CookieState<Period>(ANALYTICS_PERIOD_COOKIE, () => ({ from: range.from, cmp: compare.key }), {
-    encode: (p) => `${p.from}|${p.cmp}`,
-  });
+  const period = new CookieState<Period>(
+    ANALYTICS_PERIOD_COOKIE,
+    () => ({ from: range.from, cmp: compare.key }),
+    {
+      encode: (p) => `${p.from}|${p.cmp}`,
+    }
+  );
 
   // Selected month/comparison as 'YYYY-MM' keys (the month is fully determined by `from`).
   const monthKey = (from: string) => from.slice(0, 7);

@@ -150,6 +150,13 @@ export const AppStorageProvisioner = {
           created_at timestamptz DEFAULT now() NOT NULL
         )
       `);
+      // Supports the F1 per-(reporter, key) dedup lookup on the USER-report path
+      // (the WHERE NOT EXISTS in insertUserSharedReportDeduped). Non-unique: the
+      // auto/mod report rows share the table and must not be constrained by it.
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS shared_kv_reports_reporter_key_idx
+           ON ${schema}.shared_kv_reports (reporter_user_id, key)`
+      );
 
       // Trigger function — quota row is keyed on app_block_id pulled from
       // session-local `app.current_app_block_id`. tRPC procedures must
