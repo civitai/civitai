@@ -142,6 +142,21 @@ const winnerPlaceDivergenceCounter = registerCounterWithLabels({
   help: 'ChallengeWinner inserts that conflicted with a stored row holding a different place/prize; the payout was reconciled to the stored placement (expected to stay at zero)',
   labelNames: ['field'] as const,
 });
+// Money-path anomaly, and DELIBERATELY NOT folded into the divergence counter above. That one means
+// "a stored row disagreed with a re-pick" — a cross-run anomaly whose remediation is to work out why
+// a completion ran twice. This one means "one winner-pick named the same creator in more than one
+// slot", a judging-quality anomaly whose remediation is the prompt/model. Same metric, and an
+// operator reading a non-zero value could not tell which had happened, nor could an alert on one
+// avoid firing on the other.
+//
+// A creator can only ever hold ONE ChallengeWinner row per challenge — (challengeId, userId) is the
+// table's unique key — so a second placement for the same creator is never payable, and the extra
+// entries are dropped before the payout is built. Expected to sit flat at zero.
+const winnerDuplicatePickCounter = registerCounterWithLabels({
+  name: 'challenge_winner_duplicate_pick_total',
+  help: 'Winner placements dropped before payout because the same creator held more than one place in a single pick (expected to stay at zero)',
+  labelNames: ['source'] as const,
+});
 
 // ---------------------------------------------------------------------------
 // Never-throw record helpers — called from business logic emit sites
@@ -305,6 +320,19 @@ export function recordChallengeRefundFailure(args: {
 export function recordChallengeWinnerPlaceDivergence(args: { field: 'place' | 'prize' | 'both' }) {
   try {
     winnerPlaceDivergenceCounter.inc({ field: normDivergenceField(args.field) });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+/** `count` = how many placements were dropped, not how many picks contained a duplicate. */
+export function recordChallengeWinnerDuplicatePick(args: {
+  source?: string | null;
+  count?: number;
+}) {
+  try {
+    const count = isPositiveFinite(args.count) ? args.count : 1;
+    winnerDuplicatePickCounter.inc({ source: normSource(args.source) }, count);
   } catch {
     /* never throw from telemetry */
   }
@@ -547,6 +575,12 @@ export function __resetChallengeMetricsForTest(): void {
   operationSpentBuzzCounter.reset();
   refundBuzzCounter.reset();
   refundFailuresCounter.reset();
+  // Both money-path anomaly counters were missing here. Counters live on a process-global registry,
+  // so an un-reset one carries its value across every test in the file that touched it — a test
+  // asserting "this stayed at zero" would pass or fail on execution ORDER rather than on behaviour,
+  // which is precisely backwards for a metric whose whole contract is "expected to sit at zero".
+  winnerPlaceDivergenceCounter.reset();
+  winnerDuplicatePickCounter.reset();
 }
 
 /**

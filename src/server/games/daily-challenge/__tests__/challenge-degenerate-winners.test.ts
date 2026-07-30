@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { freshPersistedWinner } from './persisted-winner.fixture';
 
 // Verifies Task 10: pickWinnersForChallenge skips the LLM winner-pick (generateWinners) when
 // fewer than 2 distinct entrants were judged. generateWinners is asked to pick "exactly 3"
@@ -52,7 +53,7 @@ const {
   mockUpdateChallengeStatus: vi.fn().mockResolvedValue(undefined),
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
-  mockCreateChallengeWinner: vi.fn().mockResolvedValue(1),
+  mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
 }));
 
@@ -227,7 +228,12 @@ beforeEach(() => {
   mockUpdateChallengeStatus.mockResolvedValue(undefined);
   mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 0 });
   mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
-  mockCreateChallengeWinner.mockResolvedValue(1);
+  // Resolve to the PERSISTED row (fresh insert), the real return shape. Resolving `1` here left the
+  // sole-entrant reconcile on its degrade path — see persisted-winner.fixture.
+  mockCreateChallengeWinner.mockImplementation(
+    async (input: { place: number; buzzAwarded: number; pointsAwarded?: number }) =>
+      freshPersistedWinner(input)
+  );
   mockGetChallengeById.mockResolvedValue(null);
 });
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import client from 'prom-client';
 
 // Winner-prize payouts are deduped ONLY by their externalTransactionId, which embeds the winner's
 // PLACE (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`) — `createBuzzTransactionMany`
@@ -169,6 +170,27 @@ vi.mock('~/utils/logging', () => ({
 
 const { pickWinnersForChallenge } = await import('~/server/jobs/daily-challenge-processing');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
+const { __resetChallengeMetricsForTest } = await import('~/server/prom/challenge.metrics');
+
+const DUPLICATE_PICK_METRIC = 'civitai_app_challenge_winner_duplicate_pick_total';
+
+/**
+ * Read one series off the REAL prom registry. Returns `undefined` for an absent series rather than
+ * defaulting to 0, so "never emitted" can never be mistaken for "emitted zero".
+ */
+async function counterValue(
+  name: string,
+  labels: Record<string, string>
+): Promise<number | undefined> {
+  const metric = client.register.getSingleMetric(name) as unknown as {
+    get: () => Promise<{ values: Array<{ value: number; labels: Record<string, string> }> }>;
+  } | null;
+  if (!metric) return undefined;
+  const data = await metric.get();
+  return data.values.find((v) =>
+    Object.entries(labels).every(([key, val]) => v.labels[key] === val)
+  )?.value;
+}
 
 const BASE_CONFIG = {
   challengeType: 'world-morph',
@@ -260,8 +282,41 @@ function paidAmountsById(): Record<string, number> {
   );
 }
 
+/**
+ * A double that enforces the real (challengeId, userId) unique constraint.
+ *
+ * The FIRST create for a user inserts and comes back `created: true`; every later create for that
+ * same user conflicts and comes back as the STORED row with `created: false` — which is exactly
+ * what the production helper does when it catches P2002 and re-reads the row. Without this, a
+ * duplicate creator looks like two clean inserts and the whole failure mode disappears from the
+ * test.
+ */
+function stubUniqueWinnerTable() {
+  const stored = new Map<number, { id: number; place: number; buzzAwarded: number }>();
+  mockCreateChallengeWinner.mockImplementation(
+    async ({
+      userId,
+      place,
+      buzzAwarded,
+      pointsAwarded,
+    }: {
+      userId: number;
+      place: number;
+      buzzAwarded: number;
+      pointsAwarded?: number;
+    }) => {
+      const existing = stored.get(userId);
+      if (existing) return { ...existing, pointsAwarded: 0, created: false };
+      const row = { id: stored.size + 1, place, buzzAwarded };
+      stored.set(userId, row);
+      return { ...row, pointsAwarded: pointsAwarded ?? 0, created: true };
+    }
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetChallengeMetricsForTest();
   mockDbWriteExecuteRaw.mockResolvedValue(1);
   mockGetChallengeConfig.mockResolvedValue(BASE_CONFIG);
   mockGetJudgingConfig.mockResolvedValue(JUDGING_CONFIG);
@@ -431,5 +486,162 @@ describe('winner payout keys on the PERSISTED placement (duplicate-payout guard)
       [`challenge-winner-prize-${CHALLENGE_ID}-100-place-1`]: 500,
       [`challenge-winner-prize-${CHALLENGE_ID}-200-place-2`]: 250,
     });
+  });
+
+  // The SOLE-ENTRANT branch — a completely separate `createChallengeWinner` +
+  // `reconcileWinnerToPersisted` call site from the LLM loop above, reached when a challenge has
+  // fewer than 2 distinct entrants and place 1 is awarded deterministically without the LLM.
+  // Nothing covered it: with the stale `mockResolvedValue(1)` doubles in place, its reconcile could
+  // be deleted outright and the whole suite stayed green.
+  it('sole-entrant award pays the RECORDED place, not the deterministic place 1', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    // One distinct entrant -> the deterministic branch, no `generateWinners` call.
+    mockJudgedEntryRows([{ imageId: 1, userId: 100, username: 'alice' }]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]); // winner-cooldown query: nobody excluded
+
+    // ...but alice is already recorded — and already PAID — at place 2 for this challenge, from an
+    // earlier run of the same completion. The branch always picks place 1 with prizes[0].buzz, so
+    // paying what it picked would settle a brand-new `-place-1` id on top of the `-place-2` id the
+    // ledger has already honoured: a second prize.
+    mockCreateChallengeWinner.mockResolvedValue({
+      id: 7,
+      place: 2,
+      buzzAwarded: 250,
+      pointsAwarded: 5,
+      created: false,
+    });
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockGenerateWinners).not.toHaveBeenCalled();
+    expect(paidExternalIds()).toEqual([`challenge-winner-prize-${CHALLENGE_ID}-100-place-2`]);
+    expect(paidAmountsById()).toEqual({
+      [`challenge-winner-prize-${CHALLENGE_ID}-100-place-2`]: 250,
+    });
+  });
+
+  it('sole-entrant fresh award still pays place 1 — the deterministic branch is not broken', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([{ imageId: 1, userId: 100, username: 'alice' }]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    stubUniqueWinnerTable();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(paidExternalIds()).toEqual([`challenge-winner-prize-${CHALLENGE_ID}-100-place-1`]);
+    expect(paidAmountsById()).toEqual({
+      [`challenge-winner-prize-${CHALLENGE_ID}-100-place-1`]: 500,
+    });
+  });
+});
+
+describe('one creator named twice in a single pick is paid once (duplicate-pick guard)', () => {
+  // `generateWinners` returns raw LLM JSON. "Select exactly 3 different winners" is prompt text with
+  // no code-level enforcement, and the mapping loop resolves each winner with a `find()` by
+  // creatorId — so the same creator named in two slots produces two entries holding two places.
+  //
+  // Both outcomes of that are money bugs. Before the reconcile existed, the two entries paid under
+  // two DIFFERENT ids: a straight double mint. With the reconcile, the second entry is folded onto
+  // the stored row and the two collapse onto the SAME id inside one batch, which is then handed to
+  // an external Buzz service whose within-batch behaviour cannot be verified from this repo.
+  it('pays the duplicated creator exactly once, at their better place, with no repeated id', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'alice' },
+      { imageId: 2, userId: 200, username: 'bob' },
+      { imageId: 3, userId: 300, username: 'carol' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+
+    // The LLM names alice in BOTH the 1st- and 2nd-place slots.
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'alice', creatorId: 100, reason: 'best' },
+        { creator: 'alice', creatorId: 100, reason: 'also best' },
+        { creator: 'bob', creatorId: 200, reason: 'third' },
+      ],
+    });
+    stubUniqueWinnerTable();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    const ids = paidExternalIds();
+    // No id may appear twice in one batch — the property the external Buzz service is not trusted
+    // to enforce for us.
+    expect(new Set(ids).size).toBe(ids.length);
+    // alice keeps place 1 (the better place, 500 Buzz), NOT the dropped place 2 at 250.
+    expect(ids.sort()).toEqual([
+      `challenge-winner-prize-${CHALLENGE_ID}-100-place-1`,
+      `challenge-winner-prize-${CHALLENGE_ID}-200-place-3`,
+    ]);
+    expect(paidAmountsById()).toEqual({
+      [`challenge-winner-prize-${CHALLENGE_ID}-100-place-1`]: 500,
+      [`challenge-winner-prize-${CHALLENGE_ID}-200-place-3`]: 100,
+    });
+
+    // Dropped BEFORE the create loop, so the duplicate never conflicts against the row its own twin
+    // just inserted — that conflict would otherwise fire the place-divergence warning + counter for
+    // something that is not a re-pick at all.
+    expect(mockCreateChallengeWinner).toHaveBeenCalledTimes(2);
+  });
+
+  it('records the dropped placement on challenge_winner_duplicate_pick_total', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'alice' },
+      { imageId: 2, userId: 200, username: 'bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'alice', creatorId: 100, reason: 'best' },
+        { creator: 'alice', creatorId: 100, reason: 'again' },
+      ],
+    });
+    stubUniqueWinnerTable();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    // An LLM handing back the same creator twice is a real judging anomaly, not something to
+    // swallow silently just because the payout is now safe.
+    expect(await counterValue(DUPLICATE_PICK_METRIC, { source: 'System' })).toBe(1);
+  });
+
+  it('leaves a clean pick alone — the guard does not over-trigger', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'alice' },
+      { imageId: 2, userId: 200, username: 'bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'alice', creatorId: 100, reason: 'best' },
+        { creator: 'bob', creatorId: 200, reason: 'second' },
+      ],
+    });
+    stubUniqueWinnerTable();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(paidExternalIds()).toEqual([
+      `challenge-winner-prize-${CHALLENGE_ID}-100-place-1`,
+      `challenge-winner-prize-${CHALLENGE_ID}-200-place-2`,
+    ]);
+    expect(mockCreateChallengeWinner).toHaveBeenCalledTimes(2);
+    // Absent series, not zero — the counter must never have been touched.
+    expect(await counterValue(DUPLICATE_PICK_METRIC, { source: 'System' })).toBeUndefined();
   });
 });

@@ -58,3 +58,51 @@ export function reconcileWinnerToPersisted<T extends WinnerPayoutEntry>(
   if (persisted.place === entry.position && persisted.buzzAwarded === entry.prize) return entry;
   return { ...entry, position: persisted.place, prize: persisted.buzzAwarded };
 }
+
+/**
+ * Drop winner entries that would pay a creator already paid earlier in the SAME batch.
+ *
+ * Nothing upstream guarantees one placement per creator. `generateWinners` returns raw LLM JSON —
+ * "Select exactly 3 different winners" is prompt text, not a validated constraint — and both
+ * completion paths map winners to entries with a `find()` by creatorId, so one creator named in two
+ * slots yields two entries holding two different places. Before the reconcile above existed, those
+ * two entries paid under two distinct transaction ids: a genuine double mint with no re-pick
+ * involved. With it, they collapse onto the same stored place and hence the same id — a duplicate
+ * id inside a single batch, handed to an external Buzz service whose within-batch behaviour is not
+ * observable from this repo. Neither outcome is acceptable, so the duplicate is dropped here.
+ *
+ * That is safe by construction: `ChallengeWinner` is uniquely keyed on (challengeId, userId), so a
+ * creator has at most ONE row per challenge and therefore at most one thing to be paid for. A
+ * second placement for the same creator is a duplicate of the first, never a second prize.
+ *
+ * Keyed on the CREATOR, not on the full externalTransactionId, and that difference is load-bearing.
+ * Once reconciled the two entries share an id, so an id-keyed dedupe would catch them — but only
+ * then. If reconciliation did not happen (`createChallengeWinner` returned `null`, its
+ * unresolved-conflict branch) the entries keep their distinct places, produce two distinct
+ * never-before-seen ids, and an id-keyed dedupe would pass both through to be minted twice. Keying
+ * on the creator closes that case too, and cannot itself over-drop: the id embeds the creator, so
+ * two ids that differ must have different creators.
+ *
+ * The FIRST occurrence wins. Entries are built in placement order, so the first holds the best
+ * place and therefore the largest prize — keeping a later, worse placement instead would turn a
+ * duplicate pick into an under-payment.
+ *
+ * Lives in this module rather than beside `buildWinnerPayoutTransactions` for a mundane but real
+ * reason: `challenge-funding` is mocked with an explicit export list by 15 test files, so a new
+ * export there breaks all of them, while this pure module is imported for real everywhere.
+ */
+export function dedupeWinnersForPayout<T extends { userId: number }>(
+  winners: T[]
+): { winners: T[]; dropped: T[] } {
+  const seen = new Set<number>();
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  for (const entry of winners) {
+    if (seen.has(entry.userId)) dropped.push(entry);
+    else {
+      seen.add(entry.userId);
+      kept.push(entry);
+    }
+  }
+  return { winners: kept, dropped };
+}

@@ -26,6 +26,7 @@ import {
   recordChallengeVoided,
   recordChallengeDeleted,
   recordChallengePrizePaidBuzz,
+  recordChallengeWinnerDuplicatePick,
 } from '~/server/prom/challenge.metrics';
 import {
   ChallengeParticipation,
@@ -107,7 +108,10 @@ import {
   refundUserChallengeFunds,
   reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
-import { reconcileWinnerToPersisted } from '~/server/games/daily-challenge/challenge-winner-reconcile';
+import {
+  dedupeWinnersForPayout,
+  reconcileWinnerToPersisted,
+} from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
   isChallengeHiddenByDomainCurrency,
@@ -2576,6 +2580,31 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           };
         })
         .filter(isDefined);
+
+      // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
+      // winners" is prompt text, and `find()` happily matches the same entry twice — which would put
+      // one creator on two places. That creator has at most one `ChallengeWinner` row to be paid
+      // for, so the extra placement is a duplicate, not a second prize. Dropped HERE, before the
+      // create loop, rather than at the payout: it keeps the duplicate from conflicting against the
+      // row its own twin just inserted, which would otherwise fire the place-divergence warning and
+      // counter for an anomaly that is not a re-pick at all. (Parity with the cron path.)
+      const { winners: dedupedWinners, dropped: droppedWinners } =
+        dedupeWinnersForPayout(winningEntries);
+      if (droppedWinners.length) {
+        winningEntries = dedupedWinners;
+        await logToAxiom({
+          type: 'warning',
+          name: 'challenge-winner-duplicate-pick',
+          message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${challengeId}`,
+          challengeId,
+          droppedUserIds: droppedWinners.map((entry) => entry.userId),
+          droppedPlaces: droppedWinners.map((entry) => entry.position),
+        }).catch(() => undefined);
+        recordChallengeWinnerDuplicatePick({
+          source: challenge.source,
+          count: droppedWinners.length,
+        });
+      }
 
       // Create ChallengeWinner records, then pay the placement that is PERSISTED rather than the
       // one just picked. A user already recorded as a winner of this challenge cannot get a second
