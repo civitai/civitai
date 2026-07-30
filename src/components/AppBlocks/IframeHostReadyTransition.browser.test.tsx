@@ -47,9 +47,12 @@ import { renderWithProviders } from '../../../test/component-setup';
  * React internals. Every other test here runs the un-batched path too, so both
  * scheduling shapes are pinned.
  *
- * Also covered: H-11 in both directions (a late ack after `fatal` / `timeout` /
- * `no_token` must apply nothing and emit no `ok` beacon), emit-once semantics,
- * and untrusted-payload height validation.
+ * Also covered: H-11 — a BLOCK_READY that loses the race to a terminal state must
+ * apply nothing and emit no `ok` beacon. Read the note on the H-11 describe block
+ * for which of those tests exercise the guard DIRECTLY (the batched
+ * `BLOCK_ERROR{fatal}` pair) versus which pin only the terminal outcome
+ * (`timeout` / `no_token`, where a late ack is undeliverable). Plus emit-once
+ * semantics and untrusted-payload height validation.
  */
 
 // `vi.mock` is hoisted, so the per-test levers must live in a hoisted block the
@@ -227,10 +230,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // ── beacon plumbing ──────────────────────────────────────────────────────────
 let fetchSpy: ReturnType<typeof vi.spyOn>;
 // Direct observation of side effect #2. Counting BLOCK_INIT postMessages instead
-// would be VACUOUS: the same-origin iframe REPLACES its `contentWindow` when its
-// document loads, so a listener attached to the window we can reach from the test
-// never sees the host's posts (verified — it captured 0, so the assertion could
-// never fail). Spying the controller method the handler calls is the honest
+// would be VACUOUS: when the same-origin iframe's document loads, the inner global
+// is swapped out (the `WindowProxy` object identity is preserved, but the listener
+// registered on the pre-load global is not), so a listener the test attaches never
+// sees the host's posts — verified, it captured 0, meaning the assertion could
+// never have failed. Spying the controller method the handler calls is the honest
 // observable, and it IS the guard under test.
 let notifyReadySpy: ReturnType<typeof vi.spyOn>;
 
@@ -334,8 +338,10 @@ describe('IframeHost ready transition — emit-once / apply-once semantics', () 
 
   test('a later ack WITHOUT a usable height does not erase the height an earlier ack in the same batch supplied', async () => {
     // The regression direction of "last ack wins": a block that acks with a height
-    // and then re-acks bare (or with a height the shape/value guards reject) must
-    // keep the height it actually stated. Without the `!== undefined` stash guard
+    // and then re-acks bare (or with a payload the shape guard reduces to `{}`)
+    // must keep the height it actually stated. Both re-acks below land on
+    // `payload.height === undefined`, so they exercise the same single branch —
+    // they're belt-and-braces, not two separately-pinned routes. Without the `!== undefined` stash guard
     // the ref resets and the frame stays pinned at minHeight — a case the OLD code
     // got right (its eager path applied the FIRST ack), so this would have turned
     // the fix into a regression.
@@ -499,22 +505,28 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
   // rendering a framed BlockFallback, so `block-iframe` is gone — which is how
   // FRAME-1 is satisfied here (nothing rendered ⇒ nothing to masquerade as).
   //
-  // 🔴 CONSEQUENCE FOR HOW THESE TESTS ARE WRITTEN — read before adding one.
-  // Because the host collapses, a BLOCK_READY dispatched AFTER a terminal state
-  // is UNDELIVERABLE, not merely ignored: `usePostMessage` pins
+  // CONSEQUENCE FOR HOW THESE TESTS ARE WRITTEN — read before adding one.
+  // Because the host collapses, a BLOCK_READY dispatched AFTER a terminal state is
+  // UNDELIVERABLE, not merely ignored: `usePostMessage` pins
   // `event.source === iframeRef.current?.contentWindow`, and once the iframe
-  // unmounts `iframeRef.current` is null, so every inbound message is dropped
-  // before the BLOCK_READY handler runs. There is therefore NO way to exercise the
-  // effect's `status !== 'ready'` guard via a post-terminal ack, and a test that
-  // dispatches one and asserts "nothing happened" is VACUOUS — it would pass with
-  // the guard entirely removed. (An earlier draft of this file had exactly that;
-  // it was caught in review.)
-  // So the coverage is split deliberately:
-  //   - the guard itself is exercised by the BATCHED `BLOCK_ERROR{fatal}` case
-  //     below, where both messages arrive while the iframe is still mounted;
-  //   - the `timeout` / `no_token` tests assert the TERMINAL OUTCOME (error beacon
-  //     only, host collapsed, still no `ok` beacon) plus the drop itself, and say
-  //     so rather than claiming to test the guard.
+  // unmounts that comparand is `undefined` while `MessageEvent.source` is never
+  // `undefined` (absent → `null`) — so NO source value can pass and the message is
+  // dropped before the BLOCK_READY handler runs. Two things follow:
+  //   - The late `dispatchEvent` in the `timeout` / `no_token` tests below is a
+  //     NO-OP that asserts nothing on its own — nothing there distinguishes
+  //     "dropped at the transport" from "delivered and correctly ignored". Treat it
+  //     as documentation of the scenario, not as coverage.
+  //   - Those tests still have real teeth, just from a different line: their
+  //     terminal-OUTCOME assertions (exactly one `error` beacon of the right class,
+  //     no `ok` beacon, host collapsed). Removing the ready effect's
+  //     `status !== 'ready'` guard fails BOTH of them, because the ready effect then
+  //     fires at mount, claims the shared `blockRenderEmittedRef`, and the failure
+  //     beacon never gets to fire. (Verified: that mutation fails 10 of the 25 tests
+  //     in this file, these two included.)
+  // The guard is *directly* exercised — ack genuinely delivered, status genuinely
+  // terminal — only by the two BATCHED `BLOCK_ERROR{fatal}` cases, where both
+  // messages arrive while the iframe is still mounted. Prefer that shape when
+  //   adding H-11 coverage.
 
   test('BLOCK_ERROR{fatal} batched with a BLOCK_READY in the same task stays fatal: no height, no ok beacon, only the error beacon', async () => {
     // The DELIVERABLE H-11 case — both messages are dispatched while the iframe
@@ -549,9 +561,6 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
     // emit-once ref, so the error beacon never gets to fire).
     renderWithProviders(<IframeHost {...baseProps} />);
     await waitForMount();
-    // Capture the live contentWindow BEFORE the collapse so the late dispatch
-    // carries the most permissive `source` a real block could ever have.
-    const preCollapseWindow = iframeEl().contentWindow;
     // Never ack → the controller's ~10s readiness timeout fires → 'timeout'.
     await vi.waitFor(
       () => {
@@ -562,13 +571,13 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
     await vi.waitFor(() => expect(errorBeacons()).toHaveLength(1));
     expect(errorBeacons()[0]).toMatchObject({ errorClass: 'timeout' });
 
-    // A late ack (the block finally woke up) changes nothing — it is dropped by the
-    // transport's source pin, because there is no longer an iframe to pin to.
+    // A late ack (the block finally woke up). Documentation only — see the
+    // describe-block note: post-collapse there is no iframe to pin to, so no
+    // `source` value can pass the transport and this asserts nothing by itself.
     window.dispatchEvent(
       new MessageEvent('message', {
         data: { type: 'BLOCK_READY', payload: { height: 640 } },
         origin: window.location.origin,
-        source: preCollapseWindow,
       })
     );
     await sleep(200);
@@ -583,7 +592,6 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
     // the timeout case above — outcome, not guard.
     renderWithProviders(<IframeHost {...baseProps} token="" />);
     await waitForMount();
-    const preCollapseWindow = iframeEl().contentWindow;
     await vi.waitFor(
       () => {
         expect(iframeQuery()).toBeNull();
@@ -597,7 +605,6 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
       new MessageEvent('message', {
         data: { type: 'BLOCK_READY', payload: { height: 640 } },
         origin: window.location.origin,
-        source: preCollapseWindow,
       })
     );
     await sleep(200);
