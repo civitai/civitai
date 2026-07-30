@@ -10,8 +10,9 @@ export const DELETE_BATCH_SIZE = 100;
 export const DEFAULT_IMAGES_PER_RUN = 25000;
 
 /**
- * The HA/Sentinel sysRedis returns a Buffer for BLOB_STRING replies, so coerce
- * before parsing — comparing the raw reply silently misreads the operator's value.
+ * sysRedis.get is typed `string | null`, but the HA/Sentinel client can return
+ * a Buffer at runtime — coerce explicitly so the type stays honest and this
+ * stays safe if the parsing below ever grows string-sensitive (`.split`, `===`).
  */
 export async function getImagePurgeBudget(): Promise<number> {
   const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.DELETED_USER_IMAGE_PURGE_LIMIT);

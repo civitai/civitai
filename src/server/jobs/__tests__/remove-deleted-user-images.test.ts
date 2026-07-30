@@ -147,4 +147,45 @@ describe('removeDeletedUserImages budget', () => {
 
     expect(result.paused).toBeUndefined();
   });
+
+  it('falls back to the default when the Redis value is not a number', async () => {
+    mockSysRedis.get.mockResolvedValue('not-a-number');
+    mockDbRead.$queryRaw
+      .mockResolvedValueOnce([{ id: 7 }])
+      .mockImplementationOnce((_strings: TemplateStringsArray, _userId: number, limit: number) =>
+        Promise.resolve(Array.from({ length: Math.min(150, limit) }, (_, i) => ({ id: i + 1 })))
+      );
+    mockDeleteImages.mockImplementation(async (ids: number[]) => ids.map((id) => ({ id })));
+
+    const result = await run();
+
+    // Default budget (25000) comfortably covers all 150 available images; a
+    // broken fallback that lets a non-finite budget through would cap
+    // `remaining` at NaN and process nothing.
+    expect(mockDeleteImages).toHaveBeenCalledTimes(2);
+    expect(mockDeleteImages.mock.calls[0][0]).toHaveLength(100);
+    expect(mockDeleteImages.mock.calls[1][0]).toHaveLength(50);
+    expect(result.deletedImages).toBe(150);
+    expect(result.paused).toBeUndefined();
+  });
+
+  it('falls back to the default when the Redis value is negative', async () => {
+    mockSysRedis.get.mockResolvedValue('-5');
+    mockDbRead.$queryRaw
+      .mockResolvedValueOnce([{ id: 7 }])
+      .mockImplementationOnce((_strings: TemplateStringsArray, _userId: number, limit: number) =>
+        Promise.resolve(Array.from({ length: Math.min(150, limit) }, (_, i) => ({ id: i + 1 })))
+      );
+    mockDeleteImages.mockImplementation(async (ids: number[]) => ids.map((id) => ({ id })));
+
+    const result = await run();
+
+    // A broken fallback that lets -5 through would make the job's own
+    // `budget <= 0` gate pause it instead of running with the default.
+    expect(mockDeleteImages).toHaveBeenCalledTimes(2);
+    expect(mockDeleteImages.mock.calls[0][0]).toHaveLength(100);
+    expect(mockDeleteImages.mock.calls[1][0]).toHaveLength(50);
+    expect(result.deletedImages).toBe(150);
+    expect(result.paused).toBeUndefined();
+  });
 });
