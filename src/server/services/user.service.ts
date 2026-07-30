@@ -1087,8 +1087,11 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
  *
  * deleteUser scrubs username, email, paddleCustomerId, image, profilePictureId from the User row
  * and sets deletedAt. It also hard-deletes Account / Session / UserEngagement rows and reassigns
- * the user's Models to userId = -1. We can only restore what survives the deletion: the User row's
- * scrubbed fields (caller supplies them) and the orphaned Model ownership (via ClickHouse audit).
+ * the user's Models to userId = -1.
+ * We can only restore what survives the deletion: the User row's scrubbed fields (caller
+ * supplies them) and the orphaned Model ownership (via ClickHouse audit). Images and Posts are
+ * hard-deleted by the remove-deleted-user-images job, S3 objects included, and are never
+ * recoverable — restoring an account brings back its models but not its images.
  *
  * Account (OAuth links) and Session rows are unrecoverable; the user signs in fresh post-restore
  * (email magic-link or OAuth) which creates new rows.

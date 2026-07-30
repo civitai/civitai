@@ -61,8 +61,9 @@ two-step as `src/pages/api/mod/delete-user-images.ts`.
 
 Deriving the worklist from `User.deletedAt` rather than writing queue rows means:
 
-- No migration. Every migration in this repo is applied by hand per environment; avoiding one
-  is a real saving.
+- One small migration: a partial index on `User."deletedAt"`. Without it the job's driving
+  query is a parallel seq scan over 12.7M users (~1.7s, ~612K buffers) every run. Still no
+  schema change and no backfill.
 - Idempotent and retry-safe. A crash mid-user resumes on the next tick.
 - No queue state to drift out of sync with reality.
 - The 7.2M-image backlog is covered by the same code path, with no separate backfill script.
@@ -142,4 +143,4 @@ Gathered during design; recorded so the plan does not re-derive them.
 | `src/server/services/user.service.ts` | Update the `restoreUser` doc comment |
 | `src/server/services/image.service.ts` | Reused unchanged (`deleteImages`) |
 
-No schema migration. No UI change. No new tRPC procedure.
+One index-only migration (hand-applied). No schema change, no UI change, no new tRPC procedure.
