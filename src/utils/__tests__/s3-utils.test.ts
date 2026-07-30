@@ -358,7 +358,7 @@ describe('checkFileExists — SDK error shape → tri-state mapping', () => {
 
   it('returns true when HeadObject succeeds', async () => {
     const s3 = { send: vi.fn().mockResolvedValue({}) } as never;
-    await expect(checkFileExists(key, { s3, bucket: 'civitai-media-uploads' })).resolves.toBe(true);
+    await expect(checkFileExists(key, { s3, bucket: 'uploads-bucket' })).resolves.toBe(true);
   });
 
   it.each([
@@ -368,7 +368,7 @@ describe('checkFileExists — SDK error shape → tri-state mapping', () => {
     ['a bare 404', { name: 'UnrecognizedClientError', $metadata: { httpStatusCode: 404 } }],
   ])('maps %s to false (definitively absent)', async (_label, error) => {
     await expect(
-      checkFileExists(key, { s3: s3Throwing(error), bucket: 'civitai-media-uploads' })
+      checkFileExists(key, { s3: s3Throwing(error), bucket: 'uploads-bucket' })
     ).resolves.toBe(false);
   });
 
@@ -391,7 +391,7 @@ describe('checkFileExists — SDK error shape → tri-state mapping', () => {
     ['an aborted request', Object.assign(new Error('Request aborted'), { name: 'AbortError' })],
   ])('maps %s to null (unknown — caller fails open)', async (_label, error) => {
     await expect(
-      checkFileExists(key, { s3: s3Throwing(error), bucket: 'civitai-media-uploads' })
+      checkFileExists(key, { s3: s3Throwing(error), bucket: 'uploads-bucket' })
     ).resolves.toBeNull();
   });
 
@@ -399,7 +399,7 @@ describe('checkFileExists — SDK error shape → tri-state mapping', () => {
     const s3 = { send: vi.fn().mockResolvedValue({}) };
     const abortSignal = AbortSignal.timeout(5_000);
 
-    await checkFileExists(key, { s3: s3 as never, bucket: 'civitai-media-uploads', abortSignal });
+    await checkFileExists(key, { s3: s3 as never, bucket: 'uploads-bucket', abortSignal });
 
     expect(s3.send).toHaveBeenCalledTimes(1);
     // Second arg is the SDK's per-call HttpHandlerOptions — the only place a caller can bound
