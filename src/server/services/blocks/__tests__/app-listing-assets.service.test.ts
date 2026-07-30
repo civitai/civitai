@@ -294,6 +294,37 @@ describe('pure helpers', () => {
     expect(cover).not.toContain('<x>');
   });
 
+  // DRIFT GUARD (cross-surface): the GENERATED asset SVGs and the CLIENT
+  // render-time fallback (AppListingCard / AppListingDetailBody, via
+  // `listingPlaceholderGradient`) must derive from the SAME seed + stops. They
+  // used to be two hand-rolled designs that silently diverged — a generated
+  // seeded-hue icon next to a uniform grey cover placeholder. If someone
+  // recolours one side only, this fails.
+  it('generated SVG stops match the client placeholder gradient stops', async () => {
+    const { buildPlaceholderIconSvg, buildPlaceholderCoverSvg } = await import(
+      '../app-listing-assets.service'
+    );
+    const { listingPlaceholderGradient, listingPlaceholderSeed, placeholderHues, placeholderStop } =
+      await import('~/shared/constants/app-listing-placeholder.constants');
+
+    const slug = 'cool-app';
+    const category = 'games';
+    const { hue, hue2 } = placeholderHues(listingPlaceholderSeed(slug, category));
+
+    const icon = buildPlaceholderIconSvg({ slug, category, name: 'Cool App' });
+    expect(icon).toContain(placeholderStop('icon', 'from', hue));
+    expect(icon).toContain(placeholderStop('icon', 'to', hue2));
+
+    const cover = buildPlaceholderCoverSvg({ slug, category, name: 'Cool App' });
+    expect(cover).toContain(placeholderStop('cover', 'from', hue));
+    expect(cover).toContain(placeholderStop('cover', 'to', hue2));
+
+    // …and the CSS the client renders uses those very same stop strings.
+    const css = listingPlaceholderGradient({ slug, category, surface: 'cover' });
+    expect(css).toContain(placeholderStop('cover', 'from', hue));
+    expect(css).toContain(placeholderStop('cover', 'to', hue2));
+  });
+
   it('chooseScreenshotSource: existing → migrate(real only) → none', async () => {
     const { chooseScreenshotSource } = await import('../app-listing-assets.service');
     const base = {

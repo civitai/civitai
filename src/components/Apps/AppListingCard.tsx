@@ -18,6 +18,10 @@ import {
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  appInitial,
+  listingPlaceholderGradient,
+} from '~/shared/constants/app-listing-placeholder.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -61,10 +65,12 @@ function ListingCover({
   coverUrl,
   category,
   name,
+  slug,
 }: {
   coverUrl: string | null;
   category: string | null;
   name: string;
+  slug: string;
 }) {
   // A non-null coverUrl can still 404 (the server derives it from a first-
   // screenshot fallback, whose Image can dangle) — fall back to the category
@@ -84,18 +90,20 @@ function ListingCover({
     );
   }
   const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
+  // Per-app SEEDED gradient (not one uniform grey for every coverless listing) —
+  // same seed + stops the generated cover SVG uses, so a listing that later gets
+  // a real generated asset keeps its colour identity. See
+  // `~/shared/constants/app-listing-placeholder.constants`.
   return (
     <Card.Section>
       <Box
         aria-hidden
         h={140}
         className="flex items-center justify-center"
-        style={{
-          background:
-            'linear-gradient(135deg, var(--mantine-color-dark-5) 0%, var(--mantine-color-dark-7) 100%)',
-        }}
+        data-listing-cover-placeholder
+        style={{ background: listingPlaceholderGradient({ slug, category, surface: 'cover' }) }}
       >
-        <PlaceholderIcon size={44} className="opacity-40" />
+        <PlaceholderIcon size={44} className="opacity-60" />
       </Box>
     </Card.Section>
   );
@@ -176,7 +184,12 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
 
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
-      <ListingCover coverUrl={card.coverUrl} category={card.category} name={card.name} />
+      <ListingCover
+        coverUrl={card.coverUrl}
+        category={card.category}
+        name={card.name}
+        slug={card.slug}
+      />
       <Stack gap="sm" h="100%" pt="sm">
         <Group gap="xs" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
           {/* App icon (square, publisher-supplied). Decorative — the title
@@ -188,8 +201,23 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             radius="md"
             size={40}
             style={{ flexShrink: 0 }}
+            data-listing-icon-placeholder={card.iconUrl == null ? '' : undefined}
+            styles={{
+              // Missing icon → the SAME seeded monogram the generated icon SVG
+              // renders (per-app hue + first-alphanumeric initial), instead of
+              // Mantine's default flat grey placeholder.
+              placeholder: {
+                background: listingPlaceholderGradient({
+                  slug: card.slug,
+                  category: card.category,
+                  surface: 'icon',
+                }),
+                color: 'var(--mantine-color-white)',
+                fontWeight: 700,
+              },
+            }}
           >
-            {card.name.charAt(0).toUpperCase()}
+            {appInitial(card.name, card.slug)}
           </Avatar>
           <Stack gap={2} style={{ minWidth: 0 }}>
             {/* Title links to the unified detail so the detail is reachable
