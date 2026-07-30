@@ -137,6 +137,7 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { filterModelMetaForClient, isMinorAutoFlagged } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
@@ -503,8 +504,10 @@ export const getModelHandler = async ({
       },
       canGenerate: mappedVersions.some((v) => v.canGenerate),
       hasSuggestedResources: suggestedResources > 0,
+      // Computed from the raw meta: filterModelMetaForClient strips the snapshot.
+      minorAutoFlagged: isMinorAutoFlagged(model.meta as ModelMeta | null),
       meta: model.meta
-        ? filterSensitiveProfanityData(model.meta as ModelMeta, ctx?.user?.isModerator)
+        ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,
       tagsOnModels:
         tagsOnModels[model.id]?.tags
@@ -608,9 +611,7 @@ export const getModelsPagedSimpleHandler = async ({
 
       return {
         ...model,
-        meta: model.meta
-          ? filterSensitiveProfanityData(model.meta as ModelMeta, isModerator)
-          : null,
+        meta: model.meta ? filterModelMetaForClient(model.meta as ModelMeta, isModerator) : null,
         modelVersion: version
           ? {
               ...version,
