@@ -1,0 +1,75 @@
+import { describe, expect, it } from 'vitest';
+import { filterModelMetaForClient, isMinorAutoFlagged } from '~/server/utils/minor-flag-meta';
+import type { MinorFlagSnapshot, ModelMeta } from '~/server/schema/model.schema';
+
+const snapshot = (over: Partial<MinorFlagSnapshot> = {}): MinorFlagSnapshot => ({
+  at: '2026-07-30T00:00:00.000Z',
+  source: 'auto',
+  prevMinorImageIds: [1, 2, 3],
+  ...over,
+});
+
+describe('isMinorAutoFlagged', () => {
+  it('is true for a raw automated flag', () => {
+    expect(isMinorAutoFlagged({ minorFlagSnapshot: snapshot() })).toBe(true);
+  });
+
+  it('stays true after a moderator confirms it and source flips to manual', () => {
+    // confirmMinorHashAutoFlag rewrites source but preserves the origin in confirmedFrom.
+    expect(
+      isMinorAutoFlagged({
+        minorFlagSnapshot: snapshot({ source: 'manual', confirmedFrom: 'auto' }),
+      })
+    ).toBe(true);
+  });
+
+  it('is false for a genuine manual flag', () => {
+    expect(isMinorAutoFlagged({ minorFlagSnapshot: snapshot({ source: 'manual' }) })).toBe(false);
+  });
+
+  it('is false for a legacy flag with no snapshot, and for null/undefined meta', () => {
+    expect(isMinorAutoFlagged({})).toBe(false);
+    expect(isMinorAutoFlagged(null)).toBe(false);
+    expect(isMinorAutoFlagged(undefined)).toBe(false);
+  });
+});
+
+describe('filterModelMetaForClient', () => {
+  const full: ModelMeta = {
+    unpublishedReason: 'other',
+    minorFlagSnapshot: snapshot(),
+    minorHashDismissed: { at: '2026-07-30T00:00:00.000Z', by: 7 },
+    minorHashCleared: { at: '2026-07-30T00:00:00.000Z' },
+    profanityMatches: ['badword'],
+  };
+
+  it('strips all three minor-hash keys for a normal user', () => {
+    const result = filterModelMetaForClient(full, false);
+    expect(result.minorFlagSnapshot).toBeUndefined();
+    expect(result.minorHashDismissed).toBeUndefined();
+    expect(result.minorHashCleared).toBeUndefined();
+  });
+
+  it('strips them for moderators too', () => {
+    // The moderator UI reads these through its own procedures, never model.getById.
+    const result = filterModelMetaForClient(full, true);
+    expect(result.minorFlagSnapshot).toBeUndefined();
+    expect(result.minorHashDismissed).toBeUndefined();
+    expect(result.minorHashCleared).toBeUndefined();
+  });
+
+  it('keeps unrelated meta keys intact', () => {
+    expect(filterModelMetaForClient(full, false).unpublishedReason).toBe('other');
+  });
+
+  it('still applies profanity filtering: hidden for users, kept for moderators', () => {
+    expect(filterModelMetaForClient(full, false).profanityMatches).toBeUndefined();
+    expect(filterModelMetaForClient(full, true).profanityMatches).toEqual(['badword']);
+  });
+
+  it('does not mutate the input', () => {
+    const input: ModelMeta = { minorFlagSnapshot: snapshot() };
+    filterModelMetaForClient(input, false);
+    expect(input.minorFlagSnapshot).toBeDefined();
+  });
+});
