@@ -1,4 +1,4 @@
-import { Alert, Button, Skeleton, Stack, Text } from '@mantine/core';
+import { Alert, Button, Group, Loader, Skeleton, Stack, Text } from '@mantine/core';
 import { IconRefresh } from '@tabler/icons-react';
 
 type FallbackReason = 'loading' | 'token_error' | 'timeout' | 'fatal_block_error';
@@ -16,6 +16,33 @@ interface BlockFallbackProps {
    * for the non-terminal `loading` reason.
    */
   onRetry?: () => void;
+  /**
+   * In-progress feedback for the host's BOUNDED AUTO-RETRY. When set, the host
+   * has already scheduled another automatic attempt: the fallback still shows the
+   * REAL terminal message (the error is never masked or delayed) and adds a line
+   * saying a retry is under way and which attempt it is — so a user who then
+   * presses the button doesn't experience "the button does nothing".
+   *
+   * `attempt`/`maxAttempts` are 1-based. `animate:false` (driven by
+   * `prefers-reduced-motion: reduce` upstream) suppresses the spinner; the copy
+   * alone then carries the state.
+   */
+  autoRetry?: { attempt: number; maxAttempts: number; animate: boolean };
+  /**
+   * Number of AUTOMATIC attempts already spent. Renders an honest "we already
+   * tried N times" note — only when > 0, so a surface with no auto-retry wired
+   * never claims a retry that didn't happen.
+   */
+  autoRetriesSpent?: number;
+  /**
+   * Make the manual Retry affordance UNMISSABLE. Set by PageBlockHost once the
+   * host has SETTLED (no further automatic attempt is coming) — that is the
+   * moment the user must notice the button, which is precisely what was reported
+   * as missed. Renders a filled, full-width, medium button instead of the small
+   * subdued default. Default `false` keeps the model-slot IframeHost and every
+   * other existing caller byte-identical.
+   */
+  prominentRetry?: boolean;
 }
 
 const DEFAULT_MIN_HEIGHT = 200;
@@ -53,6 +80,9 @@ export function BlockFallback({
   blockName,
   minHeight = DEFAULT_MIN_HEIGHT,
   onRetry,
+  autoRetry,
+  autoRetriesSpent = 0,
+  prominentRetry = false,
 }: BlockFallbackProps) {
   if (reason === 'loading') {
     return <Skeleton h={minHeight} radius="md" data-block-fallback="loading" />;
@@ -68,15 +98,47 @@ export function BlockFallback({
     <Alert color={copy.color} title={title} data-block-fallback={reason}>
       <Stack gap="sm">
         <Text size="sm">{copy.hint}</Text>
+        {autoRetry ? (
+          // Live region: the attempt count changes while the user is already
+          // looking at a static error, so announce it instead of mutating the
+          // text silently.
+          <Group
+            gap="xs"
+            data-block-fallback-autoretry="true"
+            // Observable animation state — `false` under prefers-reduced-motion.
+            data-block-fallback-autoretry-animate={autoRetry.animate ? 'true' : 'false'}
+            role="status"
+            aria-live="polite"
+          >
+            {/* Reduced motion: no spinner at all — the copy carries the state. */}
+            {autoRetry.animate && <Loader size="xs" aria-hidden />}
+            <Text size="sm" c="dimmed">
+              {`Retrying automatically… (attempt ${autoRetry.attempt} of ${autoRetry.maxAttempts})`}
+            </Text>
+          </Group>
+        ) : autoRetriesSpent > 0 ? (
+          <Text size="sm" c="dimmed" data-block-fallback-autoretry-spent={String(autoRetriesSpent)}>
+            {autoRetriesSpent === 1
+              ? 'We already retried once automatically.'
+              : `We already retried ${autoRetriesSpent} times automatically.`}
+          </Text>
+        ) : null}
         {onRetry && (
           <Button
-            variant="light"
+            // Once automatic recovery has settled, the button IS the path
+            // forward — so it stops being a small subdued affordance.
+            variant={prominentRetry ? 'filled' : 'light'}
             color={copy.color}
-            size="xs"
-            leftSection={<IconRefresh size={16} />}
+            size={prominentRetry ? 'md' : 'xs'}
+            fullWidth={prominentRetry}
+            leftSection={<IconRefresh size={prominentRetry ? 18 : 16} />}
             onClick={onRetry}
             data-block-fallback-retry="true"
+            data-block-fallback-retry-prominent={prominentRetry ? 'true' : 'false'}
           >
+            {/* The accessible name stays "Retry" in BOTH states: existing
+                callers/tests target one stable name, and a user reading the
+                button never has to re-learn it mid-failure. */}
             Retry
           </Button>
         )}

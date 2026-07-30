@@ -106,6 +106,13 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        // Was MISSING: IframeHost calls `trpc.apps.shared.report.useMutation()`
+        // unconditionally at render, so without this stub every test in this file
+        // crashed at mount with "Cannot read properties of undefined (reading
+        // 'useMutation')". These checks are report-only, so the whole suite — the
+        // guard for the ready-transition / beacon-exclusivity invariants — had been
+        // silently red.
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },

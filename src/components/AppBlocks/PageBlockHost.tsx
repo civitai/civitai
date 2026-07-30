@@ -10,6 +10,7 @@ import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
+  decideAutoRetry,
   grantedPageScopes,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
@@ -288,6 +289,15 @@ export function PageBlockHost({
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
   // frame instead of a wedged one. See `handleRetry`.
   const [reloadNonce, setReloadNonce] = useState<number>(0);
+  // BOUNDED AUTO-RETRY budget for this mount. State (not a ref) because the
+  // scheduling effect AND the render-failure beacon both derive from it, so it
+  // has to drive re-renders. `attempts` counts every automatic attempt;
+  // `reminted` counts the subset that spent a token re-mint (the rate-limit cap).
+  // A MANUAL Retry deliberately touches NEITHER — see handleRetry.
+  const [autoRetryBudget, setAutoRetryBudget] = useState<{
+    attempts: number;
+    reminted: number;
+  }>({ attempts: 0, reminted: 0 });
   // Active async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD).
   // Keyed by the OPEN_IMAGE_UPLOAD requestId; each entry mounts one
   // BlockImageScanPoller (below) that survives the upload modal's close, polls
@@ -311,6 +321,25 @@ export function PageBlockHost({
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+
+  // BOUNDED AUTO-RETRY — the single decision both consumers read (the scheduling
+  // effect near `handleRetry`, and the render-FAILURE beacon below), so they can
+  // never disagree about whether the host has SETTLED on this terminal state.
+  // `canRemint` is whether a token re-mint is even wired: without it an auth
+  // terminal can never be recovered, so we must not burn an attempt on it.
+  const canRemint = onRetryToken != null;
+  const autoRetry = useMemo(
+    () =>
+      decideAutoRetry({
+        status,
+        attempts: autoRetryBudget.attempts,
+        reminted: autoRetryBudget.reminted,
+        canRemint,
+      }),
+    [status, autoRetryBudget.attempts, autoRetryBudget.reminted, canRemint]
+  );
+  /** True once the host has stopped auto-recovering: this terminal state is final. */
+  const autoRetrySettled = autoRetry.kind === 'none';
 
   // LAUNCH REVEAL — `prefers-reduced-motion: reduce` collapses the whole thing to
   // 0ms: no transition is ever emitted, and the overlay is dropped on the effect
@@ -575,9 +604,41 @@ export function PageBlockHost({
   // reported a fatal error ('fatal'), its token never resolved ('no_token'), or
   // the mint hard-failed ('error'). Sharing the SAME emit-once ref makes ok/error
   // mutually exclusive per mount. Fire-and-forget (beacon swallows failures).
+  //
+  // 🔴 BEACON SEMANTICS UNDER AUTO-RETRY (deliberate, and what the alert on
+  // `civitai_app_block_renders_total` measures):
+  //   ONE beacon per host MOUNT, reporting the outcome the host SETTLES on. The
+  //   whole bounded automatic retry sequence is ONE logical page load:
+  //     - `ok`    — the first BLOCK_READY, whichever attempt produced it. A load
+  //                 that succeeds on attempt 2 emits exactly one `ok`, never an
+  //                 `error` first.
+  //     - `error` — a terminal state reached with NO further automatic attempt
+  //                 coming (`autoRetrySettled`). N failed automatic attempts
+  //                 therefore emit ONE `error`, not N.
+  //     - nothing — an intermediate terminal state that will be auto-retried.
+  //   Once either fires, the mount never emits again: `handleRetry` (user-initiated,
+  //   after the host already settled) deliberately does NOT reset the emit-once ref.
+  //   So the metric's denominator stays "page loads" and its numerator stays "page
+  //   loads the platform could not recover on its own" — which is the thing worth
+  //   paging on. Manual user retries are a separate, currently-unmeasured signal.
+  //
+  // 🔴 TWO KNOWN COSTS OF THAT CHOICE, stated so they aren't rediscovered as bugs:
+  //   1. UNMOUNT DURING THE SEQUENCE EMITS NOTHING. A user who navigates away
+  //      while a retry is pending produces no beacon at all, where before they
+  //      produced an `error`. The window grew from ~0s to the length of the whole
+  //      bounded sequence. There is no unmount flush today (adding one is the
+  //      obvious follow-up — `sendBlockRender` already sets `keepalive:true`
+  //      precisely so a beacon survives unload).
+  //   2. THE `error` NUMERATOR NOW MEANS SOMETHING NARROWER — "failures the
+  //      platform could not self-recover", not "failures". A regression that only
+  //      increases TRANSIENT launch failures is invisible to a ratio built on it.
+  //      The `BlockRenderFailureRate` alert in datapacket-talos still describes it
+  //      the old way; its wording needs a companion update.
   useEffect(() => {
     if (status !== 'timeout' && status !== 'fatal' && status !== 'no_token' && status !== 'error')
       return;
+    // Another automatic attempt is scheduled — the host has NOT settled yet.
+    if (!autoRetrySettled) return;
     if (blockRenderEmittedRef.current) return;
     blockRenderEmittedRef.current = true;
     sendBlockRender({
@@ -585,9 +646,12 @@ export function PageBlockHost({
       blockInstanceId,
       slotId: 'app.page',
       status: 'error',
+      // Kept within the server-side KNOWN_ERROR_CLASSES enum
+      // (timeout|fatal|no_token|error) — the auto-retry adds no new class, so the
+      // existing `error_class` prom label and its alert are unchanged.
       errorClass: status,
     });
-  }, [status, appBlockId, blockInstanceId]);
+  }, [status, autoRetrySettled, appBlockId, blockInstanceId]);
 
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
@@ -2593,8 +2657,7 @@ export function PageBlockHost({
   //      (defensive — the init effect's cleanup already disposes + nulls it when
   //      status left 'loading'; this guarantees no orphaned interval/timeout
   //      survives a retry).
-  //   2. Reset the per-mount handshake/analytics guards so init re-fires and a
-  //      successful retry re-emits exactly one impression.
+  //   2. Reset the per-mount handshake guard so init re-fires.
   //   3. Bump `reloadNonce` → re-keys the <iframe> → React remounts it (fresh
   //      contentWindow), so the re-armed handshake talks to a clean frame.
   //   4. Flip status back to 'loading'. shouldStartInit then re-passes and the
@@ -2617,25 +2680,83 @@ export function PageBlockHost({
   // token flips the props, init re-fires, and a successful mint loads the block.
   // For `fatal`/`timeout` the token was fine — the block crashed or didn't ack —
   // so remount-only (no re-mint) is the right, unchanged behavior. refresh()
-  // aborts any in-flight mint and the endpoint is rate-limited (60/min); Retry is
-  // user-initiated, so no auto-retry loop is added.
+  // aborts any in-flight mint and the endpoint is rate-limited (60/min) — which is
+  // why the AUTOMATIC re-mints are capped at MAX_AUTO_REMINTS. A manual Retry is
+  // user-initiated and stays uncapped here (the double-click guard below plus that
+  // server-side limit bound it).
+  //
+  // The re-arm itself is shared by the MANUAL button and the BOUNDED AUTO-RETRY
+  // below — one recovery path, not two (a second path is how the two drift).
+  //
+  // 🔴 It deliberately no longer resets `blockRenderEmittedRef`. See the
+  // BEACON-SEMANTICS block on the render-failure beacon: one beacon per mount
+  // describing the outcome the host settles on.
+  const performRetry = useCallback(
+    ({ remint }: { remint: boolean }) => {
+      if (remint) onRetryToken?.();
+      controllerRef.current?.dispose();
+      controllerRef.current = null;
+      initSentRef.current = false;
+      setReloadNonce((n) => n + 1);
+      setStatus('loading');
+    },
+    [onRetryToken]
+  );
+
   const handleRetry = useCallback(() => {
     const prior = statusRef.current;
     // Double-click no-op guard (mirrors the pre-fix gate): a Retry while the
     // status is already loading/ready does nothing — no re-mint, no remount.
     if (prior === 'loading' || prior === 'ready') return;
     // AUTH failures (`error`/`no_token`) need a token re-mint — the local reset
-    // below alone can't change the upstream `token`/`tokenError` props. Fire it
-    // BEFORE the local re-arm (the rotated token then flips props → init
-    // re-fires). `fatal`/`timeout` are not auth failures → remount only.
-    if (prior === 'error' || prior === 'no_token') onRetryToken?.();
-    controllerRef.current?.dispose();
-    controllerRef.current = null;
-    initSentRef.current = false;
-    blockRenderEmittedRef.current = false;
-    setReloadNonce((n) => n + 1);
-    setStatus('loading');
-  }, [onRetryToken]);
+    // alone can't change the upstream `token`/`tokenError` props. `fatal`/`timeout`
+    // are not auth failures → remount only.
+    //
+    // A manual Retry while an automatic one is still PENDING is coherent by
+    // construction: `performRetry` flips the status back to 'loading', which makes
+    // `decideAutoRetry` return 'none', which tears down the pending backoff timer
+    // in the scheduling effect's cleanup — so exactly ONE attempt runs, the one
+    // the user asked for. It also does NOT consume the automatic budget: the user
+    // taking over shouldn't spend the platform's remaining recovery attempts.
+    performRetry({ remint: prior === 'error' || prior === 'no_token' });
+  }, [performRetry]);
+
+  // 🔴 The backoff timer must NOT depend on `performRetry`'s IDENTITY. `performRetry`
+  // is rebuilt whenever the `onRetryToken` PROP changes identity, and a caller is
+  // free to pass an inline arrow (`onRetryToken={() => refresh()}`) — that makes it a
+  // new function on every parent render. If the scheduling effect depended on it,
+  // every such render would tear down and re-arm the pending timer, so the backoff
+  // would never elapse and auto-retry would SILENTLY NEVER FIRE. Reading it through
+  // a ref keeps the effect keyed on the DECISION alone.
+  const performRetryRef = useRef(performRetry);
+  useEffect(() => {
+    performRetryRef.current = performRetry;
+  }, [performRetry]);
+
+  // BOUNDED AUTO-RETRY — arm the backoff timer for the next automatic attempt.
+  //
+  // Placed here (after `performRetry`) rather than beside the other status
+  // effects purely for declaration order. `autoRetry` is the SAME memoized
+  // decision the failure beacon reads, so a scheduled retry and a suppressed
+  // beacon can never disagree.
+  //
+  // No timer leak: the cleanup clears the pending timeout on unmount AND whenever
+  // the decision changes (a manual Retry, a recovery, a status change) — so at
+  // most one backoff timer exists at a time and none survives the component.
+  useEffect(() => {
+    if (autoRetry.kind !== 'retry') return;
+    const { delayMs, remint } = autoRetry;
+    const t = setTimeout(() => {
+      // Consume the budget FIRST so the decision recomputes to the next attempt
+      // (or to 'none') even if the retry re-fails instantly.
+      setAutoRetryBudget((b) => ({
+        attempts: b.attempts + 1,
+        reminted: b.reminted + (remint ? 1 : 0),
+      }));
+      performRetryRef.current({ remint });
+    }, delayMs);
+    return () => clearTimeout(t);
+  }, [autoRetry]);
 
   return (
     <Box
@@ -2778,7 +2899,25 @@ export function PageBlockHost({
                   aria-label={`Loading ${launchName}`}
                 />
                 <Text size="sm" c="dimmed">
-                  {`Starting ${launchName}…`}
+                  {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
+                      (manual AND automatic — both go through performRetry), so
+                      a re-attempt reads as a retry-in-progress rather than an
+                      identical "Starting …" that looks like nothing happened.
+                      This is the half of the reported defect where pressing
+                      Retry against a still-down host silently waited ~10s and
+                      re-rendered the same error.
+
+                      Deliberately NO "of N" here, and no attempt NUMBER: the
+                      fallback's pending-retry line counts AUTOMATIC attempts
+                      against a bounded ceiling, while this would count EVERY
+                      re-attempt including manual ones. Showing both put two
+                      counters on the same flow seconds apart, disagreeing —
+                      the card's "attempt 1 of 2" followed by this saying
+                      "attempt 2", and after a few manual clicks "attempt 7"
+                      against a stated maximum of 2. The bounded count belongs to
+                      the terminal card, where the budget is meaningful; this line
+                      only has to say that something is happening again. */}
+                  {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
                 </Text>
               </Stack>
             </Center>
@@ -2790,6 +2929,29 @@ export function PageBlockHost({
             reason={fallbackReason}
             blockName={sanitizeAppChromeName(appName) || blockId}
             onRetry={handleRetry}
+            // 🔴 The REAL terminal message renders the instant the status goes
+            // terminal — a pending automatic attempt is surfaced INSIDE it, never
+            // instead of it. The user is never held in a loading state waiting on
+            // a quiet retry (the silent-blank failure class), and the manual
+            // affordance stays available the whole time.
+            autoRetry={
+              autoRetry.kind === 'retry'
+                ? {
+                    attempt: autoRetry.attempt,
+                    // The ceiling REACHABLE from here, not the raw attempt cap —
+                    // an auth terminal is bounded by the lower re-mint budget, so
+                    // showing MAX_AUTO_RETRIES would promise a retry that will
+                    // never happen. Derived in decideAutoRetry.
+                    maxAttempts: autoRetry.maxAttempts,
+                    // prefers-reduced-motion: reduce → no spinner.
+                    animate: !reduceMotion,
+                  }
+                : undefined
+            }
+            autoRetriesSpent={autoRetryBudget.attempts}
+            // Automatic recovery has settled (exhausted, or never applicable):
+            // the button is now the only path forward, so make it unmissable.
+            prominentRetry={autoRetrySettled}
           />
         </Box>
       ) : null}
