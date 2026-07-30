@@ -155,7 +155,12 @@ const winnerPlaceDivergenceCounter = registerCounterWithLabels({
 const winnerDuplicatePickCounter = registerCounterWithLabels({
   name: 'challenge_winner_duplicate_pick_total',
   help: 'Winner placements dropped before payout because the same creator held more than one place in a single pick (expected to stay at zero)',
-  labelNames: ['source'] as const,
+  // `origin` separates the two layers that can drop, and it exists because `source` cannot do the
+  // job: `normSource` routes both enum drift AND a null source (the caller reads its source off a
+  // row typed `| undefined`) into `unknown`, so `source: unknown` alone cannot distinguish "the
+  // choke point caught what a caller missed" from "a caller emitted without a readable source".
+  // Those want different responses, so they get different label values rather than a shared bucket.
+  labelNames: ['source', 'origin'] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -325,14 +330,25 @@ export function recordChallengeWinnerPlaceDivergence(args: { field: 'place' | 'p
   }
 }
 
-/** `count` = how many placements were dropped, not how many picks contained a duplicate. */
+/**
+ * `count` = how many placements were dropped, not how many picks contained a duplicate.
+ *
+ * An explicit `count: 0` records NOTHING. This counter is documented as sitting flat at zero and is
+ * an alert trigger, so "I dropped nothing" must never read as "I dropped one" — an omitted `count`
+ * still defaults to 1, which is the only case where 1 is the honest answer.
+ */
 export function recordChallengeWinnerDuplicatePick(args: {
   source?: string | null;
   count?: number;
+  origin: 'caller' | 'chokepoint';
 }) {
   try {
+    if (args.count === 0) return;
     const count = isPositiveFinite(args.count) ? args.count : 1;
-    winnerDuplicatePickCounter.inc({ source: normSource(args.source) }, count);
+    winnerDuplicatePickCounter.inc(
+      { source: normSource(args.source), origin: args.origin },
+      count
+    );
   } catch {
     /* never throw from telemetry */
   }

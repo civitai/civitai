@@ -1501,8 +1501,12 @@ export async function pickWinnersForChallenge(
             droppedPlaces: droppedWinners.map((entry) => entry.position),
           }).catch(() => undefined);
           recordChallengeWinnerDuplicatePick({
-            source: challengeJudgeRow?.source,
+            // Defaulted the same way the judging call at ~:1365 defaults it: the judge row is typed
+            // `| undefined`, and letting it fall through to `unknown` would put a caller-side emit
+            // in a bucket that is meant to mean something else.
+            source: challengeJudgeRow?.source ?? ChallengeSource.System,
             count: droppedWinners.length,
+            origin: 'caller',
           });
         }
 
@@ -1536,16 +1540,17 @@ export async function pickWinnersForChallenge(
     // to the recorded ChallengeWinner.buzzAwarded) — indexing prizes[] by array position would
     // overpay when an unmatched LLM winner was filtered out above (place-2 entry at index 0
     // would get place-1 buzz), and on the retry path the array order isn't tied to place at all.
-    await withRetries(() =>
-      createBuzzTransactionMany(
-        buildWinnerPayoutTransactions({
-          challengeId: currentChallenge.challengeId,
-          title: currentChallenge.title,
-          buzzType: winnerBuzzType,
-          winners: winningEntries,
-        })
-      )
-    );
+    // Built OUTSIDE the retry closure. The output is deterministic so a rebuild would not move
+    // money, but the builder increments the duplicate-pick counter on its drop branch, and
+    // `withRetries` re-invokes up to 4 times — which would record 4x the placements actually
+    // dropped on exactly the flaky-payout run where the number matters most.
+    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+      challengeId: currentChallenge.challengeId,
+      title: currentChallenge.title,
+      buzzType: winnerBuzzType,
+      winners: winningEntries,
+    });
+    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
     log('Prizes sent');
 
     // 6. Distribute entry participation prizes

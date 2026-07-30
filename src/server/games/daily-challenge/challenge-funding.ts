@@ -410,13 +410,13 @@ export function buildWinnerPayoutTransactions({
   // removes the need to trust that a future caller remembers.
   //
   // If this branch ever fires, a caller reached the money path with duplicates and did NOT report
-  // it — the drop is real money not paid, and this counter is the only trace it leaves. It records
-  // `source: unknown` because the challenge's source is not in scope here; that is deliberate and
-  // diagnostic, since the caller-level emits always carry a real source. An `unknown` sample means
-  // "the choke point caught what a caller missed", which is a different and more alarming event
-  // than a duplicate the caller already handled.
+  // it — the drop is real money not paid, and this counter is the only trace it leaves. It is
+  // tagged `origin: 'chokepoint'` rather than being distinguished by an absent `source`: the
+  // challenge's source genuinely isn't in scope here, but `normSource` also folds enum drift and a
+  // caller's own null source into `unknown`, so `source` alone cannot tell those three apart.
   const { winners: payable, dropped } = dedupeWinnersForPayout(winners);
-  if (dropped.length) recordChallengeWinnerDuplicatePick({ count: dropped.length });
+  if (dropped.length)
+    recordChallengeWinnerDuplicatePick({ count: dropped.length, origin: 'chokepoint' });
   return payable.map((entry) => ({
     type: TransactionType.Reward,
     toAccountId: entry.userId,

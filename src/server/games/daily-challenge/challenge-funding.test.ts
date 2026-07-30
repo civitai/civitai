@@ -356,22 +356,22 @@ describe('buildWinnerPayoutTransactions', () => {
     ]);
   });
 
-  it('records the drop, so money vanishing here can never be silent', async () => {
+  // `origin: chokepoint` rather than `source`: normSource folds enum drift AND a caller's own null
+  // source into `unknown`, so source alone cannot identify a choke-point drop.
+  const readChokepointDrops = async () => {
     const client = (await import('prom-client')).default;
     const metric = client.register.getSingleMetric(
       'civitai_app_challenge_winner_duplicate_pick_total'
     ) as unknown as {
       get: () => Promise<{ values: Array<{ value: number; labels: Record<string, string> }> }>;
     } | null;
-    const readUnknownSource = async () => {
-      if (!metric) return undefined;
-      const data = await metric.get();
-      // `source: unknown` is the signal that the choke point caught what a caller missed — the
-      // caller-level emits always carry a real source.
-      return data.values.find((v) => v.labels.source === 'unknown')?.value;
-    };
+    if (!metric) return undefined;
+    const data = await metric.get();
+    return data.values.find((v) => v.labels.origin === 'chokepoint')?.value;
+  };
 
-    const before = (await readUnknownSource()) ?? 0;
+  it('records the drop, so money vanishing here can never be silent', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
 
     buildWinnerPayoutTransactions({
       challengeId: 7,
@@ -383,7 +383,46 @@ describe('buildWinnerPayoutTransactions', () => {
       ],
     });
 
-    expect(await readUnknownSource()).toBe(before + 1);
+    expect(await readChokepointDrops()).toBe(before + 1);
+  });
+
+  // The counter is documented as sitting flat at zero and is an alert trigger, so proving it fires
+  // is only half the contract — a version that increments on every payout would pass the test above
+  // and page continuously.
+  it('stays silent on a clean pick — the counter cannot drift up on normal payouts', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 22, position: 2, prize: 2500 },
+        { userId: 33, position: 3, prize: 1000 },
+      ],
+    });
+
+    expect((await readChokepointDrops()) ?? 0).toBe(before);
+  });
+
+  // Records PLACEMENTS dropped, not "a duplicate happened". With a single-duplicate fixture only,
+  // a hardcoded 1 would pass — and this counter is the sole record of how much money vanished.
+  it('records how many placements were dropped, not merely that some were', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+        { userId: 11, position: 3, prize: 1000 },
+      ],
+    });
+
+    expect(await readChokepointDrops()).toBe(before + 2);
   });
 });
 

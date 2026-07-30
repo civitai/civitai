@@ -2603,6 +2603,7 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         recordChallengeWinnerDuplicatePick({
           source: challenge.source,
           count: droppedWinners.length,
+          origin: 'caller',
         });
       }
 
@@ -2633,16 +2634,15 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     // the same builder as the cron completion path — hardcoding 'yellow' here minted yellow and
     // stranded the collected green pool for green challenges. Deterministic externalTransactionId
     // (challenge-winner-prize-{cid}-{uid}-place-{n}) keeps retries idempotent.
-    await withRetries(() =>
-      createBuzzTransactionMany(
-        buildWinnerPayoutTransactions({
-          challengeId,
-          title: challenge.title,
-          buzzType: challenge.buzzType,
-          winners: winningEntries,
-        })
-      )
-    );
+    // Built OUTSIDE the retry closure — see the matching note on the cron path. The builder emits
+    // the duplicate-pick counter on its drop branch, and `withRetries` re-invokes up to 4 times.
+    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+      challengeId,
+      title: challenge.title,
+      buzzType: challenge.buzzType,
+      winners: winningEntries,
+    });
+    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
     log('Prizes sent');
 
     // Send entry participation prizes to all eligible users
