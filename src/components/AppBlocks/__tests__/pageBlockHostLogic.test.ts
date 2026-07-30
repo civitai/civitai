@@ -343,9 +343,15 @@ describe('decideAutoRetry — the bounded automatic recovery loop', () => {
   // is no flag on the path). A kill switch whose own suite goes red is not a kill
   // switch — you would discover that mid-incident, while trying to ship the
   // one-line disable. Tests that can only hold while auto-retry is ENABLED are
-  // gated on that, so flipping the constant to 0 leaves the suite green; the
+  // gated on that, so flipping the constant to 0 leaves THIS file green; the
   // dedicated test below then asserts the feature really is off. With the feature
   // on (today) nothing is skipped, so there is no coverage loss.
+  //
+  // 🔴 SCOPE OF THAT CLAIM: this file only. `PageBlockHostAutoRetry.browser.test.tsx`
+  // deliberately asserts the ENABLED configuration end-to-end and WILL go red at 0.
+  // That is a local `pnpm test:component` cost during a rollback, not a CI one —
+  // the browser project is excluded from the CI unit job (see lint.yml) — but do
+  // not read "the suite stays green" more broadly than the unit file.
   const itWhenEnabled = MAX_AUTO_RETRIES > 0 ? it : it.skip;
 
   it('is COMPLETELY OFF when rolled back to MAX_AUTO_RETRIES = 0', () => {

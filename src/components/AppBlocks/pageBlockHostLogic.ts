@@ -466,6 +466,13 @@ export function decideAutoRetry(args: {
   // governed by the attempt cap alone. This keeps a MIXED sequence honest too: a
   // timeout followed by an auth failure has already spent an attempt but no
   // re-mint, so it correctly reads "attempt 2 of 2".
+  //
+  // Proven never to under-promise: the auth branch is only reached while
+  // `reminted < MAX_AUTO_REMINTS`, so `MAX_AUTO_REMINTS - reminted >= 1` and the
+  // result is always `>= attempt`. 🔴 It CAN still shrink across renders if the
+  // caps are ever widened past `MAX_AUTO_RETRIES === MAX_AUTO_REMINTS + 1` (e.g.
+  // 4 and 2: a timeout shows "1 of 4", a following auth failure "2 of 3"). Today's
+  // constants make that unreachable; revisit this line if they change.
   const maxAttempts = remint
     ? Math.min(MAX_AUTO_RETRIES, attempts + (MAX_AUTO_REMINTS - reminted))
     : MAX_AUTO_RETRIES;
