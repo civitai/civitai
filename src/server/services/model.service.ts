@@ -140,6 +140,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
+import { stripMinorHashMeta } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
@@ -1617,6 +1618,14 @@ export const getModelVersionsMicro = async ({
   });
 };
 
+// Mutations hand their updated row straight back to the caller, so the moderation-only
+// minor-hash keys have to come off here. Stripping beats narrowing the Prisma `select`:
+// these rows feed many callers, and the keys are only ever read back through the
+// minor-hash service's own raw SQL.
+function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
+  return { ...model, meta: stripMinorHashMeta(model.meta as ModelMeta | null) } as T;
+}
+
 export const updateModelById = async ({
   id,
   data,
@@ -1656,7 +1665,7 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
 
-  return model;
+  return withoutMinorHashMeta(model);
 };
 
 export const deleteModelById = async ({
@@ -2396,7 +2405,7 @@ export const upsertModel = async (
       // dashboard refresh right after create reads from primary.
       await preventReplicationLag('userTrainingModels', userId);
     }
-    return { ...result, meta: modelMeta };
+    return { ...result, meta: stripMinorHashMeta(modelMeta) };
   } else {
     if (!beforeUpdate) return null;
 
@@ -2538,7 +2547,7 @@ export const upsertModel = async (
     // errors); the only post-commit write left in this branch.
     await bustPublicModelResponseCache(result.id);
 
-    return result;
+    return withoutMinorHashMeta(result);
   }
 };
 
@@ -4308,7 +4317,7 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
-    return result;
+    return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({
       where: { id },
@@ -4733,7 +4742,7 @@ export const getTrainingModelsForModerators = async ({
   const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
 
   return {
-    items,
+    items: items.map(withoutMinorHashMeta),
     nextCursor,
   };
 };

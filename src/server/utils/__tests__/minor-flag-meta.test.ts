@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { filterModelMetaForClient, isMinorAutoFlagged } from '~/server/utils/minor-flag-meta';
+import {
+  filterModelMetaForClient,
+  isMinorAutoFlagged,
+  stripMinorHashMeta,
+} from '~/server/utils/minor-flag-meta';
 import type { MinorFlagSnapshot, ModelMeta } from '~/server/schema/model.schema';
 
 const snapshot = (over: Partial<MinorFlagSnapshot> = {}): MinorFlagSnapshot => ({
@@ -31,6 +35,52 @@ describe('isMinorAutoFlagged', () => {
     expect(isMinorAutoFlagged({})).toBe(false);
     expect(isMinorAutoFlagged(null)).toBe(false);
     expect(isMinorAutoFlagged(undefined)).toBe(false);
+  });
+});
+
+describe('stripMinorHashMeta', () => {
+  const full: ModelMeta = {
+    unpublishedReason: 'other',
+    minorFlagSnapshot: snapshot(),
+    minorHashDismissed: { at: '2026-07-30T00:00:00.000Z', by: 7 },
+    minorHashCleared: { at: '2026-07-30T00:00:00.000Z' },
+    profanityMatches: ['badword'],
+  };
+
+  it('removes all three minor-hash keys', () => {
+    const result = stripMinorHashMeta(full);
+    expect(result).not.toHaveProperty('minorFlagSnapshot');
+    expect(result).not.toHaveProperty('minorHashDismissed');
+    expect(result).not.toHaveProperty('minorHashCleared');
+  });
+
+  it('leaves every other key untouched — including profanityMatches', () => {
+    // Profanity filtering is filterModelMetaForClient's job, not this one's.
+    const result = stripMinorHashMeta(full);
+    expect(result.unpublishedReason).toBe('other');
+    expect(result.profanityMatches).toEqual(['badword']);
+  });
+
+  it('does not mutate the input', () => {
+    const input: ModelMeta = {
+      minorFlagSnapshot: snapshot(),
+      minorHashDismissed: { at: '2026-07-30T00:00:00.000Z', by: 7 },
+      minorHashCleared: { at: '2026-07-30T00:00:00.000Z' },
+    };
+    stripMinorHashMeta(input);
+    expect(input.minorFlagSnapshot).toBeDefined();
+    expect(input.minorHashDismissed).toBeDefined();
+    expect(input.minorHashCleared).toBeDefined();
+  });
+
+  it('passes null through', () => {
+    expect(stripMinorHashMeta(null)).toBeNull();
+  });
+
+  it('is a no-op for meta that carries none of the keys', () => {
+    expect(stripMinorHashMeta({ unpublishedReason: 'other' })).toEqual({
+      unpublishedReason: 'other',
+    });
   });
 });
 
