@@ -15,16 +15,46 @@ Occasionally, we comment back and forth as we make plans. Comments from us, are 
 @dev:* This is a new comment that needs attention
 ```
 
+## Repository Layout
+
+pnpm workspaces (`.`, `packages/*`, `apps/*`) with turbo. The root package **is**
+the main Next.js app (`src/`), not just a workspace container.
+
+- **`src/`** — the main app; most work happens here
+- **`packages/civitai-*`** — shared libraries (`auth`, `buzz`, `db`, `db-schema`,
+  `redis`, `clickhouse`, `shared`, `ui`, `telemetry`, …)
+- **`apps/*`** — spoke apps (`auth`, `moderator`, `event-engine`, `storage`,
+  `notifications`, `creator-studio`, `orchestrator-gateway`), each with its own
+  release script and tag prefix
+- **`event-engine-common`** — git submodule; `git submodule update --init` it or
+  typecheck fails with a wall of `Cannot find module`
+
+### Adding a `@civitai/*` package means editing three files
+
+A `@civitai/*` import is resolved in up to three places, and they don't all list
+the same packages today:
+
+1. `tsconfig.json` `paths`
+2. `next.config.mjs` `transpilePackages`
+3. `vitest.config.mts` `civitaiWorkspacePkgs` (vitest doesn't read tsconfig paths)
+
+Miss the third and every suite that transitively imports the package fails to
+*collect*, not merely fail.
+
 ## Tech Stack Overview
 
+**Pages Router** (`src/pages`) — there is no `app/` directory, no server
+components, no `"use client"`. Every `.ts`/`.tsx` under `src/pages` is a route, so
+no colocated helpers, components or tests live there.
+
 ### Core Technologies
-- **Framework**: Next.js 14 with TypeScript
+- **Framework**: Next.js 16 with TypeScript (`.nvmrc` pins Node 24.18.0)
 - **UI Library**: Mantine v7
 - **Styling**: Tailwind CSS + SCSS Modules
 - **Database**: PostgreSQL with Prisma ORM
 - **API**: tRPC
 - **State Management**: Zustand
-- **Authentication**: NextAuth
+- **Authentication**: custom — `src/server/auth/`, shared impl in `packages/civitai-auth`
 - **Search**: Meilisearch
 - **Image Processing**: Sharp
 
@@ -47,17 +77,24 @@ pnpm run build            # Production build
 
 ### Code Quality
 ```bash
-pnpm run typecheck        # Run TypeScript type checking
-pnpm run lint             # Run ESLint
-pnpm run prettier:check   # Check Prettier formatting
-pnpm run prettier:write   # Auto-fix Prettier formatting
+pnpm run typecheck        # full repo
+pnpm run lint             # ESLint over src/
+pnpm exec prettier --write <files>   # only what you touched — see Before Committing
 ```
 
 ### Testing
 ```bash
-pnpm test                 # Run Playwright tests
-pnpm run test:ui          # Run tests with UI
+pnpm test:unit:run        # ~8,900 unit tests (node env) — the usual one
+pnpm test:unit:run <path>  # single file; add -t "name" for a single test
+pnpm test:component       # ~860 component tests in real Chromium, slower
+pnpm test                 # Playwright e2e (tests/); preview-* need PREVIEW_URL
 ```
+
+Several dozen unit files fail to *collect* without the submodule, and the
+component suite can report two extra failures on a cold cache. Both look like you
+broke something. Run the suite on unmodified `main` first and compare — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the details and the `prettier --write`
+footgun.
 
 #### Never put unit tests under `src/pages`
 Next.js 16 treats **every** `.ts`/`.tsx` file under `src/pages` (incl. nested `__tests__/`) as a route, and `next build` runs a route-type validator over it. A Vitest test file there fails the build with `Type '...test' does not satisfy the constraint 'ApiRouteConfig'. Property 'default' is missing` — and **only `next build` catches it**: `pnpm typecheck`, `pnpm test`/vitest, and the CI typecheck/unit/component tasks all pass, so it sneaks through to the preview `build-image` step. Keep handler tests in a `__tests__/` dir **outside** `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias. (Bit us on PR #2653.)
@@ -82,118 +119,53 @@ pnpm run release:major    # Major release (x.0.0)
 ```
 **IMPORTANT**: Never run release commands without explicit user approval. These commands bump the version, push tags, and rebase the release branch.
 
-## Server-Side Architecture Map
+## `src/server`
 
-`src/server/` holds the most-edited (and largest) code in the repo. Read the *specific* file before changing it — several are huge, so grep within them rather than reading end-to-end (`services/image.service.ts` is ~7.9K lines).
+Layered `routers/` (zod input in `schema/`) -> `controllers/` -> `services/` -> `db/`,
+plus `search-index/`, `redis/`, `jobs/`, `metrics/`. **Grep for the symbol** — the big
+services are 4-8K lines (`image.service.ts` is 8.2K).
 
-- **tRPC API** — `trpc.ts` (root router + procedure helpers), `createContext.ts`, `middleware.trpc.ts`, `routers/` (~93 per-domain routers), `controllers/`, `schema/` (zod input contracts), `selectors/` (Prisma `select` fragments).
-- **Images** — `services/image.service.ts` (**~7.9K lines**; the hot feed path — `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API surface `src/pages/api/v1/images/index.ts`; index sync `search-index/images.search-index.ts`.
-- **Models** — `services/model.service.ts`, `search-index/models.search-index.ts`.
-- **Search (Meilisearch)** — `meilisearch/client.ts` (tags requests with `X-Search-Actor`), `meilisearch/cleanup.ts`, `search-index/base.search-index.ts` (shared sync engine).
-- **Redis / caching** — `redis/client.ts` (clients incl. sysRedis), `redis/caches.ts` (`createCachedObject` defs + TTLs, e.g. `imageMetaCache`, `tagIdsForImagesCache`), `utils/cache-helpers.ts`.
-- **Orchestrator (generation)** — `orchestrator/get-orchestrator-token.ts` (`getOrchestratorToken`), `services/orchestrator/orchestrator.service.ts`.
-- **Auth** — `auth/next-auth-options.ts`, `auth/session-user.ts`, `auth/token-refresh.ts`.
-- **Jobs (cron)** — `jobs/job.ts` (runner) + individual jobs `jobs/*.ts` (e.g. `entity-moderation.ts`, `search-index-sync.ts`).
-- **Metrics / analytics** — `metrics/*.metrics.ts` (ClickHouse-backed entity metrics), `clickhouse/`.
-- **DB** — `db/db-helpers.ts` (raw pg-pool config: `connectionTimeoutMillis`, labeled pool gauges), Prisma client; schema `prisma/schema.prisma`. **Migrations are applied manually — see the Database rule above.**
-- **Telemetry** — `src/instrumentation.node.ts` (OTEL: Prisma/Redis/HTTP auto-instrumentation + custom `withSpan()` from `utils/otel-helpers.ts`), `schema/track.schema.ts` (ClickHouse action/event tags), `prom/client.ts`.
-- **Health** — `src/pages/api/health.ts` runs sub-checks under `Promise.all`; a single slow check (e.g. `searchMetrics`) can exceed the kubelet probe budget. `HEALTHCHECK_TIMEOUT` env gates it.
-- **Other server domains** — `games/` (new-order/ratings), `webhooks/`, `paddle/` + `coinbase/` (payments), `notifications/`, `signals/`, `rewards/`; S3 helpers at `src/utils/s3-utils.ts`.
+Non-obvious things that cost real work to rediscover:
+
+- **Reads use `dbRead`, writes `dbWrite`.** A read that must observe a just-committed
+  write goes through `db/db-lag-helpers.ts`, not `dbWrite`.
+- **No awaited I/O inside `db.$transaction`.** `local-rules/no-io-in-transaction`
+  flags it but is set to `warn`, so `pnpm lint` stays green — capture ids in the
+  callback and do `fetch`/S3/Redis/search work after it commits.
+- **The image feed has two backends**: `getAllImages` (Postgres) and
+  `getAllImagesIndex` (Meilisearch), chosen in `image.controller.ts` behind a Flipt
+  flag. A filtering or NSFW change applied to one silently misses the other.
+- **A search-index field is two edits**: declare it in `onIndexSetup`'s
+  searchable/sortable/filterable lists *and* emit it from the transformer. Existing
+  documents are not backfilled — they need a re-index.
+- **Feature flags live only in** `services/feature-flags.service.ts` (`availability`
+  is the Flipt-down fallback, `fliptKey` the runtime ramp); client side
+  `useFeatureFlags()`. Don't invent a `NEXT_PUBLIC_` env var.
+- `api/health.ts` runs its sub-checks under `Promise.all`, so one slow check trips
+  the kubelet probe budget.
 
 ## Component Standards
 
-### File Structure
-```
-src/
-├── components/          # React components
-│   ├── ComponentName/   # Component folder
-│   │   ├── ComponentName.tsx
-│   │   ├── ComponentName.module.scss  # Optional SCSS module
-│   │   └── utils.ts     # Component utilities
-├── hooks/              # Custom React hooks
-├── server/             # Server-side code
-├── utils/              # Shared utilities
-└── store/              # Zustand stores
-```
+Match the surrounding file. The things you would otherwise guess wrong:
 
-### Component Patterns
+- Enums come from `~/shared/utils/prisma/enums`, **not** `@prisma/client`
+- tRPC client is `~/utils/trpc`; current user is `useCurrentUser()` from `~/hooks/useCurrentUser`
+- Images use `EdgeMedia`/`EdgeImage` (CDN-aware), not `next/image`
+- Dialogs are registered in `src/components/Dialog/dialog-registry2.ts`
+- Global state Zustand, server state React Query, forms React Hook Form + Zod
 
-#### 1. Mantine Components
-```tsx
-import { Button, Group, Text } from '@mantine/core';
-import { IconBolt } from '@tabler/icons-react';
-```
+### Comments
 
-#### 2. Tailwind Classes with clsx
-```tsx
-import clsx from 'clsx';
-
-<div className={clsx('flex items-center gap-2', conditionalClass && 'bg-blue-500')} />
-```
-
-#### 3. SCSS Modules (when needed)
-```tsx
-import styles from './Component.module.scss';
-
-<div className={styles.container} />
-```
-
-#### 4. TypeScript Patterns
-- Use type imports when possible: `import type { ButtonProps } from '@mantine/core'`
-- Define Props interfaces for components
-- Use enums from `~/shared/utils/prisma/enums`
-
-### Coding Standards
-
-#### Imports Order
-1. External libraries (React, Mantine, etc.)
-2. Internal components (~/components/...)
-3. Hooks (~/hooks/...)
-4. Server/API code (~/server/...)
-5. Utils and helpers (~/utils/...)
-6. Types and enums
-7. Styles
-
-#### State Management
-- Use Zustand for global state
-- Use React Query for server state
-- Use React Hook Form for forms
-
-#### API Calls
-```tsx
-import { trpc } from '~/utils/trpc';
-
-const { data, isLoading } = trpc.user.getProfile.useQuery();
-```
-
-#### Authentication
-```tsx
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-
-const currentUser = useCurrentUser();
-```
-
-#### Comments
-
-Comments are not type-checked, so they rot silently and become misleading. Write the minimum comment needed and bias toward none.
-
-- Default to no comment. If the code is clear on its own, leave it alone. Prefer a clearer name, smaller method, or better type over a comment that explains confusing code.
-- Only comment the non-obvious why: a rationale, tradeoff, gotcha, invariant, or workaround that the reader cannot recover from the code itself. Link an issue/PR when relevant.
-- Never narrate the what. No comments that restate the next line, label obvious steps (`// loop over items`), or describe what a well-named symbol already says.
-- Don't describe nearby code's current behavior (e.g. "this gates on X so Y happens"). That is exactly what goes stale when the other code changes. Comment the surprising fact, not the mechanics.
-- No process/banner noise: no change-log narration (`// added to fix...`), no "I changed X", no section-divider banners, no commented-out code.
-- When you do comment, keep it to a line or two. A long block almost always means the code or naming should be clearer instead.
-
-**Clean up as you go.** When you edit code that already has stale, redundant, or what-narrating comments, delete or fix them — don't preserve them just because they were there. The repo already has many such comments (a lot of them mine); treat touching nearby code as license to remove the noise, but keep edits scoped to what you're already working on rather than going on a separate comment-cleanup sweep.
+Comments are not type-checked, so they rot silently and become misleading. Bias
+toward none. Comment the non-obvious *why* — a rationale, tradeoff, gotcha or
+workaround a reader cannot recover from the code. Never narrate what the next line
+does, and don't describe nearby code's current behaviour; that is exactly what goes
+stale. When you edit code carrying stale or what-narrating comments, fix or delete
+them rather than preserving them.
 
 ## Environment Setup
 
-### Required Environment Variables
-- Database connection strings
-- Authentication providers
-- S3/CloudFlare credentials
-- Payment provider keys
-- Search service endpoints
+`src/env/server.ts` and `src/env/client.mjs` are the authoritative env-var lists.
 
 ### Local Development
 1. Install dependencies: `pnpm install`
@@ -210,29 +182,19 @@ like your change broke something when it didn't.
 
 ## Important Notes
 
-- Read the full file before editing. Plan all changes, then make ONE complete edit. If you've edited a file 3+ times, stop and re-read the user's requirements.
-- When the user corrects you, stop and re-read their message. Quote back what they asked for and confirm before proceeding.
-- Every few turns, re-read the original request to make sure you haven't drifted from the goal.
-- Act sooner. Don't read more than 3-5 files before making a change. Get a basic understanding, make the change, then iterate.
-- When stuck, summarize what you've tried and ask the user for guidance instead of retrying the same approach.
-- Re-read the user's last message before responding. Follow through on every instruction completely.
-- After 2 consecutive tool failures, stop and change your approach entirely. Explain what failed and try a different strategy.
-
-### Performance
-- Use dynamic imports for heavy components
-- Implement virtual scrolling for large lists
-- Optimize images with Next.js Image component
-
-### Security
-- Never commit secrets or API keys
-- Use environment variables
-- Sanitize user input with sanitize-html
-- Follow authentication best practices
+- Service files run 4-8K lines. **Grep for the symbol; don't read the file** —
+  `image.service.ts` alone is ~100K tokens.
+- Prettier/ESLint do not start at zero: ~789 unformatted `src` files and ~3,470
+  eslint warnings pre-exist. Never "fix" files you didn't touch.
+- When corrected, re-read the correction before proceeding.
 
 ### Before Committing
 1. Run type checking: `pnpm run typecheck`
 2. Run linting: `pnpm run lint`
-3. Format code: `pnpm run prettier:write`
+3. Format **only what you touched**: `pnpm exec prettier --write <files>`.
+   Never `pnpm prettier:write` — it ignores arguments and reformats the repo, and
+   789 of 4,116 `src` files fail `--check` today (see `lint.yml`), so that lands a
+   ~789-file diff. CI blocks on files you *add*; modified files are report-only.
 4. Test changes locally
 
 ### Stacked PRs — don't
@@ -242,27 +204,9 @@ like your change broke something when it didn't.
 
 ## Common Patterns
 
-### Infinite Scroll
-Use MasonryGrid or virtual scrolling components with React Query infinite queries.
-
-### Modals
-Use Mantine modals with proper accessibility and keyboard handling.
-
-#### Dialog Registry System
-The project uses a dialog-registry system for managing modals:
-- Register dialogs in `src/components/Dialog/dialog-registry.ts` or `dialog-registry2.ts`
-- Use `DialogProvider` for context-based modal management
-- `RoutedDialogProvider` for URL-based modal state
-- Access dialogs through the registry for consistent modal handling across the app
-
-### Forms
-Use React Hook Form with Zod schemas for validation.
-
-### File Uploads
-Use the S3 upload hooks and providers in the codebase.
-
-### Image Handling
-Use EdgeImage component for optimized image loading with CDN support.
+Infinite scroll uses the `MasonryColumns/` components with React Query infinite
+queries; file uploads go through the S3 upload hooks. Otherwise: find the nearest
+existing example rather than inventing a pattern.
 
 ## Debug Endpoints (`src/pages/api/testing/*`)
 
@@ -278,35 +222,10 @@ Use EdgeImage component for optimized image loading with CDN support.
 
 ## Feature Documentation
 
-Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists:
-
-### Core Systems Reference
-| System | Documentation |
-|--------|--------------|
-| Image Resources | [docs/features/image-resources.md](docs/features/image-resources.md) |
-| NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
-| Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
-| Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
-| Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
-| Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
-| Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
-| Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |
+Before implementing a feature, `ls docs/features/` — ~59 files, yours is probably
+there. Wider design docs and investigations live in `docs/`.
 
 ## Troubleshooting
 
-### Memory Issues
-Use cross-env NODE_OPTIONS with increased memory:
-```bash
-pnpm run dev-debug  # Includes --max_old_space_size=8192
-```
-
-### Build Failures
-1. Clear .next folder
-2. Clear node_modules and reinstall
-3. Check for circular dependencies
-4. Ensure all environment variables are set
-
-### Database Issues
-1. Check connection string
-2. Apply pending migrations manually (we do NOT use `prisma migrate deploy` — see Database section above)
-3. Regenerate client: `pnpm run db:generate`
+Out of memory: `pnpm run dev-debug` (8 GB) or `dev-low` (6 GB). Dev servers are
+managed by the `/dev-server` skill — never `pnpm run dev` directly.
