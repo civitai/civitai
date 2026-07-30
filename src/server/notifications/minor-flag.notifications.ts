@@ -27,7 +27,12 @@ export const minorFlagNotifications = createNotificationProcessor({
             'modelName', m.name
           ) "details"
         FROM "Model" m
-        WHERE COALESCE(
+        WHERE
+          -- Semantic no-op: when the key is absent both COALESCE arms are NULL and the
+          -- clause below is already NULL. Exists only so the planner can prove the
+          -- partial index predicate is implied — do not remove it.
+          m.meta ? 'minorFlagSnapshot'
+          AND COALESCE(
                 m.meta->'minorFlagSnapshot'->>'confirmedFrom',
                 m.meta->'minorFlagSnapshot'->>'source'
               ) = 'auto'

@@ -76,4 +76,8 @@ describe('model-flagged-minor — prepareQuery', () => {
   it('requires the model to currently be minor, so a stale or undone snapshot does not notify', () => {
     expect(query()).toMatch(/AND\s+m\.minor\s*\n/);
   });
+
+  it('asserts the snapshot key exists, so the planner can use the partial index', () => {
+    expect(query()).toContain("m.meta ? 'minorFlagSnapshot'");
+  });
 });
