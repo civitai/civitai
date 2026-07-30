@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -75,6 +75,11 @@ vi.mock('~/components/Apps/ListingAssetStep', () => ({
     onCompletenessChange?: (s: { meetsFloor: boolean; complete: boolean }) => void;
   }) => {
     state.assetProps.last = props;
+    // Mirror the real step's seeding EXACTLY: it reads `initial` in its useState
+    // INITIALISERS, so what it shows is whatever `initial` held at MOUNT — a mere
+    // re-render never re-seeds it, only a remount does. That is what makes the tab
+    // round-trip below an end-to-end assertion instead of a prop-passthrough one.
+    const [seededIcon] = useState(() => props.initial?.icon.imageId ?? null);
     // Mirror the real step: report the floor state up so the page can gate submit.
     // In an EFFECT, not during render — the real step reports from an effect, and
     // calling the parent's setState mid-render trips React's cross-component warning.
@@ -83,6 +88,7 @@ vi.mock('~/components/Apps/ListingAssetStep', () => ({
     return (
       <div data-testid="asset-step">
         assets:{props.listingId}:{props.contentRating}
+        <span data-testid="asset-step-seeded-icon">{String(seededIcon ?? 'none')}</span>
         {/* Stands in for a successful attach/remove inside the real step. */}
         <button type="button" data-testid="asset-step-mutate" onClick={() => props.onAssetMutated?.()}>
           mutate
@@ -129,6 +135,25 @@ vi.mock('~/utils/trpc', () => ({
 const { ListingMediaEditor } = await import('~/components/Apps/ListingMediaEditor');
 const ListingMediaPage = () => <ListingMediaEditor appBlockId="my-block" />;
 
+/**
+ * Stands in for the owning `/apps/[appBlockId]/edit` page's tab shell, which mounts
+ * its panels with `keepMounted={false}`: leaving the media tab and coming back
+ * genuinely UNMOUNTS and REMOUNTS the editor while the page itself stays put. The key
+ * bump reproduces that inside one render tree (a manual `unmount()` fights the
+ * scaffold's auto-`cleanup()` and blanks the following test's container).
+ */
+function TabRoundTrip() {
+  const [mountKey, setMountKey] = useState(0);
+  return (
+    <>
+      <button type="button" data-testid="tab-round-trip" onClick={() => setMountKey((n) => n + 1)}>
+        leave and re-enter the media tab
+      </button>
+      <ListingMediaEditor key={mountKey} appBlockId="my-block" />
+    </>
+  );
+}
+
 function setRouterQuery(query: Record<string, string>) {
   const router = (useRouter as unknown as () => { query: Record<string, string> })();
   router.query = query;
@@ -156,7 +181,11 @@ beforeEach(() => {
   state.submit = { calls: [], pending: false };
   state.floor = { meetsFloor: true, complete: false };
   state.assetProps.last = null;
-  state.invalidate.mockClear();
+  // mockRESET, not mockClear: a per-test `mockImplementation` (the round-trip test
+  // publishes a post-attach projection through it) otherwise leaks into every later
+  // test in the file.
+  state.invalidate.mockReset();
+  state.invalidate.mockResolvedValue(undefined);
   state.flags = { appBlocks: true };
   setRouterQuery({ appBlockId: 'my-block' });
 });
@@ -274,5 +303,70 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
     // `keepMounted={false}` tab round-trip re-seeds the step from them — a just-
     // attached icon reads as unattached and Submit goes disabled again.
     await vi.waitFor(() => expect(state.invalidate).toHaveBeenCalledWith({ appBlockId: 'my-block' }));
+  });
+
+  test('a re-attached icon survives a tab round-trip: the REMOUNT re-seeds from the refreshed assets', async () => {
+    // Start below the floor — the shadow has no icon yet.
+    const before = {
+      icon: { imageId: null as number | null, url: null as string | null },
+      cover: { imageId: 137918011, url: 'edge:cover' },
+      screenshots: [] as unknown[],
+    };
+    state.query = {
+      data: {
+        appListingId: 'apl_onsite',
+        status: 'approved',
+        contentRating: 'pg13',
+        hasPendingRevision: false,
+        shadowId: 'apl_shadow',
+        assets: before,
+      },
+      isLoading: false,
+      error: null,
+    };
+    // The real `invalidate` refetches `getMyListingForApp`; stand in for that refetch
+    // by publishing the post-attach projection the server would now return.
+    state.invalidate.mockImplementation(async () => {
+      (state.query.data as { assets: typeof before }).assets = {
+        ...before,
+        icon: { imageId: 555, url: 'edge:new-icon' },
+      };
+    });
+
+    renderWithProviders(<TabRoundTrip />);
+    await expect.element(page.getByTestId('asset-step-seeded-icon')).toHaveTextContent('none');
+
+    // The step reports a successful icon attach.
+    await userEvent.click(page.getByTestId('asset-step-mutate'));
+    await vi.waitFor(() =>
+      expect(state.invalidate).toHaveBeenCalledWith({ appBlockId: 'my-block' })
+    );
+
+    // media → manifest → media: the editor UNMOUNTS and REMOUNTS, and the step re-runs
+    // its useState INITIALISERS against whatever `initial` holds now.
+    await userEvent.click(page.getByTestId('tab-round-trip'));
+
+    // Without the post-mutation invalidation the remount re-seeds from the ORIGINAL
+    // cached assets: the just-attached icon reads as unattached, the publish floor is
+    // unmet and Submit goes disabled again — the exact symptom this fix exists to kill.
+    await expect.element(page.getByTestId('asset-step-seeded-icon')).toHaveTextContent('555');
+  });
+
+  test('a settled error does NOT also claim "this app is live" (no contradictory half-UI)', async () => {
+    // A `removed` listing, an INTERNAL_SERVER_ERROR, or a client error with no
+    // `data.code` all land here. Narrowing the NotFound guard (so the inline alert is
+    // reachable) must not leave the blue live-app notice asserting context that never
+    // resolved — "This app is live" directly above "cannot edit a listing in status
+    // removed".
+    state.query = {
+      data: undefined,
+      isLoading: false,
+      error: { message: 'cannot edit a listing in status removed', data: { code: 'BAD_REQUEST' } },
+    };
+    renderWithProviders(<ListingMediaPage />);
+
+    await expect.element(page.getByTestId('apps-listing-media-begin-error')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-media-live-notice').elements()).toHaveLength(0);
+    expect(page.getByTestId('asset-step').elements()).toHaveLength(0);
   });
 });

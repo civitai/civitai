@@ -125,21 +125,31 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
 
   return (
     <Stack gap="lg">
-      {/* 🔴 Honest, up-front framing — mirrors ExternalListingEditForm's live-app notice. */}
-      <Alert
-        icon={<IconInfoCircle size={16} />}
-        color="blue"
-        variant="light"
-        title="Listing images"
-        data-testid="apps-listing-media-live-notice"
-      >
-        <Text size="sm">
-          This app is <b>live</b> — your image changes are staged as a revision and go live only
-          after a moderator re-approves. Update the icon, cover and screenshots below, then submit
-          for review. Media can be added while it is still scanning; it only goes live once its scan
-          finishes cleanly.
-        </Text>
-      </Alert>
+      {/* 🔴 Honest, up-front framing — mirrors ExternalListingEditForm's live-app notice.
+          Gated on a RESOLVED listing: it asserts "this app is live" and describes an
+          editor that is about to render. When the resolve settled to an error (a
+          `removed` listing, an INTERNAL_SERVER_ERROR, a client error with no
+          `data.code`) nothing below it renders, so an ungated notice put "This app is
+          live" directly above "cannot edit a listing in status removed" — a
+          contradictory half-UI where the pre-narrowing code showed a clean NotFound.
+          The red alert below still surfaces those non-gating errors (that improvement
+          stands); this notice just stops claiming context it doesn't have. */}
+      {listing && !listingError && (
+        <Alert
+          icon={<IconInfoCircle size={16} />}
+          color="blue"
+          variant="light"
+          title="Listing images"
+          data-testid="apps-listing-media-live-notice"
+        >
+          <Text size="sm">
+            This app is <b>live</b> — your image changes are staged as a revision and go live only
+            after a moderator re-approves. Update the icon, cover and screenshots below, then submit
+            for review. Media can be added while it is still scanning; it only goes live once its
+            scan finishes cleanly.
+          </Text>
+        </Alert>
+      )}
 
       {listing?.hasPendingRevision && (
         <Alert

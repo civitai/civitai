@@ -115,8 +115,8 @@ function editViewRow(ssRowId: string, overrides: Record<string, unknown> = {}) {
  *   - otherwise            → the owner/editable load (`beginListingRevision`)
  *
  * `replicaLagsOn` makes the REPLICA miss on the given ids while the PRIMARY still
- * serves them — i.e. real replication lag, the condition that decides whether the
- * create path is correct.
+ * serves them — i.e. real replication lag, the condition that decides whether a
+ * shadow read is routed correctly (on BOTH the create and the reuse path).
  */
 function wireFindUnique(opts: {
   entry: unknown;
@@ -277,13 +277,15 @@ describe('getMyListingForApp', () => {
     // The screenshot ROW ids are the shadow's — removing one must never touch the
     // live listing's rows.
     expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_SHADOW']);
-    // And the edit-view read targeted the shadow, not the parent.
-    expect(mockRead.appListing.findUnique).toHaveBeenCalledWith(
+    // And the edit-view read targeted the shadow, not the parent (on the primary —
+    // a shadow is always read there; see the read-after-write block below).
+    expect(mockWrite.appListing.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'apl_shadow' },
         select: expect.objectContaining({ icon: expect.anything() }),
       })
     );
+    expect(editViewReads(mockRead)).toEqual([]);
   });
 
   it('🔴 creates the shadow when none exists yet and reads THAT one (first entry)', async () => {
@@ -333,12 +335,15 @@ describe('getMyListingForApp', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 🔴 READ-AFTER-WRITE: the shadow is INSERTed on the PRIMARY, so on the CREATE
-  // path it must be read back from the primary. Reading it off the replica
-  // microseconds later misses under lag → `loadListingEditView` throws NOT_FOUND →
-  // tRPC NOT_FOUND → the editor's query is `retry: false` and it renders <NotFound/>.
-  // That lands on the owner's VERY FIRST visit to the media tab — the exact flow
-  // this proc's asset projection exists to make usable.
+  // 🔴 READ-AFTER-WRITE: a SHADOW is INSERTed on the PRIMARY, so ANY read of one
+  // goes back to the primary — the predicate is "the target is a shadow", NOT
+  // "this call created it". `created: false` says only that another caller minted
+  // it, which here is routinely microseconds ago and in a different request (the
+  // editor's own client-side `beginListingRevision`, `getMyListingForEdit`, a second
+  // tab). Reading a shadow off the replica misses under lag → `loadListingEditView`
+  // throws NOT_FOUND → tRPC NOT_FOUND → the editor's query is `retry: false` and it
+  // renders <NotFound/>, discarding the editor and any in-flight upload. The client
+  // invalidates on every asset mutation, so the exposure is per-mutation.
   // -------------------------------------------------------------------------
 
   it('🔴 reads a FRESHLY-CREATED shadow from the PRIMARY, not the lagging replica', async () => {
@@ -367,7 +372,7 @@ describe('getMyListingForApp', () => {
     expect(editViewReads(mockRead)).toEqual([]);
   });
 
-  it('🔴 a REUSED (pre-existing) shadow still reads from the REPLICA — not a blanket primary redirect', async () => {
+  it('🔴 a REUSED (pre-existing) shadow ALSO reads from the PRIMARY — `created` is not a visibility claim', async () => {
     wireFindUnique({
       entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
       owned: ownedRow(),
@@ -379,9 +384,41 @@ describe('getMyListingForApp', () => {
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
     expect(res.shadowId).toBe('apl_shadow');
-    // The steady state is the overwhelming majority of these reads; sending them all
-    // to the primary would move real read load off the replica pool for no benefit.
-    expect(editViewReads(mockRead)).toEqual(['apl_shadow']);
-    expect(editViewReads(mockWrite)).toEqual([]);
+    // The routing predicate is "the target is a SHADOW", not "I inserted it". `created:
+    // false` only says another caller minted it — which in this flow is routinely
+    // microseconds ago and in a different request (the editor's own client-side
+    // `beginListingRevision`, `getMyListingForEdit`, a second tab). Only shadow reads
+    // move to the primary; the in-place draft/pending read below stays on the replica.
+    expect(editViewReads(mockWrite)).toEqual(['apl_shadow']);
+    expect(editViewReads(mockRead)).toEqual([]);
+  });
+
+  it('🔴 a REUSED shadow the replica has NOT caught up on still returns its assets (no NOT_FOUND)', async () => {
+    wireFindUnique({
+      entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
+      owned: ownedRow(),
+      viewByListingId: {
+        apl_onsite: editViewRow('apls_PARENT'),
+        apl_shadow: editViewRow('apls_SHADOW'),
+      },
+      // The shadow exists on the PRIMARY (a concurrent request minted it microseconds
+      // ago) but has not replicated yet. `beginListingRevision` reports created:FALSE.
+      replicaLagsOn: ['apl_shadow'],
+    });
+    // The idempotency probe reads the replica, misses, and the in-tx re-check on the
+    // primary finds the concurrent winner → returns { created: false }.
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+
+    // Routed by `created` this reads the lagging replica → NOT_FOUND → the editor
+    // renders <NotFound /> (retry:false) and the in-flight upload is discarded.
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+
+    expect(res.shadowId).toBe('apl_shadow');
+    expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_SHADOW']);
+    expect(editViewReads(mockWrite)).toEqual(['apl_shadow']);
+    expect(editViewReads(mockRead)).toEqual([]);
+    // And it never fell back to the live parent's rows.
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
   });
 });
