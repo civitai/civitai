@@ -67,7 +67,9 @@ const SUBMITTER = 4242;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  db.write.appBlockPublishRequest.update.mockImplementation(async (a: { data?: unknown }) => a?.data ?? {});
+  db.write.appBlockPublishRequest.update.mockImplementation(
+    async (a: { data?: unknown }) => a?.data ?? {}
+  );
   db.write.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
   db.write.appListing.deleteMany.mockResolvedValue({ count: 1 });
   db.read.appListing.findFirst.mockResolvedValue(null);

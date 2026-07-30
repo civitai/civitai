@@ -1186,6 +1186,84 @@ describe('backfillListingAssets', () => {
 // `ingestion` and throws unless EVERY asset is terminally `Scanned`.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// resolveListingRatingFloorInTx — the GO-LIVE rating floor for a listing whose media
+// was attached while it was directly asset-editable (pre-approval draft / reset
+// pending). The attach path DELIBERATELY accepts an image above the declared rating
+// (see "setIcon ATTACHES an over-declared-rating image" above) because draft/pending
+// listings are "rated at approve" — this helper IS that rating. Raise-only.
+// ---------------------------------------------------------------------------
+
+describe('resolveListingRatingFloorInTx (go-live rating floor, raise-only)', () => {
+  beforeEach(resetDb);
+
+  it('RAISES a g-declared listing to r when the pending media is R-rated', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: null });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R }]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    // 🔴 The exact bypass this guards: manifest declares 'g', the author attached an
+    // R-rated (Scanned, not Blocked) icon while pending. Approve must NOT stamp 'g'.
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'g')).resolves.toBe('r');
+  });
+
+  it('RAISES a null-declared listing (null → SFW floor) to the derived rating', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: null, coverId: 2 });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.X }]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', null)).resolves.toBe('x');
+  });
+
+  it('does NOT lower an x-declared listing whose media is only PG (raise-only)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.PG }, { nsfwLevel: NsfwLevel.PG }]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'x')).resolves.toBe('x');
+  });
+
+  it('takes the MAX across icon + cover + screenshots (a single mature screenshot raises)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([{ imageId: 10 }, { imageId: 11 }]);
+    mockDb.image.findMany.mockResolvedValue([
+      { nsfwLevel: NsfwLevel.PG }, { nsfwLevel: NsfwLevel.PG },
+      { nsfwLevel: NsfwLevel.PG }, { nsfwLevel: NsfwLevel.R },
+    ]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('r');
+    // Every attached asset id is considered — icon, cover AND both screenshots.
+    expect(mockDb.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1, 2, 10, 11] } } })
+    );
+  });
+
+  it('returns the declared rating unchanged when the listing has NO assets (no image query)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: null, coverId: null });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('pg');
+    expect(mockDb.image.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns the declared rating when the listing row is missing (no blind widening)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue(null);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_gone', 'pg')).resolves.toBe('pg');
+  });
+
+  it('ignores a null-imageId screenshot row (deleted Image → SetNull)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: null });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([{ imageId: null }]);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.PG }]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('pg');
+    expect(mockDb.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] } } })
+    );
+  });
+});
+
 describe('assertAssetsScanClean', () => {
   beforeEach(resetDb);
 

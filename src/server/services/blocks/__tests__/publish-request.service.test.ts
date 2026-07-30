@@ -631,12 +631,49 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
       kind: 'onsite',
       status: 'draft',
       appBlockId: null,
+      userId: 1, // owned by THIS submitter — reuse is owner-scoped
     });
     const buf = await makeBundle({ ...baseManifest, scopes: [] });
     await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
 
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 Orphan reuse is OWNER-SCOPED. An orphan draft keeps its original `userId`, and
+  // the approve transition carries that `userId` forward untouched — so reusing
+  // ANOTHER user's orphan would hand them ownership of THIS submitter's approved
+  // listing (the asset procs gate on AppListing.userId, so they'd control its media).
+  // -------------------------------------------------------------------------
+  it('REFUSES to reuse an orphan draft owned by a DIFFERENT user (no cross-user listing takeover)', async () => {
+    dbMocks.appListingFindFirst.mockResolvedValue({
+      id: 'apl_orphan_foreign',
+      kind: 'onsite',
+      status: 'draft',
+      appBlockId: null,
+      userId: 999, // someone ELSE's abandoned draft on this slug
+    });
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    // Treated as TAKEN, exactly like any other foreign listing on the slug.
+    await expect(submitVersion({ bundleBuffer: buf, submittedByUserId: 1 })).rejects.toThrow(
+      /already taken by another store listing/
+    );
+    // Fail-fast: nothing is inserted, and the foreign draft is never adopted.
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it('the slug pre-check SELECTS userId (the owner-scope decision cannot be made without it)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    const call = dbMocks.appListingFindFirst.mock.calls[0][0] as {
+      where: Record<string, unknown>;
+      select: Record<string, unknown>;
+    };
+    expect(call.where).toEqual({ slug: 'my-app' });
+    expect(call.select).toMatchObject({ userId: true });
   });
 
   it('a slug already taken by a NON-reusable listing → friendly "slug taken" (before any insert)', async () => {

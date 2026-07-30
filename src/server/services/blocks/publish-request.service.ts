@@ -1126,11 +1126,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // slug pre-check. An existing on-site pre-approval DRAFT for this slug (no backing
   // AppBlock) is a REUSABLE orphan (a prior submit whose reject/withdraw cleanup didn't
   // run) — reuse it idempotently rather than error, so a re-submit never duplicates.
+  //
+  // 🔴 Reuse is OWNER-SCOPED (`userId === submittedByUserId`). An orphan draft keeps its
+  // original owner, and the approve transition carries that `userId` FORWARD untouched —
+  // so reusing ANOTHER user's orphan would hand them ownership of THIS submitter's
+  // approved store listing (the listing-media procs gate on `AppListing.userId`, so they
+  // would control its media). A same-slug orphan owned by someone else is therefore
+  // treated as TAKEN, exactly like any other foreign listing on the slug.
   let createDraftListing = false;
   if (existingApp == null) {
     const existingSlugListing = await dbRead.appListing.findFirst({
       where: { slug },
-      select: { id: true, kind: true, status: true, appBlockId: true },
+      select: { id: true, kind: true, status: true, appBlockId: true, userId: true },
     });
     if (!existingSlugListing) {
       createDraftListing = true;
@@ -1138,15 +1145,16 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       !(
         existingSlugListing.kind === 'onsite' &&
         existingSlugListing.status === 'draft' &&
-        existingSlugListing.appBlockId == null
+        existingSlugListing.appBlockId == null &&
+        existingSlugListing.userId === submittedByUserId
       )
     ) {
       throw new Error(
         `store slug "${slug}" is already taken by another store listing; choose a different blockId`
       );
     }
-    // else: a reusable on-site pre-approval draft already exists for this slug →
-    // reuse it (idempotent re-submit), so createDraftListing stays false.
+    // else: a reusable on-site pre-approval draft owned by THIS submitter already exists
+    // for this slug → reuse it (idempotent re-submit), so createDraftListing stays false.
   }
 
   // Deep manifest validation (contentRating / scopes / iframe.sandbox /
@@ -2539,9 +2547,22 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // draft exists — a request pending BEFORE this shipped (new-submits-only compat,
     // no backfill) or a subsequent-version approve keyed by appBlockId — this no-ops
     // and the UNCHANGED create-or-sync-by-appBlockId path below runs.
+    //
+    // 🔴 OWNER-SCOPED (`userId: request.submittedByUserId`) — defense-in-depth mirroring
+    // the submit-side reuse gate. The transition carries the draft's `userId` forward
+    // untouched, so transitioning a draft owned by ANOTHER user would hand them
+    // ownership of THIS submitter's approved listing (the listing-media procs gate on
+    // `AppListing.userId`). A foreign same-slug draft does NOT match here and falls
+    // through to the legacy create path below.
     let handledByDraftTransition = false;
     const draftListing = await dbWrite.appListing.findFirst({
-      where: { slug: request.slug, kind: 'onsite', appBlockId: null, status: 'draft' },
+      where: {
+        slug: request.slug,
+        kind: 'onsite',
+        appBlockId: null,
+        status: 'draft',
+        userId: request.submittedByUserId,
+      },
       select: { id: true },
     });
     if (draftListing) {
@@ -2556,7 +2577,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       // still deploys, and a re-approve after the scan lands transitions it. No-op for
       // scan-clean media. Upholds: no approved listing may reference unscanned/Blocked
       // media.
-      const { assertListingAssetsScanCleanInTx } = await import(
+      const { assertListingAssetsScanCleanInTx, resolveListingRatingFloorInTx } = await import(
         '~/server/services/blocks/app-listing-assets.service'
       );
       await assertListingAssetsScanCleanInTx(dbWrite, draftListing.id);
@@ -2565,6 +2586,22 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         select: { blockId: true, manifest: true, category: true, contentRating: true },
       });
       if (abForTransition) {
+        // 🔴 RATING FLOOR (go-live). The AppBlock's `contentRating` is MANIFEST-declared
+        // (author-controlled), but the author attached the icon/cover/screenshots
+        // DIRECTLY to this draft while pending, and the attach path never compares an
+        // image's `nsfwLevel` against the listing rating (it rejects only
+        // `Blocked`/`NotFound`). Stamping the declared rating verbatim would therefore
+        // let mature-but-Scanned media go live on a `g`-rated card and pass
+        // `listingMatureFilter(redCapable=false)` to SFW-only users. Raise the declared
+        // rating to the media-derived one when the media is more mature (RAISE-ONLY — a
+        // deliberately higher declaration is never lowered). Same floor the off-site
+        // approve applies via `resolveApprovalContentRating`; upholds the
+        // "draft/pending listings are rated at approve" invariant.
+        const flooredRating = await resolveListingRatingFloorInTx(
+          dbWrite,
+          draftListing.id,
+          abForTransition.contentRating
+        );
         const transitioned = await dbWrite.appListing.updateMany({
           // Status-guarded (draft): a re-approve after a mid-flight failure finds the
           // row already `approved` (0-count, benign) → converges without a duplicate.
@@ -2573,9 +2610,10 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
             // Link the now-existing AppBlock (was NULL) — first writer satisfies @unique.
             appBlockId,
             status: 'approved',
-            // Mirror the runtime AppBlock rating (single source of truth — same as the
-            // mapper's create path), re-synced from the authoritative AppBlock column.
-            contentRating: abForTransition.contentRating,
+            // The runtime AppBlock rating (single source of truth — same as the mapper's
+            // create path), FLOORED at the rating derived from the media the author
+            // attached while pending (raise-only; see the comment above).
+            contentRating: flooredRating,
             // Manifest-governed scalars ONLY. iconId/coverId/screenshots, featured,
             // slug are NOT touched, so the author's pending media carries forward.
             ...buildListingScalarSync({
