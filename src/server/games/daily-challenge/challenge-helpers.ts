@@ -1,10 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { recordChallengeOperationSpentBuzz } from '~/server/prom/challenge.metrics';
+import {
+  recordChallengeOperationSpentBuzz,
+  recordChallengeWinnerPlaceDivergence,
+} from '~/server/prom/challenge.metrics';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import { isImageHiddenFromGreenViewer } from '~/server/games/daily-challenge/challenge-visibility';
+import type { PersistedChallengeWinner } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   challengeJudgingCategoriesSchema,
   type ChallengeJudgingCategory,
@@ -550,7 +554,31 @@ export type CreateWinnerInput = {
   reason?: string;
 };
 
-export async function createChallengeWinner(input: CreateWinnerInput): Promise<number | null> {
+/**
+ * Create the `ChallengeWinner` record for one winner and return the placement that is actually
+ * PERSISTED — which is not always the placement passed in.
+ *
+ * The table is uniquely keyed on (challengeId, userId), so a user who was already recorded as a
+ * winner of this challenge cannot get a second row: the insert conflicts (P2002) and the stored
+ * row keeps its ORIGINAL place. This used to return `null` on that conflict, which read as "record
+ * skipped, carry on" — and the caller then paid the freshly-picked place. Because the winner-prize
+ * externalTransactionId embeds the place, that paid under a brand-new key and MINTED A SECOND
+ * PRIZE for a user who had already been paid, with the stored row still showing the old place.
+ *
+ * So the conflict is now resolved rather than swallowed: the row is re-read from the primary and
+ * returned with `created: false`, and the caller reconciles the payout onto the stored place (see
+ * `reconcileWinnerToPersisted`). Record and payment can then never diverge.
+ */
+export async function createChallengeWinner(
+  input: CreateWinnerInput
+): Promise<PersistedChallengeWinner | null> {
+  const persistedFields = {
+    id: true,
+    place: true,
+    buzzAwarded: true,
+    pointsAwarded: true,
+  } as const;
+
   try {
     const winner = await dbWrite.challengeWinner.create({
       data: {
@@ -562,19 +590,67 @@ export async function createChallengeWinner(input: CreateWinnerInput): Promise<n
         pointsAwarded: input.pointsAwarded,
         reason: input.reason,
       },
-      select: { id: true },
+      select: persistedFields,
     });
-    return winner.id;
+    return { ...winner, created: true };
   } catch (error) {
-    // P2002 = unique constraint violation — record already exists (idempotent on recovery retry)
+    // P2002 = unique constraint violation on (challengeId, userId) — this user is already recorded
+    // as a winner of this challenge, from an earlier run of the same completion or from a
+    // concurrent run that re-picked winners.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      logToAxiom({
-        type: 'info',
-        name: 'challenge-winner-duplicate',
-        message: `Duplicate winner skipped (recovery retry): challenge=${input.challengeId} user=${input.userId} place=${input.place}`,
-        challengeId: input.challengeId,
+      // Read from the PRIMARY: the row we are conflicting with may have been written moments ago,
+      // and a replica read that missed it would send us straight back down the mint path.
+      const persisted = await dbWrite.challengeWinner.findUnique({
+        where: { challengeId_userId: { challengeId: input.challengeId, userId: input.userId } },
+        select: persistedFields,
       });
-      return null;
+
+      if (!persisted) {
+        // Structurally unreachable — (challengeId, userId) is this table's only unique constraint,
+        // so a P2002 here means the row exists. Surfaced loudly rather than silently, and the
+        // caller is deliberately left on its in-memory placement: refusing to pay would introduce
+        // an UNDER-payment failure mode on a path where nobody has ever been underpaid.
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-winner-conflict-unresolved',
+          message: `Winner insert conflicted but no stored row could be read; payout left on the freshly-picked place: challenge=${input.challengeId} user=${input.userId} place=${input.place}`,
+          challengeId: input.challengeId,
+          userId: input.userId,
+          attemptedPlace: input.place,
+        });
+        return null;
+      }
+
+      const placeDiverged = persisted.place !== input.place;
+      const prizeDiverged = persisted.buzzAwarded !== input.buzzAwarded;
+
+      if (placeDiverged || prizeDiverged) {
+        // The anomaly that caused real duplicate payouts. Loud + alertable, never info-level: at
+        // this point a payout under the freshly-picked place would have been a second mint.
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-winner-place-divergence',
+          message: `Winner re-picked at a different placement than the one recorded; payout reconciled to the stored place: challenge=${input.challengeId} user=${input.userId} storedPlace=${persisted.place} attemptedPlace=${input.place}`,
+          challengeId: input.challengeId,
+          userId: input.userId,
+          storedPlace: persisted.place,
+          attemptedPlace: input.place,
+          storedBuzzAwarded: persisted.buzzAwarded,
+          attemptedBuzzAwarded: input.buzzAwarded,
+        });
+        recordChallengeWinnerPlaceDivergence({
+          field: placeDiverged && prizeDiverged ? 'both' : placeDiverged ? 'place' : 'prize',
+        });
+      } else {
+        logToAxiom({
+          type: 'info',
+          name: 'challenge-winner-duplicate',
+          message: `Duplicate winner skipped (recovery retry): challenge=${input.challengeId} user=${input.userId} place=${input.place}`,
+          challengeId: input.challengeId,
+        });
+      }
+
+      return { ...persisted, created: false };
     }
     throw error;
   }
@@ -655,6 +731,13 @@ export async function getChallengeWinners(
  * Check if ChallengeWinner records already exist for a challenge.
  * Used to short-circuit LLM winner generation on retry — if winners were already
  * picked in a previous (failed) run, reuse them instead of re-running the LLM.
+ *
+ * Reads the PRIMARY, deliberately. An empty result here does not abort — it routes straight into a
+ * fresh, non-deterministic LLM re-pick, and the challenge's own in-flight winners are still
+ * eligible to be picked again (the winner cooldown only excludes Completed challenges). A stale
+ * replica read that missed rows written moments earlier therefore ends in a re-pick of the same
+ * users at permuted places, i.e. a second payout under a new transaction id. This runs at most a
+ * few times a day (once per challenge completion), so there is no load argument for the replica.
  */
 export async function getExistingWinnersForRetry(challengeId: number): Promise<
   Array<{
@@ -666,7 +749,7 @@ export async function getExistingWinnersForRetry(challengeId: number): Promise<
     reason: string | null;
   }>
 > {
-  return dbRead.$queryRaw`
+  return dbWrite.$queryRaw`
     SELECT
       cw."userId",
       cw."imageId",

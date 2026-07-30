@@ -27,6 +27,7 @@ import {
   promoteChallengeEntries,
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
+import { reconcileWinnerToPersisted } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   ChallengeReviewCostType,
   ChallengeSource,
@@ -1422,7 +1423,7 @@ export async function pickWinnersForChallenge(
         process = 'Deterministic award: fewer than 2 distinct entrants';
         outcome = 'Sole entrant awarded place 1 without LLM judging';
 
-        await createChallengeWinner({
+        const solePersisted = await createChallengeWinner({
           challengeId: currentChallenge.challengeId,
           userId: soleEntry.userId,
           imageId: soleEntry.imageId,
@@ -1431,6 +1432,11 @@ export async function pickWinnersForChallenge(
           pointsAwarded: currentChallenge.prizes[0]?.points ?? 0,
           reason: soleWinnerReason,
         });
+        // Pay the placement that is PERSISTED, not the one just picked — see the reconcile note on
+        // the LLM path below.
+        winningEntries = winningEntries.map((entry) =>
+          reconcileWinnerToPersisted(entry, solePersisted)
+        );
         log('ChallengeWinner record created (deterministic sole-entrant award)');
       } else {
         log('Sending entries for final judgment');
@@ -1471,9 +1477,17 @@ export async function pickWinnersForChallenge(
           })
           .filter(isDefined);
 
-        // 4. Create ChallengeWinner records (idempotent via P2002 handling)
+        // 4. Create ChallengeWinner records, then pay the placement that is PERSISTED rather than
+        // the one just picked. A user already recorded as a winner of this challenge cannot get a
+        // second row — (challengeId, userId) is unique, so the insert conflicts and the stored row
+        // keeps its original place. Paying the freshly-picked place would key the payout to a
+        // different externalTransactionId than the one already settled at the stored place and mint
+        // a second prize (this is the observed duplicate-payout mechanism, and re-picks tend to be
+        // permutations of the same users because the winner cooldown only excludes Completed
+        // challenges, leaving this challenge's own in-flight winners eligible).
+        const reconciledEntries: typeof winningEntries = [];
         for (const entry of winningEntries) {
-          await createChallengeWinner({
+          const persisted = await createChallengeWinner({
             challengeId: currentChallenge.challengeId,
             userId: entry.userId,
             imageId: entry.imageId!, // always non-null on fresh winner path
@@ -1482,7 +1496,9 @@ export async function pickWinnersForChallenge(
             pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
             reason: entry.reason ?? undefined,
           });
+          reconciledEntries.push(reconcileWinnerToPersisted(entry, persisted));
         }
+        winningEntries = reconciledEntries;
         log('ChallengeWinner records created');
       }
     }

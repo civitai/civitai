@@ -32,6 +32,7 @@ const SCAN_RESULTS = new Set(['scanned', 'blocked', 'error']);
 const STATUSES = new Set(['Scheduled', 'Active', 'Completing', 'Completed', 'Cancelled']);
 const VOID_REASONS = new Set(['moderator', 'nsfw', 'activation']);
 const REFUND_REASONS = new Set(['void', 'delete']);
+const DIVERGENCE_FIELDS = new Set(['place', 'prize', 'both']);
 
 export function normSource(v: string | null | undefined): string {
   return v && SOURCES.has(v) ? v : 'unknown';
@@ -55,6 +56,9 @@ export function normVoidReason(v: string | null | undefined): string {
 }
 export function normRefundReason(v: string | null | undefined): string {
   return v && REFUND_REASONS.has(v) ? v : 'other';
+}
+export function normDivergenceField(v: string | null | undefined): string {
+  return v && DIVERGENCE_FIELDS.has(v) ? v : 'other';
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +132,15 @@ const refundFailuresCounter = registerCounterWithLabels({
   name: 'challenge_refund_failures_total',
   help: 'Challenge refund attempts that threw (non NOT_FOUND), by source and reason',
   labelNames: ['source', 'reason'] as const,
+});
+// Money-path anomaly. A winner-prize payout is deduped only by its externalTransactionId, which
+// embeds the place — so a winner re-picked at a different place than the one already recorded would
+// pay twice. Any non-zero value means a completion re-picked winners over an existing record and
+// the payout had to be reconciled onto the stored placement. Expected to sit flat at zero.
+const winnerPlaceDivergenceCounter = registerCounterWithLabels({
+  name: 'challenge_winner_place_divergence_total',
+  help: 'ChallengeWinner inserts that conflicted with a stored row holding a different place/prize; the payout was reconciled to the stored placement (expected to stay at zero)',
+  labelNames: ['field'] as const,
 });
 
 // ---------------------------------------------------------------------------
@@ -284,6 +297,14 @@ export function recordChallengeRefundFailure(args: {
       source: normSource(args.source),
       reason: normRefundReason(args.reason),
     });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+export function recordChallengeWinnerPlaceDivergence(args: { field: 'place' | 'prize' | 'both' }) {
+  try {
+    winnerPlaceDivergenceCounter.inc({ field: normDivergenceField(args.field) });
   } catch {
     /* never throw from telemetry */
   }

@@ -107,6 +107,7 @@ import {
   refundUserChallengeFunds,
   reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
+import { reconcileWinnerToPersisted } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
   isChallengeHiddenByDomainCurrency,
@@ -2576,9 +2577,15 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         })
         .filter(isDefined);
 
-      // Create ChallengeWinner records (idempotent via P2002 handling)
+      // Create ChallengeWinner records, then pay the placement that is PERSISTED rather than the
+      // one just picked. A user already recorded as a winner of this challenge cannot get a second
+      // row — (challengeId, userId) is unique, so the insert conflicts and the stored row keeps its
+      // original place. Paying the freshly-picked place would key the payout to a different
+      // externalTransactionId than the one already settled at the stored place and mint a second
+      // prize. (Parity with the cron completion path.)
+      const reconciledEntries: typeof winningEntries = [];
       for (const entry of winningEntries) {
-        await createChallengeWinner({
+        const persisted = await createChallengeWinner({
           challengeId,
           userId: entry.userId,
           imageId: entry.imageId!, // always non-null on fresh winner path
@@ -2587,7 +2594,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
           reason: entry.reason ?? undefined,
         });
+        reconciledEntries.push(reconcileWinnerToPersisted(entry, persisted));
       }
+      winningEntries = reconciledEntries;
       log('ChallengeWinner records created');
     }
 
