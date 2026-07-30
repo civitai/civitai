@@ -433,6 +433,40 @@ describe('ExternalSubmitForm — OAuth step: mod global-search + create deeplink
     await expect.element(link).toHaveAttribute('target', '_blank');
     await expect.element(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
   });
+
+  test('the mod no-results message is NON-INTERACTIVE prose — no anchor in the listbox, exactly ONE create-client control', async () => {
+    // a11y REGRESSION GUARD. Mantine renders `nothingFoundMessage` as `Combobox.Empty`
+    // INSIDE `Combobox.Options`, which carries `role="listbox"`. Supplying the prop also
+    // flips `hiddenWhenEmpty` to false, and `Combobox` defaults to `keepMounted: true`,
+    // so that node sits in the DOM (merely `display:none`) whenever the option list is
+    // empty. It therefore must NOT be an anchor: `link` is not a permitted child role of
+    // `listbox` and it breaks the combobox's arrow/Enter semantics while open. It also
+    // must not duplicate the persistent create-client deeplink — pre-fix BOTH were the
+    // same <a> with the same `data-testid`, visible at once on exactly the no-results
+    // path this message exists for (and a bare testid query matched 2 → strict-mode
+    // violation). Moderators are the only role whose picker can reach an empty list.
+    mocks.currentUser = { id: 1, username: 'mod', isModerator: true };
+    mocks.search = { data: { items: [], nextCursor: undefined }, isFetching: false };
+    renderWithProviders(<ExternalSubmitForm />);
+    await advanceFromUrl();
+
+    // Open the picker so this is the state a moderator actually sees, not just the DOM.
+    await page.getByTestId('apps-offsite-client-search').click();
+
+    const empty = page.getByTestId('apps-offsite-client-search-empty');
+    await expect.element(empty).toBeInTheDocument();
+
+    // The empty-state copy carries no interactive control of its own…
+    expect(empty.element().querySelector('a,button,[role="link"],[role="button"]')).toBeNull();
+    // …and NO anchor is rendered inside the listbox at all.
+    expect(document.querySelector('[role="listbox"] a')).toBeNull();
+
+    // Exactly ONE "create an OAuth client" control in the document — the persistent
+    // in-form deeplink, which stays a real working link.
+    const links = page.getByTestId('apps-offsite-create-client-link');
+    expect(links.elements()).toHaveLength(1);
+    await expect.element(links).toHaveAttribute('href', '/user/account');
+  });
 });
 
 /**
