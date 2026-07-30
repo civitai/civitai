@@ -403,8 +403,10 @@ git commit -m "feat(account-deletion): add Redis rate limit and kill switch to i
 this query. This migration closes that gap; adding a second declaration would be a duplicate.
 
 The index created here is partial and DESC rather than the plain index Prisma declares, because
-the job only ever reads soft-deleted rows newest-first. It intentionally takes the name Prisma
-expects.
+the job only ever reads soft-deleted rows newest-first. It must **not** take the name Prisma
+expects: `20250228013729_normalize` already renames an older index to `User_deletedAt_idx`, and
+`CREATE INDEX CONCURRENTLY IF NOT EXISTS` matches on name alone, so reusing it would silently
+create nothing. Hence `User_deletedAt_notnull_idx`.
 
 Create `packages/civitai-db-schema/prisma/migrations/20260730130000_user_deleted_at_partial_index/migration.sql`:
 
@@ -412,11 +414,16 @@ Create `packages/civitai-db-schema/prisma/migrations/20260730130000_user_deleted
 -- The remove-deleted-user-images job filters "User" on "deletedAt" IS NOT NULL
 -- every run. Without this index that is a parallel seq scan over ~12.7M rows
 -- (~1.7s, ~612K buffers). The partial index covers only the ~1.3M soft-deleted
--- rows and lets the job take the newest deletions first.
+-- rows and lets the job page through them newest-first.
+--
+-- Named "_notnull_" because "User_deletedAt_idx" is already taken (migration
+-- 20250228013729_normalize renames the plain index into it) and IF NOT EXISTS
+-- matches on name alone, never on definition — reusing the name would make this
+-- a silent no-op wherever the plain index exists, leaving the job unindexed.
 --
 -- CONCURRENTLY cannot run inside a transaction block. Run this statement on its
 -- own, not wrapped in BEGIN/COMMIT.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "User_deletedAt_idx"
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "User_deletedAt_notnull_idx"
   ON "User" ("deletedAt" DESC)
   WHERE "deletedAt" IS NOT NULL;
 ```
@@ -484,5 +491,8 @@ git commit -m "feat(account-deletion): register image drain job and add deletedA
   and that `CREATE INDEX CONCURRENTLY` must not be wrapped in a transaction.
 - The drain starts as soon as the job is registered and deployed. To ship dark, set
   `system:deleted-user-image-purge-limit` to `0` in sysRedis **before** deploy.
-- Backlog drain at the 25,000/run default is ~290 runs, roughly 12 days. Watch S3 delete
-  throughput and search-index queue depth on the first few runs before raising the cap.
+- The compiled default is 500 images/run — enough to keep up with new deletions (~1.2
+  image-owning accounts an hour) but not enough to move the 7.2M backlog. Watch S3 delete
+  throughput and search-index queue depth on the first few runs, then raise
+  `system:deleted-user-image-purge-limit` to drain the backlog (25,000/run puts it at roughly
+  12 days).

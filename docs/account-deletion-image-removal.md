@@ -59,6 +59,17 @@ Instead a new job selects images whose owner has `deletedAt IS NOT NULL`, batche
 through the existing `deleteImages()`, then deletes the user's emptied posts — the same
 two-step as `src/pages/api/mod/delete-user-images.ts`.
 
+Unlike that mod endpoint, which scopes the post delete to the posts that held the deleted
+images so it cannot touch another user's posts, this job deletes **every** post the account
+owns. The account is gone, so there is nothing to preserve, and a post keeps title/detail text
+that the image delete would otherwise leave behind.
+
+The worklist is paged with a persisted `deletedAt` cursor (`getJobDate`), walking newest-first
+so a fresh self-deletion is honoured ahead of the backlog. The cursor advances only past users
+the run finished, so one left half-drained by the per-run cap is still first in line next run.
+An empty page resets the cursor to the top — accounts deleted *after* a run started sort above
+a descending cursor, and that wrap is what brings them back into range.
+
 Deriving the worklist from `User.deletedAt` rather than writing queue rows means:
 
 - One small migration: a partial index on `User."deletedAt"`. Without it the job's driving
@@ -73,10 +84,13 @@ cache busting for free.
 
 ### Backlog: purged, rate-limited
 
-The job processes historical and new deletions identically, under a per-tick cap (starting
-point: ~25,000 images/hour) so the S3 delete volume and search-index churn stay bounded.
-Draining 7.2M images will take days. The job must log progress and emit a metric so the drain
-is observable and can be paused.
+The job processes historical and new deletions identically, under a per-tick cap so the S3
+delete volume and search-index churn stay bounded. The cap ships at 500 images/run — enough to
+stay ahead of new deletions (~1.2 image-owning accounts an hour) without committing to an
+unmeasured backlog rate on the deploy that turns the job on. Draining 7.2M images needs the cap
+raised in Redis (`system:deleted-user-image-purge-limit`); at 25,000/run that is ~12 days.
+Setting it to `0` pauses the drain. The job logs its per-run counts to Axiom so the drain is
+observable.
 
 ## Consequences
 
@@ -101,6 +115,10 @@ These are accepted, not open questions.
 - **Orphan rows in FK-less tables.** Several image-related tables have no FK to `Image`, which
   is why `deleteImages()` calls `removeEntityFromAllCollections` manually. This is pre-existing
   `deleteImages()` behavior, inherited rather than introduced.
+- **S3 deletion is best-effort.** `deleteImages()` drops the DB row before the S3 object, so a
+  failed object delete leaves a public CDN url with no row to retry from. The failure is now
+  logged (`delete-image-from-s3-failed`, with the image id and url) rather than swallowed, but
+  it is not retried — recovery means replaying those log lines.
 
 ## Open items
 
@@ -110,10 +128,13 @@ These are accepted, not open questions.
   images" rule), or accept coverless articles for v1 and file a follow-up. **Recommendation:
   accept for v1, file a follow-up** — orphaned articles are the same class of gap as orphaned
   images and deserve their own ticket.
-- **Rate-limit tuning.** 25,000/hour is a starting figure, not a measured one. Validate against
-  S3 delete throughput and search-index queue depth before enabling the backlog drain.
-- **Backlog kill switch.** Decide whether the cap lives in code, in Redis, or behind a Flipt
-  flag so the drain can be throttled or stopped without a deploy.
+- **Rate-limit tuning.** The 500/run default is deliberately below anything that would move the
+  backlog; it only keeps up with new deletions. Validate S3 delete throughput and search-index
+  queue depth on the first runs, then raise `system:deleted-user-image-purge-limit` in sysRedis
+  (no deploy needed) to start the backlog drain — 25,000 was the original, unmeasured estimate.
+- **Backlog kill switch.** Resolved: the cap lives in sysRedis under
+  `system:deleted-user-image-purge-limit`. `0` pauses the drain; an unset key falls back to the
+  compiled default.
 
 ## Verified facts
 
@@ -139,8 +160,12 @@ Gathered during design; recorded so the plan does not re-derive them.
 | File | Change |
 |---|---|
 | `src/server/jobs/remove-deleted-user-images.ts` | New rate-limited drain job |
+| `src/server/jobs/__tests__/remove-deleted-user-images.test.ts` | Job tests |
 | `src/pages/api/webhooks/run-jobs/[[...run]].ts` | Register the job (import + `jobs` array) |
+| `packages/civitai-redis/src/client.ts` | `REDIS_SYS_KEYS.SYSTEM.DELETED_USER_IMAGE_PURGE_LIMIT` |
+| `packages/civitai-db-schema/prisma/migrations/20260730130000_user_deleted_at_partial_index/migration.sql` | Partial index on `User."deletedAt"` (hand-applied) |
 | `src/server/services/user.service.ts` | Update the `restoreUser` doc comment |
-| `src/server/services/image.service.ts` | Reused unchanged (`deleteImages`) |
+| `src/server/services/image.service.ts` | `deleteImages` reused as-is; `deleteImageFromS3` now logs its failures instead of swallowing them |
+| `src/server/services/__tests__/delete-image-from-s3-logging.test.ts` | Guards that logging |
 
 One index-only migration (hand-applied). No schema change, no UI change, no new tRPC procedure.
