@@ -76,6 +76,11 @@ beforeEach(() => {
   clickSpy = vi
     .spyOn(HTMLAnchorElement.prototype, 'click')
     .mockImplementation(function (this: HTMLAnchorElement) {
+      // Capturing the spy's RECEIVER is the whole point here — we assert which
+      // <a download> element the bridge actually clicked. `this` is the anchor,
+      // so the alias is intentional, not the accidental closure-capture the rule
+      // guards against.
+      // eslint-disable-next-line @typescript-eslint/no-this-alias
       clickedAnchor = this;
     });
 });

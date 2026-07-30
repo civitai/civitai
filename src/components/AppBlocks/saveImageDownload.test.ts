@@ -19,14 +19,21 @@ describe('isAllowedSaveImageUrl (SAVE_IMAGE origin allowlist)', () => {
       )
     ).toBe(true);
     // sanity: the static list is exactly the two known product hosts
-    expect([...CIVITAI_IMAGE_HOSTS].sort()).toEqual(['image.civitai.com', 'orchestration.civitai.com']);
+    expect([...CIVITAI_IMAGE_HOSTS].sort()).toEqual([
+      'image.civitai.com',
+      'orchestration.civitai.com',
+    ]);
   });
 
   it('ALLOWS the configured CDN origin even when not in the static list', () => {
     // A self-hosted / non-prod NEXT_PUBLIC_IMAGE_LOCATION is covered without editing the list.
-    expect(isAllowedSaveImageUrl('https://cdn.example.net/a/b.jpeg', 'https://cdn.example.net')).toBe(true);
+    expect(
+      isAllowedSaveImageUrl('https://cdn.example.net/a/b.jpeg', 'https://cdn.example.net')
+    ).toBe(true);
     // …but only that exact host — a different host is still refused.
-    expect(isAllowedSaveImageUrl('https://other.example.net/a.jpeg', 'https://cdn.example.net')).toBe(false);
+    expect(
+      isAllowedSaveImageUrl('https://other.example.net/a.jpeg', 'https://cdn.example.net')
+    ).toBe(false);
   });
 
   it('REJECTS an arbitrary attacker origin', () => {
@@ -65,7 +72,9 @@ describe('sanitizeDownloadFilename', () => {
 
   it('collapses a duplicated trailing extension, preserving base dots', () => {
     expect(sanitizeDownloadFilename('file.mp4.mp4', 'https://x/y')).toBe('file.mp4');
-    expect(sanitizeDownloadFilename('video-ttget.com.mp4', 'https://x/y')).toBe('video-ttget.com.mp4');
+    expect(sanitizeDownloadFilename('video-ttget.com.mp4', 'https://x/y')).toBe(
+      'video-ttget.com.mp4'
+    );
   });
 
   it('drops path separators / traversal (untrusted block-supplied name)', () => {
@@ -75,9 +84,9 @@ describe('sanitizeDownloadFilename', () => {
   });
 
   it('falls back to the url last segment, then a generic name', () => {
-    expect(sanitizeDownloadFilename(undefined, 'https://image.civitai.com/xG/77/original.jpeg')).toBe(
-      'original.jpeg'
-    );
+    expect(
+      sanitizeDownloadFilename(undefined, 'https://image.civitai.com/xG/77/original.jpeg')
+    ).toBe('original.jpeg');
     expect(sanitizeDownloadFilename(null, 'https://image.civitai.com/')).toBe('download');
     expect(sanitizeDownloadFilename('   ', 'https://image.civitai.com/')).toBe('download');
   });
@@ -135,8 +144,17 @@ describe('enforceImageExtension (F2 safe-extension gate)', () => {
 describe('resolveSaveImageRequest', () => {
   it('parses a url-variant request', () => {
     expect(
-      resolveSaveImageRequest({ requestId: 'r', url: 'https://image.civitai.com/x.jpeg', filename: 'a.png' })
-    ).toEqual({ requestId: 'r', kind: 'url', url: 'https://image.civitai.com/x.jpeg', filename: 'a.png' });
+      resolveSaveImageRequest({
+        requestId: 'r',
+        url: 'https://image.civitai.com/x.jpeg',
+        filename: 'a.png',
+      })
+    ).toEqual({
+      requestId: 'r',
+      kind: 'url',
+      url: 'https://image.civitai.com/x.jpeg',
+      filename: 'a.png',
+    });
   });
 
   it('parses an id-variant request', () => {
@@ -150,23 +168,41 @@ describe('resolveSaveImageRequest', () => {
 
   it('returns kind:invalid when BOTH url and imageId are present', () => {
     expect(
-      resolveSaveImageRequest({ requestId: 'r', url: 'https://image.civitai.com/x.jpeg', imageId: 5 })
+      resolveSaveImageRequest({
+        requestId: 'r',
+        url: 'https://image.civitai.com/x.jpeg',
+        imageId: 5,
+      })
     ).toEqual({ requestId: 'r', kind: 'invalid' });
   });
 
   it('returns kind:invalid when NEITHER url nor imageId is present', () => {
-    expect(resolveSaveImageRequest({ requestId: 'r' })).toEqual({ requestId: 'r', kind: 'invalid' });
+    expect(resolveSaveImageRequest({ requestId: 'r' })).toEqual({
+      requestId: 'r',
+      kind: 'invalid',
+    });
   });
 
   it('rejects a non-positive / non-integer imageId (treated as absent → invalid)', () => {
-    expect(resolveSaveImageRequest({ requestId: 'r', imageId: 0 })).toEqual({ requestId: 'r', kind: 'invalid' });
-    expect(resolveSaveImageRequest({ requestId: 'r', imageId: -3 })).toEqual({ requestId: 'r', kind: 'invalid' });
-    expect(resolveSaveImageRequest({ requestId: 'r', imageId: 1.5 })).toEqual({ requestId: 'r', kind: 'invalid' });
+    expect(resolveSaveImageRequest({ requestId: 'r', imageId: 0 })).toEqual({
+      requestId: 'r',
+      kind: 'invalid',
+    });
+    expect(resolveSaveImageRequest({ requestId: 'r', imageId: -3 })).toEqual({
+      requestId: 'r',
+      kind: 'invalid',
+    });
+    expect(resolveSaveImageRequest({ requestId: 'r', imageId: 1.5 })).toEqual({
+      requestId: 'r',
+      kind: 'invalid',
+    });
   });
 
   it('returns null (drop, uncorrelatable) for a missing/invalid requestId', () => {
     expect(resolveSaveImageRequest({ url: 'https://image.civitai.com/x.jpeg' })).toBeNull();
-    expect(resolveSaveImageRequest({ requestId: '', url: 'https://image.civitai.com/x.jpeg' })).toBeNull();
+    expect(
+      resolveSaveImageRequest({ requestId: '', url: 'https://image.civitai.com/x.jpeg' })
+    ).toBeNull();
     expect(resolveSaveImageRequest(null)).toBeNull();
     expect(resolveSaveImageRequest('nope')).toBeNull();
   });
