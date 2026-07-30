@@ -64,11 +64,29 @@ images so it cannot touch another user's posts, this job deletes **every** post 
 owns. The account is gone, so there is nothing to preserve, and a post keeps title/detail text
 that the image delete would otherwise leave behind.
 
-The worklist is paged with a persisted `deletedAt` cursor (`getJobDate`), walking newest-first
-so a fresh self-deletion is honoured ahead of the backlog. The cursor advances only past users
-the run finished, so one left half-drained by the per-run cap is still first in line next run.
-An empty page resets the cursor to the top — accounts deleted *after* a run started sort above
-a descending cursor, and that wrap is what brings them back into range.
+The worklist is paged with **two** persisted `deletedAt` cursors (`getJobDate`), because the two
+populations move in opposite directions. Each run takes the *fresh* page first: accounts deleted
+at or after an ascending high-water mark, oldest-first. That set is small — ~500 deletions a day,
+~5.7% of which own images — so it is normally satisfied in a fraction of the per-run cap.
+Whatever budget survives goes to the *backlog* page: accounts below the mark, newest-first behind
+a descending cursor that resets to the top when its page comes back empty, which then genuinely
+means the backlog is drained.
+
+One cursor cannot do both jobs. A descending cursor parks at the oldest account the run finished
+and sorts every later self-deletion out of range until the whole backlog below it drains — 74,828
+accounts, ~600 days at the shipped default. An ascending one queues fresh deletions behind that
+same backlog. Splitting them is what keeps a self-deletion honoured within a tick or two.
+
+The high-water mark is seeded to `now()` on the first run so the backlog does not all read as
+fresh, and is written back every run: an unstored key falls back to the default, so a run that
+never persists its seed re-seeds to a later `now()` on the next tick and anything deleted in
+between falls above the mark and below the backlog cursor, visible to neither page.
+
+Both cursors advance only through the run of users the tick *finished*, stopping at the first one
+it did not, so an account left half-drained by the cap (or by a cancel, or an error) is picked up
+again next run. Both comparisons include their own timestamp: bulk and admin deletions stamp one
+`now()` across several accounts, and the worklist already drops accounts that no longer own images
+or posts, so re-reading a tie costs nothing and is the only way not to skip the rest of it.
 
 Deriving the worklist from `User.deletedAt` rather than writing queue rows means:
 
@@ -84,10 +102,10 @@ cache busting for free.
 
 ### Backlog: purged, rate-limited
 
-The job processes historical and new deletions identically, under a per-tick cap so the S3
-delete volume and search-index churn stay bounded. The cap ships at 500 images/run — enough to
-stay ahead of new deletions (~1.2 image-owning accounts an hour) without committing to an
-unmeasured backlog rate on the deploy that turns the job on. Draining 7.2M images needs the cap
+Both pages share one per-tick cap, fresh deletions first, so the S3 delete volume and
+search-index churn stay bounded. The cap ships at 500 images/run — enough to stay ahead of new
+deletions (~1.2 image-owning accounts an hour) without committing to an unmeasured backlog rate
+on the deploy that turns the job on. Draining 7.2M images needs the cap
 raised in Redis (`system:deleted-user-image-purge-limit`); at 25,000/run that is ~12 days.
 Setting it to `0` pauses the drain. The job logs its per-run counts to Axiom so the drain is
 observable.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const {
   mockDbRead,
@@ -40,13 +40,15 @@ import {
   removeDeletedUserImages,
   CURSOR_START,
   DEFAULT_IMAGES_PER_RUN,
+  FRESH_CURSOR_KEY as FRESH_KEY,
+  BACKLOG_CURSOR_KEY as BACKLOG_KEY,
 } from '~/server/jobs/remove-deleted-user-images';
 
 /**
  * The suite stands in a tiny in-memory Postgres for the job: `seed()` interprets each SQL
- * statement the job issues against the fixtures, including the `deletedAt` gates. A restored
- * user is therefore only protected if the job actually carries the gate — dropping it makes
- * the fixture hand back the rows and the restore tests fail.
+ * statement the job issues against the fixtures, including the `deletedAt` gates and both
+ * cursor bounds. A restored user is therefore only protected if the job actually carries the
+ * gate — dropping it makes the fixture hand back the rows and the restore tests fail.
  */
 type Fixture = {
   deletedAt: Date;
@@ -56,13 +58,16 @@ type Fixture = {
   restored?: boolean;
   /** Restored in the window between the job's drained-check and its post delete. */
   restoredAfterCheck?: boolean;
+  /** Restored once this many image batches have cleared the job's in-batch freshness check. */
+  restoreAfterBatches?: number;
 };
 
 let fixtures: Record<number, Fixture> = {};
-let cursorStore: Date | undefined;
-let cursorSets: Date[] = [];
+let cursorStore: Record<string, Date> = {};
+let cursorSets: Record<string, Date[]> = {};
 let imageLimits: number[] = [];
 let deletedPostIds: number[] = [];
+let batchChecks: Record<number, number> = {};
 
 function seed(next: Record<number, Fixture>) {
   fixtures = next;
@@ -72,15 +77,30 @@ function seed(next: Record<number, Fixture>) {
 
   mockDbRead.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
-    const paged = sql.includes('u."deletedAt" <');
-    const cursor = paged ? (values[0] as Date) : undefined;
-    const limit = (paged ? values[1] : values[0]) as number;
+    const ascending = sql.includes('ORDER BY u."deletedAt" ASC');
+    const [bound, mark] = values.filter((v): v is Date => v instanceof Date);
+    const limit = values[values.length - 1] as number;
+    // The comparison is read out of the SQL, not assumed, so a strict bound in the job shows
+    // up here as a skipped timestamp tie instead of being papered over by the fixture.
+    const tieSafe = sql.includes(ascending ? 'u."deletedAt" >=' : 'u."deletedAt" <=');
+    const inRange = (d: Date) => {
+      const withinBound = ascending
+        ? tieSafe
+          ? d >= bound
+          : d > bound
+        : tieSafe
+        ? d <= bound
+        : d < bound;
+      // The backlog page carries the high-water mark as a second, always-strict bound.
+      return withinBound && (mark === undefined || d < mark);
+    };
     const selectsImageOwners = sql.includes('FROM "Image" i WHERE i."userId" = u.id');
     const selectsPostOwners = sql.includes('FROM "Post" p WHERE p."userId" = u.id');
+    const order = ascending ? [...newestFirst].reverse() : newestFirst;
 
     return Promise.resolve(
-      newestFirst
-        .filter((id) => !cursor || fixtures[id].deletedAt < cursor)
+      order
+        .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
         .filter(
           (id) =>
             (selectsImageOwners && fixtures[id].images.length > 0) ||
@@ -97,10 +117,16 @@ function seed(next: Record<number, Fixture>) {
     const fixture = fixtures[userId];
     const gated = sql.includes('u."deletedAt" IS NOT NULL');
 
-    if (sql.includes('"stillDeleted"')) {
+    if (sql.includes('"hasImages"')) {
       const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
       if (fixture.restoredAfterCheck) fixture.restored = true;
       return Promise.resolve([state]);
+    }
+    if (sql.includes('"stillDeleted"')) {
+      const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
+      if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
+        fixture.restored = true;
+      return Promise.resolve([{ stillDeleted: !fixture.restored }]);
     }
     if (sql.includes('FROM "Image" i')) {
       const limit = values[1] as number;
@@ -142,26 +168,38 @@ const run = (checkIfCanceled: () => void = () => undefined) =>
     checkIfCanceled,
   });
 
+const NOW = new Date('2026-07-31T00:00:00Z');
+const RECENT = new Date('2026-07-30T23:00:00Z');
+const NEWER = new Date('2026-07-30T10:00:00Z');
+const OLDER = new Date('2026-07-29T10:00:00Z');
+const ANCIENT = new Date('2024-01-01T00:00:00Z');
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // The high-water mark seeds itself off the wall clock, so the fixtures' `deletedAt` values
+  // only mean "backlog" or "fresh" relative to a pinned now.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
   fixtures = {};
-  cursorStore = undefined;
-  cursorSets = [];
+  cursorStore = {};
+  cursorSets = {};
   imageLimits = [];
   deletedPostIds = [];
+  batchChecks = {};
   mockSysRedis.get.mockResolvedValue(null);
-  mockGetJobDate.mockImplementation(async (_key: string, defaultValue: Date) => [
-    cursorStore ?? defaultValue,
+  mockGetJobDate.mockImplementation(async (key: string, defaultValue: Date) => [
+    cursorStore[key] ?? defaultValue,
     async (date?: Date) => {
-      cursorStore = date ?? new Date();
-      cursorSets.push(cursorStore);
+      cursorStore[key] = date ?? new Date();
+      (cursorSets[key] ??= []).push(cursorStore[key]);
     },
   ]);
   seed({});
 });
 
-const NEWER = new Date('2026-07-30T10:00:00Z');
-const OLDER = new Date('2026-07-29T10:00:00Z');
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('removeDeletedUserImages', () => {
   it('deletes a deleted user images in batches of 100 and then removes their posts', async () => {
@@ -250,12 +288,29 @@ describe('removeDeletedUserImages', () => {
     expect(result.deletedUsers).toBe(0);
   });
 
+  it('stops draining a user restored between image batches', async () => {
+    mockSysRedis.get.mockResolvedValue('1000');
+    seed({ 7: { deletedAt: NEWER, images: ids(300), posts: [900], restoreAfterBatches: 1 } });
+
+    const result = await run();
+
+    // Without a per-batch re-read the restore only costs the ids already fetched — which is
+    // every image the budget would have paid for.
+    expect(mockDeleteImages).toHaveBeenCalledTimes(1);
+    expect(result.deletedImages).toBe(100);
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedUsers).toBe(0);
+  });
+
   it('gates the post delete itself, not just the decision to run it', async () => {
     seed({ 7: { deletedAt: NEWER, images: [], posts: [900], restoredAfterCheck: true } });
 
-    await run();
+    const result = await run();
 
     expect(deletedPostIds).toEqual([]);
+    // The gated DELETE affects nothing, so the run neither counts the user nor moves past them.
+    expect(result.deletedUsers).toBe(0);
+    expect(cursorSets[BACKLOG_KEY]).toBeUndefined();
   });
 
   it('keeps going when one user fails, and logs the failure with a stack', async () => {
@@ -281,6 +336,8 @@ describe('removeDeletedUserImages', () => {
         error: expect.objectContaining({ stack: boom.stack }),
       })
     );
+    // User 7 may be half-drained, so the cursor must not step over them to reach user 8.
+    expect(cursorSets[BACKLOG_KEY]).toBeUndefined();
   });
 
   it('logs a success line with the run counts', async () => {
@@ -298,7 +355,7 @@ describe('removeDeletedUserImages', () => {
     );
   });
 
-  it('checks for cancellation between image batches', async () => {
+  it('checks for cancellation between image batches without logging it as a failure', async () => {
     mockSysRedis.get.mockResolvedValue('1000');
     seed({ 7: { deletedAt: NEWER, images: ids(300) } });
     let checks = 0;
@@ -311,11 +368,12 @@ describe('removeDeletedUserImages', () => {
     await run(checkIfCanceled);
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
+    expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 });
 
-describe('removeDeletedUserImages cursor', () => {
-  it('advances the cursor to the last user it fully drained', async () => {
+describe('removeDeletedUserImages cursors', () => {
+  it('advances the backlog cursor to the last user it fully drained', async () => {
     mockSysRedis.get.mockResolvedValue('1000');
     seed({
       7: { deletedAt: NEWER, images: ids(10), posts: [900] },
@@ -324,7 +382,7 @@ describe('removeDeletedUserImages cursor', () => {
 
     await run();
 
-    expect(cursorSets).toEqual([OLDER]);
+    expect(cursorSets[BACKLOG_KEY]).toEqual([OLDER]);
   });
 
   it('does not advance past a user the budget left half-drained', async () => {
@@ -337,7 +395,7 @@ describe('removeDeletedUserImages cursor', () => {
     const first = await run();
 
     expect(first.deletedImages).toBe(100);
-    expect(cursorSets).toEqual([]);
+    expect(cursorSets[BACKLOG_KEY]).toBeUndefined();
 
     // User 7 is still the newest candidate, so the next run resumes on their remainder.
     const second = await run();
@@ -346,24 +404,96 @@ describe('removeDeletedUserImages cursor', () => {
     expect(fixtures[7].images).toEqual([]);
   });
 
-  it('resets the cursor when the page comes back empty', async () => {
-    cursorStore = OLDER;
+  it('resets the backlog cursor when its page comes back empty', async () => {
+    cursorStore[BACKLOG_KEY] = OLDER;
     seed({ 7: { deletedAt: NEWER, images: ids(10) } });
 
     const result = await run();
 
     expect(result.deletedImages).toBe(0);
-    expect(cursorSets).toEqual([CURSOR_START]);
+    expect(cursorSets[BACKLOG_KEY]).toEqual([CURSOR_START]);
   });
 
-  it('picks up a newly-deleted user after the reset wraps', async () => {
-    cursorStore = OLDER;
+  it('picks up a user the backlog cursor had passed once the reset wraps', async () => {
+    cursorStore[BACKLOG_KEY] = OLDER;
     seed({ 7: { deletedAt: NEWER, images: ids(10) } });
 
     await run();
     const second = await run();
 
     expect(second.deletedImages).toBe(10);
+  });
+
+  it('drains a fresh self-deletion on the next run with an undrained backlog below the cursor', async () => {
+    mockSysRedis.get.mockResolvedValue('1000');
+    cursorStore[FRESH_KEY] = NEWER;
+    cursorStore[BACKLOG_KEY] = OLDER;
+    seed({
+      1: { deletedAt: ANCIENT, images: ids(10), posts: [900] },
+      9: { deletedAt: RECENT, images: ids(10, 100), posts: [901] },
+    });
+
+    await run();
+
+    // A single descending cursor sorts every deletion newer than itself out of range, so the
+    // fresh account waits for the whole backlog below the cursor to drain first.
+    expect(fixtures[9].images).toEqual([]);
+    expect(deletedPostIds).toContain(901);
+  });
+
+  it('spends a scarce budget on the fresh deletion before the backlog', async () => {
+    mockSysRedis.get.mockResolvedValue('10');
+    cursorStore[FRESH_KEY] = NEWER;
+    cursorStore[BACKLOG_KEY] = OLDER;
+    seed({
+      1: { deletedAt: ANCIENT, images: ids(10) },
+      9: { deletedAt: RECENT, images: ids(10, 100) },
+    });
+
+    const result = await run();
+
+    expect(result.deletedImages).toBe(10);
+    expect(fixtures[9].images).toEqual([]);
+    expect(fixtures[1].images).toHaveLength(10);
+  });
+
+  it('persists the seeded high-water mark on the first run', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10) } });
+
+    await run();
+
+    // Re-seeding the mark to a later `now` every run would leave anything deleted in between
+    // above the mark and below the backlog cursor — visible to neither pass.
+    const selfDeleted = new Date(NOW.getTime() + 30 * 60 * 1000);
+    vi.setSystemTime(new Date(NOW.getTime() + 60 * 60 * 1000));
+    seed({
+      7: { deletedAt: NEWER, images: [] },
+      9: { deletedAt: selfDeleted, images: ids(5, 500) },
+    });
+
+    const second = await run();
+
+    expect(second.deletedImages).toBe(5);
+  });
+
+  it('does not skip accounts that share the cursor timestamp', async () => {
+    mockSysRedis.get.mockResolvedValue('10');
+    seed({
+      7: { deletedAt: NEWER, images: ids(10) },
+      8: { deletedAt: NEWER, images: ids(10, 100) },
+    });
+
+    const first = await run();
+
+    expect(first.deletedImages).toBe(10);
+    expect(cursorSets[BACKLOG_KEY]).toEqual([NEWER]);
+
+    // A bulk delete stamps one `now()` across many accounts; a strict comparison drops the
+    // rest of the tie the moment the cursor lands on it.
+    const second = await run();
+
+    expect(second.deletedImages).toBe(10);
+    expect(fixtures[8].images).toEqual([]);
   });
 });
 

@@ -9,13 +9,19 @@ import { createJob, getJobDate } from './job';
 export const USERS_PER_RUN = 50;
 export const DELETE_BATCH_SIZE = 100;
 export const DEFAULT_IMAGES_PER_RUN = 500;
-export const CURSOR_KEY = 'remove-deleted-user-images-cursor';
 
 /**
- * Wrap sentinel. The drain walks `deletedAt` DESC, so it walks *away* from accounts deleted
- * after the run started; parking the cursor above every possible `deletedAt` on an empty page
- * is what brings those accounts back into range.
+ * Two cursors because the populations move in opposite directions and one cursor cannot serve
+ * both: a fresh self-deletion has to be purged within a tick or two, while the 74,828-account
+ * backlog takes months. FRESH is an ascending high-water mark over accounts deleted after the
+ * mark; BACKLOG is a descending cursor over everything below it. Collapsing them back into a
+ * single cursor strands every new deletion behind the whole backlog — in *either* direction,
+ * since a descending cursor sorts each new deletion above its own position.
  */
+export const FRESH_CURSOR_KEY = 'remove-deleted-user-images-fresh-cursor';
+export const BACKLOG_CURSOR_KEY = 'remove-deleted-user-images-cursor';
+
+/** Backlog wrap sentinel: above every possible `deletedAt`, so a reset restarts the descent. */
 export const CURSOR_START = new Date('9999-12-31T23:59:59.999Z');
 
 /**
@@ -32,6 +38,144 @@ export async function getImagePurgeBudget(): Promise<number> {
   return Math.floor(parsed);
 }
 
+type Candidate = { id: number; deletedAt: Date };
+
+type UserDrain = {
+  deletedImages: number;
+  budgetUsed: number;
+  drained: boolean;
+  canceled: boolean;
+  error?: unknown;
+};
+
+async function isStillDeleted(userId: number) {
+  const [row] = await dbWrite.$queryRaw<{ stillDeleted: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL
+    ) AS "stillDeleted"
+  `;
+  return row.stillDeleted;
+}
+
+async function drainUser(
+  userId: number,
+  budget: number,
+  isCanceled: () => boolean
+): Promise<UserDrain> {
+  let deletedImages = 0;
+  let budgetUsed = 0;
+
+  try {
+    // Joined rather than trusted from the worklist: that was read off a replica, so a
+    // restore (or replica lag) between the two would otherwise purge a live account.
+    const images = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT i.id
+      FROM "Image" i
+      JOIN "User" u ON u.id = i."userId" AND u."deletedAt" IS NOT NULL
+      WHERE i."userId" = ${userId}
+      LIMIT ${budget}
+    `;
+
+    for (const batch of chunk(
+      images.map((i) => i.id),
+      DELETE_BATCH_SIZE
+    )) {
+      if (isCanceled()) return { deletedImages, budgetUsed, drained: false, canceled: true };
+      // The id list is only as fresh as the fetch above, and the delete below is by id: without
+      // a re-read a restore landing mid-drain still costs the account every id already fetched.
+      if (!(await isStillDeleted(userId)))
+        return { deletedImages, budgetUsed, drained: false, canceled: false };
+
+      const deleted = await deleteImages(batch);
+      deletedImages += deleted.length;
+      budgetUsed += batch.length;
+    }
+
+    const [state] = await dbWrite.$queryRaw<{ stillDeleted: boolean; hasImages: boolean }[]>`
+      SELECT
+        EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL) AS "stillDeleted",
+        EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = ${userId}) AS "hasImages"
+    `;
+    if (!state.stillDeleted || state.hasImages)
+      return { deletedImages, budgetUsed, drained: false, canceled: false };
+
+    const posts = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Post" WHERE "userId" = ${userId}
+    `;
+    let deletedPosts = 0;
+    for (const batch of chunk(
+      posts.map((p) => p.id),
+      DELETE_BATCH_SIZE
+    )) {
+      if (isCanceled()) return { deletedImages, budgetUsed, drained: false, canceled: true };
+      deletedPosts += await dbWrite.$executeRaw`
+        DELETE FROM "Post"
+        WHERE id IN (${Prisma.join(batch)})
+          AND "userId" = ${userId}
+          AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${userId} AND u."deletedAt" IS NOT NULL)
+      `;
+    }
+
+    // The gated DELETE affecting fewer rows than it targeted means the account came back mid-run.
+    return { deletedImages, budgetUsed, drained: deletedPosts === posts.length, canceled: false };
+  } catch (error) {
+    return { deletedImages, budgetUsed, drained: false, canceled: false, error };
+  }
+}
+
+async function drainPage(
+  users: Candidate[],
+  budget: number,
+  isCanceled: () => boolean
+): Promise<{
+  deletedImages: number;
+  deletedUsers: number;
+  remaining: number;
+  canceled: boolean;
+  drainedThrough?: Date;
+}> {
+  let remaining = budget;
+  let deletedImages = 0;
+  let deletedUsers = 0;
+  let canceled = false;
+  let drainedThrough: Date | undefined;
+  // A user left half-drained (by the budget, a cancel, or an error) has to be reached again
+  // next run, so the cursor stops at the first one it did not finish rather than at the last
+  // one it did.
+  let stalled = false;
+
+  for (const user of users) {
+    if (remaining <= 0) break;
+    if (isCanceled()) {
+      canceled = true;
+      break;
+    }
+
+    const result = await drainUser(user.id, remaining, isCanceled);
+    remaining -= result.budgetUsed;
+    deletedImages += result.deletedImages;
+    canceled = result.canceled;
+
+    if (result.error)
+      await logToAxiom({
+        type: 'error',
+        name: 'remove-deleted-user-images',
+        message: (result.error as Error).message,
+        error: safeError(result.error),
+        userId: user.id,
+      }).catch(() => undefined);
+
+    if (result.drained) {
+      deletedUsers += 1;
+      if (!stalled) drainedThrough = user.deletedAt;
+    } else stalled = true;
+
+    if (canceled) break;
+  }
+
+  return { deletedImages, deletedUsers, remaining, canceled, drainedThrough };
+}
+
 export const removeDeletedUserImages = createJob(
   'remove-deleted-user-images',
   '15 * * * *',
@@ -39,105 +183,86 @@ export const removeDeletedUserImages = createJob(
     const budget = await getImagePurgeBudget();
     if (budget <= 0) return { paused: true, deletedImages: 0, deletedUsers: 0 };
 
-    const [cursor, setCursor] = await getJobDate(CURSOR_KEY, CURSOR_START);
+    // A cancel is a clean stop, not a failure; converting the throw keeps it out of both the
+    // per-user error log and the job runner's error counter.
+    const isCanceled = () => {
+      try {
+        ctx.checkIfCanceled();
+        return false;
+      } catch {
+        return true;
+      }
+    };
 
-    const users = await dbRead.$queryRaw<{ id: number; deletedAt: Date }[]>`
+    const [freshMark, setFreshMark] = await getJobDate(FRESH_CURSOR_KEY, new Date());
+    const [backlogCursor, setBacklogCursor] = await getJobDate(BACKLOG_CURSOR_KEY, CURSOR_START);
+
+    // Both bounds are inclusive of their own timestamp: a bulk or admin delete stamps one
+    // `now()` across many accounts, and the worklist already drops accounts that no longer own
+    // anything, so re-reading the tie costs nothing and is the only way not to skip the rest.
+    const fresh = await dbRead.$queryRaw<Candidate[]>`
       SELECT u.id, u."deletedAt"
       FROM "User" u
       WHERE u."deletedAt" IS NOT NULL
-        AND u."deletedAt" < ${cursor}
+        AND u."deletedAt" >= ${freshMark}
         AND (
           EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = u.id)
           OR EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
         )
-      ORDER BY u."deletedAt" DESC
+      ORDER BY u."deletedAt" ASC
       LIMIT ${USERS_PER_RUN}
     `;
 
-    if (!users.length) {
-      await setCursor(CURSOR_START);
-      return { deletedImages: 0, deletedUsers: 0, wrapped: true };
-    }
+    const freshRun = await drainPage(fresh, budget, isCanceled);
+    // Written on every run, drained or not: an unstored key falls back to the default, so a
+    // first run that never persists its seed re-seeds to a later `now` on the next tick and
+    // everything deleted in between lands above the mark and below the backlog cursor.
+    await setFreshMark(freshRun.drainedThrough ?? freshMark);
 
-    let remaining = budget;
-    let deletedImages = 0;
-    let deletedUsers = 0;
-    let drainedThrough: Date | undefined;
+    let deletedImages = freshRun.deletedImages;
+    let deletedUsers = freshRun.deletedUsers;
+    let candidates = fresh.length;
+    let wrapped = false;
 
-    for (const user of users) {
-      if (remaining <= 0) break;
-      ctx.checkIfCanceled();
+    if (freshRun.remaining > 0 && !freshRun.canceled) {
+      const backlog = await dbRead.$queryRaw<Candidate[]>`
+        SELECT u.id, u."deletedAt"
+        FROM "User" u
+        WHERE u."deletedAt" IS NOT NULL
+          AND u."deletedAt" <= ${backlogCursor}
+          AND u."deletedAt" < ${freshMark}
+          AND (
+            EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = u.id)
+            OR EXISTS (SELECT 1 FROM "Post" p WHERE p."userId" = u.id)
+          )
+        ORDER BY u."deletedAt" DESC
+        LIMIT ${USERS_PER_RUN}
+      `;
 
-      try {
-        // Joined rather than trusted from the worklist: that was read off a replica, so a
-        // restore (or replica lag) between the two would otherwise purge a live account.
-        const images = await dbWrite.$queryRaw<{ id: number }[]>`
-          SELECT i.id
-          FROM "Image" i
-          JOIN "User" u ON u.id = i."userId" AND u."deletedAt" IS NOT NULL
-          WHERE i."userId" = ${user.id}
-          LIMIT ${remaining}
-        `;
-
-        for (const batch of chunk(
-          images.map((i) => i.id),
-          DELETE_BATCH_SIZE
-        )) {
-          ctx.checkIfCanceled();
-          const deleted = await deleteImages(batch);
-          deletedImages += deleted.length;
-          remaining -= batch.length;
-        }
-
-        const [state] = await dbWrite.$queryRaw<{ stillDeleted: boolean; hasImages: boolean }[]>`
-          SELECT
-            EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${user.id} AND u."deletedAt" IS NOT NULL) AS "stillDeleted",
-            EXISTS (SELECT 1 FROM "Image" i WHERE i."userId" = ${user.id}) AS "hasImages"
-        `;
-        if (!state.stillDeleted || state.hasImages) continue;
-
-        const posts = await dbWrite.$queryRaw<{ id: number }[]>`
-          SELECT id FROM "Post" WHERE "userId" = ${user.id}
-        `;
-        for (const batch of chunk(
-          posts.map((p) => p.id),
-          DELETE_BATCH_SIZE
-        )) {
-          ctx.checkIfCanceled();
-          await dbWrite.$executeRaw`
-            DELETE FROM "Post"
-            WHERE id IN (${Prisma.join(batch)})
-              AND "userId" = ${user.id}
-              AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = ${user.id} AND u."deletedAt" IS NOT NULL)
-          `;
-        }
-
-        deletedUsers += 1;
-        drainedThrough = user.deletedAt;
-      } catch (error) {
-        await logToAxiom({
-          type: 'error',
-          name: 'remove-deleted-user-images',
-          message: (error as Error).message,
-          error: safeError(error),
-          userId: user.id,
-        }).catch(() => undefined);
+      if (!backlog.length) {
+        wrapped = true;
+        await setBacklogCursor(CURSOR_START);
+      } else {
+        const backlogRun = await drainPage(backlog, freshRun.remaining, isCanceled);
+        deletedImages += backlogRun.deletedImages;
+        deletedUsers += backlogRun.deletedUsers;
+        candidates += backlog.length;
+        if (backlogRun.drainedThrough) await setBacklogCursor(backlogRun.drainedThrough);
       }
     }
-
-    // Only past users that finished: one left half-drained by the budget must stay in range.
-    if (drainedThrough) await setCursor(drainedThrough);
 
     await logToAxiom({
       type: 'info',
       name: 'remove-deleted-user-images',
       deletedImages,
       deletedUsers,
-      candidates: users.length,
+      freshDeletedImages: freshRun.deletedImages,
+      freshDeletedUsers: freshRun.deletedUsers,
+      candidates,
       budget,
     }).catch(() => undefined);
 
-    return { deletedImages, deletedUsers };
+    return { deletedImages, deletedUsers, wrapped };
   },
   { lockExpiration: 30 * 60, dedicated: true }
 );
