@@ -109,25 +109,45 @@ function editViewRow(ssRowId: string, overrides: Record<string, unknown> = {}) {
 }
 
 /**
- * Route `appListing.findUnique` by call shape:
+ * Route `appListing.findUnique` by call shape, on BOTH pools:
  *   - `where.appBlockId`   → the entry resolve (id/userId/status/contentRating)
  *   - `select` has `icon`  → `loadListingEditView`, keyed by `where.id`
  *   - otherwise            → the owner/editable load (`beginListingRevision`)
+ *
+ * `replicaLagsOn` makes the REPLICA miss on the given ids while the PRIMARY still
+ * serves them — i.e. real replication lag, the condition that decides whether the
+ * create path is correct.
  */
 function wireFindUnique(opts: {
   entry: unknown;
   owned?: unknown;
   viewByListingId?: Record<string, unknown>;
+  /** Ids the replica has not received yet (a row INSERTed microseconds ago). */
+  replicaLagsOn?: string[];
 }) {
-  mockRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+  const impl = (isReplica: boolean) => async (args: unknown) => {
     const a = args as {
       select?: Record<string, unknown>;
       where?: { id?: string; appBlockId?: string };
     };
     if (a.where?.appBlockId != null) return opts.entry;
-    if ('icon' in (a.select ?? {})) return opts.viewByListingId?.[a.where?.id ?? ''] ?? null;
+    if ('icon' in (a.select ?? {})) {
+      const id = a.where?.id ?? '';
+      if (isReplica && (opts.replicaLagsOn ?? []).includes(id)) return null;
+      return opts.viewByListingId?.[id] ?? null;
+    }
     return opts.owned ?? null;
-  });
+  };
+  mockRead.appListing.findUnique.mockImplementation(impl(true));
+  mockWrite.appListing.findUnique.mockImplementation(impl(false));
+}
+
+/** The listing ids whose `loadListingEditView` read landed on a given pool. */
+function editViewReads(client: { appListing: { findUnique: { mock: { calls: unknown[][] } } } }) {
+  return client.appListing.findUnique.mock.calls
+    .map(([a]) => a as { select?: Record<string, unknown>; where?: { id?: string } })
+    .filter((a) => 'icon' in (a?.select ?? {}))
+    .map((a) => a.where?.id ?? '');
 }
 
 beforeEach(() => {
@@ -307,5 +327,61 @@ describe('getMyListingForApp', () => {
     // No shadow was opened for a draft (beginListingRevision would reject it anyway).
     expect(mockWrite.appListing.create).not.toHaveBeenCalled();
     expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_OWN']);
+    // Nothing was written, so nothing needs the primary.
+    expect(editViewReads(mockRead)).toEqual(['apl_onsite']);
+    expect(editViewReads(mockWrite)).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 READ-AFTER-WRITE: the shadow is INSERTed on the PRIMARY, so on the CREATE
+  // path it must be read back from the primary. Reading it off the replica
+  // microseconds later misses under lag → `loadListingEditView` throws NOT_FOUND →
+  // tRPC NOT_FOUND → the editor's query is `retry: false` and it renders <NotFound/>.
+  // That lands on the owner's VERY FIRST visit to the media tab — the exact flow
+  // this proc's asset projection exists to make usable.
+  // -------------------------------------------------------------------------
+
+  it('🔴 reads a FRESHLY-CREATED shadow from the PRIMARY, not the lagging replica', async () => {
+    wireFindUnique({
+      entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
+      owned: ownedRow(),
+      viewByListingId: {
+        apl_onsite: editViewRow('apls_PARENT'),
+        apl_new_1: editViewRow('apls_FRESH_SHADOW'),
+      },
+      // The shadow was INSERTed on the primary this instant — the replica misses it.
+      replicaLagsOn: ['apl_new_1'],
+    });
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'apl_new_1' });
+
+    // Routed to the replica this REJECTS with NOT_FOUND instead of resolving.
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+
+    expect(res.shadowId).toBe('apl_new_1');
+    expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_FRESH_SHADOW']);
+    // …and it got there by reading the PRIMARY, never the replica.
+    expect(editViewReads(mockWrite)).toEqual(['apl_new_1']);
+    expect(editViewReads(mockRead)).toEqual([]);
+  });
+
+  it('🔴 a REUSED (pre-existing) shadow still reads from the REPLICA — not a blanket primary redirect', async () => {
+    wireFindUnique({
+      entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
+      owned: ownedRow(),
+      viewByListingId: { apl_shadow: editViewRow('apls_shadow') },
+    });
+    // An in-flight shadow already exists → `beginListingRevision` returns created:false.
+    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+
+    expect(res.shadowId).toBe('apl_shadow');
+    // The steady state is the overwhelming majority of these reads; sending them all
+    // to the primary would move real read load off the replica pool for no benefit.
+    expect(editViewReads(mockRead)).toEqual(['apl_shadow']);
+    expect(editViewReads(mockWrite)).toEqual([]);
   });
 });

@@ -1271,15 +1271,27 @@ export type GetMyListingForEditResult = {
 };
 
 /** Load a listing's scalars + current assets (edge-resolved URLs) + connect scope
- *  snapshot for edit prefill. */
-async function loadListingEditView(listingId: string): Promise<{
+ *  snapshot for edit prefill.
+ *
+ * 🔴 READ-AFTER-WRITE: defaults to the REPLICA (`dbRead`) — correct for the steady
+ * state, where the row was written long ago. A caller that JUST created the row it is
+ * about to read (`beginListingRevision(...).created === true` mints the shadow on the
+ * PRIMARY microseconds earlier) MUST pass `dbWrite`: the replica has not received the
+ * INSERT yet, the `findUnique` misses, and this throws NOT_FOUND → tRPC NOT_FOUND →
+ * the editor renders `<NotFound />` (its query has `retry: false`) on the owner's very
+ * FIRST visit. Same hazard the screenshot re-pack guards against in
+ * `app-listing-assets.service.ts`. Do NOT route the steady-state read to the primary. */
+async function loadListingEditView(
+  listingId: string,
+  db: typeof dbRead = dbRead
+): Promise<{
   scalars: ListingEditScalars;
   assets: GetMyListingForEditResult['assets'];
   connectRequestedScopes: number | null;
   connectScopeJustifications: Record<string, string> | null;
 }> {
   const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
-  const row = (await dbRead.appListing.findUnique({
+  const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
       name: true,
@@ -1422,10 +1434,14 @@ export async function getMyListingForEdit(opts: {
   let effectiveId = listingId;
   let shadowId: string | null = null;
   let hasPendingRevision = false;
+  // See `getMyListingForApp` / `loadListingEditView`: a shadow minted on the primary
+  // this instant is not on the replica yet, so read it back from the primary.
+  let createdShadow = false;
   if (listing.status === 'approved') {
     const begun = await beginListingRevision({ listingId, userId });
     shadowId = begun.shadowId;
     effectiveId = begun.shadowId;
+    createdShadow = begun.created;
     const pendingRevisionReq = await dbRead.appListingPublishRequest.findFirst({
       where: {
         status: 'pending',
@@ -1439,7 +1455,7 @@ export async function getMyListingForEdit(opts: {
     hasPendingRevision = !!pendingRevisionReq;
   }
 
-  const view = await loadListingEditView(effectiveId);
+  const view = await loadListingEditView(effectiveId, createdShadow ? dbWrite : dbRead);
 
   // Resolve the connect client's CURRENT allowedScopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
@@ -1551,12 +1567,18 @@ export async function getMyListingForApp(opts: {
   // edited in place, so it is its own effective target.
   let effectiveId = listing.id;
   let shadowId: string | null = null;
+  // 🔴 True when the shadow was INSERTed on the primary just now → read it back from
+  // the primary. Reading a microseconds-old row off the replica misses under lag and
+  // throws NOT_FOUND, which the editor renders as `<NotFound />` on the owner's very
+  // first visit to the media tab (its query is `retry: false`). See loadListingEditView.
+  let createdShadow = false;
   if (listing.status === 'approved') {
     const begun = await beginListingRevision({ listingId: listing.id, userId });
     shadowId = begun.shadowId;
     effectiveId = begun.shadowId;
+    createdShadow = begun.created;
   }
-  const { assets } = await loadListingEditView(effectiveId);
+  const { assets } = await loadListingEditView(effectiveId, createdShadow ? dbWrite : dbRead);
 
   return {
     appListingId: listing.id,

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -5,17 +6,24 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import { useRouter } from 'next/router';
 
 /**
- * On-site listing-media OWNER page (`/apps/<appBlockId>/listing`) — route-shell
- * render test (browser mode, report-only in Tekton).
+ * On-site listing-media OWNER editor (`ListingMediaEditor`, the "Listing media" tab of
+ * `/apps/<appBlockId>/edit`) — render test (browser mode, report-only in Tekton).
  *
  * Asserts the client wiring: it resolves `appBlockId` → `appListingId`
  * (`getMyListingForApp`), begins the editable shadow revision
  * (`beginListingRevision`), re-hosts the reused `ListingAssetStep` against the
- * SHADOW id + the listing's content rating, surfaces the honest live-app framing
- * copy (+ the pending-revision notice when applicable), and fires
+ * SHADOW id + the listing's content rating, prefills it from the SHADOW's assets,
+ * re-pulls the projection after an asset mutation, surfaces the honest live-app
+ * framing copy (+ the pending-revision notice when applicable), and fires
  * `submitListingRevision({ shadowId })` from the Submit-for-review button. The
  * asset step itself is stubbed — its real behaviour is covered by
  * `ListingAssetStep.browser.test.tsx`.
+ *
+ * 🔴 This file used to import the default export of `~/pages/apps/[appBlockId]/listing`.
+ * That route is now a getServerSideProps REDIRECT stub whose default export renders
+ * `<NotFound />` and nothing else, so every test here rendered an empty not-found div
+ * and asserted nothing — a structurally dead suite that still reported green. It now
+ * targets the real component the route redirects to. Keep it pointed at a COMPONENT.
  */
 
 const state = vi.hoisted(() => ({
@@ -44,12 +52,6 @@ const state = vi.hoisted(() => ({
   flags: { appBlocks: true } as Record<string, boolean>,
 }));
 
-// The page's `getServerSideProps` calls createServerSideProps at module top — stub
-// it so importing the page in a browser test doesn't pull the server graph.
-vi.mock('~/server/utils/server-side-helpers', () => ({
-  createServerSideProps: () => async () => ({ props: {} }),
-}));
-
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
 }));
@@ -57,7 +59,6 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 vi.mock('~/components/AppLayout/NotFound', () => ({
   NotFound: () => <div data-testid="not-found">Not found</div>,
 }));
-vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/utils/notifications', () => ({
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
@@ -70,14 +71,22 @@ vi.mock('~/components/Apps/ListingAssetStep', () => ({
     listingId: string;
     contentRating: string;
     initial?: { icon: { imageId: number | null }; cover: { imageId: number | null } };
+    onAssetMutated?: () => void;
     onCompletenessChange?: (s: { meetsFloor: boolean; complete: boolean }) => void;
   }) => {
     state.assetProps.last = props;
     // Mirror the real step: report the floor state up so the page can gate submit.
-    props.onCompletenessChange?.(state.floor);
+    // In an EFFECT, not during render — the real step reports from an effect, and
+    // calling the parent's setState mid-render trips React's cross-component warning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => props.onCompletenessChange?.(state.floor), []);
     return (
       <div data-testid="asset-step">
         assets:{props.listingId}:{props.contentRating}
+        {/* Stands in for a successful attach/remove inside the real step. */}
+        <button type="button" data-testid="asset-step-mutate" onClick={() => props.onAssetMutated?.()}>
+          mutate
+        </button>
       </div>
     );
   },
@@ -115,7 +124,10 @@ vi.mock('~/utils/trpc', () => ({
   },
 }));
 
-const ListingMediaPage = (await import('~/pages/apps/[appBlockId]/listing')).default;
+// 🔴 The REAL editor component — NOT the `/apps/[appBlockId]/listing` route module,
+// which is now a redirect stub that only ever renders <NotFound />.
+const { ListingMediaEditor } = await import('~/components/Apps/ListingMediaEditor');
+const ListingMediaPage = () => <ListingMediaEditor appBlockId="my-block" />;
 
 function setRouterQuery(query: Record<string, string>) {
   const router = (useRouter as unknown as () => { query: Record<string, string> })();
@@ -223,9 +235,44 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
   });
 
   test('fails closed to NotFound when the owner resolve errors (non-owner / missing listing)', async () => {
-    state.query = { data: undefined, isLoading: false, error: { message: 'FORBIDDEN' } };
+    state.query = {
+      data: undefined,
+      isLoading: false,
+      error: { message: 'you can only manage your own listings', data: { code: 'FORBIDDEN' } },
+    };
     renderWithProviders(<ListingMediaPage />);
     await expect.element(page.getByTestId('not-found')).toBeInTheDocument();
     expect(page.getByTestId('asset-step').elements()).toHaveLength(0);
+  });
+
+  test('a NON-owner-gating error surfaces the inline alert instead of collapsing to NotFound', async () => {
+    // `getMyListingForApp` now resolves the shadow server-side, so an INVALID_REVISION
+    // ("cannot edit a listing in status …") arrives here as BAD_REQUEST. Blanket-
+    // NotFound'ing it hid the one surface that explains it and told the owner their
+    // LIVE app did not exist.
+    state.query = {
+      data: undefined,
+      isLoading: false,
+      error: { message: 'cannot edit a listing in status removed', data: { code: 'BAD_REQUEST' } },
+    };
+    renderWithProviders(<ListingMediaPage />);
+    const alert = page.getByTestId('apps-listing-media-begin-error');
+    await expect.element(alert).toBeInTheDocument();
+    await expect.element(alert).toHaveTextContent(/cannot edit a listing in status removed/i);
+    expect(page.getByTestId('not-found').elements()).toHaveLength(0);
+  });
+
+  test('re-pulls the projected assets after an asset mutation (stale-prefill guard)', async () => {
+    renderWithProviders(<ListingMediaPage />);
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    expect(state.invalidate).not.toHaveBeenCalled();
+
+    // The step reports a successful attach/remove.
+    await userEvent.click(page.getByTestId('asset-step-mutate'));
+
+    // Without this the cached `assets` stay pre-mutation and the /edit page's
+    // `keepMounted={false}` tab round-trip re-seeds the step from them — a just-
+    // attached icon reads as unattached and Submit goes disabled again.
+    await vi.waitFor(() => expect(state.invalidate).toHaveBeenCalledWith({ appBlockId: 'my-block' }));
   });
 });
