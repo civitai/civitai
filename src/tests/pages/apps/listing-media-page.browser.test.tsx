@@ -30,7 +30,13 @@ const state = vi.hoisted(() => ({
   // submitListingRevision — captured args.
   submit: { calls: [] as unknown[], pending: false },
   // Props the stubbed ListingAssetStep received.
-  assetProps: { last: null as null | { listingId: string; contentRating: string } },
+  assetProps: {
+    last: null as null | {
+      listingId: string;
+      contentRating: string;
+      initial?: { icon: { imageId: number | null }; cover: { imageId: number | null } };
+    },
+  },
   // Floor state the stubbed step reports up via onCompletenessChange (drives the
   // submit button's disabled binding). Default meets-floor so the happy paths click.
   floor: { meetsFloor: true, complete: false },
@@ -63,6 +69,7 @@ vi.mock('~/components/Apps/ListingAssetStep', () => ({
   ListingAssetStep: (props: {
     listingId: string;
     contentRating: string;
+    initial?: { icon: { imageId: number | null }; cover: { imageId: number | null } };
     onCompletenessChange?: (s: { meetsFloor: boolean; complete: boolean }) => void;
   }) => {
     state.assetProps.last = props;
@@ -117,7 +124,19 @@ function setRouterQuery(query: Record<string, string>) {
 
 beforeEach(() => {
   state.query = {
-    data: { appListingId: 'apl_onsite', status: 'approved', contentRating: 'pg13', hasPendingRevision: false },
+    data: {
+      appListingId: 'apl_onsite',
+      status: 'approved',
+      contentRating: 'pg13',
+      hasPendingRevision: false,
+      shadowId: 'apl_shadow',
+      // The SHADOW's assets — what the proc now projects so the step can prefill.
+      assets: {
+        icon: { imageId: 137918008, url: 'edge:icon' },
+        cover: { imageId: 137918011, url: 'edge:cover' },
+        screenshots: [],
+      },
+    },
     isLoading: false,
     error: null,
   };
@@ -139,6 +158,18 @@ describe('ListingMediaPage — owner listing-media route shell', () => {
     await expect.element(page.getByTestId('asset-step')).toHaveTextContent('assets:apl_shadow:pg13');
     expect(state.assetProps.last).toMatchObject({ listingId: 'apl_shadow', contentRating: 'pg13' });
     expect(page.getByTestId('not-found').elements()).toHaveLength(0);
+  });
+
+  test('prefills the asset step with the SHADOW revision assets the proc projects', async () => {
+    renderWithProviders(<ListingMediaPage />);
+
+    await expect.element(page.getByTestId('asset-step')).toBeInTheDocument();
+    // Without this prop the step seeded every slot empty → "Icon none / Cover none"
+    // → the publish floor could never be met → Submit stayed permanently disabled.
+    expect(state.assetProps.last?.initial).toMatchObject({
+      icon: { imageId: 137918008 },
+      cover: { imageId: 137918011 },
+    });
   });
 
   test('surfaces the honest live-app framing copy', async () => {

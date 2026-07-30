@@ -1478,6 +1478,28 @@ export type GetMyListingForAppResult = {
   contentRating: string;
   /** Whether a shadow-revision publish request is already under review for this listing. */
   hasPendingRevision: boolean;
+  /**
+   * The in-progress SHADOW revision id for an APPROVED parent (resolved server-side,
+   * idempotently — the same id the client's `beginListingRevision` returns), else
+   * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
+   */
+  shadowId: string | null;
+  /**
+   * The EDITABLE target's current assets, edge-resolved — icon / cover / screenshots.
+   *
+   * 🔴 These are the assets of the EFFECTIVE edit target: the SHADOW's rows for an
+   * approved parent, the listing's own rows otherwise. NEVER the live parent's rows
+   * when a shadow exists — the media editor mutates + floor-checks exactly what it
+   * is handed, so returning the parent's `AppListingScreenshot` ids here would let a
+   * "remove screenshot" delete a row from the LIVE served listing, bypassing
+   * moderator review. Same rule (and the same server-side shadow resolution) as
+   * `getMyListingForEdit`.
+   */
+  assets: {
+    icon: ListingEditAsset;
+    cover: ListingEditAsset;
+    screenshots: ListingEditScreenshot[];
+  };
 };
 
 /**
@@ -1489,6 +1511,15 @@ export type GetMyListingForAppResult = {
  * under review. Owner-bound: a listing owned by another user → NOT_OWNED
  * (→FORBIDDEN); no listing row for the app → NOT_FOUND. Kind-agnostic (works for
  * both on-site and off-site listings — the on-site owner UI is the first caller).
+ *
+ * ALSO projects the EDITABLE target's current `assets` (+ its `shadowId`). Without
+ * them the media editor had no way to see the icon/cover it is about to edit: it
+ * rendered every slot as "none" and its publish-floor check (icon+cover attached)
+ * could never be satisfied, so "Submit for review" stayed permanently disabled —
+ * the whole on-site listing-media flow was uncompletable. The assets come from the
+ * EFFECTIVE source (an approved parent's shadow, resolved here server-side and
+ * idempotently, exactly as `getMyListingForEdit` does — see the 🔴 note on
+ * `GetMyListingForAppResult.assets` for why the shadow's rows and not the parent's).
  */
 export async function getMyListingForApp(opts: {
   appBlockId: string;
@@ -1512,6 +1543,21 @@ export async function getMyListingForApp(opts: {
     where: { status: 'pending', appListing: { revisionOfId: listing.id } },
     select: { id: true },
   });
+
+  // Resolve the EFFECTIVE edit target before reading assets. For an approved parent
+  // that is the shadow revision — created/reused here (idempotent) so the asset rows
+  // the client receives are ALWAYS the shadow's, never the live listing's. A
+  // non-approved listing (draft / pending / rejected / removed) has no shadow and is
+  // edited in place, so it is its own effective target.
+  let effectiveId = listing.id;
+  let shadowId: string | null = null;
+  if (listing.status === 'approved') {
+    const begun = await beginListingRevision({ listingId: listing.id, userId });
+    shadowId = begun.shadowId;
+    effectiveId = begun.shadowId;
+  }
+  const { assets } = await loadListingEditView(effectiveId);
+
   return {
     appListingId: listing.id,
     status: listing.status,
@@ -1519,6 +1565,8 @@ export async function getMyListingForApp(opts: {
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',
     hasPendingRevision: !!pendingRevisionReq,
+    shadowId,
+    assets,
   };
 }
 

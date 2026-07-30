@@ -38,8 +38,13 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
 
   const listingId = listing?.appListingId;
 
-  // 2) Begin (or resume) the editable shadow revision — idempotent. Every asset
-  //    mutation the step performs targets the shadow, never the live parent.
+  // 2) Begin (or resume) the editable shadow revision — idempotent, and it returns
+  //    the SAME shadow `getMyListingForApp` already resolved server-side (a parent
+  //    has at most one in-flight shadow), so `listing.assets` below always describes
+  //    exactly this id. Kept as the render gate + the error surface for a listing
+  //    that isn't revisable (a non-approved parent → "only an approved listing can
+  //    be revised"). Every asset mutation the step performs targets the shadow,
+  //    never the live parent.
   const [shadowId, setShadowId] = useState<string | null>(null);
   const [beginError, setBeginError] = useState<string | null>(null);
   const beginRevision = trpc.appListings.beginListingRevision.useMutation();
@@ -143,6 +148,16 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
               listingId={shadowId}
               contentRating={listing.contentRating as OffsiteContentRating}
               suggestions={{}}
+              // 🔴 Prefill from the SHADOW's assets (what `getMyListingForApp`
+              // projects). Without this the step seeded every slot empty, so it
+              // rendered "Icon none / Cover none" for a listing that HAS both and
+              // its publish floor (icon+cover attached) could never be met —
+              // "Submit for review" was permanently disabled and the flow could
+              // not be completed by anyone. The step reads `initial` in its
+              // useState initialisers, and it only mounts once `shadowId` resolves
+              // (the query that carries the assets has long settled by then), so
+              // there is no seed race.
+              initial={listing.assets}
               allowRemove
               onCompletenessChange={handleCompletenessChange}
             />
