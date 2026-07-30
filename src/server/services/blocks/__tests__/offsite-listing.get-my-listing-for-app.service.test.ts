@@ -103,7 +103,9 @@ function editViewRow(ssRowId: string, overrides: Record<string, unknown> = {}) {
     coverId: 137918011,
     icon: { url: 'icon-key' },
     cover: { url: 'cover-key' },
-    screenshots: [{ id: ssRowId, imageId: 30, order: 0, caption: null, image: { url: 'shot-key' } }],
+    screenshots: [
+      { id: ssRowId, imageId: 30, order: 0, caption: null, image: { url: 'shot-key' } },
+    ],
     ...overrides,
   };
 }
@@ -154,6 +156,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   seq.n = 0;
   mockRead.appListing.findUnique.mockResolvedValue(null);
+  // (W13 draft-at-submit) the pre-approval DRAFT by-slug fallback reads through findFirst.
   mockRead.appListing.findFirst.mockResolvedValue(null);
   mockRead.appListingScreenshot.findMany.mockResolvedValue([]);
   mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
@@ -420,5 +423,89 @@ describe('getMyListingForApp', () => {
     expect(editViewReads(mockRead)).toEqual([]);
     // And it never fell back to the live parent's rows.
     expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+});
+
+// W13 draft-at-submit — a FIRST-version app has no AppBlock yet, so the owner-media
+// page reaches its pre-approval draft BY SLUG (`appBlockId IS NULL`). These lock the
+// slug fallback: the owner reaches their pending draft; ownership is still enforced.
+describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no AppBlock)', () => {
+  it('resolves the pending draft BY SLUG when only a slug is given (no appBlockId lookup)', async () => {
+    mockRead.appListing.findFirst.mockResolvedValue({
+      id: 'apl_draft',
+      userId: OWNER,
+      status: 'draft',
+      contentRating: 'g',
+    });
+    // A draft is NOT approved → no shadow revision; it is its own EFFECTIVE edit target,
+    // so the edit-view assets are read straight off `apl_draft` (#3476 projection).
+    wireFindUnique({ entry: null, viewByListingId: { apl_draft: editViewRow('apls_draft') } });
+
+    const res = await getMyListingForApp({ slug: 'my-app', userId: OWNER });
+
+    expect(res).toMatchObject({
+      appListingId: 'apl_draft',
+      status: 'draft',
+      contentRating: 'g',
+      hasPendingRevision: false,
+      // Edited in place while pending — no shadow is minted for a draft.
+      shadowId: null,
+    });
+    // The media editor can SEE the icon/cover it is about to edit on a pending draft.
+    expect(res.assets.icon).not.toBeNull();
+    expect(res.assets.cover).not.toBeNull();
+    // The only findUnique is the edit-view read — never the appBlockId entry resolve.
+    expect(editViewReads(mockRead)).toEqual(['apl_draft']);
+    expect(
+      mockRead.appListing.findUnique.mock.calls.some(
+        ([a]) => (a as { where?: { appBlockId?: string } })?.where?.appBlockId != null
+      )
+    ).toBe(false);
+    // Scoped to the EXACT pre-approval-draft shape (onsite / null appBlockId / draft).
+    expect(mockRead.appListing.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { slug: 'my-app', kind: 'onsite', appBlockId: null, status: 'draft' },
+      })
+    );
+  });
+
+  it('falls back to the slug draft when the appBlockId lookup misses', async () => {
+    // Entry resolve by appBlockId MISSES (no approved listing yet) → slug fallback wins.
+    wireFindUnique({ entry: null, viewByListingId: { apl_draft: editViewRow('apls_draft') } });
+    mockRead.appListing.findFirst.mockResolvedValue({
+      id: 'apl_draft',
+      userId: OWNER,
+      status: 'draft',
+      contentRating: 'pg',
+    });
+
+    const res = await getMyListingForApp({ appBlockId: 'maybe', slug: 'my-app', userId: OWNER });
+
+    expect(res.appListingId).toBe('apl_draft');
+    expect(mockRead.appListing.findFirst).toHaveBeenCalledOnce();
+    expect(editViewReads(mockRead)).toEqual(['apl_draft']);
+  });
+
+  it('a draft owned by ANOTHER user → NOT_OWNED (ownership still enforced on the slug path)', async () => {
+    mockRead.appListing.findFirst.mockResolvedValue({
+      id: 'apl_draft',
+      userId: OTHER,
+      status: 'draft',
+      contentRating: 'g',
+    });
+
+    await expect(getMyListingForApp({ slug: 'my-app', userId: OWNER })).rejects.toMatchObject({
+      name: 'OffsiteRequestError',
+      code: 'NOT_OWNED',
+    });
+    expect(mockRead.appListingPublishRequest.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('no draft for the slug → NOT_FOUND', async () => {
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+
+    const err = await getMyListingForApp({ slug: 'ghost', userId: OWNER }).catch((e) => e);
+    expect(err).toBeInstanceOf(OffsiteRequestError);
+    expect(err.code).toBe('NOT_FOUND');
   });
 });

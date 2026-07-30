@@ -563,6 +563,58 @@ export async function assertListingAssetsScanCleanInTx(
   );
 }
 
+/**
+ * Go-live RATING FLOOR for a listing whose media was attached while it was directly
+ * asset-editable (a pre-approval `draft` / reset `pending` listing). Re-derives the
+ * rating from the current assets' max `nsfwLevel` and returns `declaredRating` RAISED
+ * to the derived value when the media is more mature — never lowered.
+ *
+ * 🔴 The on-site counterpart of the off-site approve's `resolveApprovalContentRating`
+ * floor. It upholds the invariant stated at {@link reDeriveContentRatingForModLiveEdit}:
+ * *draft/pending/shadow listings are rated at approve*. Without it a manifest-declared
+ * `contentRating` (author-controlled) is stamped verbatim over media the author attached
+ * while pending — and nothing else catches it, because the attach path
+ * ({@link loadValidatedImage}) rejects only `Blocked`/`NotFound` images, never a
+ * `Scanned` mature one. An under-rated listing then passes
+ * `listingMatureFilter(redCapable=false)` (`content_rating NOT IN ('r','x')`) and shows
+ * mature store art to SFW-only users.
+ *
+ * RAISE-ONLY, so it can only ever tighten: a deliberately higher rating is never
+ * auto-lowered by tamer media, and a listing with no attached assets (or a missing row)
+ * returns `declaredRating` unchanged. `db` is typed `Prisma.TransactionClient` so an
+ * in-tx caller passes its `tx`; a non-transactional caller may pass `dbWrite` (a
+ * `PrismaClient` is structurally a `TransactionClient` for these reads).
+ */
+export async function resolveListingRatingFloorInTx(
+  db: Prisma.TransactionClient,
+  appListingId: string,
+  declaredRating: string | null
+): Promise<string | null> {
+  const listing = await db.appListing.findUnique({
+    where: { id: appListingId },
+    select: { iconId: true, coverId: true },
+  });
+  if (!listing) return declaredRating;
+  const shots = await db.appListingScreenshot.findMany({
+    where: { appListingId, imageId: { not: null } },
+    select: { imageId: true },
+  });
+  const imageIds = [listing.iconId, listing.coverId, ...shots.map((s) => s.imageId)].filter(
+    (v): v is number => v != null
+  );
+  if (imageIds.length === 0) return declaredRating;
+  const images = await db.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { nsfwLevel: true },
+  });
+  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  // Floor: only raise. `nsfwLevelFromContentRating` maps null → the SFW floor, so a null
+  // declared rating is raised by any mature asset.
+  return nsfwLevelFromContentRating(derived) > nsfwLevelFromContentRating(declaredRating)
+    ? derived
+    : declaredRating;
+}
+
 // ---------------------------------------------------------------------------
 // Per-asset scan-status poll (owner/mod-gated). The client attaches an in-flight
 // image IMMEDIATELY (the server stores the pending id), then polls THIS to flip a

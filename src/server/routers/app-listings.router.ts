@@ -558,7 +558,11 @@ export const appListingsRouter = router({
         '~/server/services/blocks/offsite-listing.service'
       );
       try {
-        return await getMyListingForApp({ appBlockId: input.appBlockId, userId: ctx.user.id });
+        return await getMyListingForApp({
+          appBlockId: input.appBlockId,
+          slug: input.slug,
+          userId: ctx.user.id,
+        });
       } catch (err) {
         throw mapOffsiteError(err);
       }
