@@ -505,7 +505,11 @@ export const getModelHandler = async ({
       canGenerate: mappedVersions.some((v) => v.canGenerate),
       hasSuggestedResources: suggestedResources > 0,
       // Computed from the raw meta: filterModelMetaForClient strips the snapshot.
-      minorAutoFlagged: isMinorAutoFlagged(model.meta as ModelMeta | null),
+      // Owner-only: this is a publicProcedure, and whether a flag came from automation
+      // or a human is not a visitor's business. `model.minor` keeps it in step with an
+      // ordinary unflag, which leaves the snapshot behind.
+      minorAutoFlagged:
+        !!isOwner && !!model.minor && isMinorAutoFlagged(model.meta as ModelMeta | null),
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,
