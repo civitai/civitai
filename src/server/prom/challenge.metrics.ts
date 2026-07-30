@@ -104,9 +104,14 @@ const entryFeesBuzzCounter = registerCounterWithLabels({
   help: 'Buzz charged for challenge entry fees (house + pool legs, first-time charges only), by source and buzzType',
   labelNames: ['source', 'buzzType'] as const,
 });
+// ATTEMPTED, not settled — do not read this as "Buzz that reached winners". The emit sites sum the
+// winner prizes SUBMITTED to `createBuzzTransactionMany`, which silently drops any non-success,
+// non-conflict result (notably insufficientFunds) from both of its result arrays: the money did not
+// move and is otherwise invisible. There is no per-leg settlement signal to filter on, so the sum is
+// counted as submitted. Treat a gap vs the Buzz ledger as expected, not as an instrumentation bug.
 const prizePaidBuzzCounter = registerCounterWithLabels({
   name: 'challenge_prize_paid_buzz_total',
-  help: 'Buzz paid out to challenge winners (winner prizes), by source and buzzType',
+  help: 'Buzz submitted for challenge winner-prize payouts (ATTEMPTED, not confirmed-settled: non-success legs such as insufficientFunds are dropped upstream and still counted), by source and buzzType',
   labelNames: ['source', 'buzzType'] as const,
 });
 const operationSpentBuzzCounter = registerCounterWithLabels({
