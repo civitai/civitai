@@ -95,6 +95,10 @@ export function mergeRestoredValues<T extends Record<string, unknown>>({
 
   const merged: Record<string, unknown> = { ...current };
   for (const [name, storedValue] of Object.entries(stored as Record<string, unknown>)) {
+    // `merged[name] = ...` is a Set, so a stored `__proto__` key would hit the inherited
+    // accessor instead of creating an own property (the spread this loop replaced could not).
+    // Never a real form field; skip it rather than let it reshape the object.
+    if (name === '__proto__') continue;
     if (
       shouldRestoreField &&
       !shouldRestoreField({ name, storedValue, currentValue: current[name] })

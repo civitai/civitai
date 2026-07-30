@@ -102,6 +102,21 @@ describe('mergeRestoredValues', () => {
       })
     ).toEqual({ coverImage: { id: 55, url: 'key-a' }, title: 'draft' });
   });
+
+  it('does not let a stored __proto__ key reach the prototype setter', () => {
+    // This loop assigns (`merged[name] = ...`) where it used to spread. A spread creates an own
+    // data property for `__proto__`; an assignment hits the inherited accessor and would
+    // re-point the object's prototype instead. Source is the user's own localStorage, so the
+    // blast radius is self-only — but `__proto__` is never a real form field, so skip it.
+    const stored = JSON.parse('{"title":"draft","__proto__":{"polluted":true}}');
+
+    const merged = mergeRestoredValues({ current: { title: 'server' }, stored });
+
+    expect(merged).toEqual({ title: 'draft' });
+    expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+    expect((merged as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
 });
 
 // --- hook-level integration -------------------------------------------------------------

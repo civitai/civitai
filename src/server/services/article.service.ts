@@ -827,7 +827,10 @@ export const upsertArticle = async ({
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
-    let coverId = coverImage?.id;
+    // Stays `undefined` when there is no cover — Prisma reads that as "don't write this
+    // column". (It was previously seeded from `coverImage?.id`, which is dead: the only branch
+    // in which that could be non-undefined is the one that immediately overwrites it.)
+    let coverId: number | undefined;
     if (coverImage) {
       // `id` present -> the ownership rule below runs, unchanged. `id` absent -> reuse an
       // existing row for this url, else verify the object is still in the uploads bucket
