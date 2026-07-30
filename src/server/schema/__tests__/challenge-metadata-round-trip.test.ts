@@ -31,11 +31,15 @@ describe('parseChallengeMetadata round-trip', () => {
 
   it('survives the parse-then-write-back cycle that strips undeclared keys', () => {
     // The shape that actually loses data in production: parse, then persist the parsed object.
+    // `migratedAt` is here so the declaration that has no reader is still held in place by a test —
+    // otherwise it could be deleted with a fully green suite, which is exactly the silent-drop this
+    // schema exists to prevent.
     const stored = {
       challengeType: 'daily',
       articleId: 42,
       reviewedAt: 1753920000000,
       completingClaimedAt: '2026-07-30T00:03:00.000Z',
+      migratedAt: '2026-05-01T00:00:00.000Z',
     };
 
     const afterRewrite = parseChallengeMetadata(parseChallengeMetadata(stored));

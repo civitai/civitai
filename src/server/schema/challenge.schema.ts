@@ -138,11 +138,21 @@ export const challengeMetadataSchema = z.object({
   themeElements: z.array(z.string()).optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
   // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
-  // daily-challenge-processing, and read back by getActiveChallengesFromDb's
-  // `cast(metadata->>'reviewedAt' as bigint)` round-robin ordering. Dropping it made a reviewed
-  // challenge sort as never-reviewed (NULLS FIRST). That ordering only decides anything once the
-  // Active set exceeds CHALLENGE_JOB_BATCH_SIZE, which it does not today (200 vs ~31), so the
-  // observable impact is currently nil — this keeps the key alive for when it isn't.
+  // daily-challenge-processing. TWO readers, and the second is the one that matters:
+  //
+  //   1. getActiveChallengesFromDb's `ORDER BY cast(metadata->>'reviewedAt' as bigint) NULLS FIRST`
+  //      round-robin. Only decides anything once the Active set exceeds CHALLENGE_JOB_BATCH_SIZE
+  //      (200 vs ~31 today), so on its own this reader would make the key look inconsequential.
+  //   2. The INCREMENTAL-REVIEW WATERMARK in the review job: `lastReviewedAt` defaults to the
+  //      challenge's start date and is overwritten by this key, then gates the candidate pool with
+  //      `AND ci."reviewedAt" >= ${lastReviewedAt}`. Losing the key rewinds that watermark to the
+  //      START OF THE CHALLENGE, so every entry since then re-enters the pool. This has nothing to
+  //      do with batch size and is not bounded by the Active count.
+  //
+  // Reader 2 is why this is not cosmetic: for PAID user challenges `judgeAllEntries` skips the
+  // sampling cap entirely, so a rewound watermark means the whole accumulated backlog is judged in
+  // a single run — re-judging work already paid for, at LLM cost. Do not reason about this key from
+  // the ordering alone.
   reviewedAt: z.number().optional(),
   // ISO timestamp stamped by claimChallengeForCompletion when a run claims a challenge into
   // Completing. Read back two ways: the time-based stuck-challenge reset, and the completion job's

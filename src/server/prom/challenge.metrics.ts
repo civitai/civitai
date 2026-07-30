@@ -337,9 +337,12 @@ const COMPLETING_STUCK_MINUTES = 30;
  * stampless row is never selected and never reset — it stays `Completing` forever.
  *
  * IT IS STILL REACHABLE, and declaring `completingClaimedAt` in `challengeMetadataSchema` does not
- * close it. The destroyer is not the zod strip — it is a STALE FULL-COLUMN REPLACE. Two sites read
- * a challenge (from the REPLICA), spend real time, then write the whole metadata column back keyed
- * only on `id`, with no status predicate: `backfill-theme-elements.ts` (a multi-second LLM call
+ * close it. The destroyer is not the zod strip — it is a STALE FULL-COLUMN REPLACE. Six sites in
+ * total do a stale-replica full-column metadata replace; of those, TWO can leave the row still IN
+ * `Completing` (the rest either set a terminal status in the same statement or are predicated to a
+ * non-`Completing` status, so they cannot strand one). Those two read a challenge (from the
+ * REPLICA), spend real time, then write the whole metadata column back keyed only on `id`, with no
+ * status predicate: `backfill-theme-elements.ts` (a multi-second LLM call
  * sits between its read and its write, and `?force=true` widens it to every themed Active/Scheduled
  * challenge) and `challenge.service.ts`'s `upsertChallenge`. If `claimChallengeForCompletion` lands
  * in that window, the pre-claim snapshot overwrites the fresh stamp. The stamp was never IN that
