@@ -58,6 +58,7 @@ import type {
   AutoCheck,
   CosmeticImageMeta,
   CosmeticOffsets,
+  GetCommunityCosmeticsInput,
   GetEarlyAccessPricesInput,
   GetPublicShopItemsInput,
   GetReviewQueueInput,
@@ -742,6 +743,50 @@ export const getCreatorShop = async ({
     earlyAccessModelCount,
     membershipLapsed,
   };
+};
+
+// Site-wide hub feed of every published community cosmetic (creator-submitted
+// items from public shops), newest first. Powers the /shop marketplace section.
+export const getCommunityCosmetics = async ({
+  viewerId,
+  limit,
+  cursor,
+  cosmeticTypes,
+}: GetCommunityCosmeticsInput & { viewerId?: number }) => {
+  const now = new Date();
+  // A block between viewer and a cosmetic's creator (either direction) hides
+  // that creator's items from the feed.
+  const blockedPairIds = viewerId ? await getBlockedPairIds(viewerId) : [];
+  const raw = await dbRead.cosmeticShopItem.findMany({
+    where: {
+      status: CosmeticShopItemStatus.Published,
+      // Creator-submitted only (official cosmetics have no creator).
+      cosmetic: {
+        createdById: { not: null },
+        ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
+      },
+      // Only items whose owner's shop is public.
+      addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+      ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
+      AND: [
+        { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
+        { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
+      ],
+    },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor } } : {}),
+    orderBy: { id: 'desc' },
+    // addedById lets the client attribute the purchase to the owner's shop.
+    select: { ...creatorStorefrontItemSelect, addedById: true },
+  });
+  let nextCursor: number | undefined;
+  if (raw.length > limit) nextCursor = raw.pop()?.id;
+  // Same meta sanitation as the storefront — cards only need the purchase count.
+  const items = raw.map((item) => ({
+    ...item,
+    meta: { purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0 },
+  }));
+  return { items, nextCursor };
 };
 
 // Early Access download prices for the shop's Models section, keyed by model

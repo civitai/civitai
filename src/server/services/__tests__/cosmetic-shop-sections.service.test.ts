@@ -97,4 +97,26 @@ describe('getShopSectionsWithItems viewer gating', () => {
     const sections = await getShopSectionsWithItems({});
     expect(sections).toHaveLength(0);
   });
+
+  it('keeps an item-less community-hub section (its feed loads separately)', async () => {
+    mocks.sectionFindMany.mockResolvedValue([
+      { ...sectionRow, items: [], meta: { communityHub: true } },
+    ]);
+
+    const sections = await getShopSectionsWithItems({ creatorShopEnabled: true });
+    expect(sections).toHaveLength(1);
+  });
+
+  it('only queries hub sections for viewers with the creatorShop flag', async () => {
+    await getShopSectionsWithItems({});
+    expect(mocks.sectionFindMany.mock.calls[0][0].where.OR).toEqual([{ items: { some: {} } }]);
+
+    mocks.sectionFindMany.mockClear();
+    mocks.sectionFindMany.mockResolvedValue([sectionRow]);
+    await getShopSectionsWithItems({ creatorShopEnabled: true });
+    expect(mocks.sectionFindMany.mock.calls[0][0].where.OR).toEqual([
+      { items: { some: {} } },
+      { meta: { path: ['communityHub'], equals: true } },
+    ]);
+  });
 });
