@@ -2,6 +2,7 @@
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { Avatar, AvatarImage, AvatarFallback } from '@civitai/ui/components/ui/avatar/index.js';
   import { IconChevronDown, IconCheck, IconLogout } from '@tabler/icons-svelte';
+  import { getEdgeUrl } from '$lib/media/edge-url';
 
   type DeviceAccount = {
     userId: number;
@@ -76,7 +77,7 @@
     class="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-sidebar-accent"
   >
     <Avatar class="size-8">
-      {#if image}<AvatarImage src={image} alt={name} />{/if}
+      {#if image}<AvatarImage src={getEdgeUrl(image, { width: 96 })} alt={name} />{/if}
       <AvatarFallback>{initial(name)}</AvatarFallback>
     </Avatar>
     <span class="flex min-w-0 flex-1 flex-col">
@@ -110,7 +111,7 @@
           class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-white hover:bg-dark-6 disabled:opacity-60"
         >
           <Avatar class="size-6">
-            {#if acct.image}<AvatarImage src={acct.image} alt={acct.username ?? ''} />{/if}
+            {#if acct.image}<AvatarImage src={getEdgeUrl(acct.image, { width: 96 })} alt={acct.username ?? ''} />{/if}
             <AvatarFallback>{initial(acct.username)}</AvatarFallback>
           </Avatar>
           <span class="min-w-0 flex-1 truncate text-left">{acct.username ?? `User ${acct.userId}`}</span>
