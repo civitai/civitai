@@ -31,10 +31,7 @@ import { readBlockTipAllowance } from '~/server/utils/block-tip-rate-limit';
  * CORS: withBlockScope + allowOpaqueOrigin (an unverified block direct-fetches
  * this from `Origin: null`; the Bearer block-JWT is the sole authz gate).
  */
-const baseHandler = withAxiom(async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
+const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
     res.status(405).json({ error: 'Method not allowed' });

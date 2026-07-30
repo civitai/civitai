@@ -9,10 +9,12 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
  */
 
 function createMocks({ method = 'GET' }: { method?: string } = {}) {
-  const req = { method, query: {}, headers: {}, socket: { remoteAddress: '203.0.113.7' } } as unknown as Record<
-    string,
-    unknown
-  >;
+  const req = {
+    method,
+    query: {},
+    headers: {},
+    socket: { remoteAddress: '203.0.113.7' },
+  } as unknown as Record<string, unknown>;
   let statusCode = 200;
   let payload: unknown;
   const headers: Record<string, string> = {};

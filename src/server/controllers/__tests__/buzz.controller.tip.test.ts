@@ -54,9 +54,15 @@ vi.mock('~/server/services/entity-collaborator.service', () => ({
   getEntityCollaborators: vi.fn(async () => []),
 }));
 vi.mock('~/server/services/image.service', () => ({ getImageById: vi.fn(async () => null) }));
-vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn(async () => undefined) }));
-vi.mock('~/server/utils/metric-helpers', () => ({ updateEntityMetric: vi.fn(async () => undefined) }));
-vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({ dailyBoostReward: { apply: vi.fn() } }));
+vi.mock('~/server/services/notification.service', () => ({
+  createNotification: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/utils/metric-helpers', () => ({
+  updateEntityMetric: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
+  dailyBoostReward: { apply: vi.fn() },
+}));
 
 import { createBuzzTipTransactionHandler } from '../buzz.controller';
 
@@ -66,21 +72,19 @@ import { createBuzzTipTransactionHandler } from '../buzz.controller';
 function installLedger() {
   const moved = new Set<string>();
   let debits = 0;
-  mockCreateMany.mockImplementation(
-    async (txns: Array<{ externalTransactionId: string }>) => {
-      const transactions: string[] = [];
-      const conflicts: string[] = [];
-      for (const t of txns) {
-        if (moved.has(t.externalTransactionId)) conflicts.push(t.externalTransactionId);
-        else {
-          moved.add(t.externalTransactionId);
-          debits += 1;
-          transactions.push(`tx_${debits}`);
-        }
+  mockCreateMany.mockImplementation(async (txns: Array<{ externalTransactionId: string }>) => {
+    const transactions: string[] = [];
+    const conflicts: string[] = [];
+    for (const t of txns) {
+      if (moved.has(t.externalTransactionId)) conflicts.push(t.externalTransactionId);
+      else {
+        moved.add(t.externalTransactionId);
+        debits += 1;
+        transactions.push(`tx_${debits}`);
       }
-      return { transactions, conflicts };
     }
-  );
+    return { transactions, conflicts };
+  });
   return { debits: () => debits };
 }
 
@@ -106,10 +110,18 @@ beforeEach(() => {
 describe('createBuzzTipTransactionHandler — ledger-backed idempotency (audit 🟡-1)', () => {
   it('with a key: a same-key retry presents a DETERMINISTIC externalTransactionId → money moves ONCE', async () => {
     const ledger = installLedger();
-    await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser(), idempotencyKey: 'idem-abc' });
+    await createBuzzTipTransactionHandler({
+      input: baseInput,
+      ctx: ctxUser(),
+      idempotencyKey: 'idem-abc',
+    });
     // Simulate the crash window: the Redis sentinel has expired, so the endpoint
     // re-runs the handler with the SAME client key.
-    await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser(), idempotencyKey: 'idem-abc' });
+    await createBuzzTipTransactionHandler({
+      input: baseInput,
+      ctx: ctxUser(),
+      idempotencyKey: 'idem-abc',
+    });
 
     // 🔴 The load-bearing assertion: exactly ONE debit across the two calls — the 2nd
     // collided on the ledger's unique externalTransactionId.
@@ -121,7 +133,7 @@ describe('createBuzzTipTransactionHandler — ledger-backed idempotency (audit �
     expect(ext2).toBe(ext1);
   });
 
-  it('WITHOUT a key: each call mints a fresh uuid externalTransactionId (no ledger dedup — today\'s behavior)', async () => {
+  it("WITHOUT a key: each call mints a fresh uuid externalTransactionId (no ledger dedup — today's behavior)", async () => {
     const ledger = installLedger();
     await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() });
     await createBuzzTipTransactionHandler({ input: baseInput, ctx: ctxUser() });
@@ -145,6 +157,8 @@ describe('createBuzzTipTransactionHandler — ledger-backed idempotency (audit �
     });
     // The key-derived id ignores entityType/entityId (the client key already uniquely
     // identifies the logical tip), so a retry with the same key collides regardless.
-    expect(mockCreateMany.mock.calls[0][0][0].externalTransactionId).toBe('block-tip:42:idem-xyz-5');
+    expect(mockCreateMany.mock.calls[0][0][0].externalTransactionId).toBe(
+      'block-tip:42:idem-xyz-5'
+    );
   });
 });

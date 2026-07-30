@@ -125,7 +125,9 @@ describe('releaseGenIdempotency', () => {
 
   it('is best-effort — never throws on a redis error', async () => {
     mockSys.del.mockRejectedValueOnce(new Error('redis down'));
-    await expect(releaseGenIdempotency('system:blocks:gen-idem:42:apb_x:key-1')).resolves.toBeUndefined();
+    await expect(
+      releaseGenIdempotency('system:blocks:gen-idem:42:apb_x:key-1')
+    ).resolves.toBeUndefined();
   });
 });
 

@@ -121,7 +121,10 @@ export function composeBlockExternalId(appBlockId: string, idempotencyKey: strin
       `block externalId: appBlockId length ${appBlockId.length} outside 1..${APP_BLOCK_ID_MAX_FOR_ENCODING}`
     );
   }
-  const externalId = `blk${String(appBlockId.length).padStart(2, '0')}${appBlockId}${idempotencyKey}`;
+  const externalId = `blk${String(appBlockId.length).padStart(
+    2,
+    '0'
+  )}${appBlockId}${idempotencyKey}`;
   if (externalId.length > ORCHESTRATOR_EXTERNAL_ID_MAX) {
     throw new Error(
       `block externalId too long (${externalId.length} > ${ORCHESTRATOR_EXTERNAL_ID_MAX})`
