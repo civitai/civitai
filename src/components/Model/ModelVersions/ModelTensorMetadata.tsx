@@ -20,6 +20,7 @@ import type { ModelById } from '~/types/router';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import {
   buildTensorDisplayRows,
+  buildTensorMetadataUrl,
   inferTensorMetadataFormat,
   type ModelTensorAnalysis,
   type ModelTensorDisplayGroup,
@@ -378,7 +379,7 @@ function formatShape(shape: number[]) {
 }
 
 async function fetchTensorSummary(fileId: number) {
-  const response = await fetch(`/api/v1/model-files/${fileId}/tensor-metadata?summaryOnly=true`);
+  const response = await fetch(buildTensorMetadataUrl(fileId, { summaryOnly: true }));
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? 'Failed to load tensor metadata');
@@ -388,7 +389,7 @@ async function fetchTensorSummary(fileId: number) {
 }
 
 async function fetchTensorMetadata(fileId: number) {
-  const response = await fetch(`/api/v1/model-files/${fileId}/tensor-metadata`);
+  const response = await fetch(buildTensorMetadataUrl(fileId));
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? 'Failed to load tensor metadata');
