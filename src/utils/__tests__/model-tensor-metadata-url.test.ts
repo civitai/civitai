@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildTensorMetadataUrl, TENSOR_METADATA_CACHE_VERSION } from '~/utils/model-tensor-metadata';
+import {
+  buildTensorMetadataUrl,
+  TENSOR_METADATA_CACHE_VERSION,
+} from '~/utils/model-tensor-metadata';
 
 /**
  * CU 868khnkuc: ~200K 422s are already sitting in the Cloudflare edge under `immutable` and do not
