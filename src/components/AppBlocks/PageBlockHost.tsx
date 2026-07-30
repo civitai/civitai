@@ -12,7 +12,6 @@ import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   decideAutoRetry,
   grantedPageScopes,
-  MAX_AUTO_RETRIES,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
@@ -2910,14 +2909,14 @@ export function PageBlockHost({
 
                       Deliberately NO "of N" here, and no attempt NUMBER: the
                       fallback's pending-retry line counts AUTOMATIC attempts
-                      ("attempt 1 of 2") while this counts EVERY re-attempt
-                      including manual ones. Showing both numbers put two
-                      different counters two seconds apart on the same surface —
-                      "attempt 1 of 2" followed by "attempt 2", and after a few
-                      manual clicks an "attempt 7" against a stated maximum of 2.
-                      The bounded count belongs to the terminal card, which is
-                      where the budget is meaningful; this line only has to say
-                      that something is happening again. */}
+                      against a bounded ceiling, while this would count EVERY
+                      re-attempt including manual ones. Showing both put two
+                      counters on the same flow seconds apart, disagreeing —
+                      the card's "attempt 1 of 2" followed by this saying
+                      "attempt 2", and after a few manual clicks "attempt 7"
+                      against a stated maximum of 2. The bounded count belongs to
+                      the terminal card, where the budget is meaningful; this line
+                      only has to say that something is happening again. */}
                   {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
                 </Text>
               </Stack>
@@ -2939,7 +2938,11 @@ export function PageBlockHost({
               autoRetry.kind === 'retry'
                 ? {
                     attempt: autoRetry.attempt,
-                    maxAttempts: MAX_AUTO_RETRIES,
+                    // The ceiling REACHABLE from here, not the raw attempt cap —
+                    // an auth terminal is bounded by the lower re-mint budget, so
+                    // showing MAX_AUTO_RETRIES would promise a retry that will
+                    // never happen. Derived in decideAutoRetry.
+                    maxAttempts: autoRetry.maxAttempts,
                     // prefers-reduced-motion: reduce → no spinner.
                     animate: !reduceMotion,
                   }

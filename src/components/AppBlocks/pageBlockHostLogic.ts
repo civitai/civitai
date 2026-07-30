@@ -405,8 +405,24 @@ export function isAuthTerminalStatus(status: PageHostStatus): boolean {
 
 export type AutoRetryDecision =
   | { kind: 'none' }
-  /** Schedule attempt `attempt` (1-based) after `delayMs`; `remint` re-mints the token. */
-  | { kind: 'retry'; attempt: number; delayMs: number; remint: boolean };
+  | {
+      kind: 'retry';
+      /** 1-based index of the attempt being scheduled. */
+      attempt: number;
+      /**
+       * The highest attempt number still reachable FROM HERE, given the current
+       * status. This is what the UI must show as the denominator — NOT the raw
+       * `MAX_AUTO_RETRIES`. On an auth terminal the sequence is bounded by the
+       * (lower) re-mint budget, so advertising the attempt cap would promise the
+       * user a retry that will never happen: a fresh auth failure gets
+       * "attempt 1 of 1", not "attempt 1 of 2". Derived rather than passed in, so
+       * the copy cannot drift from the bound that actually governs it.
+       */
+      maxAttempts: number;
+      delayMs: number;
+      /** Whether this attempt spends a token re-mint. */
+      remint: boolean;
+    };
 
 /**
  * Decide whether the host should schedule another AUTOMATIC load attempt.
@@ -443,5 +459,16 @@ export function decideAutoRetry(args: {
 
   const delayMs =
     AUTO_RETRY_BACKOFF_MS[attempts] ?? AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1];
-  return { kind: 'retry', attempt: attempts + 1, delayMs, remint };
+
+  // The reachable ceiling FROM HERE. An auth terminal can only continue while it
+  // has re-mint budget, so its ceiling is the attempts already spent plus the
+  // re-mints still available — clamped by the attempt cap. A non-auth terminal is
+  // governed by the attempt cap alone. This keeps a MIXED sequence honest too: a
+  // timeout followed by an auth failure has already spent an attempt but no
+  // re-mint, so it correctly reads "attempt 2 of 2".
+  const maxAttempts = remint
+    ? Math.min(MAX_AUTO_RETRIES, attempts + (MAX_AUTO_REMINTS - reminted))
+    : MAX_AUTO_RETRIES;
+
+  return { kind: 'retry', attempt: attempts + 1, maxAttempts, delayMs, remint };
 }

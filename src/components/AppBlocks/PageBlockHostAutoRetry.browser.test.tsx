@@ -223,6 +223,7 @@ describe('PageBlockHost auto-retry — fires from a terminal state, bounded and 
     // … alongside the in-progress feedback (attempt 1 of N) …
     const line = autoRetryLine();
     expect(line).not.toBeNull();
+    // `fatal` is a NON-auth terminal, so the full attempt budget is reachable.
     expect(line?.textContent).toContain(`attempt 1 of ${MAX_AUTO_RETRIES}`);
     // … and the manual affordance stays available the whole time.
     expect(retryButton()).not.toBeNull();
@@ -354,6 +355,15 @@ describe('PageBlockHost auto-retry — the caps (unbounded loops are the failure
     const onRemint = vi.fn();
     renderWithProviders(<AuthFailureHarness onRemint={onRemint} />);
 
+    // 🔴 The advertised ceiling on the AUTH path is the RE-MINT budget, not the
+    // attempt cap — the user must not be promised a retry that can never happen.
+    await vi.waitFor(() => expect(autoRetryLine()).not.toBeNull(), {
+      timeout: 5_000,
+      interval: 50,
+    });
+    expect(autoRetryLine()?.textContent).toContain(`attempt 1 of ${MAX_AUTO_REMINTS}`);
+    expect(autoRetryLine()?.textContent).not.toContain(`of ${MAX_AUTO_RETRIES}`);
+
     // The host burns its automatic budget …
     await vi.waitFor(() => expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS), {
       timeout: 25_000,
@@ -366,12 +376,6 @@ describe('PageBlockHost auto-retry — the caps (unbounded loops are the failure
     // would burn it.
     await sleep(AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1] + 3_000);
     expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS);
-    // 🔴 …and it stopped because of the RE-MINT cap specifically, not the total
-    // attempt cap: the auth path used strictly fewer attempts than the budget it
-    // would have had on a non-auth terminal. Without this, the test would still
-    // pass if the re-mint cap were unreachable dead code and the attempt cap were
-    // doing all the work.
-    expect(MAX_AUTO_REMINTS).toBeLessThan(MAX_AUTO_RETRIES);
   }, 45_000);
 
   test('after exhaustion the host settles on a DEFINITIVE terminal state with a PROMINENT manual Retry', async () => {
@@ -497,6 +501,18 @@ describe('PageBlockHost auto-retry — beacon semantics (one per mount, the sett
     // Still exactly the one `ok` — no `error` beacon was re-opened.
     expect(beaconCalls()).toHaveLength(1);
     expect(beaconBodies()[0]).not.toHaveProperty('status');
+
+    // This is the only path that exhausts the FULL attempt budget (a non-auth
+    // terminal is not bound by the lower re-mint cap), so it is where the PLURAL
+    // exhausted-copy branch is reachable — pin it here or it has no coverage
+    // anywhere.
+    const spentNote = document.querySelector('[data-block-fallback-autoretry-spent]');
+    expect(spentNote?.getAttribute('data-block-fallback-autoretry-spent')).toBe(
+      String(MAX_AUTO_RETRIES)
+    );
+    expect(spentNote?.textContent).toBe(
+      `We already retried ${MAX_AUTO_RETRIES} times automatically.`
+    );
   }, 60_000);
 
   test('N failed automatic attempts emit ONE `error` beacon, not N', async () => {
