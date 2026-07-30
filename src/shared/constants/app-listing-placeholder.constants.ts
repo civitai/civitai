@@ -125,9 +125,9 @@ export function listingPlaceholderGradient(args: {
   surface: PlaceholderSurface;
 }): string {
   const { hue, hue2 } = placeholderHues(listingPlaceholderSeed(args.slug, args.category));
-  return `linear-gradient(135deg, ${placeholderStop(args.surface, 'from', hue)} 0%, ${placeholderStop(
+  return `linear-gradient(135deg, ${placeholderStop(
     args.surface,
-    'to',
-    hue2
-  )} 100%)`;
+    'from',
+    hue
+  )} 0%, ${placeholderStop(args.surface, 'to', hue2)} 100%)`;
 }

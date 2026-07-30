@@ -123,7 +123,9 @@ describe('listingPlaceholderGradient', () => {
     const a = listingPlaceholderGradient({ slug: 'buzz', category: 'analytics', surface: 'cover' });
     const b = listingPlaceholderGradient({ slug: 'buzz', category: 'analytics', surface: 'cover' });
     expect(a).toBe(b);
-    expect(a).toMatch(/^linear-gradient\(135deg, hsl\(\d+ \d+% \d+%\) 0%, hsl\(\d+ \d+% \d+%\) 100%\)$/);
+    expect(a).toMatch(
+      /^linear-gradient\(135deg, hsl\(\d+ \d+% \d+%\) 0%, hsl\(\d+ \d+% \d+%\) 100%\)$/
+    );
   });
 
   it('differs per app', () => {
@@ -147,9 +149,9 @@ describe('listingPlaceholderGradient', () => {
     expect(listingPlaceholderGradient({ slug: 'buzz', category: null, surface: 'icon' })).toContain(
       `hsl(${hue} `
     );
-    expect(listingPlaceholderGradient({ slug: 'buzz', category: null, surface: 'cover' })).toContain(
-      `hsl(${hue} `
-    );
+    expect(
+      listingPlaceholderGradient({ slug: 'buzz', category: null, surface: 'cover' })
+    ).toContain(`hsl(${hue} `);
   });
 
   it('null and "other" category resolve identically (same seed)', () => {
