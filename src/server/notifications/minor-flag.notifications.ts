@@ -33,6 +33,9 @@ export const minorFlagNotifications = createNotificationProcessor({
               ) = 'auto'
           AND (m.meta->'minorFlagSnapshot'->>'at')::timestamptz > '${lastSent}'
           AND m."userId" <> -1
+          -- The snapshot is written before the flag lands and survives an ordinary
+          -- unflag, so its presence alone doesn't prove the model is currently minor.
+          AND m.minor
       )
       SELECT
         concat('model-flagged-minor:', details->>'modelId', ':', '${lastSent}') "key",

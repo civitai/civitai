@@ -72,4 +72,8 @@ describe('model-flagged-minor — prepareQuery', () => {
     expect(sql).toContain("'model-flagged-minor' \"type\"");
     expect(sql).toContain("concat('model-flagged-minor:', details->>'modelId'");
   });
+
+  it('requires the model to currently be minor, so a stale or undone snapshot does not notify', () => {
+    expect(query()).toMatch(/AND\s+m\.minor\s*\n/);
+  });
 });
