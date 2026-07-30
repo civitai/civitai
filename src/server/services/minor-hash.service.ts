@@ -488,7 +488,9 @@ export async function getAutoFlaggedMinorModels({ limit }: { limit: number }) {
 // decision: the model leaves this queue, a blanket rollback can no longer revert
 // it, and — the part the ModActivity row alone never did — its hashes start
 // seeding future matches, which is the point of a moderator affirming the flag.
-// `confirmedFrom` keeps the record that it began as an automated flag.
+// `confirmedFrom` keeps the record that it began as an automated flag, and is
+// COALESCEd so a second confirm reads the already-promoted 'manual' without
+// erasing that origin — the owner alert and notification both key off it.
 //
 // The ModActivity row is still written: it is the audit trail of who signed off,
 // and it remains the only protection from a blanket rollback for a model whose
@@ -507,7 +509,10 @@ export async function confirmMinorHashAutoFlag({
       ARRAY[${MINOR_FLAG_SNAPSHOT_KEY}],
       m.meta->${MINOR_FLAG_SNAPSHOT_KEY} || jsonb_build_object(
         'source', 'manual',
-        'confirmedFrom', m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->'source',
+        'confirmedFrom', COALESCE(
+          m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->'confirmedFrom',
+          m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->'source'
+        ),
         'confirmedAt', now(),
         'confirmedBy', ${userId}
       )

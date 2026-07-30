@@ -704,6 +704,18 @@ describe('confirmMinorHashAutoFlag', () => {
     expect(values).toContain(4);
   });
 
+  // Without the COALESCE the second confirm reads the source it just promoted to
+  // 'manual', so an automated flag stops looking automated to the owner alert.
+  it('keeps the original confirmedFrom so a repeat confirm cannot erase the auto origin', async () => {
+    await confirmMinorHashAutoFlag({ modelId: 100, userId: 4 });
+
+    const [strings] = mockDbWrite.$executeRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toMatch(
+      /'confirmedFrom',\s*COALESCE\(\s*m\.meta->\?->'confirmedFrom',\s*m\.meta->\?->'source'\s*\)/
+    );
+  });
+
   // Snapshot capture is best-effort, so a model can be flagged without one. The
   // promotion has to no-op there rather than write a snapshot with no pre-state.
   it('only promotes a model that actually has a snapshot', async () => {
