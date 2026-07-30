@@ -16,8 +16,29 @@ export type MinorHashMatch = { modelId: number; userId: number };
 // the three entry points cannot select different populations.
 export const MINOR_HASH_FILE_TYPE = 'Model';
 
-// Seed set: only moderator-applied minor flags. A creator self-declaring their
-// model minor must not cause other people's uploads to be flagged.
+// What makes a model's hashes count as "known minor". Only a human decision
+// qualifies:
+//
+//   - `minor AND 'minor' = ANY(lockedProperties)` keeps a creator from
+//     self-declaring their way into seeding other people's uploads, and
+//   - excluding source='auto' keeps the machine from seeding itself.
+//
+// Without that second clause an auto-flagged model becomes a seed, contributing
+// EVERY hash on it — including ones no moderator ever tied to minor content — so
+// the seed set grows from automated decisions and a dry run can't predict what
+// later rounds will match. Measured on the dev clone: dry run said 300, the
+// drain wrote 302. It matters more than the count suggests because `minor` lives
+// on Model, not ModelVersion: one matching file restricts every version of that
+// model, so each extra flag is far wider than the hash that triggered it.
+//
+// One definition, used by both the scan-time lookup and the CTE below — they
+// were duplicated and could silently disagree about what a seed is.
+const moderatorMinorSeedPredicate = Prisma.sql`
+  m.minor
+  AND 'minor' = ANY(m."lockedProperties")
+  AND m.meta->${MINOR_FLAG_SNAPSHOT_KEY}->>'source' IS DISTINCT FROM 'auto'
+`;
+
 export const minorSrcCte = Prisma.sql`
   minor_src AS (
     SELECT DISTINCT mfh.hash, m."userId", m.id AS "minorModelId"
@@ -25,7 +46,7 @@ export const minorSrcCte = Prisma.sql`
     JOIN "ModelVersion" mv ON mv."modelId" = m.id
     JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = ${MINOR_HASH_FILE_TYPE}
     JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id AND mfh.type = 'SHA256'
-    WHERE m.minor AND 'minor' = ANY(m."lockedProperties")
+    WHERE ${moderatorMinorSeedPredicate}
   )
 `;
 
@@ -59,7 +80,7 @@ export async function findMinorHashMatches(sha256: string): Promise<MinorHashMat
     JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE mfh.type = 'SHA256' AND mfh.hash = ${sha256.toUpperCase()}
-      AND m.minor AND 'minor' = ANY(m."lockedProperties")
+      AND ${moderatorMinorSeedPredicate}
   `;
 
   return rows.map(({ id, userId }) => ({ modelId: id, userId }));

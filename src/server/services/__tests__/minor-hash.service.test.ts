@@ -82,12 +82,39 @@ describe('findMinorHashMatches', () => {
     // (TemplateStringsArray, ...substitutions) — not a single Sql object.
     const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
     const text = Array.from(strings as TemplateStringsArray).join('?');
+    // The minor/lockedProperties gate is interpolated as a shared Prisma.Sql
+    // fragment now, so it lands in values rather than the template strings.
+    const rendered = [
+      text,
+      ...values.map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? ''),
+    ].join('\n');
     expect(text).toContain(`'SHA256'`);
-    expect(text).toContain('m.minor');
-    expect(text).toContain(`'minor' = ANY(m."lockedProperties")`);
+    expect(rendered).toContain('m.minor');
+    expect(rendered).toContain(`'minor' = ANY(m."lockedProperties")`);
     expect(text).toContain('mf.type =');
     expect(values).toContain(MINOR_HASH_FILE_TYPE);
     expect(values).toContain('ABC123');
+  });
+
+  // The scan hook had its own copy of the seed predicate; if the two disagree,
+  // a hash the sweep refuses to seed from could still auto-flag at upload time.
+  it('gates on the same seed definition the sweep CTE uses', async () => {
+    await findMinorHashMatches('ABC123');
+
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const fragments = values.filter((v) => (v as { strings?: readonly string[] })?.strings) as {
+      strings: readonly string[];
+      values: unknown[];
+    }[];
+    const rendered = [
+      Array.from(strings as TemplateStringsArray).join('?'),
+      ...fragments.map((f) => f.strings.join('?')),
+    ].join('\n');
+
+    expect(rendered).toContain(`->>'source' IS DISTINCT FROM 'auto'`);
+    expect(rendered).toContain(`'minor' = ANY(m."lockedProperties")`);
+    // same fragment the CTE embeds, not a hand-rolled copy
+    expect(fragments.some((f) => f.strings.join('?').includes('IS DISTINCT FROM'))).toBe(true);
   });
 
   it('uppercases the hash — stored hashes are uppercase hex', async () => {
@@ -110,6 +137,22 @@ describe('minor-hash CTE predicates', () => {
     expect(minorSrcCte.sql).toContain(`mfh.type = 'SHA256'`);
     expect(minorSrcCte.sql).toContain('mf.type =');
     expect(minorSrcCte.values).toContain(MINOR_HASH_FILE_TYPE);
+  });
+
+  // Without this the sweep seeds itself: an auto-flagged model contributes every
+  // hash on it, so the seed set grows from machine decisions and the dry run
+  // under-reports what a live run will write (observed 300 predicted / 302
+  // written on a prod-scale clone).
+  it('excludes auto-flagged models from the seed set so it cannot self-amplify', () => {
+    expect(minorSrcCte.sql).toContain(`->>'source' IS DISTINCT FROM 'auto'`);
+    expect(minorSrcCte.values).toContain('minorFlagSnapshot');
+  });
+
+  // A moderator's own "Set as Minor" writes source='manual', so it must still
+  // seed — only the machine's own output is excluded.
+  it('keeps manual moderator flags eligible as seeds', () => {
+    expect(minorSrcCte.sql).not.toContain(`IS DISTINCT FROM 'manual'`);
+    expect(minorSrcCte.sql).not.toContain(`? 'minorFlagSnapshot'`);
   });
 
   it('restricts candidates to non-minor, non-deleted models of the gated file type', () => {
