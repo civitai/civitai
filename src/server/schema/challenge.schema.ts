@@ -115,6 +115,12 @@ const challengeCompletionSummarySchema = z.object({
 export type ChallengeCompletionSummary = z.infer<typeof challengeCompletionSummarySchema>;
 
 // Zod schema for Challenge.metadata (Json? column)
+//
+// Every key the column can hold must be declared here. `parseChallengeMetadata` uses this schema's
+// default strip behaviour, so an undeclared key is SILENTLY DROPPED — and several call sites parse
+// the metadata and then write the parsed object back wholesale, which deletes anything missing from
+// this list. Two fields written by raw SQL elsewhere were lost that way; see the notes below. When
+// adding a key to Challenge.metadata anywhere in the codebase, add it here in the same change.
 export const challengeMetadataSchema = z.object({
   challengeType: z.string().optional(),
   resourceUserId: z.number().optional(),
@@ -122,6 +128,18 @@ export const challengeMetadataSchema = z.object({
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
+  // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
+  // daily-challenge-processing, and read back by getActiveChallengesFromDb's
+  // `cast(metadata->>'reviewedAt' as bigint)` round-robin ordering. Dropping it made a reviewed
+  // challenge sort as never-reviewed (NULLS FIRST), so it was picked again ahead of its peers —
+  // defeating the rotation that ordering exists to provide.
+  reviewedAt: z.number().optional(),
+  // ISO timestamp stamped by claimChallengeForCompletion when a run claims a challenge into
+  // Completing. Read back two ways: the time-based stuck-challenge reset, and the completion job's
+  // claim-ownership check that gates its telemetry. Dropping it made the ownership check fail open,
+  // and a stampless Completing row is never selected by the reset (its comparison is
+  // NULL-propagating), so such a row is wedged rather than recovered.
+  completingClaimedAt: z.string().optional(),
   reconciliation: z
     .object({
       paidUserIds: z.array(z.number()).optional(),
