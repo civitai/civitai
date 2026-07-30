@@ -105,17 +105,24 @@ describe('removeDeletedUserImages budget', () => {
   });
 
   it('coerces a Buffer reply from the HA sysRedis', async () => {
-    mockSysRedis.get.mockResolvedValue(Buffer.from('200'));
+    mockSysRedis.get.mockResolvedValue(Buffer.from('150'));
     mockDbRead.$queryRaw
       .mockResolvedValueOnce([{ id: 7 }])
-      .mockResolvedValueOnce(Array.from({ length: 200 }, (_, i) => ({ id: i + 1 })));
+      // Simulates the real `LIMIT ${budgetForUser}` clause: the user has 200
+      // images, but the query only ever returns up to the requested limit.
+      .mockImplementationOnce((_strings: TemplateStringsArray, _userId: number, limit: number) =>
+        Promise.resolve(Array.from({ length: Math.min(200, limit) }, (_, i) => ({ id: i + 1 })))
+      );
     mockDeleteImages.mockImplementation(async (ids: number[]) => ids.map((id) => ({ id })));
 
     const result = await run();
 
-    // Budget of 200 honoured: 2 batches of 100, nothing more.
+    // Budget of 150 (not the 200 available, not the 25000 default) honoured:
+    // a full batch of 100, then a truncated batch of 50.
     expect(mockDeleteImages).toHaveBeenCalledTimes(2);
-    expect(result.deletedImages).toBe(200);
+    expect(mockDeleteImages.mock.calls[0][0]).toHaveLength(100);
+    expect(mockDeleteImages.mock.calls[1][0]).toHaveLength(50);
+    expect(result.deletedImages).toBe(150);
   });
 
   it('stops at the budget and leaves later users for the next run', async () => {
