@@ -397,6 +397,15 @@ git commit -m "feat(account-deletion): add Redis rate limit and kill switch to i
 
 - [ ] **Step 1: Write the migration**
 
+**Do not edit `schema.full.prisma`.** It already declares `@@index([deletedAt])` on `User`
+(line ~594). That declaration was never applied to the database — prod has only
+`User_createdAt_idx`, which is `btree("createdAt") WHERE "deletedAt" IS NULL` and cannot serve
+this query. This migration closes that gap; adding a second declaration would be a duplicate.
+
+The index created here is partial and DESC rather than the plain index Prisma declares, because
+the job only ever reads soft-deleted rows newest-first. It intentionally takes the name Prisma
+expects.
+
 Create `packages/civitai-db-schema/prisma/migrations/20260730130000_user_deleted_at_partial_index/migration.sql`:
 
 ```sql
