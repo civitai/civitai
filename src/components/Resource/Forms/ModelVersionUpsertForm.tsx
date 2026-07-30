@@ -43,6 +43,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 import {
@@ -387,8 +388,20 @@ export function ModelVersionUpsertForm({
       shouldValidate: true,
     });
   };
+  // Earning through a licensing fee requires an active Creator Program membership (joined the program
+  // AND currently subscribed) — the same rule as the Creator Studio's canSetLicensingFee, and enforced
+  // server-side in upsertModelVersionHandler. A lapsed member keeps seeing an existing fee, read-only,
+  // rather than having it silently vanish from the form.
+  const canSetLicensingFee =
+    !!currentUser &&
+    (currentUser.isModerator ||
+      (!!currentUser.isMember &&
+        Flags.hasFlag(currentUser.onboarding ?? 0, OnboardingSteps.CreatorProgram)));
   const showLicensingFeeBlock =
     !isNonCommercial &&
+    (canSetLicensingFee ||
+      hasExistingLicensingFee ||
+      existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash) &&
     (!!features.licensingFee ||
       hasExistingLicensingFee ||
       existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash);
@@ -1067,6 +1080,7 @@ export function ModelVersionUpsertForm({
                     max={MAX_LICENSING_FEE * feeRatio.images}
                     step={1}
                     allowDecimal={false}
+                    disabled={!canSetLicensingFee}
                     leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                     w={140}
                   />
@@ -1087,6 +1101,7 @@ export function ModelVersionUpsertForm({
                     }}
                     data={FEE_IMAGE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
                     allowDeselect={false}
+                    disabled={!canSetLicensingFee}
                     w={90}
                   />
                   <Text size="sm" c="dimmed">
@@ -1094,6 +1109,11 @@ export function ModelVersionUpsertForm({
                   </Text>
                 </Group>
               </Input.Wrapper>
+              {!canSetLicensingFee && (
+                <Text size="xs" c="yellow.5">
+                  Changing your licensing fee requires an active Creator Program membership.
+                </Text>
+              )}
               {showLicensingFeeSettlementCurrency && (
                 <InputSelect
                   name="licensingFeeSettlementCurrency"

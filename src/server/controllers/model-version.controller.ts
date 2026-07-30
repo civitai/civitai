@@ -8,6 +8,8 @@ import {
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
+import { OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
@@ -405,6 +407,33 @@ export const upsertModelVersionHandler = async ({
             `Your Creator Program tier allows up to ${limit} permanent paid-access model${
               limit === 1 ? '' : 's'
             }.`
+          );
+      }
+    }
+
+    // A licensing fee is a Creator Program earning channel, so setting one requires an active
+    // membership — the same rule the Creator Studio enforces in canSetLicensingFee. Only a CHANGE to a
+    // non-zero fee is gated: re-saving a version that already carries one stays allowed so a lapsed
+    // member isn't locked out of editing the rest of the version (and so the moderator review flows,
+    // which spread the stored version back through this handler, don't trip on the owner's fee), and
+    // clearing a fee is always allowed.
+    if (!ctx.user.isModerator && input.licensingFee != null && input.licensingFee > 0) {
+      const existingFee = input.id
+        ? (await getVersionById({ id: input.id, select: { licensingFee: true } }))?.licensingFee
+        : null;
+      // Compared in whole cents: the stored value is a Prisma Decimal and the input a JSON float, so a
+      // direct !== can read "changed" on an untouched fee and lock a lapsed member out of their version.
+      const toCents = (v: number) => Math.round(v * 100);
+      if (toCents(Number(existingFee ?? 0)) !== toCents(input.licensingFee)) {
+        const isCreatorProgramMember = Flags.hasFlag(
+          ctx.user.onboarding ?? 0,
+          OnboardingSteps.CreatorProgram
+        );
+        const tier = (await getHighestTierSubscription(ctx.user.id))?.tier;
+        const isMember = !!tier && tier !== 'free' && tier !== 'founder';
+        if (!isCreatorProgramMember || !isMember)
+          throw throwBadRequestError(
+            'Setting a licensing fee requires an active Creator Program membership.'
           );
       }
     }
