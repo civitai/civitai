@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import type { ImageSchema } from '~/server/schema/image.schema';
 import { createImage } from '~/server/services/image.service';
 import { checkFileExists, getImageUploadBackend } from '~/utils/s3-utils';
@@ -71,7 +72,16 @@ export type ReusableCoverImageCandidate = {
  *     trading the bug being fixed here for a different broken image.
  *
  * So a row is reusable only when it is either (a) the entity's CURRENT cover — trivially safe,
- * it is already exactly this pointer — or (b) attached to nothing at all.
+ * it is already exactly this pointer — or (b) unattached as far as the FIVE relations checked
+ * below are concerned: `postId`, `article`, `connections`, `challengesCover`,
+ * `challengeEventCovers`.
+ *
+ * 🔴 That list is PARTIAL, not exhaustive. `Image` carries many more relations than these —
+ * profile pictures, club covers, collection items, comic panels, app-listing assets, challenge
+ * wins, … — and a row attached only through one of those will still be accepted here. The five
+ * are the ones a cover-image reuse can actually collide with today; treat the predicate as
+ * "not attached to anything a cover can conflict with", NOT as "attached to nothing at all".
+ * Anyone extending cover reuse to a new surface must widen this list deliberately.
  */
 export function isReusableCoverImage(
   candidate: ReusableCoverImageCandidate,
@@ -101,6 +111,12 @@ export type CoverImageDeps = {
   /** `true` present · `false` definitively absent · `null` bucket could not be consulted. */
   objectExists: (url: string) => Promise<boolean | null>;
   createImage: (args: ImageSchema & { userId: number }) => Promise<{ id: number }>;
+  /**
+   * Called when the existence check came back indeterminate and we therefore proceeded
+   * unverified. Must not throw and must not block — it exists purely to make the fail-open
+   * no-op measurable.
+   */
+  logExistenceUnknown: (args: { userId: number }) => void;
 };
 
 /** Reused rows must belong to the caller — see `findReusableImageId` below for why. */
@@ -113,8 +129,13 @@ async function findReusableImageId({
   userId: number;
   currentCoverId?: number | null;
 }) {
-  // `Image.url` carries a hash index, so this is an equality probe over a handful of rows
-  // (the same object key is only ever shared by re-saves of the same upload).
+  // An equality probe over a handful of rows — the same object key is only ever shared by
+  // re-saves of the same upload, and the result is capped at 5.
+  //
+  // 🔴 This lookup relies on an index on `Image.url` that is NOT declared in the Prisma schema
+  // and is created in no migration in this repo, so it must not be assumed present in a fresh
+  // or local database. On a database without it this is a sequential scan of `Image`; keep that
+  // in mind before adding a call site on a hotter path than "the user saved a cover with no id".
   //
   // 🔴 Scoped to `userId` on purpose. `Image.url` is the bare object key and it is visible in
   // every public image URL, so an unscoped url→row reuse would let anyone attach somebody
@@ -139,20 +160,66 @@ async function findReusableImageId({
   );
 }
 
+/**
+ * How long the existence probe may take before we give up and treat the answer as unknown.
+ *
+ * 🔴 This runs on the user-facing save path. The uploads client is built with SDK-default
+ * retries and no request timeout, so without a bound a degraded backend turns a
+ * bounded-latency guard into an unbounded one — the save just hangs. 2s matches the
+ * `AbortSignal.timeout(2000)` already used for the best-effort image-cacher invalidation in
+ * `image.service`. Timing out is an "unknown", never an "absent": it falls through to the
+ * same fail-open path as any other unreachable-bucket outcome.
+ */
+export const COVER_IMAGE_EXISTS_TIMEOUT_MS = 2000;
+
+/** Structured-log name for both indeterminate branches. Query this to measure the no-op. */
+export const COVER_IMAGE_EXISTS_UNKNOWN_LOG = 'cover-image-exists-unknown';
+
 async function objectExistsInUploads(url: string): Promise<boolean | null> {
   try {
     const { s3, bucket } = await getImageUploadBackend();
-    return await checkFileExists(url, { s3, bucket });
-  } catch {
+    return await checkFileExists(url, {
+      s3,
+      bucket,
+      abortSignal: AbortSignal.timeout(COVER_IMAGE_EXISTS_TIMEOUT_MS),
+    });
+  } catch (e) {
     // Credentials absent (local/dev) or the client could not even be constructed. Unknown, not
     // absent — see the fail-open note in `resolveCoverImageId`.
+    //
+    // 🔴 Logged because failing open is SILENT by construction: a period in which this check is
+    // doing nothing is otherwise indistinguishable from "working fine, no bad drafts". `reason`
+    // separates this branch (could not build the client) from the one inside `checkFileExists`
+    // (the bucket was consulted and did not give a definitive answer).
+    logToAxiom({
+      type: 'warning',
+      name: COVER_IMAGE_EXISTS_UNKNOWN_LOG,
+      message: 'cover image existence check could not consult the uploads bucket',
+      reason: 'client-unavailable',
+      error: safeError(e),
+    }).catch(() => {
+      // swallow — best-effort logging must never break the save it is observing
+    });
     return null;
   }
+}
+
+function logExistenceUnknown({ userId }: { userId: number }) {
+  logToAxiom({
+    type: 'warning',
+    name: COVER_IMAGE_EXISTS_UNKNOWN_LOG,
+    message: 'cover image created without a verified object — existence check was indeterminate',
+    reason: 'proceeded-unverified',
+    userId,
+  }).catch(() => {
+    // swallow — best-effort logging must never break the save it is observing
+  });
 }
 
 export const productionCoverImageDeps: CoverImageDeps = {
   findReusableImageId,
   objectExists: objectExistsInUploads,
+  logExistenceUnknown,
   // 🔴 Wrapped, not referenced directly. Reading `createImage` here would read it at MODULE
   // LOAD, and this module is now in the import graph of the article + challenge services —
   // so every existing test that wholesale-`vi.mock`s `image.service` without re-stubbing
@@ -195,6 +262,17 @@ export async function resolveCoverImageId(
   // blips — an infrastructure hiccup must not look like a bad request to the user.
   if (exists === false) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: COVER_IMAGE_UNAVAILABLE_MESSAGE });
+  }
+
+  if (exists === null) {
+    // 🔴 The fail-open branch is a SILENT no-op by construction: while it is taken, this whole
+    // guard is off, and "the check found nothing bad" looks identical to "the check did not
+    // run". Emit it so the difference is measurable — a sustained rate here means covers are
+    // being minted unverified again, which is precisely the pre-fix behaviour.
+    //
+    // Deliberately no url/key and no image fields: the decision is what needs counting, and the
+    // object key is the one piece of the payload worth not scattering through the log stream.
+    deps.logExistenceUnknown({ userId });
   }
 
   const created = await deps.createImage({ ...image, userId });

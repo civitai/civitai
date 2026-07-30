@@ -4,14 +4,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The module under test imports the (very large) image service, the db client and the s3
 // helpers only to build its production deps. The behaviour under test is injected, so stub
 // those graphs out entirely rather than dragging them into the suite.
-const { dbWriteMock, createImageMock, checkFileExistsMock, getImageUploadBackendMock } = vi.hoisted(
-  () => ({
-    dbWriteMock: { image: { findMany: vi.fn() } },
-    createImageMock: vi.fn(),
-    checkFileExistsMock: vi.fn(),
-    getImageUploadBackendMock: vi.fn(),
-  })
-);
+const {
+  dbWriteMock,
+  createImageMock,
+  checkFileExistsMock,
+  getImageUploadBackendMock,
+  logToAxiomMock,
+} = vi.hoisted(() => ({
+  dbWriteMock: { image: { findMany: vi.fn() } },
+  createImageMock: vi.fn(),
+  checkFileExistsMock: vi.fn(),
+  getImageUploadBackendMock: vi.fn(),
+  logToAxiomMock: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('~/server/db/client', () => ({ dbWrite: dbWriteMock, dbRead: dbWriteMock }));
 vi.mock('~/server/services/image.service', () => ({ createImage: createImageMock }));
@@ -19,9 +24,15 @@ vi.mock('~/utils/s3-utils', () => ({
   checkFileExists: checkFileExistsMock,
   getImageUploadBackend: getImageUploadBackendMock,
 }));
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: logToAxiomMock,
+  safeError: (e: unknown) => ({ message: (e as Error)?.message }),
+}));
 
 import type { CoverImageDeps, ReusableCoverImageCandidate } from '../cover-image.service';
 import {
+  COVER_IMAGE_EXISTS_TIMEOUT_MS,
+  COVER_IMAGE_EXISTS_UNKNOWN_LOG,
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   isReusableCoverImage,
   productionCoverImageDeps,
@@ -35,6 +46,7 @@ function makeDeps(overrides: Partial<CoverImageDeps> = {}): CoverImageDeps {
     findReusableImageId: vi.fn().mockResolvedValue(null),
     objectExists: vi.fn().mockResolvedValue(true),
     createImage: vi.fn().mockResolvedValue({ id: 999 }),
+    logExistenceUnknown: vi.fn(),
     ...overrides,
   };
 }
@@ -139,6 +151,47 @@ describe('resolveCoverImageId — no id (a raw upload key)', () => {
   });
 });
 
+describe('resolveCoverImageId — the fail-open branch is observable', () => {
+  // 🔴 Failing open is correct, but it is SILENT: while it is happening the guard is off, and
+  // "no bad drafts found" is indistinguishable from "the check never ran". These pin the signal
+  // that tells those apart.
+  it('reports the indeterminate check when it proceeds unverified', async () => {
+    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(null) });
+
+    await expect(resolveCoverImageId({ coverImage, userId: 7 }, deps)).resolves.toBe(999);
+
+    expect(deps.logExistenceUnknown).toHaveBeenCalledTimes(1);
+    expect(deps.logExistenceUnknown).toHaveBeenCalledWith({ userId: 7 });
+  });
+
+  it('stays quiet when the object was definitively present', async () => {
+    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(true) });
+
+    await resolveCoverImageId({ coverImage, userId: 7 }, deps);
+
+    expect(deps.logExistenceUnknown).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when the object was definitively absent', async () => {
+    const deps = makeDeps({ objectExists: vi.fn().mockResolvedValue(false) });
+
+    await resolveCoverImageId({ coverImage, userId: 7 }, deps).catch(() => undefined);
+
+    // A rejection is a decision the user sees; it is not the silent no-op this signal counts.
+    expect(deps.logExistenceUnknown).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet on the hot path and on reuse — neither consults the bucket', async () => {
+    const idDeps = makeDeps();
+    await resolveCoverImageId({ coverImage: { ...coverImage, id: 42 }, userId: 7 }, idDeps);
+    expect(idDeps.logExistenceUnknown).not.toHaveBeenCalled();
+
+    const reuseDeps = makeDeps({ findReusableImageId: vi.fn().mockResolvedValue(1234) });
+    await resolveCoverImageId({ coverImage, userId: 7 }, reuseDeps);
+    expect(reuseDeps.logExistenceUnknown).not.toHaveBeenCalled();
+  });
+});
+
 describe('isReusableCoverImage', () => {
   it('accepts a row attached to nothing', () => {
     expect(isReusableCoverImage(unattached)).toBe(true);
@@ -201,15 +254,79 @@ describe('productionCoverImageDeps.objectExists', () => {
     expect(checkFileExistsMock).not.toHaveBeenCalled();
   });
 
+  it('reports the indeterminate check when the uploads client cannot be built', async () => {
+    getImageUploadBackendMock.mockRejectedValue(
+      new Error('B2 image upload credentials not configured')
+    );
+
+    await productionCoverImageDeps.objectExists(coverImage.url);
+
+    expect(logToAxiomMock).toHaveBeenCalledTimes(1);
+    expect(logToAxiomMock.mock.calls[0][0]).toMatchObject({
+      name: COVER_IMAGE_EXISTS_UNKNOWN_LOG,
+      reason: 'client-unavailable',
+    });
+  });
+
   it('probes the uploads bucket the app actually writes to', async () => {
     const s3 = { send: vi.fn() };
     getImageUploadBackendMock.mockResolvedValue({ s3, bucket: 'civitai-media-uploads' });
     checkFileExistsMock.mockResolvedValue(false);
 
     await expect(productionCoverImageDeps.objectExists(coverImage.url)).resolves.toBe(false);
-    expect(checkFileExistsMock).toHaveBeenCalledWith(coverImage.url, {
-      s3,
-      bucket: 'civitai-media-uploads',
-    });
+    expect(checkFileExistsMock).toHaveBeenCalledWith(
+      coverImage.url,
+      expect.objectContaining({ s3, bucket: 'civitai-media-uploads' })
+    );
   });
+
+  it('bounds the probe with an abort signal — this runs on the user-facing save path', async () => {
+    // 🔴 The uploads client has SDK-default retries and no request timeout, so without a bound
+    // a degraded backend turns this guard into an unbounded wait on someone's save. The signal
+    // is created once and shared by every retry attempt, so it caps the WHOLE call.
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      const s3 = { send: vi.fn() };
+      getImageUploadBackendMock.mockResolvedValue({ s3, bucket: 'civitai-media-uploads' });
+      checkFileExistsMock.mockResolvedValue(true);
+
+      await productionCoverImageDeps.objectExists(coverImage.url);
+
+      const options = checkFileExistsMock.mock.calls[0][1];
+      expect(options.abortSignal).toBeInstanceOf(AbortSignal);
+      expect(options.abortSignal.aborted).toBe(false);
+      expect(timeoutSpy).toHaveBeenCalledWith(COVER_IMAGE_EXISTS_TIMEOUT_MS);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+});
+
+describe('productionCoverImageDeps.logExistenceUnknown', () => {
+  it('emits a structured warning naming the branch, and never throws', () => {
+    expect(() => productionCoverImageDeps.logExistenceUnknown({ userId: 7 })).not.toThrow();
+
+    expect(logToAxiomMock).toHaveBeenCalledTimes(1);
+    expect(logToAxiomMock.mock.calls[0][0]).toMatchObject({
+      type: 'warning',
+      name: COVER_IMAGE_EXISTS_UNKNOWN_LOG,
+      reason: 'proceeded-unverified',
+      userId: 7,
+    });
+    // The object key is deliberately NOT logged — the decision is what needs counting.
+    expect(logToAxiomMock.mock.calls[0][0]).not.toHaveProperty('url');
+  });
+
+  // NOT COVERED, deliberately: that `logToAxiom(...)` carries a `.catch()` so a logging failure
+  // cannot surface as an unhandled rejection.
+  //
+  // 🔴 Do not "add a test" for it here. The only observable difference between having and not
+  // having that `.catch()` is whether Node emits `unhandledRejection` — and it never can through
+  // this suite, because Vitest attaches its OWN handler to any promise returned from a `vi.fn()`
+  // (that is how `mock.settledResults` is populated), which marks the rejection handled. Measured
+  // directly: a raw `Promise.reject()` in a test is seen by a `process.on('unhandledRejection')`
+  // listener; the identical rejection returned from a mocked `logToAxiom` is not. So any
+  // assertion written here passes whether or not the `.catch()` exists — i.e. it is unfalsifiable,
+  // which is worse than no test. The guarantee rests on code review, and on the same
+  // `.catch(() => {})` pattern already used for the best-effort log in `image.service`.
 });

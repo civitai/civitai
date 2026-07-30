@@ -86,6 +86,7 @@ import {
   deleteModelFileObject,
   deleteModelFileObjects,
   classifyS3MultipartError,
+  checkFileExists,
 } from '~/utils/s3-utils';
 
 beforeEach(() => {
@@ -302,7 +303,7 @@ describe('classifyS3MultipartError', () => {
     // an unambiguous parts fault.
     const err = Object.assign(
       new Error(
-        'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.'
+        "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag."
       ),
       { name: 'InvalidPart' }
     );
@@ -340,5 +341,69 @@ describe('classifyS3MultipartError', () => {
   it('handles null / undefined without throwing', () => {
     expect(classifyS3MultipartError(null)).toBe('other');
     expect(classifyS3MultipartError(undefined)).toBe('other');
+  });
+});
+
+describe('checkFileExists — SDK error shape → tri-state mapping', () => {
+  // 🔴 This mapping is load-bearing for the cover-image guard, which REJECTS a user's save on
+  // `false`. Every rejection shape the AWS SDK can hand back has to land on the right side of
+  // that line: only a definitive "the bucket says this key is not there" may be `false`.
+  // Everything else — throttling, auth, transport, an abort — is `null`, i.e. "we do not know",
+  // and the caller proceeds. Reasoning about this from the source is not the same as running it.
+  function s3Throwing(error: unknown) {
+    return { send: vi.fn().mockRejectedValue(error) } as never;
+  }
+
+  const key = '0d5f0a4e-0000-4000-8000-000000000001';
+
+  it('returns true when HeadObject succeeds', async () => {
+    const s3 = { send: vi.fn().mockResolvedValue({}) } as never;
+    await expect(checkFileExists(key, { s3, bucket: 'civitai-media-uploads' })).resolves.toBe(true);
+  });
+
+  it.each([
+    ['NotFound', { name: 'NotFound', $metadata: { httpStatusCode: 404 } }],
+    ['NoSuchKey', { name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } }],
+    // A 404 whose name the SDK did not map — still definitively absent.
+    ['a bare 404', { name: 'UnrecognizedClientError', $metadata: { httpStatusCode: 404 } }],
+  ])('maps %s to false (definitively absent)', async (_label, error) => {
+    await expect(
+      checkFileExists(key, { s3: s3Throwing(error), bucket: 'civitai-media-uploads' })
+    ).resolves.toBe(false);
+  });
+
+  it.each([
+    // 🔴 The throttle case the cover-image audit could only verify by inspection. A backend
+    // shedding load must never read as "the user's upload is gone".
+    ['a 503 SlowDown throttle', { name: 'SlowDown', $metadata: { httpStatusCode: 503 } }],
+    [
+      'a 403 from a rotated/insufficient key',
+      { name: 'Forbidden', $metadata: { httpStatusCode: 403 } },
+    ],
+    ['a 500 from the backend', { name: 'InternalError', $metadata: { httpStatusCode: 500 } }],
+    // No `$metadata` at all: the request never got an HTTP answer.
+    [
+      'a transport error with no status',
+      Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }),
+    ],
+    // What `AbortSignal.timeout` surfaces as through the node HTTP handler — the timeout
+    // budget must fail OPEN, not reject the save.
+    ['an aborted request', Object.assign(new Error('Request aborted'), { name: 'AbortError' })],
+  ])('maps %s to null (unknown — caller fails open)', async (_label, error) => {
+    await expect(
+      checkFileExists(key, { s3: s3Throwing(error), bucket: 'civitai-media-uploads' })
+    ).resolves.toBeNull();
+  });
+
+  it('forwards an abort signal to the SDK send call', async () => {
+    const s3 = { send: vi.fn().mockResolvedValue({}) };
+    const abortSignal = AbortSignal.timeout(5_000);
+
+    await checkFileExists(key, { s3: s3 as never, bucket: 'civitai-media-uploads', abortSignal });
+
+    expect(s3.send).toHaveBeenCalledTimes(1);
+    // Second arg is the SDK's per-call HttpHandlerOptions — the only place a caller can bound
+    // a request that otherwise inherits default retries and no timeout.
+    expect(s3.send.mock.calls[0][1]).toEqual({ abortSignal });
   });
 });

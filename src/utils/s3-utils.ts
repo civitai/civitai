@@ -773,10 +773,21 @@ function isNotFoundError(e: unknown) {
  * Collapsing `null` into `false` (as this helper used to) turns an infrastructure hiccup
  * into a user-facing rejection — the same fail-open discipline the announcement media
  * check applies for the same reason.
+ *
+ * 🔴 `abortSignal` is how a caller on a USER-FACING path bounds this. The client is built with
+ * SDK-default retries and no request timeout, so an unbounded probe against a degraded backend
+ * turns a guard into a hang. The signal is passed once and shared by every retry attempt, so it
+ * caps the WHOLE call, not each attempt. An abort surfaces as a plain `AbortError` (no
+ * `$metadata`), which is not a not-found shape — so it lands on `null` and the caller fails open,
+ * exactly like any other "could not consult the bucket" outcome.
  */
 export async function checkFileExists(
   key: string,
-  { s3, bucket }: { s3?: S3Client | null; bucket?: string } = {}
+  {
+    s3,
+    bucket,
+    abortSignal,
+  }: { s3?: S3Client | null; bucket?: string; abortSignal?: AbortSignal } = {}
 ): Promise<boolean | null> {
   if (!s3) s3 = getS3Client();
 
@@ -786,7 +797,8 @@ export async function checkFileExists(
       new HeadObjectCommand({
         Key: parsedKey,
         Bucket: parsedBucket ?? bucket ?? env.S3_UPLOAD_BUCKET,
-      })
+      }),
+      { abortSignal }
     );
   } catch (e) {
     return isNotFoundError(e) ? false : null;
