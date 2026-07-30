@@ -1,0 +1,6 @@
+# apps/creator-studio formats itself, from its own root, with its own Prettier 3 + prettier-plugin-svelte
+# (svelte 5 needs prettier >=3; no prettier-plugin-svelte supports svelte 5 on the root's prettier 2).
+# The two majors format TS differently -- prettier 3 collapses leading-pipe unions that prettier 2 breaks
+# across lines -- so ownership has to be exclusive or the two fight over the same files forever.
+# Run `pnpm -F @civitai/creator-studio-app format` there instead.
+apps/creator-studio/
