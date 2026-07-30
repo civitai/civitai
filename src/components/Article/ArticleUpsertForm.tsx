@@ -54,6 +54,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import classes from './ArticleUpsertForm.module.scss';
 
 const schema = upsertArticleInput
   .omit({
@@ -343,13 +344,7 @@ export function ArticleUpsertForm({ article }: Props) {
           </Stack>
         </ContainerGrid2.Col>
         <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
-          <Stack
-            style={{
-              position: 'sticky',
-              top: 'calc(var(--header-height) + var(--mantine-spacing-md))',
-            }}
-            gap="xl"
-          >
+          <Stack className={classes.sidebar} gap="xl">
             {article?.id && article.status === ArticleStatus.Processing && (
               <ArticleScanStatus
                 articleId={article.id}

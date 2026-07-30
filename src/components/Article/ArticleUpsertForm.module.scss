@@ -1,0 +1,19 @@
+.sidebar {
+  position: sticky;
+  top: calc(var(--header-height) + var(--mantine-spacing-md));
+}
+
+// Only from `md` up, where the form is actually two columns. Below that the
+// sidebar is stacked under the editor at full width and scrolls with the page.
+@media (min-width: theme('screens.md')) {
+  .sidebar {
+    // Pinning the top of a column taller than the viewport leaves its lower
+    // fields — Tags, Attachments — permanently below the fold, reachable only
+    // by scrolling to the very end of the article. Giving the pinned column its
+    // own scroll keeps every field reachable from any position in the document.
+    max-height: calc(100dvh - var(--header-height) - 2 * var(--mantine-spacing-md));
+    overflow-y: auto;
+    // Room for the scrollbar so it doesn't sit on top of the inputs.
+    padding-right: var(--mantine-spacing-xs);
+  }
+}
