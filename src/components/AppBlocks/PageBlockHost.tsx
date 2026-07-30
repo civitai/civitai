@@ -35,6 +35,14 @@ import {
 } from './wildcardPackParse';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
+import {
+  downloadUrlAsBlob,
+  isAllowedSaveImageUrl,
+  resolveSaveImageRequest,
+  sanitizeDownloadFilename,
+  SAVE_IMAGE_MAX_CONCURRENT,
+} from './saveImageDownload';
+import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
@@ -1680,6 +1688,7 @@ export function PageBlockHost({
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
+  const sharedReportMutation = trpc.apps.shared.report.useMutation();
 
   // SHARED_LIST → apps.shared.list → SHARED_LIST_RESULT (query).
   useEffect(() => {
@@ -1720,6 +1729,8 @@ export function PageBlockHost({
               it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
             updatedAt:
               it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+            // item 3: pass the per-viewer vote flag straight through (no logic).
+            viewerVoted: it.viewerVoted,
           })),
           nextCursor: result.nextCursor,
         });
@@ -1944,6 +1955,160 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, sharedWithdrawMutation, reviewMode]);
+
+  // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (query). Single-row deep-link
+  // fetch-by-key. READ (anon-allowed server-side; no reviewMode NACK — reads stay
+  // live). Maps the item exactly like SHARED_LIST (createdAt/updatedAt → ISO, and
+  // the additive viewerVoted flows straight through). A missing/hidden row comes
+  // back as `item: null` (the server applies the same hidden_at gate as list).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_GET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.shared.get.fetch({
+            blockToken: token,
+            key: raw.key,
+          });
+          const it = result.item;
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: it
+              ? {
+                  key: it.key,
+                  authorUserId: it.authorUserId,
+                  value: it.value,
+                  count: it.count,
+                  createdAt:
+                    it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
+                  updatedAt:
+                    it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+                  viewerVoted: it.viewerVoted,
+                }
+              : null,
+          });
+        } catch (err) {
+          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT (mutation). A user
+  // reports a posted row for mod review; the server already trust-gates + rate-
+  // limits + files the report (endpoint pre-exists). Reply is SHARED_WITHDRAW-
+  // style `{ ok, error? }` — the error path MUST carry ok:false or the SDK drops
+  // it (→ hang). reviewMode NACK: report is a shared:write-trust op, never granted
+  // in run-for-real (mirrors the other shared writes).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; reason?: unknown } | undefined>(
+      'SHARED_REPORT',
+      async (raw) => {
+        if (reviewMode) {
+          if (raw && typeof raw.requestId === 'string') {
+            send('SHARED_REPORT_RESULT', {
+              requestId: raw.requestId,
+              ok: false,
+              error: REVIEW_NACK_MESSAGE,
+            });
+          }
+          return;
+        }
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
+        try {
+          await sharedReportMutation.mutateAsync({ blockToken: token, key: raw.key, reason });
+          send('SHARED_REPORT_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedReportMutation, reviewMode]);
+
+  // F2 concurrency-cap counter for SAVE_IMAGE (see the handler below). A ref (not
+  // state) so increment/decrement never re-renders and the count is read
+  // synchronously in the message handler (single-threaded ⇒ check→increment before
+  // the first await is atomic per message), mirroring wildcardInFlightRef.
+  const saveImageInFlightRef = useRef<number>(0);
+
+  // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
+  // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
+  // has no allow-downloads). TWO variants, each with its own security gate:
+  //   • url  — the block's OWN output. MUST pass the civitai image/blob origin
+  //            allowlist (isAllowedSaveImageUrl) — never a host-side fetch of an
+  //            attacker origin (an opaque-origin block's url/data is untrusted).
+  //   • id   — a cross-user grid image. Resolved through the SAME per-viewer
+  //            gated read (blocks.getImagesByIds) that GET_IMAGES_BY_IDS uses, so
+  //            a withheld/above-ceiling image (status !== 'visible', or omitted)
+  //            can NEVER be saved.
+  // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
+  // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
+  // so the block never hangs.
+  useEffect(() => {
+    const off = onMessage<unknown>('SAVE_IMAGE', async (raw) => {
+      const req = resolveSaveImageRequest(raw);
+      if (!req) return; // missing/invalid requestId — can't correlate, drop
+      const { requestId } = req;
+      if (req.kind === 'invalid') {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'invalid save-image request' });
+        return;
+      }
+      // F2 concurrency cap (host-side backpressure): bound concurrent host-side
+      // image downloads so a hostile block can't download-bomb the viewer's tab
+      // (memory/bandwidth). check→increment runs synchronously before the first
+      // await (single-threaded), so N concurrent SAVE_IMAGEs can't all pass the
+      // gate; excess replies `busy` (the block retries) rather than fetching.
+      if (saveImageInFlightRef.current >= SAVE_IMAGE_MAX_CONCURRENT) {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'busy' });
+        return;
+      }
+      saveImageInFlightRef.current += 1;
+      try {
+        if (req.kind === 'url') {
+          if (!isAllowedSaveImageUrl(req.url, env.NEXT_PUBLIC_IMAGE_LOCATION)) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image url is not allowed' });
+            return;
+          }
+          await downloadUrlAsBlob(req.url, sanitizeDownloadFilename(req.filename, req.url));
+          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+          return;
+        }
+        // id variant — route through the gated per-viewer read.
+        if (!token) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'no block token' });
+          return;
+        }
+        const result = await getImagesByIdsMutation.mutateAsync({
+          blockToken: token,
+          imageIds: [req.imageId],
+        });
+        const image = result.images.find((i) => i.imageId === req.imageId);
+        if (!image || image.status !== 'visible') {
+          // Withheld (hidden / above-ceiling / unscanned / flagged) or unresolvable
+          // → never saveable. Do NOT leak which reason.
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image is not available' });
+          return;
+        }
+        await downloadUrlAsBlob(image.url, sanitizeDownloadFilename(req.filename, image.url));
+        send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+      } catch (err) {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+      } finally {
+        // Release the slot on EVERY exit that acquired one (success / refusal /
+        // error) so the gate can't leak slots and wedge shut.
+        saveImageInFlightRef.current -= 1;
+      }
+    });
+    return off;
+  }, [onMessage, send, token, getImagesByIdsMutation]);
 
   // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
   //

@@ -1553,6 +1553,7 @@ export function IframeHost({
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
+  const sharedReportMutation = trpc.apps.shared.report.useMutation();
 
   useEffect(() => {
     const off = onMessage<
@@ -1590,6 +1591,8 @@ export function IframeHost({
               it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
             updatedAt:
               it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+            // item 3: pass the per-viewer vote flag straight through (no logic).
+            viewerVoted: it.viewerVoted,
           })),
           nextCursor: result.nextCursor,
         });
@@ -1752,6 +1755,64 @@ export function IframeHost({
     );
     return off;
   }, [onMessage, send, token, sharedWithdrawMutation]);
+
+  // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (single-row deep-link fetch).
+  // Mirrors SHARED_LIST's item mapping (createdAt/updatedAt → ISO; additive
+  // viewerVoted passes through); a missing/hidden row comes back `item: null`.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_GET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.shared.get.fetch({ blockToken: token, key: raw.key });
+          const it = result.item;
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: it
+              ? {
+                  key: it.key,
+                  authorUserId: it.authorUserId,
+                  value: it.value,
+                  count: it.count,
+                  createdAt:
+                    it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
+                  updatedAt:
+                    it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+                  viewerVoted: it.viewerVoted,
+                }
+              : null,
+          });
+        } catch (err) {
+          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT. User reports a
+  // posted row for mod review (server trust-gates + rate-limits + files it).
+  // Reply is SHARED_WITHDRAW-style `{ ok, error? }` — the error path MUST carry
+  // ok:false or the SDK drops it (→ hang).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; reason?: unknown } | undefined>(
+      'SHARED_REPORT',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
+        try {
+          await sharedReportMutation.mutateAsync({ blockToken: token, key: raw.key, reason });
+          send('SHARED_REPORT_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, sharedReportMutation]);
 
   useEffect(() => {
     if (status !== 'ready') return;
