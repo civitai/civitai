@@ -283,7 +283,9 @@ describe('productionCoverImageDeps.objectExists', () => {
   it('bounds the probe with an abort signal — this runs on the user-facing save path', async () => {
     // 🔴 The uploads client has SDK-default retries and no request timeout, so without a bound
     // a degraded backend turns this guard into an unbounded wait on someone's save. The signal
-    // is created once and shared by every retry attempt, so it caps the WHOLE call.
+    // is created once and shared by every retry attempt, so it bounds every network attempt —
+    // it is not a wall-clock cap: an in-flight retry backoff is not interrupted, so worst-case
+    // wall time is the budget plus one backoff (see the note on `checkFileExists`).
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     try {
       const s3 = { send: vi.fn() };
@@ -299,6 +301,18 @@ describe('productionCoverImageDeps.objectExists', () => {
     } finally {
       timeoutSpy.mockRestore();
     }
+  });
+
+  it('keeps the budget small enough to sit on a user-facing save path', () => {
+    // 🔴 Deliberately a CEILING, not `toBe(2000)`. Re-stating the constant would be a
+    // change-detector — it can only fail when someone edits the value on purpose, and the fix is
+    // to edit the test. What actually needs defending is the invariant the design argument rests
+    // on: this is a synchronous cost added to somebody's save, and worst-case wall time is this
+    // budget plus one un-interruptible retry backoff. Retuning 2000 → 1500 or 3000 is a normal
+    // decision and stays green; widening it to something that would visibly stall a save (the
+    // failure mode this bound exists to prevent) does not.
+    expect(COVER_IMAGE_EXISTS_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(COVER_IMAGE_EXISTS_TIMEOUT_MS).toBeLessThanOrEqual(5000);
   });
 });
 
@@ -317,16 +331,18 @@ describe('productionCoverImageDeps.logExistenceUnknown', () => {
     expect(logToAxiomMock.mock.calls[0][0]).not.toHaveProperty('url');
   });
 
-  // NOT COVERED, deliberately: that `logToAxiom(...)` carries a `.catch()` so a logging failure
-  // cannot surface as an unhandled rejection.
+  // The `.catch()` on that `logToAxiom(...)` — the thing that stops a logging failure surfacing
+  // as an unhandled rejection — is pinned in `cover-image.service.logging.test.ts`, NOT here.
   //
-  // 🔴 Do not "add a test" for it here. The only observable difference between having and not
-  // having that `.catch()` is whether Node emits `unhandledRejection` — and it never can through
-  // this suite, because Vitest attaches its OWN handler to any promise returned from a `vi.fn()`
-  // (that is how `mock.settledResults` is populated), which marks the rejection handled. Measured
-  // directly: a raw `Promise.reject()` in a test is seen by a `process.on('unhandledRejection')`
-  // listener; the identical rejection returned from a mocked `logToAxiom` is not. So any
-  // assertion written here passes whether or not the `.catch()` exists — i.e. it is unfalsifiable,
-  // which is worse than no test. The guarantee rests on code review, and on the same
-  // `.catch(() => {})` pattern already used for the best-effort log in `image.service`.
+  // 🔴 The reason is a trap worth knowing: it cannot be tested through THIS file's mocks. The
+  // only observable difference between having and not having the `.catch()` is whether Node
+  // emits `unhandledRejection`, and a `vi.fn()` mock suppresses that by construction — it
+  // attaches `returnValue.then(onFulfilled, onRejected)` to whatever the implementation returns
+  // (that is how `mock.settledResults` is populated), which marks a returned rejected promise
+  // handled. Measured both ways: with `logToAxiom` mocked as a `vi.fn()`, an assertion that no
+  // `unhandledRejection` fires passes whether or not the production `.catch()` exists —
+  // unfalsifiable, which is worse than no test. Mocked as a PLAIN function returning a rejected
+  // promise, the same assertion fails the moment the `.catch()` is deleted. Since this file's
+  // other tests need `logToAxiom` to be a `vi.fn()` to assert on payloads, and `vi.mock` is
+  // per-file, the falsifiable version lives in its own file.
 });
