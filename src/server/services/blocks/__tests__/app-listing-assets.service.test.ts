@@ -294,6 +294,55 @@ describe('pure helpers', () => {
     expect(cover).not.toContain('<x>');
   });
 
+  // DRIFT GUARD (cross-surface): the GENERATED asset SVGs and the CLIENT
+  // render-time fallback (AppListingCard / AppListingDetailBody, via
+  // `listingPlaceholderGradient`) must derive from the SAME seed + stops. They
+  // used to be two hand-rolled designs that silently diverged — a generated
+  // seeded-hue icon next to a uniform grey cover placeholder. If someone
+  // recolours one side only, this fails.
+  it('generated SVG stops match the client placeholder gradient stops', async () => {
+    const { buildPlaceholderIconSvg, buildPlaceholderCoverSvg } = await import(
+      '../app-listing-assets.service'
+    );
+    const { listingPlaceholderGradient, listingPlaceholderSeed, placeholderHues, placeholderStop } =
+      await import('~/shared/constants/app-listing-placeholder.constants');
+
+    const slug = 'cool-app';
+    const category = 'games';
+    const { hue, hue2 } = placeholderHues(listingPlaceholderSeed(slug, category));
+
+    // 🔴 Assert the stop + its OFFSET as ONE string. A pair of order-agnostic
+    // `toContain(stop)` checks passes even if the two stops are SWAPPED — an
+    // inverted gradient on every generated icon, which is a real visual
+    // regression. Binding offset→colour is what actually pins the direction.
+    const icon = buildPlaceholderIconSvg({ slug, category, name: 'Cool App' });
+    expect(icon).toContain(`offset="0%" stop-color="${placeholderStop('icon', 'from', hue)}"`);
+    expect(icon).toContain(`offset="100%" stop-color="${placeholderStop('icon', 'to', hue2)}"`);
+
+    const cover = buildPlaceholderCoverSvg({ slug, category, name: 'Cool App' });
+    expect(cover).toContain(`offset="0%" stop-color="${placeholderStop('cover', 'from', hue)}"`);
+    expect(cover).toContain(`offset="100%" stop-color="${placeholderStop('cover', 'to', hue2)}"`);
+
+    // …and the CSS the client renders uses those very same stops, in the same
+    // order. BOTH surfaces are cross-checked: `icon` backs the Avatar monogram
+    // and `cover` backs the card/hero, so checking only one leaves the other
+    // free to drift.
+    expect(listingPlaceholderGradient({ slug, category, surface: 'cover' })).toBe(
+      `linear-gradient(135deg, ${placeholderStop('cover', 'from', hue)} 0%, ${placeholderStop(
+        'cover',
+        'to',
+        hue2
+      )} 100%)`
+    );
+    expect(listingPlaceholderGradient({ slug, category, surface: 'icon' })).toBe(
+      `linear-gradient(135deg, ${placeholderStop('icon', 'from', hue)} 0%, ${placeholderStop(
+        'icon',
+        'to',
+        hue2
+      )} 100%)`
+    );
+  });
+
   it('chooseScreenshotSource: existing → migrate(real only) → none', async () => {
     const { chooseScreenshotSource } = await import('../app-listing-assets.service');
     const base = {
