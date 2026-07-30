@@ -204,7 +204,9 @@ function AuthFailureHarness({
 
 describe('PageBlockHost auto-retry — fires from a terminal state, bounded and backed off', () => {
   test('a terminal state renders the REAL error IMMEDIATELY, with the pending retry shown inside it', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />);
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
     await driveToReady();
 
     const firedAt = Date.now();
@@ -229,7 +231,9 @@ describe('PageBlockHost auto-retry — fires from a terminal state, bounded and 
   });
 
   test('the automatic attempt actually re-runs the load after the backoff (and says so)', async () => {
-    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />);
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
     await driveToFatal();
     // Still in the terminal state for the whole backoff — the retry is NOT instant
     // (a 0ms "backoff" would be a hot loop against a down host).
@@ -243,55 +247,49 @@ describe('PageBlockHost auto-retry — fires from a terminal state, bounded and 
       timeout: FIRST_BACKOFF_MS + 4_000,
       interval: 50,
     });
-    await expect.element(page.getByText(/Retrying Budgeted Generator… \(attempt 2\)/)).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Retrying Budgeted Generator… \(attempt 2\)/))
+      .toBeInTheDocument();
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     expect(el.getAttribute('data-block-ready')).toBe('false');
   }, 20_000);
 
-  test(
-    'auto-retry also fires from the `timeout` terminal (block never acks BLOCK_READY)',
-    async () => {
-      renderWithProviders(
-        <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
-      );
-      // ~10s readiness window → 'timeout'.
-      await vi.waitFor(() => expect(fallbackEl()).not.toBeNull(), {
-        timeout: 13_000,
-        interval: 250,
-      });
-      expect(autoRetryLine()?.textContent).toContain(`attempt 1 of ${MAX_AUTO_RETRIES}`);
-    },
-    25_000
-  );
+  test('auto-retry also fires from the `timeout` terminal (block never acks BLOCK_READY)', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
+    // ~10s readiness window → 'timeout'.
+    await vi.waitFor(() => expect(fallbackEl()).not.toBeNull(), {
+      timeout: 13_000,
+      interval: 250,
+    });
+    expect(autoRetryLine()?.textContent).toContain(`attempt 1 of ${MAX_AUTO_RETRIES}`);
+  }, 25_000);
 
-  test(
-    'auto-retry also fires from the `no_token` terminal, and it RE-MINTS',
-    async () => {
-      const onRetryToken = vi.fn();
-      renderWithProviders(
-        <PageBlockHost
-          {...baseProps}
-          token={null}
-          tokenError={false}
-          onConsentGranted={vi.fn()}
-          onRetryToken={onRetryToken}
-        />
-      );
-      // ~15s token-wait window → 'no_token'.
-      await vi.waitFor(() => expect(fallbackEl()).not.toBeNull(), {
-        timeout: 19_000,
-        interval: 250,
-      });
-      expect(onRetryToken).not.toHaveBeenCalled();
-      // An auth terminal can ONLY be recovered by re-minting (the token is an
-      // upstream prop) — so the automatic attempt must re-mint, not just remount.
-      await vi.waitFor(() => expect(onRetryToken).toHaveBeenCalledTimes(1), {
-        timeout: FIRST_BACKOFF_MS + 4_000,
-        interval: 50,
-      });
-    },
-    30_000
-  );
+  test('auto-retry also fires from the `no_token` terminal, and it RE-MINTS', async () => {
+    const onRetryToken = vi.fn();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError={false}
+        onConsentGranted={vi.fn()}
+        onRetryToken={onRetryToken}
+      />
+    );
+    // ~15s token-wait window → 'no_token'.
+    await vi.waitFor(() => expect(fallbackEl()).not.toBeNull(), {
+      timeout: 19_000,
+      interval: 250,
+    });
+    expect(onRetryToken).not.toHaveBeenCalled();
+    // An auth terminal can ONLY be recovered by re-minting (the token is an
+    // upstream prop) — so the automatic attempt must re-mint, not just remount.
+    await vi.waitFor(() => expect(onRetryToken).toHaveBeenCalledTimes(1), {
+      timeout: FIRST_BACKOFF_MS + 4_000,
+      interval: 50,
+    });
+  }, 30_000);
 
   test('a NON-auth terminal auto-retries WITHOUT re-minting (the token was fine)', async () => {
     const onRetryToken = vi.fn();
@@ -352,62 +350,54 @@ describe('PageBlockHost auto-retry — survives an UNSTABLE onRetryToken prop', 
 });
 
 describe('PageBlockHost auto-retry — the caps (unbounded loops are the failure mode)', () => {
-  test(
-    'AUTH terminals re-mint AT MOST MAX_AUTO_REMINTS times, then stop',
-    async () => {
-      const onRemint = vi.fn();
-      renderWithProviders(<AuthFailureHarness onRemint={onRemint} />);
+  test('AUTH terminals re-mint AT MOST MAX_AUTO_REMINTS times, then stop', async () => {
+    const onRemint = vi.fn();
+    renderWithProviders(<AuthFailureHarness onRemint={onRemint} />);
 
-      // The host burns its automatic budget …
-      await vi.waitFor(() => expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS), {
-        timeout: 25_000,
-        interval: 100,
-      });
+    // The host burns its automatic budget …
+    await vi.waitFor(() => expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS), {
+      timeout: 25_000,
+      interval: 100,
+    });
 
-      // 🔴 …and then STOPS. Waiting well past another full backoff must produce no
-      // further re-mint. This is the rate-limit guard: `/api/v1/block-tokens` is
-      // 60/min, and an unbounded auth-failure loop is exactly the shape that
-      // would burn it.
-      await sleep(AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1] + 3_000);
-      expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS);
-    },
-    45_000
-  );
+    // 🔴 …and then STOPS. Waiting well past another full backoff must produce no
+    // further re-mint. This is the rate-limit guard: `/api/v1/block-tokens` is
+    // 60/min, and an unbounded auth-failure loop is exactly the shape that
+    // would burn it.
+    await sleep(AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1] + 3_000);
+    expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS);
+  }, 45_000);
 
-  test(
-    'after exhaustion the host settles on a DEFINITIVE terminal state with a PROMINENT manual Retry',
-    async () => {
-      const onRemint = vi.fn();
-      renderWithProviders(<AuthFailureHarness onRemint={onRemint} />);
-      await vi.waitFor(() => expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS), {
-        timeout: 25_000,
-        interval: 100,
-      });
+  test('after exhaustion the host settles on a DEFINITIVE terminal state with a PROMINENT manual Retry', async () => {
+    const onRemint = vi.fn();
+    renderWithProviders(<AuthFailureHarness onRemint={onRemint} />);
+    await vi.waitFor(() => expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS), {
+      timeout: 25_000,
+      interval: 100,
+    });
 
-      // Settle: the pending-retry line is gone and the fallback is final.
-      await vi.waitFor(
-        () => {
-          expect(fallbackEl()).not.toBeNull();
-          expect(autoRetryLine()).toBeNull();
-        },
-        { timeout: 20_000, interval: 100 }
-      );
+    // Settle: the pending-retry line is gone and the fallback is final.
+    await vi.waitFor(
+      () => {
+        expect(fallbackEl()).not.toBeNull();
+        expect(autoRetryLine()).toBeNull();
+      },
+      { timeout: 20_000, interval: 100 }
+    );
 
-      // 🔴 THE ACTUAL REPORTED FAILURE: the manual affordance must now be
-      // impossible to miss. It is filled + full-width rather than the small
-      // subdued default, and the host says plainly that it already tried.
-      const btn = retryButton();
-      expect(btn).not.toBeNull();
-      expect(btn?.getAttribute('data-block-fallback-retry-prominent')).toBe('true');
-      await expect
-        .element(page.getByText(`We already retried ${MAX_AUTO_RETRIES} times automatically.`))
-        .toBeInTheDocument();
-      // Still reachable by its stable accessible name, and still inside the chrome.
-      await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-      await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
-    },
-    60_000
-  );
+    // 🔴 THE ACTUAL REPORTED FAILURE: the manual affordance must now be
+    // impossible to miss. It is filled + full-width rather than the small
+    // subdued default, and the host says plainly that it already tried.
+    const btn = retryButton();
+    expect(btn).not.toBeNull();
+    expect(btn?.getAttribute('data-block-fallback-retry-prominent')).toBe('true');
+    await expect
+      .element(page.getByText(`We already retried ${MAX_AUTO_RETRIES} times automatically.`))
+      .toBeInTheDocument();
+    // Still reachable by its stable accessible name, and still inside the chrome.
+    await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
+  }, 60_000);
 });
 
 describe('PageBlockHost auto-retry — beacon semantics (one per mount, the settled outcome)', () => {
@@ -428,110 +418,98 @@ describe('PageBlockHost auto-retry — beacon semantics (one per mount, the sett
     fetchSpy.mockClear();
   });
 
-  test(
-    'success on attempt 2 emits EXACTLY ONE `ok` beacon — and no `error` first',
-    async () => {
-      renderWithProviders(
-        <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
-      );
+  test('success on attempt 2 emits EXACTLY ONE `ok` beacon — and no `error` first', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
 
-      // Attempt 1 fails by never acking → 'timeout'. It must emit NOTHING (an
-      // automatic attempt is still coming — the host has not settled).
-      await vi.waitFor(() => expect(fallbackEl()).not.toBeNull(), {
-        timeout: 13_000,
-        interval: 250,
-      });
-      expect(beaconCalls()).toHaveLength(0);
+    // Attempt 1 fails by never acking → 'timeout'. It must emit NOTHING (an
+    // automatic attempt is still coming — the host has not settled).
+    await vi.waitFor(() => expect(fallbackEl()).not.toBeNull(), {
+      timeout: 13_000,
+      interval: 250,
+    });
+    expect(beaconCalls()).toHaveLength(0);
 
-      // Attempt 2 succeeds.
-      await vi.waitFor(() => expect(page.getByTestId('app-page-loading').query()).not.toBeNull(), {
-        timeout: FIRST_BACKOFF_MS + 4_000,
-        interval: 50,
-      });
-      await driveToReady();
+    // Attempt 2 succeeds.
+    await vi.waitFor(() => expect(page.getByTestId('app-page-loading').query()).not.toBeNull(), {
+      timeout: FIRST_BACKOFF_MS + 4_000,
+      interval: 50,
+    });
+    await driveToReady();
 
-      await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
-      const [body] = beaconBodies();
-      // The `ok` beacon carries no `status` field (see sendBlockRender).
-      expect(body).toEqual({
-        appBlockId: 'apb_test',
-        blockInstanceId: 'page_apb_test',
-        slotId: 'app.page',
-      });
-      // Give any stray emit a chance to show up before asserting exclusivity.
-      await sleep(300);
-      expect(beaconCalls()).toHaveLength(1);
-    },
-    30_000
-  );
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+    const [body] = beaconBodies();
+    // The `ok` beacon carries no `status` field (see sendBlockRender).
+    expect(body).toEqual({
+      appBlockId: 'apb_test',
+      blockInstanceId: 'page_apb_test',
+      slotId: 'app.page',
+    });
+    // Give any stray emit a chance to show up before asserting exclusivity.
+    await sleep(300);
+    expect(beaconCalls()).toHaveLength(1);
+  }, 30_000);
 
-  test(
-    'a mount that already reported `ok` never additionally reports `error` after a crash + failed recovery',
-    async () => {
-      // 🔴 THE EMIT-ONCE GUARD. `performRetry` must NOT reset
-      // `blockRenderEmittedRef` — a retry is part of the SAME mount, so the mount
-      // keeps its already-reported outcome. Resetting it re-opens the beacon and
-      // a single page load reports BOTH `ok` and `error`, double-counting in the
-      // denominator AND inflating the failure ratio the alert watches.
-      //
-      // (Mutation-verified: re-adding `blockRenderEmittedRef.current = false` to
-      // performRetry fails THIS test. The sibling "N failed attempts emit ONE
-      // error" test does NOT catch it — the settled-gate alone keeps that path to
-      // one beacon — which is why this case exists separately.)
-      renderWithProviders(
-        <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
-      );
+  test('a mount that already reported `ok` never additionally reports `error` after a crash + failed recovery', async () => {
+    // 🔴 THE EMIT-ONCE GUARD. `performRetry` must NOT reset
+    // `blockRenderEmittedRef` — a retry is part of the SAME mount, so the mount
+    // keeps its already-reported outcome. Resetting it re-opens the beacon and
+    // a single page load reports BOTH `ok` and `error`, double-counting in the
+    // denominator AND inflating the failure ratio the alert watches.
+    //
+    // (Mutation-verified: re-adding `blockRenderEmittedRef.current = false` to
+    // performRetry fails THIS test. The sibling "N failed attempts emit ONE
+    // error" test does NOT catch it — the settled-gate alone keeps that path to
+    // one beacon — which is why this case exists separately.)
+    renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
 
-      // Load succeeds → exactly one `ok`.
-      await driveToReady();
-      await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
-      expect(beaconBodies()[0]).not.toHaveProperty('status');
+    // Load succeeds → exactly one `ok`.
+    await driveToReady();
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
+    expect(beaconBodies()[0]).not.toHaveProperty('status');
 
-      // Then the block crashes and every automatic recovery attempt fails
-      // (the fresh frames never ack, so each rides the readiness timeout).
-      postFromBlock('BLOCK_ERROR', { fatal: true });
-      await vi.waitFor(
-        () => {
-          expect(fallbackEl()).not.toBeNull();
-          expect(autoRetryLine()).toBeNull(); // settled: budget spent
-        },
-        { timeout: 40_000, interval: 250 }
-      );
+    // Then the block crashes and every automatic recovery attempt fails
+    // (the fresh frames never ack, so each rides the readiness timeout).
+    postFromBlock('BLOCK_ERROR', { fatal: true });
+    await vi.waitFor(
+      () => {
+        expect(fallbackEl()).not.toBeNull();
+        expect(autoRetryLine()).toBeNull(); // settled: budget spent
+      },
+      { timeout: 40_000, interval: 250 }
+    );
 
-      // Still exactly the one `ok` — no `error` beacon was re-opened.
-      expect(beaconCalls()).toHaveLength(1);
-      expect(beaconBodies()[0]).not.toHaveProperty('status');
-    },
-    60_000
-  );
+    // Still exactly the one `ok` — no `error` beacon was re-opened.
+    expect(beaconCalls()).toHaveLength(1);
+    expect(beaconBodies()[0]).not.toHaveProperty('status');
+  }, 60_000);
 
-  test(
-    'N failed automatic attempts emit ONE `error` beacon, not N',
-    async () => {
-      const onRemint = vi.fn();
-      renderWithProviders(<AuthFailureHarness onRemint={onRemint} />);
+  test('N failed automatic attempts emit ONE `error` beacon, not N', async () => {
+    const onRemint = vi.fn();
+    renderWithProviders(<AuthFailureHarness onRemint={onRemint} />);
 
-      // Burn the whole automatic budget.
-      await vi.waitFor(() => expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS), {
-        timeout: 25_000,
-        interval: 100,
-      });
-      // Settle, then exactly ONE error beacon for the whole sequence.
-      await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1), {
-        timeout: 20_000,
-        interval: 100,
-      });
-      const [body] = beaconBodies();
-      expect(body.status).toBe('error');
-      // errorClass stays inside the server-side KNOWN_ERROR_CLASSES enum, so the
-      // existing prom label + its alert are unchanged by auto-retry.
-      expect(['error', 'no_token']).toContain(body.errorClass);
+    // Burn the whole automatic budget.
+    await vi.waitFor(() => expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS), {
+      timeout: 25_000,
+      interval: 100,
+    });
+    // Settle, then exactly ONE error beacon for the whole sequence.
+    await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1), {
+      timeout: 20_000,
+      interval: 100,
+    });
+    const [body] = beaconBodies();
+    expect(body.status).toBe('error');
+    // errorClass stays inside the server-side KNOWN_ERROR_CLASSES enum, so the
+    // existing prom label + its alert are unchanged by auto-retry.
+    expect(['error', 'no_token']).toContain(body.errorClass);
 
-      await sleep(AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1] + 2_000);
-      expect(beaconCalls()).toHaveLength(1);
-    },
-    60_000
-  );
+    await sleep(AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1] + 2_000);
+    expect(beaconCalls()).toHaveLength(1);
+  }, 60_000);
 });
 
 describe('PageBlockHost auto-retry — reduced motion', () => {
@@ -599,43 +577,39 @@ describe('PageBlockHost auto-retry — manual Retry interaction + teardown', () 
     expect(onRetryToken).not.toHaveBeenCalled();
   }, 20_000);
 
-  test(
-    'unmounting mid-backoff leaks NO timer — the pending attempt never fires',
-    async () => {
-      const onRemint = vi.fn();
-      function Harness() {
-        const [mounted, setMounted] = useState(true);
-        return (
-          <>
-            <button type="button" data-testid="unmount-host" onClick={() => setMounted(false)}>
-              unmount
-            </button>
-            <AuthFailureHarness onRemint={onRemint} mounted={mounted} />
-          </>
-        );
-      }
-      renderWithProviders(<Harness />);
+  test('unmounting mid-backoff leaks NO timer — the pending attempt never fires', async () => {
+    const onRemint = vi.fn();
+    function Harness() {
+      const [mounted, setMounted] = useState(true);
+      return (
+        <>
+          <button type="button" data-testid="unmount-host" onClick={() => setMounted(false)}>
+            unmount
+          </button>
+          <AuthFailureHarness onRemint={onRemint} mounted={mounted} />
+        </>
+      );
+    }
+    renderWithProviders(<Harness />);
 
-      // An auth terminal is reached and an automatic re-mint is scheduled …
-      await vi.waitFor(() => expect(autoRetryLine()).not.toBeNull(), {
-        timeout: 5_000,
-        interval: 50,
-      });
+    // An auth terminal is reached and an automatic re-mint is scheduled …
+    await vi.waitFor(() => expect(autoRetryLine()).not.toBeNull(), {
+      timeout: 5_000,
+      interval: 50,
+    });
 
-      // … unmount before the backoff elapses.
-      await page.getByTestId('unmount-host').click();
-      await vi.waitFor(() => expect(page.getByTestId('app-page-frame').query()).toBeNull());
-      // Snapshot AT unmount rather than asserting zero beforehand: on a slow box a
-      // first automatic attempt may legitimately have already fired. The invariant
-      // under test is that NOTHING fires AFTER unmount, and that holds either way.
-      const remintsAtUnmount = onRemint.mock.calls.length;
+    // … unmount before the backoff elapses.
+    await page.getByTestId('unmount-host').click();
+    await vi.waitFor(() => expect(page.getByTestId('app-page-frame').query()).toBeNull());
+    // Snapshot AT unmount rather than asserting zero beforehand: on a slow box a
+    // first automatic attempt may legitimately have already fired. The invariant
+    // under test is that NOTHING fires AFTER unmount, and that holds either way.
+    const remintsAtUnmount = onRemint.mock.calls.length;
 
-      // 🔴 A leaked timer would fire the scheduled attempt after unmount — hitting
-      // the rate-limited mint endpoint for a page nobody is looking at. Wait well
-      // past the backoff and assert the count never grew.
-      await sleep(FIRST_BACKOFF_MS + 2_000);
-      expect(onRemint.mock.calls.length).toBe(remintsAtUnmount);
-    },
-    30_000
-  );
+    // 🔴 A leaked timer would fire the scheduled attempt after unmount — hitting
+    // the rate-limited mint endpoint for a page nobody is looking at. Wait well
+    // past the backoff and assert the count never grew.
+    await sleep(FIRST_BACKOFF_MS + 2_000);
+    expect(onRemint.mock.calls.length).toBe(remintsAtUnmount);
+  }, 30_000);
 });
