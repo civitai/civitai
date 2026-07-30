@@ -3,6 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconApps, IconExternalLink, IconLayoutGrid, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { LISTING_GRID_SPAN } from '~/components/Apps/appListingGrid';
 import { CategoryFilterButtons } from '~/components/Apps/CategoryFilterButtons';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { type MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
@@ -209,9 +210,16 @@ export function AppListingsMarketplaceBody() {
         </Center>
       ) : (
         <>
+          {/* Feedback #1 ("make app cover images larger — fewer columns per row?"):
+              at `xl` the grid drops 5 columns → 4 (`span` 2.4 → 3), so each card —
+              and therefore its responsive 16:9 cover — gets ~25% more width. The
+              container width is UNCHANGED (`LISTING_STORE_CONTAINER_SIZE`, still
+              1600, on the store index) and every other breakpoint is unchanged
+              (base 12 / sm 6 / md 4 / lg 3). Both constants live in
+              `appListingGrid.ts` so they're unit-pinned together. */}
           <Grid gutter="md">
             {filteredItems.map((card) => (
-              <Grid.Col key={card.id} span={{ base: 12, sm: 6, md: 4, lg: 3, xl: 2.4 }}>
+              <Grid.Col key={card.id} span={LISTING_GRID_SPAN} data-testid="apps-listing-grid-col">
                 <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
               </Grid.Col>
             ))}

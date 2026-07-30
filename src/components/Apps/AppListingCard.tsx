@@ -1,4 +1,17 @@
-import { Anchor, Avatar, Badge, Box, Button, Card, Group, Image, Stack, Text, Title, Tooltip } from '@mantine/core';
+import {
+  Anchor,
+  Avatar,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Group,
+  Image,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
 import { IconApps, IconExternalLink, IconPencil, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -18,6 +31,10 @@ import {
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+import {
+  appInitial,
+  listingPlaceholderGradient,
+} from '~/shared/constants/app-listing-placeholder.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -52,50 +69,99 @@ function categoryIcon(category: string): Icon {
 
 /**
  * Card cover — the listing's cover image (`coverUrl`, already a CDN URL, with the
- * first screenshot as a server-side fallback). When absent, a tasteful
- * category-glyph placeholder over a neutral gradient (mirrors AppBlockCard) so a
- * card is never a broken/empty `<img>`. Decorative (aria-hidden) — the placeholder
- * carries no info the title/category chip don't.
+ * first screenshot as a server-side fallback). When absent, a category-glyph
+ * placeholder over the listing's DETERMINISTIC PER-APP seeded gradient (shared
+ * with the server-generated cover SVG — see
+ * `~/shared/constants/app-listing-placeholder.constants`), so a card is never a
+ * broken/empty `<img>` and two coverless listings never look identical.
+ * Decorative (aria-hidden) — the placeholder carries no info the title/category
+ * chip don't.
+ *
+ * GEOMETRY (feedback #1: "make cover images larger"): the cover is a RESPONSIVE
+ * 16:9 box (a `Box` with a CSS `aspect-ratio`), not the former fixed `h={140}`.
+ * Two reasons:
+ *   1. It scales with the column, so widening the grid (5 → 4 cols at `xl`)
+ *      actually makes the art bigger instead of leaving a short letterbox. The
+ *      server already serves the cover at `width: 1200` (app-listing.service),
+ *      so there is ~8× resolution headroom — this is a pure client-side change,
+ *      no DTO/pipeline work.
+ *   2. CLS: `aspect-ratio` derives the box height from the (already-known) column
+ *      width BEFORE the image loads, so a slow or failed cover never shifts the
+ *      card. The old fixed height did too — the point is that the responsive box
+ *      KEEPS that property rather than trading it away for scale.
+ * The image branch and the placeholder branch render inside the SAME box, so the
+ * `onError` fallback swaps art without ANY reflow.
  */
 function ListingCover({
   coverUrl,
   category,
   name,
+  slug,
 }: {
   coverUrl: string | null;
   category: string | null;
   name: string;
+  slug: string;
 }) {
   // A non-null coverUrl can still 404 (the server derives it from a first-
   // screenshot fallback, whose Image can dangle) — fall back to the category
   // glyph placeholder on load error instead of a broken <img>.
   const [broken, setBroken] = useState(false);
-  if (coverUrl && !broken) {
-    return (
-      <Card.Section>
-        <Image
-          src={coverUrl}
-          alt={`${name} cover image`}
-          h={140}
-          fit="cover"
-          onError={() => setBroken(true)}
-        />
-      </Card.Section>
-    );
-  }
+  const showImage = !!coverUrl && !broken;
   const PlaceholderIcon = category ? categoryIcon(category) : IconApps;
+  // Per-app SEEDED gradient (not one uniform grey for every coverless listing) —
+  // same seed + stops the generated cover SVG uses, so a listing that later gets
+  // a real generated asset keeps its colour identity. See
+  // `~/shared/constants/app-listing-placeholder.constants`.
   return (
     <Card.Section>
       <Box
-        aria-hidden
-        h={140}
-        className="flex items-center justify-center"
+        data-testid="apps-listing-cover"
         style={{
-          background:
-            'linear-gradient(135deg, var(--mantine-color-dark-5) 0%, var(--mantine-color-dark-7) 100%)',
+          // The ratio box. `aspect-ratio` derives the height from the (fluid)
+          // column width, so the cover grows with the card AND its height is
+          // reserved before any image bytes arrive — that's the CLS guard.
+          position: 'relative',
+          width: '100%',
+          aspectRatio: '16 / 9',
+          overflow: 'hidden',
         }}
       >
-        <PlaceholderIcon size={44} className="opacity-40" />
+        {showImage ? (
+          <Image
+            src={coverUrl}
+            alt={`${name} cover image`}
+            fit="cover"
+            onError={() => setBroken(true)}
+            // Absolutely filling the ratio box, NOT `h="100%"`: a percentage
+            // height has to resolve against a block size that is itself derived
+            // from `aspect-ratio`. Every current engine does that, but if it ever
+            // resolved to `auto` the image would render at its intrinsic size and
+            // `overflow: hidden` would silently CROP it — a failure no test that
+            // reads style strings could catch. `inset: 0` needs no such
+            // resolution.
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+          />
+        ) : (
+          <Box
+            aria-hidden
+            data-testid="apps-listing-cover-placeholder"
+            data-listing-cover-placeholder=""
+            className="flex items-center justify-center"
+            style={{
+              // Fills the ratio box exactly (same absolute encoding as the image),
+              // so swapping art on `onError` cannot change the card's geometry.
+              position: 'absolute',
+              inset: 0,
+              // Per-app SEEDED gradient (#3465) — NOT the old uniform grey, so two
+              // coverless listings never look identical and a listing keeps its
+              // colour identity if it later gains a generated cover SVG.
+              background: listingPlaceholderGradient({ slug, category, surface: 'cover' }),
+            }}
+          >
+            <PlaceholderIcon size={56} className="opacity-60" />
+          </Box>
+        )}
       </Box>
     </Card.Section>
   );
@@ -176,7 +242,12 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
 
   return (
     <Card shadow="sm" padding="md" radius="md" withBorder className="h-full">
-      <ListingCover coverUrl={card.coverUrl} category={card.category} name={card.name} />
+      <ListingCover
+        coverUrl={card.coverUrl}
+        category={card.category}
+        name={card.name}
+        slug={card.slug}
+      />
       <Stack gap="sm" h="100%" pt="sm">
         <Group gap="xs" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
           {/* App icon (square, publisher-supplied). Decorative — the title
@@ -188,8 +259,23 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             radius="md"
             size={40}
             style={{ flexShrink: 0 }}
+            data-listing-icon-placeholder={card.iconUrl == null ? '' : undefined}
+            styles={{
+              // Missing icon → the SAME seeded monogram the generated icon SVG
+              // renders (per-app hue + first-alphanumeric initial), instead of
+              // Mantine's default flat grey placeholder.
+              placeholder: {
+                background: listingPlaceholderGradient({
+                  slug: card.slug,
+                  category: card.category,
+                  surface: 'icon',
+                }),
+                color: 'var(--mantine-color-white)',
+                fontWeight: 700,
+              },
+            }}
           >
-            {card.name.charAt(0).toUpperCase()}
+            {appInitial(card.name, card.slug)}
           </Avatar>
           <Stack gap={2} style={{ minWidth: 0 }}>
             {/* Title links to the unified detail so the detail is reachable
@@ -236,19 +322,34 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
           </Text>
         )}
 
-        <Group justify="space-between" mt="auto" pt="xs" wrap="nowrap">
-          {/* Recommend rollup — "N% recommend (M)" or "No reviews yet". */}
-          <Group gap={4} wrap="nowrap">
+        {/* Feedback #2: the action row's buttons stepped up a notch on the Mantine
+            size scale (xs → sm), so the primary CTA reads as the card's call to
+            action rather than a footnote.
+            🔴 The row deliberately stays `nowrap`. Letting it wrap looks like the
+            obvious way to stop the taller buttons overflowing a narrow column, but
+            it breaks two things: (1) under `justify="space-between"` a wrapped line
+            holding a single item sits at flex-START, so the actions would jump from
+            right-aligned to LEFT-aligned; and (2) an OWNER card (Edit + CTA) wraps
+            at a wider column than a non-owner card, so inside a `h-full` grid row
+            one owner card would grow the height of the whole row. Instead the
+            actions never shrink and the recommend rollup absorbs the pressure by
+            truncating — so every card in a row keeps the same geometry regardless
+            of who is looking at it. */}
+        <Group justify="space-between" mt="auto" pt="xs" gap="xs" wrap="nowrap">
+          {/* Recommend rollup — "N% recommend (M)" or "No reviews yet". This is the
+              flexible side: it may truncate so the actions never do. */}
+          <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
             <IconThumbUp
               size={13}
+              style={{ flexShrink: 0 }}
               className={card.recommend.recommendPct == null ? 'text-gray-500' : 'text-green-500'}
             />
-            <Text size="xs" c="dimmed">
+            <Text size="xs" c="dimmed" truncate>
               {recommendLabel}
             </Text>
           </Group>
 
-          <Group gap={6} wrap="nowrap">
+          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
             {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
                 owner + editable status (mod-removed listings hide it). Routes by
                 kind (manifest editor for on-site, submit editor for off-site). */}
@@ -256,9 +357,9 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               <Button
                 component={Link}
                 href={editHref}
-                size="xs"
+                size="sm"
                 variant="default"
-                leftSection={<IconPencil size={14} />}
+                leftSection={<IconPencil size={16} />}
                 data-testid="apps-listing-owner-edit"
                 onClick={(e: MouseEvent) => e.stopPropagation()}
               >
@@ -275,9 +376,9 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 href={cta.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                size="xs"
+                size="sm"
                 variant="light"
-                rightSection={<IconExternalLink size={14} />}
+                rightSection={<IconExternalLink size={16} />}
               >
                 {cta.label}
               </Button>
@@ -285,7 +386,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               <Button
                 component={Link}
                 href={cta.href}
-                size="xs"
+                size="sm"
                 variant={cta.action === 'open' ? 'filled' : 'light'}
               >
                 {cta.label}

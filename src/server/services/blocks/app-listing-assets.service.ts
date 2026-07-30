@@ -16,6 +16,14 @@ import {
   type ListingAssetKind,
 } from '~/server/schema/blocks/app-listing.schema';
 import type { SessionUser } from '~/types/session';
+import {
+  appInitial,
+  categoryGlyph,
+  listingPlaceholderSeed,
+  placeholderHues,
+  placeholderStop,
+  seededHue,
+} from '~/shared/constants/app-listing-placeholder.constants';
 
 /**
  * App Store Listings (W13) — P1 asset pipeline service.
@@ -171,39 +179,15 @@ export function pickLogoPrefillUrl(logoUrl: string | null | undefined): string |
 // by the impure default deps below via sharp).
 // ---------------------------------------------------------------------------
 
-/** Category → glyph letter/emoji-free monogram seed (kept ASCII for the SVG). */
-const CATEGORY_GLYPH: Record<string, string> = {
-  generation: '✦',
-  games: '◆',
-  utility: '⚙',
-  discovery: '◈',
-  moderation: '⛨',
-  analytics: '▤',
-  other: '●',
-};
-
-/** FNV-1a → a stable 0..359 hue from a seed string (deterministic per slug). */
-export function seededHue(seed: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return Math.abs(h) % 360;
-}
-
-/** The app's display initial (first alphanumeric of name, else slug), uppercased. */
-export function appInitial(name: string, slug: string): string {
-  // A whitespace-only name must fall through to the slug (not resolve to '?').
-  const src = (name?.trim() || slug?.trim() || '?').trim();
-  const m = src.match(/[A-Za-z0-9]/);
-  return (m ? m[0] : '?').toUpperCase();
-}
+// The placeholder PRIMITIVES (glyphs / seeded hue / initial / gradient stops)
+// now live in `~/shared/constants/app-listing-placeholder.constants` so the
+// CLIENT render-time fallback (AppListingCard / AppListingDetailBody) can derive
+// its colours from the SAME seed as these generated assets. They are re-exported
+// below to keep this module's public API (and its existing tests) unchanged.
+export { seededHue, appInitial };
 
 function gradientDefs(seed: string): { hue: number; hue2: number } {
-  const hue = seededHue(seed);
-  const hue2 = (hue + 40) % 360;
-  return { hue, hue2 };
+  return placeholderHues(seed);
 }
 
 /** Escape the few chars that are unsafe inside SVG text content. */
@@ -228,14 +212,14 @@ export function buildPlaceholderIconSvg(args: {
   size?: number;
 }): string {
   const size = args.size ?? 512;
-  const seed = `${args.category ?? 'other'}:${args.slug}`;
+  const seed = listingPlaceholderSeed(args.slug, args.category);
   const { hue, hue2 } = gradientDefs(seed);
   const initial = svgEscape(appInitial(args.name, args.slug));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`,
-    `<stop offset="0%" stop-color="hsl(${hue} 55% 42%)"/>`,
-    `<stop offset="100%" stop-color="hsl(${hue2} 60% 22%)"/>`,
+    `<stop offset="0%" stop-color="${placeholderStop('icon', 'from', hue)}"/>`,
+    `<stop offset="100%" stop-color="${placeholderStop('icon', 'to', hue2)}"/>`,
     `</linearGradient></defs>`,
     `<rect width="${size}" height="${size}" rx="${Math.round(size * 0.18)}" fill="url(#g)"/>`,
     `<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="${Math.round(size * 0.5)}" fill="#ffffff" fill-opacity="0.92">${initial}</text>`,
@@ -257,15 +241,15 @@ export function buildPlaceholderCoverSvg(args: {
 }): string {
   const width = args.width ?? 1280;
   const height = args.height ?? 720;
-  const seed = `${args.category ?? 'other'}:${args.slug}`;
+  const seed = listingPlaceholderSeed(args.slug, args.category);
   const { hue, hue2 } = gradientDefs(seed);
-  const glyph = svgEscape(CATEGORY_GLYPH[args.category ?? 'other'] ?? CATEGORY_GLYPH.other);
+  const glyph = svgEscape(categoryGlyph(args.category));
   const name = svgEscape((args.name || args.slug).slice(0, 48));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`,
-    `<stop offset="0%" stop-color="hsl(${hue} 45% 32%)"/>`,
-    `<stop offset="100%" stop-color="hsl(${hue2} 50% 16%)"/>`,
+    `<stop offset="0%" stop-color="${placeholderStop('cover', 'from', hue)}"/>`,
+    `<stop offset="100%" stop-color="${placeholderStop('cover', 'to', hue2)}"/>`,
     `</linearGradient></defs>`,
     `<rect width="${width}" height="${height}" fill="url(#g)"/>`,
     `<text x="50%" y="44%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="${Math.round(height * 0.22)}" fill="#ffffff" fill-opacity="0.85">${glyph}</text>`,

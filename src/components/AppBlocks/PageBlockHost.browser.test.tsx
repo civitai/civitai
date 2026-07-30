@@ -4,6 +4,11 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+// Type-only (erased at runtime, so it can't defeat vi.mock hoisting) — lets the
+// `importOriginal` generic below be written without an inline `import()` type,
+// which the repo's `consistent-type-imports` rule forbids (this file was the
+// last lint error in src/components/AppBlocks).
+import type * as MantineNotifications from '@mantine/notifications';
 
 // PageBlockHost wires the money-path workflow bridge AND the storage bridge,
 // which call `trpc.blocks.*.useMutation()`, `trpc.apps.storage.*.useMutation()`,
@@ -21,7 +26,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // mounting the full Notifications provider. Preserve the module's other exports.
 const showNotificationSpy = vi.fn();
 vi.mock('@mantine/notifications', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@mantine/notifications')>();
+  const actual = await importOriginal<typeof MantineNotifications>();
   return { ...actual, showNotification: (args: unknown) => showNotificationSpy(args) };
 });
 
@@ -571,7 +576,15 @@ describe('PageBlockHost Retry (Task: re-attempt load from terminal fallback)', (
     expect(page.getByTestId('app-page-fallback').query()).toBeNull();
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     expect(el.getAttribute('data-block-ready')).toBe('true');
-    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    // The launch veil now CROSS-FADES out over LAUNCH_REVEAL_MS once the block is
+    // ready (the "subtly animated" launch experience) rather than disappearing in
+    // the same commit, so poll for its removal instead of reading it synchronously.
+    // It is still gated structurally — every terminal state unmounts it with the
+    // whole iframe branch — so this can't mask a stuck spinner; the terminal-path
+    // tests above (and PageBlockHostLaunchReveal.browser.test.tsx) pin that.
+    await vi.waitFor(() => {
+      expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    });
   });
 
   test('failure-after-retry: a second fatal error shows the fallback again (no timer leak / stuck state)', async () => {
@@ -715,6 +728,17 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
   // Analytics Phase 2 now emits via the /api/track/block-render BEACON
   // (sendBlockRender → fetch), not a tRPC mutation. Spy on global fetch and
   // assert the beacon fires exactly once at BLOCK_READY (and never on re-render).
+  //
+  // 🔴 THIS DESCRIBE IS ALSO THE BATCHING-INDEPENDENCE GUARD for the beacon, and
+  // that is why it must keep rendering the REAL host with REAL hooks (no
+  // `@mantine/hooks` mock in this file). The beacon used to fire from inside the
+  // BLOCK_READY handler behind a flag set by the `setStatus` UPDATER, which only
+  // works while React can evaluate that updater EAGERLY — i.e. while nothing else
+  // is queued on the fiber. `useReducedMotion` (added by the launch-reveal work)
+  // commits its value in a post-mount effect, which is exactly such a pending
+  // update, and it made the impression drop 5/5 runs. The beacon now keys off the
+  // COMMITTED `status`. Mutation-verified: restoring the in-handler `acked`
+  // pattern fails the first test below, deterministically.
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   // Only the block-render beacon goes through fetch in this test; resolve OK.
