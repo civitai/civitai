@@ -181,7 +181,9 @@ export type SaveImageRequest =
  * means "drop, no reply" (a missing requestId can't be correlated); a shape that
  * HAS a requestId but is otherwise invalid returns a request the caller NACKs.
  */
-export function resolveSaveImageRequest(raw: unknown): SaveImageRequest | { requestId: string; kind: 'invalid' } | null {
+export function resolveSaveImageRequest(
+  raw: unknown
+): SaveImageRequest | { requestId: string; kind: 'invalid' } | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as { requestId?: unknown; url?: unknown; imageId?: unknown; filename?: unknown };
   if (typeof r.requestId !== 'string' || r.requestId.length === 0) return null;
