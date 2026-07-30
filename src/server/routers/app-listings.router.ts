@@ -57,6 +57,7 @@ import {
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { rateLimit } from '~/server/middleware.trpc';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
@@ -114,6 +115,34 @@ const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
   if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
 });
+
+/**
+ * Token-scope gate for the listing-media authoring procs the civitai CLI drives
+ * (`civitai app listing set-icon/set-cover/add-screenshot/status`, civitai/cli#186).
+ *
+ * The CLI acts as the caller over the SCOPED OAuth access token `civitai login` mints
+ * (`UserRead | AppBlocksSubmit | AppBlocksDevTunnel`) — NOT a Full personal API key.
+ * `enforceTokenScope` (`server/services/oauth/enforce-token-scope.ts`) treats an
+ * UN-annotated proc as implicitly requiring `TokenScope.Full`; the CLI token is not
+ * Full and lacks bits 0..24, so every un-annotated proc here 403s it today (the same
+ * trap `startDevTunnel` faced). Annotating with `AppBlocksSubmit` (bit 25 — a bit the
+ * CLI token already carries) makes them reachable by that token.
+ *
+ * 🔴 No regression to the Full-personal-key path: `enforceTokenScope` EARLY-RETURNS the
+ * scope check for `ctx.tokenScope === TokenScope.Full`, so a Full personal API key (and
+ * cookie session) STILL passes regardless of this meta — `Flags.hasFlag(Full,
+ * AppBlocksSubmit)` (which is false, since `Full` deliberately excludes bit 25) is never
+ * evaluated for a Full credential. So this meta only ADMITS the scoped CLI token; it
+ * never gates a credential that works today.
+ *
+ * ADDITIVE, never loosening: each proc keeps its `appDeveloperProcedure` /
+ * `protectedProcedure + enforceAppBlocksAuthorFlag` author-cohort gate and the
+ * service-layer owner checks (`assertOwnerAssetEditable`, owner-bound `userId`). This is
+ * one more gate the token must clear, applied only to the owner-scoped listing-media
+ * authoring procs — no mod-only or cross-user proc is annotated. Mirrors
+ * `blocks.router` `startDevTunnel`/`stopDevTunnel` (`AppBlocksDevTunnel`).
+ */
+const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
 
 /**
  * Flag gate for the P2a PUBLIC READ procs (unified store). Anon-CAPABLE but DARK
@@ -254,6 +283,7 @@ export const appListingsRouter = router({
    * scoped in the service (mods read any; a not-owned id is silently omitted).
    */
   getAssetScanStatuses: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(assetScanStatusesSchema)
     .query(async ({ ctx, input }) => {
@@ -264,6 +294,7 @@ export const appListingsRouter = router({
     }),
 
   setIcon: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(setListingIconSchema)
     .mutation(async ({ ctx, input }) => {
@@ -272,6 +303,7 @@ export const appListingsRouter = router({
     }),
 
   setCover: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(setListingCoverSchema)
     .mutation(async ({ ctx, input }) => {
@@ -280,6 +312,7 @@ export const appListingsRouter = router({
     }),
 
   addScreenshot: protectedProcedure
+    .meta(listingMediaCliScope)
     .use(enforceAppBlocksAuthorFlag)
     .input(addListingScreenshotSchema)
     .mutation(async ({ ctx, input }) => {
@@ -452,6 +485,7 @@ export const appListingsRouter = router({
    * MUST_RESUBMIT/BAD_REQUEST, removed→FORBIDDEN). Typed failures via `mapOffsiteError`.
    */
   getMyListingForEdit: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .input(getMyListingForEditSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -508,6 +542,7 @@ export const appListingsRouter = router({
    * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
    */
   getMyListingForApp: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .input(getMyListingForAppSchema)
     .query(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -529,6 +564,7 @@ export const appListingsRouter = router({
    * (passing the shadow id) and calls `submitListingRevision`.
    */
   beginListingRevision: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .input(beginListingRevisionSchema)
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
@@ -550,6 +586,7 @@ export const appListingsRouter = router({
    * `mapOffsiteError`.
    */
   submitListingRevision: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 20,
@@ -582,6 +619,7 @@ export const appListingsRouter = router({
    * per-kind-image validation still bounds where/whether it can be used.
    */
   persistAssetImage: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 60,
@@ -659,6 +697,7 @@ export const appListingsRouter = router({
    * rate-limit shape as the URL accept.
    */
   ingestAssetFromDataUri: appDeveloperProcedure
+    .meta(listingMediaCliScope)
     .use(
       rateLimit({
         limit: 30,
