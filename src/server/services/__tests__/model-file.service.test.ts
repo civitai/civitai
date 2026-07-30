@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockDbRead } = vi.hoisted(() => ({
+const { mockDbRead, mockBustTensorMetadata, mockDeleteModelFileObject } = vi.hoisted(() => ({
   mockDbRead: {
     modelFile: {
       count: vi.fn(),
@@ -8,8 +8,11 @@ const { mockDbRead } = vi.hoisted(() => ({
       findUnique: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
+  mockBustTensorMetadata: vi.fn(),
+  mockDeleteModelFileObject: vi.fn(),
 }));
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 
@@ -25,6 +28,10 @@ vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
 vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: { CACHES: { FILES_FOR_MODEL_VERSION: 'files-for-model-version' } },
 }));
+vi.mock('~/server/services/tensor-metadata-cache.service', () => ({
+  bustModelTensorMetadataCaches: mockBustTensorMetadata,
+}));
+vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObject: mockDeleteModelFileObject }));
 
 import {
   hasOfficialFileOfSize,
@@ -32,6 +39,7 @@ import {
   markFileReplaced,
   restoreReplacedFile,
   fetchModelFilesForCache,
+  updateFile,
 } from '~/server/services/model-file.service';
 import { constants } from '~/server/common/constants';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
@@ -58,7 +66,45 @@ const officialBundledEncoderRow = {
   modelVersion: { name: 'v1', modelId: 8, model: { name: 'Z Image Base', type: 'Checkpoint' } },
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockBustTensorMetadata.mockResolvedValue(undefined);
+  mockDeleteModelFileObject.mockResolvedValue(undefined);
+});
+
+describe('updateFile tensor metadata invalidation', () => {
+  const existingFile = {
+    id: 88,
+    url: 'https://example.com/old.safetensors',
+    metadata: { format: 'SafeTensor' },
+    modelVersionId: 10,
+    sizeKB: 100,
+    modelVersion: { modelId: 7 },
+  };
+
+  it('invalidates content-derived caches when the URL changes', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue(existingFile);
+    mockDbRead.modelFile.updateMany.mockResolvedValue({ count: 1 });
+
+    await updateFile({
+      id: 88,
+      url: 'https://example.com/new.safetensors',
+      userId: 123,
+    });
+
+    expect(mockBustTensorMetadata).toHaveBeenCalledOnce();
+    expect(mockBustTensorMetadata).toHaveBeenCalledWith(88, existingFile.url);
+  });
+
+  it('does not invalidate content-derived caches for a metadata-only edit', async () => {
+    mockDbRead.modelFile.findUnique.mockResolvedValue(existingFile);
+    mockDbRead.modelFile.updateMany.mockResolvedValue({ count: 1 });
+
+    await updateFile({ id: 88, metadata: { fp: 'bf16' }, userId: 123 });
+
+    expect(mockBustTensorMetadata).not.toHaveBeenCalled();
+  });
+});
 
 describe('hasOfficialFileOfSize', () => {
   it('scopes to the official account and the exact sizeKB', async () => {

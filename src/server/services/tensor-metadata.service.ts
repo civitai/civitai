@@ -76,7 +76,9 @@ function estimateAnalysisBytes(analysis: ModelTensorAnalysis): number {
 // (the ttl-limit overload would require `ttlAutopurge`). The byte cap and the optional
 // TTL are spread in only when enabled, so `maxSize`+`sizeCalculation` always travel
 // together and `ttl`+`ttlAutopurge` always travel together (lru-cache v11 invariants).
-const decodedAnalysisLru = new LRUCache<number, ModelTensorAnalysis>({
+export type TensorAnalysisCacheKey = number | string;
+
+const decodedAnalysisLru = new LRUCache<TensorAnalysisCacheKey, ModelTensorAnalysis>({
   max: MAX_ITEMS > 0 ? MAX_ITEMS : 64,
   ...(MAX_SIZE_BYTES > 0
     ? { maxSize: MAX_SIZE_BYTES, sizeCalculation: estimateAnalysisBytes }
@@ -84,37 +86,37 @@ const decodedAnalysisLru = new LRUCache<number, ModelTensorAnalysis>({
   ...(TTL_MS > 0 ? { ttl: TTL_MS, ttlAutopurge: false } : {}),
 });
 
-// Per-id in-flight decode promises. The LRU only caches RESOLVED objects, so without
-// this a burst of concurrent misses for the SAME cold id (e.g. a popular model right
+// Per-identity in-flight decode promises. The LRU only caches RESOLVED objects, so without
+// this a burst of concurrent misses for the SAME cold identity (e.g. a popular model right
 // after a deploy or an eviction, before the first `.set` lands) would each run the full
 // decompress+decode — the exact cost we're removing, just confined to the warm-up window.
 // Coalescing concurrent misses onto ONE shared promise closes that residual cold-burst.
 // (The redis `fetchThroughCache` single-flight only dedups the ORIGIN PARSE on a redis
 // MISS — it does NOT dedup the decompress+decode of a redis HIT, which is the wave cost.)
-const inFlightDecodes = new Map<number, Promise<ModelTensorAnalysis>>();
+const inFlightDecodes = new Map<TensorAnalysisCacheKey, Promise<ModelTensorAnalysis>>();
 
 /**
- * Return the full decoded tensor analysis for a file id, served from the in-process
+ * Return the full decoded tensor analysis for a content identity, served from the in-process
  * LRU when warm. On a miss, `fetchDecoded` is invoked (the redis-backed compressed
  * `fetchThroughCache` path), the result is stored, and returned. Concurrent misses for
- * the same id share a single in-flight decode (no thundering herd while cold).
+ * the same identity share a single in-flight decode (no thundering herd while cold).
  *
- * @param fileId        model file id (the cache key)
+ * @param cacheKey      stable model-content identity
  * @param fetchDecoded  miss handler that produces the decoded analysis (redis-backed)
  */
 export async function getFullTensorAnalysisCached(
-  fileId: number,
+  cacheKey: TensorAnalysisCacheKey,
   fetchDecoded: () => Promise<ModelTensorAnalysis>
 ): Promise<ModelTensorAnalysis> {
-  const cached = decodedAnalysisLru.get(fileId);
+  const cached = decodedAnalysisLru.get(cacheKey);
   if (cached !== undefined) {
     cacheHitCounter.inc({ cache_name: CACHE_NAME, cache_type: 'lruCache' });
     return cached;
   }
 
-  // Join an in-flight decode for this id if one exists (counts as a hit — it avoids a
+  // Join an in-flight decode for this identity if one exists (counts as a hit — it avoids a
   // second decode). Only the request that STARTS the decode is counted as a miss.
-  const pending = inFlightDecodes.get(fileId);
+  const pending = inFlightDecodes.get(cacheKey);
   if (pending) {
     cacheHitCounter.inc({ cache_name: CACHE_NAME, cache_type: 'lruCache' });
     return pending;
@@ -125,25 +127,24 @@ export async function getFullTensorAnalysisCached(
     // `.set` only on SUCCESS; on throw nothing is cached. `finally` always clears the
     // in-flight entry so a rejected decode does not wedge future reads.
     const analysis = await fetchDecoded();
-    decodedAnalysisLru.set(fileId, analysis);
+    decodedAnalysisLru.set(cacheKey, analysis);
     return analysis;
   })().finally(() => {
-    inFlightDecodes.delete(fileId);
+    inFlightDecodes.delete(cacheKey);
   });
-  inFlightDecodes.set(fileId, decodePromise);
+  inFlightDecodes.set(cacheKey, decodePromise);
   return decodePromise;
 }
 
 /**
- * Invalidate the in-process cache for a file id. No production caller today (tensor
- * metadata is immutable per file-content and has no redis bust path), but this is the
- * hook a future re-scan / parser-version change would call to force a re-decode without
- * waiting for LRU eviction or a pod restart. Clears both the cached object and any
- * in-flight decode.
+ * Invalidate one in-process cache identity after its backing content changes.
+ * This removes the settled object and stops later callers from joining the
+ * tracked decode. It cannot cancel work that was already in flight, so that
+ * promise may still finish after the bust.
  */
-export function bustFullTensorAnalysis(fileId: number): void {
-  decodedAnalysisLru.delete(fileId);
-  inFlightDecodes.delete(fileId);
+export function bustFullTensorAnalysis(cacheKey: TensorAnalysisCacheKey): void {
+  decodedAnalysisLru.delete(cacheKey);
+  inFlightDecodes.delete(cacheKey);
 }
 
 /** Test/maintenance helpers — not used on the request path. */
@@ -158,6 +159,6 @@ export const __tensorMetadataLruInternals = {
   get inFlightSize() {
     return inFlightDecodes.size;
   },
-  has: (fileId: number) => decodedAnalysisLru.has(fileId),
-  peek: (fileId: number) => decodedAnalysisLru.peek(fileId),
+  has: (cacheKey: TensorAnalysisCacheKey) => decodedAnalysisLru.has(cacheKey),
+  peek: (cacheKey: TensorAnalysisCacheKey) => decodedAnalysisLru.peek(cacheKey),
 };
