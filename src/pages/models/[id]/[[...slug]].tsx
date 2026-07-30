@@ -1396,7 +1396,7 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
-              {isOwner && model.minorAutoFlagged && (
+              {isCreator && model.minorAutoFlagged && (
                 <Alert color="red">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
                     <ThemeIcon color="red">
