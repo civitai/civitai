@@ -158,6 +158,26 @@ describe('listAvailableListings — STORE-SCOPE kind gate in the keyset WHERE', 
     expect(capturedSql()).not.toMatch(/al\.kind = 'offsite'/i);
   });
 
+  // 🔴 SECURITY (W13 draft-at-submit): a pre-approval DRAFT onsite listing exists in
+  // `app_listings` from submit time. The store LIST keyset WHERE must hard-gate
+  // `status='approved'` (+ `revision_of_id IS NULL`) under EVERY scope so a draft can
+  // NEVER surface on `/api/v1/apps` (or the tRPC store grid). This is the security
+  // crux — assert the gate is present regardless of the store-visibility scope.
+  it('DRAFTS CANNOT LEAK — the keyset WHERE hard-gates status=approved + revision_of_id IS NULL (both scopes)', async () => {
+    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 }, { scope: 'full' });
+    const full = capturedSql();
+    expect(full).toMatch(/al\.status = 'approved'/i);
+    expect(full).toMatch(/al\.revision_of_id IS NULL/i);
+
+    await listAvailableListings(
+      { kind: 'all', sort: 'newest', limit: 20 },
+      { scope: 'public-external' }
+    );
+    const ext = capturedSql();
+    expect(ext).toMatch(/al\.status = 'approved'/i);
+    expect(ext).toMatch(/al\.revision_of_id IS NULL/i);
+  });
+
   it("public-external + client override input.kind='onsite' → offsite predicate STILL wins (empty)", async () => {
     // Security-audit (a): a public viewer cannot escape the offsite-only gate by
     // asking for onsite. The scope predicate `al.kind = 'offsite'` is emitted
@@ -220,6 +240,26 @@ describe('getListingDetail — STORE-SCOPE kind gate (app-layer)', () => {
   it('default scope (none passed) → full: ONSITE shown (back-compat)', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
     expect(await getListingDetail({ slug: 'cool-app' })).not.toBeNull();
+  });
+
+  // 🔴 SECURITY (W13 draft-at-submit): the DETAIL proc app-layer gate returns null for
+  // ANY non-approved row (`row.status !== 'approved'`), so a pre-approval DRAFT (or a
+  // PENDING) onsite listing is indistinguishable from a missing one — even under the
+  // most-permissive `full` scope. A crafted slug/id can never reach a draft's data on
+  // the public REST `/api/v1/apps/[slug]` or the tRPC store detail.
+  it("DRAFT CANNOT LEAK — a pre-approval DRAFT onsite listing → null under full scope", async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...onsiteRow(),
+      status: 'draft',
+      appBlockId: null,
+      appBlock: null,
+    });
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).toBeNull();
+  });
+
+  it('DRAFT CANNOT LEAK — a PENDING onsite listing → null under full scope', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'pending' });
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).toBeNull();
   });
 
   it('none → HIDES (null) even an approved listing, and never touches the DB (default-closed guard)', async () => {

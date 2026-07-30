@@ -103,6 +103,12 @@ vi.mock('~/utils/bundle-s3', () => ({
   getBundleBucket: () => 'bundles',
   getBundleS3Client: () => s3,
 }));
+// W13 draft-at-submit: the (3b-transition) + (3b-reset) go-live scan-clean gate is a
+// no-op here (media scan-clean is exercised in the assets-service suite). Both are
+// dynamic imports, so mocking just the one helper the approve path pulls is safe.
+vi.mock('~/server/services/blocks/app-listing-assets.service', () => ({
+  assertListingAssetsScanCleanInTx: vi.fn(async () => undefined),
+}));
 
 const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
 
@@ -395,5 +401,75 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
       )
     ).toBe(false);
     warn.mockRestore();
+  });
+});
+
+describe('approveRequest (3b-transition) — draft-at-submit transitions the pending draft → approved', () => {
+  // Return the pre-approval draft for the slug-scoped resolve, null for the
+  // (3b-reset) appBlockId+pending probe (so the unrelated reset branch stays inert).
+  function draftFor(id: string) {
+    return async (args: { where?: Record<string, unknown> }) => {
+      const w = args?.where ?? {};
+      if (w.status === 'draft' && w.appBlockId === null) return { id };
+      return null;
+    };
+  }
+
+  it('TRANSITIONS the draft in place (appBlockId+approved+scalars) and does NOT create a second listing; media (icon/cover) is NEVER touched', async () => {
+    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    // No fresh create — the existing draft BECOMES the approved listing (media preserved).
+    expect(db.write.appListing.create).not.toHaveBeenCalled();
+
+    // The transition updateMany carries appBlockId + status:approved + manifest scalars,
+    // status-guarded on the draft.
+    const transitionCall = db.write.appListing.updateMany.mock.calls.find((c) => {
+      const d = (c[0] as { data?: Record<string, unknown> })?.data ?? {};
+      return 'appBlockId' in d;
+    });
+    expect(transitionCall).toBeDefined();
+    const arg = transitionCall![0] as {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    };
+    expect(arg.where).toEqual({ id: 'apl_draft', status: 'draft' });
+    expect(arg.data).toEqual({
+      appBlockId: 'apb_1',
+      status: 'approved',
+      contentRating: 'pg',
+      name: 'Cool App v2',
+      description: 'Now with more cool.',
+      tagline: 'The coolest app',
+      category: 'utility',
+    });
+    // 🔴 Media columns are NEVER in the transition payload — icon/cover survive approval.
+    expect(arg.data).not.toHaveProperty('iconId');
+    expect(arg.data).not.toHaveProperty('coverId');
+  });
+
+  it('FLOOR STAYS ADVISORY: approve is NOT blocked when the draft has no icon/cover (transition still runs)', async () => {
+    // No `assertListingMeetsFloor` on the onsite approve path — a media-less draft still
+    // transitions to approved (the floor gates PUBLISH visibility, not approve — D2).
+    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+    expect(db.write.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('LEGACY COMPAT: a pending request with NO draft (pre-ship) still CREATES the listing the old way at approve', async () => {
+    // Simulate a request that predates draft-at-submit: no draft resolvable by slug, and
+    // no listing keyed by appBlockId → falls through to the legacy mapper-create path.
+    db.write.appListing.findFirst.mockResolvedValue(null);
+    db.read.appListing.findUnique.mockResolvedValue(null);
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    expect(db.write.appListing.create).toHaveBeenCalledTimes(1);
   });
 });

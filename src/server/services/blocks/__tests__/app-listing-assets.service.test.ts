@@ -669,6 +669,32 @@ describe('screenshot CRUD', () => {
     );
   });
 
+  // W13 draft-at-submit — media set on the PRE-APPROVAL DRAFT (status='draft',
+  // revisionOfId=null) is a DIRECT edit: `assertOwnerAssetEditable` only throws for an
+  // `approved && revisionOfId==null` (live) listing, so a draft edits in place — it must
+  // NOT open a shadow revision. Assert the write targets the SAME listing id directly.
+  it('setIcon on a pre-approval DRAFT → DIRECT write to the same listing (NO shadow revision)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      status: 'draft',
+      revisionOfId: null,
+    });
+    mockDb.image.findUnique.mockResolvedValue({
+      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
+      metadata: {}, ingestion: 'Scanned', nsfwLevel: 1,
+    });
+    const { setListingIcon } = await import('../app-listing-assets.service');
+    const res = await setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner);
+
+    expect(res).toEqual({ status: 'attached', iconId: 9 });
+    // DIRECT edit: writes iconId onto the draft's OWN id, no revision clone.
+    expect(mockDb.appListing.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'apl_1' }, data: { iconId: 9 } })
+    );
+    // A shadow revision would be a NEW AppListing row (revisionOfId set) — never created.
+    expect(mockDb.appListing.create).toBeUndefined();
+  });
+
   // A TERMINAL ingestion failure stays BAD_REQUEST, so the client stops polling
   // and shows a clear "upload it manually" error instead of an eternal scanning
   // spinner. This is the client-resilience half of the OG-pull-ingest fix — a

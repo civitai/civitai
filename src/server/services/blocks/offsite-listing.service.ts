@@ -1528,14 +1528,18 @@ export type GetMyListingForAppResult = {
 };
 
 /**
- * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
- * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
- * on-site listing-media page. Returns the `AppListing.id` (the target the page
- * then passes to `beginListingRevision` + the owner-gated asset procs), the
- * listing's lifecycle status + content rating, and whether a revision is already
- * under review. Owner-bound: a listing owned by another user → NOT_OWNED
- * (→FORBIDDEN); no listing row for the app → NOT_FOUND. Kind-agnostic (works for
- * both on-site and off-site listings — the on-site owner UI is the first caller).
+ * OWNER: resolve the caller's OWN listing for the owner-facing on-site
+ * listing-media page. Resolves by backing `appBlockId` (`AppListing.appBlockId` is
+ * `@unique`) when the app is approved; falls back to the pre-approval DRAFT BY SLUG
+ * (`kind='onsite', appBlockId IS NULL, status='draft'`) for a FIRST-version app that
+ * is still pending (no AppBlock exists yet) — the W13 draft-at-submit wiring gap that
+ * lets the author set media WHILE pending. At least one of `appBlockId` / `slug` must
+ * be given. Returns the `AppListing.id` (the target the page then passes to
+ * `beginListingRevision` + the owner-gated asset procs), the listing's lifecycle
+ * status + content rating, and whether a revision is already under review.
+ * Owner-bound: a listing owned by another user → NOT_OWNED (→FORBIDDEN); no listing
+ * row for the app → NOT_FOUND. Kind-agnostic (works for both on-site and off-site
+ * listings — the on-site owner UI is the first caller).
  *
  * ALSO projects the EDITABLE target's current `assets` (+ its `shadowId`). Without
  * them the media editor had no way to see the icon/cover it is about to edit: it
@@ -1545,18 +1549,39 @@ export type GetMyListingForAppResult = {
  * EFFECTIVE source (an approved parent's shadow, resolved here server-side and
  * idempotently, exactly as `getMyListingForEdit` does — see the 🔴 note on
  * `GetMyListingForAppResult.assets` for why the shadow's rows and not the parent's).
+ * A pre-approval DRAFT is NOT approved, so it has no shadow and is its own effective
+ * target — edited in place, exactly like any other non-approved listing.
  */
 export async function getMyListingForApp(opts: {
-  appBlockId: string;
+  appBlockId?: string;
+  slug?: string;
   userId: number;
 }): Promise<GetMyListingForAppResult> {
-  const { appBlockId, userId } = opts;
-  const listing = await dbRead.appListing.findUnique({
-    where: { appBlockId },
-    select: { id: true, userId: true, status: true, contentRating: true },
-  });
+  const { appBlockId, slug, userId } = opts;
+  let listing = appBlockId
+    ? await dbRead.appListing.findUnique({
+        where: { appBlockId },
+        select: { id: true, userId: true, status: true, contentRating: true },
+      })
+    : null;
+  // (W13 draft-at-submit) Pre-approval DRAFT fallback: a FIRST-version app has no
+  // backing AppBlock yet, so its draft listing (minted at submit) has
+  // `appBlockId = NULL` and is only reachable BY SLUG. Resolve it when the appBlockId
+  // lookup missed (or only a slug was supplied) so the owner-media page can reach the
+  // draft to set icon/cover/screenshots WHILE the app is pending. Scoped to the exact
+  // pre-approval-draft shape so this can never resolve some other kind/status by slug.
+  // Owner-bound below (unchanged).
+  if (!listing && slug) {
+    listing = await dbRead.appListing.findFirst({
+      where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' },
+      select: { id: true, userId: true, status: true, contentRating: true },
+    });
+  }
   if (!listing) {
-    throw new OffsiteRequestError('NOT_FOUND', `no listing found for app ${appBlockId}`);
+    throw new OffsiteRequestError(
+      'NOT_FOUND',
+      `no listing found for app ${appBlockId ?? slug ?? '(unspecified)'}`
+    );
   }
   if (listing.userId !== userId) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');

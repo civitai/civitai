@@ -154,6 +154,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   seq.n = 0;
   mockRead.appListing.findUnique.mockResolvedValue(null);
+  // (W13 draft-at-submit) the pre-approval DRAFT by-slug fallback reads through findFirst.
   mockRead.appListing.findFirst.mockResolvedValue(null);
   mockRead.appListingScreenshot.findMany.mockResolvedValue([]);
   mockRead.appListingPublishRequest.findFirst.mockResolvedValue(null);
@@ -420,5 +421,75 @@ describe('getMyListingForApp', () => {
     expect(editViewReads(mockRead)).toEqual([]);
     // And it never fell back to the live parent's rows.
     expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+});
+
+// W13 draft-at-submit — a FIRST-version app has no AppBlock yet, so the owner-media
+// page reaches its pre-approval draft BY SLUG (`appBlockId IS NULL`). These lock the
+// slug fallback: the owner reaches their pending draft; ownership is still enforced.
+describe('getMyListingForApp — pre-approval DRAFT slug resolver (pending, no AppBlock)', () => {
+  it('resolves the pending draft BY SLUG when only a slug is given (no appBlockId lookup)', async () => {
+    mockRead.appListing.findFirst.mockResolvedValue({
+      id: 'apl_draft',
+      userId: OWNER,
+      status: 'draft',
+      contentRating: 'g',
+    });
+
+    const res = await getMyListingForApp({ slug: 'my-app', userId: OWNER });
+
+    expect(res).toEqual({
+      appListingId: 'apl_draft',
+      status: 'draft',
+      contentRating: 'g',
+      hasPendingRevision: false,
+    });
+    // Never touches the appBlockId path when no appBlockId is supplied.
+    expect(mockRead.appListing.findUnique).not.toHaveBeenCalled();
+    // Scoped to the EXACT pre-approval-draft shape (onsite / null appBlockId / draft).
+    expect(mockRead.appListing.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { slug: 'my-app', kind: 'onsite', appBlockId: null, status: 'draft' },
+      })
+    );
+  });
+
+  it('falls back to the slug draft when the appBlockId lookup misses', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(null); // no approved listing yet
+    mockRead.appListing.findFirst.mockResolvedValue({
+      id: 'apl_draft',
+      userId: OWNER,
+      status: 'draft',
+      contentRating: 'pg',
+    });
+
+    const res = await getMyListingForApp({ appBlockId: 'maybe', slug: 'my-app', userId: OWNER });
+
+    expect(res.appListingId).toBe('apl_draft');
+    expect(mockRead.appListing.findUnique).toHaveBeenCalledOnce();
+    expect(mockRead.appListing.findFirst).toHaveBeenCalledOnce();
+  });
+
+  it("a draft owned by ANOTHER user → NOT_OWNED (ownership still enforced on the slug path)", async () => {
+    mockRead.appListing.findFirst.mockResolvedValue({
+      id: 'apl_draft',
+      userId: OTHER,
+      status: 'draft',
+      contentRating: 'g',
+    });
+
+    await expect(getMyListingForApp({ slug: 'my-app', userId: OWNER })).rejects.toMatchObject({
+      name: 'OffsiteRequestError',
+      code: 'NOT_OWNED',
+    });
+    expect(mockRead.appListingPublishRequest.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('no draft for the slug → NOT_FOUND', async () => {
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+
+    const err = await getMyListingForApp({ slug: 'ghost', userId: OWNER }).catch((e) => e);
+    expect(err).toBeInstanceOf(OffsiteRequestError);
+    expect(err.code).toBe('NOT_FOUND');
   });
 });
