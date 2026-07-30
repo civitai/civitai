@@ -1,4 +1,6 @@
+import { REDIS_KEYS } from '@civitai/redis';
 import { dbRead, dbWrite } from './db';
+import { bustCachedObject } from './cache';
 import { recordModActivity } from './mod-activity';
 
 // The @unique thumbnail link from an image to its parent Model3D, for the review-card affordance
@@ -25,7 +27,7 @@ export async function getModel3DsByThumbnailImageIds(
 
 // Unpublish a Model3D from the review queue (a mod reviewing its thumbnail). Ports unpublishModel3D's
 // write; the owner-authz branch is dropped (the spoke is always a moderator). No-op on a missing/deleted
-// model. Main-app userContentOverviewCache refresh (Redis) is deferred: TODO(moderator-migration).
+// model.
 export async function unpublishModel3d({
   id,
   userId,
@@ -35,7 +37,7 @@ export async function unpublishModel3d({
 }): Promise<void> {
   const existing = await dbRead
     .selectFrom('Model3D')
-    .select(['id', 'deletedAt'])
+    .select(['id', 'deletedAt', 'userId'])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!existing || existing.deletedAt) return;
@@ -47,4 +49,14 @@ export async function unpublishModel3d({
     .execute();
 
   await recordModActivity({ userId, entityType: 'model3d', entityId: id, activity: 'unpublish' });
+
+  // Unpublishing drops the owner's public model3d count — bust the three overview counters the main app
+  // recomputes via userContentOverviewCache.refresh (base / :sfw / :public). Busting (lazy recompute on next
+  // read) matches the article-restore pattern; only the model3d counters change here.
+  const owner = existing.userId;
+  await Promise.all([
+    bustCachedObject(`${REDIS_KEYS.CACHES.OVERVIEW_USERS}:model3dCount`, owner),
+    bustCachedObject(`${REDIS_KEYS.CACHES.OVERVIEW_USERS}:model3dCount:sfw`, owner),
+    bustCachedObject(`${REDIS_KEYS.CACHES.OVERVIEW_USERS}:model3dCount:public`, owner),
+  ]);
 }

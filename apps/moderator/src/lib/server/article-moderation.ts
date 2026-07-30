@@ -2,6 +2,8 @@ import { sql } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import { dbWrite } from './db';
 import { bustCachedObject } from './cache';
+import { getClickhouse } from './clickhouse';
+import { deleteImagesByIds } from './image-deletion';
 import { syncSearchIndex } from './search-index';
 import { ArticleStatus, type ArticleMetadata } from '$lib/articles';
 
@@ -14,8 +16,9 @@ const UNPUBLISHED: ArticleStatus[] = [
 
 // Restore or delete an article. The DB mutations run INTERNALLY via Kysely; the only main-app hit is the
 // Meilisearch enqueue. Restore is faithful (status + nsfwLevel re-derive + ingestion recompute +
-// userArticleCountCache bust). Delete's cover/orphaned-content image cleanup (DB + S3 + CDN) is still
-// deferred — it needs the @civitai/storage client that isn't wired yet (see the TODO in deleteArticle).
+// userArticleCountCache bust). Delete also cleans up the cover + orphaned content images (Image row + S3 via
+// @civitai/storage + Meili + collections + caches), and recomputes any post those images belonged to — see
+// deleteImagesByIds.
 export async function moderateArticle(input: {
   action: 'restore' | 'delete';
   articleId: number;
@@ -35,7 +38,24 @@ export async function moderateArticle(input: {
     action: input.action === 'delete' ? 'delete' : 'update',
   });
 
+  if (input.action === 'delete') void recordArticleDeleted(input.articleId, input.userId);
+
   return { ok: true };
+}
+
+// ClickHouse analytics parity with the main app's `ctx.track.article({ type: 'Delete' })` (article.router:110).
+// Best-effort: a failed insert must never surface as a failed moderation. `nsfw: false` matches the main app
+// (it hardcodes false on delete); actor userId is the moderator, matching the spoke's other CH inserts.
+async function recordArticleDeleted(articleId: number, moderatorId: number): Promise<void> {
+  try {
+    await getClickhouse().insert({
+      table: 'articles',
+      values: [{ userId: moderatorId, type: 'Delete', articleId, nsfw: false }],
+      format: 'JSONEachRow',
+    });
+  } catch (err) {
+    console.error('[article-moderation] failed to record delete event', err);
+  }
 }
 
 async function restoreArticle(id: number): Promise<void> {
@@ -51,6 +71,7 @@ async function restoreArticle(id: number): Promise<void> {
         'title',
         'content',
         'ingestion',
+        'moderatorNsfwLevel',
       ])
       .where('id', '=', id)
       .executeTakeFirst();
@@ -165,14 +186,19 @@ async function restoreArticle(id: number): Promise<void> {
       hasText && !!textMod && ['Failed', 'Expired', 'Canceled'].includes(textMod.status);
     const textDone = !hasText || textMod?.status === 'Succeeded';
 
-    const next =
-      imageBlocked || textBlocked
-        ? 'Blocked'
-        : imageError || textError
-        ? 'Error'
-        : imageDone && textDone
-        ? 'Scanned'
-        : 'Pending';
+    // A moderator override (moderatorNsfwLevel pinned) is authoritative — the article stays Scanned/visible
+    // even if a cover/content image is still non-terminal (Pending/Error). This is the top-precedence branch
+    // in deriveArticleIngestionState; without it a restored mod-pinned article would be wrongly hidden.
+    const hasModeratorOverride = article.moderatorNsfwLevel != null;
+    const next = hasModeratorOverride
+      ? 'Scanned'
+      : imageBlocked || textBlocked
+      ? 'Blocked'
+      : imageError || textError
+      ? 'Error'
+      : imageDone && textDone
+      ? 'Scanned'
+      : 'Pending';
 
     await trx
       .updateTable('Article')
@@ -194,10 +220,21 @@ async function restoreArticle(id: number): Promise<void> {
 }
 
 async function deleteArticle(id: number): Promise<void> {
-  await dbWrite.transaction().execute(async (trx) => {
+  // Capture the content image ids BEFORE the transaction removes the connections, so we can clean up the
+  // orphaned images afterward (parity with the main app's deleteArticleById).
+  const contentImageIds = (
+    await dbWrite
+      .selectFrom('ImageConnection')
+      .select('imageId')
+      .where('entityId', '=', id)
+      .where('entityType', '=', 'Article')
+      .execute()
+  ).map((c) => c.imageId);
+
+  const coverId = await dbWrite.transaction().execute(async (trx): Promise<number | null> => {
     const article = await trx
       .selectFrom('Article')
-      .select('id')
+      .select('coverId')
       .where('id', '=', id)
       .executeTakeFirst();
     if (!article) throw new Error(`No article with id ${id}`);
@@ -213,9 +250,38 @@ async function deleteArticle(id: number): Promise<void> {
       .where('entityType', '=', 'Article')
       .execute();
     await trx.deleteFrom('Article').where('id', '=', id).execute();
+
+    return article.coverId;
   });
 
-  // TODO(moderator-migration): the main app also deletes the cover + orphaned content images from DB + S3
-  // + CDN cache (deleteImageById). S3 isn't wired in the spoke (Wave 5), so those image rows/objects are
-  // left for that wave / a reconciliation job — the article row + its connections are fully removed here.
+  // Delete the cover + any content image now orphaned (no remaining connection to ANY entity) — full image
+  // delete (row + S3 + Meili + collections + caches). Mirrors deleteArticleById's post-transaction cleanup:
+  // it deletes the cover + truly-orphaned content images unconditionally, and deleteImagesByIds recomputes
+  // any post those images belonged to. "Orphaned" is about ImageConnection only — a post membership (postId)
+  // does NOT keep an image alive here (matching the main app's `connections: { none: {} }`).
+  const toDelete: number[] = [];
+
+  if (coverId) toDelete.push(coverId);
+
+  const orphanCandidates = contentImageIds.filter((imageId) => imageId !== coverId);
+  if (orphanCandidates.length) {
+    const orphaned = await dbWrite
+      .selectFrom('Image')
+      .select('Image.id')
+      .where('Image.id', 'in', orphanCandidates)
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('ImageConnection')
+              .select('ImageConnection.imageId')
+              .whereRef('ImageConnection.imageId', '=', 'Image.id')
+          )
+        )
+      )
+      .execute();
+    toDelete.push(...orphaned.map((o) => o.id));
+  }
+
+  if (toDelete.length) await deleteImagesByIds(toDelete);
 }

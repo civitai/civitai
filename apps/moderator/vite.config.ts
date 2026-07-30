@@ -31,6 +31,7 @@ export default defineConfig(({ mode }) => {
         '@civitai/notifications',
         '@civitai/redis',
         '@civitai/shared',
+        '@civitai/storage',
         '@civitai/ui',
       ],
     },

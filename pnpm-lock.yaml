@@ -1080,6 +1080,9 @@ importers:
       '@civitai/shared':
         specifier: workspace:*
         version: link:../../packages/civitai-shared
+      '@civitai/storage':
+        specifier: workspace:*
+        version: link:../../packages/civitai-storage
       '@civitai/ui':
         specifier: workspace:*
         version: link:../../packages/civitai-ui

@@ -5,10 +5,12 @@ import { env } from '$env/dynamic/private';
 // this spoke just pings its callback. Fire-and-forget — call it WITHOUT `await` so a slow/down main app
 // can't stall the moderator action; it self-bounds with a timeout and never throws.
 //
-// HARD RULE: this Meilisearch enqueue is the ONLY sanctioned call from the spoke into the main app.
-// Everything else — restore/delete/resolve, nsfwLevel writes, etc. — is a direct Kysely mutation in this
-// app. Do NOT add other main-app callbacks or shims to run main-app services; port the logic here, and
-// defer infra-bound side effects (notifications/S3/Redis) to their wave with a TODO(moderator-migration).
+// HARD RULE: spoke→main callbacks are a closed set of TWO, each for a capability the spoke fundamentally
+// lacks — (1) this Meilisearch enqueue (main owns the search-index client), and (2) the KoNO finalize in
+// `kono.ts` (main owns the new-order game engine + WebSocket signals). Everything else — restore/delete/
+// resolve, nsfwLevel writes, etc. — is a direct Kysely mutation in this app. Do NOT add a third callback or
+// a shim to run main-app services; port the logic here, and defer infra-bound side effects
+// (notifications/S3/Redis) to their wave with a TODO(moderator-migration).
 export async function syncSearchIndex(entity: {
   entityType: string;
   entityId: number;

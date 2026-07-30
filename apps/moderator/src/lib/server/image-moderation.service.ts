@@ -91,6 +91,17 @@ export async function acceptImage({
     .where('id', '=', imageId)
     .execute();
 
+  // Rating-locked Blocked rows are skipped by update_nsfw_levels_new (WHERE NOT "nsfwLevelLocked"), so a
+  // mod-unblock would otherwise leave them hidden at Blocked. Reset them first — clear the lock + zero the
+  // level so the recompute below can restore the real one. Parity with the main app's resetBlockedNsfwLevel
+  // in handleUnblockImages (restored by #3355 / c371fcbc16).
+  await dbWrite
+    .updateTable('Image')
+    .set({ nsfwLevel: 0, nsfwLevelLocked: false })
+    .where('id', '=', imageId)
+    .where('nsfwLevel', '=', NsfwLevel.Blocked)
+    .execute();
+
   // Disable + clear the moderation tags that flagged the image (upsertTagsOnImageNew recomputes
   // nsfwLevel + enqueues the search sync). No review tags → do those two steps directly.
   const reviewTags = await dbRead
@@ -109,6 +120,10 @@ export async function acceptImage({
       }))
     );
     await dbWrite.deleteFrom('ImageTagForReview').where('imageId', '=', imageId).execute();
+    // upsertTagsOnImageNew recomputes nsfwLevel + syncs search but, unlike recompute(), does NOT bust the
+    // thumbnail cache. Do it here so an unblocked thumbnail-child image can't serve a stale (Blocked) level
+    // until TTL — main's handleUnblockImages busts on every unblock, not just the no-review-tags path.
+    await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, imageId);
   } else {
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });

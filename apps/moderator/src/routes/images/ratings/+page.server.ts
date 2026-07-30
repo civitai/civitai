@@ -30,7 +30,13 @@ export const actions: Actions = {
     if (!id) return fail(400, { error: 'Missing image id.' });
     if (!isRatingLevel(nsfwLevel)) return fail(400, { error: 'Invalid rating level.' });
 
-    await updateImageNsfwLevel({ id, nsfwLevel, status: 'Actioned', userId: locals.user.id });
+    await updateImageNsfwLevel({
+      id,
+      nsfwLevel,
+      status: 'Actioned',
+      reason: 'Moderator rating review',
+      userId: locals.user.id,
+    });
     return { success: true, id, nsfwLevel };
   },
 };
