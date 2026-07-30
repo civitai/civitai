@@ -31,17 +31,13 @@
 
 .lifetimeBuzzContainer {
   border: 2px solid var(--mantine-color-yellow-7);
-  background: linear-gradient(45deg,
-      var(--mantine-color-yellow-4),
-      var(--mantine-color-yellow-1));
+  background: linear-gradient(45deg, var(--mantine-color-yellow-4), var(--mantine-color-yellow-1));
   animation: moveBackground 5s ease infinite;
   background-size: 200% 200%;
 }
 
 .goldText {
-  background: linear-gradient(45deg,
-      var(--mantine-color-yellow-4),
-      var(--mantine-color-yellow-1));
+  background: linear-gradient(45deg, var(--mantine-color-yellow-4), var(--mantine-color-yellow-1));
   font-weight: 800;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -70,7 +66,7 @@
 .chipGroup {
   gap: var(--mantine-spacing-md);
 
-  >* {
+  > * {
     width: 100%;
   }
 
@@ -86,7 +82,7 @@
   width: 100%;
   border-radius: var(--mantine-radius-md);
 
-  &[data-variant="filled"] {
+  &[data-variant='filled'] {
     background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
   }
 
@@ -115,18 +111,18 @@
   background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
 
   &:first-of-type,
-  &:first-of-type>[data-accordion-control] {
+  &:first-of-type > [data-accordion-control] {
     border-top-left-radius: var(--mantine-radius-md);
     border-top-right-radius: var(--mantine-radius-md);
   }
 
   &:last-of-type,
-  &:last-of-type>[data-accordion-control] {
+  &:last-of-type > [data-accordion-control] {
     border-bottom-left-radius: var(--mantine-radius-md);
     border-bottom-right-radius: var(--mantine-radius-md);
   }
 
-  &[data-active="true"] {
+  &[data-active='true'] {
     border: 1px solid rgb(var(--buzz-color));
     background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
   }
@@ -158,7 +154,9 @@
 .dashboardGrid {
   display: grid;
   gap: var(--mantine-spacing-md);
-  grid-template-columns: 1fr;
+  // minmax(0, …) not 1fr — a bare 1fr floors at min-content, so unshrinkable
+  // children (charts, SegmentedControls) burst the track and scroll the page.
+  grid-template-columns: minmax(0, 1fr);
 
   @media (min-width: 768px) {
     grid-template-columns: var(--grid-cols, minmax(0, 7fr) minmax(0, 5fr));
@@ -173,14 +171,15 @@
 }
 
 .dashboardGridConstrainedInner {
-  // Mobile: normal positioning, explicit height for scroll
+  // Mobile: cap the scroll height rather than fixing it, so a short or empty
+  // list doesn't reserve a screenful of blank card.
   position: static;
-  height: 400px;
+  max-height: 400px;
 
   @media (min-width: 768px) {
     position: absolute;
     inset: 0;
-    height: auto;
+    max-height: none;
   }
 }
 
@@ -217,13 +216,11 @@
 @keyframes upsellPulse {
   0%,
   100% {
-    box-shadow: 0 0 12px rgba(255, 212, 59, 0.45),
-      0 0 24px rgba(99, 86, 245, 0.35);
+    box-shadow: 0 0 12px rgba(255, 212, 59, 0.45), 0 0 24px rgba(99, 86, 245, 0.35);
   }
 
   50% {
-    box-shadow: 0 0 20px rgba(255, 212, 59, 0.7),
-      0 0 36px rgba(99, 86, 245, 0.55);
+    box-shadow: 0 0 20px rgba(255, 212, 59, 0.7), 0 0 36px rgba(99, 86, 245, 0.55);
   }
 }
 
