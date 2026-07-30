@@ -853,11 +853,17 @@ export function IframeHost({
       const payload =
         raw && typeof raw === 'object' && 'height' in raw ? (raw as { height?: unknown }) : {};
       // Record the offered height for the ready-transition effect below to apply
-      // once React has COMMITTED 'ready'. Deliberately ungated: H-11 is enforced
-      // by that effect's `status === 'ready'` guard, not here (see the ref's
-      // comment). When several acks land in one batch the LAST one wins, which is
-      // the block's most recent statement of its own handshake height.
-      pendingReadyHeightRef.current = payload.height;
+      // once React has COMMITTED 'ready'. NOT gated on the current status: H-11 is
+      // enforced by that effect's `status === 'ready'` guard, not here (see the
+      // ref's comment).
+      //
+      // When several acks land in one batch the LAST one that CARRIES a height
+      // wins — the block's most recent statement of its own handshake height. The
+      // `!== undefined` check matters: without it a `BLOCK_READY {height: 640}`
+      // followed in the same batch by a bare `BLOCK_READY {}` (or one whose height
+      // fails the shape guard) would reset the ref to `undefined` and LOSE a height
+      // the old code applied, turning this fix into a regression in that direction.
+      if (payload.height !== undefined) pendingReadyHeightRef.current = payload.height;
       setStatus((current) => (current === 'loading' ? 'ready' : current));
       // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
       // timeout. Called UNCONDITIONALLY, not behind a "did this ack win the

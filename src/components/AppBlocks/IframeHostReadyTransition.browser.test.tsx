@@ -332,6 +332,30 @@ describe('IframeHost ready transition — emit-once / apply-once semantics', () 
     expect(errorBeacons()).toHaveLength(0);
   });
 
+  test('a later ack WITHOUT a usable height does not erase the height an earlier ack in the same batch supplied', async () => {
+    // The regression direction of "last ack wins": a block that acks with a height
+    // and then re-acks bare (or with a height the shape/value guards reject) must
+    // keep the height it actually stated. Without the `!== undefined` stash guard
+    // the ref resets and the frame stays pinned at minHeight — a case the OLD code
+    // got right (its eager path applied the FIRST ack), so this would have turned
+    // the fix into a regression.
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await waitForMount();
+
+    postFromBlock('BLOCK_READY', { height: 640 });
+    postFromBlock('BLOCK_READY', {});
+    postFromBlock('BLOCK_READY', { width: 100 });
+
+    await vi.waitFor(() => {
+      expect(iframeEl().getAttribute('data-block-ready')).toBe('true');
+    });
+    await vi.waitFor(() => {
+      expect(appliedHeight()).toBe(640);
+    });
+    await sleep(120);
+    expect(okBeacons()).toHaveLength(1);
+  });
+
   test('a duplicate ack AFTER the ready commit does not re-emit and does not clobber a negotiated RESIZE_IFRAME height', async () => {
     renderWithProviders(<IframeHost {...baseProps} />);
     await driveToReady({ height: 300 });
@@ -474,6 +498,23 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
   // terminal state COLLAPSES the host to null (hostRenderDecision) rather than
   // rendering a framed BlockFallback, so `block-iframe` is gone — which is how
   // FRAME-1 is satisfied here (nothing rendered ⇒ nothing to masquerade as).
+  //
+  // 🔴 CONSEQUENCE FOR HOW THESE TESTS ARE WRITTEN — read before adding one.
+  // Because the host collapses, a BLOCK_READY dispatched AFTER a terminal state
+  // is UNDELIVERABLE, not merely ignored: `usePostMessage` pins
+  // `event.source === iframeRef.current?.contentWindow`, and once the iframe
+  // unmounts `iframeRef.current` is null, so every inbound message is dropped
+  // before the BLOCK_READY handler runs. There is therefore NO way to exercise the
+  // effect's `status !== 'ready'` guard via a post-terminal ack, and a test that
+  // dispatches one and asserts "nothing happened" is VACUOUS — it would pass with
+  // the guard entirely removed. (An earlier draft of this file had exactly that;
+  // it was caught in review.)
+  // So the coverage is split deliberately:
+  //   - the guard itself is exercised by the BATCHED `BLOCK_ERROR{fatal}` case
+  //     below, where both messages arrive while the iframe is still mounted;
+  //   - the `timeout` / `no_token` tests assert the TERMINAL OUTCOME (error beacon
+  //     only, host collapsed, still no `ok` beacon) plus the drop itself, and say
+  //     so rather than claiming to test the guard.
 
   test('BLOCK_ERROR{fatal} batched with a BLOCK_READY in the same task stays fatal: no height, no ok beacon, only the error beacon', async () => {
     // The DELIVERABLE H-11 case — both messages are dispatched while the iframe
@@ -499,9 +540,18 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
     expect(okBeacons()).toHaveLength(0);
   });
 
-  test('a late BLOCK_READY after the readiness TIMEOUT applies nothing and emits no ok beacon', async () => {
+  test('the readiness TIMEOUT is terminal: error beacon only, host collapsed, and a late ack is not even deliverable', async () => {
+    // NOT a test of the effect's status guard — see the describe-block note: once
+    // the host collapses the ack cannot reach a handler at all. What this pins is
+    // the terminal OUTCOME (exactly one `error` beacon, classed 'timeout', never an
+    // `ok` one) and that a late ack leaves it that way. Killed by M3 (removing the
+    // status guard makes the ready effect fire at mount and claim the shared
+    // emit-once ref, so the error beacon never gets to fire).
     renderWithProviders(<IframeHost {...baseProps} />);
     await waitForMount();
+    // Capture the live contentWindow BEFORE the collapse so the late dispatch
+    // carries the most permissive `source` a real block could ever have.
+    const preCollapseWindow = iframeEl().contentWindow;
     // Never ack → the controller's ~10s readiness timeout fires → 'timeout'.
     await vi.waitFor(
       () => {
@@ -512,11 +562,13 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
     await vi.waitFor(() => expect(errorBeacons()).toHaveLength(1));
     expect(errorBeacons()[0]).toMatchObject({ errorClass: 'timeout' });
 
-    // A late ack (the block finally woke up) must change nothing.
+    // A late ack (the block finally woke up) changes nothing — it is dropped by the
+    // transport's source pin, because there is no longer an iframe to pin to.
     window.dispatchEvent(
       new MessageEvent('message', {
         data: { type: 'BLOCK_READY', payload: { height: 640 } },
         origin: window.location.origin,
+        source: preCollapseWindow,
       })
     );
     await sleep(200);
@@ -525,11 +577,13 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
     expect(iframeQuery()).toBeNull();
   }, 22_000);
 
-  test('a late BLOCK_READY after NO_TOKEN applies nothing and emits no ok beacon', async () => {
+  test('NO_TOKEN is terminal: error beacon only, and a late ack is not even deliverable', async () => {
     // An empty token never satisfies `shouldStartInit`, so the independent
-    // token-wait timer (~15s) is what goes terminal here.
+    // token-wait timer (~15s) is what goes terminal here. Same coverage note as
+    // the timeout case above — outcome, not guard.
     renderWithProviders(<IframeHost {...baseProps} token="" />);
     await waitForMount();
+    const preCollapseWindow = iframeEl().contentWindow;
     await vi.waitFor(
       () => {
         expect(iframeQuery()).toBeNull();
@@ -543,12 +597,36 @@ describe('IframeHost ready transition — H-11: a late BLOCK_READY after a termi
       new MessageEvent('message', {
         data: { type: 'BLOCK_READY', payload: { height: 640 } },
         origin: window.location.origin,
+        source: preCollapseWindow,
       })
     );
     await sleep(200);
     expect(okBeacons()).toHaveLength(0);
     expect(errorBeacons()).toHaveLength(1);
   }, 28_000);
+
+  test('BLOCK_READY then BLOCK_ERROR{fatal} in the same batch resolves to fatal — the error beacon, not the ok beacon', async () => {
+    // The REVERSE order of the case above, and a genuine behaviour change vs
+    // `main`: there the handler emitted `ok` synchronously before the fatal was
+    // processed, so `error` was suppressed by the shared emit-once ref. Now both
+    // updaters run in one render, the committed status is 'fatal', and the ready
+    // effect early-returns — so the mount is reported as a FAILED render. Pinned
+    // because it moves BlockRenderFailureRate, and declared in the PR body.
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await waitForMount();
+
+    postFromBlock('BLOCK_READY', { height: 640 });
+    postFromBlock('BLOCK_ERROR', { fatal: true });
+
+    await vi.waitFor(() => {
+      expect(iframeQuery()).toBeNull();
+    });
+    await vi.waitFor(() => {
+      expect(errorBeacons()).toHaveLength(1);
+    });
+    expect(errorBeacons()[0]).toMatchObject({ status: 'error', errorClass: 'fatal' });
+    expect(okBeacons()).toHaveLength(0);
+  });
 });
 
 describe('IframeHost ready transition — a ready block must never go terminal', () => {
