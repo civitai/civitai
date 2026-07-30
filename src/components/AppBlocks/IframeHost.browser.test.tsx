@@ -264,8 +264,10 @@ describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_t
     await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
 
     // A second/third BLOCK_READY (block re-ack, or a re-render re-running
-    // listeners) finds status === 'ready', so `appliedReady` stays false AND
-    // the emit-once ref is already set → no re-emit.
+    // listeners) can't re-emit: the beacon now fires from the COMMITTED
+    // loading→ready effect, which is already past its once-per-mount guard, and
+    // the shared emit-once ref is set. (See IframeHostReadyTransition.browser
+    // .test.tsx for the batching-immunity + H-11 coverage of that effect.)
     postFromBlock('BLOCK_READY', {});
     postFromBlock('BLOCK_READY', {});
     await new Promise((r) => setTimeout(r, 150));
