@@ -25,6 +25,7 @@ import {
   releaseTipIdempotency,
   reserveBlockTipSpend,
 } from '~/server/utils/block-tip-rate-limit';
+import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotency';
 
 /**
  * POST /api/v1/blocks/tip
@@ -66,9 +67,12 @@ const bodySchema = z.object({
   entityType: z.enum(['Image', 'Collection', 'User']).optional(),
   entityId: z.number().int().positive().optional(),
   // OPTIONAL client idempotency key — a stable id the block reuses across its own
-  // retry of the SAME logical tip. Absent → no dedupe (today's behavior). Bounded
-  // so it can't bloat the redis key; the block SDK generates a `crypto.randomUUID`.
-  idempotencyKey: z.string().min(1).max(200).optional(),
+  // retry of the SAME logical tip. Absent → no dedupe (today's behavior). Charset-
+  // restricted to a UUID-ish alphabet (audit 🟢) so no control chars / newlines /
+  // colons flow into the ledger `externalTransactionId` derived from it, and length
+  // bounded so it can't bloat the redis key; the block SDK generates a
+  // `crypto.randomUUID` (or `idem-<base36>` fallback), both of which match.
+  idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX).optional(),
 });
 
 /** A terminal HTTP outcome from the tip attempt. `transient` outcomes (429/503) are
@@ -210,6 +214,12 @@ export const baseHandler = withAxiom(async function handler(
           entityId,
         },
         ctx,
+        // Ledger-backed idempotency (audit 🟡-1): derive the tip's
+        // `externalTransactionId` from the client key so a retry after the Redis
+        // sentinel expired (a crash between charge and finalize) collides on the
+        // Buzz ledger's unique constraint = money moves once. The Redis sentinel
+        // above stays the fast-path; this is the authoritative second layer.
+        idempotencyKey,
       });
 
       // W13 richer audit detail — stash a structured ref so the middleware

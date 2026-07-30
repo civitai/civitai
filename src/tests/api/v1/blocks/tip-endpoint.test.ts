@@ -453,5 +453,29 @@ describe('POST /api/v1/blocks/tip', () => {
       );
       expect(mockRelease).not.toHaveBeenCalled();
     });
+
+    it('THREADS the client key into createBuzzTipTransactionHandler (ledger-backed dedup, audit 🟡-1)', async () => {
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'idem-abc' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      // The handler DERIVES the tip's externalTransactionId from this key so a
+      // crash-window retry (Redis sentinel expired) collides on the Buzz ledger's
+      // unique constraint → money moves once. The Redis sentinel stays the fast-path.
+      expect(mockTip).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: 'idem-abc' })
+      );
+    });
+
+    it('CHARSET (audit 🟢): a key with a space/control char is REJECTED (400), no claim, no charge', async () => {
+      const { req, res } = createMocks({
+        body: { toUserId: 5, amount: 25, idempotencyKey: 'bad key\n' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(400);
+      expect(mockClaim).not.toHaveBeenCalled();
+      expect(mockTip).not.toHaveBeenCalled();
+    });
   });
 });

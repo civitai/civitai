@@ -1639,6 +1639,25 @@ export const REDIS_SYS_KEYS = {
      */
     TIP_IDEM: 'system:blocks:tip-idem',
     /**
+     * Idempotency record for the block GENERATION submit (`blocks.submitWorkflow`
+     * — both the txt2img and customComfy branches), keyed
+     * `system:blocks:gen-idem:${userId}:${appBlockId}:${clientIdempotencyKey}`. A
+     * generation submit RESERVES the viewer's daily/per-app Buzz cap and SUBMITS to
+     * the orchestrator (a real charge), so two CONCURRENT same-key submits (a
+     * double-click / SDK auto-retry racing before the orchestrator's own
+     * `(userId, externalId)` dedupe engages) could otherwise BOTH reserve and BOTH
+     * charge. The handler `SET NX`-claims this key BEFORE the cap reservation; a
+     * concurrent submit that finds it in-progress gets a 409 (no 2nd reservation,
+     * no 2nd orchestrator submit), and a lost-response retry AFTER success replays
+     * the cached snapshot (no re-submit). DISTINCT from BUZZ_CAP (the daily-spend
+     * counter) and from TIP_IDEM (the tip endpoint's dedupe): this dedupes ONE
+     * logical generation across retries. Per-(user, app, key) so a key can never
+     * collide across apps or users. Short TTL (covers realistic retry windows); a
+     * genuinely-new generation uses a fresh client key. On `sysRedis`, like the
+     * sibling BLOCKS caps; fail-CLOSED on a redis error at claim time (money path).
+     */
+    GEN_IDEM: 'system:blocks:gen-idem',
+    /**
      * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
      * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
      * bounds a single USER's daily Buzz SPEND; this one bounds the daily

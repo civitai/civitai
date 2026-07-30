@@ -121,9 +121,22 @@ export function completeStripeBuzzPurchaseHandler({
 export async function createBuzzTipTransactionHandler({
   input,
   ctx,
+  idempotencyKey,
 }: {
   input: UserBuzzTransactionInputSchema;
   ctx: ProtectedContext;
+  /**
+   * OPTIONAL client idempotency key (App Blocks tip endpoint, audit 🟡-1). When
+   * present, the tip's `externalTransactionId` is DERIVED from it deterministically
+   * (`block-tip:${fromUserId}:${idempotencyKey}-${toAccountId}`) instead of a fresh
+   * `uuid()`, so the Buzz ledger's own idempotency (a duplicate
+   * `externalTransactionId` is a benign "money already moved" conflict) becomes the
+   * AUTHORITATIVE dedup: a retry after the Redis sentinel has expired (a crash
+   * between charge and `finalizeTipIdempotency`) collides on the ledger = money
+   * moves once. Absent → today's per-call `uuid()` behavior (no ledger dedup),
+   * byte-identical for the on-site tip path which never passes this.
+   */
+  idempotencyKey?: string;
 }) {
   try {
     const { id: fromAccountId } = ctx.user;
@@ -219,7 +232,16 @@ export async function createBuzzTipTransactionHandler({
       throw throwInsufficientFundsError();
     }
 
-    const sharedId = `tip-${uuid()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
+    // The base of every transaction's `externalTransactionId` (`${sharedId}-${toAccountId}`).
+    // With a client idempotency key, DERIVE it deterministically so a retry collides
+    // on the ledger's unique constraint (money moves once — see the param doc). The
+    // key is charset-restricted (`^[A-Za-z0-9_-]{1,200}$`) at the endpoint, and both
+    // `fromUserId` and `toAccountId` are numeric, so `block-tip:${fromUserId}:${key}`
+    // is delimiter-injective — no two distinct (user, key, target) triples collide.
+    // Absent key → the original per-call `uuid()` (no dedup), byte-identical to today.
+    const sharedId = idempotencyKey
+      ? `block-tip:${ctx.user.id}:${idempotencyKey}`
+      : `tip-${uuid()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
     const transactions = targetUserIds.map((toAccountId) => ({
       ...input,
       fromAccountId: ctx.user.id,
