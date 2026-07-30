@@ -19,7 +19,8 @@
       <p class="text-xs uppercase tracking-wide text-green-4">You've joined</p>
       <p class="mt-1 text-lg font-semibold text-white">Start earning from your models</p>
       <p class="mt-2 text-sm text-green-3">
-        Set per-generation licensing fees, sell paid access, and track your earnings — all from the Studio.
+        Set per-generation licensing fees, sell paid access, and track your earnings — all from the
+        Studio.
       </p>
     </div>
   </div>

@@ -8,4 +8,6 @@
   const cash = $derived(currency != null ? formatAmount(amount, currency) : '');
 </script>
 
-{#if isCash}{cash}{:else}<span class="whitespace-nowrap"><span class="mr-0.5 text-[0.82em]">⚡</span>{buzzNumber(amount)}</span>{/if}
+{#if isCash}{cash}{:else}<span class="whitespace-nowrap"
+    ><span class="mr-0.5 text-[0.82em]">⚡</span>{buzzNumber(amount)}</span
+  >{/if}

@@ -1,6 +1,11 @@
 <script lang="ts">
   import * as Table from '@civitai/ui/components/ui/table/index.js';
-  import { IconArrowUp, IconArrowDown, IconArrowsSort, IconExternalLink } from '@tabler/icons-svelte';
+  import {
+    IconArrowUp,
+    IconArrowDown,
+    IconArrowsSort,
+    IconExternalLink,
+  } from '@tabler/icons-svelte';
   import { page } from '$app/state';
   import { setSortParam } from '$lib/table-nav';
   import { modelUrl } from '$lib/model-url';
@@ -37,7 +42,8 @@
   <div class="placeholder">Engagement is temporarily unavailable — please try again shortly.</div>
 {:else if rows.length === 0}
   <div class="rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-    <strong class="text-dark-2">Nothing to review</strong> — none of your published models have downvotes or comments.
+    <strong class="text-dark-2">Nothing to review</strong> — none of your published models have downvotes
+    or comments.
   </div>
 {:else}
   <div class="cs-panel p-4">
@@ -58,10 +64,10 @@
         >
           <span>{label}</span>
           {#if active}
-            {#if sortDir === 'asc'}<IconArrowUp size={14} class="text-blue-4" />{:else}<IconArrowDown
+            {#if sortDir === 'asc'}<IconArrowUp
                 size={14}
                 class="text-blue-4"
-              />{/if}
+              />{:else}<IconArrowDown size={14} class="text-blue-4" />{/if}
           {:else}
             <IconArrowsSort size={14} class="text-dark-4" />
           {/if}
@@ -99,11 +105,15 @@
             <Table.Cell class="text-right tabular-nums {m.comments ? 'text-white' : 'text-dark-4'}">
               {m.comments ? num(m.comments) : '—'}
             </Table.Cell>
-            <Table.Cell class="text-right tabular-nums {m.upvotes ? 'text-green-4' : 'text-dark-4'}">
+            <Table.Cell
+              class="text-right tabular-nums {m.upvotes ? 'text-green-4' : 'text-dark-4'}"
+            >
               {m.upvotes ? num(m.upvotes) : '—'}
             </Table.Cell>
             <Table.Cell
-              class="text-right font-medium tabular-nums {m.downvotes ? 'text-red-4' : 'text-dark-4'}"
+              class="text-right font-medium tabular-nums {m.downvotes
+                ? 'text-red-4'
+                : 'text-dark-4'}"
             >
               {m.downvotes ? num(m.downvotes) : '—'}
             </Table.Cell>

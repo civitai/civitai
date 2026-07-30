@@ -37,7 +37,12 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     series,
     cmpSummary,
     cmpSeries,
-    compare: { key: compare.key, label: compare.label, from: compare.range.from, to: compare.range.to },
+    compare: {
+      key: compare.key,
+      label: compare.label,
+      from: compare.range.from,
+      to: compare.range.to,
+    },
     through,
     cash,
     monthly,

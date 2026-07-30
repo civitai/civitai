@@ -41,7 +41,11 @@
   );
   const monthlyCell = (month: string, currency: string) =>
     data.monthly?.find((m) => m.month === month && m.currency === currency)?.total ?? 0;
-  const monthFmt = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const monthFmt = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
   const formatMonth = (m: string) => monthFmt.format(Date.parse(`${m}T00:00:00Z`));
 
   // ClickHouse earnings are the buzz flow by source; cash is deliberately excluded here and shown from the buzz
@@ -60,7 +64,9 @@
     }))
   );
   // Sources present, in canonical order.
-  const sources = $derived(EARNINGS_SOURCES.filter((s) => (data.summary ?? []).some((b) => b.source === s)));
+  const sources = $derived(
+    EARNINGS_SOURCES.filter((s) => (data.summary ?? []).some((b) => b.source === s))
+  );
   const cell = (source: string, currency: string) =>
     (data.summary ?? []).find((b) => b.source === source && b.currency === currency)?.total ?? 0;
 
@@ -97,7 +103,9 @@
   const hasCash = $derived(!!cash && (cash.settled > 0 || cash.pending > 0 || cash.withdrawn > 0));
 
   // Trend is a buzz-only per-source line chart (cash is USD + lumpy → lives in the panel).
-  const seriesSources = $derived(EARNINGS_SOURCES.filter((s) => (data.series ?? []).some((p) => p.source === s)));
+  const seriesSources = $derived(
+    EARNINGS_SOURCES.filter((s) => (data.series ?? []).some((p) => p.source === s))
+  );
   // The trend collapses the *selected* sources into one total-per-day line. The comparison line sums the SAME
   // selection from the chosen baseline period and lines it up under the current days by ordinal offset (`delta`), so
   // any earlier period — the immediately-prior one or an arbitrary month — reads like-for-like.
@@ -108,7 +116,8 @@
     const shown = new Set<string>(seriesSources.filter((s) => shownSources.includes(s)));
     const sumSelected = (rows: { date: string; source: string; total: number }[]) => {
       const byDate = new Map<string, number>();
-      for (const p of rows) if (shown.has(p.source)) byDate.set(p.date, (byDate.get(p.date) ?? 0) + p.total);
+      for (const p of rows)
+        if (shown.has(p.source)) byDate.set(p.date, (byDate.get(p.date) ?? 0) + p.total);
       return byDate;
     };
     const currentByDate = sumSelected(data.series ?? []);
@@ -185,13 +194,16 @@
       .reduce((s, b) => s + b.total, 0);
   const cmpCell = (source: string, currency: string) =>
     (data.cmpSummary ?? []).find((b) => b.source === source && b.currency === currency)?.total ?? 0;
-  const cmpBuzzTotal = (source: string) => currencies.reduce((sum, c) => sum + cmpCell(source, c), 0);
+  const cmpBuzzTotal = (source: string) =>
+    currencies.reduce((sum, c) => sum + cmpCell(source, c), 0);
 </script>
 
 <header class="page-header flex flex-wrap items-start gap-3">
   <div>
     <h1>Earnings</h1>
-    <p>What you earned and where it came from — shown in the currency received, without conversion.</p>
+    <p>
+      What you earned and where it came from — shown in the currency received, without conversion.
+    </p>
   </div>
   <div class="ml-auto">
     <RangeSelector range={data.range} compare={data.compare} />
@@ -205,15 +217,21 @@
         <p class="text-xs uppercase tracking-wide text-green-4">Creator Program cash</p>
         <div class="mt-1 flex flex-wrap items-end gap-x-8 gap-y-3">
           <div>
-            <p class="text-2xl font-semibold text-white">{formatAmount(cash.pending, 'cashPending')}</p>
+            <p class="text-2xl font-semibold text-white">
+              {formatAmount(cash.pending, 'cashPending')}
+            </p>
             <p class="text-xs text-green-3">Pending settlement</p>
           </div>
           <div>
-            <p class="text-2xl font-semibold text-white">{formatAmount(cash.settled, 'cashSettled')}</p>
+            <p class="text-2xl font-semibold text-white">
+              {formatAmount(cash.settled, 'cashSettled')}
+            </p>
             <p class="text-xs text-green-3">Ready to withdraw</p>
           </div>
           <div>
-            <p class="text-2xl font-semibold text-white">{formatAmount(cash.withdrawn, 'cashSettled')}</p>
+            <p class="text-2xl font-semibold text-white">
+              {formatAmount(cash.withdrawn, 'cashSettled')}
+            </p>
             <p class="text-xs text-green-3">Withdrawn</p>
           </div>
         </div>
@@ -233,8 +251,10 @@
 {:else if !hasBuzzEarnings}
   <div class="placeholder flex flex-col items-center justify-center h-full">
     {#if data.membership.isCreatorProgramMember}
-      <span>No buzz earnings {periodLabel}. Set licensing fees or access prices on
-      <a href="/models" class="underline">your models</a> to start earning.</span>
+      <span
+        >No buzz earnings {periodLabel}. Set licensing fees or access prices on
+        <a href="/models" class="underline">your models</a> to start earning.</span
+      >
     {:else}
       <span>You're not in the Creator Program yet, so there's nothing to show here.</span>
       <span><a href="/join" class="underline">Join to start earning</a> from your models.</span>
@@ -295,7 +315,8 @@
   {/if}
 
   <p class="mb-2 text-xs text-dark-2">
-    Earned by source · buzz {periodLabel}{#if isFiltered}<span class="font-medium text-yellow-5"> · filtered</span
+    Earned by source · buzz {periodLabel}{#if isFiltered}<span class="font-medium text-yellow-5">
+        · filtered</span
       >{/if}
   </p>
   <section class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -303,7 +324,11 @@
       <StatCard label={SOURCE_LABEL[st.source]}>
         <p class="mt-1 text-xl font-semibold text-white"><CurrencyDisplay amount={st.total} /></p>
         <div class="mt-1">
-          <DeltaChip current={st.total} previous={cmpSourceBuzz(st.source)} label="vs {data.compare.label}" />
+          <DeltaChip
+            current={st.total}
+            previous={cmpSourceBuzz(st.source)}
+            label="vs {data.compare.label}"
+          />
         </div>
       </StatCard>
     {/each}
@@ -313,11 +338,8 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <p class="text-sm font-medium text-white">
         Buzz earned over time
-        <span class="text-xs text-dark-3">· this month vs {data.compare.label}</span>{#if isFiltered}<span
-            class="text-xs font-medium text-yellow-5"
-          >
-            · filtered</span
-          >{/if}
+        <span class="text-xs text-dark-3">· this month vs {data.compare.label}</span
+        >{#if isFiltered}<span class="text-xs font-medium text-yellow-5"> · filtered</span>{/if}
       </p>
       <ChartTypeToggle />
     </div>
@@ -346,8 +368,12 @@
         variant="outline"
         size="sm"
       >
-        <ToggleGroupItem value="split" aria-label="Split by currency" class="text-xs">Split</ToggleGroupItem>
-        <ToggleGroupItem value="combined" aria-label="Combined Buzz total" class="text-xs">Combined</ToggleGroupItem>
+        <ToggleGroupItem value="split" aria-label="Split by currency" class="text-xs"
+          >Split</ToggleGroupItem
+        >
+        <ToggleGroupItem value="combined" aria-label="Combined Buzz total" class="text-xs"
+          >Combined</ToggleGroupItem
+        >
       </ToggleGroup>
     </div>
     <Table.Root>
@@ -370,8 +396,12 @@
             {#if combined}
               {@const total = buzzTotal(s)}
               {@const show = Math.floor(total) >= 1}
-              <Table.Cell class="text-right align-top {show ? 'font-medium text-white' : 'text-dark-4'}">
-                <div>{#if show}<CurrencyDisplay amount={total} />{:else}—{/if}</div>
+              <Table.Cell
+                class="text-right align-top {show ? 'font-medium text-white' : 'text-dark-4'}"
+              >
+                <div>
+                  {#if show}<CurrencyDisplay amount={total} />{:else}—{/if}
+                </div>
                 {#if show}
                   <div class="mt-0.5"><DeltaChip current={total} previous={cmpBuzzTotal(s)} /></div>
                 {/if}
@@ -380,8 +410,12 @@
               {#each currencies as c (c)}
                 {@const v = cell(s, c)}
                 {@const show = hasDisplayValue(v, c)}
-                <Table.Cell class="text-right align-top {show ? 'font-medium text-white' : 'text-dark-4'}">
-                  <div>{#if show}<CurrencyDisplay amount={v} currency={c} />{:else}—{/if}</div>
+                <Table.Cell
+                  class="text-right align-top {show ? 'font-medium text-white' : 'text-dark-4'}"
+                >
+                  <div>
+                    {#if show}<CurrencyDisplay amount={v} currency={c} />{:else}—{/if}
+                  </div>
                   {#if show}
                     <div class="mt-0.5"><DeltaChip current={v} previous={cmpCell(s, c)} /></div>
                   {/if}
@@ -423,7 +457,11 @@
                 </div>
                 {#if prevMonth && show}
                   <div class="mt-0.5">
-                    <DeltaChip current={v} previous={monthlyCell(prevMonth, c)} label="vs previous month" />
+                    <DeltaChip
+                      current={v}
+                      previous={monthlyCell(prevMonth, c)}
+                      label="vs previous month"
+                    />
                   </div>
                 {/if}
               </Table.Cell>
@@ -438,11 +476,13 @@
 {#if data.buzzRatio?.length}
   <div class="mt-6 cs-panel p-4">
     <p class="mb-1 text-sm font-medium text-white">
-      Buzz → $ conversion <span class="text-xs text-dark-3">· what your banked Buzz was worth each month</span>
+      Buzz → $ conversion <span class="text-xs text-dark-3"
+        >· what your banked Buzz was worth each month</span
+      >
     </p>
     <p class="mb-3 text-xs text-dark-3">
-      Your Creator Program cash payout ÷ the Buzz you banked that month. Capped at $1.00 per 1,000 Buzz. The current
-      month appears once its pool settles.
+      Your Creator Program cash payout ÷ the Buzz you banked that month. Capped at $1.00 per 1,000
+      Buzz. The current month appears once its pool settles.
     </p>
     <Table.Root>
       <Table.Header>
@@ -457,8 +497,12 @@
         {#each data.buzzRatio as r (r.month)}
           <Table.Row>
             <Table.Cell class="text-dark-1">{formatMonth(r.month)}</Table.Cell>
-            <Table.Cell class="text-right tabular-nums text-white"><CurrencyDisplay amount={r.bankedBuzz} /></Table.Cell>
-            <Table.Cell class="text-right tabular-nums text-white">{usdFmt.format(r.usd)}</Table.Cell>
+            <Table.Cell class="text-right tabular-nums text-white"
+              ><CurrencyDisplay amount={r.bankedBuzz} /></Table.Cell
+            >
+            <Table.Cell class="text-right tabular-nums text-white"
+              >{usdFmt.format(r.usd)}</Table.Cell
+            >
             <Table.Cell class="text-right font-medium tabular-nums text-green-4">
               {rateFmt.format(r.perThousand)}
             </Table.Cell>
@@ -470,6 +514,6 @@
 {/if}
 
 <div class="mt-8 rounded-lg border border-dashed border-dark-4 p-4 text-sm text-dark-3">
-  <strong class="text-dark-2">These totals are creator-level.</strong> For earnings broken down by individual
-  model, see <a href="/analytics/models" class="underline">Model analytics</a>.
+  <strong class="text-dark-2">These totals are creator-level.</strong> For earnings broken down by
+  individual model, see <a href="/analytics/models" class="underline">Model analytics</a>.
 </div>

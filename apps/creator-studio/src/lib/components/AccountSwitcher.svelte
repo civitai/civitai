@@ -17,8 +17,12 @@
     image,
     logoutUrl,
     tier = null,
-  }: { name: string; image: string | null; logoutUrl: string | null; tier?: string | null } =
-    $props();
+  }: {
+    name: string;
+    image: string | null;
+    logoutUrl: string | null;
+    tier?: string | null;
+  } = $props();
 
   const TIER_LABEL: Record<string, string> = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold' };
   const tierLabel = $derived.by(() => {
@@ -95,7 +99,9 @@
     <IconChevronDown size={14} class="shrink-0 text-dark-3" />
   </Popover.Trigger>
   <Popover.Content align="start" side="top" class="w-56 border-dark-4 bg-dark-7 p-1">
-    <p class="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-dark-3">Accounts on this device</p>
+    <p class="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-dark-3">
+      Accounts on this device
+    </p>
     {#if loading}
       <p class="px-2 py-2 text-xs text-dark-3">Loading…</p>
     {:else if others.length === 0}
@@ -111,10 +117,15 @@
           class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-sm text-white hover:bg-dark-6 disabled:opacity-60"
         >
           <Avatar class="size-6">
-            {#if acct.image}<AvatarImage src={getEdgeUrl(acct.image, { width: 96 })} alt={acct.username ?? ''} />{/if}
+            {#if acct.image}<AvatarImage
+                src={getEdgeUrl(acct.image, { width: 96 })}
+                alt={acct.username ?? ''}
+              />{/if}
             <AvatarFallback>{initial(acct.username)}</AvatarFallback>
           </Avatar>
-          <span class="min-w-0 flex-1 truncate text-left">{acct.username ?? `User ${acct.userId}`}</span>
+          <span class="min-w-0 flex-1 truncate text-left"
+            >{acct.username ?? `User ${acct.userId}`}</span
+          >
           {#if switching === acct.userId}<span class="text-xs text-dark-3">…</span>{/if}
         </button>
       {/each}

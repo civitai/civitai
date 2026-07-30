@@ -2,7 +2,10 @@ import { sql } from '@civitai/db/kysely';
 import { dbRead } from '$lib/server/db';
 import type { ModelType } from '@civitai/db-schema';
 import type { ModelVersionTerms } from '@civitai/buzz';
-import { DEFAULT_GENERATION_TRIAL_LIMIT, type EarlyAccessConfig } from '$lib/monetization/early-access';
+import {
+  DEFAULT_GENERATION_TRIAL_LIMIT,
+  type EarlyAccessConfig,
+} from '$lib/monetization/early-access';
 
 // "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
 function paidAccessFilter(alias: string) {
@@ -12,7 +15,10 @@ function paidAccessFilter(alias: string) {
 
 // Rebuild the UI-facing EarlyAccessConfig from an active PaidAccess row (terms bundle + timeframeDays).
 // timeframeDays null => permanent. Donation-goal fields are sourced separately, not from PaidAccess.
-function paidAccessToConfig(timeframeDays: number | null, terms: unknown): EarlyAccessConfig | null {
+function paidAccessToConfig(
+  timeframeDays: number | null,
+  terms: unknown
+): EarlyAccessConfig | null {
   const t = terms as ModelVersionTerms | null;
   if (!t) return null;
   const gen = t.generation;
@@ -152,7 +158,8 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const { userId, q, fee, baseModel, type, status, access, usage, sort = 'recent' } = query;
   const page = Math.max(1, query.page ?? 1);
   const perPage = query.perPage ?? MODELS_PER_PAGE;
-  const usageValue = usage === 'generation' ? 'Generation' : usage === 'download' ? 'Download' : null;
+  const usageValue =
+    usage === 'generation' ? 'Generation' : usage === 'download' ? 'Download' : null;
 
   // Model-list filter (shared by count + page query; kysely builders are immutable, so branch off one).
   let filtered = dbRead
