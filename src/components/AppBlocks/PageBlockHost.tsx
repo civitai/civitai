@@ -622,6 +622,19 @@ export function PageBlockHost({
   //   So the metric's denominator stays "page loads" and its numerator stays "page
   //   loads the platform could not recover on its own" — which is the thing worth
   //   paging on. Manual user retries are a separate, currently-unmeasured signal.
+  //
+  // 🔴 TWO KNOWN COSTS OF THAT CHOICE, stated so they aren't rediscovered as bugs:
+  //   1. UNMOUNT DURING THE SEQUENCE EMITS NOTHING. A user who navigates away
+  //      while a retry is pending produces no beacon at all, where before they
+  //      produced an `error`. The window grew from ~0s to the length of the whole
+  //      bounded sequence. There is no unmount flush today (adding one is the
+  //      obvious follow-up — `sendBlockRender` already sets `keepalive:true`
+  //      precisely so a beacon survives unload).
+  //   2. THE `error` NUMERATOR NOW MEANS SOMETHING NARROWER — "failures the
+  //      platform could not self-recover", not "failures". A regression that only
+  //      increases TRANSIENT launch failures is invisible to a ratio built on it.
+  //      The `BlockRenderFailureRate` alert in datapacket-talos still describes it
+  //      the old way; its wording needs a companion update.
   useEffect(() => {
     if (status !== 'timeout' && status !== 'fatal' && status !== 'no_token' && status !== 'error')
       return;
@@ -2893,10 +2906,19 @@ export function PageBlockHost({
                       identical "Starting …" that looks like nothing happened.
                       This is the half of the reported defect where pressing
                       Retry against a still-down host silently waited ~10s and
-                      re-rendered the same error. */}
-                  {reloadNonce > 0
-                    ? `Retrying ${launchName}… (attempt ${reloadNonce + 1})`
-                    : `Starting ${launchName}…`}
+                      re-rendered the same error.
+
+                      Deliberately NO "of N" here, and no attempt NUMBER: the
+                      fallback's pending-retry line counts AUTOMATIC attempts
+                      ("attempt 1 of 2") while this counts EVERY re-attempt
+                      including manual ones. Showing both numbers put two
+                      different counters two seconds apart on the same surface —
+                      "attempt 1 of 2" followed by "attempt 2", and after a few
+                      manual clicks an "attempt 7" against a stated maximum of 2.
+                      The bounded count belongs to the terminal card, which is
+                      where the budget is meaningful; this line only has to say
+                      that something is happening again. */}
+                  {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
                 </Text>
               </Stack>
             </Center>

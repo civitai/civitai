@@ -350,16 +350,33 @@ export function pageFallbackReason(status: PageHostStatus): PageFallbackReason |
 // The budgets are per MOUNT and are NOT refilled by a manual Retry — once spent,
 // every subsequent failure goes straight to the definitive terminal state.
 
-/** Maximum AUTOMATIC load re-attempts per host mount (the initial load excluded). */
+/**
+ * Maximum AUTOMATIC load re-attempts per host mount (the initial load excluded).
+ *
+ * 🔴 ROLLBACK: setting this to 0 cleanly disables auto-retry entirely — the
+ * decision returns `none` for every status, so the terminal fallback renders
+ * immediately with the prominent manual Retry and `autoRetriesSpent` stays 0 (no
+ * false "we already retried" copy). It is the one-line kill switch; there is no
+ * feature flag on this path.
+ */
 export const MAX_AUTO_RETRIES = 2;
 
 /**
  * Maximum automatic attempts that may spend a token RE-MINT. Auth terminals
  * (`error`/`no_token`) can only be recovered by re-minting — a local remount can
  * never clear them — so this is the specific cap that protects the rate-limited
- * mint endpoint from an automatic loop.
+ * `/api/v1/block-tokens` (60/min per user+instance) from an automatic loop.
+ *
+ * 🔴 MUST STAY STRICTLY BELOW `MAX_AUTO_RETRIES`, and there is a test that pins
+ * exactly that. Because `reminted` is a SUBSET of `attempts` (every re-minting
+ * attempt also increments `attempts`), the invariant `reminted <= attempts` holds
+ * — so if the two caps were EQUAL the total-attempt check, which runs first,
+ * would always fire first and this cap would be unreachable dead code: a stated
+ * safety limit that provably cannot bind. Keeping it strictly lower makes it the
+ * binding constraint on the auth path (the expensive one), while non-auth
+ * terminals — which cost nothing but a remount — still get the full budget.
  */
-export const MAX_AUTO_REMINTS = 2;
+export const MAX_AUTO_REMINTS = 1;
 
 /**
  * Backoff before automatic attempt N (index 0 = the first auto-retry). Modest and

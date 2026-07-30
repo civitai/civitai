@@ -241,15 +241,15 @@ describe('PageBlockHost auto-retry — fires from a terminal state, bounded and 
     expect(fallbackEl()).not.toBeNull();
 
     // …then the host re-attempts on its own: back to the loading surface, with a
-    // fresh iframe, and copy that names the attempt (the "did the button do
-    // anything?" half of the report).
+    // fresh iframe, and copy that says a RETRY is under way rather than the
+    // identical "Starting …" (the "did the button do anything?" half of the
+    // report). Deliberately no attempt NUMBER here — the bounded count lives on
+    // the terminal card, so the two surfaces can't show disagreeing counters.
     await vi.waitFor(() => expect(page.getByTestId('app-page-loading').query()).not.toBeNull(), {
       timeout: FIRST_BACKOFF_MS + 4_000,
       interval: 50,
     });
-    await expect
-      .element(page.getByText(/Retrying Budgeted Generator… \(attempt 2\)/))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Retrying Budgeted Generator…')).toBeInTheDocument();
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     expect(el.getAttribute('data-block-ready')).toBe('false');
   }, 20_000);
@@ -366,6 +366,12 @@ describe('PageBlockHost auto-retry — the caps (unbounded loops are the failure
     // would burn it.
     await sleep(AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1] + 3_000);
     expect(onRemint).toHaveBeenCalledTimes(MAX_AUTO_REMINTS);
+    // 🔴 …and it stopped because of the RE-MINT cap specifically, not the total
+    // attempt cap: the auth path used strictly fewer attempts than the budget it
+    // would have had on a non-auth terminal. Without this, the test would still
+    // pass if the re-mint cap were unreachable dead code and the attempt cap were
+    // doing all the work.
+    expect(MAX_AUTO_REMINTS).toBeLessThan(MAX_AUTO_RETRIES);
   }, 45_000);
 
   test('after exhaustion the host settles on a DEFINITIVE terminal state with a PROMINENT manual Retry', async () => {
@@ -391,9 +397,15 @@ describe('PageBlockHost auto-retry — the caps (unbounded loops are the failure
     const btn = retryButton();
     expect(btn).not.toBeNull();
     expect(btn?.getAttribute('data-block-fallback-retry-prominent')).toBe('true');
-    await expect
-      .element(page.getByText(`We already retried ${MAX_AUTO_RETRIES} times automatically.`))
-      .toBeInTheDocument();
+    // …and it states honestly how many automatic attempts were actually spent
+    // (asserted off the rendered count, not a hardcoded cap — the auth path stops
+    // at the RE-MINT cap, which is strictly below the attempt cap).
+    const spentNote = document.querySelector('[data-block-fallback-autoretry-spent]');
+    expect(spentNote).not.toBeNull();
+    expect(spentNote?.getAttribute('data-block-fallback-autoretry-spent')).toBe(
+      String(MAX_AUTO_REMINTS)
+    );
+    expect(spentNote?.textContent).toMatch(/already retried/);
     // Still reachable by its stable accessible name, and still inside the chrome.
     await expect.element(page.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();

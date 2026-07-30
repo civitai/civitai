@@ -368,19 +368,53 @@ describe('decideAutoRetry — the bounded automatic recovery loop', () => {
     }
   });
 
-  it('BOUNDS re-mints at MAX_AUTO_REMINTS — the rate-limit guard', () => {
-    // At the cap, an auth terminal STOPS (a remount alone can never clear an
-    // auth failure, so a budget-less attempt would be a guaranteed re-fail).
-    expect(
-      decideAutoRetry({ ...base, status: 'error', attempts: 0, reminted: MAX_AUTO_REMINTS }).kind
-    ).toBe('none');
-    expect(
-      decideAutoRetry({ ...base, status: 'no_token', attempts: 0, reminted: MAX_AUTO_REMINTS }).kind
-    ).toBe('none');
-    // …while a NON-auth terminal is unaffected by the re-mint budget.
-    expect(
-      decideAutoRetry({ ...base, status: 'timeout', attempts: 0, reminted: MAX_AUTO_REMINTS }).kind
-    ).toBe('retry');
+  it('keeps the re-mint cap STRICTLY below the attempt cap, so it can actually bind', () => {
+    // 🔴 THE DEAD-CAP GUARD. `reminted` is a SUBSET of `attempts` (every
+    // re-minting attempt increments both), so `reminted <= attempts` always
+    // holds. The total-attempt check runs FIRST — therefore if the two caps were
+    // equal, `reminted >= MAX_AUTO_REMINTS` could only ever be true when
+    // `attempts >= MAX_AUTO_RETRIES` had already returned 'none', and the
+    // re-mint cap would be unreachable dead code: a stated safety limit that
+    // provably cannot fire. This test fails the moment that happens again.
+    expect(MAX_AUTO_REMINTS).toBeLessThan(MAX_AUTO_RETRIES);
+    expect(MAX_AUTO_REMINTS).toBeGreaterThan(0);
+  });
+
+  it('BOUNDS re-mints at MAX_AUTO_REMINTS from a REACHABLE state — the rate-limit guard', () => {
+    // Reachable by construction: walk the auth path from a fresh mount and stop
+    // at the first refusal, rather than asserting on a hand-made state the
+    // runtime can never produce (which is how this cap was previously "tested"
+    // while being unreachable).
+    let attempts = 0;
+    let reminted = 0;
+    const remintedAt: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const d = decideAutoRetry({ ...base, status: 'error', attempts, reminted });
+      if (d.kind === 'none') break;
+      expect(d.remint).toBe(true); // the auth path always re-mints
+      remintedAt.push(d.attempt);
+      attempts += 1;
+      reminted += 1;
+    }
+    // The AUTH path stops at the RE-MINT cap, strictly before the attempt cap.
+    expect(reminted).toBe(MAX_AUTO_REMINTS);
+    expect(attempts).toBeLessThan(MAX_AUTO_RETRIES);
+    expect(remintedAt).toHaveLength(MAX_AUTO_REMINTS);
+    // And the refusal is genuinely the re-mint cap, not the attempt cap: the
+    // SAME budget on a non-auth terminal still has attempts left.
+    expect(decideAutoRetry({ ...base, status: 'error', attempts, reminted }).kind).toBe('none');
+    expect(decideAutoRetry({ ...base, status: 'timeout', attempts, reminted }).kind).toBe('retry');
+  });
+
+  it('gives NON-auth terminals the full attempt budget (the re-mint cap does not bind them)', () => {
+    let attempts = 0;
+    for (let i = 0; i < 10; i++) {
+      const d = decideAutoRetry({ ...base, status: 'timeout', attempts, reminted: 0 });
+      if (d.kind === 'none') break;
+      expect(d.remint).toBe(false);
+      attempts += 1;
+    }
+    expect(attempts).toBe(MAX_AUTO_RETRIES);
   });
 
   it('does not auto-retry an auth terminal when no re-mint is wired', () => {
