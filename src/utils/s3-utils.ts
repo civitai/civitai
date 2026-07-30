@@ -777,9 +777,14 @@ function isNotFoundError(e: unknown) {
  * 🔴 `abortSignal` is how a caller on a USER-FACING path bounds this. The client is built with
  * SDK-default retries and no request timeout, so an unbounded probe against a degraded backend
  * turns a guard into a hang. The signal is passed once and shared by every retry attempt, so it
- * caps the WHOLE call, not each attempt. An abort surfaces as a plain `AbortError` (no
- * `$metadata`), which is not a not-found shape — so it lands on `null` and the caller fails open,
- * exactly like any other "could not consult the bucket" outcome.
+ * bounds every network attempt — but it is NOT a wall-clock cap on the call: the SDK's retry
+ * middleware sleeps between attempts with a plain, non-abort-aware timer, so a deadline landing
+ * mid-backoff lets that sleep run to completion and only the NEXT attempt short-circuits.
+ * Worst-case wall time is therefore the budget plus one backoff. (Measured against the installed
+ * SDK: a 300 ms budget with a ~5 s backoff in flight returned in ~4.7 s.) An abort surfaces as a
+ * plain `AbortError` (no `$metadata`), which is not a not-found shape and is not classified
+ * retryable — so the call ends there, lands on `null`, and the caller fails open exactly like any
+ * other "could not consult the bucket" outcome.
  */
 export async function checkFileExists(
   key: string,
