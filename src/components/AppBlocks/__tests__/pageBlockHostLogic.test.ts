@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
+  AUTO_RETRY_BACKOFF_MS,
+  decideAutoRetry,
   grantedPageScopes,
+  isAuthTerminalStatus,
+  isAutoRetryableStatus,
+  MAX_AUTO_REMINTS,
+  MAX_AUTO_RETRIES,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
@@ -292,5 +298,117 @@ describe('resolveImageUploadRequest (OPEN_IMAGE_UPLOAD — requestId drop rule +
     expect(resolveImageUploadRequest(null)).toBeNull();
     expect(resolveImageUploadRequest('u3')).toBeNull();
     expect(resolveImageUploadRequest(123)).toBeNull();
+  });
+});
+
+/**
+ * BOUNDED AUTO-RETRY (launch-failure recovery).
+ *
+ * These pin the BOUNDS, in the node env, without paying the host's real 10s/15s
+ * timer windows. The two hard constraints:
+ *   - the automatic loop is BOUNDED (never unbounded against a down host);
+ *   - the RE-MINT count is bounded specifically, because `/api/v1/block-tokens`
+ *     is rate-limited (60/min) and only auth terminals re-mint.
+ * The browser suite (PageBlockHostAutoRetry.browser.test.tsx) drives the same
+ * bounds through the REAL host.
+ */
+describe('decideAutoRetry — the bounded automatic recovery loop', () => {
+  const base = { attempts: 0, reminted: 0, canRemint: true };
+
+  it('never auto-retries a non-terminal status', () => {
+    expect(decideAutoRetry({ ...base, status: 'loading' }).kind).toBe('none');
+    expect(decideAutoRetry({ ...base, status: 'ready' }).kind).toBe('none');
+  });
+
+  it('schedules a retry from EVERY terminal reason', () => {
+    for (const status of ['timeout', 'fatal', 'no_token', 'error'] as PageHostStatus[]) {
+      const d = decideAutoRetry({ ...base, status });
+      expect(d.kind, `status=${status}`).toBe('retry');
+    }
+  });
+
+  it('BOUNDS the loop at MAX_AUTO_RETRIES — attempt N+1 is never scheduled', () => {
+    // Walk the whole budget for a non-auth terminal (no re-mint involved).
+    for (let attempts = 0; attempts < MAX_AUTO_RETRIES; attempts++) {
+      const d = decideAutoRetry({ ...base, attempts, status: 'timeout' });
+      expect(d.kind).toBe('retry');
+      if (d.kind === 'retry') expect(d.attempt).toBe(attempts + 1);
+    }
+    // Budget spent → SETTLED. This is the assertion that fails if the cap is
+    // removed (an unbounded loop against a down host).
+    expect(decideAutoRetry({ ...base, attempts: MAX_AUTO_RETRIES, status: 'timeout' }).kind).toBe(
+      'none'
+    );
+    expect(
+      decideAutoRetry({ ...base, attempts: MAX_AUTO_RETRIES + 5, status: 'timeout' }).kind
+    ).toBe('none');
+  });
+
+  it('BACKS OFF between attempts (each delay strictly greater than the last)', () => {
+    const delays: number[] = [];
+    for (let attempts = 0; attempts < MAX_AUTO_RETRIES; attempts++) {
+      const d = decideAutoRetry({ ...base, attempts, status: 'timeout' });
+      if (d.kind === 'retry') delays.push(d.delayMs);
+    }
+    expect(delays).toHaveLength(MAX_AUTO_RETRIES);
+    expect(delays).toEqual([...AUTO_RETRY_BACKOFF_MS].slice(0, MAX_AUTO_RETRIES));
+    for (let i = 1; i < delays.length; i++) expect(delays[i]).toBeGreaterThan(delays[i - 1]);
+    // Every delay is a real, positive pause — a 0ms "backoff" would be a hot loop.
+    for (const d of delays) expect(d).toBeGreaterThan(0);
+  });
+
+  it('marks ONLY the auth terminals as re-minting (the rate-limited path)', () => {
+    for (const status of ['no_token', 'error'] as PageHostStatus[]) {
+      const d = decideAutoRetry({ ...base, status });
+      expect(d.kind === 'retry' && d.remint, `status=${status}`).toBe(true);
+    }
+    for (const status of ['timeout', 'fatal'] as PageHostStatus[]) {
+      const d = decideAutoRetry({ ...base, status });
+      expect(d.kind === 'retry' && d.remint, `status=${status}`).toBe(false);
+    }
+  });
+
+  it('BOUNDS re-mints at MAX_AUTO_REMINTS — the rate-limit guard', () => {
+    // At the cap, an auth terminal STOPS (a remount alone can never clear an
+    // auth failure, so a budget-less attempt would be a guaranteed re-fail).
+    expect(
+      decideAutoRetry({ ...base, status: 'error', attempts: 0, reminted: MAX_AUTO_REMINTS }).kind
+    ).toBe('none');
+    expect(
+      decideAutoRetry({ ...base, status: 'no_token', attempts: 0, reminted: MAX_AUTO_REMINTS }).kind
+    ).toBe('none');
+    // …while a NON-auth terminal is unaffected by the re-mint budget.
+    expect(
+      decideAutoRetry({ ...base, status: 'timeout', attempts: 0, reminted: MAX_AUTO_REMINTS }).kind
+    ).toBe('retry');
+  });
+
+  it('does not auto-retry an auth terminal when no re-mint is wired', () => {
+    // `canRemint:false` (no onRetryToken) → a remount is a guaranteed re-fail.
+    expect(decideAutoRetry({ ...base, canRemint: false, status: 'error' }).kind).toBe('none');
+    expect(decideAutoRetry({ ...base, canRemint: false, status: 'no_token' }).kind).toBe('none');
+    // Non-auth terminals still retry — they never needed a re-mint.
+    expect(decideAutoRetry({ ...base, canRemint: false, status: 'timeout' }).kind).toBe('retry');
+    expect(decideAutoRetry({ ...base, canRemint: false, status: 'fatal' }).kind).toBe('retry');
+  });
+
+  it('classifies terminals consistently (auto-retryable / auth) ', () => {
+    expect(isAutoRetryableStatus('loading')).toBe(false);
+    expect(isAutoRetryableStatus('ready')).toBe(false);
+    expect(isAutoRetryableStatus('timeout')).toBe(true);
+    expect(isAutoRetryableStatus('fatal')).toBe(true);
+    expect(isAutoRetryableStatus('no_token')).toBe(true);
+    expect(isAutoRetryableStatus('error')).toBe(true);
+
+    expect(isAuthTerminalStatus('error')).toBe(true);
+    expect(isAuthTerminalStatus('no_token')).toBe(true);
+    expect(isAuthTerminalStatus('timeout')).toBe(false);
+    expect(isAuthTerminalStatus('fatal')).toBe(false);
+  });
+
+  it('the backoff table covers the whole attempt budget', () => {
+    // A shorter table would silently reuse the last delay; assert they line up so
+    // a future bump of MAX_AUTO_RETRIES has to extend the table deliberately.
+    expect(AUTO_RETRY_BACKOFF_MS.length).toBeGreaterThanOrEqual(MAX_AUTO_RETRIES);
   });
 });

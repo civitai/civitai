@@ -325,3 +325,106 @@ export function pageFallbackReason(status: PageHostStatus): PageFallbackReason |
       return 'timeout';
   }
 }
+
+// ── BOUNDED AUTO-RETRY (launch-failure recovery) ─────────────────────────────
+//
+// The reported defect was NOT that the retry LOGIC was broken — it works — but
+// that a transient launch failure required the user to notice and press a
+// button, and the button was easy to miss ("there might have been a retry
+// button but I didn't notice — I did a full page reload"). So the host now
+// re-attempts the load ITSELF a bounded number of times, and only after that
+// budget is spent does it settle on a definitive terminal state whose manual
+// Retry is made prominent.
+//
+// 🔴 THE TERMINAL STATE IS NEVER DELAYED OR MASKED. The host renders the real
+// terminal `BlockFallback` the instant a terminal status is reached; the pending
+// auto-retry is surfaced as ADDITIONAL copy inside that same fallback. There is
+// no "keep spinning while we quietly retry" state — that would recreate the
+// silent-blank failure class this codebase has fought repeatedly.
+//
+// 🔴 BOUNDED, ALWAYS. Two independent caps:
+//   - MAX_AUTO_RETRIES bounds the total automatic attempts per host mount.
+//   - MAX_AUTO_REMINTS bounds how many of those may spend a token RE-MINT.
+//     `/api/v1/block-tokens` is rate-limited (60/min per user+instance), and an
+//     unbounded auth-failure loop is exactly the shape that would burn it.
+// The budgets are per MOUNT and are NOT refilled by a manual Retry — once spent,
+// every subsequent failure goes straight to the definitive terminal state.
+
+/** Maximum AUTOMATIC load re-attempts per host mount (the initial load excluded). */
+export const MAX_AUTO_RETRIES = 2;
+
+/**
+ * Maximum automatic attempts that may spend a token RE-MINT. Auth terminals
+ * (`error`/`no_token`) can only be recovered by re-minting — a local remount can
+ * never clear them — so this is the specific cap that protects the rate-limited
+ * mint endpoint from an automatic loop.
+ */
+export const MAX_AUTO_REMINTS = 2;
+
+/**
+ * Backoff before automatic attempt N (index 0 = the first auto-retry). Modest and
+ * exponential-ish: long enough for a transient blip/deploy-drain to clear, short
+ * enough that a real failure settles quickly. Indices past the end reuse the last
+ * value (defensive — today the array covers MAX_AUTO_RETRIES exactly).
+ */
+export const AUTO_RETRY_BACKOFF_MS: readonly number[] = [2_000, 5_000];
+
+/** Terminal statuses a bounded auto-retry may attempt to recover from. */
+export function isAutoRetryableStatus(status: PageHostStatus): boolean {
+  return (
+    status === 'timeout' || status === 'fatal' || status === 'no_token' || status === 'error'
+  );
+}
+
+/**
+ * AUTH terminals: the iframe never received a usable token. `token`/`tokenError`
+ * are PROPS owned upstream (useBlockToken in the route), and `shouldStartInit`
+ * gates on `hasToken` — so a local remount alone can NEVER recover these; only a
+ * re-mint can. Mirrors the manual-Retry branch in PageBlockHost.handleRetry.
+ */
+export function isAuthTerminalStatus(status: PageHostStatus): boolean {
+  return status === 'error' || status === 'no_token';
+}
+
+export type AutoRetryDecision =
+  | { kind: 'none' }
+  /** Schedule attempt `attempt` (1-based) after `delayMs`; `remint` re-mints the token. */
+  | { kind: 'retry'; attempt: number; delayMs: number; remint: boolean };
+
+/**
+ * Decide whether the host should schedule another AUTOMATIC load attempt.
+ *
+ * Pure so every bound is unit-testable without driving the real 10s/15s timer
+ * windows, and so the two consumers can never disagree: the scheduling effect
+ * (which arms the backoff timer) and the render-FAILURE beacon (which must stay
+ * silent while the host has not settled — see the beacon-semantics note in
+ * PageBlockHost) both read THIS function.
+ *
+ * Returns `{kind:'none'}` — i.e. the host has SETTLED on this terminal state — when:
+ *   - the status is non-terminal (loading/ready) or not auto-retryable;
+ *   - the total attempt budget is spent;
+ *   - the status is an AUTH terminal and either (a) the re-mint budget is spent,
+ *     or (b) no re-mint is wired (`canRemint:false`). In both cases a further
+ *     attempt is a GUARANTEED re-fail (a remount can't change an upstream token),
+ *     so retrying would waste the user's time and, in case (a), the rate limit.
+ */
+export function decideAutoRetry(args: {
+  status: PageHostStatus;
+  /** Automatic attempts already performed this mount. */
+  attempts: number;
+  /** Automatic attempts already performed that spent a re-mint. */
+  reminted: number;
+  /** Whether the host actually has a token re-mint available (`onRetryToken`). */
+  canRemint: boolean;
+}): AutoRetryDecision {
+  const { status, attempts, reminted, canRemint } = args;
+  if (!isAutoRetryableStatus(status)) return { kind: 'none' };
+  if (attempts >= MAX_AUTO_RETRIES) return { kind: 'none' };
+
+  const remint = isAuthTerminalStatus(status);
+  if (remint && (!canRemint || reminted >= MAX_AUTO_REMINTS)) return { kind: 'none' };
+
+  const delayMs =
+    AUTO_RETRY_BACKOFF_MS[attempts] ?? AUTO_RETRY_BACKOFF_MS[AUTO_RETRY_BACKOFF_MS.length - 1];
+  return { kind: 'retry', attempt: attempts + 1, delayMs, remint };
+}
