@@ -11,13 +11,17 @@ import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   decideAutoRetry,
+  advanceReviewConsentLatch,
+  buildReviewConsentNotification,
   grantedPageScopes,
+  INITIAL_REVIEW_CONSENT_LATCH,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
+  resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
@@ -49,7 +53,7 @@ import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { showNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -694,6 +698,12 @@ export function PageBlockHost({
     });
   }, [status, autoRetrySettled, appBlockId, blockInstanceId]);
 
+  // MOD REVIEW SANDBOX — anti-spam latch for the reduced-permissions notice in
+  // the consent handler below. Bounded to at most TWO per host MOUNT (one generic
+  // + one scope-named upgrade — see `advanceReviewConsentLatch`). The review
+  // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
+  // gets its own budget, and the notification ids are mode-specific to match.
+  const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when
@@ -713,10 +723,6 @@ export function PageBlockHost({
   // the void and the block hung on "confirm in the Civitai dialog".
   useEffect(() => {
     const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', (payload) => {
-      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
-      // let untrusted review code pop a permission modal at the mod. Fire-and-
-      // forget ⇒ dropping it never hangs the block.
-      if (reviewMode) return;
       // PageBlockHost's local Status carries an extra terminal `'error'` variant
       // (a hard mint failure) the shared gate's HostStatus union doesn't model.
       // The gate only ever grants when status === 'ready', and `'error'` is a
@@ -727,6 +733,53 @@ export function PageBlockHost({
       // Only act on a post-handshake request; a pre-handshake block never gets a
       // modal OR a toast (same posture as the consent gate itself).
       if (gateStatus !== 'ready') return;
+
+      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
+      // let untrusted review code pop a permission modal at the mod. That stays
+      // absolute; the request is still fire-and-forget (dropping the GRANT never
+      // hangs the block). What changed: dropping it SILENTLY meant the reviewer
+      // got nothing at all — no modal, no toast, no error — while the app parked
+      // forever on its consent card, which reads as "this app is broken" rather
+      // than "the preview deliberately withholds this permission". So review mode
+      // now emits a PASSIVE, non-interactive notice (never a modal, nothing to
+      // click, no scope is granted) pointing at the existing opt-in escape hatch.
+      if (reviewMode) {
+        const notice = resolveReviewConsentNotice(payload?.scopes, grantedScopes);
+        if (!notice.notify) return;
+        // 🔴 ANTI-SPAM (required, not a nicety): the reviewed app is UNTRUSTED
+        // code and can post REQUEST_CONSENT in a loop, so one toast per message
+        // would let a hostile submission carpet-bomb the reviewing mod's screen
+        // (and bury the review chrome). The latch caps this at TWO notices per
+        // host mount — one generic, plus at most one upgrade to the scope-NAMED
+        // copy. It is NOT a plain "already notified" boolean: the SDK's `scopes`
+        // hint is optional, so a hint-less request on load would otherwise win
+        // the latch and permanently suppress the later, informative one.
+        const { show, next } = advanceReviewConsentLatch(
+          reviewConsentLatchRef.current,
+          notice.scopes.length > 0
+        );
+        reviewConsentLatchRef.current = next;
+        if (!show) return;
+        // `notice.scopes` is filtered to the known block-scope vocabulary, so no
+        // attacker-controlled text can reach this string; Mantine renders
+        // `message` as React text (escaped) — never as HTML.
+        const notification = buildReviewConsentNotification({
+          appBlockId,
+          runForReal: reviewRunForReal,
+          scopes: notice.scopes,
+        });
+        // Upgrade path only: retire the generic notice this one replaces, so the
+        // reviewer sees ONE notice, not a stack. A no-op when it already closed.
+        if (notification.supersedesId) hideNotification(notification.supersedesId);
+        showNotification({
+          id: notification.id,
+          color: 'yellow',
+          title: notification.title,
+          message: notification.message,
+        });
+        return;
+      }
+
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
         dialogStore.trigger({
@@ -772,6 +825,7 @@ export function PageBlockHost({
     appName,
     onConsentGranted,
     reviewMode,
+    reviewRunForReal,
   ]);
 
   // Deep-link bridge — block requests in-page navigation. The block may push a

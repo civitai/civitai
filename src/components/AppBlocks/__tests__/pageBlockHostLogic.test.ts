@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  advanceReviewConsentLatch,
   AUTO_RETRY_BACKOFF_MS,
+  buildReviewConsentNotification,
   decideAutoRetry,
   grantedPageScopes,
+  INITIAL_REVIEW_CONSENT_LATCH,
   isAuthTerminalStatus,
   isAutoRetryableStatus,
   MAX_AUTO_REMINTS,
@@ -11,6 +14,7 @@ import {
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
   resolveResourcePickerRequest,
+  resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
@@ -109,6 +113,214 @@ describe('resolveUngrantableConsentScopes (Issue B — un-grantable dev-preview 
     expect(
       resolveUngrantableConsentScopes(['apps:storage:read'], ['models:read:self'], undefined)
     ).toEqual(['apps:storage:read']);
+  });
+});
+
+describe('resolveReviewConsentNotice (mod review — silent REQUEST_CONSENT → visible notice)', () => {
+  const granted = ['models:read:self', 'user:read:self', 'collections:read:self'];
+
+  it('notifies and NAMES the un-granted scopes the review mint stripped', () => {
+    expect(resolveReviewConsentNotice(['buzz:read:self'], granted)).toEqual({
+      notify: true,
+      scopes: ['buzz:read:self'],
+    });
+  });
+
+  it('notifies with NO hint at all — the regression: the fire-and-forget SDK call sends none', () => {
+    // Unlike the prod path (which stays silent because it cannot tell "already
+    // granted" from "clamped"), review has nothing to tell apart: consent can
+    // never be granted here, so a hint-less request is still a dead end.
+    expect(resolveReviewConsentNotice(undefined, granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice([], granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice('nope', granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice([1, null, ''], granted)).toEqual({
+      notify: true,
+      scopes: [],
+    });
+  });
+
+  it('stays SILENT for the benign already-granted re-request (nothing is actually blocked)', () => {
+    expect(resolveReviewConsentNotice(['models:read:self'], granted)).toEqual({
+      notify: false,
+      scopes: [],
+    });
+    expect(resolveReviewConsentNotice(['models:read:self', 'user:read:self'], granted)).toEqual({
+      notify: false,
+      scopes: [],
+    });
+  });
+
+  it('🔴 drops UNKNOWN scope strings from the mod-facing set (untrusted manifest text)', () => {
+    // The hint comes from the reviewed app's own frame. Only the fixed platform
+    // vocabulary may ever reach a string rendered at the moderator.
+    const out = resolveReviewConsentNotice(
+      ['<img src=x onerror=alert(1)>', 'totally:made:up', 'buzz:read:self'],
+      granted
+    );
+    expect(out.notify).toBe(true);
+    expect(out.scopes).toEqual(['buzz:read:self']);
+  });
+
+  it('still notifies (generically) when EVERY un-granted scope is unknown', () => {
+    const out = resolveReviewConsentNotice(['totally:made:up'], granted);
+    expect(out).toEqual({ notify: true, scopes: [] });
+  });
+
+  it('dedupes + sorts the named scopes and ignores the ones already granted', () => {
+    const out = resolveReviewConsentNotice(
+      ['social:tip:self', 'buzz:read:self', 'social:tip:self', 'models:read:self'],
+      granted
+    );
+    expect(out.scopes).toEqual(['buzz:read:self', 'social:tip:self']);
+  });
+
+  it('🔴 drops inherited Object.prototype keys (isKnownBlockScope prototype-chain bypass)', () => {
+    // `payload.scopes` is untrusted runtime input from the reviewed app's frame
+    // and reaches NO regex shape-check on this path (unlike the manifest
+    // validator's SCOPE_RE). While `isKnownBlockScope` used `in`, every inherited
+    // Object.prototype key answered "known scope" and would have been printed
+    // verbatim into the moderator-facing toast.
+    expect(resolveReviewConsentNotice(['constructor', '__proto__'], granted).scopes).toEqual([]);
+    expect(
+      resolveReviewConsentNotice(
+        ['toString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf', 'buzz:read:self'],
+        granted
+      ).scopes
+    ).toEqual(['buzz:read:self']);
+    // Still a real, un-grantable request — the mod gets the GENERIC copy, not silence.
+    expect(resolveReviewConsentNotice(['constructor'], granted)).toEqual({
+      notify: true,
+      scopes: [],
+    });
+  });
+});
+
+describe('advanceReviewConsentLatch (🔴 anti-spam bound + the generic→named upgrade)', () => {
+  it('shows the first notice of either kind', () => {
+    expect(advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, false)).toEqual({
+      show: true,
+      next: { shown: true, named: false },
+    });
+    expect(advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, true)).toEqual({
+      show: true,
+      next: { shown: true, named: true },
+    });
+  });
+
+  it('allows exactly ONE upgrade generic → named (the first-notice-wins bug)', () => {
+    // The SDK's `scopes` hint is OPTIONAL, so a hint-less request on load is an
+    // ordinary path. Under a plain boolean latch it won the latch and the app's
+    // later, specific request was suppressed for the rest of the mount — the mod
+    // never learned WHICH permission was blocked.
+    const afterGeneric = advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, false).next;
+    const upgrade = advanceReviewConsentLatch(afterGeneric, true);
+    expect(upgrade.show).toBe(true);
+    expect(upgrade.next).toEqual({ shown: true, named: true });
+  });
+
+  it('suppresses a repeat GENERIC after a generic (it adds nothing)', () => {
+    const afterGeneric = advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, false).next;
+    expect(advanceReviewConsentLatch(afterGeneric, false)).toEqual({
+      show: false,
+      next: afterGeneric,
+    });
+  });
+
+  it('suppresses EVERYTHING once a named notice has been shown (no downgrade, no repeat)', () => {
+    const afterNamed = advanceReviewConsentLatch(INITIAL_REVIEW_CONSENT_LATCH, true).next;
+    expect(advanceReviewConsentLatch(afterNamed, true).show).toBe(false);
+    expect(advanceReviewConsentLatch(afterNamed, false).show).toBe(false);
+  });
+
+  it('🔴 BOUND: a hostile flood of ANY mix of requests emits at most TWO notices', () => {
+    // This is the security property the latch exists for — an untrusted app can
+    // post REQUEST_CONSENT in a loop. Exercise every ordering of a long flood.
+    const floods: boolean[][] = [
+      Array.from({ length: 200 }, () => true),
+      Array.from({ length: 200 }, () => false),
+      Array.from({ length: 200 }, (_, i) => i % 2 === 0),
+      Array.from({ length: 200 }, (_, i) => i % 2 === 1),
+      Array.from({ length: 200 }, () => Math.random() < 0.5),
+    ];
+    for (const flood of floods) {
+      let latch = INITIAL_REVIEW_CONSENT_LATCH;
+      let shows = 0;
+      for (const isNamed of flood) {
+        const r = advanceReviewConsentLatch(latch, isNamed);
+        latch = r.next;
+        if (r.show) shows++;
+      }
+      expect(shows).toBeLessThanOrEqual(2);
+      expect(shows).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('never mutates the latch it is given', () => {
+    const latch = { shown: false, named: false };
+    advanceReviewConsentLatch(latch, true);
+    expect(latch).toEqual({ shown: false, named: false });
+    expect(INITIAL_REVIEW_CONSENT_LATCH).toEqual({ shown: false, named: false });
+  });
+});
+
+describe('buildReviewConsentNotification (🔴 mode-specific ids + honest Run-for-real copy)', () => {
+  const build = (runForReal: boolean, scopes: string[] = []) =>
+    buildReviewConsentNotification({ appBlockId: 'pubreq_X', runForReal, scopes });
+
+  it('🔴 render-only and run-for-real produce DISTINCT ids', () => {
+    // Mantine no-ops showNotification for an id already displayed/queued (default
+    // autoClose 4000ms). A single shared id meant: notice fires in render-only →
+    // mod clicks "Run for real…" → host remounts → latch resets by design → the
+    // app re-requests within 4s → the run-for-real notice is SILENTLY SWALLOWED,
+    // re-creating the original silent-drop bug in the other mode.
+    expect(build(false).id).not.toBe(build(true).id);
+    expect(build(false, ['buzz:read:self']).id).not.toBe(build(true, ['buzz:read:self']).id);
+    expect(build(false).id).toBe('review-consent-pubreq_X-render');
+    expect(build(true).id).toBe('review-consent-pubreq_X-real');
+  });
+
+  it('🔴 the generic and the named upgrade use DISTINCT ids, and the upgrade supersedes the generic', () => {
+    // Same dedupe trap in the other direction: reusing the generic id would make
+    // the upgrade a no-op while the generic is still displayed, and
+    // updateNotification would drop it once the generic had auto-closed.
+    for (const runForReal of [false, true]) {
+      const generic = build(runForReal);
+      const named = build(runForReal, ['buzz:read:self']);
+      expect(named.id).not.toBe(generic.id);
+      expect(generic.supersedesId).toBeNull();
+      expect(named.supersedesId).toBe(generic.id);
+    }
+  });
+
+  it('names the scopes when it has them, and falls back to generic copy when it does not', () => {
+    expect(build(false, ['buzz:read:self', 'social:tip:self']).message).toContain(
+      'buzz:read:self, social:tip:self'
+    );
+    expect(build(false).message).toContain('doesn’t have here');
+  });
+
+  it('🔴 render-only copy states that "Run for real…" spends the MODERATOR\'S OWN Buzz', () => {
+    // Untrusted code can emit this toast unprompted right after BLOCK_READY, and
+    // it is the one surface pointing a reviewer at the opt-in. The opt-in grants
+    // `ai:write:budgeted` against the mod's OWN account under a session Buzz cap,
+    // so the copy must not read as a free "make it work" button.
+    const message = build(false, ['buzz:read:self']).message;
+    expect(message).toContain('Run for real');
+    expect(message).toContain('your own account and Buzz');
+  });
+
+  it('run-for-real copy does NOT point at the opt-in the mod already took', () => {
+    const message = build(true, ['buzz:read:self']).message;
+    expect(message).not.toContain('Run for real');
+    expect(message).not.toContain('your own account and Buzz');
+  });
+
+  it('keeps a stable, non-empty title in every variant', () => {
+    for (const runForReal of [false, true]) {
+      for (const scopes of [[], ['buzz:read:self']]) {
+        expect(build(runForReal, scopes).title).toBe('Permission unavailable in review');
+      }
+    }
   });
 });
 

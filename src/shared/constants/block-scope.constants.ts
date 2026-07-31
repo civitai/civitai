@@ -133,8 +133,33 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  */
 export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
 
+/**
+ * Membership test against the authoritative scope vocabulary.
+ *
+ * 🔴 OWN-PROPERTY ONLY — deliberately `hasOwnProperty`, never `in`. `in` walks
+ * the prototype chain, so `BLOCK_SCOPE_TO_OAUTH_BIT` being a plain object
+ * literal made 12 inherited `Object.prototype` keys answer "known scope":
+ * `__proto__`, `constructor`, `toString`, `valueOf`, `hasOwnProperty`,
+ * `isPrototypeOf`, `propertyIsEnumerable`, `toLocaleString`, and the four
+ * `__define*`/`__lookup*` accessors. Every caller treats a `true` here as
+ * "this string is part of the fixed platform vocabulary" and several then read
+ * `BLOCK_SCOPE_TO_OAUTH_BIT[scope]` expecting a number — for those keys that
+ * read yields a FUNCTION.
+ *
+ * The registration-time manifest path was never reachable (its `SCOPE_RE`
+ * requires at least one colon and rejects all 12 before this predicate runs),
+ * so this is defense-in-depth for the paths that call the predicate on
+ * untrusted runtime input WITHOUT a shape check first — notably the review
+ * host's REQUEST_CONSENT notice, whose `payload.scopes` comes straight from
+ * the reviewed app's own frame and whose filtered output is rendered into
+ * moderator-facing text.
+ *
+ * `Object.prototype.hasOwnProperty.call(...)` rather than
+ * `BLOCK_SCOPE_TO_OAUTH_BIT.hasOwnProperty(...)` so a future map that is
+ * null-prototype or that ever declares its own `hasOwnProperty` key still works.
+ */
 export function isKnownBlockScope(scope: string): scope is BlockScopeString {
-  return scope in BLOCK_SCOPE_TO_OAUTH_BIT;
+  return Object.prototype.hasOwnProperty.call(BLOCK_SCOPE_TO_OAUTH_BIT, scope);
 }
 
 /**
