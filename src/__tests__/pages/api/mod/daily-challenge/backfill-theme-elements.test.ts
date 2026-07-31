@@ -12,14 +12,19 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // reset propagates NULL and so never selects such a row: the challenge wedges permanently.
 // `?force=true` widens the exposure to every themed Active/Scheduled challenge at once.
 
-const { mockQueryRaw, mockExecuteRaw, mockGenerateThemeElements, mockLogToAxiom } = vi.hoisted(
-  () => ({
-    mockQueryRaw: vi.fn(),
-    mockExecuteRaw: vi.fn(),
-    mockGenerateThemeElements: vi.fn(),
-    mockLogToAxiom: vi.fn(),
-  })
-);
+const {
+  mockQueryRaw,
+  mockExecuteRaw,
+  mockGenerateThemeElements,
+  mockLogToAxiom,
+  mockGetChallengeConfig,
+} = vi.hoisted(() => ({
+  mockQueryRaw: vi.fn(),
+  mockExecuteRaw: vi.fn(),
+  mockGenerateThemeElements: vi.fn(),
+  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
+  mockGetChallengeConfig: vi.fn(),
+}));
 
 vi.mock('~/server/db/client', () => ({
   dbRead: { $queryRaw: mockQueryRaw },
@@ -27,7 +32,7 @@ vi.mock('~/server/db/client', () => ({
 }));
 
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
-  getChallengeConfig: vi.fn().mockResolvedValue({ defaultJudgeId: 1 }),
+  getChallengeConfig: mockGetChallengeConfig,
   getJudgingConfig: vi.fn().mockResolvedValue({ userId: 1 }),
 }));
 
@@ -127,6 +132,8 @@ describe('backfill-theme-elements — must not clobber a challenge claimed for c
     mockQueryRaw.mockResolvedValue([CHALLENGE]);
     mockGenerateThemeElements.mockResolvedValue(['neon', 'glow']);
     mockExecuteRaw.mockResolvedValue(1);
+    mockGetChallengeConfig.mockResolvedValue({ defaultJudgeId: 1 });
+    mockLogToAxiom.mockResolvedValue(undefined);
   });
 
   it('predicates the metadata write on the challenge still being Active/Scheduled', async () => {
@@ -187,10 +194,90 @@ describe('backfill-theme-elements — must not clobber a challenge claimed for c
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
 
-  it('force=true does not bypass the status predicate', async () => {
-    const { promise } = runRequest({ force: 'true' });
+  it('binds THIS challenge id, not a fixed one from the batch', async () => {
+    // The whole-statement pin above can only see SQL TEXT. `WHERE id = ${challenge.id}` rewritten
+    // to a constant (e.g. the first row of the batch) emits byte-identical SQL and would update
+    // the wrong challenge on every iteration — a single-row fixture cannot notice.
+    mockQueryRaw.mockResolvedValue([
+      { ...CHALLENGE, id: 7 },
+      { ...CHALLENGE, id: 99 },
+    ]);
+
+    const { promise } = runRequest();
     await promise;
 
-    expect(sqlOf(mockExecuteRaw.mock.calls[0])).toBe(EXPECTED_SQL);
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
+    expect(mockExecuteRaw.mock.calls[0][2]).toBe(7);
+    expect(mockExecuteRaw.mock.calls[1][2]).toBe(99);
+  });
+
+  it('force=true widens the set to challenges that ALREADY have theme elements', async () => {
+    // This is what force actually does, and it is the amplifier the guard exists to survive:
+    // without it the pre-filled challenge is never attempted, so a test using only a bare
+    // fixture passes whether force widens anything or not.
+    const withElements = { ...CHALLENGE, id: 43, metadata: { themeElements: ['existing'] } };
+    mockQueryRaw.mockResolvedValue([CHALLENGE, withElements]);
+
+    const { promise: unforced, res: unforcedRes } = runRequest();
+    await unforced;
+    const unforcedPayload = (unforcedRes.json as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(unforcedPayload.attempted).toBe(1);
+    expect(mockExecuteRaw.mock.calls.map((c) => c[2])).toEqual([42]);
+
+    vi.clearAllMocks();
+    mockQueryRaw.mockResolvedValue([CHALLENGE, withElements]);
+    mockGenerateThemeElements.mockResolvedValue(['neon', 'glow']);
+    mockExecuteRaw.mockResolvedValue(1);
+    mockGetChallengeConfig.mockResolvedValue({ defaultJudgeId: 1 });
+
+    const { promise: forced, res: forcedRes } = runRequest({ force: 'true' });
+    await forced;
+    const forcedPayload = (forcedRes.json as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(forcedPayload.attempted).toBe(2);
+    expect(mockExecuteRaw.mock.calls.map((c) => c[2])).toEqual([42, 43]);
+    // Widened, but every write still carries the predicate.
+    expect(sqlOf(mockExecuteRaw.mock.calls[1])).toBe(EXPECTED_SQL);
+  });
+
+  it('counts a challenge with no resolvable judge as skipped', async () => {
+    mockQueryRaw.mockResolvedValue([{ ...CHALLENGE, judgeId: null }]);
+    mockGetChallengeConfig.mockResolvedValueOnce({ defaultJudgeId: null });
+
+    const { promise, res } = runRequest();
+    await promise;
+
+    const payload = (res.json as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
+    expect(payload.skipped).toBe(1);
+    expect(payload.attempted).toBe(1);
+    expect(payload.results[0].status).toBe('skipped: no judge');
+  });
+
+  it('counts an empty generation result as skipped', async () => {
+    mockGenerateThemeElements.mockResolvedValue([]);
+
+    const { promise, res } = runRequest();
+    await promise;
+
+    const payload = (res.json as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
+    expect(payload.skipped).toBe(1);
+    expect(payload.attempted).toBe(1);
+    expect(payload.results[0].status).toBe('skipped: generation returned empty');
+  });
+
+  it('reports attempted=0 rather than omitting the field when nothing needs backfilling', async () => {
+    // The documented identity `attempted === backfilled + failures + skipped` must hold on EVERY
+    // response shape, including this early return.
+    mockQueryRaw.mockResolvedValue([{ ...CHALLENGE, metadata: { themeElements: ['already'] } }]);
+
+    const { promise, res } = runRequest();
+    await promise;
+
+    const payload = (res.json as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.attempted).toBe(0);
+    expect(payload.backfilled).toBe(0);
+    expect(mockExecuteRaw).not.toHaveBeenCalled();
   });
 });

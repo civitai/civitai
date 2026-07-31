@@ -56,7 +56,12 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
     return res.status(200).json({
       message: 'No challenges need backfilling',
       total: challenges.length,
+      // Present even here so `attempted === backfilled + failures + skipped` holds on EVERY
+      // response shape rather than only the one the happy path returns.
+      attempted: 0,
       backfilled: 0,
+      failures: 0,
+      skipped: 0,
     });
   }
 
