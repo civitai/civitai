@@ -355,6 +355,7 @@ describe('fulfillMembershipGift', () => {
     expect(mockStripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
       coupon: 'coupon_1',
       cancel_at: expectedCancelAt,
+      cancel_at_period_end: false,
     });
   });
 
@@ -369,6 +370,7 @@ describe('fulfillMembershipGift', () => {
     expect(mockStripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
       coupon: 'coupon_1',
       cancel_at: dayjs.unix(scheduled).add(3, 'month').unix(),
+      cancel_at_period_end: false,
     });
   });
 
@@ -504,9 +506,35 @@ describe('revokeMembershipGift', () => {
 
     expect(mockStripe.subscriptions.deleteDiscount).toHaveBeenCalledWith('sub_1');
     expect(mockStripe.subscriptions.del).not.toHaveBeenCalled();
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
     expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'Revoked' } })
     );
+  });
+
+  it('collapses a deferred cancellation back to period-end when revoking an extended sub', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({
+      id: 'gift_1',
+      status: 'Fulfilled',
+      recipientId: 2,
+      stripeCouponId: 'coupon_1',
+      stripeSubscriptionId: 'sub_1',
+    });
+    mockStripe.subscriptions.retrieve.mockResolvedValue({
+      id: 'sub_1',
+      status: 'active',
+      metadata: {},
+      discount: { coupon: { id: 'coupon_1' } },
+      cancel_at: dayjs().add(3, 'month').unix(),
+    });
+
+    await revokeMembershipGift({ paymentIntentId: 'pi_1', reason: 'refund' });
+
+    expect(mockStripe.subscriptions.deleteDiscount).toHaveBeenCalledWith('sub_1');
+    expect(mockStripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
+      cancel_at: '',
+      cancel_at_period_end: true,
+    });
   });
 
   it('is idempotent for already-revoked gifts', async () => {
@@ -557,7 +585,23 @@ describe('keepGiftMembership', () => {
     expect(mockStripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
       cancel_at: '',
       cancel_at_period_end: false,
-      default_payment_method: 'pm_1',
+    });
+    expect(mockStripe.paymentMethods.list).not.toHaveBeenCalled();
+  });
+
+  it('accepts a legacy default_source without setting it as the subscription payment method', async () => {
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      cancelingStripeSub({
+        customer: { id: 'cus_2', invoice_settings: {}, default_source: 'card_legacy' },
+      })
+    );
+
+    const result = await keepGiftMembership({ userId: 2 });
+
+    expect(result).toEqual({ kept: true });
+    expect(mockStripe.subscriptions.update).toHaveBeenCalledWith('sub_1', {
+      cancel_at: '',
+      cancel_at_period_end: false,
     });
   });
 

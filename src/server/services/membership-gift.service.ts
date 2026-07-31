@@ -318,6 +318,9 @@ export async function fulfillMembershipGift({
         : null;
       if (scheduledEnd) {
         updateParams.cancel_at = dayjs.unix(scheduledEnd).add(gift.months, 'month').unix();
+        // cancel_at and cancel_at_period_end are mutually exclusive — leaving the
+        // flag set would still end the sub at period end, eating the gifted months.
+        updateParams.cancel_at_period_end = false;
       }
 
       await stripe.subscriptions.update(stripeSub.id, updateParams);
@@ -497,6 +500,16 @@ export async function revokeMembershipGift({
       } else if (gift.stripeCouponId && subscription.discount?.coupon?.id === gift.stripeCouponId) {
         // Existing subscription that got our coupon — strip the remaining free months
         await stripe.subscriptions.deleteDiscount(subscription.id);
+        // Fulfillment may have deferred the recipient's own cancellation past the
+        // gifted months (cancel_at pushed out). With the gift revoked that deferral
+        // would resume BILLING a user who had canceled — collapse it back to
+        // period-end so they keep what they paid for and are never charged again.
+        if (subscription.cancel_at) {
+          await stripe.subscriptions.update(subscription.id, {
+            cancel_at: '',
+            cancel_at_period_end: true,
+          });
+        }
       }
     }
   }
@@ -553,12 +566,18 @@ export async function keepGiftMembership({ userId }: { userId: number }) {
   }
 
   const customer = stripeSub.customer as Stripe.Customer;
-  let paymentMethod = customer.invoice_settings?.default_payment_method ?? customer.default_source;
-  if (!paymentMethod) {
+  // default_source is a legacy Source/Card — Stripe bills it as the customer
+  // default but rejects it as a subscription default_payment_method, so it only
+  // counts as "has a way to pay", never gets set on the sub.
+  let subscriptionPaymentMethod: string | null = null;
+  let hasBillingMethod =
+    !!customer.invoice_settings?.default_payment_method || !!customer.default_source;
+  if (!hasBillingMethod) {
     const methods = await stripe.paymentMethods.list({ customer: customer.id, type: 'card' });
-    paymentMethod = methods.data[0]?.id ?? null;
+    subscriptionPaymentMethod = methods.data[0]?.id ?? null;
+    hasBillingMethod = !!subscriptionPaymentMethod;
   }
-  if (!paymentMethod) {
+  if (!hasBillingMethod) {
     const portal = await stripe.billingPortal.sessions.create({
       customer: customer.id,
       return_url: `${baseUrl}/user/membership?flow=keep-membership`,
@@ -570,7 +589,7 @@ export async function keepGiftMembership({ userId }: { userId: number }) {
   await stripe.subscriptions.update(stripeSub.id, {
     cancel_at: '',
     cancel_at_period_end: false,
-    default_payment_method: typeof paymentMethod === 'string' ? paymentMethod : paymentMethod.id,
+    ...(subscriptionPaymentMethod ? { default_payment_method: subscriptionPaymentMethod } : {}),
   });
 
   await invalidateSubscriptionCaches(userId);

@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import type * as FliptClient from '~/server/flipt/client';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
@@ -561,7 +562,7 @@ function checkRegionAccess(
 }
 
 // Lazy-loaded flipt module (server-only — avoids pulling ~/env/server into client bundle)
-type FliptModule = typeof import('~/server/flipt/client');
+type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 
