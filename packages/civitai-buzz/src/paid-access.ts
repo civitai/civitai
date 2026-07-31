@@ -1,3 +1,5 @@
+import { maxLicensingFee, VIDEO_CAP_MULTIPLIER, type CapMediaType } from './licensing-fee';
+
 // Paid access — pure helpers shared by the main app and the creator-studio spoke.
 // The gate reads ONE column, `endsAt`: active <=> endsAt IS NULL (permanent) OR endsAt > now().
 // `terms` is bundle semantics (a `download` purchase grants generation too). No termsVersion —
@@ -173,10 +175,64 @@ export function maxPermanentAccessModels(tier: string | null | undefined): numbe
 }
 
 /** Highest price a tier may charge for paid access. Unknown/lapsed tiers get the FREE cap (see above). */
-export function maxPaidAccessPrice(tier: string | null | undefined): number {
-  return (
-    (tier ? PAID_ACCESS_PRICE_CAP_BY_TIER[tier] : undefined) ?? PAID_ACCESS_PRICE_CAP_BY_TIER.free
-  );
+export function maxPaidAccessPrice(
+  tier: string | null | undefined,
+  mediaType?: CapMediaType
+): number {
+  const base =
+    (tier ? PAID_ACCESS_PRICE_CAP_BY_TIER[tier] : undefined) ?? PAID_ACCESS_PRICE_CAP_BY_TIER.free;
+  return mediaType === 'video' ? base * VIDEO_CAP_MULTIPLIER : base;
+}
+
+// Tiers a creator can actually be shown, cheapest first. `founder` is omitted deliberately: it's a legacy
+// tier nobody can buy, and every cap it has matches bronze — listing it would imply a choice that isn't one.
+export const CAP_TIERS = ['free', 'bronze', 'silver', 'gold'] as const;
+export type CapTier = (typeof CAP_TIERS)[number];
+
+export const CAP_TIER_LABELS: Record<CapTier, string> = {
+  free: 'Free',
+  bronze: 'Bronze',
+  silver: 'Silver',
+  gold: 'Gold',
+};
+
+/** One tier's ceilings on one media axis. `null` = unlimited (Infinity doesn't survive serialization). */
+export type TierCapAmounts = {
+  /** Per-generation licensing fee ceilings, in Buzz. */
+  feeCheckpoint: number;
+  feeOther: number;
+  paidAccessPrice: number | null;
+};
+
+export type TierCapRow = {
+  tier: CapTier;
+  label: string;
+  image: TierCapAmounts;
+  video: TierCapAmounts;
+  /** Concurrent permanent gates — a count, so the video multiplier doesn't apply. `null` = unlimited. */
+  permanentGates: number | null;
+};
+
+const finiteOrNull = (n: number) => (Number.isFinite(n) ? n : null);
+
+const amountsFor = (tier: CapTier, mediaType: CapMediaType): TierCapAmounts => ({
+  feeCheckpoint: maxLicensingFee(tier, 'Checkpoint', mediaType),
+  feeOther: maxLicensingFee(tier, undefined, mediaType),
+  paidAccessPrice: finiteOrNull(maxPaidAccessPrice(tier, mediaType)),
+});
+
+/**
+ * Every tier's monetization ceilings, for display. Derived from the cap tables rather than transcribed, so
+ * a table rendered from this can't drift from what the server actually enforces.
+ */
+export function tierCapRows(): TierCapRow[] {
+  return CAP_TIERS.map((tier) => ({
+    tier,
+    label: CAP_TIER_LABELS[tier],
+    image: amountsFor(tier, 'image'),
+    video: amountsFor(tier, 'video'),
+    permanentGates: finiteOrNull(maxPermanentAccessModels(tier)),
+  }));
 }
 
 /**
@@ -198,10 +254,11 @@ export const raisesOverCap = (
  */
 export function effectivePaidAccessPrice(
   storedPrice: number | null | undefined,
-  ownerTier: string | null | undefined
+  ownerTier: string | null | undefined,
+  mediaType?: CapMediaType
 ): number {
   if (storedPrice == null || storedPrice <= 0) return 0;
-  return Math.min(storedPrice, maxPaidAccessPrice(ownerTier));
+  return Math.min(storedPrice, maxPaidAccessPrice(ownerTier, mediaType));
 }
 
 /**
@@ -209,7 +266,11 @@ export function effectivePaidAccessPrice(
  * terms to the owner, whose editors write them back. A generation tier with no price of its own must keep
  * falling back to the download price, which is already capped here.
  */
-export function cappedTerms(terms: ModelVersionTerms, ownerTier: string | null): ModelVersionTerms {
+export function cappedTerms(
+  terms: ModelVersionTerms,
+  ownerTier: string | null,
+  mediaType?: CapMediaType
+): ModelVersionTerms {
   const paidGen = paidGenerationGrant(terms);
   return {
     ...terms,
@@ -217,12 +278,17 @@ export function cappedTerms(terms: ModelVersionTerms, ownerTier: string | null):
       ? {
           download: {
             ...terms.download,
-            price: effectivePaidAccessPrice(terms.download.price, ownerTier),
+            price: effectivePaidAccessPrice(terms.download.price, ownerTier, mediaType),
           },
         }
       : {}),
     ...(paidGen?.price != null
-      ? { generation: { ...paidGen, price: effectivePaidAccessPrice(paidGen.price, ownerTier) } }
+      ? {
+          generation: {
+            ...paidGen,
+            price: effectivePaidAccessPrice(paidGen.price, ownerTier, mediaType),
+          },
+        }
       : {}),
   };
 }

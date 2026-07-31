@@ -767,10 +767,10 @@ export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAcc
   // it now. The shop is a public listing — no viewer, so nobody gets the owner's stored prices.
   const owners = await dbRead.modelVersion.findMany({
     where: { id: { in: gatedIds } },
-    select: { id: true, model: { select: { userId: true } } },
+    select: { id: true, baseModel: true, model: { select: { userId: true } } },
   });
   const monetization = await getViewerMonetization({
-    versions: owners.map((v) => ({ id: v.id, ownerId: v.model.userId })),
+    versions: owners.map((v) => ({ id: v.id, ownerId: v.model.userId, baseModel: v.baseModel })),
     viewer: {},
   });
 

@@ -89,6 +89,7 @@ import {
 } from '~/server/services/paid-access.service';
 import {
   type ModelVersionTerms,
+  capMediaType,
   effectivePaidAccessPrice,
   generationPrice,
   isPaidAccessActive,
@@ -847,10 +848,7 @@ export const updateModelVersionPaidAccess = async ({
     throw throwBadRequestError('Paid access is not available for this version’s usage control.');
   }
 
-  if (
-    existingVersion.usageControl !== ModelUsageControl.Download &&
-    !!paidAccess?.terms.download
-  ) {
+  if (existingVersion.usageControl !== ModelUsageControl.Download && !!paidAccess?.terms.download) {
     throw throwBadRequestError(
       'Cannot charge for download if downloads are disabled for this model version'
     );
@@ -1923,6 +1921,7 @@ export const earlyAccessPurchase = async ({
       status: true,
       name: true,
       meta: true,
+      baseModel: true,
       model: {
         select: {
           id: true,
@@ -1995,7 +1994,8 @@ export const earlyAccessPurchase = async ({
   const ownerTier = await getCachedCapTier(modelVersion.model.userId);
   const amount = effectivePaidAccessPrice(
     type === 'download' ? terms.download?.price : generationPrice(terms),
-    ownerTier
+    ownerTier,
+    capMediaType(modelVersion.baseModel)
   );
 
   const accessRecord = await dbWrite.entityAccess.findFirst({

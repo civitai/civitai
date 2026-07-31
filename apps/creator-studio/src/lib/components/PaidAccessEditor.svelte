@@ -14,7 +14,9 @@
     MIN_GENERATION_PRICE,
     MAX_GENERATION_TRIAL_LIMIT,
     DEFAULT_GENERATION_TRIAL_LIMIT,
+    maxPaidAccessPrice,
   } from '$lib/monetization/paid-access';
+  import { capMediaType } from '$lib/monetization/fee';
   import type { CreatorModelVersion } from '$lib/server/models';
   import type { CreatorCaps } from '$lib/server/membership';
 
@@ -37,7 +39,12 @@
   const earlyAccessCap = $derived(caps.earlyAccessCap);
   const maxEarlyAccessDays = $derived(caps.maxEarlyAccessDays);
   const tier = $derived(caps.tier);
-  const priceCap = $derived(caps.priceCap);
+  // Per-version, not caps.priceCap: that is page-level and can't know this version's media type, so it
+  // would pin a video gate to the image ceiling the server would happily exceed.
+  const priceCap = $derived.by(() => {
+    const cap = maxPaidAccessPrice(caps.capTier, capMediaType(version.baseModel));
+    return Number.isFinite(cap) ? cap : null;
+  });
 
   const permAtCap = $derived(
     permanentCap !== null && permanentCap > 0 && permanentUsed >= permanentCap

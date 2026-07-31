@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { maxLicensingFee, raisesOverCap } from '@civitai/buzz';
+import { capMediaType, maxLicensingFee, raisesOverCap } from '@civitai/buzz';
 import {
   assertPaidAccessCaps,
   getViewerMonetization,
@@ -292,6 +292,7 @@ const loadModelVersion = async ({
             ownerId: version.model.user.id,
             licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
             modelType: version.model.type,
+            baseModel: version.baseModel,
           },
         ],
         viewer: { id: ctx?.user?.id, isModerator: ctx?.user?.isModerator },
@@ -409,6 +410,7 @@ export const upsertModelVersionHandler = async ({
       versionId: input.id,
       paidAccess: input.paidAccess,
       tier: input.paidAccess && !ctx.user.isModerator ? await actorTier() : null,
+      baseModel: input.baseModel,
     });
 
     await assertUserEarlyAccessLimits({
@@ -442,7 +444,7 @@ export const upsertModelVersionHandler = async ({
       if (!ctx.user.isModerator) {
         const toCents = (v: number) => Math.round(v * 100);
         const model = await getModel({ id: input.modelId, select: { type: true } });
-        const cap = maxLicensingFee(await actorTier(), model?.type);
+        const cap = maxLicensingFee(await actorTier(), model?.type, capMediaType(input.baseModel));
         const stored = toCents(Number(existing?.licensingFee ?? 0));
         if (raisesOverCap(toCents(input.licensingFee), stored, toCents(cap)))
           throw throwBadRequestError(

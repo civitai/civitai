@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
   cappedTerms,
+  capMediaType,
   effectiveLicensingFee,
   gatePrices,
   isPaidAccessActive,
@@ -236,6 +237,8 @@ export async function getViewerMonetization({
     ownerId?: number;
     licensingFee?: number | null;
     modelType?: string | null;
+    /** Decides the media axis of the caps — video ceilings are higher. Absent prices as image. */
+    baseModel?: string | null;
   }[];
   viewer: PaidAccessViewer;
 }): Promise<Record<number, ViewerMonetization>> {
@@ -264,11 +267,13 @@ export async function getViewerMonetization({
       continue;
     }
     const tier = capTiers.get(ownerOf(v) as number) ?? null;
+    const mediaType = capMediaType(v.baseModel);
     out[v.id] = {
       paidAccess: row
-        ? { ...row, terms: cappedTerms(row.terms as ModelVersionTerms, tier) }
+        ? { ...row, terms: cappedTerms(row.terms as ModelVersionTerms, tier, mediaType) }
         : undefined,
-      licensingFee: storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType) : null,
+      licensingFee:
+        storedFee != null ? effectiveLicensingFee(storedFee, tier, v.modelType, mediaType) : null,
     };
   }
   return out;
@@ -281,19 +286,21 @@ export async function assertPaidAccessCaps({
   versionId,
   paidAccess,
   tier,
+  baseModel,
 }: {
   userId: number;
   isModerator?: boolean;
   versionId?: number;
   paidAccess: ModelVersionPaidAccessInputSchema | null | undefined;
   tier: string | null | undefined;
+  baseModel?: string | null;
 }) {
   if (isModerator || !paidAccess) return;
 
   const existing = versionId
     ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
     : undefined;
-  const priceCap = maxPaidAccessPrice(tier);
+  const priceCap = maxPaidAccessPrice(tier, capMediaType(baseModel));
   const next = gatePrices(paidAccess.terms);
   const prev = gatePrices(existing?.terms as ModelVersionTerms);
   // Per-component: collapsing to max(download, generation) would let a cheap generation tier be raised to

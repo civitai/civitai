@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { sql } from '@civitai/db/kysely';
-import { buildModelVersionTerms, gatePrices, type ModelVersionTerms } from '@civitai/buzz';
+import {
+  buildModelVersionTerms,
+  capMediaType,
+  gatePrices,
+  type CapMediaType,
+  type ModelVersionTerms,
+} from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
 import { dbRead } from '$lib/server/db';
 import { checkbox, optionalBuzz, freePreviewsField } from './form-fields';
@@ -228,6 +234,23 @@ export async function currentAccessPrices(
     .where('entityId', '=', versionId)
     .executeTakeFirst();
   return gatePrices(row?.terms as ModelVersionTerms | undefined);
+}
+
+/**
+ * The media axis a set of versions must be capped on. A bulk edit applies ONE price to every selected
+ * version, so the whole set is held to the strictest applicable ceiling — image unless every version is
+ * video. Matches how bulkSetLicensingFee picks the strictest model-type cap.
+ */
+export async function strictestCapMediaType(versionIds: number[]): Promise<CapMediaType> {
+  if (!versionIds.length) return 'image';
+  const rows = await dbRead
+    .selectFrom('ModelVersion')
+    .select('baseModel')
+    .where('id', 'in', versionIds)
+    .execute();
+  return rows.length && rows.every((r) => capMediaType(r.baseModel) === 'video')
+    ? 'video'
+    : 'image';
 }
 
 // Counts versions in a *currently running* timed early-access window (permanent ones are capped separately,

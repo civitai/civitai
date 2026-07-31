@@ -30,6 +30,7 @@ import {
   countActiveEarlyAccessVersions,
   isVersionPermanent,
   currentAccessPrices,
+  strictestCapMediaType,
   bulkSetPermanentAccess,
 } from '$lib/server/monetization/paid-access';
 import {
@@ -277,7 +278,10 @@ export const actions: Actions = {
 
     if (!locals.user.isModerator) {
       // Price cap first — it applies to every tier; the count cap only bites on free (CU 868kj4q4j).
-      const priceCap = maxPaidAccessPrice(cappedTier(membership));
+      const priceCap = maxPaidAccessPrice(
+        cappedTier(membership),
+        await strictestCapMediaType(versionIds.data)
+      );
       const highest = Math.max(pricing.data.accessPrice, pricing.data.generationPrice ?? 0);
       if (highest > priceCap)
         return fail(403, {
@@ -368,7 +372,10 @@ export const actions: Actions = {
     // value outright would make an over-cap version uneditable after a lapse (the same class of bug that
     // 82f64846ba had to hot-fix in the main app). Lowering or leaving it alone always passes.
     if (!locals.user.isModerator) {
-      const priceCap = maxPaidAccessPrice(cappedTier(membership));
+      const priceCap = maxPaidAccessPrice(
+        cappedTier(membership),
+        await strictestCapMediaType([versionId.data])
+      );
       const prev = await currentAccessPrices(versionId.data);
       // Compared per-component so a cheap generation tier can't be raised under an over-cap access price.
       // For a gen-only version the access price IS the generation price, so it's checked against that side.

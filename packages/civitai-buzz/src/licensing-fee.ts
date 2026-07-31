@@ -8,6 +8,22 @@
 /** Ceiling for a per-image licensing fee, in Buzz. Mirrored by the app's model-version schema. */
 export const MAX_LICENSING_FEE = 100;
 
+// Video costs far more to generate than an image, so every price ceiling is worth this much more on a
+// video model. Applied to the licensing-fee caps, the paid-access price cap, and the suggested defaults
+// — but NOT to the permanent-gate allowance, which counts gates rather than pricing them.
+export const VIDEO_CAP_MULTIPLIER = 5;
+
+/** The axis the caps resolve against. See capMediaType for how a base model maps onto it. */
+export type CapMediaType = 'image' | 'video';
+
+const mediaMultiplier = (mediaType: CapMediaType | undefined) =>
+  mediaType === 'video' ? VIDEO_CAP_MULTIPLIER : 1;
+
+/** Absolute ceiling a fee may be stored at, before the per-tier cap narrows it further. */
+export function maxLicensingFeeCeiling(mediaType?: CapMediaType): number {
+  return MAX_LICENSING_FEE * mediaMultiplier(mediaType);
+}
+
 export type FeeRatio = { buzz: number; images: number };
 
 // Image-count denominators the creator UI offers (a select, not a free input). Every stored fee maps
@@ -43,10 +59,13 @@ export function ratioToFee(buzz: number, images: number): number {
 // everything else is 0.1 ⚡/image (= 1 ⚡ per 10 images).
 export const SUGGESTED_FEE_PER_IMAGE: Record<string, number> = { Checkpoint: 1 };
 export const DEFAULT_SUGGESTED_FEE_PER_IMAGE = 0.1;
-export function suggestedFeePerImage(modelType: string | null | undefined): number {
-  return (
-    (modelType ? SUGGESTED_FEE_PER_IMAGE[modelType] : undefined) ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE
-  );
+export function suggestedFeePerImage(
+  modelType: string | null | undefined,
+  mediaType?: CapMediaType
+): number {
+  const base =
+    (modelType ? SUGGESTED_FEE_PER_IMAGE[modelType] : undefined) ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE;
+  return base * mediaMultiplier(mediaType);
 }
 
 // Per-tier ceiling on the per-image licensing fee (CU 868kj4q49). Anyone may set a fee — including free
@@ -69,11 +88,13 @@ export const LICENSING_FEE_CAP_BY_TIER: Record<string, { checkpoint: number; def
  */
 export function maxLicensingFee(
   tier: string | null | undefined,
-  modelType?: string | null
+  modelType?: string | null,
+  mediaType?: CapMediaType
 ): number {
   const caps =
     (tier ? LICENSING_FEE_CAP_BY_TIER[tier] : undefined) ?? LICENSING_FEE_CAP_BY_TIER.free;
-  return modelType === 'Checkpoint' ? caps.checkpoint : caps.default;
+  const base = modelType === 'Checkpoint' ? caps.checkpoint : caps.default;
+  return base * mediaMultiplier(mediaType);
 }
 
 /**
@@ -84,10 +105,11 @@ export function maxLicensingFee(
 export function effectiveLicensingFee(
   storedFee: number | null | undefined,
   recipientTier: string | null | undefined,
-  modelType?: string | null
+  modelType?: string | null,
+  mediaType?: CapMediaType
 ): number {
   if (storedFee == null || storedFee <= 0) return 0;
-  return Math.min(storedFee, maxLicensingFee(recipientTier, modelType));
+  return Math.min(storedFee, maxLicensingFee(recipientTier, modelType, mediaType));
 }
 
 /**
@@ -98,17 +120,21 @@ export function effectiveLicensingFee(
 export function maxFeeBuzzForRatio(
   tier: string | null | undefined,
   modelType: string | null | undefined,
-  images: number
+  images: number,
+  mediaType?: CapMediaType
 ): number {
-  return Math.floor(maxLicensingFee(tier, modelType) * images);
+  return Math.floor(maxLicensingFee(tier, modelType, mediaType) * images);
 }
 
 /** Denominators from FEE_IMAGE_OPTIONS that can express at least 1 ⚡ under this tier's cap. */
 export function feeImageOptionsForCap(
   tier: string | null | undefined,
-  modelType?: string | null
+  modelType?: string | null,
+  mediaType?: CapMediaType
 ): number[] {
-  const usable = FEE_IMAGE_OPTIONS.filter((n) => maxFeeBuzzForRatio(tier, modelType, n) >= 1);
+  const usable = FEE_IMAGE_OPTIONS.filter(
+    (n) => maxFeeBuzzForRatio(tier, modelType, n, mediaType) >= 1
+  );
   // Never return an empty select: the coarsest denominator is the most expressive.
   return usable.length ? [...usable] : [FEE_IMAGE_OPTIONS[FEE_IMAGE_OPTIONS.length - 1]];
 }

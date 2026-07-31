@@ -270,6 +270,7 @@ export const getModelHandler = async ({
         ownerId: model.user.id,
         licensingFee: x.licensingFee != null ? Number(x.licensingFee) : null,
         modelType: model.type,
+        baseModel: x.baseModel,
       })),
       viewer: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
     });

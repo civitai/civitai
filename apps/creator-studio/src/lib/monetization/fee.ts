@@ -14,5 +14,7 @@ export {
   maxLicensingFee,
   maxFeeBuzzForRatio,
   feeImageOptionsForCap,
+  maxLicensingFeeCeiling,
+  capMediaType,
 } from '@civitai/buzz';
 export type { FeeRatio } from '@civitai/buzz';

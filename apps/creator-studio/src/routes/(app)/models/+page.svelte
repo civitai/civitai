@@ -45,8 +45,10 @@
     feeImageOptionsForCap,
     suggestedFeePerImage,
     DEFAULT_FEE_IMAGES,
+    capMediaType,
   } from '$lib/monetization/fee';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
+  import TierCapsTable from '$lib/components/TierCapsTable.svelte';
   import NumberInput from '$lib/components/NumberInput.svelte';
   import PaidAccessBulkBar from '$lib/components/PaidAccessBulkBar.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
@@ -66,19 +68,27 @@
 
   // Off / Active / Over cap — anyone may set a fee now, so the amber state means "above your tier's ceiling
   // for this model type": still charged in full, but it can't be raised until the membership is upgraded.
-  function feeStatus(fee: number | null, modelType: string): { label: string; cls: string } {
+  function feeStatus(
+    fee: number | null,
+    modelType: string,
+    baseModel: string
+  ): { label: string; cls: string } {
     if (fee == null || fee <= 0) return { label: 'Off', cls: 'text-dark-3' };
-    return fee > maxLicensingFee(data.caps.capTier, modelType)
+    return fee > maxLicensingFee(data.caps.capTier, modelType, capMediaType(baseModel))
       ? { label: 'Over cap', cls: 'text-yellow-5' }
       : { label: 'Active', cls: 'text-green-5' };
   }
 
   // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / amber Capped / dim Off).
-  function feeChip(fee: number | null, modelType: string): { label: string; cls: string } {
+  function feeChip(
+    fee: number | null,
+    modelType: string,
+    baseModel: string
+  ): { label: string; cls: string } {
     if (fee == null || fee <= 0) return { label: 'Fee off', cls: 'border-dark-4 text-dark-3' };
     const { buzz, images } = feeToRatio(fee);
     const label = images === 1 ? `${buzz} ⚡ / gen` : `${buzz} ⚡ / ${images}`;
-    return fee > maxLicensingFee(data.caps.capTier, modelType)
+    return fee > maxLicensingFee(data.caps.capTier, modelType, capMediaType(baseModel))
       ? { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' }
       : { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' };
   }
@@ -226,19 +236,29 @@
     return already + Math.min(fresh, remainingPermanentSlots);
   });
   // The suggested fee is per model type, so surface a bulk "use suggested" only when the type filter pins one.
-  const bulkSuggested = $derived(data.query.mt ? suggestedFeePerImage(data.query.mt) : undefined);
+  const bulkSuggested = $derived(
+    data.query.mt
+      ? suggestedFeePerImage(data.query.mt, data.query.bm ? capMediaType(data.query.bm) : undefined)
+      : undefined
+  );
 
   // One fee is applied to every picked version, so the input is capped by the STRICTEST cap in the selection
   // — matching bulkSetLicensingFee on the server. "Select all" can pick versions beyond this page, whose model
   // types aren't loaded, so anything unresolved falls back to the non-checkpoint cap (the strictest there is).
   const bulkFeeCap = $derived.by(() => {
-    const loaded = new Map<number, string>();
-    for (const m of data.models) for (const v of m.versions) loaded.set(v.id, m.type);
+    const loaded = new Map<number, { modelType: string; baseModel: string }>();
+    for (const m of data.models)
+      for (const v of m.versions) loaded.set(v.id, { modelType: m.type, baseModel: v.baseModel });
     // Seeded at Infinity so a checkpoint-only selection gets the checkpoint cap; only ids whose type isn't
     // loaded (select-all reaches beyond this page) fall back to the stricter non-checkpoint cap.
     let cap = Infinity;
-    for (const id of selected)
-      cap = Math.min(cap, maxLicensingFee(data.caps.capTier, loaded.get(id)));
+    for (const id of selected) {
+      const v = loaded.get(id);
+      cap = Math.min(
+        cap,
+        maxLicensingFee(data.caps.capTier, v?.modelType, capMediaType(v?.baseModel))
+      );
+    }
     return Number.isFinite(cap) ? cap : maxLicensingFee(data.caps.capTier, undefined);
   });
 
@@ -358,8 +378,10 @@
   let editing = $state<CreatorModelVersion | null>(null);
   // The parent model's type isn't on the version, so capture it when opening — the fee reference is keyed by it.
   let editingType = $state('');
+  // The edited version's base model decides the media axis of every cap in the drawer.
+  const editingMediaType = $derived(capMediaType(editing?.baseModel));
   // Per-model-type suggested fee behind the drawer's "Use this" shortcut.
-  const suggested = $derived(feeToRatio(suggestedFeePerImage(editingType)));
+  const suggested = $derived(feeToRatio(suggestedFeePerImage(editingType, editingMediaType)));
   // Fee inputs are bound (not just seeded) so "Use this" can populate them from the reference.
   let feeBuzz = $state<number | undefined>();
   let feeImages = $state(String(DEFAULT_FEE_IMAGES));
@@ -419,6 +441,15 @@
       <span class="text-dark-3">· up to {data.caps.maxEarlyAccessDays} days</span>
     {/if}
   </span>
+  <details class="w-full">
+    <summary
+      class="cursor-pointer select-none text-dark-2 marker:text-dark-3 hover:text-white"
+      data-testid="tier-caps-toggle"
+    >
+      Pricing limits · {data.caps.tier}
+    </summary>
+    <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
+  </details>
 </div>
 
 <!-- Search / filter / sort -->
@@ -720,7 +751,7 @@
           {:else}
             <ul class="divide-y divide-dark-4 border-t border-dark-4">
               {#each model.versions as version (version.id)}
-                {@const chip = feeChip(version.licensingFee, model.type)}
+                {@const chip = feeChip(version.licensingFee, model.type, version.baseModel)}
                 <li>
                   {#if selectionMode}
                     {@const cbId = `v-${version.id}`}
@@ -931,7 +962,7 @@
 >
   <SheetContent side="right" class="w-full gap-0 overflow-y-auto p-0 sm:max-w-md">
     {#if editing}
-      {@const st = feeStatus(editing.licensingFee, editingType)}
+      {@const st = feeStatus(editing.licensingFee, editingType, editing.baseModel)}
       <SheetHeader class="border-b border-dark-4 p-5">
         <SheetTitle class="text-white">{editing.name}</SheetTitle>
         <SheetDescription>{editing.baseModel} · {editing.status}</SheetDescription>
@@ -954,7 +985,12 @@
             <NumberInput
               name="buzz"
               min={0}
-              max={maxFeeBuzzForRatio(data.caps.capTier, editingType, Number(feeImages))}
+              max={maxFeeBuzzForRatio(
+                data.caps.capTier,
+                editingType,
+                Number(feeImages),
+                editingMediaType
+              )}
               bind:value={feeBuzz}
               placeholder="Off"
               aria-label="Buzz for {editing.name}"
@@ -977,7 +1013,7 @@
                 {feeImages}
               </Select.Trigger>
               <Select.Content>
-                {#each feeImageOptionsForCap(data.caps.capTier, editingType) as opt (opt)}
+                {#each feeImageOptionsForCap(data.caps.capTier, editingType, editingMediaType) as opt (opt)}
                   <Select.Item value={String(opt)} label={String(opt)} />
                 {/each}
               </Select.Content>

@@ -71,7 +71,6 @@ import type {
 } from '~/server/schema/model-version.schema';
 import {
   baseModelToTraningDetailsBaseModelMap,
-  MAX_LICENSING_FEE,
   modelVersionUpsertSchema2,
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
@@ -85,6 +84,8 @@ import {
   feeToRatio,
   maxFeeBuzzForRatio,
   maxLicensingFee,
+  maxLicensingFeeCeiling,
+  capMediaType,
   maxPaidAccessPrice,
   ratioToFee,
   suggestedFeePerImage,
@@ -149,7 +150,11 @@ function toPaidAccessInput(
   if (!config || config.accessPrice == null) return null;
   // Only downloadable or on-site-generation versions can be gated; other usage controls (internal /
   // external API) can't set paid access at all.
-  if (usageControl && usageControl !== ModelUsageControl.Download && usageControl !== ModelUsageControl.Generation)
+  if (
+    usageControl &&
+    usageControl !== ModelUsageControl.Download &&
+    usageControl !== ModelUsageControl.Generation
+  )
     return null;
   const terms = buildModelVersionTerms({
     accessPrice: config.accessPrice,
@@ -199,10 +204,13 @@ const schema = modelVersionUpsertSchema2
     skipTrainedWords: z.boolean().default(false),
     paidAccessConfig: formPaidAccessConfigSchema
       // A timed gate needs a valid window; a permanent gate ignores the timeframe entirely.
-      .refine((c) => c.permanent || EARLY_ACCESS_CONFIG.timeframeValues.some((x) => x === c.timeframe), {
-        error: 'Invalid value',
-        path: ['timeframe'],
-      })
+      .refine(
+        (c) => c.permanent || EARLY_ACCESS_CONFIG.timeframeValues.some((x) => x === c.timeframe),
+        {
+          error: 'Invalid value',
+          path: ['timeframe'],
+        }
+      )
       .nullish(),
     useMonetization: z.boolean().default(false),
     recommendedResources: generationResourceSchema
@@ -328,7 +336,7 @@ export function ModelVersionUpsertForm({
   const initialLicensingFee = version?.id
     ? Number(version.licensingFee ?? 0)
     : features.licensingFee
-    ? suggestedFeePerImage(model?.type)
+    ? suggestedFeePerImage(model?.type, capMediaType(initialBaseModel))
     : 0;
 
   const defaultValues: Schema = {
@@ -414,17 +422,20 @@ export function ModelVersionUpsertForm({
   //
   // `memberInBadState` mirrors the server's getCapTier, which excludes bad-state subs — so the UI never
   // advertises a ceiling the server will reject.
-  const feeCapTier = currentUser?.memberInBadState ? 'free' : (currentUser?.tier ?? 'free');
+  const feeCapTier = currentUser?.memberInBadState ? 'free' : currentUser?.tier ?? 'free';
+  // Video ceilings are 5x image. Keyed to the WATCHED base model, not the seeded one, so switching
+  // ecosystem mid-form moves the max instead of stranding it on the value the form loaded with.
+  const feeMediaType = capMediaType(baseModel);
   const licensingFeeCap = currentUser?.isModerator
-    ? MAX_LICENSING_FEE
-    : maxLicensingFee(feeCapTier, model?.type);
+    ? maxLicensingFeeCeiling(feeMediaType)
+    : maxLicensingFee(feeCapTier, model?.type, feeMediaType);
   // Denominators that can express at least 1 ⚡ under this cap — at the free/other cap of 0.1, "per 1
   // generation" has no valid whole-number entry, so offering it would strand the field.
   const feeImageOptions = currentUser?.isModerator
     ? [...FEE_IMAGE_OPTIONS]
-    : feeImageOptionsForCap(feeCapTier, model?.type);
+    : feeImageOptionsForCap(feeCapTier, model?.type, feeMediaType);
   // Infinity (gold/moderator) falls back to MAX_DONATION_GOAL: an infinite `max` renders as no cap at all.
-  const tierPriceCap = maxPaidAccessPrice(feeCapTier);
+  const tierPriceCap = maxPaidAccessPrice(feeCapTier, feeMediaType);
   const paidAccessCap =
     currentUser?.isModerator || !Number.isFinite(tierPriceCap) ? MAX_DONATION_GOAL : tierPriceCap;
   const storedTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
@@ -664,7 +675,10 @@ export function ModelVersionUpsertForm({
   // A gen-only version ratchets on its generation price, having no download tier. The stored price is a
   // floor: the server allows resubmitting over-cap, so clamping down would silently cut it.
   const accessPriceMax = Math.max(
-    Math.min(isPublished ? storedAccessPrice || MAX_DONATION_GOAL : MAX_DONATION_GOAL, paidAccessCap),
+    Math.min(
+      isPublished ? storedAccessPrice || MAX_DONATION_GOAL : MAX_DONATION_GOAL,
+      paidAccessCap
+    ),
     storedAccessPrice
   );
   const isPrivateModel = model?.availability === Availability.Private;
@@ -1010,8 +1024,8 @@ export function ModelVersionUpsertForm({
                           {(paidAccessConfig?.accessPrice ?? 0) > paidAccessCap && (
                             <Text size="xs" c="yellow.5">
                               This price is above your membership&apos;s{' '}
-                              {paidAccessCap.toLocaleString()} Buzz cap. You can keep or lower it, but not
-                              raise it — upgrade to charge more.
+                              {paidAccessCap.toLocaleString()} Buzz cap. You can keep or lower it,
+                              but not raise it — upgrade to charge more.
                             </Text>
                           )}
                           {!isGenOnly && (
@@ -1176,7 +1190,7 @@ export function ModelVersionUpsertForm({
                       })
                     }
                     min={0}
-                    max={maxFeeBuzzForRatio(feeCapTier, model?.type, feeRatio.images)}
+                    max={maxFeeBuzzForRatio(feeCapTier, model?.type, feeRatio.images, feeMediaType)}
                     step={1}
                     allowDecimal={false}
                     leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -1196,7 +1210,7 @@ export function ModelVersionUpsertForm({
                       applyFeeRatio({
                         buzz: Math.min(
                           feeRatio.buzz,
-                          maxFeeBuzzForRatio(feeCapTier, model?.type, images)
+                          maxFeeBuzzForRatio(feeCapTier, model?.type, images, feeMediaType)
                         ),
                         images,
                       });

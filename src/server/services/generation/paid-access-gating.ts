@@ -12,6 +12,8 @@ import { getViewerMonetization } from '~/server/services/paid-access.service';
 // caller passes its full (much larger) resource type unchanged.
 export type PaidAccessGatingResource = {
   id: number;
+  /** Decides whether the gate prices on the image or video ceiling. */
+  baseModel?: string | null;
   covered?: boolean | null;
   hasAccess: boolean;
   canGenerate: boolean;
@@ -47,12 +49,14 @@ export async function applyPaidAccessGating<T extends PaidAccessGatingResource>(
   resources: T[],
   user: GenerationViewer
 ) {
-  const ids = [...new Set(resources.map((r) => r.id))];
-  if (!ids.length) return;
+  // Deduped by id, keeping each version's baseModel: a video gate priced above the image ceiling would
+  // otherwise advertise a lower price here than earlyAccessPurchase actually charges.
+  const byId = new Map(resources.map((r) => [r.id, { id: r.id, baseModel: r.baseModel }]));
+  if (!byId.size) return;
   // Wire prices are what this viewer is charged, so a lapsed owner can't advertise more than they bill.
   // The decision below is unaffected: it turns on free/trial/purchase, never on a price.
   const monetization = await getViewerMonetization({
-    versions: ids.map((id) => ({ id })),
+    versions: [...byId.values()],
     viewer: user,
   });
   const isOwnerOrMod = (ownerId: number) =>

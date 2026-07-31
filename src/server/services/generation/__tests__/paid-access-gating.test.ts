@@ -202,3 +202,16 @@ describe('applyPaidAccessGating — pricing is delegated, not reimplemented', ()
     expect(r.paidAccess?.terms).toEqual({ download: { price: 500 } });
   });
 });
+
+describe('applyPaidAccessGating — the wire price is resolved per version', () => {
+  it("forwards each version's baseModel, so a video gate is not priced at the image ceiling", async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+
+    await applyPaidAccessGating([resource({ baseModel: 'Hunyuan Video' })], { id: 2 });
+
+    expect(mockGetViewerMonetization).toHaveBeenCalledWith({
+      versions: [{ id: 1, baseModel: 'Hunyuan Video' }],
+      viewer: { id: 2 },
+    });
+  });
+});
