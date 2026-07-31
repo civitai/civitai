@@ -10,9 +10,9 @@ export const membershipGiftNotifications = createNotificationProcessor({
       const from = details.from ? `@${details.from}` : 'Someone';
       const note = details.message ? ` They said: "${details.message}"` : '';
       return {
-        message: `${from} gifted you ${details.months} month${
-          details.months === 1 ? '' : 's'
-        } of ${details.tier} membership! 🎁${note}`,
+        message: `${from} gifted you ${details.months} month${details.months === 1 ? '' : 's'} of ${
+          details.tier
+        } membership! 🎁${note}`,
         url: '/user/membership',
       };
     },
@@ -22,9 +22,9 @@ export const membershipGiftNotifications = createNotificationProcessor({
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your gift of ${details.months} month${
-        details.months === 1 ? '' : 's'
-      } of ${details.tier} membership has been delivered to @${details.to}`,
+      message: `Your gift of ${details.months} month${details.months === 1 ? '' : 's'} of ${
+        details.tier
+      } membership has been delivered to @${details.to}`,
       url: '/user/membership',
     }),
   },
