@@ -5,6 +5,7 @@ import {
   LORA_STRENGTH_MAX,
   LORA_STRENGTH_MIN,
   MAX_ADDITIONAL_RESOURCES,
+  SOURCE_IMAGE_URL_MAX,
 } from '../workflow.schema';
 
 /**
@@ -205,5 +206,181 @@ describe('blockWorkflowBodySchema — sourceImage host allowlist (generationSour
     expect(() =>
       withSource('http://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg')
     ).toThrow();
+  });
+});
+
+/**
+ * sourceImage URL canonicalization (validate-the-parse / forward-the-raw gap).
+ *
+ * The host allowlist validates a PARSED url but the schema used to emit the
+ * ORIGINAL string, and nothing downstream re-validates (the graph's imagesNode
+ * is a bare `url: z.string()`). That made two WHATWG-specific normalizations
+ * load-bearing as security properties: `\` is treated as `/` in the authority,
+ * and tab/CR/LF are deleted from anywhere in the url. Both let a raw string
+ * carrying a foreign host — or raw CRLF — pass the check and reach the
+ * orchestrator unmodified.
+ *
+ * These lock in the three-layer bound: ambiguous bytes are rejected, the parsed
+ * host is checked, and the EMITTED value is `URL.href` (so the bytes we forward
+ * are the bytes we validated) re-capped at SOURCE_IMAGE_URL_MAX.
+ *
+ * Every assertion below is on the EMITTED value or on an explicit rejection —
+ * never merely on "parse succeeded".
+ */
+describe('blockWorkflowBodySchema — sourceImage URL canonicalization', () => {
+  // The bytes under test are written as explicit code points rather than string
+  // escapes: this is exactly the class of character an editor, formatter, or
+  // copy/paste can silently rewrite, which would quietly defang the test.
+  const BACKSLASH = String.fromCharCode(0x5c);
+  const TAB = String.fromCharCode(0x09);
+  const CR = String.fromCharCode(0x0d);
+  const LF = String.fromCharCode(0x0a);
+  const NUL = String.fromCharCode(0x00);
+
+  const parseSource = (url: string) =>
+    blockWorkflowBodySchema.safeParse(baseBody({ sourceImage: { url, width: 512, height: 512 } }));
+
+  const emittedUrl = (url: string): string => {
+    const res = parseSource(url);
+    if (!res.success)
+      throw new Error(`expected ${JSON.stringify(url)} to parse, but it was rejected`);
+    return (res.data as { sourceImage: { url: string } }).sourceImage.url;
+  };
+
+  describe('rejects the parser-differential shapes that used to pass', () => {
+    it('rejects a backslash in the authority', () => {
+      const raw = `https://civitai.com${BACKSLASH}@evil.com/x.png`;
+      // The WHATWG behaviour that WAS being relied on: `\` acts as `/`, so the
+      // hostname check saw `civitai.com` and passed. A parser that splits the
+      // authority on the last `@` without treating `\` as a delimiter reads
+      // host = evil.com — a different origin than the one we approved.
+      expect(new URL(raw).hostname).toBe('civitai.com');
+      expect(parseSource(raw).success).toBe(false);
+    });
+
+    it('rejects a TAB inside the host', () => {
+      const raw = `https://evil.com${TAB}.civitai.com/x.png`;
+      // WHATWG deletes the tab, yielding an allowlist-passing subdomain — while
+      // the raw bytes, tab intact, were what got forwarded.
+      expect(new URL(raw).hostname).toBe('evil.com.civitai.com');
+      expect(parseSource(raw).success).toBe(false);
+    });
+
+    it('rejects CRLF inside the host', () => {
+      const raw = `https://evil.com${CR}${LF}.civitai.com/x.png`;
+      expect(new URL(raw).hostname).toBe('evil.com.civitai.com');
+      expect(parseSource(raw).success).toBe(false);
+    });
+
+    it('rejects CR/LF elsewhere in the URL, not just in the host', () => {
+      // Raw CRLF in a value a consumer concatenates into a request line or a
+      // log record is a request-splitting / log-injection primitive, whatever
+      // part of the URL it sits in.
+      expect(parseSource(`https://civitai.com/x.png${CR}${LF}Host: evil.com`).success).toBe(false);
+      expect(parseSource(`https://civitai.com/${LF}x.png`).success).toBe(false);
+      expect(parseSource(`https://civitai.com/x.png?a=${CR}${LF}b`).success).toBe(false);
+    });
+
+    it('rejects NUL and other C0 control bytes', () => {
+      expect(parseSource(`https://civitai.com/x${NUL}.png`).success).toBe(false);
+      expect(parseSource(`${String.fromCharCode(0x01)}https://civitai.com/x.png`).success).toBe(
+        false
+      );
+      expect(parseSource(`https://civitai.com/x.png${String.fromCharCode(0x7f)}`).success).toBe(
+        false
+      );
+    });
+
+    it('rejects a backslash anywhere, including the path', () => {
+      expect(parseSource(`https://civitai.com/a${BACKSLASH}b.png`).success).toBe(false);
+    });
+  });
+
+  describe('emits a canonicalized value, never the raw input', () => {
+    it('emits URL.href (root path added, default port dropped, host case folded)', () => {
+      expect(emittedUrl('https://civitai.com')).toBe('https://civitai.com/');
+      expect(emittedUrl('https://CIVITAI.com:443/x.png')).toBe('https://civitai.com/x.png');
+      expect(emittedUrl('https://civitai.com/a/../b.png')).toBe('https://civitai.com/b.png');
+    });
+
+    it('emits a value free of backslash, tab, CR and LF', () => {
+      for (const url of [
+        'https://civitai.com',
+        'https://civitai.com/images/xyz.jpeg',
+        'https://image.civitai.com/abc/def.jpeg',
+        'https://CIVITAI.com:443/x.png',
+      ]) {
+        const out = emittedUrl(url);
+        expect(out).not.toContain(BACKSLASH);
+        expect(out).not.toContain(TAB);
+        expect(out).not.toContain(CR);
+        expect(out).not.toContain(LF);
+      }
+    });
+  });
+
+  describe('legitimate URLs are unchanged', () => {
+    it('round-trips every real Civitai image host byte-for-byte', () => {
+      // Canonicalization must be a no-op for the URLs production actually
+      // sends — otherwise this would be a behaviour change, not a hardening.
+      for (const url of [
+        'https://civitai.com/images/xyz.jpeg',
+        'https://image.civitai.com/abc/def.jpeg',
+        'https://orchestration.civitai.com/v2/consumer/blobs/AB1.jpeg?sig=abc&exp=2030-01-01T00:00:00Z',
+        'https://orchestration-new.civitai.com/v2/consumer/blobs/E8S6FBPH50ENNVF2PD5.jpeg',
+        'https://civitai.red/x.png',
+        'https://image.civitai.green/x.png',
+      ]) {
+        expect(emittedUrl(url), url).toBe(url);
+      }
+    });
+  });
+
+  describe('previously-rejected hostile URLs stay rejected', () => {
+    it('rejects userinfo, host confusion, bad schemes, homographs and IP literals', () => {
+      const cyrillicEs = String.fromCharCode(0x0441); // looks like ASCII 'c'
+      for (const url of [
+        'https://civitai.com@evil.com/x.png', // userinfo — real host is evil.com
+        'https://civitai.com%40evil.com/x.png', // percent-encoded userinfo
+        'https://civitai.com.evil.example/x.png', // allowed host as a prefix
+        'https://evilcivitai.com/x.png', // no dot boundary before the allowed host
+        'https://evil.example/?x=image.civitai.com', // allowed host only as a substring
+        'http://image.civitai.com/x.png', // non-https
+        'ftp://image.civitai.com/x.png',
+        'javascript:alert(1)//civitai.com',
+        'data:image/png;base64,AAAA',
+        `https://${cyrillicEs}ivitai.com/x.png`, // homograph -> punycode host
+        'https://civitai.com./x.png', // trailing dot
+        'https://127.0.0.1/x.png',
+        'https://[::1]/x.png',
+        'https://169.254.169.254/latest/meta-data/', // cloud metadata
+      ]) {
+        expect(parseSource(url).success, url).toBe(false);
+      }
+    });
+  });
+
+  describe('the length cap bounds the EMITTED value', () => {
+    it('rejects a raw URL over the cap', () => {
+      const raw = `https://civitai.com/${'a'.repeat(SOURCE_IMAGE_URL_MAX)}`;
+      expect(raw.length).toBeGreaterThan(SOURCE_IMAGE_URL_MAX);
+      expect(parseSource(raw).success).toBe(false);
+    });
+
+    it('rejects an in-cap URL that canonicalization inflates past the cap', () => {
+      // Percent-encoding expands a non-ASCII path ~9x (each CJK code point ->
+      // 3 UTF-8 bytes -> 9 chars). The pre-transform `.max()` therefore does
+      // NOT bound what we emit; the post-transform re-check is what does.
+      const raw = `https://civitai.com/${'中'.repeat(2000)}`;
+      expect(raw.length).toBeLessThanOrEqual(SOURCE_IMAGE_URL_MAX);
+      expect(new URL(raw).href.length).toBeGreaterThan(SOURCE_IMAGE_URL_MAX);
+      expect(parseSource(raw).success).toBe(false);
+    });
+
+    it('accepts a long-but-in-bounds URL and emits it within the cap', () => {
+      const raw = `https://civitai.com/${'a'.repeat(2000)}`;
+      expect(raw.length).toBeLessThanOrEqual(SOURCE_IMAGE_URL_MAX);
+      expect(emittedUrl(raw).length).toBeLessThanOrEqual(SOURCE_IMAGE_URL_MAX);
+    });
   });
 });
