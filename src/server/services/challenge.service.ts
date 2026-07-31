@@ -26,6 +26,7 @@ import {
   recordChallengeVoided,
   recordChallengeDeleted,
   recordChallengePrizePaidBuzz,
+  recordChallengeWinnerDuplicatePick,
 } from '~/server/prom/challenge.metrics';
 import {
   ChallengeParticipation,
@@ -107,6 +108,10 @@ import {
   refundUserChallengeFunds,
   reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
+import {
+  dedupeWinnersForPayout,
+  reconcileWinnerToPersisted,
+} from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   deriveDomainCurrency,
   isChallengeHiddenByDomainCurrency,
@@ -2576,9 +2581,41 @@ export async function endChallengeAndPickWinners(challengeId: number) {
         })
         .filter(isDefined);
 
-      // Create ChallengeWinner records (idempotent via P2002 handling)
+      // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
+      // winners" is prompt text, and `find()` happily matches the same entry twice — which would put
+      // one creator on two places. That creator has at most one `ChallengeWinner` row to be paid
+      // for, so the extra placement is a duplicate, not a second prize. Dropped HERE, before the
+      // create loop, rather than at the payout: it keeps the duplicate from conflicting against the
+      // row its own twin just inserted, which would otherwise fire the place-divergence warning and
+      // counter for an anomaly that is not a re-pick at all. (Parity with the cron path.)
+      const { winners: dedupedWinners, dropped: droppedWinners } =
+        dedupeWinnersForPayout(winningEntries);
+      if (droppedWinners.length) {
+        winningEntries = dedupedWinners;
+        await logToAxiom({
+          type: 'warning',
+          name: 'challenge-winner-duplicate-pick',
+          message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${challengeId}`,
+          challengeId,
+          droppedUserIds: droppedWinners.map((entry) => entry.userId),
+          droppedPlaces: droppedWinners.map((entry) => entry.position),
+        }).catch(() => undefined);
+        recordChallengeWinnerDuplicatePick({
+          source: challenge.source,
+          count: droppedWinners.length,
+          origin: 'caller',
+        });
+      }
+
+      // Create ChallengeWinner records, then pay the placement that is PERSISTED rather than the
+      // one just picked. A user already recorded as a winner of this challenge cannot get a second
+      // row — (challengeId, userId) is unique, so the insert conflicts and the stored row keeps its
+      // original place. Paying the freshly-picked place would key the payout to a different
+      // externalTransactionId than the one already settled at the stored place and mint a second
+      // prize. (Parity with the cron completion path.)
+      const reconciledEntries: typeof winningEntries = [];
       for (const entry of winningEntries) {
-        await createChallengeWinner({
+        const persisted = await createChallengeWinner({
           challengeId,
           userId: entry.userId,
           imageId: entry.imageId!, // always non-null on fresh winner path
@@ -2587,7 +2624,9 @@ export async function endChallengeAndPickWinners(challengeId: number) {
           pointsAwarded: challenge.prizes[entry.position - 1]?.points ?? 0,
           reason: entry.reason ?? undefined,
         });
+        reconciledEntries.push(reconcileWinnerToPersisted(entry, persisted));
       }
+      winningEntries = reconciledEntries;
       log('ChallengeWinner records created');
     }
 
@@ -2595,16 +2634,15 @@ export async function endChallengeAndPickWinners(challengeId: number) {
     // the same builder as the cron completion path — hardcoding 'yellow' here minted yellow and
     // stranded the collected green pool for green challenges. Deterministic externalTransactionId
     // (challenge-winner-prize-{cid}-{uid}-place-{n}) keeps retries idempotent.
-    await withRetries(() =>
-      createBuzzTransactionMany(
-        buildWinnerPayoutTransactions({
-          challengeId,
-          title: challenge.title,
-          buzzType: challenge.buzzType,
-          winners: winningEntries,
-        })
-      )
-    );
+    // Built OUTSIDE the retry closure — see the matching note on the cron path. The builder emits
+    // the duplicate-pick counter on its drop branch, and `withRetries` re-invokes up to 4 times.
+    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+      challengeId,
+      title: challenge.title,
+      buzzType: challenge.buzzType,
+      winners: winningEntries,
+    });
+    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
     log('Prizes sent');
 
     // Send entry participation prizes to all eligible users

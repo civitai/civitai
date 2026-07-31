@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import client from 'prom-client';
+import { freshPersistedWinner } from '~/server/games/daily-challenge/__tests__/persisted-winner.fixture';
 
 // Regression coverage for the SCHEDULED-JOB challenge completion telemetry.
 //
@@ -60,7 +61,7 @@ const {
   mockUpdateChallengeStatus: vi.fn().mockResolvedValue(undefined),
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
-  mockCreateChallengeWinner: vi.fn().mockResolvedValue(1),
+  mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
   mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
   mockGetChallengeBuzzType: vi.fn().mockResolvedValue('yellow'),
@@ -360,7 +361,12 @@ beforeEach(() => {
   mockUpdateChallengeStatus.mockResolvedValue(undefined);
   mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 0 });
   mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
-  mockCreateChallengeWinner.mockResolvedValue(1);
+  // Resolve to the PERSISTED row (fresh insert), the real return shape — see
+  // persisted-winner.fixture for why resolving `1` silently neutered the reconcile.
+  mockCreateChallengeWinner.mockImplementation(
+    async (input: { place: number; buzzAwarded: number; pointsAwarded?: number }) =>
+      freshPersistedWinner(input)
+  );
   mockGetChallengeById.mockResolvedValue(null);
   mockGetChallengeBuzzType.mockResolvedValue('yellow');
 });

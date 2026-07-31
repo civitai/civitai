@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import client from 'prom-client';
+import type { PersistedChallengeWinner } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 
 // Regression coverage for the MOD -> JOB completion boundary.
 //
@@ -115,7 +116,18 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   closeChallengeCollection: vi.fn().mockResolvedValue(undefined),
   computeDynamicPool: vi.fn(),
   createChallengeRecord: vi.fn(),
-  createChallengeWinner: vi.fn().mockResolvedValue(1),
+  // Resolves to the PERSISTED row, matching the real signature. Inlined rather than built from
+  // `persisted-winner.fixture` / `WINNER_PRIZE_BUZZ` because a `vi.mock` factory is hoisted and
+  // cannot reference module-scope bindings. `1` used to sit here, which is truthy but has no
+  // `.created` / `.place`, so every caller's `reconcileWinnerToPersisted` degraded to a no-op —
+  // see persisted-winner.fixture. The `satisfies` is the guard that keeps this copy honest.
+  createChallengeWinner: vi.fn().mockResolvedValue({
+    id: 1,
+    place: 1,
+    buzzAwarded: 500, // = WINNER_PRIZE_BUZZ, declared below
+    pointsAwarded: 0,
+    created: true,
+  } satisfies PersistedChallengeWinner),
   distributePrizes: vi.fn(),
   getChallengeById: mockGetChallengeById,
   getChallengeEntryCount: vi.fn().mockResolvedValue(0),
