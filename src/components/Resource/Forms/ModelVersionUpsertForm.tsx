@@ -2,6 +2,7 @@ import {
   Alert,
   Anchor,
   Card,
+  Checkbox,
   Divider,
   Group,
   Input,
@@ -79,7 +80,11 @@ import {
   DEFAULT_FEE_IMAGES,
   FEE_IMAGE_OPTIONS,
   buildModelVersionTerms,
+  feeImageOptionsForCap,
   feeToRatio,
+  maxFeeBuzzForRatio,
+  maxLicensingFee,
+  maxPaidAccessPrice,
   ratioToFee,
   suggestedFeePerImage,
 } from '@civitai/buzz';
@@ -374,6 +379,11 @@ export function ModelVersionUpsertForm({
   ]) as number[];
   const { isDirty } = form.formState;
   const earlyAccessConfig = form.watch('earlyAccessConfig');
+  // Opt-in to a cheaper generation-only tier. Seeded from the stored config so an existing separate price
+  // stays visible; unchecking clears the value, which is what makes generation fall back to the access price.
+  const [chargeGenerationSeparately, setChargeGenerationSeparately] = useState(
+    () => toFormEarlyAccessConfig(version?.paidAccess, version?.donationGoal)?.generationPrice != null
+  );
   const usageControl = form.watch('usageControl');
   const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
@@ -387,6 +397,33 @@ export function ModelVersionUpsertForm({
       shouldValidate: true,
     });
   };
+  // Anyone may set a licensing fee, free tier included (CU 868kj4q49) — the tier caps only how much, and
+  // checkpoints carry a higher ceiling than everything else. Moderators are uncapped. Mirrored server-side
+  // in upsertModelVersionHandler, which is the enforcement point.
+  //
+  // `memberInBadState` mirrors the server's getCapTier, which excludes bad-state subs — so the UI never
+  // advertises a ceiling the server will reject.
+  const feeCapTier = currentUser?.memberInBadState ? 'free' : (currentUser?.tier ?? 'free');
+  const licensingFeeCap = currentUser?.isModerator
+    ? MAX_LICENSING_FEE
+    : maxLicensingFee(feeCapTier, model?.type);
+  // Denominators that can express at least 1 ⚡ under this cap — at the free/other cap of 0.1, "per 1
+  // generation" has no valid whole-number entry, so offering it would strand the field.
+  const feeImageOptions = currentUser?.isModerator
+    ? [...FEE_IMAGE_OPTIONS]
+    : feeImageOptionsForCap(feeCapTier, model?.type);
+  // Infinity (gold/moderator) falls back to MAX_DONATION_GOAL: an infinite `max` renders as no cap at all.
+  const tierPriceCap = maxPaidAccessPrice(feeCapTier);
+  const paidAccessCap =
+    currentUser?.isModerator || !Number.isFinite(tierPriceCap) ? MAX_DONATION_GOAL : tierPriceCap;
+  const storedTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
+  const storedPaidGen =
+    storedTerms?.generation && !('free' in storedTerms.generation)
+      ? storedTerms.generation
+      : undefined;
+  // What the version already charges for access — the download bundle, or the generation price on a gen-only
+  // version (which has no download tier, so `download?.price` alone would read as unpriced).
+  const storedAccessPrice = storedTerms?.download?.price ?? storedPaidGen?.price ?? 0;
   const showLicensingFeeBlock =
     !isNonCommercial &&
     (!!features.licensingFee ||
@@ -586,6 +623,13 @@ export function ModelVersionUpsertForm({
       });
       // Keep the ratio inputs in step with the form value reset (they're local state, not form-bound).
       setFeeRatio(feeToRatio(Number(version.licensingFee ?? 0)));
+      // Same for the generation-price checkbox. Without this it keeps its mount-time value while `reset`
+      // restores a generationPrice underneath it: on first render `version` is undefined so the box seeds
+      // off, then a price arrives and is charged while the input stays hidden — and after the creator
+      // unchecks it, any refetch/invalidate re-populates the value they just cleared and re-saves it.
+      setChargeGenerationSeparately(
+        toFormEarlyAccessConfig(version.paidAccess, version.donationGoal)?.generationPrice != null
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
@@ -606,6 +650,12 @@ export function ModelVersionUpsertForm({
   // Keeps the Paid Access section visible/editable for a published permanent-gated version.
   const atEarlyAccess = !!version?.paidAccess;
   const isPublished = version?.status === 'Published';
+  // A gen-only version ratchets on its generation price, having no download tier. The stored price is a
+  // floor: the server allows resubmitting over-cap, so clamping down would silently cut it.
+  const accessPriceMax = Math.max(
+    Math.min(isPublished ? storedAccessPrice || MAX_DONATION_GOAL : MAX_DONATION_GOAL, paidAccessCap),
+    storedAccessPrice
+  );
   const isPrivateModel = model?.availability === Availability.Private;
   // A timed Early Access window can't be *started* after publish; only a version already on one keeps it.
   // Permanent Paid Access has no window, so it stays available post-publish.
@@ -940,28 +990,59 @@ export function ModelVersionUpsertForm({
                                 : 'Buyers unlock download + generation.'
                             }
                             min={100}
-                            max={
-                              isPublished
-                                ? (version?.paidAccess?.terms as ModelVersionTerms | undefined)
-                                    ?.download?.price
-                                : MAX_DONATION_GOAL
-                            }
+                            max={accessPriceMax}
                             step={100}
                             leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
                             withAsterisk
                             disabled={isEarlyAccessOver}
                           />
+                          {(earlyAccessConfig?.accessPrice ?? 0) > paidAccessCap && (
+                            <Text size="xs" c="yellow.5">
+                              This price is above your membership&apos;s{' '}
+                              {paidAccessCap.toLocaleString()} Buzz cap. You can keep or lower it, but not
+                              raise it — upgrade to charge more.
+                            </Text>
+                          )}
                           {!isGenOnly && (
-                            <InputNumber
-                              name="earlyAccessConfig.generationPrice"
-                              label="Generation-only price"
-                              description="Defaults to the access price. Lower it to offer a cheaper generation-only tier — buyers upgrade for the difference."
-                              min={50}
-                              max={earlyAccessConfig?.accessPrice}
-                              step={100}
-                              leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
-                              disabled={isEarlyAccessOver}
-                            />
+                            <>
+                              <Checkbox
+                                label="Charge a different price for generation access"
+                                description="Off, buyers pay the same access price whether they download or generate."
+                                checked={chargeGenerationSeparately}
+                                disabled={isEarlyAccessOver}
+                                onChange={(e) => {
+                                  const on = e.currentTarget.checked;
+                                  setChargeGenerationSeparately(on);
+                                  // Clearing the value is what actually removes the cheaper tier — an
+                                  // undefined generationPrice makes generation fall back to the access price.
+                                  if (!on)
+                                    form.setValue(
+                                      'earlyAccessConfig.generationPrice',
+                                      undefined as never
+                                    );
+                                }}
+                              />
+                              {chargeGenerationSeparately && (
+                                <InputNumber
+                                  name="earlyAccessConfig.generationPrice"
+                                  label="Generation-only price"
+                                  description="What buyers pay to generate on-site without unlocking the download. Can't exceed the access price."
+                                  min={50}
+                                  // Grandfather floor, as on the access price — generation is capped
+                                  // per-component and increase-only.
+                                  max={Math.max(
+                                    Math.min(
+                                      earlyAccessConfig?.accessPrice ?? paidAccessCap,
+                                      paidAccessCap
+                                    ),
+                                    storedPaidGen?.price ?? 0
+                                  )}
+                                  step={100}
+                                  leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+                                  disabled={isEarlyAccessOver}
+                                />
+                              )}
+                            </>
                           )}
                           <InputNumber
                             name="earlyAccessConfig.freePreviewGenerations"
@@ -1050,7 +1131,7 @@ export function ModelVersionUpsertForm({
             <Stack gap="xs">
               <Input.Wrapper
                 label="License Fee"
-                description={`Charge for generations using this version, as Buzz per number of generations. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per generation.`}
+                description={`Charge for generations using this version, as Buzz per number of generations. If this is a derivative of a base model that already charges a licensing fee, your fee is added on top of it. Set 0 to disable. Your membership allows up to ${licensingFeeCap} Buzz per generation for this model type.`}
               >
                 <Group gap="xs" wrap="nowrap" mt={4}>
                   <NumberInput
@@ -1063,7 +1144,7 @@ export function ModelVersionUpsertForm({
                       })
                     }
                     min={0}
-                    max={MAX_LICENSING_FEE * feeRatio.images}
+                    max={maxFeeBuzzForRatio(feeCapTier, model?.type, feeRatio.images)}
                     step={1}
                     allowDecimal={false}
                     leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -1077,14 +1158,18 @@ export function ModelVersionUpsertForm({
                     value={String(feeRatio.images)}
                     onChange={(v) => {
                       const images = Number(v) || DEFAULT_FEE_IMAGES;
-                      // Clamp buzz so a smaller denominator can't silently push the per-generation fee
-                      // past MAX_LICENSING_FEE (which the schema would reject with no visible field error).
+                      // Clamp in the RATIO domain: the cap is per-image and can be fractional (free/other is
+                      // 0.1), so `cap * images` would put a decimal into a whole-number field the schema then
+                      // rejects. floor() keeps the value enterable and valid.
                       applyFeeRatio({
-                        buzz: Math.min(feeRatio.buzz, MAX_LICENSING_FEE * images),
+                        buzz: Math.min(
+                          feeRatio.buzz,
+                          maxFeeBuzzForRatio(feeCapTier, model?.type, images)
+                        ),
                         images,
                       });
                     }}
-                    data={FEE_IMAGE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
+                    data={feeImageOptions.map((n) => ({ value: String(n), label: String(n) }))}
                     allowDeselect={false}
                     w={90}
                   />
@@ -1093,6 +1178,12 @@ export function ModelVersionUpsertForm({
                   </Text>
                 </Group>
               </Input.Wrapper>
+              {currentLicensingFee > licensingFeeCap && (
+                <Text size="xs" c="yellow.5">
+                  This fee is above your membership&apos;s {licensingFeeCap} Buzz cap for this model
+                  type. You can keep or lower it, but not raise it — upgrade to charge more.
+                </Text>
+              )}
               {showLicensingFeeSettlementCurrency && (
                 <InputSelect
                   name="licensingFeeSettlementCurrency"

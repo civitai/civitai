@@ -30,12 +30,15 @@
     suggestedFee,
     cancelHref,
     onSelectAll,
+    feeCap,
   }: {
     matchingVersionIds: number[];
     selected: SvelteSet<number>;
     suggestedFee: number | undefined;
     cancelHref: string;
     onSelectAll: (ids: number[]) => void;
+    /** Strictest per-image fee cap across the selection — one fee is applied to every picked version. */
+    feeCap: number;
   } = $props();
 
   let bulkBuzz = $state<number | undefined>(1);
@@ -86,6 +89,7 @@
     <NumberInput
       name="buzz"
       min={0}
+      max={feeCap * Number(bulkImages)}
       bind:value={bulkBuzz}
       placeholder="Buzz"
       aria-label="Buzz (leave empty to clear the fee)"

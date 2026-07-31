@@ -50,9 +50,9 @@ export function earlyAccessQuantityForScore(modelsScore: number): number {
   return quantity;
 }
 
-// Permanent pay-for-access cap by Creator-Program tier (CU 868ke4949). Lives in @civitai/buzz because the onsite
-// model-version form sets permanent access too, and the main app enforces the cap server-side.
-export { PERMANENT_ACCESS_LIMIT_BY_TIER, maxPermanentAccessModels } from '@civitai/buzz';
+// Per-tier paid-access caps. In @civitai/buzz because the onsite model-version form sets access too, and the
+// main app enforces the caps server-side.
+export { maxPermanentAccessModels, maxPaidAccessPrice } from '@civitai/buzz';
 
 export type EarlyAccessConfig = {
   timeframe: number;

@@ -11,5 +11,8 @@ export {
   ratioToFee,
   suggestedFeePerImage,
   formatFeeRatio,
+  maxLicensingFee,
+  maxFeeBuzzForRatio,
+  feeImageOptionsForCap,
 } from '@civitai/buzz';
 export type { FeeRatio } from '@civitai/buzz';

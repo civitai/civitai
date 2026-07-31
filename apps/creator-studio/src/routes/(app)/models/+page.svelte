@@ -40,8 +40,10 @@
   import {
     feeToRatio,
     formatFeeRatio,
+    maxLicensingFee,
+    maxFeeBuzzForRatio,
+    feeImageOptionsForCap,
     suggestedFeePerImage,
-    FEE_IMAGE_OPTIONS,
     DEFAULT_FEE_IMAGES,
   } from '$lib/monetization/fee';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
@@ -62,22 +64,23 @@
 
   let { data }: { data: PageData } = $props();
 
-  // Off / Active / Paused — a fee is "paused" (kept but not charged) when the owner isn't currently a CP member.
-  function feeStatus(fee: number | null): { label: string; cls: string } {
+  // Off / Active / Over cap — anyone may set a fee now, so the amber state means "above your tier's ceiling
+  // for this model type": still charged in full, but it can't be raised until the membership is upgraded.
+  function feeStatus(fee: number | null, modelType: string): { label: string; cls: string } {
     if (fee == null || fee <= 0) return { label: 'Off', cls: 'text-dark-3' };
-    return data.canSetFee
-      ? { label: 'Active', cls: 'text-green-5' }
-      : { label: 'Paused', cls: 'text-yellow-5' };
+    return fee > maxLicensingFee(data.caps.capTier, modelType)
+      ? { label: 'Over cap', cls: 'text-yellow-5' }
+      : { label: 'Active', cls: 'text-green-5' };
   }
 
-  // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / yellow Paused / dim Off).
-  function feeChip(fee: number | null): { label: string; cls: string } {
+  // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / amber Capped / dim Off).
+  function feeChip(fee: number | null, modelType: string): { label: string; cls: string } {
     if (fee == null || fee <= 0) return { label: 'Fee off', cls: 'border-dark-4 text-dark-3' };
     const { buzz, images } = feeToRatio(fee);
     const label = images === 1 ? `${buzz} ⚡ / gen` : `${buzz} ⚡ / ${images}`;
-    return data.canSetFee
-      ? { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' }
-      : { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' };
+    return fee > maxLicensingFee(data.caps.capTier, modelType)
+      ? { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' }
+      : { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' };
   }
 
   // Early-access chip: shown (green) only while a window is actually active, so it clearly means
@@ -109,9 +112,13 @@
   }
   // Permanent access is capped by CP tier (null cap = unlimited); concurrent early access by models score.
   const permAtCap = $derived(
-    data.permanentCap !== null && data.permanentCap > 0 && data.permanentUsed >= data.permanentCap
+    data.caps.permanentCap !== null &&
+      data.caps.permanentCap > 0 &&
+      data.caps.permanentUsed >= data.caps.permanentCap
   );
-  const eaAtCap = $derived(data.earlyAccessCap > 0 && data.earlyAccessUsed >= data.earlyAccessCap);
+  const eaAtCap = $derived(
+    data.caps.earlyAccessCap > 0 && data.caps.earlyAccessUsed >= data.caps.earlyAccessCap
+  );
 
   // Version status as a distinct tag (M5) — green when Published, dim for Draft/other — so it reads as a badge
   // rather than blending into the base-model text.
@@ -167,11 +174,10 @@
   }
 
   // --- Bulk mode ---
-  const bulkMode = $derived(data.canSetFee && page.url.searchParams.get('mode') === 'bulk');
-  // Bulk permanent paid-access pricing — a separate mode/bar from fees, members only.
-  const paidAccessMode = $derived(
-    data.canSellIndefinitely && page.url.searchParams.get('mode') === 'paid-access'
-  );
+  const bulkMode = $derived(page.url.searchParams.get('mode') === 'bulk');
+  // Bulk permanent paid-access pricing — a separate mode/bar from fees. Open to every tier now; the price
+  // and count caps do the gating.
+  const paidAccessMode = $derived(page.url.searchParams.get('mode') === 'paid-access');
   // Either mode shares the same version-selection UI.
   const selectionMode = $derived(bulkMode || paidAccessMode);
   // Paid-access bulk is scoped to one usage type — the toggle drives a `usage` list filter so the price
@@ -181,7 +187,9 @@
   const selected = new SvelteSet<number>();
   // Permanent slots the creator can still fill (null cap = unlimited).
   const remainingPermanentSlots = $derived(
-    data.permanentCap === null ? Infinity : Math.max(0, data.permanentCap - data.permanentUsed)
+    data.caps.permanentCap === null
+      ? Infinity
+      : Math.max(0, data.caps.permanentCap - data.caps.permanentUsed)
   );
   // Versions already sold permanently don't consume a NEW slot when re-priced — mirrors the server's
   // countPermanentAccessVersionsExcluding baseline, so re-pricing stays possible even at the cap.
@@ -219,6 +227,20 @@
   });
   // The suggested fee is per model type, so surface a bulk "use suggested" only when the type filter pins one.
   const bulkSuggested = $derived(data.query.mt ? suggestedFeePerImage(data.query.mt) : undefined);
+
+  // One fee is applied to every picked version, so the input is capped by the STRICTEST cap in the selection
+  // — matching bulkSetLicensingFee on the server. "Select all" can pick versions beyond this page, whose model
+  // types aren't loaded, so anything unresolved falls back to the non-checkpoint cap (the strictest there is).
+  const bulkFeeCap = $derived.by(() => {
+    const loaded = new Map<number, string>();
+    for (const m of data.models) for (const v of m.versions) loaded.set(v.id, m.type);
+    // Seeded at Infinity so a checkpoint-only selection gets the checkpoint cap; only ids whose type isn't
+    // loaded (select-all reaches beyond this page) fall back to the stricter non-checkpoint cap.
+    let cap = Infinity;
+    for (const id of selected)
+      cap = Math.min(cap, maxLicensingFee(data.caps.capTier, loaded.get(id)));
+    return Number.isFinite(cap) ? cap : maxLicensingFee(data.caps.capTier, undefined);
+  });
 
   // Leaving bulk mode (Cancel, or any URL change that drops the mode) discards a pending selection.
   $effect(() => {
@@ -336,6 +358,8 @@
   let editing = $state<CreatorModelVersion | null>(null);
   // The parent model's type isn't on the version, so capture it when opening — the fee reference is keyed by it.
   let editingType = $state('');
+  // Per-model-type suggested fee behind the drawer's "Use this" shortcut.
+  const suggested = $derived(feeToRatio(suggestedFeePerImage(editingType)));
   // Fee inputs are bound (not just seeded) so "Use this" can populate them from the reference.
   let feeBuzz = $state<number | undefined>();
   let feeImages = $state(String(DEFAULT_FEE_IMAGES));
@@ -356,10 +380,10 @@
   <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
 </header>
 
-{#if !data.canSetFee}
+{#if data.caps.capTier === 'free'}
   <JoinUpsell
     class="mb-6"
-    body="Setting licensing fees requires an active Creator Program membership. You can still review your models below."
+    body="You can set licensing fees and paid access on the free tier. Joining the Creator Program raises how much you can charge."
   />
 {/if}
 
@@ -369,26 +393,30 @@
   <span class="flex items-center gap-1.5">
     <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
     <span class="text-dark-2">Permanent access</span>
-    {#if data.permanentCap === 0}
+    {#if data.caps.permanentCap === 0}
       <span class="font-medium text-dark-3">Not available on your tier</span>
-    {:else if data.permanentCap === null}
-      <span class="font-medium text-white">{data.permanentUsed} set · unlimited</span>
+    {:else if data.caps.permanentCap === null}
+      <span class="font-medium text-white">{data.caps.permanentUsed} set · unlimited</span>
     {:else}
       <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
-        {data.permanentUsed} of {data.permanentCap} set{permAtCap ? ' · limit reached' : ''}
+        {data.caps.permanentUsed} of {data.caps.permanentCap} set{permAtCap
+          ? ' · limit reached'
+          : ''}
       </span>
     {/if}
   </span>
   <span class="flex items-center gap-1.5">
     <span class="inline-block h-2 w-2 rounded-full bg-green-5"></span>
     <span class="text-dark-2">Early access</span>
-    {#if data.earlyAccessCap === 0}
+    {#if data.caps.earlyAccessCap === 0}
       <span class="font-medium text-dark-3">Not unlocked yet — grows with your creator score</span>
     {:else}
       <span class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}">
-        {data.earlyAccessUsed} of {data.earlyAccessCap} active{eaAtCap ? ' · limit reached' : ''}
+        {data.caps.earlyAccessUsed} of {data.caps.earlyAccessCap} active{eaAtCap
+          ? ' · limit reached'
+          : ''}
       </span>
-      <span class="text-dark-3">· up to {data.maxEarlyAccessDays} days</span>
+      <span class="text-dark-3">· up to {data.caps.maxEarlyAccessDays} days</span>
     {/if}
   </span>
 </div>
@@ -547,44 +575,40 @@
     <div class="ml-auto flex items-center gap-2">
       <Button href={exportHref} data-sveltekit-reload variant="outline" size="sm">Export CSV</Button
       >
-      {#if data.canSetFee}
-        <form
-          bind:this={previewForm}
-          method="POST"
-          action="?/previewFees"
-          enctype="multipart/form-data"
-          use:enhance={previewEnhance}
-          class="contents"
-        >
-          <input
-            bind:this={fileInput}
-            type="file"
-            name="file"
-            accept=".csv,text/csv"
-            class="hidden"
-            onchange={() => previewForm?.requestSubmit()}
-          />
-        </form>
-        <Button variant="outline" size="sm" onclick={() => fileInput?.click()}>Import CSV</Button>
-        {#if data.canSellIndefinitely}
-          <Button
-            href={buildHref({ mode: 'paid-access', usage: 'download' })}
-            data-sveltekit-replacestate
-            variant="outline"
-            size="sm"
-          >
-            Bulk Paid Access
-          </Button>
-        {/if}
-        <Button
-          href={buildHref({ mode: 'bulk' })}
-          data-sveltekit-replacestate
-          variant="outline"
-          size="sm"
-        >
-          Bulk Edit Fees
-        </Button>
-      {/if}
+      <form
+        bind:this={previewForm}
+        method="POST"
+        action="?/previewFees"
+        enctype="multipart/form-data"
+        use:enhance={previewEnhance}
+        class="contents"
+      >
+        <input
+          bind:this={fileInput}
+          type="file"
+          name="file"
+          accept=".csv,text/csv"
+          class="hidden"
+          onchange={() => previewForm?.requestSubmit()}
+        />
+      </form>
+      <Button variant="outline" size="sm" onclick={() => fileInput?.click()}>Import CSV</Button>
+      <Button
+        href={buildHref({ mode: 'paid-access', usage: 'download' })}
+        data-sveltekit-replacestate
+        variant="outline"
+        size="sm"
+      >
+        Bulk Paid Access
+      </Button>
+      <Button
+        href={buildHref({ mode: 'bulk' })}
+        data-sveltekit-replacestate
+        variant="outline"
+        size="sm"
+      >
+        Bulk Edit Fees
+      </Button>
     </div>
   {/if}
 </div>
@@ -619,13 +643,13 @@
     suggestedFee={bulkSuggested}
     cancelHref={buildHref({ mode: null })}
     onSelectAll={selectAll}
+    feeCap={bulkFeeCap}
   />
 {/if}
 
 {#if paidAccessMode}
   <PaidAccessBulkBar
-    permanentCap={data.permanentCap}
-    permanentUsed={data.permanentUsed}
+    caps={data.caps}
     matchingVersionIds={data.matchingVersionIds}
     selectableCount={selectableMatchingCount}
     slotsConsumed={newSlotsUsed()}
@@ -696,7 +720,7 @@
           {:else}
             <ul class="divide-y divide-dark-4 border-t border-dark-4">
               {#each model.versions as version (version.id)}
-                {@const chip = feeChip(version.licensingFee)}
+                {@const chip = feeChip(version.licensingFee, model.type)}
                 <li>
                   {#if selectionMode}
                     {@const cbId = `v-${version.id}`}
@@ -907,7 +931,7 @@
 >
   <SheetContent side="right" class="w-full gap-0 overflow-y-auto p-0 sm:max-w-md">
     {#if editing}
-      {@const st = feeStatus(editing.licensingFee)}
+      {@const st = feeStatus(editing.licensingFee, editingType)}
       <SheetHeader class="border-b border-dark-4 p-5">
         <SheetTitle class="text-white">{editing.name}</SheetTitle>
         <SheetDescription>{editing.baseModel} · {editing.status}</SheetDescription>
@@ -920,81 +944,67 @@
             <span class="text-sm font-medium text-white">Licensing fee</span>
             <span class="text-xs {st.cls}">{st.label}</span>
           </div>
-          {#if data.canSetFee}
-            {@const suggested = feeToRatio(suggestedFeePerImage(editingType))}
-            <form
-              method="POST"
-              action="?/setFee"
-              use:enhance={setFeeEnhance}
-              class="flex flex-wrap items-center gap-1.5"
+          <form
+            method="POST"
+            action="?/setFee"
+            use:enhance={setFeeEnhance}
+            class="flex flex-wrap items-center gap-1.5"
+          >
+            <input type="hidden" name="versionId" value={editing.id} />
+            <NumberInput
+              name="buzz"
+              min={0}
+              max={maxFeeBuzzForRatio(data.caps.capTier, editingType, Number(feeImages))}
+              bind:value={feeBuzz}
+              placeholder="Off"
+              aria-label="Buzz for {editing.name}"
+              class="w-16 py-1"
+            />
+            <span class="text-xs text-dark-3">⚡ per</span>
+            <input type="hidden" name="images" value={feeImages} />
+            <Select.Root
+              type="single"
+              value={feeImages}
+              onValueChange={(v: string) => {
+                if (v) feeImages = v;
+              }}
             >
-              <input type="hidden" name="versionId" value={editing.id} />
-              <NumberInput
-                name="buzz"
-                min={0}
-                bind:value={feeBuzz}
-                placeholder="Off"
-                aria-label="Buzz for {editing.name}"
-                class="w-16 py-1"
-              />
-              <span class="text-xs text-dark-3">⚡ per</span>
-              <input type="hidden" name="images" value={feeImages} />
-              <Select.Root
-                type="single"
-                value={feeImages}
-                onValueChange={(v: string) => {
-                  if (v) feeImages = v;
+              <Select.Trigger
+                size="default"
+                class="w-16 text-white"
+                aria-label="Generations for {editing.name}"
+              >
+                {feeImages}
+              </Select.Trigger>
+              <Select.Content>
+                {#each feeImageOptionsForCap(data.caps.capTier, editingType) as opt (opt)}
+                  <Select.Item value={String(opt)} label={String(opt)} />
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <span class="text-xs text-dark-3">generations</span>
+            <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
+            <p class="w-full text-xs text-dark-3">
+              Suggested for {editingType}: {suggested.buzz} ⚡ / {suggested.images === 1
+                ? 'generation'
+                : `${suggested.images} generations`}
+              <button
+                type="button"
+                class="ml-1 text-blue-4 hover:underline"
+                onclick={() => {
+                  feeBuzz = suggested.buzz;
+                  feeImages = String(suggested.images);
                 }}
               >
-                <Select.Trigger
-                  size="default"
-                  class="w-16 text-white"
-                  aria-label="Generations for {editing.name}"
-                >
-                  {feeImages}
-                </Select.Trigger>
-                <Select.Content>
-                  {#each FEE_IMAGE_OPTIONS as opt (opt)}
-                    <Select.Item value={String(opt)} label={String(opt)} />
-                  {/each}
-                </Select.Content>
-              </Select.Root>
-              <span class="text-xs text-dark-3">generations</span>
-              <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
-              <p class="w-full text-xs text-dark-3">
-                Suggested for {editingType}: {suggested.buzz} ⚡ / {suggested.images === 1
-                  ? 'generation'
-                  : `${suggested.images} generations`}
-                <button
-                  type="button"
-                  class="ml-1 text-blue-4 hover:underline"
-                  onclick={() => {
-                    feeBuzz = suggested.buzz;
-                    feeImages = String(suggested.images);
-                  }}
-                >
-                  Use this
-                </button>
-              </p>
-              <span class="w-full text-xs text-dark-3">Leave empty to clear the fee.</span>
-            </form>
-          {:else}
-            <span class="text-sm text-dark-1">{formatFeeRatio(editing.licensingFee)}</span>
-          {/if}
+                Use this
+              </button>
+            </p>
+            <span class="w-full text-xs text-dark-3">Leave empty to clear the fee.</span>
+          </form>
         </section>
 
         {#key editing.id}
-          <PaidAccessEditor
-            version={editing}
-            onClose={() => (editing = null)}
-            maxEarlyAccessDays={data.maxEarlyAccessDays}
-            canSellIndefinitely={data.canSellIndefinitely}
-            permanentCap={data.permanentCap}
-            permanentUsed={data.permanentUsed}
-            earlyAccessUsed={data.earlyAccessUsed}
-            earlyAccessCap={data.earlyAccessCap}
-            tier={data.tier}
-          />
+          <PaidAccessEditor version={editing} onClose={() => (editing = null)} caps={data.caps} />
         {/key}
       </div>
     {/if}

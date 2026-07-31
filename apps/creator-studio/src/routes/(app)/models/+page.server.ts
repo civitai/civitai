@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
+import { raisesOverCap } from '@civitai/buzz';
 import type { PageServerLoad, Actions } from './$types';
 import {
   getCreatorModels,
@@ -9,8 +10,8 @@ import {
 } from '$lib/server/models';
 import {
   resolveMembership,
-  canSetLicensingFee,
-  canSellIndefinitely,
+  cappedTier,
+  displayTier,
   TEST_MEMBERSHIP_COOKIE,
 } from '$lib/server/membership';
 import {
@@ -28,6 +29,7 @@ import {
   countPermanentAccessVersionsExcluding,
   countActiveEarlyAccessVersions,
   isVersionPermanent,
+  currentAccessPrices,
   bulkSetPermanentAccess,
 } from '$lib/server/monetization/early-access';
 import {
@@ -41,6 +43,7 @@ import {
   earlyAccessDaysForScore,
   earlyAccessQuantityForScore,
   maxPermanentAccessModels,
+  maxPaidAccessPrice,
   MIN_ACCESS_PRICE,
   MIN_GENERATION_PRICE,
 } from '$lib/monetization/early-access';
@@ -127,21 +130,25 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     countPermanentAccessVersions(locals.user.id),
     countActiveEarlyAccessVersions(locals.user.id),
   ]);
-  const permanentCap = maxPermanentAccessModels(membership.tier);
+  const permanentCap = maxPermanentAccessModels(cappedTier(membership));
+  const paidAccessPriceCap = maxPaidAccessPrice(cappedTier(membership));
   return {
     ...result,
     perPage,
     pageSizeOptions: PAGE_SIZE_OPTIONS,
-    canSetFee: canSetLicensingFee(membership),
-    canSellIndefinitely: canSellIndefinitely(membership),
-    tier: membership.tier,
-    // Score gates early access two ways: how long a window can run, and how many can run at once.
-    maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
-    earlyAccessUsed,
-    earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
-    permanentUsed,
-    // null cap = unlimited (gold); Infinity wouldn't survive as a plain number.
-    permanentCap: Number.isFinite(permanentCap) ? permanentCap : null,
+    // `tier` is the display label; `capTier` is what cap math must use — a lapsed membership keeps its
+    // tier string but is capped at free. null cap = unlimited (Infinity would not survive serialization).
+    caps: {
+      tier: displayTier(membership),
+      capTier: cappedTier(membership),
+      permanentUsed,
+      permanentCap: Number.isFinite(permanentCap) ? permanentCap : null,
+      priceCap: Number.isFinite(paidAccessPriceCap) ? paidAccessPriceCap : null,
+      // Score gates early access two ways: how long a window can run, and how many can run at once.
+      maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
+      earlyAccessUsed,
+      earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
+    },
     query: {
       q: q ?? '',
       fee: parsed.fee ?? '',
@@ -260,11 +267,6 @@ export const actions: Actions = {
       return fail(400, { paidAccess: true, error: firstError(versionIds.error) });
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-    if (!locals.user.isModerator && !canSellIndefinitely(membership))
-      return fail(403, {
-        paidAccess: true,
-        error: 'Permanent paid access requires an active Creator Program membership.',
-      });
 
     const pricing = bulkPaidAccessSchema.safeParse({
       accessPrice: form.get('accessPrice'),
@@ -274,7 +276,16 @@ export const actions: Actions = {
     if (!pricing.success) return fail(400, { paidAccess: true, error: firstError(pricing.error) });
 
     if (!locals.user.isModerator) {
-      const cap = maxPermanentAccessModels(membership.tier);
+      // Price cap first — it applies to every tier; the count cap only bites on free (CU 868kj4q4j).
+      const priceCap = maxPaidAccessPrice(cappedTier(membership));
+      const highest = Math.max(pricing.data.accessPrice, pricing.data.generationPrice ?? 0);
+      if (highest > priceCap)
+        return fail(403, {
+          paidAccess: true,
+          error: `Your membership allows a paid-access price of up to ${priceCap} buzz.`,
+        });
+
+      const cap = maxPermanentAccessModels(cappedTier(membership));
       if (Number.isFinite(cap)) {
         const baseline = await countPermanentAccessVersionsExcluding(
           locals.user.id,
@@ -320,25 +331,23 @@ export const actions: Actions = {
       return { versionId: versionId.data, earlyAccessCleared: true };
     }
 
-    // Permanent access needs an active Creator Program membership and is capped by tier — enforced here
-    // (mods excepted). Only NEW permanent grants are gated: re-saving an already-permanent version stays
-    // allowed even if the creator's membership lapsed or the tier is at capacity, so an edit can't strand them.
+    const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
+
+    // Paid access is open to every tier; only free carries a COUNT limit (CU 868kj4q4j). Still only NEW
+    // permanent grants are counted — re-saving an already-permanent version stays allowed even at capacity,
+    // so an edit can't strand a creator whose membership lapsed.
     if (permanent && !locals.user.isModerator && !(await isVersionPermanent(versionId.data))) {
-      const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
-      if (!canSellIndefinitely(membership))
-        return fail(403, {
-          versionId: versionId.data,
-          error: 'Permanent access requires an active Creator Program membership.',
-        });
-      const cap = maxPermanentAccessModels(membership.tier);
-      const current = await countPermanentAccessVersions(locals.user.id, versionId.data);
-      if (current >= cap)
-        return fail(400, {
-          versionId: versionId.data,
-          error: `Your membership allows up to ${cap} permanent paid-access model${
-            cap === 1 ? '' : 's'
-          }.`,
-        });
+      const cap = maxPermanentAccessModels(cappedTier(membership));
+      if (Number.isFinite(cap)) {
+        const current = await countPermanentAccessVersions(locals.user.id, versionId.data);
+        if (current >= cap)
+          return fail(400, {
+            versionId: versionId.data,
+            error: `Your membership allows up to ${cap} permanent paid-access model${
+              cap === 1 ? '' : 's'
+            }. Upgrade for more.`,
+          });
+      }
     }
 
     const config = earlyAccessFormSchema.safeParse(Object.fromEntries(form));
@@ -353,6 +362,31 @@ export const actions: Actions = {
         error: "Paid access isn't available for this version's usage control.",
       });
     const genOnly = usageControl === 'Generation';
+
+    // Price cap applies to timed and permanent alike — the charge is what's capped, not the duration. Only an
+    // INCREASE is rejected: the editor resubmits the stored price on every save, so capping the submitted
+    // value outright would make an over-cap version uneditable after a lapse (the same class of bug that
+    // 82f64846ba had to hot-fix in the main app). Lowering or leaving it alone always passes.
+    if (!locals.user.isModerator) {
+      const priceCap = maxPaidAccessPrice(cappedTier(membership));
+      const prev = await currentAccessPrices(versionId.data);
+      // Compared per-component so a cheap generation tier can't be raised under an over-cap access price.
+      // For a gen-only version the access price IS the generation price, so it's checked against that side.
+      const next = genOnly
+        ? { download: 0, generation: config.data.accessPrice ?? 0 }
+        : {
+            download: config.data.accessPrice ?? 0,
+            generation: config.data.generationPrice ?? 0,
+          };
+      if (
+        raisesOverCap(next.download, prev.download, priceCap) ||
+        raisesOverCap(next.generation, prev.generation, priceCap)
+      )
+        return fail(403, {
+          versionId: versionId.data,
+          error: `Your membership allows a paid-access price of up to ${priceCap} buzz. Lower the price or upgrade your membership.`,
+        });
+    }
 
     const result = await setEarlyAccessConfig(cookie, versionId.data, config.data, genOnly);
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });

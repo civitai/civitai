@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { sql } from '@civitai/db/kysely';
-import { buildModelVersionTerms } from '@civitai/buzz';
+import { buildModelVersionTerms, gatePrices, type ModelVersionTerms } from '@civitai/buzz';
 import { env } from '$env/dynamic/private';
 import { dbRead } from '$lib/server/db';
 import { checkbox, optionalBuzz, freePreviewsField } from './form-fields';
@@ -211,6 +211,21 @@ export async function isVersionPermanent(versionId: number): Promise<boolean> {
     .where('entityId', '=', versionId)
     .executeTakeFirst();
   return row != null && row.timeframeDays == null;
+}
+
+// The version's stored gate prices (0 when ungated), kept per-component. Feeds the "only an INCREASE is
+// capped" rule so an over-cap gate stays editable and can be lowered — and keeping download/generation
+// separate stops a cheap generation tier being raised under an over-cap download umbrella.
+export async function currentAccessPrices(
+  versionId: number
+): Promise<{ download: number; generation: number }> {
+  const row = await dbRead
+    .selectFrom('PaidAccess')
+    .select('terms')
+    .where('entityType', '=', 'ModelVersion')
+    .where('entityId', '=', versionId)
+    .executeTakeFirst();
+  return gatePrices(row?.terms as ModelVersionTerms | undefined);
 }
 
 // Counts versions in a *currently running* timed early-access window (permanent ones are capped separately,

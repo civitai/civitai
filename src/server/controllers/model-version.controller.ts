@@ -1,5 +1,11 @@
 import { TRPCError } from '@trpc/server';
-import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
+import { maxLicensingFee, raisesOverCap } from '@civitai/buzz';
+import {
+  assertPaidAccessCaps,
+  getPaidAccess,
+  toModelVersionPaidAccessDto,
+} from '~/server/services/paid-access.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import type { BaseModelType } from '~/server/common/constants';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
@@ -378,6 +384,21 @@ export const upsertModelVersionHandler = async ({
       input.trainingDetails = undefined;
     }
 
+    // Monetization is open to every creator, free tier included (CU 868kj4q49 / 868kj4q4j) — the tier caps
+    // only how much may be charged. Read fresh (not off the session) so a lapse applies immediately, and
+    // memoized because both the paid-access and licensing-fee checks need it: getAllUserSubscriptions is
+    // uncached and hits the primary.
+    let capTier: string | null | undefined;
+    const actorTier = async () => (capTier ??= await getCapTier(ctx.user.id));
+
+    await assertPaidAccessCaps({
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+      versionId: input.id,
+      paidAccess: input.paidAccess,
+      tier: input.paidAccess && !ctx.user.isModerator ? await actorTier() : null,
+    });
+
     await assertUserEarlyAccessLimits({
       userId: ctx.user.id,
       userMeta: ctx.user.meta,
@@ -403,6 +424,18 @@ export const upsertModelVersionHandler = async ({
       const hadExistingFee = existing?.licensingFee != null && Number(existing.licensingFee) > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
+      }
+      // Per-tier ceiling, varying by model type. Compared in whole cents: the stored value is a Prisma
+      // Decimal and the input a JSON float, so a raw > can read "raised" on an untouched fee.
+      if (!ctx.user.isModerator) {
+        const toCents = (v: number) => Math.round(v * 100);
+        const model = await getModel({ id: input.modelId, select: { type: true } });
+        const cap = maxLicensingFee(await actorTier(), model?.type);
+        const stored = toCents(Number(existing?.licensingFee ?? 0));
+        if (raisesOverCap(toCents(input.licensingFee), stored, toCents(cap)))
+          throw throwBadRequestError(
+            `Your tier allows a licensing fee of up to ${cap} Buzz per generation for this model type. Lower the fee or upgrade your membership.`
+          );
       }
       if (
         input.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash &&

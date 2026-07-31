@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
+  gatePrices,
   isPaidAccessActive,
+  maxPaidAccessPrice,
+  maxPermanentAccessModels,
+  raisesOverCap,
   type ModelVersionTerms,
   type PaidAccessEntityType,
   type PaidAccessRow,
@@ -138,6 +142,54 @@ export async function countUserPermanentAccessVersions(
       ${excludeVersionId != null ? Prisma.sql`AND mv.id <> ${excludeVersionId}` : Prisma.empty}
   `;
   return Number(rows[0]?.count ?? 0);
+}
+
+/** Per-tier paid-access caps (CU 868kj4q4j). Shared because the tRPC handler and the REST endpoint both write gates. */
+export async function assertPaidAccessCaps({
+  userId,
+  isModerator,
+  versionId,
+  paidAccess,
+  tier,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  versionId?: number;
+  paidAccess: ModelVersionPaidAccessInputSchema | null | undefined;
+  tier: string | null | undefined;
+}) {
+  if (isModerator || !paidAccess) return;
+
+  const existing = versionId
+    ? (await getPaidAccess('ModelVersion', [versionId]))[versionId]
+    : undefined;
+  const priceCap = maxPaidAccessPrice(tier);
+  const next = gatePrices(paidAccess.terms);
+  const prev = gatePrices(existing?.terms as ModelVersionTerms);
+  // Per-component: collapsing to max(download, generation) would let a cheap generation tier be raised to
+  // the download price under an over-cap umbrella (200 → 3000) without exceeding the collapsed value.
+  if (
+    raisesOverCap(next.download, prev.download, priceCap) ||
+    raisesOverCap(next.generation, prev.generation, priceCap)
+  )
+    throw throwBadRequestError(
+      `Your tier allows a paid-access price of up to ${priceCap} Buzz. Lower the price or upgrade your membership.`
+    );
+
+  // Only the free tier keeps a COUNT limit, and only NEW permanent grants count against it.
+  if (paidAccess.permanent) {
+    const alreadyPermanent = existing != null && existing.timeframeDays == null;
+    const limit = maxPermanentAccessModels(tier);
+    if (!alreadyPermanent && Number.isFinite(limit)) {
+      const used = await countUserPermanentAccessVersions(userId, versionId);
+      if (used + 1 > limit)
+        throw throwBadRequestError(
+          `Your tier allows up to ${limit} permanent paid-access model${
+            limit === 1 ? '' : 's'
+          }. Upgrade your membership for more.`
+        );
+    }
+  }
 }
 
 /** Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). */

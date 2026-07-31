@@ -129,18 +129,64 @@ export const grantsGeneration = (
   { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
 ): boolean => isOwnerOrMod || hasBought || generationOpenToNonBuyers(terms);
 
-// Permanent pay-for-access caps (CU 868ke4949). Shared because two surfaces set permanent access — the
-// onsite model-version form and Creator Studio — and they must agree on the limit. The server-side
-// assertion in the main app is the enforcement point; these constants also drive the "X of Y set"
-// capacity hints in both UIs.
+// Permanent pay-for-access caps (CU 868ke4949, revised by CU 868kj4q4j). Shared because two surfaces set
+// permanent access — the onsite model-version form and Creator Studio — and they must agree on the limit.
+// The server-side assertion in the main app is the enforcement point; these constants also drive the
+// "X of Y set" capacity hints in both UIs.
+//
+// The gate moved from QUANTITY to PRICE: permanent access is open to everyone, and the tier caps how much
+// you may charge. Only free keeps a count limit, so a non-member can try it without running a storefront.
+//
+// NUMBERS ARE PLACEHOLDERS pending CU 868kj4q4x (Justin + Briant to finalize).
 export const PERMANENT_ACCESS_LIMIT_BY_TIER: Record<string, number> = {
-  bronze: 10,
-  silver: 25,
+  free: 3,
+  // Legacy paid tier — allowances match bronze.
+  founder: Infinity,
+  bronze: Infinity,
+  silver: Infinity,
   gold: Infinity,
 };
 
-/** Concurrent permanent-access versions allowed for a Creator-Program tier. 0 = not permitted (no/free tier). */
+export const PAID_ACCESS_PRICE_CAP_BY_TIER: Record<string, number> = {
+  free: 500,
+  // Legacy paid tier — charges as bronze.
+  founder: 1000,
+  bronze: 1000,
+  silver: 5000,
+  gold: Infinity,
+};
+
+/**
+ * Concurrent permanent-access versions allowed for a tier. An unknown or lapsed tier gets the FREE
+ * allowance rather than 0: a lapse must never take a gated model back to free/public (CU 868kj4q4j).
+ */
 export function maxPermanentAccessModels(tier: string | null | undefined): number {
-  return tier ? PERMANENT_ACCESS_LIMIT_BY_TIER[tier] ?? 0 : 0;
+  return (tier ? PERMANENT_ACCESS_LIMIT_BY_TIER[tier] : undefined) ?? PERMANENT_ACCESS_LIMIT_BY_TIER.free;
+}
+
+/** Highest price a tier may charge for paid access. Unknown/lapsed tiers get the FREE cap (see above). */
+export function maxPaidAccessPrice(tier: string | null | undefined): number {
+  return (tier ? PAID_ACCESS_PRICE_CAP_BY_TIER[tier] : undefined) ?? PAID_ACCESS_PRICE_CAP_BY_TIER.free;
+}
+
+/**
+ * Whether a monetization change needs cap headroom. Only a RAISE does: the whole version is resubmitted on
+ * any edit, so rejecting every over-cap submission would make a version priced above the creator's current
+ * cap unsavable — the "blocked version saves entirely" bug hot-fixed in 82f64846ba. Keeping or lowering an
+ * over-cap value always passes, which is also how a lapse tightens without stranding anyone.
+ */
+export const raisesOverCap = (
+  next: number | null | undefined,
+  current: number,
+  cap: number
+): boolean => next != null && next > cap && next > current;
+
+/** A gate's two chargeable prices (0 when absent). Kept separate so a cheap tier can't ride an over-cap one. */
+export function gatePrices(terms: ModelVersionTerms | undefined | null): {
+  download: number;
+  generation: number;
+} {
+  const gen = terms?.generation && !('free' in terms.generation) ? terms.generation : undefined;
+  return { download: terms?.download?.price ?? 0, generation: gen?.price ?? 0 };
 }
 
