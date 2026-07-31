@@ -457,6 +457,9 @@ describe('OffsiteSubmissionsList — row actions scroll rather than clip (S3)', 
     const scrollEl = scroll.element();
     const table = scrollEl.querySelector('table');
     expect(table).not.toBeNull();
-    expect(table?.closest('[data-testid="apps-offsite-submissions-table-scroll"]')).toBe(scrollEl);
+    // Placement, not presence — see the note on the matching on-site test.
+    const card = scrollEl.closest('.mantine-Card-root');
+    expect(card).not.toBeNull();
+    expect(table?.closest('.mantine-Card-root')).toBe(card);
   });
 });

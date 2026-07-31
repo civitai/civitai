@@ -28,8 +28,25 @@
  * container converts that silent clip into a real horizontal scroll.
  *
  * The value is seeded from that measurement: 1424 px is the onsite table's measured
- * natural width with the full action set, so at container widths >= 1424 nothing
- * scrolls at all and below it every action stays reachable.
+ * natural width with the full action set, so the table scrolls exactly when the
+ * card is narrower than 1424 and not otherwise.
+ *
+ * 🔴 THE FLOOR ALONE WAS NOT ENOUGH — see {@link MY_SUBMISSIONS_CONTAINER_SIZE}.
+ * The page's container was `AppsPageLayout`'s default `'xl'`, i.e. Mantine's 1320 px
+ * token, which is a MAX-width: at every viewport >= 1320 px the card computed a
+ * constant 1320 − 32 (Container padding) − 2 (Card border) = 1286 px. 1286 < 1424,
+ * so a scroll container on its own left a permanent ~138 px scroll region on EVERY
+ * desktop viewport — the clip became a scrollbar rather than going away. The page
+ * therefore also widens its container past this floor.
+ *
+ * 🔴 The wrapper clips on BOTH axes. Mantine's `Table.ScrollContainer` sets only
+ * `overflow-x`; per the CSS overflow spec a non-`visible` value on one axis computes
+ * the other to `auto`, so `overflow-y` is `auto` too (browser-confirmed). That is
+ * safe today only because the two in-cell overlays these rows render explicitly pass
+ * `withinPortal` (`AppAnalyticsInline`'s `Tooltip` and `ListingProblemsIndicator`'s
+ * `HoverCard`) — and the repo theme sets `Popover: { defaultProps: { withinPortal: false } }`
+ * GLOBALLY, so any future non-portaled `Popover`/`HoverCard`/`Menu` rendered inside
+ * a cell WILL be clipped by this wrapper. Portal it, or it will be cut off.
  *
  * 🔴 SHARED BY BOTH LISTS ON PURPOSE. The offsite table (6 columns) is narrower
  * today and would not need this large a floor on its own, but:
@@ -46,6 +63,30 @@
  * constants HERE — do not hardcode a literal at a call site.
  */
 export const SUBMISSIONS_TABLE_MIN_WIDTH = 1424;
+
+/**
+ * Chrome (px) that `AppsPageLayout` + the submissions `Card` take out of the
+ * container width before the table sees it: Mantine `Container` pads `2 x 16`, and
+ * `<Card withBorder>` draws a `1 px` border on each side.
+ */
+export const SUBMISSIONS_CONTAINER_CHROME = 34;
+
+/**
+ * The `AppsPageLayout` container width (raw px) for /apps/my-submissions.
+ *
+ * `AppsPageLayout` defaults to `size='xl'` = Mantine's 1320 px token, and that is a
+ * MAX-width — so the card computed a CONSTANT 1286 px at every viewport >= 1320 px,
+ * permanently below {@link SUBMISSIONS_TABLE_MIN_WIDTH}. Left at `'xl'`, the scroll
+ * container would simply have converted the silent clip into a scrollbar that is
+ * always there on desktop. Widening the container past the floor is what actually
+ * removes the overflow at desktop widths; the scroll container remains the safety
+ * net below that (narrow desktop, tablet, mobile) and for future column growth.
+ *
+ * `Container` accepts a raw number — the store index already widens this way. The
+ * value is not viewport-clamped by us: `Container` is max-width, so a narrower
+ * viewport just yields a narrower container and the table scrolls, as intended.
+ */
+export const MY_SUBMISSIONS_CONTAINER_SIZE = 1500;
 
 /** Sortable columns shared by both tables. */
 export type SortColumn = 'app' | 'status' | 'submitted' | 'reviewed';

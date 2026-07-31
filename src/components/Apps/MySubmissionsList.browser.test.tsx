@@ -1061,8 +1061,19 @@ describe('MySubmissionsList — row actions scroll rather than clip (S3)', () =>
     const scrollEl = scroll.element();
     const table = scrollEl.querySelector('table');
     expect(table).not.toBeNull();
-    // The wrapper is the table's nearest scroll ancestor — i.e. the overflow is
-    // handled BEFORE the clipping Card, not by it.
-    expect(table?.closest('[data-testid="apps-submissions-table-scroll"]')).toBe(scrollEl);
+    // PLACEMENT, which is the whole fix: the scroll box must sit INSIDE the clipping
+    // Card (`.mantine-Card-root` is `overflow: hidden`), between it and the table.
+    // Hoisting the wrapper outside the Card restores the defect in full, and a
+    // presence-only assertion would not notice.
+    //
+    // (The obvious-looking `table.closest('[data-testid=…]') === scrollEl` is a
+    // TAUTOLOGY — `scrollEl.querySelector('table')` already found the table inside
+    // scrollEl, so its nearest such ancestor is scrollEl by construction. It proves
+    // nothing about the Card. Hence the two assertions below instead.)
+    const card = scrollEl.closest('.mantine-Card-root');
+    expect(card).not.toBeNull();
+    // …and no further Card sits between the wrapper and the table, which would
+    // re-introduce the clip below the scroll box.
+    expect(table?.closest('.mantine-Card-root')).toBe(card);
   });
 });

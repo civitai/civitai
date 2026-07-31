@@ -12,12 +12,14 @@ import {
   filterGroups,
   groupSubmissionsByApp,
   matchesQuery,
+  MY_SUBMISSIONS_CONTAINER_SIZE,
   nextSortState,
   OWNER_STATUS_BUCKETS,
   sortGroups,
   statusBucket,
   statusRank,
   STATUS_SECTION_ORDER,
+  SUBMISSIONS_CONTAINER_CHROME,
   SUBMISSIONS_TABLE_MIN_WIDTH,
   toDate,
   type SortState,
@@ -663,15 +665,76 @@ describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
   });
 });
 
+describe('MY_SUBMISSIONS_CONTAINER_SIZE', () => {
+  it('is wide enough that the table does NOT scroll at desktop width', () => {
+    // This is the invariant the scroll container alone did not give us. The page's
+    // old container (`AppsPageLayout` default `'xl'` = 1320) is a MAX-width, so the
+    // card was a CONSTANT 1286 px at every viewport >= 1320 — always below the
+    // floor, i.e. a permanent scrollbar on every desktop. The container must clear
+    // the floor plus the Container padding + Card border it loses on the way in.
+    expect(MY_SUBMISSIONS_CONTAINER_SIZE - SUBMISSIONS_CONTAINER_CHROME).toBeGreaterThanOrEqual(
+      SUBMISSIONS_TABLE_MIN_WIDTH
+    );
+  });
+
+  it('is a raw px number, not a Mantine size token (tokens cap at xl = 1320)', () => {
+    expect(typeof MY_SUBMISSIONS_CONTAINER_SIZE).toBe('number');
+    expect(Number.isFinite(MY_SUBMISSIONS_CONTAINER_SIZE)).toBe(true);
+  });
+});
+
+describe('/apps/my-submissions consumes the widened container (S3)', () => {
+  const PAGE = path.resolve(__dirname, '../../../pages/apps/my-submissions.tsx');
+  const src = () => readFileSync(PAGE, 'utf8');
+
+  it('passes MY_SUBMISSIONS_CONTAINER_SIZE to AppsPageLayout, not the layout default', () => {
+    // Dropping the prop silently falls back to the layout default `'xl'`, which is
+    // exactly the state that made the clip permanent — nothing else would fail.
+    // Anchored to the ELEMENT, not the file (see the `type="native"` guard below for
+    // why a whole-file regex is not a guard at all).
+    expect(src()).toMatch(/<AppsPageLayout\b[^>]*?\ssize=\{MY_SUBMISSIONS_CONTAINER_SIZE\}/s);
+  });
+});
+
 describe('both my-submissions tables scroll rather than clip (S3, structural)', () => {
   const APPS_DIR = path.resolve(__dirname, '..');
   const read = (file: string) => readFileSync(path.join(APPS_DIR, file), 'utf8');
   const LISTS = ['MySubmissionsList.tsx', 'OffsiteSubmissionsList.tsx'] as const;
 
+  /**
+   * 🔴 EVERY assertion here is ANCHORED TO THE `<Table.ScrollContainer …>` OPENING
+   * TAG (`<Table\.ScrollContainer\b[^>]*?\s<prop>` — `[^>]*?` cannot cross the `>`
+   * that closes the tag, so the match is confined to that element's attributes).
+   *
+   * A whole-file regex here is NOT a guard. These files carry prose comments that
+   * quote the very props being asserted (the block comment above each container
+   * explains why `type="native"` was chosen over `type="hover"`), so an unanchored
+   * `/type="native"/` is satisfied by the COMMENT and stays green while the real
+   * prop is mutated to anything at all. That is exactly what happened here before
+   * this rewrite. Same trap for the negative `minWidth` assertion, which an
+   * unrelated `minWidth={400}` anywhere in a ~700-line file would trip.
+   */
+  const inTag = (prop: string) => new RegExp(String.raw`<Table\.ScrollContainer\b[^>]*?\s${prop}`, 's');
+
   for (const file of LISTS) {
     describe(file, () => {
       it('wraps its Table in a Table.ScrollContainer', () => {
         expect(read(file)).toMatch(/<Table\.ScrollContainer\b/);
+      });
+
+      it('nests the scroll container INSIDE the clipping Card, wrapping the Table', () => {
+        // PLACEMENT is the entire fix. `.mantine-Card-root` is `overflow: hidden`, so
+        // the scroll box only does anything if it sits BETWEEN the Card and the
+        // table. Hoisting it outside the Card (`<Table.ScrollContainer><Card>…`)
+        // fully restores the defect while every presence-only assertion above — and
+        // both component tests — stay green. This is the assertion that catches it.
+        const src = read(file);
+        expect(src).toMatch(
+          /<Card\b[^>]*>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)*<Table\.ScrollContainer\b[^>]*>\s*<Table\b/
+        );
+        // …and it closes in the mirror order, so the table is genuinely nested in
+        // both rather than merely preceded by them.
+        expect(src).toMatch(/<\/Table>\s*<\/Table\.ScrollContainer>\s*<\/Card>/);
       });
 
       it('feeds that container the SHARED constant, not a width literal', () => {
@@ -681,15 +744,15 @@ describe('both my-submissions tables scroll rather than clip (S3, structural)', 
         expect(src).toMatch(/from '~\/components\/Apps\/submissionsTable'/);
         // …and the container must consume it rather than a hardcoded number, which
         // is how the two lists would silently diverge.
-        expect(src).toMatch(/minWidth=\{SUBMISSIONS_TABLE_MIN_WIDTH\}/);
-        expect(src).not.toMatch(/minWidth=\{\s*\d/);
+        expect(src).toMatch(inTag(String.raw`minWidth=\{SUBMISSIONS_TABLE_MIN_WIDTH\}`));
+        expect(src).not.toMatch(inTag(String.raw`minWidth=\{\s*\d`));
       });
 
       it('uses the native scroll box, so the scrollbar is not hover-hidden', () => {
         // Mantine's ScrollArea (Table.ScrollContainer's default) defaults to
         // `type="hover"` — scrollbars appear only on hover. The measured defect IS a
         // missing affordance, so the native overflow box is deliberate.
-        expect(read(file)).toMatch(/type="native"/);
+        expect(read(file)).toMatch(inTag('type="native"'));
       });
     });
   }
