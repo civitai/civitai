@@ -4,6 +4,7 @@ import client from 'prom-client';
 // — the repo forbids inline `typeof import(...)` annotations.
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge-funding';
+import type * as ErrorHandling from '~/utils/errorHandling';
 
 // Winner-prize payouts are deduped ONLY by their externalTransactionId, which embeds the winner's
 // PLACE (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`) — `createBuzzTransactionMany`
@@ -42,6 +43,8 @@ const {
   mockCreateChallengeWinner,
   mockGetChallengeById,
   mockCreateBuzzTransactionMany,
+  mockWithRetries,
+  mockBuildWinnerPayoutTransactions,
 } = vi.hoisted(() => ({
   mockDbReadQueryRaw: vi.fn(),
   mockDbReadChallengeFindUnique: vi.fn(),
@@ -64,6 +67,12 @@ const {
   mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
   mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
+  // Real `withRetries` re-invokes its closure up to 4 times on a flaky payout. Doubled so a test can
+  // drive that deterministically instead of making the buzz mock throw and waiting on real retries.
+  mockWithRetries: vi.fn(),
+  // A SPY that delegates to the real (pure) builder — assertions still run against genuine
+  // externalTransactionId strings, but the number of times the payout is BUILT becomes observable.
+  mockBuildWinnerPayoutTransactions: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -158,12 +167,19 @@ vi.mock('~/server/services/reaction.service', () => ({
 // assertions below run against the genuine externalTransactionId strings.
 vi.mock('~/server/games/daily-challenge/challenge-funding', async (importOriginal) => {
   const actual = await importOriginal<typeof ChallengeFunding>();
+  mockBuildWinnerPayoutTransactions.mockImplementation(actual.buildWinnerPayoutTransactions);
   return {
     ...actual,
+    buildWinnerPayoutTransactions: mockBuildWinnerPayoutTransactions,
     refundUserChallengeFunds: mockRefundUserChallengeFunds,
     getChallengeBuzzType: vi.fn().mockResolvedValue('yellow'),
     reportPoolFundingShortfall: vi.fn().mockResolvedValue(undefined),
   };
+});
+
+vi.mock('~/utils/errorHandling', async (importOriginal) => {
+  const actual = await importOriginal<typeof ErrorHandling>();
+  return { ...actual, withRetries: mockWithRetries };
 });
 
 vi.mock('~/utils/logging', () => ({
@@ -331,6 +347,8 @@ beforeEach(() => {
   mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
   mockGetChallengeById.mockResolvedValue(null);
   mockCreateBuzzTransactionMany.mockResolvedValue(undefined);
+  // Default: the happy path, one invocation — same as real `withRetries` when nothing throws.
+  mockWithRetries.mockImplementation((fn: (remaining: number) => unknown) => fn(3));
 });
 
 describe('winner payout keys on the PERSISTED placement (duplicate-payout guard)', () => {
@@ -617,6 +635,74 @@ describe('one creator named twice in a single pick is paid once (duplicate-pick 
     expect(await counterValue(DUPLICATE_PICK_METRIC, { source: 'System' })).toBe(1);
   });
 
+  // `origin` was asserted nowhere, so the two values were interchangeable and the label could be
+  // flipped with every test still green. It is the sharpest label on this counter to get wrong:
+  // `chokepoint` means "a caller reached the money path with duplicates and did NOT report it", i.e.
+  // real prize money silently not paid, and an operator seeing it on a drop the caller DID report
+  // would go hunting a payout failure that never happened.
+  it('tags the drop as origin=caller — this path reported it, the choke point did not catch it', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'alice' },
+      { imageId: 2, userId: 200, username: 'bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'alice', creatorId: 100, reason: 'best' },
+        { creator: 'alice', creatorId: 100, reason: 'again' },
+      ],
+    });
+    stubUniqueWinnerTable();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(await counterValue(DUPLICATE_PICK_METRIC, { source: 'System', origin: 'caller' })).toBe(
+      1
+    );
+    // And the choke-point series must not exist: the caller dropped the duplicate before the
+    // builder ever saw it, so the builder's own guard is a genuine no-op here.
+    expect(await counterValue(DUPLICATE_PICK_METRIC, { origin: 'chokepoint' })).toBeUndefined();
+  });
+
+  // The judge row is typed `| undefined` (the SELECT is `LIMIT 1` against a replica), and the emit
+  // defaults its source the same way the judging call upstream does. Nothing pinned that default, so
+  // it could be dropped and the `unknown` bucket would quietly absorb the emit — and `unknown` is
+  // reserved for "the source could not be read", which is a different operator question from "a
+  // System challenge dropped a placement".
+  it('defaults the source to System when the judge row could not be read', async () => {
+    // No judge row at all — the destructure yields `undefined`, which is exactly what a replica that
+    // has not seen the challenge row (or a row deleted mid-run) produces.
+    mockDbReadQueryRaw.mockResolvedValueOnce([]);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'alice' },
+      { imageId: 2, userId: 200, username: 'bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'alice', creatorId: 100, reason: 'best' },
+        { creator: 'alice', creatorId: 100, reason: 'again' },
+      ],
+    });
+    stubUniqueWinnerTable();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(await counterValue(DUPLICATE_PICK_METRIC, { source: 'System', origin: 'caller' })).toBe(
+      1
+    );
+    expect(await counterValue(DUPLICATE_PICK_METRIC, { source: 'unknown' })).toBeUndefined();
+  });
+
   it('leaves a clean pick alone — the guard does not over-trigger', async () => {
     mockChallengeJudgeRow(ChallengeSource.System);
     mockJudgedEntryRows([
@@ -645,5 +731,74 @@ describe('one creator named twice in a single pick is paid once (duplicate-pick 
     expect(mockCreateChallengeWinner).toHaveBeenCalledTimes(2);
     // Absent series, not zero — the counter must never have been touched.
     expect(await counterValue(DUPLICATE_PICK_METRIC, { source: 'System' })).toBeUndefined();
+  });
+});
+
+// `buildWinnerPayoutTransactions` is called OUTSIDE the `withRetries` closure. The output is
+// deterministic so rebuilding it would not move different money — but the builder increments the
+// duplicate-pick counter on its drop branch, and `withRetries` re-invokes up to 4 times. Inside the
+// closure, a flaky payout would record up to 4x the placements actually dropped, on exactly the run
+// where the number matters most. Nothing pinned the placement of that one line.
+describe('the winner payout is built ONCE, outside the retry closure', () => {
+  const wireCleanTwoWinnerPick = () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'alice' },
+      { imageId: 2, userId: 200, username: 'bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'alice', creatorId: 100, reason: 'best' },
+        { creator: 'bob', creatorId: 200, reason: 'second' },
+      ],
+    });
+    stubUniqueWinnerTable();
+  };
+
+  it('a payout that retries three times still builds the transactions exactly once', async () => {
+    wireCleanTwoWinnerPick();
+    // What real `withRetries` does to its closure when the buzz call keeps failing.
+    mockWithRetries.mockImplementation(async (fn: (remaining: number) => Promise<unknown>) => {
+      await fn(3);
+      await fn(2);
+      await fn(1);
+    });
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    // The retry itself must still happen — otherwise this test would pass on a build that never
+    // retries at all, which is a different bug.
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(3);
+    expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
+  });
+
+  it('every retry submits the SAME transaction array instance, not a rebuilt one', async () => {
+    wireCleanTwoWinnerPick();
+    mockWithRetries.mockImplementation(async (fn: (remaining: number) => Promise<unknown>) => {
+      await fn(3);
+      await fn(2);
+    });
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    const [first] = mockCreateBuzzTransactionMany.mock.calls[0];
+    const [second] = mockCreateBuzzTransactionMany.mock.calls[1];
+    // Identity, not deep equality: a rebuild produces an equal-but-distinct array, so `toEqual`
+    // would pass on the very mutation this pins.
+    expect(second).toBe(first);
+  });
+
+  it('does not rebuild on the happy path either — one build, one submit', async () => {
+    wireCleanTwoWinnerPick();
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
+    expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
   });
 });

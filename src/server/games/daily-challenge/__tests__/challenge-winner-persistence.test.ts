@@ -21,6 +21,7 @@ const {
   mockFindUnique,
   mockLogToAxiom,
   mockRecordDivergence,
+  mockRecordUnresolved,
 } = vi.hoisted(() => ({
   mockDbReadQueryRaw: vi.fn().mockResolvedValue([]),
   mockDbWriteQueryRaw: vi.fn().mockResolvedValue([]),
@@ -28,6 +29,7 @@ const {
   mockFindUnique: vi.fn(),
   mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockRecordDivergence: vi.fn(),
+  mockRecordUnresolved: vi.fn(),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -44,7 +46,11 @@ vi.mock('~/server/logging/client', () => ({
 }));
 vi.mock('~/server/prom/challenge.metrics', async (importOriginal) => {
   const actual = await importOriginal<typeof ChallengeMetrics>();
-  return { ...actual, recordChallengeWinnerPlaceDivergence: mockRecordDivergence };
+  return {
+    ...actual,
+    recordChallengeWinnerPlaceDivergence: mockRecordDivergence,
+    recordChallengeWinnerConflictUnresolved: mockRecordUnresolved,
+  };
 });
 
 const { createChallengeWinner, getExistingWinnersForRetry } = await import(
@@ -155,6 +161,29 @@ describe('createChallengeWinner (P0-b)', () => {
     expect(mockRecordDivergence).toHaveBeenCalledWith({ field: 'place' });
   });
 
+  // The third `field` value. Nothing asserted it, so the prize-only arm of the ternary that picks
+  // the label was free to be wrong — and it is the arm that matters most for money: the place, and
+  // therefore the transaction id, is unchanged, so the ONLY thing that diverged is how much the user
+  // is owed. An operator seeing `field=place` for that would go looking for a re-ordering that never
+  // happened.
+  it('labels a prize-only divergence as prize', async () => {
+    mockCreate.mockRejectedValue(p2002());
+    // Same place as INPUT (1), different buzzAwarded.
+    mockFindUnique.mockResolvedValue({ id: 5, place: 1, buzzAwarded: 250, pointsAwarded: 10 });
+
+    await createChallengeWinner(INPUT);
+
+    expect(mockRecordDivergence).toHaveBeenCalledWith({ field: 'prize' });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'warning',
+        name: 'challenge-winner-place-divergence',
+        storedBuzzAwarded: 250,
+        attemptedBuzzAwarded: 500,
+      })
+    );
+  });
+
   it('an identical duplicate stays info-level and does not touch the divergence metric', async () => {
     mockCreate.mockRejectedValue(p2002());
     mockFindUnique.mockResolvedValue({ id: 5, place: 1, buzzAwarded: 500, pointsAwarded: 10 });
@@ -173,7 +202,13 @@ describe('createChallengeWinner (P0-b)', () => {
     );
   });
 
-  it('returns null and warns when the conflict resolves to no readable row', async () => {
+  // THE remaining mint path. Returning `null` makes `reconcileWinnerToPersisted` pass the entry
+  // through untouched, so the caller settles a freshly-picked `-place-N` id with no ChallengeWinner
+  // row to key it to. It is reachable, not theoretical: (challengeId, userId) is not this table's
+  // only unique constraint — `id Int @id @default(autoincrement())` is one too — so a sequence left
+  // behind by a restore or a manual insert raises P2002 on `id`, and the (challengeId, userId)
+  // re-read then correctly finds nothing.
+  it('returns null, warns, and RECORDS the unresolved conflict — the mint path is not silent', async () => {
     mockCreate.mockRejectedValue(p2002());
     mockFindUnique.mockResolvedValue(null);
 
@@ -184,6 +219,30 @@ describe('createChallengeWinner (P0-b)', () => {
         name: 'challenge-winner-conflict-unresolved',
       })
     );
+    // Without this the counter suite reads exactly 0 in the one case where money may have moved
+    // twice — an Axiom log is not a metric and nothing can alert on its absence.
+    expect(mockRecordUnresolved).toHaveBeenCalledTimes(1);
+    // And NOT onto the divergence counter: that one's contract is "the payout was reconciled onto
+    // the stored row", which is exactly what did not happen here.
+    expect(mockRecordDivergence).not.toHaveBeenCalled();
+  });
+
+  it('a resolved conflict does not touch the unresolved counter', async () => {
+    mockCreate.mockRejectedValue(p2002());
+    mockFindUnique.mockResolvedValue({ id: 5, place: 3, buzzAwarded: 100, pointsAwarded: 2 });
+
+    await createChallengeWinner(INPUT);
+
+    expect(mockRecordUnresolved).not.toHaveBeenCalled();
+  });
+
+  it('a clean insert touches neither money-path counter', async () => {
+    mockCreate.mockResolvedValue({ id: 5, place: 1, buzzAwarded: 500, pointsAwarded: 10 });
+
+    await createChallengeWinner(INPUT);
+
+    expect(mockRecordUnresolved).not.toHaveBeenCalled();
+    expect(mockRecordDivergence).not.toHaveBeenCalled();
   });
 
   it('rethrows a non-P2002 error', async () => {
