@@ -150,9 +150,17 @@ export type VersionWorkflowScope =
  *
  * The `unscoped` verdict is the important one for safety: a version that is not
  * in ANY of the ecosystem's scoped lists (a community checkpoint, a brand-new
- * upload) is deliberately left alone. That mirrors the graph's own
- * `buildModelTransform`, which skips ids it doesn't know — so this never
- * rejects something the graph would have honoured as-is.
+ * upload) is deliberately left alone, so this can only ever reject a version
+ * whose intended workflow the config states outright.
+ *
+ * That is a fail-open CHOICE, not a claim that such an id is safe. On a
+ * `modelLocked` ecosystem the graph does NOT honour an unknown id as-is: the
+ * `checkpointInputSchema` clamp in `common.ts` rewrites it to the workflow's
+ * `defaultModelId` and returns success (verified — `model: { id: 987654321 }`
+ * on Qwen/txt2img comes back as 2552908). Only NON-`modelLocked` ecosystems
+ * (Boogu, SDXL, Flux1, …) pass an unknown id through untouched. Rejecting the
+ * unknown-id case here would refuse ids the graph is willing to run, so it is
+ * left to the broader fix tracked in #3520.
  */
 export function resolveVersionWorkflowScope(opts: {
   ecosystem: string;

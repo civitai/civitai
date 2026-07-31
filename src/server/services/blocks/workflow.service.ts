@@ -495,22 +495,51 @@ export function resolveBlockImageWorkflowType(
  *
  * The block bridge picks its workflow purely from `sourceImage` presence, so a
  * body naming the EDIT version with no `sourceImage` resolved to `txt2img` —
- * and the generation graph did NOT reject it. `buildModelTransform` maps an
- * out-of-workflow version to its SAME-INDEX sibling in the target workflow's
- * list, so the graph silently REWROTE `model.id` 2558804 → 2552908 and returned
- * success. The caller was billed, got images, and never learned that the
- * checkpoint it asked for was swapped for a different one. Verified against the
- * real graph, not inferred — see the `silently substitutes` test.
+ * and the generation graph did NOT reject it. It returned success with a
+ * DIFFERENT checkpoint: `model.id` 2558804 → 2552908. The caller was billed,
+ * got images, and never learned about the swap.
+ *
+ * THE MECHANISM is the `modelLocked` clamp in `createCheckpointGraph`'s
+ * `checkpointInputSchema` (`shared/data-graph/generation/common.ts`, the
+ * `if (modelLocked && modelVersionId && val.id !== modelVersionId)` branch):
+ * on a `modelLocked` ecosystem, ANY id not in the CURRENT workflow's visible
+ * version list is replaced with that workflow's `defaultModelId`.
+ *
+ * It is NOT `buildModelTransform`'s same-index sibling mapping. That transform
+ * is gated on `depsChanged && !isDirectUpdate` (`libs/data-graph/data-graph.ts`)
+ * — a one-shot `safeParse` that passes `model` explicitly, which is exactly what
+ * this bridge does, IS a direct update, so the transform never runs at all here.
+ * It belongs to the interactive form path, where the workflow changes underneath
+ * a model the user did not just set. Measured: 0 invocations across these
+ * inputs, and stubbing it to `undefined` changes no output.
+ *
+ * That distinction is not cosmetic: it decides which inputs are affected, and
+ * it is pinned by an executed discriminator (see the `SILENTLY SUBSTITUTES to
+ * the workflow DEFAULT` tests). Index-mapping and the default-clamp predict
+ * different outputs for the index-0 edit version 2133258 — 2110043 vs 2552908.
+ * The real graph returns 2552908. Every id lands on the default, regardless of
+ * its position or whether the ecosystem has ever heard of it.
  *
  * Nothing in the response, the snapshot, or the `block_workflows` read-model
  * reveals the substitution, which makes it the worst available failure mode: a
  * successful-looking wrong answer.
  *
- * SCOPE — this deliberately only fires when the version IS one of the
- * ecosystem's workflow-scoped versions but belongs to a DIFFERENT workflow. A
- * community checkpoint the ecosystem does not list is left alone (the graph's
- * own transform skips unknown ids too, so nothing is being substituted for it
- * and there is nothing to warn about).
+ * SCOPE — this guard deliberately closes only a SUBSET of that class: a version
+ * that IS one of the ecosystem's workflow-scoped versions but belongs to a
+ * DIFFERENT workflow, in the txt2img direction only. Two parts stay open:
+ *
+ *  - An UNRECOGNIZED id (a community checkpoint, a brand-new upload) on a
+ *    `modelLocked` ecosystem is also clamped to the workflow default —
+ *    `{ workflow: 'txt2img', ecosystem: 'Qwen', model: { id: 987654321 } }`
+ *    returns success with `model.id` 2552908. It is NOT "left alone". 23 of the
+ *    35 image ecosystems are `modelLocked`, so this is the wide part of the
+ *    class, and rejecting it here would reject ids the graph is willing to run.
+ *  - The reverse direction (a txt2img-only version sent WITH a `sourceImage`)
+ *    is substituted the same way and is likewise not rejected here.
+ *
+ * The broader class is tracked in #3520. `resolveVersionWorkflowScope` is
+ * already direction-agnostic, so flipping the reverse direction on is a
+ * one-line change — held deliberately, not overlooked.
  */
 export function assertCheckpointVersionSupportsWorkflow(opts: {
   ecosystem: string;
