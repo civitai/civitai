@@ -360,6 +360,14 @@ export async function getBlobContent(slug: string, sha: string): Promise<Buffer>
  *
  * `files[].content` must be a Buffer (text or binary); function
  * base64-encodes for the Forgejo API.
+ *
+ * 🔴 NOT content-comparing, and therefore NOT idempotent. An existing
+ * path always gets an `update` op regardless of whether its bytes
+ * changed, so calling this twice with an IDENTICAL file set still
+ * produces a second commit with a new sha. A caller that needs a stable
+ * sha across repeat calls (e.g. the review-preview mirror) must compare
+ * the tree itself and skip the call — see `reviewRepoAlreadyHoldsTree`
+ * in publish-request.service.
  */
 export async function commitFiles(opts: {
   slug: string;
@@ -411,8 +419,9 @@ export async function commitFiles(opts: {
   }
 
   if (operations.length === 0) {
-    // Nothing to commit (bundle identical to repo state). Caller can
-    // treat this as a no-op approve. Return current HEAD SHA so the
+    // Reached ONLY when `files` is empty and there is nothing to delete —
+    // NOT when the bundle merely matches the repo state (an unchanged path
+    // still emits an `update` op above). Return the current HEAD SHA so the
     // publish_request still gets a forgejo_commit_sha pointer.
     const branchRes = await fjFetch(
       `/api/v1/repos/${org}/${opts.slug}/branches/${encodeURIComponent(branch)}`
@@ -719,10 +728,16 @@ export async function deleteReviewRepo(slug: string): Promise<'deleted' | 'alrea
 
 /**
  * MOD REVIEW SANDBOX (#2831) — current HEAD commit sha of the in-review repo
- * `civitai-apps-review/<slug>` on `main`. submitVersion pushes the pending
- * bundle to this repo (replaceAllFiles=true) and only one pending request exists
- * per slug, so HEAD is exactly the pending version's source — the sha the review
- * build clones + tags. Full 40-hex sha (the build pipeline requires it).
+ * `civitai-apps-review/<slug>` on `main`. Full 40-hex sha (the build pipeline
+ * requires it).
+ *
+ * 🔴 HEAD is the pending version's source ONLY for a ZIP-originated request:
+ * submitVersion pushes that bundle here (replaceAllFiles=true) and at most one
+ * request is pending per slug. A request that arrived by `git push` never wrote
+ * here — for those, HEAD is an OLDER submission's tree (or missing entirely), so
+ * calling this for one previews the wrong code. `previewRequest` discriminates
+ * on the request's origin before it gets here (resolveReviewSourceSha); do not
+ * call this without doing the same.
  */
 export async function getReviewRepoHeadSha(slug: string): Promise<string> {
   const res = await fjFetch(
