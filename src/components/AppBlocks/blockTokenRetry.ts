@@ -50,7 +50,11 @@ export const REFRESH_RETRY_BACKOFF_MS: readonly number[] = [2_000, 8_000, 30_000
 
 export type RefreshRetryDecision =
   /** Arm a backoff timer for another automatic attempt. */
-  | { kind: 'retry'; /** 1-based index of the attempt being scheduled. */ attempt: number; delayMs: number }
+  | {
+      kind: 'retry';
+      /** 1-based index of the attempt being scheduled. */ attempt: number;
+      delayMs: number;
+    }
   /** Budget spent — no further AUTOMATIC attempt. The hook is now `terminal`. */
   | { kind: 'settled' };
 

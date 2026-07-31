@@ -141,11 +141,20 @@ export function useBlockToken(
   contextRef.current = context;
 
   const requestToken = useCallback(async (): Promise<void> => {
+    // 🔴 BAIL BEFORE CLAIMING `abortRef`. This check used to sit just below the
+    // claim, which was harmless when nothing tracked in-flight state but is a
+    // trap now: a no-op call would take ownership of `abortRef` without ever
+    // entering the try/finally, so an actually-in-flight sibling's `finally`
+    // would no longer recognise itself as current and would leave `inFlightRef`
+    // stuck TRUE — permanently disabling every automatic recovery path, silently.
+    // The unmount cleanup already aborts the live controller, so returning here
+    // drops nothing.
+    if (!mountedRef.current) return;
+
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
-    if (!mountedRef.current) return;
     // H-3: only flip pending=true when we don't already have a token.
     // On refresh, the iframe should stay mounted with the prior token;
     // unmounting it every 2 minutes (the refresh cadence) was tearing

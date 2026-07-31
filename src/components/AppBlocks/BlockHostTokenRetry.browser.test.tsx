@@ -3,7 +3,10 @@ import { page } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { MAX_REFRESH_RETRIES, REFRESH_RETRY_BACKOFF_MS } from '~/components/AppBlocks/blockTokenRetry';
+import {
+  MAX_REFRESH_RETRIES,
+  REFRESH_RETRY_BACKOFF_MS,
+} from '~/components/AppBlocks/blockTokenRetry';
 
 /**
  * MODEL SLOT — a transient token-refresh failure must NOT erase the block.
@@ -39,7 +42,9 @@ vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
     blocks: {
-      getEffectiveCheckpoint: { useQuery: () => ({ data: { checkpoint: null }, isLoading: false }) },
+      getEffectiveCheckpoint: {
+        useQuery: () => ({ data: { checkpoint: null }, isLoading: false }),
+      },
       getShowcaseImages: { useQuery: () => ({ data: [], isLoading: false }) },
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -69,7 +74,11 @@ vi.mock('~/utils/trpc', () => ({
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
         },
-        storage: { get: { fetch: vi.fn() }, list: { fetch: vi.fn() }, getQuota: { fetch: vi.fn() } },
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
       },
     }),
   },

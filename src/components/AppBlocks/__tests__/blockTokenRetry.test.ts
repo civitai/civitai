@@ -72,9 +72,7 @@ describe('decideRefreshRetry — the bounded automatic re-mint', () => {
 
   test('a garbage attempt count cannot widen the budget', () => {
     expect(decideRefreshRetry({ attempts: -3 }).kind).toBe('retry');
-    expect(decideRefreshRetry({ attempts: 2.9 })).toEqual(
-      decideRefreshRetry({ attempts: 2 })
-    );
+    expect(decideRefreshRetry({ attempts: 2.9 })).toEqual(decideRefreshRetry({ attempts: 2 }));
   });
 });
 
@@ -84,9 +82,9 @@ describe('shouldRetainTokenOnFailure — keeping the block alive through a blip'
 
   test('retains a token that is still live (the T-2min refresh-failure case)', () => {
     // The real shape: refresh fires 2 minutes before expiry and fails.
-    expect(
-      shouldRetainTokenOnFailure({ token: 'tok', expiresAt: iso(2 * 60_000), now })
-    ).toBe(true);
+    expect(shouldRetainTokenOnFailure({ token: 'tok', expiresAt: iso(2 * 60_000), now })).toBe(
+      true
+    );
     expect(shouldRetainTokenOnFailure({ token: 'tok', expiresAt: iso(1), now })).toBe(true);
   });
 

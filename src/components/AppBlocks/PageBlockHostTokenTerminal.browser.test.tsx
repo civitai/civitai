@@ -75,7 +75,11 @@ vi.mock('~/utils/trpc', () => ({
           getCounts: { fetch: vi.fn() },
           get: { fetch: vi.fn() },
         },
-        storage: { get: { fetch: vi.fn() }, list: { fetch: vi.fn() }, getQuota: { fetch: vi.fn() } },
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
       },
     }),
   },
@@ -130,7 +134,11 @@ function postFromBlock(type: string, payload?: unknown) {
   const cw = iframeEl.contentWindow;
   if (!cw) throw new Error('iframe contentWindow missing');
   window.dispatchEvent(
-    new MessageEvent('message', { data: { type, payload }, origin: window.location.origin, source: cw })
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
   );
 }
 
