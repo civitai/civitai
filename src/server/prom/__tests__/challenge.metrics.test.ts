@@ -383,6 +383,20 @@ describe('money-path anomaly counters — a unit must mean exactly one real even
     ).not.toThrow();
     expect(() => recordChallengeWinnerConflictUnresolved()).not.toThrow();
   });
+
+  // The "starts at a real 0" assertion above is only meaningful if the reset helper actually clears
+  // this counter — and because counters live on a process-global registry, that assertion passes on
+  // execution ORDER alone as long as it happens to run before anything increments. That is the exact
+  // hazard __resetChallengeMetricsForTest exists to remove, so it needs its own guard rather than
+  // relying on file order: increment FIRST, then re-assert zero after a reset.
+  it('the reset helper clears the unresolved-conflict counter, not just the labelled ones', async () => {
+    recordChallengeWinnerConflictUnresolved();
+    expect(await seriesValue(UNRESOLVED, {})).toBe(1);
+
+    __resetChallengeMetricsForTest();
+
+    expect(await seriesValue(UNRESOLVED, {})).toBe(0);
+  });
 });
 
 describe('never-throw guarantee', () => {

@@ -171,13 +171,21 @@ const winnerDuplicatePickCounter = registerCounterWithLabels({
 // label report "reconciled" for the one case where money may have moved twice.
 //
 // The causes differ as much as the verdicts. Divergence is triggered by a completion re-picking
-// winners over an existing record; remediation is finding out why a completion ran twice. This one's
-// reachable trigger is a P2002 raised by a DIFFERENT unique constraint: `ChallengeWinner` also has
-// `id Int @id @default(autoincrement())`, and a sequence left behind by a restore or a manual insert
-// collides on `id` — a conflict that says nothing about (challengeId, userId), so the re-read that
-// follows finds no row. Remediation there is resyncing the sequence. Same function, different
-// constraint, different fix; the module's existing split (duplicate-pick vs divergence) draws the
-// line in exactly the same place.
+// winners over an existing record; remediation is finding out why a completion ran twice.
+//
+// This one fires whenever a P2002 is followed by a re-read that finds nothing, and there is more
+// than one way to get there. Do NOT treat the list below as exhaustive — the counter's meaning is
+// "the conflict did not resolve to a row", not "the sequence is desynced":
+//   - a P2002 on a DIFFERENT unique key. `ChallengeWinner` also has `id Int @id
+//     @default(autoincrement())`, so a sequence left behind by a restore or a manual insert
+//     collides on `id`, which says nothing about (challengeId, userId). Remediation: resync the
+//     sequence. Structurally real, but note it is not what prod looks like today.
+//   - a genuine (challengeId, userId) conflict whose row disappears between the failed INSERT and
+//     the re-read. Both FKs are `onDelete: Cascade` and no application code deletes these rows, so
+//     the realistic actor is a cascade or a human doing post-incident cleanup. Remediation: find
+//     out who deleted winner rows, which is a very different investigation.
+// Same function, different constraint, different fix; the module's existing split (duplicate-pick
+// vs divergence) draws the line in exactly the same place.
 //
 // UNLABELLED on purpose, and that is a feature here. `createChallengeWinner` is handed a winner row,
 // not a challenge, so the `source` every other counter in this file slices by is genuinely not in

@@ -559,8 +559,9 @@ export type CreateWinnerInput = {
  * Create the `ChallengeWinner` record for one winner and return the placement that is actually
  * PERSISTED — which is not always the placement passed in.
  *
- * The table is uniquely keyed on (challengeId, userId), so a user who was already recorded as a
- * winner of this challenge cannot get a second row: the insert conflicts (P2002) and the stored
+ * The table has a (challengeId, userId) unique key — note it is NOT the only one, see the P2002
+ * handling below — so a user already recorded as a winner of this challenge normally cannot get a
+ * second row: the insert conflicts (P2002) and the stored
  * row keeps its ORIGINAL place. This used to return `null` on that conflict, which read as "record
  * skipped, carry on" — and the caller then paid the freshly-picked place. Because the winner-prize
  * externalTransactionId embeds the place, that paid under a brand-new key and MINTED A SECOND
@@ -595,9 +596,11 @@ export async function createChallengeWinner(
     });
     return { ...winner, created: true };
   } catch (error) {
-    // P2002 = unique constraint violation on (challengeId, userId) — this user is already recorded
-    // as a winner of this challenge, from an earlier run of the same completion or from a
-    // concurrent run that re-picked winners.
+    // P2002 = unique constraint violation. USUALLY that is (challengeId, userId) — this user is
+    // already recorded as a winner of this challenge, from an earlier run of the same completion or
+    // from a concurrent run that re-picked winners. Do NOT read it as a guarantee that such a row
+    // exists: this table carries more than one unique key, so the re-read below can legitimately
+    // come back empty. That case is handled and instrumented at the end of this block.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       // Read from the PRIMARY: the row we are conflicting with may have been written moments ago,
       // and a replica read that missed it would send us straight back down the mint path.
