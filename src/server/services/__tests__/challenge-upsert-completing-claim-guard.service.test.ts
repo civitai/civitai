@@ -13,32 +13,38 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // the stuck-challenge reset keys off. It is now a status-predicated `updateMany` + `count === 0`,
 // matching the Scheduled-only edit path elsewhere in this service.
 
-const { mockDbRead, mockDbWrite, mockTx, mockCreateImage, mockGenerateThemeElements } = vi.hoisted(
-  () => {
-    const tx = {
-      challenge: {
-        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-        findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 1 }),
-        create: vi.fn().mockResolvedValue({ id: 2 }),
-      },
-      collection: {
-        create: vi.fn().mockResolvedValue({ id: 10 }),
-        update: vi.fn().mockResolvedValue({ id: 10 }),
-        findUnique: vi.fn().mockResolvedValue({ metadata: {} }),
-      },
-    };
-    return {
-      mockTx: tx,
-      mockDbRead: {
-        challenge: { findUnique: vi.fn() },
-        challengeJudge: { findUnique: vi.fn().mockResolvedValue({ userId: 1 }) },
-      },
-      mockDbWrite: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
-      mockCreateImage: vi.fn(),
-      mockGenerateThemeElements: vi.fn().mockResolvedValue([]),
-    };
-  }
-);
+const {
+  mockDbRead,
+  mockDbWrite,
+  mockTx,
+  mockCreateImage,
+  mockGenerateThemeElements,
+  mockLogToAxiom,
+} = vi.hoisted(() => {
+  const tx = {
+    challenge: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 1 }),
+      create: vi.fn().mockResolvedValue({ id: 2 }),
+    },
+    collection: {
+      create: vi.fn().mockResolvedValue({ id: 10 }),
+      update: vi.fn().mockResolvedValue({ id: 10 }),
+      findUnique: vi.fn().mockResolvedValue({ metadata: {} }),
+    },
+  };
+  return {
+    mockTx: tx,
+    mockDbRead: {
+      challenge: { findUnique: vi.fn() },
+      challengeJudge: { findUnique: vi.fn().mockResolvedValue({ userId: 1 }) },
+    },
+    mockDbWrite: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
+    mockCreateImage: vi.fn(),
+    mockGenerateThemeElements: vi.fn().mockResolvedValue([]),
+    mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
@@ -47,11 +53,10 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn().mockResolvedValue(false),
 }));
 
-// Must resolve a promise, not undefined: the guard chains `.catch()` on it, matching how the
-// rest of challenge.service.ts calls logToAxiom.
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
+// Must resolve a promise, not undefined: production `logToAxiom` is async and the guard chains
+// `.catch()` on it (as two other sites in challenge.service.ts do). A bare `vi.fn()` returns
+// undefined and TypeErrors — which is also what proves the guard path is genuinely exercised.
+vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   claimChallengeForCompletion: vi.fn(),
@@ -206,6 +211,14 @@ describe('upsertChallenge — must not overwrite a challenge claimed for complet
     // re-dated for a challenge that is already completing.
     expect(mockTx.challenge.findUniqueOrThrow).not.toHaveBeenCalled();
     expect(mockTx.collection.update).not.toHaveBeenCalled();
+    // Rare by construction, so the log is the only way to know the guard ever fired.
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'challenge-upsert-status-precondition-failed',
+        challengeId: 1,
+        readStatus: ChallengeStatus.Active,
+      })
+    );
   });
 
   it('returns the re-read row on a successful update', async () => {

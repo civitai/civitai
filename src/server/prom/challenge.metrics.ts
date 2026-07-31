@@ -463,15 +463,19 @@ const COMPLETING_STUCK_MINUTES = 30;
  *
  * Declaring `completingClaimedAt` in `challengeMetadataSchema` does not close it. The destroyer is
  * not the zod strip — it is a STALE FULL-COLUMN REPLACE. Six sites in total do a stale-replica
- * full-column metadata replace; of those, TWO could leave the row still IN `Completing` (the rest
- * either set a terminal status in the same statement or are predicated to a non-`Completing`
- * status, so they cannot strand one). Those two read a challenge (from the REPLICA), spend real
- * time, then wrote the whole metadata column back keyed only on `id`, with no status predicate:
- * `backfill-theme-elements.ts` (a multi-second LLM call sits between its read and its write, and
- * `?force=true` widens it to every themed Active/Scheduled challenge) and `challenge.service.ts`'s
- * `upsertChallenge`. If `claimChallengeForCompletion` landed in that window, the pre-claim snapshot
- * overwrote the fresh stamp — and the stamp was never IN that snapshot, so there was nothing for
- * the schema to have preserved.
+ * full-column metadata replace. Two of them read a challenge (from the REPLICA), spend real time,
+ * then wrote the whole metadata column back keyed only on `id` with no status predicate, so
+ * `claimChallengeForCompletion` could land in the window and have the pre-claim snapshot overwrite
+ * the fresh stamp. The stamp was never IN that snapshot, so there was nothing for the schema to
+ * have preserved. Their damage differed, and only the first is what THIS gauge would have seen:
+ *
+ *   - `backfill-theme-elements.ts` wrote metadata and NOT status, so it left the row IN
+ *     `Completing` with no stamp — the stranded state this gauge counts. A multi-second LLM call
+ *     sits between its read and its write, and `?force=true` widens it to every themed
+ *     Active/Scheduled challenge.
+ *   - `challenge.service.ts`'s `upsertChallenge` also wrote `status`, pinned back to the
+ *     Active/Scheduled value it had READ — so it did not strand a stampless `Completing` row, it
+ *     UN-CLAIMED a challenge mid-completion. Invisible to this gauge; the damage lands elsewhere.
  *
  * BOTH WRITES ARE NOW PREDICATED (2026-07-31): the backfill's UPDATE carries
  * `AND status IN ('Active','Scheduled')` and merges with jsonb `||` instead of replacing the

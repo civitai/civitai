@@ -75,6 +75,7 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
     try {
       const resolvedJudgeId = challenge.judgeId ?? defaultJudgeId;
       if (!resolvedJudgeId) {
+        skipped++;
         results.push({ id: challenge.id, theme: challenge.theme, status: 'skipped: no judge' });
         return;
       }
@@ -86,6 +87,7 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
       });
 
       if (!elements.length) {
+        skipped++;
         results.push({
           id: challenge.id,
           theme: challenge.theme,
@@ -121,9 +123,8 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
       `;
 
       if (updatedRows === 0) {
-        // The whole point of the predicate is a race nobody is watching for. Without a log the
-        // only evidence it ever fired is a reader noticing that
-        // `backfilled + failures + skipped < total` in the response JSON.
+        // The whole point of the predicate is a race nobody is watching for, so log it — the
+        // response JSON alone cannot single it out (it is one of three `skipped:` reasons).
         logToAxiom({
           type: 'warning',
           name: 'backfill-theme-elements-skipped',
@@ -167,10 +168,13 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
   log(`Backfill complete: ${successes} successes, ${failures} failures, ${skipped} skipped`);
   return res.status(200).json({
     total: challenges.length,
+    // `total` counts every themed Active/Scheduled challenge; without force, most of them already
+    // have themeElements and are never attempted. Report the attempted set separately so the
+    // identity that actually closes is `attempted === backfilled + failures + skipped` — against
+    // `total` a shortfall is the ordinary steady state and carries no signal.
+    attempted: toBackfill.length,
     backfilled: successes,
     failures,
-    // Reported so `backfilled + failures` adding up to less than the attempted set is explained
-    // rather than looking like a silent shortfall.
     skipped,
     force,
     results,

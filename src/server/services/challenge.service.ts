@@ -1439,6 +1439,14 @@ export async function upsertChallenge({
             ? (data.prizeDistribution as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
           judgingCategories: effectiveJudgingCategories,
+          // 🔴 REMAINING WORK: this is still a stale full-column replace. `existingMetadata`
+          // comes from the REPLICA read above, so a SAME-status write that commits during
+          // `tryGenerateThemeElements` is silently dropped — notably the `reviewedAt` watermark,
+          // whose loss rewinds incremental review to the challenge start and re-judges the whole
+          // backlog at LLM cost. The status predicate on this updateMany does NOT cover that; only
+          // converting this to the jsonb `||` merge used by backfill-theme-elements.ts does.
+          // Routine rather than rare: the edit form pre-fills themeElements, so this branch runs
+          // on most mod saves. See the long note in server/prom/challenge.metrics.ts.
           ...(themeElements && {
             metadata: { ...existingMetadata, themeElements },
           }),
