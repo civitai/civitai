@@ -111,34 +111,36 @@ function seed(next: Record<number, Fixture>) {
     );
   });
 
-  mockDbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
-    const sql = strings.join('?');
-    const userId = values[0] as number;
-    const fixture = fixtures[userId];
-    const gated = sql.includes('u."deletedAt" IS NOT NULL');
+  mockDbWrite.$queryRaw.mockImplementation(
+    (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = strings.join('?');
+      const userId = values[0] as number;
+      const fixture = fixtures[userId];
+      const gated = sql.includes('u."deletedAt" IS NOT NULL');
 
-    if (sql.includes('"hasImages"')) {
-      const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
-      if (fixture.restoredAfterCheck) fixture.restored = true;
-      return Promise.resolve([state]);
-    }
-    if (sql.includes('"stillDeleted"')) {
-      const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
-      if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
-        fixture.restored = true;
-      return Promise.resolve([{ stillDeleted: !fixture.restored }]);
-    }
-    if (sql.includes('FROM "Image" i')) {
-      const limit = values[1] as number;
-      imageLimits.push(limit);
-      if (gated && fixture.restored) return Promise.resolve([]);
-      return Promise.resolve(fixture.images.slice(0, limit).map((id) => ({ id })));
-    }
-    if (sql.includes('FROM "Post"'))
-      return Promise.resolve((fixture.posts ?? []).map((id) => ({ id })));
+      if (sql.includes('"hasImages"')) {
+        const state = { stillDeleted: !fixture.restored, hasImages: fixture.images.length > 0 };
+        if (fixture.restoredAfterCheck) fixture.restored = true;
+        return Promise.resolve([state]);
+      }
+      if (sql.includes('"stillDeleted"')) {
+        const checks = (batchChecks[userId] = (batchChecks[userId] ?? 0) + 1);
+        if (fixture.restoreAfterBatches != null && checks > fixture.restoreAfterBatches)
+          fixture.restored = true;
+        return Promise.resolve([{ stillDeleted: !fixture.restored }]);
+      }
+      if (sql.includes('FROM "Image" i')) {
+        const limit = values[1] as number;
+        imageLimits.push(limit);
+        if (gated && fixture.restored) return Promise.resolve([]);
+        return Promise.resolve(fixture.images.slice(0, limit).map((id) => ({ id })));
+      }
+      if (sql.includes('FROM "Post"'))
+        return Promise.resolve((fixture.posts ?? []).map((id) => ({ id })));
 
-    throw new Error(`unexpected dbWrite read: ${sql}`);
-  });
+      throw new Error(`unexpected dbWrite read: ${sql}`);
+    }
+  );
 
   mockDbWrite.$executeRaw.mockImplementation(
     (strings: TemplateStringsArray, ...values: unknown[]) => {

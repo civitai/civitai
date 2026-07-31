@@ -27,7 +27,10 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
       return Promise.resolve([]);
     },
   };
-  return new Proxy(function () {}, handler);
+  // Callable target so the `apply` trap can fire; its body never runs.
+  return new Proxy(function () {
+    return undefined;
+  }, handler);
 }
 
 const dbWrite = makePermissive({ image: makePermissive({ findFirst: mockFindFirst }) });
