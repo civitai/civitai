@@ -193,6 +193,7 @@ export const deleteUserSchema = z.object({
   id: z.number(),
   username: usernameSchema.optional(),
   removeModels: z.boolean().optional(),
+  removeImages: z.boolean().optional(),
 });
 
 export type RestoreUserInput = z.infer<typeof restoreUserSchema>;
@@ -436,6 +437,7 @@ export const userMeta = z.object({
   membershipChangedAt: z.date().optional(),
   strikeFlaggedForReview: z.boolean().optional(),
   strikeFlaggedAt: z.date().optional(),
+  imageRemoval: z.enum(['grace', 'immediate']).optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 

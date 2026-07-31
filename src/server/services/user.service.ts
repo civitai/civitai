@@ -93,6 +93,7 @@ import {
   throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { imageRemovalMode } from '~/server/utils/image-removal-mode';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
@@ -1025,16 +1026,18 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   }
 };
 
-export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput) => {
+export const deleteUser = async ({ id, username, removeModels, removeImages }: DeleteUserInput) => {
   const user = await dbWrite.user.findFirst({
     where: { username, id },
-    select: { id: true },
+    select: { id: true, meta: true },
   });
   if (!user) throw throwNotFoundError('Could not find user');
 
   const modelData: Prisma.ModelUpdateManyArgs['data'] = removeModels
     ? { deletedAt: new Date(), status: 'Deleted' }
     : { userId: -1 };
+
+  const meta = { ...((user.meta ?? {}) as UserMeta), imageRemoval: imageRemovalMode(removeImages) };
 
   const result = await dbWrite.$transaction([
     dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
@@ -1052,6 +1055,7 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
         paddleCustomerId: null,
         image: null,
         profilePictureId: null,
+        meta,
       },
     }),
   ]);
