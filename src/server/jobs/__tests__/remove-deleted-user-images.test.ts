@@ -54,8 +54,8 @@ import {
 type Fixture = {
   deletedAt: Date;
   images: number[];
-  /** `User.meta`; `imageRemoval` is jsonb, so it can hold a value the job does not recognize. */
-  meta?: { imageRemoval?: string };
+  /** `User.meta`, keyed as the job spells it; jsonb, so it can hold a value it cannot read. */
+  meta?: Record<string, string>;
   /** Per-image `ingestion`; an id absent from here holds anything other than `Blocked`. */
   ingestion?: Record<number, string>;
   /** Blocked by another writer in the window between the job's image read and its write. */
@@ -86,19 +86,22 @@ const unblocked = (fixture: Fixture) =>
 /**
  * Evaluates the worklist's mode expression instead of pattern-matching one accepted spelling of
  * it, so a `CASE` that normalizes the wrong way reads as the wrong mode rather than as no
- * normalization at all. Falls back to the stored value where the job names no `CASE`.
+ * normalization at all. Each atom is read down to the `meta` key it names and that key is what
+ * the fixture is asked for: the key is a bare literal on both sides of the app, so a rename that
+ * only lands here has to surface as a user the fixture reports no choice for.
  */
 function modeExpression(sql: string) {
   const branches = /CASE\s+WHEN ([\s\S]+?)\s+THEN '(\w+)' ELSE '(\w+)'\s+END AS mode/.exec(sql);
-  if (!branches) return (fixture: Fixture) => fixture.meta?.imageRemoval ?? 'immediate';
+  if (!branches) throw new Error(`unrecognized mode expression: ${sql}`);
 
   const [, condition, whenTrue, whenFalse] = branches;
   const atoms = condition.split(/\s+OR\s+/);
   return (fixture: Fixture) => {
-    const choice = fixture.meta?.imageRemoval;
-    const holds = atoms.some((atom) =>
-      atom.includes('IS NULL') ? choice == null : choice === /= '([^']*)'/.exec(atom)?.[1]
-    );
+    const holds = atoms.some((atom) => {
+      const key = /meta->>'([^']*)'/.exec(atom)?.[1];
+      const choice = key == null ? undefined : fixture.meta?.[key];
+      return atom.includes('IS NULL') ? choice == null : choice === /= '([^']*)'/.exec(atom)?.[1];
+    });
     return holds ? whenTrue : whenFalse;
   };
 }
