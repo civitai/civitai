@@ -43,6 +43,14 @@ export type BlockRenderBeaconInput = {
   // `Tracker.blockRender`'s parameter type has no field for either. So it drives
   // the prom label only.
   errorClass?: string;
+  // Mark this as a FOLLOW-UP beacon for a mount that has already reported an
+  // outcome (today: the mid-session credential-loss report that follows an `ok`
+  // impression). It still drives the prom counter, but the server SKIPS the
+  // `blockRenders` ClickHouse insert for it — that table counts impressions, and
+  // a second row for one mount would be byte-identical to the first and so
+  // impossible to de-duplicate later. Omit (or false) for a mount's FIRST
+  // beacon, including a launch failure, which must still be recorded.
+  secondary?: boolean;
 };
 
 export function sendBlockRender(input: BlockRenderBeaconInput) {

@@ -67,12 +67,17 @@ export default PublicEndpoint(
     const result = blockRenderSchema.safeParse(parsed);
     if (!result.success) return res.status(400).send('invalid input');
 
-    // `status`/`errorClass` drive the prom render counter ONLY — they are NOT
-    // forwarded to the ClickHouse insert (the `blockRenders` table is provisioned
-    // out-of-repo by the tracker service; adding columns is out of scope here).
-    // Strip them so the CH payload stays byte-identical to the pre-change insert.
-    // `errorClass` still drives the prom label below (normalized), never the CH insert.
-    const { status, errorClass, ...renderData } = result.data;
+    // `status`/`errorClass`/`secondary` drive the prom render counter ONLY — they
+    // are NOT forwarded to the ClickHouse insert (the `blockRenders` table is
+    // provisioned out-of-repo by the tracker service; adding columns is out of
+    // scope here). Strip them so the CH payload stays byte-identical to the
+    // pre-change insert. `errorClass` still drives the prom label below
+    // (normalized), never the CH insert.
+    //
+    // 🔴 `secondary` ALSO GATES THE CH INSERT ENTIRELY (see below). Every beacon
+    // increments the prom counter, but only a mount's FIRST beacon writes a
+    // `blockRenders` row — that table counts IMPRESSIONS, one per host mount.
+    const { status, errorClass, secondary, ...renderData } = result.data;
 
     // Per-app render/impression outcome (additive + dark). `result` ∈ ok|error.
     // ALL labels are BOUNDED even though the beacon body is client-supplied and
@@ -96,6 +101,27 @@ export default PublicEndpoint(
     } catch {
       // swallow — observability must not affect the response
     }
+
+    // 🔴 SECONDARY (follow-up) BEACON → prom only, NO ClickHouse row. Return here,
+    // AFTER the counter above and BEFORE the insert below.
+    //
+    // `blockRenders` is an IMPRESSION table and its rows carry no status, so one
+    // mount must produce at most one row. A host now emits a SECOND beacon when an
+    // outcome it already reported later changes (a page that rendered fine and
+    // then lost its credential mid-session). Inserting for that would write a row
+    // BYTE-IDENTICAL to the first — undedupable after the fact — silently
+    // inflating `civitai_app_blocks_impressions_24h`, `renders_by_app_24h`, the
+    // digest CronJob and the author-analytics tab for precisely the sessions that
+    // suffered a revocation. An observability fix must not corrupt an analytics
+    // series.
+    //
+    // 🔴 The gate is the FLAG, not `status === 'error'`. A LAUNCH failure is a
+    // mount's only beacon and MUST still write its row — it is a real attempted
+    // render. Only a follow-up to an already-reported mount is suppressed.
+    //
+    // Returning early also skips the session resolve, which the insert was the
+    // only reason to pay for.
+    if (secondary) return res.status(200).end();
 
     // Resolve the session ONCE here so we can derive isAnon, then hand it to the
     // Tracker (3rd ctor arg) so it isn't re-resolved. `isAnon` is SERVER-derived

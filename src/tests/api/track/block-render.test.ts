@@ -339,6 +339,73 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
     }
   });
 
+  /**
+   * 🔴 THE IMPRESSION TABLE MUST STAY 1 ROW PER MOUNT.
+   *
+   * `blockRenders` counts IMPRESSIONS and its rows carry NO status, so two rows
+   * for one mount are byte-identical and cannot be de-duplicated afterwards.
+   * Since a host can now emit a SECOND beacon for a mount whose outcome changed
+   * (rendered fine, then lost its credential), an unguarded insert would inflate
+   * every CH-derived impression figure for exactly the revoked sessions.
+   *
+   * The gate is the `secondary` FLAG, not `status === 'error'` — a LAUNCH failure
+   * is a mount's only beacon and must still be recorded. These two cases pin both
+   * halves of that rule.
+   */
+  it('🔴 a SECONDARY beacon counts in prom but writes NO ClickHouse row', async () => {
+    const before = await renderCounterValue(
+      'apb_test',
+      'app.page',
+      'error',
+      'token_lost_midsession'
+    );
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const res = makeRes();
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: {
+          ...validInput,
+          status: 'error',
+          errorClass: 'token_lost_midsession',
+          secondary: true,
+        },
+      }) as any,
+      res
+    );
+
+    // The observability signal still fires — this is what the alert reads.
+    expect(
+      await renderCounterValue('apb_test', 'app.page', 'error', 'token_lost_midsession')
+    ).toBe(before + 1);
+    // …but the impression table is untouched.
+    expect(mockBlockRender).not.toHaveBeenCalled();
+    // And the request still succeeds (fire-and-forget beacon).
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('🔴 a LAUNCH failure is NOT secondary — it still writes its ClickHouse row', async () => {
+    // The discriminator must not be `status === 'error'`. A mount that never
+    // rendered emits exactly one beacon, and that beacon represents a real
+    // attempted render that analytics must keep counting.
+    const handler = (await import('~/pages/api/track/block-render')).default;
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, status: 'error', errorClass: 'no_token' },
+      }) as any,
+      makeRes()
+    );
+
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    const arg = mockBlockRender.mock.calls[0][0];
+    expect(arg).toEqual({ ...validInput, isAnon: true });
+    // `secondary` is stripped like status/errorClass — never a CH column.
+    expect(arg).not.toHaveProperty('secondary');
+  });
+
   it('clamps an UNKNOWN error_class to "other" (bounds the label) and still strips it from the CH insert', async () => {
     const before = await renderCounterValue('apb_test', 'app.page', 'error', 'other');
     const handler = (await import('~/pages/api/track/block-render')).default;

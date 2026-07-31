@@ -74,6 +74,27 @@ export const blockRenderSchema = z.object({
   // the ClickHouse insert — it never reaches the tracker payload, only the prom
   // label.
   errorClass: z.string().trim().min(1).max(64).optional(),
+  // 🔴 SECONDARY (follow-up) BEACON — drives the prom counter ONLY, never a
+  // `blockRenders` ClickHouse row.
+  //
+  // `blockRenders` is an IMPRESSION table: historically one host mount emitted
+  // exactly ONE beacon (`ok` XOR `error`), so one mount == one row, and every
+  // CH-derived figure counts rows as impressions.
+  //
+  // A host may now emit a SECOND beacon for the same mount when an outcome it
+  // already reported later changes — today: a page that rendered fine and then
+  // lost its credential mid-session (`token_lost_midsession`). That is a status
+  // UPDATE about an impression already counted, NOT a new impression. Since the
+  // CH row carries no status, a second row would be byte-identical to the first
+  // and therefore impossible to de-duplicate after the fact — silently inflating
+  // impressions/renders for exactly the sessions that suffered a revocation.
+  //
+  // So the emitter marks the follow-up and the server skips the insert for it.
+  // 🔴 The discriminator is deliberately THIS FLAG and not `status === 'error'`:
+  // a LAUNCH failure is a mount's ONLY beacon and MUST still write its row (it
+  // is a real attempted render). What is suppressed is specifically a second
+  // beacon for a mount that already reported.
+  secondary: z.boolean().optional().default(false),
 });
 
 export type TrackShareInput = z.infer<typeof trackShareSchema>;

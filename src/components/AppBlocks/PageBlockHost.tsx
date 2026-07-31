@@ -620,12 +620,20 @@ export function PageBlockHost({
     // Fire-and-forget beacon — failures are a no-op. `errorClass` is a member of
     // the server-side KNOWN_ERROR_CLASSES allowlist, so it survives as a real
     // `error_class` prom label instead of collapsing into 'other'.
+    //
+    // 🔴 `secondary: true` is REQUIRED here, not decorative. This mount already
+    // sent its `ok` impression, and the `blockRenders` CH row carries no status —
+    // so without this flag the follow-up would write a SECOND byte-identical row
+    // for one mount, un-de-duplicatable, inflating every CH-derived impression
+    // figure for exactly the sessions that were revoked. The flag keeps the prom
+    // counter firing (that is what the alert reads) while skipping the insert.
     sendBlockRender({
       appBlockId,
       blockInstanceId,
       slotId: 'app.page',
       status: 'error',
       errorClass: MID_SESSION_LOSS_ERROR_CLASS,
+      secondary: true,
     });
   }, [status, tokenTerminal, token, appBlockId, blockInstanceId]);
 

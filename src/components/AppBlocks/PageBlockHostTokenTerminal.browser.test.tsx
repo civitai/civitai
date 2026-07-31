@@ -114,10 +114,14 @@ let fetchSpy: ReturnType<typeof vi.spyOn>;
 const isBeacon = (call: unknown[]) =>
   typeof call[0] === 'string' && (call[0] as string).includes('/api/track/block-render');
 const beaconCalls = () => fetchSpy.mock.calls.filter(isBeacon);
-const beaconBodies = (): Array<{ status?: string; errorClass?: string }> =>
+const beaconBodies = (): Array<{ status?: string; errorClass?: string; secondary?: boolean }> =>
   beaconCalls().map((c: unknown[]) => {
     const init = c[1] as RequestInit | undefined;
-    return JSON.parse(String(init?.body ?? '{}')) as { status?: string; errorClass?: string };
+    return JSON.parse(String(init?.body ?? '{}')) as {
+      status?: string;
+      errorClass?: string;
+      secondary?: boolean;
+    };
   });
 const beaconStatuses = (): string[] => beaconBodies().map((b) => b.status ?? 'ok');
 
@@ -279,12 +283,23 @@ describe('a READY page whose credential is GONE for good', () => {
     // Exactly TWO, in order, and the impression is still the untouched `ok`.
     expect(beaconStatuses()).toEqual(['ok', 'error']);
     const bodies = beaconBodies();
-    // The original impression is byte-identical to before: no status, no class.
+    // The original impression is byte-identical to before: no status, no class,
+    // and NOT flagged secondary — it is the mount's first beacon and must still
+    // write its ClickHouse impression row.
     expect(bodies[0].status).toBeUndefined();
     expect(bodies[0].errorClass).toBeUndefined();
+    expect(bodies[0].secondary).toBeUndefined();
     // The teardown carries the class that makes it distinguishable from a launch
     // failure ('error'/'no_token'/'timeout'/'fatal') in `sum by(error_class)`.
-    expect(bodies[1]).toMatchObject({ status: 'error', errorClass: 'token_lost_midsession' });
+    //
+    // 🔴 …and `secondary: true`, WITHOUT which the server would write a second
+    // byte-identical `blockRenders` row for this one mount, inflating every
+    // CH-derived impression figure for revoked sessions.
+    expect(bodies[1]).toMatchObject({
+      status: 'error',
+      errorClass: 'token_lost_midsession',
+      secondary: true,
+    });
   }, 20_000);
 
   test('🔴 emits the teardown beacon AT MOST ONCE despite the host RE-ENTERING `error`', async () => {
