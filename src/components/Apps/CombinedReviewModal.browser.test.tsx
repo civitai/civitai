@@ -252,7 +252,7 @@ describe('CombinedReviewModal', () => {
     await expect.element(page.getByRole('tab', { name: /Scopes/ })).toBeInTheDocument();
     await expect.element(page.getByRole('tab', { name: /Code review/ })).toBeInTheDocument();
     // Code section: the on-site bundle affordance.
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
 
     // Media section: the listing PREVIEW (card + detail) + the content-review surface.
     await expect.element(page.getByTestId('apps-listing-preview')).toBeInTheDocument();

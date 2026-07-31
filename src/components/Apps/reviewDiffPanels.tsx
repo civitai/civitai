@@ -1,5 +1,4 @@
-import { Badge, Button, Card, Code, Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { IconCode, IconExternalLink } from '@tabler/icons-react';
+import { Badge, Card, Code, Group, ScrollArea, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 
 /**
@@ -70,14 +69,21 @@ export type FileLineDiff = {
   removed: number;
 };
 
+/**
+ * Why a file has no inline diff. These used to end in "— view in Forgejo" next
+ * to a deep-link into the raw in-review snapshot; that link was retired in
+ * #3495 when snapshots became private (an anonymous click 404s, and a dead link
+ * is worse than none). The labels now just state the reason — the mod knows the
+ * file changed and why it isn't rendered, which is what the label is for.
+ */
 const SKIP_LABEL: Record<NonNullable<FileLineDiff['skipReason']>, string> = {
-  binary: 'Binary file — view in Forgejo',
-  'too-large': 'File too large to diff — view in Forgejo',
-  'diff-too-large': 'Diff too large to display — view in Forgejo',
-  'file-cap': 'Too many changed files — view this one in Forgejo',
+  binary: 'Binary file — no inline diff',
+  'too-large': 'File too large to diff',
+  'diff-too-large': 'Diff too large to display',
+  'file-cap': 'Too many changed files — this one not diffed',
 };
 
-export function FileDiffEntry({ file, forgejoUrl }: { file: FileLineDiff; forgejoUrl: string }) {
+export function FileDiffEntry({ file }: { file: FileLineDiff }) {
   const [open, setOpen] = useState(false);
   const elided = file.skipReason !== null;
 
@@ -127,23 +133,6 @@ export function FileDiffEntry({ file, forgejoUrl }: { file: FileLineDiff; forgej
           )}
         </Group>
       </Group>
-
-      {elided && (
-        <Group p={8} pt={0}>
-          <Button
-            component="a"
-            href={forgejoUrl}
-            target="_blank"
-            rel="noopener"
-            size="compact-xs"
-            variant="subtle"
-            leftSection={<IconCode size={12} />}
-            rightSection={<IconExternalLink size={10} />}
-          >
-            View in Forgejo
-          </Button>
-        </Group>
-      )}
 
       {open && !elided && (
         <ScrollArea.Autosize mah={320} style={{ background: PANEL_BG }}>

@@ -105,7 +105,7 @@ describe('reviewDiffPanels — dark-theme-aware backgrounds (Bug 2)', () => {
         },
       ],
     };
-    renderWithProviders(<FileDiffEntry file={file} forgejoUrl="https://forge.example/x" />);
+    renderWithProviders(<FileDiffEntry file={file} />);
 
     // Collapsed by default → no diff panel painted yet.
     expect(

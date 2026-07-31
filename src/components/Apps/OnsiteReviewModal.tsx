@@ -22,7 +22,6 @@ import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
   IconCheck,
-  IconCode,
   IconExternalLink,
   IconInfoCircle,
   IconKey,
@@ -414,28 +413,22 @@ export function OnsiteReviewModalBody({
               </Badge>
             )}
           </Group>
-          <Button
-            component="a"
-            href={request.pushCommitUrl ?? request.reviewRepoUrl}
-            target="_blank"
-            rel="noopener"
-            variant="default"
-            leftSection={<IconCode size={14} />}
-            rightSection={<IconExternalLink size={12} />}
-          >
-            View full source
-          </Button>
+          {/* The raw-source deep-link that used to sit here has been retired
+              (#3495). In-review snapshots are private now, so an anonymous
+              click on it 404s — a dead link is worse than no link. Source
+              review happens in the "Show code diff" panel below, which reads
+              the submitted artifact server-side and needs no second login.
+              `request.reviewRepoUrl` / `request.pushCommitUrl` are intentionally
+              still carried on the payload: a richer in-app file browser is
+              being designed separately and will reuse them. */}
           {mds.kind === 'update' && (
             <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
           )}
           {/* Line-level code diff — lazy (only fetched when the mod toggles it
               open) so the modal stays light by default. Bounded server-side;
-              binary / oversized / huge-diff files fall back to the Forgejo link
-              above. */}
-          <CodeDiffPanel
-            publishRequestId={request.id}
-            forgejoUrl={request.pushCommitUrl ?? request.reviewRepoUrl}
-          />
+              binary / oversized / huge-diff files are labelled as not-shown
+              rather than linked out. */}
+          <CodeDiffPanel publishRequestId={request.id} />
         </Stack>
 
         <Stack gap={4}>
@@ -854,8 +847,8 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // Line-level code diff — expands the file-level summary with the actual unified
 // line diff per changed/added text file. Lazy: the query only fires once the mod
 // toggles "Show code diff" on, so the modal default stays light. Bounded
-// server-side (text-only, byte/line/file caps); elided files render a "view in
-// Forgejo" fallback rather than inlining unbounded content.
+// server-side (text-only, byte/line/file caps); elided files are labelled with
+// WHY they were skipped rather than inlining unbounded content.
 //
 // The presentational panels (FileListPreview / FileDiffEntry / DiffHunkView /
 // ManifestDiffPreview) + the FileLineDiff type live in the server-free
@@ -863,13 +856,7 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // browser mode without importing this page's tRPC server graph.
 // ---------------------------------------------------------------------------
 
-function CodeDiffPanel({
-  publishRequestId,
-  forgejoUrl,
-}: {
-  publishRequestId: string;
-  forgejoUrl: string;
-}) {
+function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();
   const [show, setShow] = useState(false);
 
@@ -894,7 +881,7 @@ function CodeDiffPanel({
         {show && !isLoading && !error && (
           <Text size="xs" c="dimmed">
             {files.length} file{files.length === 1 ? '' : 's'} changed
-            {data?.truncated ? ' (some elided — view in Forgejo)' : ''}
+            {data?.truncated ? ' (some elided)' : ''}
           </Text>
         )}
       </Group>
@@ -915,7 +902,7 @@ function CodeDiffPanel({
         ) : (
           <Stack gap={6}>
             {files.map((f) => (
-              <FileDiffEntry key={f.path} file={f} forgejoUrl={forgejoUrl} />
+              <FileDiffEntry key={f.path} file={f} />
             ))}
           </Stack>
         ))}
