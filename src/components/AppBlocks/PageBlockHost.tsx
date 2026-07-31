@@ -364,6 +364,38 @@ export function PageBlockHost({
   // that ever launched has launched).
   const reachedReadyRef = useRef<boolean>(false);
 
+  // 🔴 BOTH REFS ABOVE ARE PER-MOUNT, BUT THIS HOST IS NOT ALWAYS REMOUNTED.
+  //
+  // `/apps/run/[slug]/[[...path]]` renders <PageBlockHost> with NO `key`, and
+  // `_app.tsx` renders <Component> with no key either — so a SOFT navigation
+  // between two apps (appA → appB, e.g. via the "Recently run" menu) reuses this
+  // component instance: same mount, different `blockInstanceId`.
+  //
+  // Left alone, app A's latches would leak onto app B and produce a WRONG,
+  // MISATTRIBUTED signal: B's launch failure would inherit `reachedReady === true`
+  // and be reported as `token_lost_midsession` for an app that never launched —
+  // exactly the launch-vs-teardown confusion this whole feature exists to avoid.
+  // (Conversely a spent emit-latch would silently swallow B's genuine loss.)
+  //
+  // So the latches are scoped to the block INSTANCE, not the React mount.
+  //
+  // 🔴 Deliberately conservative: this resets to `false` rather than re-deriving
+  // from `status`, because under host reuse `status` is itself STALE (it is still
+  // app A's 'ready'). Re-deriving would re-create the misattribution this fixes.
+  // The cost is that if app B does reach ready and then loses its credential
+  // WITHOUT `status` ever changing value, its beacon is missed — under-reporting,
+  // never mis-reporting. That is the right side to err on for an alerting signal.
+  //
+  // NOTE: the wider host-reuse problem is PRE-EXISTING and NOT fixed here — stale
+  // `status` and the leaked `blockRenderEmittedRef` (so app B loses its `ok`
+  // impression) both predate this change. The real fix is `key={blockInstanceId}`
+  // on the run page, which would also change impression COUNTS, so it belongs in
+  // its own PR rather than riding along on an observability change.
+  useEffect(() => {
+    reachedReadyRef.current = false;
+    midSessionLossEmittedRef.current = false;
+  }, [blockInstanceId]);
+
   // Keep statusRef tracking the live status so handleRetry can branch on the
   // prior terminal state without reading it inside the setStatus updater.
   useEffect(() => {

@@ -409,6 +409,68 @@ describe('a READY page whose credential is GONE for good', () => {
   }, 25_000);
 });
 
+describe('app → app soft navigation (the host is NOT remounted)', () => {
+  /**
+   * 🔴 `/apps/run/[slug]` renders <PageBlockHost> with NO `key`, and `_app.tsx`
+   * renders <Component> with no key either — so navigating appA → appB (the
+   * "Recently run" menu) REUSES this component instance: same React mount, new
+   * `blockInstanceId`.
+   *
+   * The credential-loss latches are per-MOUNT refs, so without scoping them to
+   * the block instance they leak across that boundary and produce a WRONG,
+   * MISATTRIBUTED signal: app B's LAUNCH failure inherits app A's
+   * `reachedReady === true` and gets reported as `token_lost_midsession` for an
+   * app that never launched — the exact launch-vs-teardown confusion this
+   * feature exists to eliminate, now with the wrong app's id on it.
+   *
+   * (The wider host-reuse breakage — stale `status`, and app B losing its `ok`
+   * impression to the leaked `blockRenderEmittedRef` — is PRE-EXISTING and not
+   * fixed here. This only pins that the new signal cannot be misattributed.)
+   */
+  test('🔴 does NOT report app B’s launch failure as app A’s mid-session loss', async () => {
+    const { rerender } = await renderWithProviders(
+      <PageBlockHost {...baseProps} onConsentGranted={vi.fn()} onRetryToken={vi.fn()} />
+    );
+    await driveToReady();
+    expect(beaconStatuses()).toEqual(['ok']);
+
+    // Soft-navigate to a DIFFERENT app: same mount, new identifiers.
+    const appB = {
+      ...baseProps,
+      appBlockId: 'apb_other',
+      blockInstanceId: 'page_apb_other',
+      blockId: 'other-page-app',
+      slug: 'other-page-app',
+    };
+
+    // App B's mint fails terminally — it NEVER reached ready.
+    await rerender(
+      <PageBlockHost
+        {...appB}
+        token={null}
+        tokenError
+        tokenTerminal
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await new Promise((r) => setTimeout(r, 9_000));
+
+    // No `token_lost_midsession` may be attributed to app B.
+    const midSession = beaconBodies().filter((b) => b.errorClass === 'token_lost_midsession');
+    expect(midSession).toEqual([]);
+    // And nothing may be attributed to app B's id at all via this path.
+    const forAppB = beaconCalls().filter((c: unknown[]) => {
+      const init = c[1] as RequestInit | undefined;
+      return String(init?.body ?? '').includes('apb_other');
+    });
+    expect(forAppB.map((c: unknown[]) => {
+      const init = c[1] as RequestInit | undefined;
+      return (JSON.parse(String(init?.body ?? '{}')) as { errorClass?: string }).errorClass;
+    })).not.toContain('token_lost_midsession');
+  }, 20_000);
+});
+
 describe('backward compatibility', () => {
   test('🔴 omitting `tokenTerminal` leaves a ready page byte-identical', async () => {
     // Every pre-existing caller (ReviewBlockPreviewHost, the dev-tunnel page
