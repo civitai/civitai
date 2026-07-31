@@ -52,6 +52,8 @@ const longAgo = (extraMs = 24 * 60 * 60 * 1000) =>
   new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS - extraMs);
 
 type Row = { id: string; slug: string; status: string; updatedAt: Date };
+/** The shape of the where-clause the sweep builds, for predicate-applying mocks. */
+type PurgeWhere = { status: { in: string[] }; updatedAt: { gt: Date; lt: Date } };
 const row = (slug: string, updatedAt = longAgo(), status = 'rejected'): Row => ({
   id: `pubreq_${slug}`,
   slug,
@@ -172,7 +174,7 @@ describe('purgeExpiredReviewSnapshots — the 30-day retention boundary', () => 
     // they would straddle the boundary for ANY window value including zero.
     const due = row('due-app', new Date('2026-06-30T00:00:00.000Z')); // 31d before NOW
     const notYetDue = row('not-due-app', new Date('2026-07-02T00:00:00.000Z')); // 29d before NOW
-    mockFindMany.mockImplementation(async (args: { where: Record<string, any> }) =>
+    mockFindMany.mockImplementation(async (args: { where: PurgeWhere }) =>
       [due, notYetDue].filter(
         (r) =>
           args.where.status.in.includes(r.status) &&
@@ -196,7 +198,7 @@ describe('purgeExpiredReviewSnapshots — the 30-day retention boundary', () => 
    */
   it('purges that same 29-day-old request once the clock reaches day 31', async () => {
     const notYetDue = row('not-due-app', new Date('2026-07-02T00:00:00.000Z'));
-    mockFindMany.mockImplementation(async (args: { where: Record<string, any> }) =>
+    mockFindMany.mockImplementation(async (args: { where: PurgeWhere }) =>
       [notYetDue].filter(
         (r) => r.updatedAt > args.where.updatedAt.gt && r.updatedAt < args.where.updatedAt.lt
       )
