@@ -271,9 +271,29 @@ const noIoInTransaction = {
  *
  * Known gaps (deliberate, documented rather than papered over):
  *   - a factory passed as an identifier (`vi.mock(mod, factoryFn)`) is not
- *     analysed — the definition may be anywhere, and the shape is unused here;
+ *     analysed — the definition may be anywhere, and the shape is unused here.
+ *     DO NOT reach for it to get past this rule: `const f = () => ({ trpc: {} });
+ *     vi.mock('~/utils/trpc', f)` is silently accepted and, unlike a disable
+ *     comment, leaves NOTHING for a reviewer or a later grep to find. If a
+ *     factory genuinely has to be exempt, use the disable comment below — it is
+ *     greppable and it carries your reason;
  *   - `modules` entries are matched per-module, not by glob;
  *   - only files ESLint already covers (`src/`, `packages/`) are seen at all.
+ *
+ * Known FALSE POSITIVES — safe shapes the analysis cannot walk, so they report
+ * `unprovableMock`. None exist in the tree today; they are listed so an author
+ * who hits one recognises their own shape and reaches for the disable comment
+ * instead of reshaping working code (or switching the rule off):
+ *   - destructure-and-rebuild: `const { trpc, ...rest } = await importOriginal();
+ *     return { ...rest, trpc: {} }` — `rest` comes from a destructuring pattern,
+ *     not an initialiser this rule tracks;
+ *   - `const [actual] = await Promise.all([importOriginal()])` — same reason;
+ *   - an aliased binding: `const f = importOriginal; return { ...(await f()) }`
+ *     — only the parameter itself is recognised as the original call;
+ *   - the `vi.hoisted` idiom, where the spread source is built outside the
+ *     factory entirely.
+ * Each is a one-line disable away, which is the intended cost: a false positive
+ * costs a comment, a false negative costs a silently-empty test suite.
  *
  * Intentional exceptions should use:
  *   // eslint-disable-next-line local-rules/no-wholesale-module-mock -- <reason>
@@ -380,6 +400,15 @@ function readModuleSpecifier(node) {
  * file first. Anything that does not reduce (a bare package name, a path that
  * resolves outside `src/`) is compared verbatim, which is the conservative
  * outcome: it simply will not match a `~/`-style target.
+ *
+ * The `src/` that `~` aliases is the ONE at the repo root — the directory
+ * beside this file — not any `src/` anywhere in the path. A workspace package
+ * has its own: from `packages/blocks-react/src/foo/x.test.tsx`, the specifier
+ * `../utils/trpc` means `packages/blocks-react/src/utils/trpc`, a DIFFERENT
+ * module from `~/utils/trpc`, and matching it would flag a file for mocking
+ * something the rule was never pointed at. Resolving against `REPO_SRC` rather
+ * than "the last `/src/` in the string" keeps the alias inside its own package
+ * boundary.
  */
 function stripModuleExtension(modulePath) {
   return modulePath.replace(/\.(?:m|c)?[jt]sx?$/, '').replace(/\/index$/, '');
@@ -392,10 +421,16 @@ function canonicalModulePath(specifier, fromFile) {
     if (!fromFile) return null;
     const posixFile = String(fromFile).split(pathSep).join('/');
     const resolved = posixNormalize(`${posixDirname(posixFile)}/${specifier}`);
-    const marker = resolved.lastIndexOf('/src/');
-    if (marker !== -1) return stripModuleExtension(resolved.slice(marker + '/src/'.length));
-    // A repo-relative filename (RuleTester, or eslint invoked with relative paths)
-    // has no leading slash for the marker above to find.
+    // Absolute (how ESLint actually invokes the rule): must land under the
+    // repo's OWN src/, not a workspace package's.
+    if (resolved.startsWith('/')) {
+      return resolved.startsWith(`${REPO_SRC}/`)
+        ? stripModuleExtension(resolved.slice(REPO_SRC.length + 1))
+        : null;
+    }
+    // A repo-relative filename (RuleTester, or eslint invoked with relative
+    // paths) is already rooted at the repo, so a leading `src/` is the alias
+    // root and a leading `packages/` is not.
     if (resolved.startsWith('src/')) return stripModuleExtension(resolved.slice('src/'.length));
     return null;
   }
@@ -406,6 +441,9 @@ function canonicalModulePath(specifier, fromFile) {
 // contexts where pulling in node:path is fine, but keeping these local makes
 // the reduction above explicit and platform-independent.
 const pathSep = require('path').sep;
+// The repo root is this file's own directory (ESLint loads `eslint-local-rules`
+// from it), so `<root>/src` is exactly what the `~` alias points at.
+const REPO_SRC = require('path').resolve(__dirname, 'src').split(pathSep).join('/');
 function posixDirname(p) {
   const i = p.lastIndexOf('/');
   return i === -1 ? '.' : p.slice(0, i) || '/';
@@ -427,7 +465,13 @@ function posixNormalize(p) {
  * top-level `const` initialisers.
  */
 function createOriginalAnalyzer(factory, targetCanonical, filename) {
-  const firstParam = factory.params && factory.params[0];
+  // The first parameter IS importOriginal, whatever it is named. A default
+  // value (`async (importOriginal = x) => ...`) parses as an AssignmentPattern
+  // wrapping the identifier, so unwrap that too — otherwise a correct factory
+  // written with a default is reported. A destructured or rest parameter has no
+  // single binding to call, and stays unrecognised.
+  let firstParam = factory.params && factory.params[0];
+  if (firstParam && firstParam.type === 'AssignmentPattern') firstParam = firstParam.left;
   const originalBinding = firstParam && firstParam.type === 'Identifier' ? firstParam.name : null;
 
   // Local `const actual = await importOriginal()` bindings. A name that is
@@ -442,12 +486,25 @@ function createOriginalAnalyzer(factory, targetCanonical, filename) {
         locals.set(n.id.name, n.init || null);
       } else if (n.type === 'AssignmentExpression' && n.left && n.left.type === 'Identifier') {
         poisoned.add(n.left.name);
-      } else if (
-        (n.type === 'UpdateExpression' || n.type === 'UnaryExpression') &&
-        n.argument &&
-        n.argument.type === 'Identifier'
-      ) {
+      } else if (n.type === 'UpdateExpression' && n.argument && n.argument.type === 'Identifier') {
+        // `actual++` / `--actual` rebinds the name to a number.
         poisoned.add(n.argument.name);
+      } else if (n.type === 'UnaryExpression' && n.operator === 'delete') {
+        // `delete actual.trpcVanilla` is the ONLY unary that mutates, and it is
+        // precisely the historical bug: the spread still looks right, but an
+        // export has been removed from the object being spread. Every other
+        // unary on a bare identifier — `!actual`, `typeof actual`, `void actual`,
+        // `-actual` — reads the value and cannot change it, so it must NOT
+        // poison: `if (!actual) throw ...` is correct defensive code and used to
+        // be reported.
+        let target = n.argument;
+        while (
+          target &&
+          (target.type === 'MemberExpression' || target.type === 'ChainExpression')
+        ) {
+          target = target.type === 'ChainExpression' ? target.expression : target.object;
+        }
+        if (target && target.type === 'Identifier') poisoned.add(target.name);
       }
     });
   }
@@ -495,9 +552,11 @@ function createOriginalAnalyzer(factory, targetCanonical, filename) {
             callee.property.type === 'Identifier' &&
             callee.property.name === 'assign'
           ) {
-            return (expr.arguments || []).some(
-              (arg) => arg.type !== 'SpreadElement' && isOriginalPreserving(arg)
-            );
+            // A `...sources` argument needs no special case: `SpreadElement`
+            // is not an expression type this analysis accepts, so it falls
+            // through to `false` on its own. (An explicit exclusion here was
+            // redundant — no input could distinguish it.)
+            return (expr.arguments || []).some((arg) => isOriginalPreserving(arg));
           }
           return false;
         }
@@ -571,7 +630,7 @@ const noWholesaleModuleMock = {
     ],
     messages: {
       wholesaleMock:
-        "Wholesale vi.mock('{{module}}') factory — it replaces the module with a hand-written object, so the day '{{module}}' gains an export this factory omits, every importer in this test's module graph gets `undefined` and the whole FILE fails to load: 0 tests collected, no failing assertion, silently 'green' (this disabled ~36 tests via `trpcVanilla`). TypeScript cannot catch it — the factory's return is typed `Partial<unknown>`. Spread the real module and override only what you need: add `import type * as Mod from '{{module}}';` then `vi.mock('{{module}}', async (importOriginal) => ({ ...(await importOriginal<typeof Mod>()), /* overrides */ }));` — use the type-only namespace import, NOT `typeof import('...')`, which @typescript-eslint/consistent-type-imports rejects. Canonical example: src/components/Challenge/__tests__/ChallengeUpsertForm.browser.test.tsx",
+        "Wholesale vi.mock('{{module}}') factory — it replaces the module with a hand-written object, so the day '{{module}}' gains an export this factory omits, every importer in this test's module graph gets `undefined` and the whole FILE fails to load: 0 tests collected, no failing assertion, silently 'green' (this disabled ~36 tests via `trpcVanilla`). TypeScript cannot catch it — the factory's return is typed `Partial<unknown>`. Spread the real module and override only what you need: add `import type * as Mod from '{{module}}';` then `vi.mock('{{module}}', async (importOriginal) => ({ ...(await importOriginal<typeof Mod>()), /* overrides */ }));` — use the type-only namespace import, NOT `typeof import('...')`, which @typescript-eslint/consistent-type-imports rejects. If this factory really is intentional and safe, silence it explicitly rather than reshaping it: `// eslint-disable-next-line local-rules/no-wholesale-module-mock -- <reason>`. Canonical example: src/components/Challenge/__tests__/ChallengeUpsertForm.browser.test.tsx",
       unprovableMock:
         "vi.mock('{{module}}') factory returns a value this rule cannot prove carries the real module's exports ({{shape}}). That is reported rather than assumed safe: if '{{module}}' gains an export the factory omits, the whole test FILE fails to load and collects 0 tests with nothing turning red. Return an object literal that spreads the original directly — `vi.mock('{{module}}', async (importOriginal) => ({ ...(await importOriginal<typeof Mod>()), /* overrides */ }))` (with `import type * as Mod from '{{module}}';`) — so the spread is visible statically. Note `... as any` / `satisfies` do not change this; the spread itself is what has to be there. If this factory really is safe, silence it explicitly: `// eslint-disable-next-line local-rules/no-wholesale-module-mock -- <reason>`. Canonical example: src/components/Challenge/__tests__/ChallengeUpsertForm.browser.test.tsx",
     },
@@ -607,13 +666,31 @@ const noWholesaleModuleMock = {
 
         const isOriginalPreserving = createOriginalAnalyzer(factory, targetCanonical, filename);
 
+        // Classify each un-provable return so the AUTHOR gets advice they can
+        // act on. The split is "did you even try to spread?":
+        //
+        //   no top-level spread at all -> `wholesaleMock`, whose advice is
+        //     "spread the real module" — exactly what is missing;
+        //   a spread the analysis cannot walk to the original (`...localStub`,
+        //     `...(actual ?? {})`, `...(await import('./elsewhere'))`), or any
+        //     non-object return -> `unprovableMock`, which says the spread is
+        //     unprovable and names the escape hatch.
+        //
+        // Telling an author who ALREADY spreads to "spread the real module" is
+        // how a rule gets switched off, and at 'error' that advice blocks them.
         let wholesale = false;
         let unprovable = null;
         for (const returned of collectFactoryReturns(factory)) {
           if (returned && isOriginalPreserving(returned)) continue;
           const shape = returned ? unwrapExpression(returned) : null;
           if (shape && shape.type === 'ObjectExpression') {
-            wholesale = true;
+            const spreads = shape.properties.filter((p) => p.type === 'SpreadElement');
+            if (spreads.length === 0) {
+              wholesale = true;
+            } else if (!unprovable) {
+              unprovable =
+                'an object literal whose spread does not provably carry the original module';
+            }
           } else if (!unprovable) {
             unprovable = shape ? shape.type : 'no return value';
           }
