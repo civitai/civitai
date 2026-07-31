@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { resolveLegacyAppRedirect, STORE_PREVIEW_PATH_PREFIX } from '../resolveLegacyAppRedirect';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  approvedListingSlugQuery,
+  resolveLegacyAppRedirect,
+  resolveLegacyAppRoute,
+  STORE_PREVIEW_PATH_PREFIX,
+} from '../resolveLegacyAppRedirect';
 
 /**
  * S8 / PR-2 — the retirement decision for the legacy `/apps/[appBlockId]` detail
@@ -80,9 +85,7 @@ describe('resolveLegacyAppRedirect — NO approved listing → site-standard 404
     // with an obvious message rather than only tripping the toEqual above.
     for (const slug of [null, undefined, '', '  ']) {
       const result = resolveLegacyAppRedirect({ slug });
-      const destination = 'redirect' in result ? result.redirect.destination : null;
-      expect(destination).not.toBe('/apps');
-      expect(destination).toBeNull();
+      expect('redirect' in result, `slug ${JSON.stringify(slug)} must not redirect`).toBe(false);
     }
   });
 });
@@ -119,5 +122,118 @@ describe('resolveLegacyAppRedirect — slug encoding / open-redirect containment
     const result = resolveLegacyAppRedirect({ slug: '  vitrine  ' });
     if (!('redirect' in result)) throw new Error('expected a redirect');
     expect(result.redirect.destination).toBe('/apps/store-preview/vitrine');
+  });
+});
+
+/**
+ * The SSR half. The string concat above is the easy part; the parts that can
+ * actually hurt are the GATE ORDERING and the APPROVED-ONLY precondition, and
+ * neither is visible to a test of `resolveLegacyAppRedirect` alone — by the time
+ * it runs, the gate has already been passed and the slug already handed over.
+ * `resolveLegacyAppRoute` takes the lookup as an argument precisely so both are
+ * assertable here.
+ */
+describe('resolveLegacyAppRoute — SSR gate ordering', () => {
+  const lookup = (slug: string | null) => vi.fn(async (): Promise<string | null> => slug);
+
+  it('no store visibility → notFound, and the DB is NEVER QUERIED', async () => {
+    // 🔴 The load-bearing assertion. Returning notFound is not enough: if the
+    // lookup runs first and the gate second, an ungranted viewer still causes a
+    // query, and timing/load become a side channel. Assert the call count.
+    const findApprovedListingSlug = lookup('model-benchmarking');
+    const result = await resolveLegacyAppRoute({
+      features: { appBlocks: false, appListings: false },
+      appBlockId: 'apb_01KXPENN70SG0RXQKN7WMJMJHF',
+      findApprovedListingSlug,
+    });
+    expect(result).toEqual({ notFound: true });
+    expect(findApprovedListingSlug).not.toHaveBeenCalled();
+  });
+
+  it('absent / null features → notFound, no query (fails closed)', async () => {
+    for (const features of [undefined, null, {}]) {
+      const findApprovedListingSlug = lookup('vitrine');
+      expect(
+        await resolveLegacyAppRoute({ features, appBlockId: 'apb_x', findApprovedListingSlug })
+      ).toEqual({ notFound: true });
+      expect(findApprovedListingSlug).not.toHaveBeenCalled();
+    }
+  });
+
+  it('either store-visibility flag grants access (the OR-fallback is preserved)', async () => {
+    for (const features of [
+      { appBlocks: true, appListings: false },
+      { appBlocks: false, appListings: true },
+    ]) {
+      const findApprovedListingSlug = lookup('vitrine');
+      expect(
+        await resolveLegacyAppRoute({ features, appBlockId: 'apb_x', findApprovedListingSlug })
+      ).toEqual({
+        redirect: { destination: '/apps/store-preview/vitrine', permanent: false },
+      });
+      expect(findApprovedListingSlug).toHaveBeenCalledWith('apb_x');
+    }
+  });
+});
+
+describe('resolveLegacyAppRoute — route param handling', () => {
+  const granted = { appBlocks: true };
+
+  it('a missing / non-string route param → notFound without querying', async () => {
+    for (const appBlockId of [undefined, null, '', '   ', 123, ['apb_x']]) {
+      const findApprovedListingSlug = vi.fn(async () => 'vitrine');
+      expect(
+        await resolveLegacyAppRoute({ features: granted, appBlockId, findApprovedListingSlug })
+      ).toEqual({ notFound: true });
+      expect(findApprovedListingSlug).not.toHaveBeenCalled();
+    }
+  });
+
+  it('a granted viewer + an app WITH an approved listing → the store-preview redirect', async () => {
+    const findApprovedListingSlug = vi.fn(async () => 'model-benchmarking');
+    expect(
+      await resolveLegacyAppRoute({
+        features: granted,
+        appBlockId: 'apb_01KXPENN70SG0RXQKN7WMJMJHF',
+        findApprovedListingSlug,
+      })
+    ).toEqual({
+      redirect: { destination: '/apps/store-preview/model-benchmarking', permanent: false },
+    });
+  });
+
+  it('a granted viewer + an app with NO approved listing → notFound, never /apps', async () => {
+    const findApprovedListingSlug = vi.fn(async () => null);
+    const result = await resolveLegacyAppRoute({
+      features: granted,
+      appBlockId: 'apb_pending',
+      findApprovedListingSlug,
+    });
+    expect(result).toEqual({ notFound: true });
+    expect('redirect' in result).toBe(false);
+  });
+});
+
+describe('approvedListingSlugQuery — the approved-only precondition', () => {
+  /**
+   * 🔴 This is a contract pin, and it is deliberate. Without it, deleting
+   * `status: 'approved'` from the query is a one-word edit that inverts the
+   * decided behaviour — every pending and rejected app would start redirecting
+   * into the store — while every other test in this file still passes, because
+   * they all begin AFTER the lookup has returned.
+   */
+  it('filters to an approved, non-shadow listing for the given app block', () => {
+    expect(approvedListingSlugQuery('apb_01KXPENN70SG0RXQKN7WMJMJHF')).toEqual({
+      where: {
+        appBlockId: 'apb_01KXPENN70SG0RXQKN7WMJMJHF',
+        status: 'approved',
+        revisionOfId: null,
+      },
+      select: { slug: true },
+    });
+  });
+
+  it('selects the slug and nothing else (no incidental data pulled into SSR)', () => {
+    expect(Object.keys(approvedListingSlugQuery('apb_x').select)).toEqual(['slug']);
   });
 });
