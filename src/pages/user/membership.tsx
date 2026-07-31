@@ -17,6 +17,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
+  IconGift,
   IconInfoCircle,
   IconInfoTriangleFilled,
   IconRotateClockwise,
@@ -24,6 +25,7 @@ import {
 } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
+import { useEffect, useRef } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzEnvironmentAlert } from '~/components/Buzz/BuzzEnvironmentAlert';
@@ -61,6 +63,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { syncAccount } from '~/utils/sync-account';
+import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
 import styles from './membership.module.scss';
 
@@ -91,6 +94,7 @@ const querySchema = z.object({
   tier: userTierSchema.optional(),
   updated: booleanString().optional(),
   downgraded: booleanString().optional(),
+  flow: z.enum(['keep-membership']).optional(),
 });
 
 export default function UserMembership() {
@@ -131,6 +135,38 @@ export default function UserMembership() {
   const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
   const isUpdate = query.success ? query.data?.updated : false;
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
+
+  const queryUtils = trpc.useUtils();
+  const keepMembershipMutation = trpc.membershipGift.keepMembership.useMutation({
+    onSuccess: async (result) => {
+      if (result.kept) {
+        showSuccessNotification({
+          title: 'Membership kept',
+          message: 'Your membership will continue after your free months end.',
+        });
+        await queryUtils.subscriptions.getUserSubscription.invalidate();
+        await currentUser?.refresh();
+      } else if (result.portalUrl) {
+        // No payment method on file — send them to the Stripe portal to add one
+        window.location.assign(result.portalUrl);
+      }
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Unable to keep membership',
+        error: new Error(error.message),
+      }),
+  });
+
+  const keepFlowTriggered = useRef(false);
+  const keepFlowRequested = query.success && query.data.flow === 'keep-membership';
+  useEffect(() => {
+    if (!keepFlowRequested || !features.giftMemberships || keepFlowTriggered.current) return;
+    keepFlowTriggered.current = true;
+    keepMembershipMutation.mutate();
+    router.replace('/user/membership', undefined, { shallow: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keepFlowRequested, features.giftMemberships]);
 
   const handleRedirectToOtherEnvironment = () => {
     const targetDomain = otherBuzzType === 'green' ? serverDomains.green : serverDomains.red;
@@ -247,6 +283,10 @@ export default function UserMembership() {
   const isFree = meta?.tier === 'free';
   const { image, benefits } = getPlanDetails(subscription.product, features);
   const isCivitaiProvider = subscriptionPaymentProvider === PaymentProvider.Civitai;
+  const isGiftedSub = !!(
+    subscription.metadata as (SubscriptionMetadata & { membershipGiftId?: string }) | null
+  )?.membershipGiftId;
+  const showKeepMembership = features.giftMemberships && isStripe && !!subscription.cancelAt;
 
   return (
     <>
@@ -459,12 +499,35 @@ export default function UserMembership() {
                         )}
                     </Stack>
                   </Group>
-                  {subscription.cancelAt && (
+                  {subscription.cancelAt && isGiftedSub && (
+                    <Alert color="teal" icon={<IconGift size={18} />}>
+                      This membership was gifted to you — it&rsquo;s free until{' '}
+                      {new Date(subscription.cancelAt).toLocaleDateString()}. Keep it to continue
+                      your benefits after that.
+                    </Alert>
+                  )}
+                  {subscription.cancelAt && !isGiftedSub && (
                     <Text c="red">
                       Your membership will be canceled on{' '}
                       {new Date(subscription.cancelAt).toLocaleDateString()}. You will lose your
                       benefits on that date.
                     </Text>
+                  )}
+                  {showKeepMembership && (
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        radius="xl"
+                        leftSection={<IconGift size={14} />}
+                        loading={keepMembershipMutation.isPending}
+                        onClick={() => keepMembershipMutation.mutate()}
+                      >
+                        Keep my membership
+                      </Button>
+                      <Text size="xs" c="dimmed">
+                        Billing resumes after your free months end — you keep your benefits.
+                      </Text>
+                    </Group>
                   )}
                   {isCivitaiProvider && (
                     <Text c="yellow">

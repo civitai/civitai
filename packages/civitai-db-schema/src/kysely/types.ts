@@ -15,6 +15,7 @@ import type {
   CryptoTransactionStatus,
   RewardsEligibility,
   PaymentProvider,
+  MembershipGiftStatus,
   UserEngagementType,
   LinkType,
   ModelType,
@@ -2367,6 +2368,24 @@ export type Link = {
   entityId: number;
   entityType: string;
 };
+export type MembershipGift = {
+  id: string;
+  gifterId: number;
+  recipientId: number;
+  tier: string;
+  months: number;
+  amountCents: number;
+  status: Generated<MembershipGiftStatus>;
+  message: string | null;
+  anonymous: Generated<boolean>;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  stripeCouponId: string | null;
+  stripeSubscriptionId: string | null;
+  fulfilledAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type ModActivity = {
   id: Generated<number>;
   userId: number | null;
@@ -4048,6 +4067,7 @@ export type DB = {
   License: License;
   LicensingRoot: LicensingRoot;
   Link: Link;
+  MembershipGift: MembershipGift;
   ModActivity: ModActivity;
   Model: Model;
   Model3D: Model3D;
