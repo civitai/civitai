@@ -275,6 +275,39 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
     if (result.status === 'early-access') expect(result.details.deadline).toEqual(endsAt);
   });
 
+  // The common case, and the one the bit-test read backwards: a user who has bought nothing carries
+  // the "no grant" sentinel `permissions: -1` (every bit set), so `permissions & EarlyAccessDownload`
+  // is non-zero and reads as "already holds the download grant". The purchase route was skipped and
+  // the user got a dead-end 403 instead of the buy CTA.
+  it('routes a user with no grant at all to early-access, not a bare denial', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: false, permissions: -1 }]);
+
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1234, isModerator: false },
+    });
+
+    expect(result.status).toBe('early-access');
+  });
+
+  it('lets an actual early-access buyer through the gate', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    const endsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    getPaidAccessMock.mockResolvedValue({ 1: { endsAt, terms: { download: { price: 100 } } } });
+    hasEntityAccessMock.mockResolvedValue([{ hasAccess: true, permissions: 2 }]);
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    const result = await getFileForModelVersion({
+      modelVersionId: 1,
+      user: { id: 1234, isModerator: false },
+    });
+
+    expect(result.status).toBe('success');
+  });
+
   // --- Unpublished models: the review path ---------------------------------
   // Moderators review unpublished models constantly (takedowns, TOS checks) and need the actual
   // file to decide. The publish-state gate must keep answering them — and the owner — with the
