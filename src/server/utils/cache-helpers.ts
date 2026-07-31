@@ -623,13 +623,19 @@ export function createCachedArray<T extends object>({
       // post-mutation shape to Redis. Leave it to fetch().
       const cachedAt = new Date();
       const EX = resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl);
+      // Honor dontCacheFn exactly as fetch() and the degraded path do. A cache that uses it as a
+      // correctness guard ("only hold values that are safe to serve stale") otherwise loses that
+      // guard entirely, because refresh() is what every bust-and-repopulate helper calls.
+      const cacheable = Object.entries(results).filter(([, x]) => !dontCacheFn?.(x));
       await Promise.all(
-        Object.entries(results).map(([rid, x]) =>
-          redis.packed.set(`${key}:${rid}`, { ...x, cachedAt }, { EX })
-        )
+        cacheable.map(([rid, x]) => redis.packed.set(`${key}:${rid}`, { ...x, cachedAt }, { EX }))
       );
 
-      const toRemove = ids.filter((x) => !results[x]).map(String);
+      // An id with no row and an id we're not allowed to hold both have to end up ABSENT rather
+      // than merely un-refreshed — leaving the prior entry in place keeps serving the very value
+      // this refresh was called to replace.
+      const cached = new Set(cacheable.map(([rid]) => rid));
+      const toRemove = ids.map(String).filter((rid) => !cached.has(rid));
       await Promise.all(toRemove.map((rid) => redis.del(`${key}:${rid}`)));
     } catch (error) {
       // Refresh is best-effort: swallow and fall back to bust semantics so the

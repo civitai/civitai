@@ -367,7 +367,43 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.userBasic, // ~4MB (tiny records)
 });
 
-type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date; status: ModelStatus };
+export type ModelVersionAccessCache = EntityAccessDataType & {
+  publishedAt: Date;
+  status: ModelStatus;
+};
+
+/**
+ * The authoritative availability read behind modelVersionAccessCache. Exported because
+ * `dontCacheFn` below means the cache is *allowed* to hold nothing for an id, and callers that
+ * gate access on the result (hasEntityAccess) must be able to resolve those ids for real rather
+ * than assume the worst.
+ */
+export async function lookupModelVersionAccess(
+  ids: number[],
+  fromWrite?: boolean
+): Promise<Record<string, ModelVersionAccessCache>> {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
+    SELECT
+      mv.id AS "entityId",
+      mmv."userId" AS "userId",
+      -- Model availability prevails if it's private
+      CASE
+        WHEN mmv.availability = 'Private'
+          THEN mmv."availability"
+        ELSE mv."availability"
+      END AS "availability",
+      mv."publishedAt" AS "publishedAt",
+      mv."status" as "status"
+    FROM "ModelVersion" mv
+         JOIN "Model" mmv ON mv."modelId" = mmv.id
+    WHERE
+      mv.id IN (${Prisma.join(goodIds, ',')})
+  `);
+  return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
+}
 
 export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCache>({
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
@@ -388,29 +424,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
       data.status !== ModelStatus.Published
     );
   },
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = ids.filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
-      SELECT
-        mv.id AS "entityId",
-        mmv."userId" AS "userId",
-        -- Model availability prevails if it's private
-        CASE
-          WHEN mmv.availability = 'Private'
-            THEN mmv."availability"
-          ELSE mv."availability"
-        END AS "availability",
-        mv."publishedAt" AS "publishedAt",
-        mv."status" as "status"
-      FROM "ModelVersion" mv
-           JOIN "Model" mmv ON mv."modelId" = mmv.id
-      WHERE
-        mv.id IN (${Prisma.join(goodIds, ',')})
-    `);
-    return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupModelVersionAccess(ids as number[], fromWrite),
 });
 
 type TagLookup = {
