@@ -395,3 +395,33 @@ describe('getViewerMonetization — gate price and licensing fee capped as one',
     expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
   });
 });
+
+describe('getViewerMonetization — an unset gate/fee is never invented', () => {
+  const drive = () =>
+    mockCacheFetch.mockImplementation(async (key: string) =>
+      key === 'test:cap-tier' ? { 7: { userId: 7, tier: null } } : {}
+    );
+
+  it('no gate and no fee: nothing charged, and no cap tier is even resolved', async () => {
+    drive();
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1, ownerId: 7 }],
+      viewer: { id: 2 },
+    });
+
+    expect(out[1]).toEqual({ paidAccess: undefined, licensingFee: null });
+    expect(mockCacheFetch.mock.calls.filter(([key]) => key === 'test:cap-tier')).toHaveLength(0);
+  });
+
+  it('a null fee stays null rather than falling back to the free-tier cap', async () => {
+    drive();
+
+    const out = await getViewerMonetization({
+      versions: [{ id: 1, ownerId: 7, licensingFee: null, modelType: 'Checkpoint' }],
+      viewer: { id: 2 },
+    });
+
+    expect(out[1].licensingFee).toBeNull();
+  });
+});
