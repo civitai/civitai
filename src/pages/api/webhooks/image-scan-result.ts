@@ -349,11 +349,27 @@ async function updateImage(
     }
 
     if (data.ingestion && data.ingestion !== 'Blocked') {
-      await signalClient.send({
-        target: SignalMessages.ImageIngestionStatus,
-        data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
-        userId: image.userId,
-      });
+      // The ingestion is already committed — a signals brownout must not 400 the webhook.
+      await signalClient
+        .send({
+          target: SignalMessages.ImageIngestionStatus,
+          data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
+          userId: image.userId,
+        })
+        .catch((error) =>
+          logToAxiom(
+            {
+              name: 'image-scan-result',
+              type: 'warning',
+              message: `signal send failed: ${
+                error instanceof Error ? error.message : 'Unknown error'
+              }`,
+              imageId: image.id,
+              source: 'webhook-legacy',
+            },
+            'webhooks'
+          ).catch(() => null)
+        );
     }
   } catch (e) {
     if (isDev) console.log({ error: e });
