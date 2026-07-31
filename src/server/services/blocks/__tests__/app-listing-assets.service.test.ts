@@ -539,13 +539,18 @@ describe('screenshot CRUD', () => {
     expect(mockDb.appListingScreenshot.deleteMany).toHaveBeenCalledWith({
       where: { id: 'b', appListingId: 'apl_1' },
     });
-    const orders = mockDb.appListingScreenshot.update.mock.calls.map(
-      (c) => c[0] as { where: { id: string }; data: { order: number } }
+    const orders = mockDb.appListingScreenshot.updateMany.mock.calls.map(
+      (c) => c[0] as { where: { id: string; appListingId: string }; data: { order: number } }
     );
     expect(orders.map((o) => [o.where.id, o.data.order])).toEqual([
       ['a', 0],
       ['c', 1],
     ]);
+    // 🔴 The re-pack is LISTING-SCOPED like every other screenshot write here. It used
+    // to be a bare `update({ where: { id } })`, which is the one write that could still
+    // land `order` on the LIVE listing if an approve reparented the shadow's rows
+    // between the survivor read and these writes.
+    expect(orders.every((o) => o.where.appListingId === 'apl_1')).toBe(true);
   });
 
   // -------------------------------------------------------------------------

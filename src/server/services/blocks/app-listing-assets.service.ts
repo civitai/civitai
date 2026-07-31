@@ -459,6 +459,16 @@ function throwScreenshotNoLongerOnRevision(): never {
   });
 }
 
+/**
+ * Aborts the post-delete re-pack transaction WITHOUT surfacing an error.
+ *
+ * The re-pack is the one screenshot write on this path where `count !== 1` must NOT
+ * become a refusal — see the note at its call site in {@link removeListingScreenshot}.
+ * Rolling back needs a throw, but the caller's delete already succeeded, so the throw
+ * is caught and swallowed one frame up. Never escapes this module.
+ */
+class ListingScreenshotRepackAborted extends Error {}
+
 async function remapScreenshotRowIds(args: {
   screenshotIds: string[];
   sourceListingId: string;
@@ -1030,15 +1040,21 @@ export async function reorderListingScreenshots(
   // reparents the shadow's rows onto the live parent between the check above and here,
   // every `updateMany` matches 0 rows — the live listing's ordering is left alone and
   // the owner is told to refresh, instead of the reorder silently landing on it.
-  const results = await dbWrite.$transaction(
-    orderedIds.map((id, index) =>
-      dbWrite.appListingScreenshot.updateMany({
-        where: { id, appListingId: listing.id },
+  //
+  // 🔴 …and the refusal is raised INSIDE an INTERACTIVE transaction so it actually
+  // ROLLS BACK. The array form (`$transaction([...])`) COMMITS before its results are
+  // inspected, so a reparent landing mid-flight under READ COMMITTED left some orders
+  // written AND threw — the worst of both. All-or-nothing is the property this guard
+  // claims, so it has to be the property it has.
+  await dbWrite.$transaction(async (tx) => {
+    for (let index = 0; index < orderedIds.length; index++) {
+      const { count } = await tx.appListingScreenshot.updateMany({
+        where: { id: orderedIds[index], appListingId: listing.id },
         data: { order: index },
-      })
-    )
-  );
-  if (results.some((r) => r.count !== 1)) throwScreenshotNoLongerOnRevision();
+      });
+      if (count !== 1) throwScreenshotNoLongerOnRevision();
+    }
+  });
   return { reordered: orderedIds.length };
 }
 
@@ -1161,20 +1177,45 @@ export async function removeListingScreenshot(
   // (no re-derive: removal/reorder/caption can never RAISE the derived rating)
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).
-  // Read the survivor set from dbWrite (primary): under replica lag the replica
-  // may still return the just-deleted row → an `update` on it would P2025/500
-  // after the delete already committed.
+  // Read the survivor set from dbWrite (primary): under replica lag the replica may
+  // still return the just-deleted row, and the scoped write below would then match 0
+  // rows on it and abandon the whole re-pack (before the write was scoped, the same
+  // stale row was a P2025/500 after the delete had already committed).
   const remaining = await dbWrite.appListingScreenshot.findMany({
     where: { appListingId: listing.id },
     select: { id: true },
     orderBy: { order: 'asc' },
   });
   if (remaining.length > 0) {
-    await dbWrite.$transaction(
-      remaining.map((s, index) =>
-        dbWrite.appListingScreenshot.update({ where: { id: s.id }, data: { order: index } })
-      )
-    );
+    // 🔴 LISTING-SCOPED, like every other screenshot write on this path. The unscoped
+    // `update({ where: { id } })` this replaces was the last hole in the invariant:
+    // an approve reparenting the shadow's rows onto the live parent between the
+    // `findMany` above and these writes would have written `order` onto rows that now
+    // belong to the LIVE served listing.
+    //
+    // 🔴 `count !== 1` here is a deliberate NO-OP, NOT the refusal the other three
+    // writes raise — this is the one place where refusing is the worse answer. The
+    // delete has ALREADY committed and is exactly what the owner asked for; a reparent
+    // landing afterwards is a moderator's approve, not user error, so reporting a
+    // failure would name a removal that in fact succeeded. And there is no state left
+    // to protect: the re-pack only densifies `order`, and the reparented rows keep the
+    // orders `applyApprovedRevision` moved them with. The abort is still raised INSIDE
+    // the interactive transaction so the rows re-packed before the race are rolled
+    // back — abandoning it half-done would leave exactly the `order` gaps the re-pack
+    // exists to remove.
+    await dbWrite
+      .$transaction(async (tx) => {
+        for (let index = 0; index < remaining.length; index++) {
+          const { count } = await tx.appListingScreenshot.updateMany({
+            where: { id: remaining[index].id, appListingId: listing.id },
+            data: { order: index },
+          });
+          if (count !== 1) throw new ListingScreenshotRepackAborted();
+        }
+      })
+      .catch((e) => {
+        if (!(e instanceof ListingScreenshotRepackAborted)) throw e;
+      });
   }
   return { removed: screenshotId };
 }

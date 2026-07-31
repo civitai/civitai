@@ -88,8 +88,40 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
      * whole class of bug (#3476) could not be pinned here.
      */
     replicaLagsOn: new Set<string>(),
+    /**
+     * 🔴 Fires after every `update`/`updateMany` the fake performs on a screenshot row
+     * — i.e. after each individual ORDER write. The reparent-race suites use it to
+     * commit a CONCURRENT `applyApprovedRevision` BETWEEN two statements of an
+     * interactive transaction, which is the only window in which "does the refusal
+     * actually roll back?" is a real question rather than a restatement of the code.
+     */
+    afterShotOrderWrite: null as null | (() => void),
   };
   const ids = { n: 0 };
+
+  /**
+   * UNDO LOG for the interactive-`$transaction` fake (see `$transaction` below).
+   * Writes performed while a transaction callback is running push their inverse here;
+   * if the callback throws, the inverses are applied in reverse — the transaction
+   * ROLLS BACK.
+   *
+   * 🔴 An undo LOG rather than a whole-store snapshot, deliberately: the reparent-race
+   * tests land a CONCURRENT committed `applyApprovedRevision` by mutating the store
+   * directly mid-transaction, and a real ROLLBACK does not undo another transaction's
+   * committed work. A snapshot would, and would then let a test "pass" by asserting a
+   * state Postgres could never produce.
+   */
+  const txn = { undo: null as null | (() => void)[] };
+  const journal = (undo: () => void) => {
+    if (txn.undo) txn.undo.push(undo);
+  };
+  /** Journal an in-place field write so it can be reverted to the pre-write values. */
+  const journalPatch = <T extends object>(row: T, data: Partial<T>) => {
+    if (!txn.undo) return;
+    const prev = {} as Partial<T>;
+    for (const k of Object.keys(data) as (keyof T)[]) prev[k] = row[k];
+    journal(() => Object.assign(row, prev));
+  };
 
   const matchListing = (row: ListingRow, where: Record<string, unknown>) =>
     Object.entries(where).every(([k, v]) => (row as unknown as Record<string, unknown>)[k] === v);
@@ -104,11 +136,15 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
     create: vi.fn(async (args: { data: Partial<ListingRow> }) => {
       const row = { ...(args.data as ListingRow) };
       store.listings.push(row);
+      journal(() => {
+        store.listings = store.listings.filter((l) => l !== row);
+      });
       return row;
     }),
     update: vi.fn(async (args: { where: { id: string }; data: Partial<ListingRow> }) => {
       const row = store.listings.find((l) => l.id === args.where.id);
       if (!row) throw new Error(`no listing ${args.where.id}`);
+      journalPatch(row, args.data);
       Object.assign(row, args.data);
       return row;
     }),
@@ -143,23 +179,35 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
         store.shots.filter((s) => s.appListingId === args.where.appListingId).length
     ),
     create: vi.fn(async (args: { data: ShotRow }) => {
-      store.shots.push({ ...args.data });
+      const row = { ...args.data };
+      store.shots.push(row);
+      journal(() => {
+        store.shots = store.shots.filter((s) => s !== row);
+      });
       return args.data;
     }),
     createMany: vi.fn(async (args: { data: ShotRow[] }) => {
-      for (const d of args.data) store.shots.push({ ...d });
+      const rows = args.data.map((d) => ({ ...d }));
+      for (const r of rows) store.shots.push(r);
+      journal(() => {
+        store.shots = store.shots.filter((s) => !rows.includes(s));
+      });
       return { count: args.data.length };
     }),
     update: vi.fn(async (args: { where: { id: string }; data: Partial<ShotRow> }) => {
       const row = store.shots.find((s) => s.id === args.where.id);
       if (!row) throw new Error(`no screenshot ${args.where.id}`);
+      journalPatch(row, args.data);
       Object.assign(row, args.data);
+      store.afterShotOrderWrite?.();
       return row;
     }),
     delete: vi.fn(async (args: { where: { id: string } }) => {
       const i = store.shots.findIndex((s) => s.id === args.where.id);
       if (i < 0) throw new Error(`no screenshot ${args.where.id}`);
-      return store.shots.splice(i, 1)[0];
+      const [row] = store.shots.splice(i, 1);
+      journal(() => store.shots.splice(i, 0, row));
+      return row;
     }),
     // The LISTING-SCOPED write forms. A compound `{ id, appListingId }` filter is the
     // whole point: it must match ZERO rows once `applyApprovedRevision` has reparented
@@ -171,11 +219,16 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
             (args.where.id === undefined || s.id === args.where.id) &&
             (args.where.appListingId === undefined || s.appListingId === args.where.appListingId)
         );
-        for (const r of rows) Object.assign(r, args.data);
+        for (const r of rows) {
+          journalPatch(r, args.data);
+          Object.assign(r, args.data);
+        }
+        store.afterShotOrderWrite?.();
         return { count: rows.length };
       }
     ),
     deleteMany: vi.fn(async (args: { where: { id?: string; appListingId?: string } }) => {
+      const before = store.shots;
       const keep: ShotRow[] = [];
       let count = 0;
       for (const s of store.shots) {
@@ -186,6 +239,7 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
         else keep.push(s);
       }
       store.shots = keep;
+      if (count > 0) journal(() => (store.shots = before));
       return { count };
     }),
   };
@@ -204,7 +258,26 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
     appListingScreenshot,
     image,
     $transaction: vi.fn(async (arg: unknown) => {
-      if (typeof arg === 'function') return (arg as (tx: unknown) => unknown)(db);
+      // 🔴 The INTERACTIVE form rolls back on throw (via the undo log above). Modelling
+      // that is the whole point: `reorderListingScreenshots` now raises its refusal
+      // INSIDE the callback specifically so the orders already written are undone, and
+      // without a fake that can roll back, "leaves no partial order writes" would be an
+      // assertion nothing could falsify.
+      if (typeof arg === 'function') {
+        const outer = txn.undo;
+        const log: (() => void)[] = [];
+        txn.undo = log;
+        try {
+          return await (arg as (tx: unknown) => unknown)(db);
+        } catch (e) {
+          for (let i = log.length - 1; i >= 0; i--) log[i]();
+          throw e;
+        } finally {
+          txn.undo = outer;
+        }
+      }
+      // The ARRAY form has no such property — it COMMITS, and only then are its
+      // results inspected. Left un-rolled-back on purpose so a regression to it fails.
       return Promise.all(arg as Promise<unknown>[]);
     }),
   };
@@ -350,6 +423,7 @@ beforeEach(() => {
   store.shots = [];
   store.images = [];
   store.replicaLagsOn = new Set();
+  store.afterShotOrderWrite = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -777,6 +851,99 @@ describe('the reparent race — a resolved row id that became a LIVE row must no
       ['apls_parent_a', 0],
       ['apls_parent_b', 1],
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 …AND THE REFUSAL HAS TO ROLL BACK.
+//
+// The two suites above land the approve BEFORE the first write, so every statement
+// misses and "nothing was written" is true for free. The interesting window is the
+// approve committing BETWEEN two statements: then one order IS already written when
+// the next one finds nothing. `$transaction([...])` (the array form) had COMMITTED by
+// the time its results were inspected, so that case left some orders written AND threw
+// — the worst of both. The refusal is raised inside an INTERACTIVE transaction now, so
+// it rolls back; these tests are what makes that claim falsifiable.
+// ---------------------------------------------------------------------------
+
+/** `seedShadowWithClonedRows` plus a third pair, so there IS a middle statement. */
+function seedShadowWithThreeClonedRows() {
+  seedShadowWithClonedRows();
+  seedShot('apls_parent_c', PARENT_ID, 302, 2);
+  seedShot('apls_shadow_c', 'apl_shadow', 302, 2);
+}
+
+/** Commit the approve's reparent right after the Nth screenshot ORDER write. */
+function reparentAfterOrderWrite(n: number, shadowId = 'apl_shadow') {
+  let writes = 0;
+  store.afterShotOrderWrite = () => {
+    if (++writes === n) simulateApprovalReparent(shadowId);
+  };
+}
+
+describe('a refusal raised mid-transaction must ROLL BACK, not half-write', () => {
+  it('🔴 reorderScreenshots raced MID-TRANSACTION leaves NO partial order writes', async () => {
+    seedShadowWithThreeClonedRows();
+    // The first `updateMany` lands on the shadow; the approve commits; the second finds
+    // nothing (it is scoped to the shadow, and the rows are on the parent now).
+    reparentAfterOrderWrite(1);
+
+    await expect(
+      reorderListingScreenshots(
+        {
+          listingId: 'apl_shadow',
+          orderedIds: ['apls_shadow_c', 'apls_shadow_b', 'apls_shadow_a'],
+        },
+        OWNER
+      )
+    ).rejects.toThrow(/no longer available on your revision/);
+
+    // 🔴 THE ASSERTION. These rows are on the LIVE listing now. The one order the
+    // transaction did write (c → 0) was rolled back with it, so the live listing
+    // carries exactly the ordering the approve gave it — not a half-applied reorder
+    // with `c` yanked to the front of a listing no one reviewed.
+    expect(shotsOf(PARENT_ID).map((s) => [s.id, s.order])).toEqual([
+      ['apls_shadow_a', 0],
+      ['apls_shadow_b', 1],
+      ['apls_shadow_c', 2],
+    ]);
+  });
+
+  it('🔴 the post-delete RE-PACK is listing-scoped — an approve mid-repack writes no order onto the live rows', async () => {
+    seedShadowWithThreeClonedRows();
+    // The delete commits normally (it is not an order write, so it does not tick the
+    // counter); the approve lands after the first re-pack write.
+    reparentAfterOrderWrite(1);
+
+    // The removal itself SUCCEEDS. It committed before the approve, and it is exactly
+    // what the owner asked for — see the `count !== 1` note on the re-pack: abandoning
+    // a cosmetic densification is a no-op, refusing would report a failed removal that
+    // in fact happened.
+    const res = await removeListingScreenshot({ screenshotId: 'apls_shadow_a' }, OWNER);
+    expect(res).toEqual({ removed: 'apls_shadow_a' });
+
+    // 🔴 THE ASSERTION. By the time the re-pack runs, `_b` and `_c` are rows on the
+    // LIVE served listing. The unscoped `update({ where: { id } })` this replaced would
+    // have written 0/1 onto them — reordering a listing no moderator reviewed. Scoped,
+    // it matches nothing, aborts, and rolls back the one order it had written; the rows
+    // keep the orders `applyApprovedRevision` moved them with.
+    expect(shotsOf(PARENT_ID).map((s) => [s.id, s.order])).toEqual([
+      ['apls_shadow_b', 1],
+      ['apls_shadow_c', 2],
+    ]);
+  });
+
+  it('the ordinary (unraced) re-pack still densifies the survivors to 0..n-1', async () => {
+    seedShadowWithThreeClonedRows();
+
+    await removeListingScreenshot({ screenshotId: 'apls_shadow_a' }, OWNER);
+
+    // Scoping the write must not have cost the re-pack its actual job.
+    expect(shotsOf('apl_shadow').map((s) => [s.id, s.order])).toEqual([
+      ['apls_shadow_b', 0],
+      ['apls_shadow_c', 1],
+    ]);
+    expect(shotsOf(PARENT_ID)).toHaveLength(3);
   });
 });
 
