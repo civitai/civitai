@@ -193,6 +193,15 @@ export const getPublicShopItemsSchema = z.object({
   query: z.string().optional(),
 });
 
+// Site-wide community cosmetics hub on /shop — one feed of every published
+// creator cosmetic from public shops, filterable by type.
+export type GetCommunityCosmeticsInput = z.infer<typeof getCommunityCosmeticsSchema>;
+export const getCommunityCosmeticsSchema = z.object({
+  limit: z.number().min(1).max(100).default(40),
+  cursor: z.number().optional(),
+  cosmeticTypes: z.array(z.enum(CosmeticType)).optional(),
+});
+
 export type ReviewCreatorShopItemInput = z.infer<typeof reviewCreatorShopItemSchema>;
 export const reviewCreatorShopItemSchema = z
   .object({

@@ -37,6 +37,8 @@ import projectOdysseyProducts from '~/utils/shop/project-odyssey-products.json';
 import clsx from 'clsx';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { useQueryUserCosmetics } from '~/components/Cosmetics/cosmetics.util';
+import { CommunityCosmeticsSection } from '~/components/CosmeticShop/CommunityCosmeticsSection';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const merchSections = {
   civitai: {
@@ -77,6 +79,7 @@ export default function CosmeticShopMain() {
   const [debouncedFilters] = useDebouncedValue({ cosmeticTypes: filters.cosmeticTypes }, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
   const { data: userCosmetics, isFetching: loadingOwnedCosmetics } = useQueryUserCosmetics();
+  const features = useFeatureFlags();
 
   const { updateLastViewed, isFetched } = useShopLastViewed();
 
@@ -154,6 +157,19 @@ export default function CosmeticShopMain() {
               cosmeticShopSections.map((section, index) => {
                 const { image, items } = section;
                 const meta = section.meta as CosmeticShopSectionMeta;
+
+                if (meta.communityHub) {
+                  return features.creatorShop ? (
+                    <CommunityCosmeticsSection
+                      key={section.id}
+                      title={section.title}
+                      description={section.description}
+                      imageUrl={image?.url}
+                      hideTitle={meta.hideTitle}
+                      className={clsx(index === 0 ? 'order-1' : 'order-3')}
+                    />
+                  ) : null;
+                }
 
                 let filteredItems = items;
                 if (filters.modifier) {
