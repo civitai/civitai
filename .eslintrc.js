@@ -121,6 +121,65 @@ module.exports = {
     ],
   },
 
+  overrides: [
+    {
+      // Services must build their Redis caches LAZILY. A module-scope
+      // `createCachedObject(...)` runs on IMPORT, so it needs `createCachedObject`
+      // and `REDIS_KEYS.CACHES` to exist at module-evaluation time — which they do
+      // not in the ~150 suites that wholesale-mock `~/server/redis/client` and the
+      // ~26 that mock `~/server/utils/cache-helpers`. Any of those suites that
+      // reaches the service TRANSITIVELY then dies during COLLECTION, and the error
+      // names a file the suite never mentions. That is how one eager `capTierCache`
+      // took out three model-service suites (57 tests) and turned `Unit tests` red
+      // on `main` for every open PR (#3505 / #3506).
+      //
+      // 'error', matching no-wholesale-module-mock and for the same reason: at
+      // 'warn' it gates nothing, because the only BLOCKING ESLint step in
+      // .github/workflows/lint.yml ("ESLint (added files)") runs without
+      // --max-warnings.
+      //
+      // Blast radius on the existing tree — 30 module-scope caches exist in total
+      // (grep says 29; it misses a wrapped `export const x =\n  createCachedObject(`
+      // in caches.ts that the AST finds — the rule is the accurate census):
+      //   8 reported here: 7 services (buzz, paid-access, model-file, user,
+      //     creator-program, image, bug) + redis/resource-data.redis.ts. 7 once
+      //     #3506 lands. Each is one lazy getter away; #3506 is the worked example.
+      //  22 in src/server/redis/caches.ts, silenced by a file-level disable AT
+      //     that file, with the reasoning written there. It is a real backlog, not
+      //     a safe shape — all 22 are keyed off REDIS_KEYS at module scope,
+      //     exactly like the capTierCache that broke main, and caches.ts is
+      //     imported far more widely than paid-access.service.ts was.
+      //
+      // The 8th (`bugReportCounter` in bug.service.ts) is a `cachedCounter`, the
+      // third cache-helpers factory with this hazard. It is REPORTED, not silenced
+      // and not converted here: every other member of the backlog is reported, and
+      // converting one of them inside the rule's own PR would change a service
+      // export's shape (`bugReportCounter.get` -> `bugReportCounter().get`) in a
+      // diff that is otherwise pure lint infrastructure. It gets #3506's treatment
+      // in its own change.
+      //
+      // Two more `cachedCounter` calls live at module scope in src/server/routers/
+      // (redeemableCode, research) — outside this override, and left there
+      // deliberately: routers are not the shape that took out three suites, and
+      // widening the glob is a separate blast-radius decision.
+      //
+      // All are pre-existing FILES, so a PR touching one reaches only the
+      // report-only modified-files step. What the rule can BLOCK is a newly ADDED
+      // service or redis module — the case where the three-line lazy fix is
+      // cheapest, and the one that grows the backlog.
+      //
+      // SCOPE: this guards eager cache CONSTRUCTION, not eager `REDIS_KEYS` reads.
+      // A bare `const CACHE_KEY = REDIS_KEYS.CACHES.X;` at module scope throws the
+      // same collection-time TypeError and is deliberately NOT covered — one exists
+      // in scope today (nowpayments.service.ts). Counts and the reasoning are in
+      // the rule header in eslint-local-rules.js.
+      files: ['src/server/services/**/*.ts', 'src/server/redis/**/*.ts'],
+      rules: {
+        'local-rules/no-module-scope-cache': 'error',
+      },
+    },
+  ],
+
   // No type-aware linting: `parserOptions.project` costs ~40s of program build plus
   // ~2.3s/file (2h40m across the repo). If a type-aware rule is ever worth that, add
   // an `overrides` entry scoped to the narrowest possible file set.
