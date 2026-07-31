@@ -10,6 +10,7 @@ import {
   type OffsiteSubmission,
 } from '~/components/Apps/OffsiteSubmissionsList';
 import { Meta } from '~/components/Meta/Meta';
+import { MY_SUBMISSIONS_CONTAINER_SIZE } from '~/components/Apps/submissionsTable';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -99,6 +100,10 @@ export default function MySubmissionsPage() {
     <>
       <Meta title="My app submissions — Civitai" deIndex />
       <AppsPageLayout
+        // Wider than the layout default (`xl` = 1320, a MAX-width that made the card
+        // a constant 1286 px on every desktop viewport — permanently narrower than
+        // the table needs). See MY_SUBMISSIONS_CONTAINER_SIZE.
+        size={MY_SUBMISSIONS_CONTAINER_SIZE}
         title="My submissions"
         subtitle="Status of every app submission you've made. Open a row's reviewer notes to see mod feedback; pending submissions can be withdrawn."
         actions={

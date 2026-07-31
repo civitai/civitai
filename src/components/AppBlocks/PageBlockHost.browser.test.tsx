@@ -317,7 +317,13 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
-  test('Issue B: reviewMode never toasts an un-grantable consent request (untrusted preview stays silent)', async () => {
+  test('reviewMode surfaces a passive reduced-permissions notice and NEVER a consent modal', async () => {
+    // Was: reviewMode dropped REQUEST_CONSENT silently, so a moderator clicking a
+    // consent-gated action in the review preview got nothing at all and the app
+    // parked forever on its consent card. The modal ban is unchanged (untrusted
+    // review code must never pop a permission prompt at the mod) — only the
+    // silence is fixed. Full coverage lives in
+    // PageBlockHostReviewMode.browser.test.tsx.
     renderWithProviders(
       <PageBlockHost
         {...baseProps}
@@ -330,10 +336,10 @@ describe('PageBlockHost REQUEST_CONSENT (W10 lazy-consent wiring)', () => {
     );
 
     await driveToReady();
-    postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write'] });
-
-    await new Promise((r) => setTimeout(r, 150));
-    expect(showNotificationSpy).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:write'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 });

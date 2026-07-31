@@ -4,9 +4,9 @@ import { buildModelVersionTerms, gatePrices, type ModelVersionTerms } from '@civ
 import { env } from '$env/dynamic/private';
 import { dbRead } from '$lib/server/db';
 import { checkbox, optionalBuzz, freePreviewsField } from './form-fields';
-import type { EarlyAccessConfig } from '$lib/monetization/early-access';
+import type { PaidAccessConfig } from '$lib/monetization/paid-access';
 
-// Early access is written through the MAIN APP, not kysely: the write has real
+// Paid access is written through the MAIN APP, not kysely: the write has real
 // side effects (donation-goal rows, buzzTransactionId bookkeeping, publish-state
 // guards, cache/search invalidation) that only the main app owns. We POST to its
 // REST endpoint, forwarding the caller's shared .civitai.com session cookie so it
@@ -14,14 +14,14 @@ import type { EarlyAccessConfig } from '$lib/monetization/early-access';
 const MAIN_APP_URL = env.CIVITAI_APP_URL || 'https://civitai.com';
 const ENDPOINT = '/api/v1/model-versions/early-access';
 
-export type { EarlyAccessConfig } from '$lib/monetization/early-access';
-export { DEFAULT_GENERATION_TRIAL_LIMIT } from '$lib/monetization/early-access';
+export type { PaidAccessConfig } from '$lib/monetization/paid-access';
+export { DEFAULT_GENERATION_TRIAL_LIMIT } from '$lib/monetization/paid-access';
 
-export type EarlyAccessResult = { ok: true } | { ok: false; status: number; error: string };
+export type PaidAccessResult = { ok: true } | { ok: false; status: number; error: string };
 
-// Validates the early-access editor form → an EarlyAccessConfig. Light shape validation only; the main-app
+// Validates the paid-access editor form → a PaidAccessConfig. Light shape validation only; the main-app
 // endpoint (updateEarlyAccessConfigSchema) is the source of truth for prices, per-user limits, side effects.
-export const earlyAccessFormSchema = z
+export const paidAccessFormSchema = z
   .object({
     timeframe: z.coerce.number().int().min(0),
     permanent: checkbox,
@@ -29,6 +29,7 @@ export const earlyAccessFormSchema = z
     usageControl: z.string().optional(),
     accessPrice: optionalBuzz,
     generationPrice: optionalBuzz,
+    freeGeneration: checkbox,
     freePreviewGenerations: freePreviewsField(),
     donationGoalEnabled: checkbox,
     donationGoal: optionalBuzz,
@@ -45,17 +46,17 @@ export const earlyAccessFormSchema = z
     { message: 'Generation-only price cannot be greater than the access price.' }
   );
 
-// versionId + config (null clears early access). `cookie` is the incoming request's raw Cookie header,
+// versionId + config (null clears the gate). `cookie` is the incoming request's raw Cookie header,
 // forwarded verbatim for auth. `genOnly` = the version is on-site-generation-only (no download tier), so
 // the single "price for access" (accessPrice) is written as the generation price instead.
-export async function setEarlyAccessConfig(
+export async function setPaidAccessConfig(
   cookie: string,
   versionId: number,
-  config: EarlyAccessConfig | null,
+  config: PaidAccessConfig | null,
   genOnly = false
-): Promise<EarlyAccessResult> {
+): Promise<PaidAccessResult> {
   try {
-    // Map the editor's EarlyAccessConfig to the endpoint's PaidAccess contract ({ id, paidAccess,
+    // Map the editor's PaidAccessConfig to the endpoint's PaidAccess contract ({ id, paidAccess,
     // donationGoal }). A null config clears the gate. Permanent carries no timeframe.
     const terms =
       config && config.accessPrice != null
@@ -64,6 +65,7 @@ export async function setEarlyAccessConfig(
             generationPrice: config.generationPrice,
             freePreviewGenerations: config.freePreviewGenerations ?? 0,
             genOnly,
+            freeGeneration: config.freeGeneration,
           })
         : {};
     const paidAccess = !config
@@ -105,7 +107,7 @@ export async function setEarlyAccessConfig(
 
 // Counts the creator's permanent paid-access versions, excluding the one being edited. Permanent =
 // timeframeDays IS NULL (endsAt stays NULL on unpublished timed gates too, so it can't distinguish
-// them). Feeds the tier cap in the setEarlyAccess action.
+// them). Feeds the tier cap in the setPaidAccess action.
 export async function countPermanentAccessVersions(
   userId: number,
   excludeVersionId?: number
@@ -178,10 +180,10 @@ export async function bulkSetPermanentAccess(
       continue;
     }
     const genOnly = usage === 'Generation';
-    const config: EarlyAccessConfig = {
+    const config: PaidAccessConfig = {
       timeframe: 0,
       permanent: true,
-      // The access price is the single charge; for gen-only versions setEarlyAccessConfig writes it as the
+      // The access price is the single charge; for gen-only versions setPaidAccessConfig writes it as the
       // generation price. The optional cheaper generation tier only applies to downloadable versions.
       accessPrice: pricing.accessPrice,
       generationPrice: pricing.generationPrice,
@@ -189,7 +191,7 @@ export async function bulkSetPermanentAccess(
       donationGoalEnabled: false,
       donationGoal: undefined,
     };
-    const res = await setEarlyAccessConfig(cookie, id, config, genOnly);
+    const res = await setPaidAccessConfig(cookie, id, config, genOnly);
     if (res.ok) updated++;
     else {
       failed++;

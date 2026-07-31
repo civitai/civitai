@@ -1,5 +1,6 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  getCommunityCosmeticsSchema,
   getCreatorShopSchema,
   getCreatorShopSettingsSchema,
   getEarlyAccessPricesSchema,
@@ -15,6 +16,7 @@ import {
 import {
   archiveCreatorShopItem,
   deleteCreatorShopItem,
+  getCommunityCosmetics,
   getCreatorShop,
   getCreatorShopManageItems,
   getEarlyAccessModelPrices,
@@ -114,6 +116,11 @@ export const creatorShopRouter = router({
     .use(isFlagProtected('creatorShop'))
     .input(getEarlyAccessPricesSchema)
     .query(({ input }) => getEarlyAccessModelPrices(input)),
+  // Site-wide community cosmetics hub feed on /shop.
+  getCommunityCosmetics: publicProcedure
+    .use(isFlagProtected('creatorShop'))
+    .input(getCommunityCosmeticsSchema)
+    .query(({ input, ctx }) => getCommunityCosmetics({ ...input, viewerId: ctx.user?.id })),
   // #endregion
 
   // #region [Shop settings]

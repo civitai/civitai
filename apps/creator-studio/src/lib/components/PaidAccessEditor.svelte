@@ -6,6 +6,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
+  import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import { SheetFooter } from '@civitai/ui/components/ui/sheet/index.js';
   import NumberInput from '$lib/components/NumberInput.svelte';
   import {
@@ -13,7 +14,7 @@
     MIN_GENERATION_PRICE,
     MAX_GENERATION_TRIAL_LIMIT,
     DEFAULT_GENERATION_TRIAL_LIMIT,
-  } from '$lib/monetization/early-access';
+  } from '$lib/monetization/paid-access';
   import type { CreatorModelVersion } from '$lib/server/models';
   import type { CreatorCaps } from '$lib/server/membership';
 
@@ -43,7 +44,7 @@
   );
 
   function seed(v: CreatorModelVersion) {
-    const c = v.earlyAccessConfig;
+    const c = v.paidAccessConfig;
     // Timed early access can't be started on a published version or without score — default new gates to
     // permanent when only that's available. Clamp a seeded duration to the score-based max.
     const timedNewOk = maxEarlyAccessDays > 0 && v.status !== 'Published';
@@ -63,7 +64,7 @@
 
   // max never drops below the stored price: the server blocks only RAISES, so clamping down would silently
   // cut a grandfathered price on any unrelated edit.
-  const storedAccess = $derived(version.earlyAccessConfig?.accessPrice ?? 0);
+  const storedAccess = $derived(version.paidAccessConfig?.accessPrice ?? 0);
   const accessMax = $derived(priceCap == null ? undefined : Math.max(priceCap, storedAccess));
   const overCap = $derived(priceCap != null && (ea.accessPrice ?? 0) > priceCap);
   // The generation-only tier can't exceed the access price, and neither may exceed the tier's ceiling.
@@ -71,23 +72,30 @@
     accessMax == null ? ea.accessPrice : Math.min(ea.accessPrice ?? accessMax, accessMax)
   );
 
-  // Opt-in to a cheaper generation-only tier. Unchecked, the input isn't rendered so `generationPrice` never
-  // reaches the form, and buildModelVersionTerms omits the price — generation then falls back to the access
-  // price. Seeded on so an existing separate price stays visible instead of silently reverting on the next save.
-  let chargeGenerationSeparately = $state(
-    untrack(() => version.earlyAccessConfig?.generationPrice != null)
+  // The three generation grants, in the order the terms model supports them: bundled (no price — falls back
+  // to the access price), a cheaper separate price, or free for everyone. Only `separate` renders the price
+  // input, so the other two never submit `generationPrice`. Seeded from the stored grant so an existing
+  // choice survives an unrelated edit.
+  let genMode = $state<'bundled' | 'separate' | 'free'>(
+    untrack(() =>
+      version.paidAccessConfig?.freeGeneration
+        ? 'free'
+        : version.paidAccessConfig?.generationPrice != null
+          ? 'separate'
+          : 'bundled'
+    )
   );
 
   // A donation goal is create-once (the endpoint never updates or removes it), so once a version has one
   // the amount is locked here — reflected, not editable. Timed access only; permanent has none.
-  const hadDonationGoal = $derived(!!version.earlyAccessConfig?.donationGoalEnabled);
+  const hadDonationGoal = $derived(!!version.paidAccessConfig?.donationGoalEnabled);
   // The permanent option stays available to an already-permanent version even if membership lapsed or the
   // tier is at capacity, so an edit can't strand the creator (mirrors the main-app carve-out).
-  const alreadyPermanent = $derived(!!version.earlyAccessConfig?.permanent);
+  const alreadyPermanent = $derived(!!version.paidAccessConfig?.permanent);
   const canChoosePermanent = $derived(alreadyPermanent || !permAtCap);
   const permBlocked = $derived(permAtCap && !alreadyPermanent);
   // A version already on a timed gate stays editable regardless of score/publish state.
-  const timedAlreadySet = $derived(!!version.earlyAccessConfig && !alreadyPermanent);
+  const timedAlreadySet = $derived(!!version.paidAccessConfig && !alreadyPermanent);
   // Timed early access can't be *started* on a published version (nor without score); permanent still can.
   const canChooseTimed = $derived(
     timedAlreadySet || (maxEarlyAccessDays > 0 && version.status !== 'Published')
@@ -108,7 +116,7 @@
       await event.update({ reset: false });
       if (event.result.type === 'success') {
         toast.success(
-          event.result.data?.earlyAccessCleared ? 'Early access turned off' : 'Early access saved'
+          event.result.data?.paidAccessCleared ? 'Early access turned off' : 'Early access saved'
         );
         onClose();
         await invalidateAll();
@@ -131,7 +139,7 @@
       Paid access isn't available for this version — it's set to API-only generation, not download
       or on-site generation.
     </p>
-  {:else if !canChooseTimed && !canChoosePermanent && !version.earlyAccessConfig}
+  {:else if !canChooseTimed && !canChoosePermanent && !version.paidAccessConfig}
     <p class="rounded-lg border border-dark-4 p-3 text-xs text-dark-2">
       {#if version.status === 'Published'}
         Early access can't be started after a version is published, and you've reached your
@@ -144,7 +152,7 @@
   {:else}
     <form
       method="POST"
-      action="?/setEarlyAccess"
+      action="?/setPaidAccess"
       use:enhance={eaEnhance}
       class="flex flex-col gap-4"
     >
@@ -272,16 +280,38 @@
         </label>
         {#if !isGenOnly}
           <div class="flex flex-col gap-2">
-            <div class="flex items-center gap-2">
-              <Checkbox id="ea-gen-price" bind:checked={chargeGenerationSeparately} />
-              <Label for="ea-gen-price" class="cursor-pointer text-sm font-normal text-white">
-                Charge a different price for generation access
-              </Label>
-            </div>
-            <span class="text-xs text-dark-3">
-              Off, buyers pay the same access price whether they download or generate.
-            </span>
-            {#if chargeGenerationSeparately}
+            <span class="text-sm text-dark-1">Generating on-site</span>
+            <input
+              type="hidden"
+              name="freeGeneration"
+              value={genMode === 'free' ? 'true' : 'false'}
+            />
+            <RadioGroup bind:value={genMode} class="flex flex-col gap-1.5">
+              <div class="flex items-center gap-2">
+                <RadioGroupItem value="bundled" id="ea-gen-bundled" />
+                <Label for="ea-gen-bundled" class="cursor-pointer text-sm font-normal text-white">
+                  Same as the access price
+                </Label>
+              </div>
+              <div class="flex items-center gap-2">
+                <RadioGroupItem value="separate" id="ea-gen-separate" />
+                <Label for="ea-gen-separate" class="cursor-pointer text-sm font-normal text-white">
+                  A cheaper generation-only price
+                </Label>
+              </div>
+              <div class="flex items-center gap-2">
+                <RadioGroupItem value="free" id="ea-gen-free" />
+                <Label for="ea-gen-free" class="cursor-pointer text-sm font-normal text-white">
+                  Free for everyone
+                </Label>
+              </div>
+            </RadioGroup>
+            {#if genMode === 'free'}
+              <span class="text-xs text-dark-3">
+                Anyone can generate on-site without buying; only the download is gated. Earn per
+                generation with a licensing fee instead.
+              </span>
+            {:else if genMode === 'separate'}
               <label class="flex flex-col gap-1 text-sm">
                 <span class="text-dark-1">Generation-only price</span>
                 <NumberInput
@@ -299,20 +329,24 @@
             {/if}
           </div>
         {/if}
-        <label class="flex flex-col gap-1 text-sm">
-          <span class="text-dark-1">Free preview generations</span>
-          <NumberInput
-            name="freePreviewGenerations"
-            min={0}
-            max={MAX_GENERATION_TRIAL_LIMIT}
-            bind:value={ea.freePreviewGenerations}
-            placeholder="0"
-            class="w-32"
-          />
-          <span class="text-xs text-dark-3">
-            Free test generations before purchase is required — clear or set 0 for none.
-          </span>
-        </label>
+        <!-- A free grant has no trial to run out, so there's nothing to sample toward. Unmounted rather
+             than hidden: the field preprocesses absent → 0, so it doesn't need to submit. -->
+        {#if !(genMode === 'free' && !isGenOnly)}
+          <label class="flex flex-col gap-1 text-sm">
+            <span class="text-dark-1">Free preview generations</span>
+            <NumberInput
+              name="freePreviewGenerations"
+              min={0}
+              max={MAX_GENERATION_TRIAL_LIMIT}
+              bind:value={ea.freePreviewGenerations}
+              placeholder="0"
+              class="w-32"
+            />
+            <span class="text-xs text-dark-3">
+              Free test generations before purchase is required — clear or set 0 for none.
+            </span>
+          </label>
+        {/if}
       </div>
 
       {#if !ea.permanent}
@@ -362,7 +396,7 @@
 
       <SheetFooter class="flex-col gap-2 p-0">
         <Button type="submit">{ea.permanent ? 'Save paid access' : 'Save early access'}</Button>
-        {#if version.earlyAccessConfig}
+        {#if version.paidAccessConfig}
           <Button type="submit" name="clear" value="true" variant="outline">
             {ea.permanent ? 'Turn off paid access' : 'Turn off early access'}
           </Button>

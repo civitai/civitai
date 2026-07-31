@@ -61,14 +61,22 @@ export function buildModelVersionTerms({
   generationPrice,
   freePreviewGenerations,
   genOnly = false,
+  freeGeneration = false,
 }: {
   accessPrice: number;
   generationPrice?: number;
   freePreviewGenerations?: number;
   genOnly?: boolean;
+  /**
+   * Gate the download but leave generation open to everyone — for creators who earn per generation
+   * through a licensing fee and don't want to charge on top. Ignored when `genOnly`, where generation
+   * IS the paid tier. A free grant carries no price or trial limit: there's nothing to sample toward.
+   */
+  freeGeneration?: boolean;
 }): ModelVersionTerms {
   const trial = freePreviewGenerations != null ? { trialLimit: freePreviewGenerations } : {};
   if (genOnly) return { generation: { price: accessPrice, ...trial } };
+  if (freeGeneration) return { download: { price: accessPrice }, generation: { free: true } };
   return {
     download: { price: accessPrice },
     generation: { ...(generationPrice != null ? { price: generationPrice } : {}), ...trial },

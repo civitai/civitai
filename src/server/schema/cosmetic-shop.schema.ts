@@ -104,6 +104,9 @@ export type CosmeticShopSectionMeta = z.infer<typeof cosmeticShopSectionMeta>;
 export const cosmeticShopSectionMeta = z.object({
   hideTitle: z.boolean().optional(),
   availableItemsMax: z.number().optional(),
+  // Renders the sitewide community-cosmetics feed in place of hand-picked
+  // items, so mods control the hub's placement/banner/copy like any section.
+  communityHub: z.boolean().optional(),
 });
 
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
