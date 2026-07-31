@@ -65,7 +65,13 @@ vi.mock('~/server/redis/caches', () => ({
 }));
 vi.mock('~/server/redis/client', () => ({
   redis: { del: mockRedisDel },
-  REDIS_KEYS: { MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' } },
+  REDIS_KEYS: {
+    MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' },
+    // Read at module scope through a transitive import (paid-access.service ->
+    // session-cache). Omitting it makes REDIS_KEYS.CACHES undefined and the file
+    // fails at collection, before any test runs.
+    CACHES: { PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier' },
+  },
 }));
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
@@ -119,6 +125,14 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/utils/cache-helpers', () => ({
   bustFetchThroughCache: vi.fn(),
   fetchThroughCache: vi.fn(),
+  // These are invoked at MODULE SCOPE by services this test only imports transitively
+  // (e.g. model-file.service's `filesForModelVersionCache`), so a wholesale factory that
+  // omits them fails at collection with "No <name> export is defined on the mock" — the
+  // whole file errors before a single test runs. They must return the cache-shaped object
+  // their callers immediately destructure. See the note in paid-access.service.ts, which
+  // dodges this by creating its cache lazily instead.
+  createCachedObject: vi.fn(() => ({ fetch: vi.fn(async () => ({})), bust: vi.fn() })),
+  createCachedArray: vi.fn(() => ({ fetch: vi.fn(async () => []), bust: vi.fn() })),
 }));
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
