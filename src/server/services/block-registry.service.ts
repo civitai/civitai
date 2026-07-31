@@ -31,6 +31,7 @@ import type {
   SubscriptionScope,
 } from '~/server/schema/blocks/subscription.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import { projectPublicOwner } from '~/server/services/blocks/public-owner';
 import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { isMatureContentRating } from '~/server/utils/server-domain';
@@ -3306,6 +3307,12 @@ export class BlockRegistry {
       // jsonb. NULL until the E5 migration is applied + an app is (re)approved
       // with a `screenshots/` dir — projected to PUBLIC display URLs below.
       screenshots: unknown;
+      // The app's real OWNER (OauthClient.userId → User). ONLY the three public
+      // chip columns are selected — never the rest of the user row. See
+      // `projectPublicOwner` for the allowlist rationale.
+      owner_user_id: number | null;
+      owner_username: string | null;
+      owner_image: string | null;
     };
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
@@ -3313,6 +3320,9 @@ export class BlockRegistry {
         ab.block_id,
         ab.app_id,
         oc.name AS app_name,
+        u.id AS owner_user_id,
+        u.username AS owner_username,
+        u.image AS owner_image,
         ab.manifest,
         ab.status,
         ab.content_rating,
@@ -3327,6 +3337,7 @@ export class BlockRegistry {
         ${REVIEW_COUNT_SUBQUERY} AS review_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
+      LEFT JOIN "User" u ON u.id = oc."userId"
       WHERE ab.id = ${appBlockId}::text
       LIMIT 1
     `) as Row[];
@@ -3358,6 +3369,12 @@ export class BlockRegistry {
       blockId: row.block_id,
       appId: row.app_id,
       appName: row.app_name ?? null,
+      // The app's REAL owner as the standard public chip ({id, username, image}
+      // ONLY — see projectPublicOwner). `appName` above is the OAuth client's
+      // name, which for every approved block equals the APP TITLE — so it must
+      // never be used as the author; that was the `/apps/<appBlockId>` "by
+      // {appName}" bug this field fixes.
+      owner: projectPublicOwner(row),
       // PUBLIC allowlist projection — identical to the listing path so the two
       // can't drift in what they expose.
       manifest: toPublicBlockManifest(row.manifest),

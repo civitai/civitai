@@ -263,6 +263,40 @@ export interface PageBlockHostProps {
    * the preview surface, not here.
    */
   reviewRunForReal?: boolean;
+  /**
+   * May this viewer open `/apps/run/<blockId>`? Forwarded to `AppBlockChrome`,
+   * where it gates the "Recently run" menu — that section's ONLY link shape is
+   * that route, which 404s fail-closed unless the viewer holds BOTH `appBlocks`
+   * and `appBlocksPages`.
+   *
+   * 🔴 IT IS THE SAME PREDICATE ON EVERY MOUNTER:
+   * `!!(features.appBlocks && features.appBlocksPages)` — the exact conjunction
+   * `/apps/run/[slug]`'s own `getServerSideProps` checks, no more and no less.
+   * Two ways to get it wrong, both of which have been written here:
+   *
+   *   - A PER-SURFACE CONSTANT, justified with "the surfaces gate on DIFFERENT
+   *     flags". That conflates what gates the SURFACE with what gates the LINK
+   *     TARGET. The dev tunnel's own gate and mod review's reviewer check say
+   *     nothing about whether the menu's links resolve. Hardcoding it per
+   *     surface is what silently killed the menu for mods on three of four
+   *     surfaces.
+   *   - HALF THE CONJUNCTION (`!!features.appBlocksPages`). `appBlocks` is the
+   *     block-runtime kill-switch and a Flipt override can disable as well as
+   *     enable, so pages-on/blocks-off is a reachable state in which every one
+   *     of these links 404s. All four surfaces happen to sit behind their own
+   *     `appBlocks` check today, so the one-flag form is not currently a live
+   *     bug — but that makes the menu gate depend on an invariant held in four
+   *     other functions, which is exactly the kind of distant coupling that
+   *     produced the original defect. Encode the target route's predicate here.
+   *
+   * All three mounters (`/apps/run/[slug]`, `/apps/dev/[blockId]`,
+   * `ReviewBlockPreviewHost`) read the conjunction; the source-level guard in
+   * `recentAppsRail.test.ts` enumerates them by scanning the tree, so a NEW
+   * mounter cannot quietly omit it or downgrade it to one flag.
+   *
+   * Default false → a mounter that hasn't wired it shows no dead links.
+   */
+  canOpenPage?: boolean;
 }
 
 export function PageBlockHost({
@@ -290,6 +324,7 @@ export function PageBlockHost({
   onRetryToken,
   reviewMode = false,
   reviewRunForReal = false,
+  canOpenPage = false,
 }: PageBlockHostProps) {
   const router = useRouter();
   // MOD REVIEW SANDBOX (#2831): the side-effect NACK gate. Side-effecting handlers
@@ -2890,6 +2925,7 @@ export function PageBlockHost({
         appBlockId={appBlockId}
         appName={appName}
         slotId={PAGE_SLOT_ID}
+        canOpenPage={canOpenPage}
       />
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —

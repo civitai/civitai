@@ -16,6 +16,7 @@ import {
   getRecentlyOpenedApps,
   type RecentApp,
 } from '~/components/Apps/recentlyOpenedAppsStore';
+import { selectChromeRecentApps } from '~/components/Apps/recentAppsRail';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
@@ -45,6 +46,7 @@ import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/base
 import { trpc } from '~/utils/trpc';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
@@ -89,8 +91,9 @@ const HARD_HEIGHT_CEILING = 8_000;
 
 // Max "Recently run" entries shown in the app-chrome platform-nav dropdown.
 // Kept short so the compact menu doesn't grow unbounded (the store itself caps
-// at MAX_RECENTS; this is the additional display cap after excluding the
-// current app).
+// at MAX_RECENTS PER KIND; this is the additional display cap after excluding
+// the current app). The per-kind store budget is what guarantees this menu is
+// never starved by off-site traffic it can't render.
 const RECENTLY_RUN_LIMIT = 5;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
@@ -162,6 +165,7 @@ export function AppBlockChrome({
   modelId,
   modelName,
   slotId,
+  canOpenPage = false,
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -176,6 +180,26 @@ export function AppBlockChrome({
    *  distinction — the "Hide" item is hidden on the full-page (`app.page`)
    *  surface. Omitted → treated as a model surface (Hide shown). */
   slotId?: string;
+  /** Mirrors the viewer's `appBlocksPages` flag: may this viewer actually open
+   *  `/apps/run/<blockId>`? Gates the "Recently run" section, whose ONLY link
+   *  shape is that route — it 404s fail-closed without the flag, and the writers
+   *  that feed the recents store record flag-blind.
+   *
+   *  🔴 THE PREDICATE IS UNIFORM ACROSS SURFACES — do not hardcode it per
+   *  mount. What gates the *surface* (`appBlocksPages` on `/apps/run`,
+   *  `appBlocksAuthor` on the dev tunnel, the reviewer gate on mod review) is a
+   *  different question from what gates the *link target*, and only the latter
+   *  matters here: the menu always points at `/apps/run/<blockId>`, whose
+   *  `getServerSideProps` 404s on `appBlocks && appBlocksPages` for every
+   *  viewer regardless of where they came from. So every mounter passes
+   *  `!!features.appBlocksPages`, exactly like `AppListingCard`,
+   *  `AppListingDetailBody`, `MySubmissionsList` and `MarketplaceBody` do.
+   *  Pinned by the source-level guard in `recentAppsRail.test.ts`.
+   *
+   *  🔴 DEFAULTS TO FALSE (no dead links) so a NEW mounter that forgets the
+   *  prop hides the menu rather than offering guaranteed-404 links.
+   */
+  canOpenPage?: boolean;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -217,7 +241,17 @@ export function AppBlockChrome({
   useEffect(() => {
     setRecents(getRecentlyOpenedApps());
   }, []);
-  const recentApps = recents.filter((r) => r.id !== appBlockId).slice(0, RECENTLY_RUN_LIMIT);
+  // Which of those entries this menu may offer. The rules (off-site exclusion,
+  // the `appBlocksPages` gate that keeps a dark-flag viewer off guaranteed-404
+  // `/apps/run/` links, self-exclusion, the cap) live in the pure
+  // `selectChromeRecentApps` so the node `unit` project covers them — the
+  // browser suites are not run in CI. The store's PER-KIND cap is what stops
+  // off-site entries from evicting the on-site ones this menu needs.
+  const recentApps = selectChromeRecentApps(recents, {
+    canOpenPage,
+    currentAppBlockId: appBlockId,
+    limit: RECENTLY_RUN_LIMIT,
+  });
 
   // Controlled-Menu change handler: mirror the open state AND re-read the recents
   // store on the transition to open, so the "Recently run" list is fresh within
@@ -352,6 +386,7 @@ export function AppBlockChrome({
                   <Menu.Item
                     key={r.id}
                     component={Link}
+                    // Non-null by `selectChromeRecentApps` (ChromeRecentApp).
                     href={`/apps/run/${r.blockId}`}
                     data-testid="app-recently-run-item"
                     leftSection={
@@ -509,6 +544,12 @@ export function IframeHost({
   // the only producer in v1 (ModelVersionDetails); other surfaces use the
   // base SlotContext shape.
   const modelCtx = context as Partial<ModelSlotContext>;
+  // The chrome's "Recently run" menu links ONLY to `/apps/run/<blockId>`, and
+  // that route 404s unless the viewer has BOTH `appBlocks` AND `appBlocksPages`
+  // — on EVERY surface, because the gate is on the viewer, not on where the
+  // link was clicked from. So the predicate mirrors the route's own
+  // `getServerSideProps` conjunction, not just the pages flag.
+  const features = useFeatureFlags();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [iframeHeight, setIframeHeight] = useState<number>(
@@ -1865,6 +1906,7 @@ export function IframeHost({
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
         slotId={slotId}
+        canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
       {children}
     </Box>

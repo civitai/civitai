@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -58,7 +59,12 @@ const mocks = vi.hoisted(() => ({
 // CivitaiSessionContext", crashing every card render. Mock a signed-out viewer.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
-vi.mock('~/utils/trpc', () => ({
+// Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
+// module-mock): a hand-written replacement silently breaks every importer the
+// day '~/utils/trpc' grows an export this factory omits — the whole FILE then
+// fails to load with 0 tests collected and no failing assertion.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
   trpc: {
     appListings: {
       listAvailable: {
@@ -83,10 +89,14 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { clearRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
+  './recentlyOpenedAppsStore'
+);
 
 beforeEach(() => {
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
+  clearRecentlyOpenedApps();
 });
 
 describe('AppListingsMarketplaceBody', () => {
@@ -147,5 +157,63 @@ describe('AppListingsMarketplaceBody', () => {
     const bases = Array.from(css.matchAll(/--col-flex-basis:([\d.]+)%/g)).map((m) => m[1]);
     expect(bases).toEqual(['100', '50', '33.333333333333336', '25', '25']);
     expect(css).not.toContain('--col-flex-basis:20%'); // 2.4/12 — the retired 5-col xl
+  });
+
+  // ── "Recently opened" rail ──────────────────────────────────────────────────
+  // Selection/target logic is pinned in the CI-run node unit suite
+  // (__tests__/recentAppsRail.test.ts). What these assert is the WIRING: the
+  // page really reads the store after mount, really renders the rail BELOW the
+  // search/filter controls but ABOVE the result grid, and really renders NOTHING
+  // for a viewer with no recents.
+
+  test('a viewer with NO recents sees no rail at all (no heading, no reserved space)', async () => {
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-recent-rail').elements()).toHaveLength(0);
+    expect(page.getByText('Recently opened').elements()).toHaveLength(0);
+  });
+
+  test('🔴 a viewer WITH recents sees the rail BELOW the controls and ABOVE the grid (CLS)', async () => {
+    recordRecentlyOpenedApp({
+      id: 'ab_1',
+      blockId: 'gen-matrix',
+      slug: 'gen-matrix',
+      kind: 'onsite',
+      hasPage: true,
+      name: 'Gen Matrix',
+    });
+    renderWithProviders(<AppListingsMarketplaceBody />);
+
+    const rail = page.getByTestId('apps-recent-rail');
+    await expect.element(rail).toBeInTheDocument();
+    await expect.element(page.getByText('Gen Matrix')).toBeInTheDocument();
+
+    // Document order, asserted on BOTH sides — `compareDocumentPosition` is the
+    // direct encoding of position, where a visual-only check would pass with the
+    // rail appended at the bottom like the legacy body did.
+    const railEl = rail.element();
+    const search = page.getByLabelText('Search').element();
+    const firstCard = page.getByTestId('apps-listing-grid-col').elements()[0];
+
+    // 1. The rail comes AFTER the search input. The rail hydrates one frame late
+    //    (localStorage is client-only), so placing it above the primary controls
+    //    shifted them down by ~90px after paint — a CLS regression Faro RUM
+    //    reports for this page. Below the controls, the late insertion only moves
+    //    the grid.
+    expect(search.compareDocumentPosition(railEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 2. …but still BEFORE the first result card, so "jump back in" outranks
+    //    browsing and stays above the fold.
+    expect(
+      railEl.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  test('a LEGACY {id, blockId} recents entry still renders (resolved, not dropped)', async () => {
+    recordRecentlyOpenedApp({ id: 'ab_legacy', blockId: 'legacy-app' });
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    const item = page.getByTestId('apps-recent-rail-item');
+    await expect.element(item).toBeInTheDocument();
+    // hasPage unknown for a legacy entry → the always-valid detail link.
+    await expect.element(item).toHaveAttribute('href', '/apps/store-preview/legacy-app');
   });
 });

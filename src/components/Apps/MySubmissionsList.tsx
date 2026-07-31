@@ -736,7 +736,10 @@ export function MySubmissionsList({
  * {@link getDetailPrimaryAction} matrix (identical to the store detail):
  *   - page app + canOpenPage → **Open** → `/apps/run/<slug>` (internal in-host page).
  *   - page app + !canOpenPage → **Open live** → the standalone `<slug>.civit.ai` origin.
- *   - model-slot app (no page) → informational "Runs on model pages" → the block detail.
+ *   - model-slot app (no page) → informational "Runs on model pages", TEXT ONLY.
+ *     It used to link to `/apps/<appBlockId>`; #3493 retired that route (it now
+ *     302s to `/apps/store-preview/<slug>` or 404s), so `getDetailPrimaryAction`
+ *     returns no href for this arm at all and the text fallback is what renders.
  */
 function OpenLiveAction({
   submission,
@@ -790,8 +793,13 @@ function OpenLiveAction({
       </Button>
     );
   }
-  // Model-slot / no launchable page → informational; links to the block detail where
-  // the install affordance lives, never a dead standalone link.
+  // Model-slot / no launchable page → informational. `getDetailPrimaryAction`
+  // produces NO href for `info` today (its only such target was the retired
+  // `/apps/[appBlockId]`) and `connect` never carried one, so the TEXT arm below
+  // is the live one. The link arm is kept, unreachable, as the type's
+  // optional-href contract-keeper — mirroring `AppListingDetailBody`'s `info`
+  // renderer so the two consumers of this matrix stay shaped the same — NOT as a
+  // place to reinstate a link to the retired route.
   if (action.href) {
     return (
       <Button

@@ -1,8 +1,9 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
+import type * as TrpcMod from '~/utils/trpc';
+import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
  * P2c AppListingDetailBody component tests (REPORT-ONLY — the browser project is
@@ -14,10 +15,34 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
 
 const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string },
+  // Items the mocked `appListings.listAvailable` returns to the related rail.
+  relatedItems: [] as unknown[],
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.currentUser,
+}));
+
+// The detail body now renders the discovery rail, which reads the feature flags
+// + `appListings.listAvailable`. Mock both so the suite stays network-free.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appBlocks: true, appListings: true, appBlocksPages: false }),
+}));
+// Spread the REAL module and override only `trpc` (local-rules/no-wholesale-
+// module-mock): a hand-written replacement silently breaks every importer the
+// day '~/utils/trpc' grows an export this factory omits.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: {
+    appListings: {
+      listAvailable: {
+        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => ({
+          data: opts?.enabled === false ? undefined : { items: mocks.relatedItems },
+          isLoading: false,
+        }),
+      },
+    },
+  },
 }));
 
 // Header-focused: stub the trpc-backed children (reviews/report/comments) so the
@@ -42,6 +67,7 @@ const { AppListingDetailBody } = await import('./AppListingDetailBody');
 
 beforeEach(() => {
   mocks.currentUser = null;
+  mocks.relatedItems = [];
 });
 
 function base(over: Partial<ListingDetail>): ListingDetail {
@@ -63,6 +89,30 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     screenshots: [],
     kindData: { kind: 'onsite', appBlockId: 'blk-1', hasPage: true, liveUrl: 'https://my-app.civit.ai' },
     ...over,
+  };
+}
+
+/** A sibling store card as returned by the mocked `listAvailable`. */
+function relatedCard(id: string, name: string): ListingCard {
+  return {
+    id,
+    slug: id === 'l1' ? 'my-app' : `slug-${id}`,
+    kind: 'onsite',
+    name,
+    tagline: null,
+    category: 'utility',
+    contentRating: null,
+    iconUrl: null,
+    coverUrl: null,
+    creator: null,
+    recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+    reviewCount: 0,
+    kindData: {
+      kind: 'onsite',
+      appBlockId: `ab-${id}`,
+      hasPage: false,
+      liveUrl: `https://slug-${id}.civit.ai`,
+    },
   };
 }
 
@@ -111,16 +161,22 @@ describe('AppListingDetailBody', () => {
       .toHaveAttribute('href', '/apps/submit?edit=l1');
   });
 
+  // 🔴 The two absence tests below RENDER-BARRIER first, then assert with
+  // `.elements()`. `await expect.element(x).not.toBeInTheDocument()` polls until
+  // the assertion passes — with `.not`, the still-empty pre-commit DOM satisfies
+  // it on poll #0, so the test passed even when the Edit button was rendered.
   test('non-owner does NOT see the Edit deep-link', async () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     renderWithProviders(<AppListingDetailBody detail={base({})} />);
-    await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
   });
 
   test('signed-out viewer does NOT see the Edit deep-link', async () => {
     mocks.currentUser = null;
     renderWithProviders(<AppListingDetailBody detail={base({})} />);
-    await expect.element(page.getByTestId('apps-listing-owner-edit')).not.toBeInTheDocument();
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
   });
 
   test('preview mode renders presentational parts and OMITS comments/reviews/report/review-button/primary-action', async () => {
@@ -148,8 +204,11 @@ describe('AppListingDetailBody', () => {
     expect(page.getByTestId('mock-report-button').elements().length).toBe(0);
     expect(page.getByTestId('mock-review-button').elements().length).toBe(0);
     expect(page.getByTestId('apps-listing-owner-edit').elements().length).toBe(0);
-    // The primary action (base() = on-site page app → "Open live") is gone too.
-    expect(page.getByText('Open live', { exact: true }).elements().length).toBe(0);
+    // The primary action is gone too.
+    expect(page.getByTestId('apps-listing-open-live').elements().length).toBe(0);
+    // …as is the in-page preview and the discovery rail (both live surfaces).
+    expect(page.getByTestId('apps-listing-preview').elements().length).toBe(0);
+    expect(page.getByTestId('apps-related-rail').elements().length).toBe(0);
     // Back-to-store nav is gone.
     expect(page.getByText('Back to store').elements().length).toBe(0);
   });
@@ -161,8 +220,115 @@ describe('AppListingDetailBody', () => {
     await expect.element(page.getByTestId('mock-reviews')).toBeInTheDocument();
     await expect.element(page.getByTestId('mock-report-button')).toBeInTheDocument();
     await expect.element(page.getByTestId('mock-review-button')).toBeInTheDocument();
-    // Primary action present (on-site page app, viewer can't open page → "Open live").
-    await expect.element(page.getByText('Open live', { exact: true })).toBeInTheDocument();
+    // Primary action present. base() is an on-site page app whose viewer CAN'T
+    // open the in-host page route (appBlocksPages is false in the mocked flags),
+    // so the raw-origin "Open live" escape hatch is the primary action — the
+    // sandboxed in-page preview alone can't run a block that needs a form /
+    // popup / download.
+    const openLive = page.getByTestId('apps-listing-open-live');
+    await expect.element(openLive).toBeInTheDocument();
+    await expect.element(openLive).toHaveAttribute('href', 'https://my-app.civit.ai');
+    await expect.element(openLive).toHaveAttribute('target', '_blank');
+    await expect.element(openLive).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  // ── In-page live preview (poster → click to activate) ───────────────────────
+
+  test('🔴 does NOT mount an iframe before the click, and DOES after', async () => {
+    renderWithProviders(<AppListingDetailBody detail={base({})} />);
+
+    await expect.element(page.getByTestId('apps-listing-preview')).toBeInTheDocument();
+    // Before activation: a poster + activate control, and NO iframe anywhere in
+    // the document (the direct encoding of "no third-party frame boots on load").
+    await expect.element(page.getByTestId('apps-listing-preview-activate')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-preview-frame').elements()).toHaveLength(0);
+    expect(document.querySelectorAll('iframe')).toHaveLength(0);
+
+    await userEvent.click(page.getByTestId('apps-listing-preview-activate'));
+
+    const frame = page.getByTestId('apps-listing-preview-frame');
+    await expect.element(frame).toBeInTheDocument();
+    await expect.element(frame).toHaveAttribute('src', 'https://my-app.civit.ai');
+    await expect.element(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin');
+    await expect.element(frame).toHaveAttribute('referrerpolicy', 'no-referrer');
+    await expect.element(frame).toHaveAttribute('loading', 'lazy');
+  });
+
+  test('a listing with NO cover and NO screenshots still gets an activatable preview', async () => {
+    renderWithProviders(
+      <AppListingDetailBody detail={base({ coverUrl: null, screenshots: [] })} />
+    );
+    await userEvent.click(page.getByTestId('apps-listing-preview-activate'));
+    await expect.element(page.getByTestId('apps-listing-preview-frame')).toBeInTheDocument();
+  });
+
+  test('an OFF-SITE listing gets no preview section at all', async () => {
+    renderWithProviders(
+      <AppListingDetailBody
+        detail={base({
+          kind: 'offsite',
+          kindData: {
+            kind: 'offsite',
+            subKind: 'external-link',
+            externalUrl: 'https://ext.app',
+            connectClientId: null,
+          },
+        })}
+      />
+    );
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-preview').elements()).toHaveLength(0);
+  });
+
+  test('canOpenPage → the in-host Open button, and the raw-origin escape hatch is HIDDEN', async () => {
+    // The redundancy the removal was actually about: once /apps/run works there
+    // is no reason to also ship the viewer to <slug>.civit.ai.
+    renderWithProviders(<AppListingDetailBody detail={base({})} canOpenPage />);
+    await expect.element(page.getByText('Open', { exact: true })).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-open-live').elements()).toHaveLength(0);
+  });
+
+  test('the VERBOSE legacy preview copy is gone (the escape-hatch button is not)', async () => {
+    renderWithProviders(<AppListingDetailBody detail={base({})} />);
+    await expect.element(page.getByTestId('apps-listing-preview')).toBeInTheDocument();
+    const text = document.body.textContent ?? '';
+    expect(text).not.toContain('Preview of the standalone block at');
+    expect(text).not.toContain('The live block on a model page runs with your granted permissions');
+    expect(text).not.toContain('this standalone preview does not');
+    // The button itself STAYS in this state — it is the only route for a block
+    // the sandboxed frame can't run. Only the wall of caveat text was removed.
+    expect(page.getByTestId('apps-listing-open-live').elements()).toHaveLength(1);
+  });
+
+  // ── Discovery rail ─────────────────────────────────────────────────────────
+
+  test('the related rail renders siblings and EXCLUDES the listing being viewed', async () => {
+    mocks.relatedItems = [
+      relatedCard('l1', 'My App'), // self — must not appear as a related card
+      relatedCard('l2', 'Sibling One'),
+      relatedCard('l3', 'Sibling Two'),
+    ];
+    renderWithProviders(<AppListingDetailBody detail={base({})} />);
+
+    await expect.element(page.getByTestId('apps-related-rail')).toBeInTheDocument();
+    await expect.element(page.getByText('Sibling One')).toBeInTheDocument();
+    await expect.element(page.getByText('Sibling Two')).toBeInTheDocument();
+    // Two related cards, not three — self was dropped.
+    expect(page.getByTestId('apps-related-grid-col').elements()).toHaveLength(2);
+    // No related card links back to this very listing.
+    const hrefs = page
+      .getByTestId('apps-related-grid-col')
+      .elements()
+      .flatMap((col) => Array.from(col.querySelectorAll('a')).map((a) => a.getAttribute('href')));
+    expect(hrefs).not.toContain('/apps/store-preview/my-app');
+  });
+
+  test('the "Browse all apps" link is present even when the rail is empty', async () => {
+    mocks.relatedItems = [];
+    renderWithProviders(<AppListingDetailBody detail={base({})} />);
+    const browse = page.getByTestId('apps-browse-all');
+    await expect.element(browse).toBeInTheDocument();
+    await expect.element(browse).toHaveAttribute('href', '/apps');
   });
 
   test('a long username reveals the full value in a tooltip on hover (clip fallback)', async () => {
