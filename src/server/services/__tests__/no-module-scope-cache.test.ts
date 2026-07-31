@@ -65,6 +65,33 @@ ruleTester.run('no-module-scope-cache', rule, {
     `const get = () => (() => createCachedObject({ key: 'k' }))();`,
 
     // ================================================================
+    // 🔴 M8 — a cache-creating function passed as a CALL ARGUMENT is not an
+    // IIFE. These pin the `parent.callee === fn` half of isImmediatelyInvoked.
+    // ================================================================
+    // A mutant that drops that check (so "the function's parent is a
+    // CallExpression" alone counts as immediate invocation) survives every
+    // other case in this file — every existing valid case puts the creator in a
+    // function that is either declared, assigned, or a class member, never
+    // passed as an argument. It is a live risk rather than a hypothetical: the
+    // rule's own "Known gaps" comment invites closing the
+    // `TYPES.map(() => createCachedObject(...))` gap, and dropping that check is
+    // the naive way to try. It would ship green and then report every deferred
+    // callback in src/server/services/** and src/server/redis/**.
+    //
+    // A callback stored by a registrar and invoked later — the shape the mutant
+    // breaks, and the one the lazy-init idiom actually uses.
+    `register(() => createCachedObject({ key: 'k' }));`,
+    // The test-framework spelling of the same thing, which is why the mutant is
+    // not merely noisy but wrong: this is deferred by definition.
+    `describe('caches', () => {
+       const cache = createCachedObject({ key: 'k' });
+     });`,
+    // A function EXPRESSION argument, not just an arrow.
+    `onReady(function () { return createCachedArray({ key: 'k' }); });`,
+    // The argument is not even the first one — position must not matter.
+    `withRetry(3, () => cachedCounter(REDIS_KEYS.COUNTERS.X));`,
+
+    // ================================================================
     // Not a cache creator at all
     // ================================================================
     `const x = createSomethingElse({ key: 'k' });`,
@@ -77,10 +104,25 @@ ruleTester.run('no-module-scope-cache', rule, {
     `const fn = createCachedObject;`,
 
     // ================================================================
+    // cachedCounter — the third cache-helpers factory with the same hazard
+    // ================================================================
+    // Lazy is lazy for every creator in the default list.
+    `let instance;
+     function bugReportCounter() {
+       return (instance ??= cachedCounter(REDIS_KEYS.COUNTERS.BUG_REPORTS));
+     }`,
+
+    // ================================================================
     // The `creators` option narrows what counts
     // ================================================================
     {
       code: `const cache = createCachedArray({ key: 'k' });`,
+      options: [{ creators: ['createCachedObject'] }],
+    },
+    // An explicit `creators` list REPLACES the default, so a creator that is in
+    // the default but not in the list must go quiet.
+    {
+      code: `const c = cachedCounter(REDIS_KEYS.COUNTERS.BUG_REPORTS);`,
       options: [{ creators: ['createCachedObject'] }],
     },
   ],
@@ -113,6 +155,21 @@ ruleTester.run('no-module-scope-cache', rule, {
     // createCachedArray is the same hazard (resource-data.redis.ts's shape).
     {
       code: `export const resourceDataCache = createCachedArray({ key: 'k' });`,
+      errors: [{ messageId: 'moduleScopeCache' }],
+    },
+    // cachedCounter is the THIRD cache-helpers factory with the identical
+    // hazard, and it is in the default creators list for that reason: it is an
+    // export of `~/server/utils/cache-helpers` (so it is `undefined` on a
+    // wholesale mock of that module) and its first argument dereferences
+    // `REDIS_KEYS` at module scope (so it throws on a mock of
+    // `~/server/redis/client` with no `COUNTERS`). This is `bugReportCounter` in
+    // src/server/services/bug.service.ts, reduced — the 8th in-scope finding.
+    {
+      code: `export const bugReportCounter = cachedCounter<number>(
+         REDIS_KEYS.COUNTERS.BUG_REPORTS,
+         async (bugId) => 0,
+         { ttl: CacheTTL.hour }
+       );`,
       errors: [{ messageId: 'moduleScopeCache' }],
     },
 
