@@ -441,3 +441,25 @@ describe('OffsiteSubmissionsList — advisory listing-problems warning', () => {
     expect(page.getByTestId('apps-submission-problems').elements()).toHaveLength(0);
   });
 });
+
+/**
+ * S3 — same scroll wrapper as the on-site list (they share
+ * `SUBMISSIONS_TABLE_MIN_WIDTH`). Structural assertion only; see the note on the
+ * matching test in `MySubmissionsList.browser.test.tsx`.
+ */
+describe('OffsiteSubmissionsList — row actions scroll rather than clip (S3)', () => {
+  test('the table renders inside the Table.ScrollContainer wrapper', async () => {
+    renderWithProviders(
+      <OffsiteSubmissionsList submissions={[live({})]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    const scroll = page.getByTestId('apps-offsite-submissions-table-scroll');
+    await expect.element(scroll).toBeInTheDocument();
+    const scrollEl = scroll.element();
+    const table = scrollEl.querySelector('table');
+    expect(table).not.toBeNull();
+    // Placement, not presence — see the note on the matching on-site test.
+    const card = scrollEl.closest('.mantine-Card-root');
+    expect(card).not.toBeNull();
+    expect(table?.closest('.mantine-Card-root')).toBe(card);
+  });
+});
