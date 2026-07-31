@@ -25,6 +25,9 @@ import {
   IconPercentage10,
   IconCaretRightFilled,
   IconCircleCheck,
+  IconTrendingUp,
+  IconLicense,
+  IconLock,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -138,6 +141,7 @@ function CreatorsClubV1() {
           <HowItWorksSection />
           <FunStatsSection />
           <JoinSection applyFormUrl={applyFormUrl} />
+          <MonetizationCapsSection />
           <CreatorCapsSection />
           <FAQ />
         </Stack>
@@ -594,6 +598,64 @@ const FAQ = () => {
           ))}
         </Accordion>
       </Stack>
+    </Stack>
+  );
+};
+
+const MonetizationCapsSection = () => {
+  return (
+    <Stack className={classes.section}>
+      <Stack gap={0} mb="sm">
+        <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+          Charge more as you climb
+        </Title>
+        <Text size={sizing.sections.subtitle}>
+          Every creator can monetize their work — your membership tier decides how much you can
+          charge. The higher your tier, the higher your caps.
+        </Text>
+      </Stack>
+      <Paper withBorder className={classes.card} h="100%">
+        <Stack gap="sm" maw="unset">
+          <Group wrap="nowrap" w="100%">
+            <IconLicense size={24} className="flex-none" />
+            <Text>
+              <Text component="span" fw={700}>
+                Higher licensing fee caps.
+              </Text>{' '}
+              Set a per-generation licensing fee on your models and raise your ceiling as you move up
+              tiers — Bronze, Silver, then Gold each unlock a higher maximum fee.
+            </Text>
+          </Group>
+          <Divider />
+          <Group wrap="nowrap" w="100%">
+            <IconLock size={24} className="flex-none" />
+            <Text>
+              <Text component="span" fw={700}>
+                Higher paid-access price caps.
+              </Text>{' '}
+              Charge for early or permanent access to your resources. Higher tiers let you set higher
+              access prices, so top-tier members can price their most in-demand work accordingly.
+            </Text>
+          </Group>
+          <Divider />
+          <Group wrap="nowrap" w="100%">
+            <IconTrendingUp size={24} className="flex-none" />
+            <Text>
+              Your caps scale with your tier — <Text component="span" fw={700}>
+                Free
+              </Text>{' '}
+              to <Text component="span" fw={700}>Bronze</Text> to{' '}
+              <Text component="span" fw={700}>Silver</Text> to{' '}
+              <Text component="span" fw={700}>Gold</Text> — so upgrading your membership raises how
+              much you can earn per resource.{' '}
+              <Anchor component={NextLink} href="/pricing">
+                Compare membership tiers
+              </Anchor>
+              .
+            </Text>
+          </Group>
+        </Stack>
+      </Paper>
     </Stack>
   );
 };
