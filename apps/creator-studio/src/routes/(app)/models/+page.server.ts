@@ -23,15 +23,15 @@ import {
 } from '$lib/server/monetization/licensing-fee';
 import { parseFeeCsv } from '$lib/server/monetization/fee-csv';
 import {
-  setEarlyAccessConfig,
-  earlyAccessFormSchema,
+  setPaidAccessConfig,
+  paidAccessFormSchema,
   countPermanentAccessVersions,
   countPermanentAccessVersionsExcluding,
   countActiveEarlyAccessVersions,
   isVersionPermanent,
   currentAccessPrices,
   bulkSetPermanentAccess,
-} from '$lib/server/monetization/early-access';
+} from '$lib/server/monetization/paid-access';
 import {
   checkbox,
   optionalBuzzField,
@@ -46,7 +46,7 @@ import {
   maxPaidAccessPrice,
   MIN_ACCESS_PRICE,
   MIN_GENERATION_PRICE,
-} from '$lib/monetization/early-access';
+} from '$lib/monetization/paid-access';
 
 // --- input schemas: every load/action input is zod-validated ---
 const versionIdSchema = z.coerce.number().int().positive();
@@ -308,9 +308,9 @@ export const actions: Actions = {
     return { paidAccess: true, updated: result.updated, failed: result.failed };
   },
 
-  // Early access is written through the main app (see monetization/early-access.ts). Not member-gated;
+  // Paid access is written through the main app (see monetization/paid-access.ts). Not member-gated;
   // ownership + all validation are enforced by the endpoint. We forward the shared session cookie.
-  setEarlyAccess: async ({ request, locals, cookies }) => {
+  setPaidAccess: async ({ request, locals, cookies }) => {
     const form = await request.formData();
     const versionId = versionIdSchema.safeParse(form.get('versionId'));
     if (!versionId.success) return fail(400, { versionId: null, error: 'Invalid version.' });
@@ -325,10 +325,10 @@ export const actions: Actions = {
       checkbox.parse(form.get('clear')) ||
       (!permanent && (!Number.isFinite(rawTimeframe) || rawTimeframe <= 0));
     if (turnOff) {
-      const result = await setEarlyAccessConfig(cookie, versionId.data, null);
+      const result = await setPaidAccessConfig(cookie, versionId.data, null);
       if (!result.ok)
         return fail(result.status, { versionId: versionId.data, error: result.error });
-      return { versionId: versionId.data, earlyAccessCleared: true };
+      return { versionId: versionId.data, paidAccessCleared: true };
     }
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
@@ -350,7 +350,7 @@ export const actions: Actions = {
       }
     }
 
-    const config = earlyAccessFormSchema.safeParse(Object.fromEntries(form));
+    const config = paidAccessFormSchema.safeParse(Object.fromEntries(form));
     if (!config.success)
       return fail(400, { versionId: versionId.data, error: firstError(config.error) });
 
@@ -388,9 +388,9 @@ export const actions: Actions = {
         });
     }
 
-    const result = await setEarlyAccessConfig(cookie, versionId.data, config.data, genOnly);
+    const result = await setPaidAccessConfig(cookie, versionId.data, config.data, genOnly);
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
 
-    return { versionId: versionId.data, earlyAccessSaved: true };
+    return { versionId: versionId.data, paidAccessSaved: true };
   },
 };

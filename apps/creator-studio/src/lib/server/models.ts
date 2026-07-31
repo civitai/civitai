@@ -4,8 +4,8 @@ import type { ModelType } from '@civitai/db-schema';
 import type { ModelVersionTerms } from '@civitai/buzz';
 import {
   DEFAULT_GENERATION_TRIAL_LIMIT,
-  type EarlyAccessConfig,
-} from '$lib/monetization/early-access';
+  type PaidAccessConfig,
+} from '$lib/monetization/paid-access';
 
 // "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
 function paidAccessFilter(alias: string) {
@@ -13,12 +13,9 @@ function paidAccessFilter(alias: string) {
   return sql<boolean>`exists (select 1 from "PaidAccess" pa where pa."entityType" = 'ModelVersion' and pa."entityId" = ${p}"id" and (pa."endsAt" is null or pa."endsAt" > now()))`;
 }
 
-// Rebuild the UI-facing EarlyAccessConfig from an active PaidAccess row (terms bundle + timeframeDays).
+// Rebuild the UI-facing PaidAccessConfig from an active PaidAccess row (terms bundle + timeframeDays).
 // timeframeDays null => permanent. Donation-goal fields are sourced separately, not from PaidAccess.
-function paidAccessToConfig(
-  timeframeDays: number | null,
-  terms: unknown
-): EarlyAccessConfig | null {
+function paidAccessToConfig(timeframeDays: number | null, terms: unknown): PaidAccessConfig | null {
   const t = terms as ModelVersionTerms | null;
   if (!t) return null;
   const gen = t.generation;
@@ -30,6 +27,7 @@ function paidAccessToConfig(
     permanent: timeframeDays == null,
     accessPrice: t.download?.price ?? paidGen?.price,
     generationPrice: t.download ? paidGen?.price : undefined,
+    freeGeneration: !!gen && 'free' in gen,
     freePreviewGenerations: paidGen?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
     donationGoalEnabled: false,
     donationGoal: undefined,
@@ -46,8 +44,8 @@ export type CreatorModelVersion = {
   // Governs whether the version can be gated: Download (download + gen), Generation (on-site gen only,
   // no download charge), or other (no paid access). See paidAccessUsageOk in the models page.
   usageControl: string;
-  hasEarlyAccess: boolean;
-  earlyAccessConfig: EarlyAccessConfig | null;
+  hasPaidAccess: boolean;
+  paidAccessConfig: PaidAccessConfig | null;
 };
 
 export type CreatorModel = {
@@ -289,12 +287,12 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   for (const v of versions) {
     const list = byModel.get(v.modelId) ?? [];
     // The left join only matched an ACTIVE gate, so a rebuilt config means the version is currently sold.
-    const earlyAccessConfig = paidAccessToConfig(v.paTimeframeDays, v.paTerms);
+    const paidAccessConfig = paidAccessToConfig(v.paTimeframeDays, v.paTerms);
     // A donation goal (create-once, timed-only) is a separate row from the gate — fold the existing one
     // into the config so the editor reflects it. Permanent gates never carry a goal.
-    if (earlyAccessConfig && !earlyAccessConfig.permanent && v.donationGoalAmount != null) {
-      earlyAccessConfig.donationGoalEnabled = true;
-      earlyAccessConfig.donationGoal = Number(v.donationGoalAmount);
+    if (paidAccessConfig && !paidAccessConfig.permanent && v.donationGoalAmount != null) {
+      paidAccessConfig.donationGoalEnabled = true;
+      paidAccessConfig.donationGoal = Number(v.donationGoalAmount);
     }
     list.push({
       id: v.id,
@@ -305,8 +303,8 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       // kysely types the DECIMAL column as string (prisma-kysely maps Decimal→string); the app carries a number.
       licensingFee: v.licensingFee == null ? null : Number(v.licensingFee),
       usageControl: v.usageControl,
-      hasEarlyAccess: earlyAccessConfig !== null,
-      earlyAccessConfig,
+      hasPaidAccess: paidAccessConfig !== null,
+      paidAccessConfig,
     });
     byModel.set(v.modelId, list);
   }

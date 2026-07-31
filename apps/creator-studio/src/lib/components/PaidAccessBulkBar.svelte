@@ -21,7 +21,7 @@
     MIN_GENERATION_PRICE,
     MAX_GENERATION_TRIAL_LIMIT,
     DEFAULT_GENERATION_TRIAL_LIMIT,
-  } from '$lib/monetization/early-access';
+  } from '$lib/monetization/paid-access';
 
   // Bulk permanent-paid-access bar, scoped to one usage type (the toggle drives a `usage` list filter in
   // the parent so the price fields are unambiguous). Owns its own pricing state + confirm dialog; the
