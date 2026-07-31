@@ -517,7 +517,9 @@ export default function AppDetailPage() {
                         }
                       >
                         {scopes.map((scope) => (
-                          <List.Item key={scope}>{SCOPE_DESCRIPTIONS[scope] ?? scope}</List.Item>
+                          <List.Item key={scope}>
+                            {SCOPE_DESCRIPTIONS[scope] ?? scope}
+                          </List.Item>
                         ))}
                       </List>
                     )}
