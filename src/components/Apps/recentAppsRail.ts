@@ -157,10 +157,12 @@ export type ChromeRecentApp = RecentApp & { blockId: string };
  * That menu has exactly ONE link shape, `/apps/run/<blockId>`, so an entry
  * qualifies only if all three hold:
  *
- *  1. `canOpenPage` — mirrors the viewer's `appBlocksPages` flag. 🔴 THIS IS THE
- *     LOAD-BEARING ONE. `/apps/run/<slug>` 404s fail-closed for a viewer without
- *     that flag (`src/pages/apps/run/[slug]/[[...path]].tsx` gates on
- *     `features.appBlocks && features.appBlocksPages`), yet BOTH writers that
+ *  1. `canOpenPage` — mirrors the run route's OWN predicate, the conjunction
+ *     `features.appBlocks && features.appBlocksPages` (NOT just the pages flag:
+ *     `appBlocks` is the block-runtime kill-switch, so pages-on/blocks-off is a
+ *     reachable state that still 404s). 🔴 THIS IS THE LOAD-BEARING ONE.
+ *     `/apps/run/<slug>` 404s fail-closed for a viewer missing either flag
+ *     (`src/pages/apps/run/[slug]/[[...path]].tsx`), yet BOTH writers that
  *     feed this menu — the detail page's "Open live" CTA and the legacy
  *     `MarketplaceBody.recordRecent` — record on-site `{hasPage:true}` entries
  *     flag-blind. Without this gate a dark-flag viewer is offered a menu of

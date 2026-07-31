@@ -545,10 +545,10 @@ export function IframeHost({
   // base SlotContext shape.
   const modelCtx = context as Partial<ModelSlotContext>;
   // The chrome's "Recently run" menu links ONLY to `/apps/run/<blockId>`, and
-  // that route 404s for a viewer without `appBlocksPages` — on EVERY surface,
-  // because the gate is on the viewer, not on where the link was clicked from.
-  // So the predicate is the viewer's flag, read the same way every other
-  // `canOpenPage` consumer in `~/components/Apps` reads it.
+  // that route 404s unless the viewer has BOTH `appBlocks` AND `appBlocksPages`
+  // — on EVERY surface, because the gate is on the viewer, not on where the
+  // link was clicked from. So the predicate mirrors the route's own
+  // `getServerSideProps` conjunction, not just the pages flag.
   const features = useFeatureFlags();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
@@ -1906,7 +1906,7 @@ export function IframeHost({
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
         slotId={slotId}
-        canOpenPage={!!features.appBlocksPages}
+        canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
       {children}
     </Box>

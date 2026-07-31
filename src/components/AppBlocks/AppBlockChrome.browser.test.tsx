@@ -286,13 +286,14 @@ describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
 // current app, and the whole label+section is omitted when there are no other
 // recents. The store is real localStorage in browser mode, so seed it directly.
 //
-// 🔴 EVERY RENDER IN THIS BLOCK MUST PASS `canOpenPage` — the prop is the
-// `appBlocksPages` gate and it FAILS CLOSED (defaults to false), so a render
-// that omits it can never show the section. That makes a presence assertion
-// permanently red and, worse, an ABSENCE assertion permanently green: it would
-// keep passing with the exclusion logic, the store and the cap all deleted. The
-// deliberate fail-closed case is its own test at the bottom of this block, where
-// the omission is the thing under test rather than an accident.
+// 🔴 EVERY RENDER IN THIS BLOCK MUST PASS `canOpenPage` — the prop carries the
+// run route's `appBlocks && appBlocksPages` gate and it FAILS CLOSED (defaults
+// to false), so a render that omits it can never show the section. That makes a
+// presence assertion permanently red and, worse, an ABSENCE assertion
+// permanently green: it would keep passing with the exclusion logic, the store
+// and the cap all deleted. The deliberate fail-closed case is its own test at
+// the bottom of this block, where the omission is the thing under test rather
+// than an accident.
 describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => {
   beforeEach(() => {
     clearRecentlyOpenedApps();
@@ -395,11 +396,11 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
   });
 
   // 🔴 The fail-closed case, stated deliberately: a mounter that cannot prove the
-  // viewer holds `appBlocksPages` omits the prop, and the section must not render
-  // even though the store HAS offerable entries. This is the one render in this
-  // block that leaves `canOpenPage` off, and the seeded store is what makes it a
-  // real assertion — the same seed with `canOpenPage` renders two items (asserted
-  // in the first test above).
+  // viewer holds BOTH `appBlocks` and `appBlocksPages` omits the prop, and the
+  // section must not render even though the store HAS offerable entries. This is
+  // the one render in this block that leaves `canOpenPage` off, and the seeded
+  // store is what makes it a real assertion — the same seed with `canOpenPage`
+  // renders two items (asserted in the first test above).
   test('OMITTING canOpenPage hides the section even with offerable recents (fail-closed)', async () => {
     recordRecentlyOpenedApp({ id: 'other', blockId: 'other-block', name: 'Other App' });
     recordRecentlyOpenedApp({ id: 'third', blockId: 'third-block', name: 'Third App' });

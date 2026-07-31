@@ -254,12 +254,13 @@ export function ReviewBlockPreviewHost({
         // Re-mint the block token on an auth-failure Retry, preserving the mode.
         onRetryToken={() => doMint(runForRealActive)}
         // The chrome's "Recently run" menu links to `/apps/run/<blockId>`, gated
-        // on the VIEWER's `appBlocksPages` — the reviewer gate that lets a mod
-        // reach this preview proves nothing about that route, so read the flag.
-        // (Mods have `appBlocksPages` today, so this is what restores the menu
-        // on the review surface; a future non-mod reviewer without it gets no
+        // on the VIEWER having BOTH `appBlocks` and `appBlocksPages` — the
+        // reviewer gate that lets a mod reach this preview proves nothing about
+        // that route, so read the route's own predicate. (Mods have both today,
+        // so this is what restores the menu on the review surface; a reviewer
+        // missing either — including during an `appBlocks` kill-switch — gets no
         // dead links.)
-        canOpenPage={!!features.appBlocksPages}
+        canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
     </Stack>
   );

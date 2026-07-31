@@ -266,20 +266,33 @@ export interface PageBlockHostProps {
   /**
    * May this viewer open `/apps/run/<blockId>`? Forwarded to `AppBlockChrome`,
    * where it gates the "Recently run" menu — that section's ONLY link shape is
-   * that route, which 404s fail-closed for a viewer without `appBlocksPages`.
+   * that route, which 404s fail-closed unless the viewer holds BOTH `appBlocks`
+   * and `appBlocksPages`.
    *
-   * 🔴 IT IS THE SAME PREDICATE ON EVERY MOUNTER: `!!features.appBlocksPages`.
-   * An earlier revision justified a per-surface constant with "the surfaces
-   * gate on DIFFERENT flags" — that conflates what gates the SURFACE with what
-   * gates the LINK TARGET. The dev tunnel gating on `appBlocksAuthor` and mod
-   * review gating on the reviewer check say nothing about whether the menu's
-   * `/apps/run/<blockId>` links resolve; only the viewer's `appBlocksPages`
-   * does, because that is what `/apps/run/[slug]`'s own `getServerSideProps`
-   * checks. Hardcoding it per surface is what silently killed the menu for
-   * mods on three of four surfaces. All three mounters
-   * (`/apps/run/[slug]`, `/apps/dev/[blockId]`, `ReviewBlockPreviewHost`) now
-   * read the flag; the source-level guard in `recentAppsRail.test.ts`
-   * enumerates them so a NEW mounter cannot quietly omit it.
+   * 🔴 IT IS THE SAME PREDICATE ON EVERY MOUNTER:
+   * `!!(features.appBlocks && features.appBlocksPages)` — the exact conjunction
+   * `/apps/run/[slug]`'s own `getServerSideProps` checks, no more and no less.
+   * Two ways to get it wrong, both of which have been written here:
+   *
+   *   - A PER-SURFACE CONSTANT, justified with "the surfaces gate on DIFFERENT
+   *     flags". That conflates what gates the SURFACE with what gates the LINK
+   *     TARGET. The dev tunnel's own gate and mod review's reviewer check say
+   *     nothing about whether the menu's links resolve. Hardcoding it per
+   *     surface is what silently killed the menu for mods on three of four
+   *     surfaces.
+   *   - HALF THE CONJUNCTION (`!!features.appBlocksPages`). `appBlocks` is the
+   *     block-runtime kill-switch and a Flipt override can disable as well as
+   *     enable, so pages-on/blocks-off is a reachable state in which every one
+   *     of these links 404s. All four surfaces happen to sit behind their own
+   *     `appBlocks` check today, so the one-flag form is not currently a live
+   *     bug — but that makes the menu gate depend on an invariant held in four
+   *     other functions, which is exactly the kind of distant coupling that
+   *     produced the original defect. Encode the target route's predicate here.
+   *
+   * All three mounters (`/apps/run/[slug]`, `/apps/dev/[blockId]`,
+   * `ReviewBlockPreviewHost`) read the conjunction; the source-level guard in
+   * `recentAppsRail.test.ts` enumerates them by scanning the tree, so a NEW
+   * mounter cannot quietly omit it or downgrade it to one flag.
    *
    * Default false → a mounter that hasn't wired it shows no dead links.
    */

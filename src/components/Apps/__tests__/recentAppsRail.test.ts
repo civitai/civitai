@@ -433,28 +433,45 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
    *   - every non-test mount of `<AppBlockChrome` / `<PageBlockHost` passes a
    *     `canOpenPage` prop, and
    *   - every mount OUTSIDE the two host modules sources it from the viewer's
-   *     `appBlocksPages` flag — not a per-surface constant.
+   *     flags — not a per-surface constant.
    *
-   * The second half is the design fix: what gates the SURFACE (`appBlocksPages`
-   * on `/apps/run`, `appBlocksAuthor` on the dev tunnel, the reviewer check on
-   * mod review) is a different question from what gates the LINK TARGET, and
-   * only the latter matters — the menu always points at `/apps/run/<blockId>`,
-   * whose own `getServerSideProps` 404s on `appBlocks && appBlocksPages` for
-   * every viewer regardless of where they came from. So the predicate is
-   * uniform, exactly as it already is for `AppListingCard`,
-   * `AppListingDetailBody`, `MySubmissionsList` and `MarketplaceBody`.
+   * The second half is the design fix: what gates the SURFACE (the dev tunnel's
+   * `isAppBlocksDevTunnelEnabled`, the reviewer check on mod review) is a
+   * different question from what gates the LINK TARGET, and only the latter
+   * matters — the menu always points at `/apps/run/<blockId>`, whose own
+   * `getServerSideProps` 404s unless `appBlocks && appBlocksPages` for every
+   * viewer regardless of where they came from. So the predicate is uniform and
+   * is the FULL conjunction: `appBlocksPages` alone is only half of it, and
+   * because `appBlocks` is the block-runtime kill-switch (and Flipt overrides
+   * disable as well as enable) pages-on/blocks-off is a reachable state in which
+   * every one of those links 404s. All four surfaces do also carry their own
+   * `appBlocks` check today (the run page and review preview in
+   * `getServerSideProps`, the model slot in `BlockSlot`, the dev tunnel in its
+   * own SSR gate), so the one-flag form was not a live bug — but it made this
+   * gate depend on an invariant held in four other functions, which is the same
+   * distant coupling that produced the original defect.
+   *
+   * SCOPE — deliberately narrow: this scans only the two chrome-bearing hosts,
+   * not every `canOpenPage` consumer. `AppBlockCard`, `AppListingCard`,
+   * `AppListingDetailBody`, `MySubmissionsList`, `MarketplaceBody` and
+   * `RecentlyOpenedApps` also take the prop and are all fail-closed and wired
+   * today, but they still pass the one-flag `!!features.appBlocksPages` form, so
+   * a single uniform assertion across the whole population would be wrong right
+   * now. Widening the scan is tracked as a follow-up together with converting
+   * those surfaces to the conjunction; until then this guard covers the mounts
+   * that lost their opt-in outright, which is the defect that shipped.
    */
-  describe('every chrome mounter opts in from the appBlocksPages flag', () => {
+  describe('every chrome mounter opts in from the run-route flags', () => {
     const SRC = path.resolve(__dirname, '../../..');
     /** The two modules that declare the prop; both must appear in the scan. */
     const HOST_MODULES = [
       'components/AppBlocks/IframeHost.tsx',
       'components/AppBlocks/PageBlockHost.tsx',
     ];
-    /** The ONLY module allowed to pass something other than the flag: it is a
+    /** The ONLY module allowed to pass something other than the flags: it is a
      *  pure forwarder of its own `canOpenPage` prop (asserted above). Note
      *  `IframeHost.tsx` is NOT exempt — the model slot is a real surface and
-     *  must read the flag like every other one. */
+     *  must read the flags like every other one. */
     const FORWARDER = 'components/AppBlocks/PageBlockHost.tsx';
     const MOUNT = /<(?:AppBlockChrome|PageBlockHost)\b/g;
 
@@ -468,39 +485,142 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
     }
 
     /**
-     * The JSX element starting at `idx`, ending at its own closing `/>` (or
-     * `>`) line. Bounding matters: an unbounded `[\s\S]*?canOpenPage` would let
-     * a `canOpenPage` mention ANYWHERE later in the file satisfy the check —
-     * `PageBlockHost.tsx` mentions it in its own prop list, which is exactly the
-     * false green this guard exists to avoid.
+     * Blank the CONTENTS of every comment, string and template literal
+     * (preserving offsets and line breaks) so that no `<PageBlockHost` inside a
+     * doc comment or a string can be mistaken for a mount, and no `>` inside one
+     * can terminate a real one. Replaces the old two-regex comment strip, which
+     * shifted every offset after it and could itself be fooled by a
+     * block-comment opener sitting inside a string literal.
+     */
+    function maskNonCode(code: string): string {
+      const out = code.split('');
+      const blank = (from: number, to: number) => {
+        for (let i = Math.max(from, 0); i < Math.min(to, out.length); i++) {
+          if (out[i] !== '\n') out[i] = ' ';
+        }
+      };
+      let i = 0;
+      while (i < code.length) {
+        const ch = code[i];
+        const next = code[i + 1];
+        if (ch === '/' && next === '/') {
+          const nl = code.indexOf('\n', i);
+          const end = nl === -1 ? code.length : nl;
+          blank(i, end);
+          i = end;
+        } else if (ch === '/' && next === '*') {
+          const close = code.indexOf('*/', i + 2);
+          const end = close === -1 ? code.length : close + 2;
+          blank(i, end);
+          i = end;
+        } else if (ch === '"' || ch === "'" || ch === '`') {
+          let j = i + 1;
+          while (j < code.length) {
+            if (code[j] === '\\') j += 2;
+            else if (code[j] === ch) break;
+            else j++;
+          }
+          blank(i + 1, j); // keep the delimiters, blank the body
+          i = j + 1;
+        } else i++;
+      }
+      return out.join('');
+    }
+
+    /**
+     * The OPENING TAG of the JSX element starting at `idx` — from its `<`
+     * through the `>` that closes that tag, excluding children and siblings.
+     *
+     * 🔴 The bound is the entire point, and it can fail in BOTH directions:
+     *   - too LOOSE and a `canOpenPage` appearing anywhere later satisfies the
+     *     check. Two ways that happens: `PageBlockHost.tsx` mentions the prop in
+     *     its own prop list, and — the one that actually bit — a non-compliant
+     *     mount inherits the NEXT SIBLING's compliant props. Either is a false
+     *     GREEN over the exact defect this guard exists to catch.
+     *   - too TIGHT and a legitimate mount reads as non-compliant: a false RED.
+     *
+     * A newline-anchored terminator (`/>` alone on its own line) gets both
+     * wrong, because that shape is a formatting accident rather than a property
+     * of JSX: a single-line `<PageBlockHost {...props} />`, or a mount nested
+     * inside a JSX prop, has no such line, so the scan runs straight past it.
+     * Verified 2026-07-31 with a throwaway probe — a probe component whose
+     * single-line mount passed NO `canOpenPage`, followed by a compliant
+     * sibling, was fully green under the old bound.
+     *
+     * So walk characters instead of matching a shape: count `{}` depth (which
+     * is where nested JSX, arrow bodies and `a > b` comparisons live) and stop
+     * at the first `>` at depth 0. Strings/comments are already masked out by
+     * `maskNonCode`, so they cannot contribute a spurious brace or `>`.
      */
     function elementAt(code: string, idx: number): string {
-      const rest = code.slice(idx);
-      const end = rest.search(/\n[ \t]*\/?>[ \t]*\n/);
-      return end === -1 ? rest.slice(0, 2000) : rest.slice(0, end);
+      let depth = 0;
+      for (let i = idx + 1; i < code.length; i++) {
+        const ch = code[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') depth--;
+        else if (ch === '>' && depth === 0) return code.slice(idx, i + 1);
+      }
+      return code.slice(idx); // unterminated tag — let the assertions fail loudly
     }
 
     /** Every non-test .tsx that renders one of the two chrome-bearing hosts. */
-    const mounters = walk(path.join(SRC, 'components'))
-      .concat(walk(path.join(SRC, 'pages')))
-      .map((file) => ({
+    const files = walk(path.join(SRC, 'components')).concat(walk(path.join(SRC, 'pages')));
+    const scanned = files.map((file) => {
+      const raw = fs.readFileSync(file, 'utf8');
+      const code = maskNonCode(raw);
+      return {
         rel: path.relative(SRC, file).split(path.sep).join('/'),
-        code: fs
-          .readFileSync(file, 'utf8')
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/^[ \t]*\/\/.*$/gm, ''),
-      }))
-      .map((m) => ({
-        ...m,
-        elements: [...m.code.matchAll(MOUNT)].map((hit) => elementAt(m.code, hit.index ?? 0)),
-      }))
-      .filter((m) => m.elements.length > 0);
+        raw,
+        code,
+        elements: [...code.matchAll(MOUNT)].map((hit) => elementAt(code, hit.index ?? 0)),
+      };
+    });
+    const mounters = scanned.filter((m) => m.elements.length > 0);
+
+    it('the extractor is bounded to ONE opening tag (the false green that shipped)', () => {
+      // A direct test of the helper, because every assertion below is only as
+      // honest as this bound. Each fixture is a mount that passes NOTHING,
+      // followed by a compliant sibling; a correct bound never sees the sibling.
+      const sibling = '\n      <PageBlockHost canOpenPage={!!features.appBlocksPages} />\n';
+      const shapes: Record<string, string> = {
+        'single-line self-closing': '<PageBlockHost {...props} />',
+        'multi-line': '<PageBlockHost\n        blockId={id}\n        slug={slug}\n      />',
+        'spread props only': '<PageBlockHost {...chromeProps} />',
+        'nested in a JSX prop': '<Wrapper render={<PageBlockHost {...props} />} />',
+        'children, not self-closing': '<PageBlockHost blockId={id}>{kids}</PageBlockHost>',
+        'expression containing >': '<PageBlockHost show={a > b} on={() => go()} />',
+      };
+      for (const [label, jsx] of Object.entries(shapes)) {
+        const code = maskNonCode(`<div>\n      ${jsx}${sibling}    </div>`);
+        const first = code.indexOf('<PageBlockHost');
+        expect(elementAt(code, first), label).not.toMatch(/canOpenPage/);
+      }
+      // …and it does not under-read: the prop IS found when the mount carries it.
+      const compliant = maskNonCode(
+        `<PageBlockHost {...p} canOpenPage={!!features.appBlocksPages} />`
+      );
+      expect(elementAt(compliant, 0)).toMatch(/canOpenPage=\{!!features\.appBlocksPages\}/);
+      // A tag name inside a string literal is NOT a mount (false-red guard).
+      expect(maskNonCode(`const s = '<PageBlockHost />';`)).not.toMatch(/<PageBlockHost/);
+    });
 
     it('found the mount sites (the scan itself must not silently match nothing)', () => {
       // Without this, every assertion below would pass vacuously if the walk
-      // broke, the components were renamed, or the roots moved.
-      expect(mounters.length).toBeGreaterThanOrEqual(5);
+      // broke, the components were renamed, or the roots moved. The floor is
+      // deliberately BELOW the live count (5 as of 2026-07-31: the two host
+      // modules + run page + dev tunnel + review preview) so that legitimately
+      // retiring one surface does not red the guard with no bug — the
+      // HOST_MODULES check below is what makes it non-vacuous, since those two
+      // are structural rather than a headcount.
+      expect(mounters.length).toBeGreaterThanOrEqual(3);
       expect(mounters.map((m) => m.rel)).toEqual(expect.arrayContaining(HOST_MODULES));
+      // Masking must not SWALLOW a mount site: any file whose raw text names one
+      // of the tags has to survive into the scan. This is the failure mode that
+      // would otherwise turn a lexer bug into silence rather than a red.
+      const swallowed = scanned
+        .filter((m) => /<(?:AppBlockChrome|PageBlockHost)\b/.test(m.raw) && m.elements.length === 0)
+        .map((m) => m.rel);
+      expect(swallowed).toEqual([]);
     });
 
     it('🔴 every chrome/host mount passes canOpenPage — none may rely on the default', () => {
@@ -510,16 +630,22 @@ describe('selectChromeRecentApps — the app-chrome "Recently run" menu', () => 
       expect(missing).toEqual([]);
     });
 
-    it('🔴 every mount but the forwarder sources it from appBlocksPages', () => {
+    it('🔴 every mount but the forwarder sources it from BOTH run-route flags', () => {
+      const PREDICATE = /canOpenPage=\{!!\(features\.appBlocks && features\.appBlocksPages\)\}/;
       const offenders = mounters
         .filter((m) => m.rel !== FORWARDER)
-        .filter((m) =>
-          m.elements.some((el) => !/canOpenPage=\{!!features\.appBlocksPages\}/.test(el))
-        )
+        .filter((m) => m.elements.some((el) => !PREDICATE.test(el)))
         .map((m) => m.rel);
-      // A per-surface constant (`canOpenPage` / `canOpenPage={true}` /
-      // `canOpenPage={false}`) fails here: the link target is gated on the
-      // VIEWER, so the predicate cannot vary by surface.
+      // Two ways to fail here, both real:
+      //   - a per-surface constant (`canOpenPage` / `={true}` / `={false}`) —
+      //     the link target is gated on the VIEWER, so the predicate cannot vary
+      //     by surface;
+      //   - `!!features.appBlocksPages` alone — half the route's predicate. The
+      //     run route 404s unless BOTH flags are on, and `appBlocks` is the
+      //     block-runtime kill-switch, so the one-flag form is only correct for
+      //     as long as every mounting surface keeps its own `appBlocks` check.
+      //     That is true today; pinning the conjunction here is what stops it
+      //     from becoming a live bug the moment one of them stops being true.
       expect(offenders).toEqual([]);
     });
   });

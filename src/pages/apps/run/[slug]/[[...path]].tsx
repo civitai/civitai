@@ -224,13 +224,16 @@ export default function AppPage(props: PageProps) {
           onConsentGranted={refresh}
           onRetryToken={refresh}
           // The chrome's "Recently run" shortcuts point at this very route, so
-          // what decides whether they resolve is the viewer's `appBlocksPages`
-          // flag — the same predicate every other `canOpenPage` consumer reads,
-          // and the same one this route's own getServerSideProps 404s on. (It
-          // is therefore redundantly true here; it is written as the flag
-          // anyway so all four chrome mounters carry ONE greppable shape and a
-          // future surface can't justify a per-surface constant.)
-          canOpenPage={!!features.appBlocksPages}
+          // what decides whether they resolve is exactly this route's own
+          // `getServerSideProps` predicate — which requires BOTH flags (see the
+          // 404 above). `appBlocksPages` alone is NOT it: `appBlocks` is the
+          // block-runtime kill-switch and Flipt can disable as well as enable,
+          // so pages-on/blocks-off is reachable and would render guaranteed-404
+          // links. (Both are redundantly true here, since we already passed that
+          // gate; it is written out anyway so all four chrome mounters carry ONE
+          // greppable shape and a future surface can't justify a per-surface
+          // constant.)
+          canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
         />
       </Box>
     </>

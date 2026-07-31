@@ -266,11 +266,16 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             onConsentGranted={refresh}
             onRetryToken={refresh}
             // The chrome's "Recently run" menu links to `/apps/run/<blockId>`,
-            // which is gated on `appBlocksPages` for the VIEWER — this route's
-            // own `appBlocksAuthor` gate says nothing about that, so read the
-            // flag rather than assuming. An author who also has pages gets the
-            // menu here; one who doesn't gets no dead links.
-            canOpenPage={!!features.appBlocksPages}
+            // which 404s unless the VIEWER has BOTH `appBlocks` and
+            // `appBlocksPages` — this route's own author/dev-tunnel gate says
+            // nothing about `appBlocksPages`, so read the target route's full
+            // predicate rather than assuming. Today the `appBlocks` half is
+            // redundant here (this page's own getServerSideProps already 404s
+            // without it, above), but writing the conjunction out keeps the menu
+            // gate self-contained instead of depending on a distant invariant in
+            // another function, and keeps all four mounters on ONE greppable
+            // shape.
+            canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
           />
         )}
       </Box>
