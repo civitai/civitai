@@ -1891,6 +1891,37 @@ export const blocksRouter = router({
     }),
 
   /**
+   * ONE-OFF moderator-only backfill — flip every EXISTING in-review snapshot
+   * repo to private (#3498). New snapshots are created private, but the create
+   * call is idempotent on an existing repo, so pre-change snapshots keep their
+   * original visibility until this walks the org and patches them.
+   *
+   * 🔴 A human must run this ONCE for the privacy fix to be complete. Safe to
+   * re-run: already-private repos are skipped, a vanished repo counts `missing`,
+   * and per-repo failures are collected rather than thrown. `dryRun` reports
+   * exactly which slugs a real run would touch without changing anything.
+   */
+  backfillReviewRepoPrivacy: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(1000).optional(),
+        dryRun: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError(
+          'Review snapshot privacy backfill is restricted to civitai team'
+        );
+      }
+      const { backfillReviewRepoPrivacy } = await import(
+        '~/server/services/blocks/review-repo-privacy.service'
+      );
+      return backfillReviewRepoPrivacy({ limit: input.limit, dryRun: input.dryRun });
+    }),
+
+  /**
    * Reject a pending publish request. Reason is required
    * (≥`PUBLISH_REJECTION_REASON_MIN` — the shared `OFFSITE_MOD_REASON_MIN`, 3 —
    * chars) and shown to the dev inline on /apps/my-submissions.
