@@ -3,12 +3,14 @@
  *
  * Turns the tolerant localStorage `RecentApp[]` (see `recentlyOpenedAppsStore`)
  * into the exact list the `/apps` store rail renders, and decides each entry's
- * link target. Extracted as a pure module on purpose: the civitai browser-mode
- * (`component`) suites are REPORT-ONLY / non-blocking, so the real gate for this
- * behaviour lives in the node `unit` project — mirroring `appListingCardView` /
- * `appListingDetailView`.
+ * link target. Extracted as a pure module on purpose: CI does not run the
+ * civitai browser-mode (`component`) suites at all (they need Chromium), so the
+ * coverage that actually runs on a PR has to live in the node `unit` project —
+ * mirroring `appListingCardView` / `appListingDetailView`. (Neither project
+ * BLOCKS a merge — the `Unit tests` job is `continue-on-error` — so "runs on
+ * every PR" is the whole of the claim.)
  *
- * Two decisions live here:
+ * Three decisions live here:
  *
  * 1. RESOLUTION of a persisted entry (`resolveRecentApp`). The store is
  *    versioned only by what happens to be in a viewer's localStorage, so a read
@@ -42,6 +44,11 @@
  *      - anything else (no page, page but `appBlocksPages` dark, or a legacy
  *        entry whose `hasPage` we never recorded) → `/apps/store-preview/<slug>`,
  *        the unified detail. Always a real target.
+ *
+ * 3. APP-CHROME MENU eligibility (`selectChromeRecentApps`). The in-app chrome's
+ *    "Recently run" dropdown has only ONE link shape, `/apps/run/<blockId>`, so
+ *    it can't fall back the way (2) does — an entry it can't route is omitted
+ *    outright. Same "no dead nav" discipline, different lever.
  */
 
 import { getListingDetailHref, safeExternalHref } from '~/components/Apps/appListingCardView';
@@ -137,6 +144,49 @@ export function selectRecentRailEntries(
   return out;
 }
 
+/**
+ * A recents entry the app-chrome menu can safely render: on-site AND carrying
+ * the `blockId` that builds `/apps/run/<blockId>`.
+ */
+export type ChromeRecentApp = RecentApp & { blockId: string };
+
+/**
+ * The app-chrome ("Civitai Apps" ⋯ menu) "Recently run" list — see
+ * `AppBlockChrome` in `~/components/AppBlocks/IframeHost`.
+ *
+ * That menu has exactly ONE link shape, `/apps/run/<blockId>`, so an entry
+ * qualifies only if all three hold:
+ *
+ *  1. `canOpenPage` — mirrors the viewer's `appBlocksPages` flag. 🔴 THIS IS THE
+ *     LOAD-BEARING ONE. `/apps/run/<slug>` 404s fail-closed for a viewer without
+ *     that flag (`src/pages/apps/run/[slug]/[[...path]].tsx` gates on
+ *     `features.appBlocks && features.appBlocksPages`), yet BOTH writers that
+ *     feed this menu — the detail page's "Open live" CTA and the legacy
+ *     `MarketplaceBody.recordRecent` — record on-site `{hasPage:true}` entries
+ *     flag-blind. Without this gate a dark-flag viewer is offered a menu of
+ *     guaranteed-404 links. Dark → the whole section is hidden (the menu has no
+ *     second link shape to fall back to; the `/apps` rail, which does, keeps
+ *     showing the same entries via `getRecentRailTarget`).
+ *  2. not the app currently being viewed (nothing to "return" to).
+ *  3. on-site with a `blockId`. Off-site listings have no AppBlock at all, so
+ *     they would render `/apps/run/undefined`; an off-site entry carrying a
+ *     stray `blockId` (hand-edited localStorage) would link to the WRONG app.
+ *
+ * Pure + exported so the gate is covered by the node `unit` project.
+ */
+export function selectChromeRecentApps(
+  entries: RecentApp[],
+  opts: { canOpenPage: boolean; currentAppBlockId?: string; limit: number }
+): ChromeRecentApp[] {
+  if (!opts.canOpenPage) return [];
+  return entries
+    .filter(
+      (r): r is ChromeRecentApp =>
+        r.id !== opts.currentAppBlockId && r.kind !== 'offsite' && !!r.blockId
+    )
+    .slice(0, opts.limit);
+}
+
 export type RecentRailTarget = {
   href: string;
   /** True → render as a new-tab anchor (rel="noopener noreferrer"). */
@@ -163,13 +213,22 @@ export function getRecentRailTarget(
 }
 
 /**
- * Build the store entry for a listing the viewer just OPENED FOR REAL — used by
- * the off-site "Visit" CTA (card + detail), which is the moment an off-site app
- * is actually opened (there is no on-platform route to record it later).
+ * Build the store entry for a listing the viewer just OPENED FOR REAL.
+ *
+ * Callers (all of them — keep this list true):
+ *  - `AppListingCard`'s new-tab CTA (`cta.external`, i.e. the OFF-SITE "Visit").
+ *  - `AppListingDetailBody`'s `PrimaryAction` in `mode: 'visit'`, which is
+ *    reached by BOTH kinds: an off-site "Visit", and an ON-SITE page app whose
+ *    viewer can't open the in-host route ("Open live" — the raw-origin escape
+ *    hatch; see `getDetailPrimaryAction`).
+ *
+ * What unites them is that each one LEAVES the SPA to the app itself, so the
+ * click is the only chance to record the open.
  *
  * 🔴 NOT called for a detail-page VIEW: browsing a listing is not opening it.
- * The on-site counterpart is recorded by the run page itself
- * (`/apps/run/<slug>`), i.e. only once the app really launched.
+ * A second on-site writer exists — the run page (`/apps/run/<slug>`) records
+ * itself on mount — which is why the on-site branch below keys on the AppBlock
+ * id: the two writers MUST agree on the de-dup key.
  */
 export function toRecentAppFromListing(
   card: Pick<ListingCard, 'id' | 'slug' | 'name' | 'iconUrl' | 'kindData'>

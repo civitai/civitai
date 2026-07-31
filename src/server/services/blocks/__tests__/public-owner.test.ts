@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { projectPublicOwner } from '~/server/services/blocks/public-owner';
 
 /**
- * Public owner-chip projection — node `unit` project (the BLOCKING gate).
+ * Public owner-chip projection — node `unit` project: the fast, deterministic
+ * suite CI runs on every PR. (The browser `component` suites are not run in CI
+ * at all, so behavioural coverage belongs here.)
  *
  * This projection is the ONLY thing between a real `User` row and an
  * anon-capable public read (`blocks.getAppDetail`), so the load-bearing test is

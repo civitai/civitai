@@ -10,7 +10,9 @@ import {
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * In-page live-preview view-model — node `unit` project (the BLOCKING gate).
+ * In-page live-preview view-model — node `unit` project: the fast,
+ * deterministic suite CI runs on every PR (the browser `component` suites are
+ * not run in CI at all).
  *
  * The load-bearing assertion is `shouldMountPreviewIframe` being FALSE before
  * activation: that is the whole poster-first design, and a regression there
@@ -192,9 +194,10 @@ describe('sandbox parity with the legacy preview', () => {
    * somebody deletes `sandbox={LISTING_PREVIEW_SANDBOX}` from the `<iframe>`
    * altogether — which would hand a third-party block an UNSANDBOXED frame. The
    * only test that caught that lived in the browser (`component`) project, which
-   * is REPORT-ONLY / non-blocking.
+   * CI does not run at all — so on a PR nothing was watching it.
    *
-   * So the blocking gate reads the JSX itself. Structural, not behavioural, and
+   * So the check below reads the JSX itself, in the suite CI does run.
+   * Structural, not behavioural, and
    * deliberately so: rendering `AppListingDetailBody` in the node project would
    * mean booting Mantine + next/link + tRPC for one attribute. The repo already
    * uses source-level unit gates for exactly this shape of invariant (see

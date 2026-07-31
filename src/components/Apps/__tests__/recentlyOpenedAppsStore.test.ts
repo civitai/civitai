@@ -11,18 +11,24 @@ import {
 import { resolveRecentApp } from '~/components/Apps/recentAppsRail';
 
 /**
- * `recentlyOpenedApps` localStorage store — node `unit` project (the BLOCKING
- * gate).
+ * `recentlyOpenedApps` localStorage store — node `unit` project.
  *
  * 🔴 WHY THIS IS HERE AND NOT ONLY IN THE BROWSER SUITE. This is the one module
  * in the `/apps` recents feature that parses UNTRUSTED, USER-WRITABLE input: the
  * whole v3 validation layer (`coerce`) exists because anybody can hand-edit
  * `localStorage.recentlyOpenedApps` and every previously-shipped entry shape is
  * still in the wild. The existing coverage lived only in
- * `recents-helper.browser.test.tsx`, and the browser (`component`) project is
- * REPORT-ONLY / non-blocking — so a regression in the validation of untrusted
- * input could merge green. This suite is the blocking one; the browser suite
- * keeps its real-`window` prepend/dedup/cap coverage.
+ * `recents-helper.browser.test.tsx` — and CI does not run the browser
+ * (`component`) project AT ALL (no Chromium), so on a PR nothing was watching
+ * that validation. The `unit` project at least runs on every PR
+ * (`.github/workflows/lint.yml`), which is why behavioural coverage belongs
+ * here; the browser suite keeps its real-`window` prepend/dedup/cap coverage.
+ *
+ * 🔴 DON'T READ THAT AS "THIS BLOCKS A MERGE" — it does not. The `Unit tests`
+ * job carries `continue-on-error: true`, so a red test annotates and merges.
+ * The only merge-blocking steps today are Typecheck, the "migrations are in the
+ * schema package" check, and ESLint/Prettier over ADDED files. Running on every
+ * PR is the value here; enforcement is not.
  *
  * The store is SSR-safe via `isClient()`, so a node test has to supply a
  * `window.localStorage`. A minimal in-memory Storage is enough — the store only

@@ -328,15 +328,67 @@ describe('BlockRegistry.getAppDetail — anon-exposure protections (F-E E2)', ()
     expect(sql).toMatch(/u\.id AS owner_user_id/);
     expect(sql).toMatch(/u\.username AS owner_username/);
     expect(sql).toMatch(/u\.image AS owner_image/);
-    // 🔴 The SELECT list carries EXACTLY those three user columns and nothing
-    // else. Enumerating them (rather than a handful of `not.toMatch(/u\.email/)`
-    // spot-checks, which `u."email"` and every column nobody thought of walk
-    // straight past) is what makes this a real widened-SELECT guard.
-    const selectList = sql.slice(sql.indexOf('SELECT'), sql.indexOf('FROM app_blocks'));
-    const userColumns = [...selectList.matchAll(/\bu\.(?:"([^"]+)"|([\w*]+))/g)].map(
-      (m) => m[1] ?? m[2]
+    // 🔴 The SELECT list PROJECTS exactly this key set and nothing else.
+    //
+    // Assert on the PROJECTED KEYS (the `AS` alias, else the trailing column
+    // name), not on `u.`-prefixed source text. The alias-scoped version of this
+    // guard — collect every `u.<col>` in the SELECT list, expect
+    // ['id','image','username'] — reads like a widened-SELECT guard but is only
+    // a guard on ONE table alias: adding a second `"User"` join and selecting
+    // `usr.email AS owner_email` off it walks straight past, and so does any
+    // widening of `oc.`/`ab.`. The projection is what actually reaches the
+    // caller (it becomes a `Row` key, which `projectPublicOwner` then reads), so
+    // that is what gets pinned. A new column here is a deliberate act and must
+    // update this list.
+    const selectList = sql.slice(
+      sql.indexOf('SELECT') + 'SELECT'.length,
+      sql.indexOf('FROM app_blocks')
     );
-    expect([...new Set(userColumns)].sort()).toEqual(['id', 'image', 'username']);
+    // Split on TOP-LEVEL commas only — `install_count` is an inline subquery.
+    const items: string[] = [];
+    let depth = 0;
+    let buf = '';
+    for (const ch of selectList) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) {
+        items.push(buf);
+        buf = '';
+      } else buf += ch;
+    }
+    items.push(buf);
+    const projected = items
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const alias = /\bAS\s+(?:"([^"]+)"|(\w+))\s*$/i.exec(item);
+        if (alias) return alias[1] ?? alias[2];
+        // No alias → the projected key is the bare/qualified column name.
+        const bare = /(?:"([^"]+)"|(\w+))\s*$/.exec(item);
+        return bare?.[1] ?? bare?.[2] ?? item;
+      });
+    expect([...projected].sort()).toEqual([
+      'app_id',
+      'app_name',
+      'approved_scopes',
+      'avg_rating',
+      'block_id',
+      'content_rating',
+      'current_version_deployed_at',
+      'external_url',
+      'id',
+      'install_count',
+      'manifest',
+      'owner_image',
+      'owner_user_id',
+      'owner_username',
+      'review_count',
+      'screenshots',
+      'status',
+      'version',
+    ]);
+    // No duplicate projected key (two sources colliding on one `Row` field).
+    expect(new Set(projected).size).toBe(projected.length);
   });
 
   it('an unresolvable owner yields owner:null (no crash, no fallback to appName)', async () => {

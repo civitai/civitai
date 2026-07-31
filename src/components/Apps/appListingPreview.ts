@@ -3,8 +3,9 @@
  *
  * Decides (a) whether a listing can show a live preview at all, (b) what poster
  * image stands in for it before activation, and (c) whether the `<iframe>` is
- * mounted yet. Pure so the gate lives in the node `unit` project (the browser
- * component suites are REPORT-ONLY / non-blocking).
+ * mounted yet. Pure so the coverage lives in the node `unit` project — the
+ * fast, deterministic suite CI runs on every PR (the browser component suites
+ * are not run in CI at all).
  *
  * 🔴 POSTER-FIRST IS THE WHOLE POINT. `shouldMountPreviewIframe` is FALSE until
  * the viewer clicks: a store page that boots one third-party iframe per visit

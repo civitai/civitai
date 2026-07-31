@@ -8,9 +8,10 @@ import {
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * "More in <category>" discovery-rail selection — node `unit` project (the
- * BLOCKING gate). Pins exclude-self, category-then-popular top-up, de-dup and
- * the cap, plus the "do we even need the second query" predicate.
+ * "More in <category>" discovery-rail selection — node `unit` project: the
+ * fast, deterministic suite CI runs on every PR (the browser `component` suites
+ * are not run in CI at all). Pins exclude-self, category-then-popular top-up,
+ * de-dup and the cap, plus the "do we even need the second query" predicate.
  */
 
 function card(id: string): ListingCard {

@@ -259,6 +259,18 @@ export interface PageBlockHostProps {
    * the preview surface, not here.
    */
   reviewRunForReal?: boolean;
+  /**
+   * May this viewer open `/apps/run/<blockId>`? Forwarded to `AppBlockChrome`,
+   * where it gates the "Recently run" menu — that section's ONLY link shape is
+   * that route, which 404s fail-closed for a viewer without `appBlocksPages`.
+   *
+   * NOT derivable inside the host: the two surfaces that mount it gate on
+   * DIFFERENT flags — `/apps/run/<slug>` requires `appBlocksPages`, while the
+   * author dev tunnel (`/apps/dev/<blockId>`) requires `appBlocksAuthor` and
+   * says nothing about pages. So each route passes what it actually proved.
+   * Default false → no dead links for a caller that hasn't.
+   */
+  canOpenPage?: boolean;
 }
 
 export function PageBlockHost({
@@ -286,6 +298,7 @@ export function PageBlockHost({
   onRetryToken,
   reviewMode = false,
   reviewRunForReal = false,
+  canOpenPage = false,
 }: PageBlockHostProps) {
   const router = useRouter();
   // MOD REVIEW SANDBOX (#2831): the side-effect NACK gate. Side-effecting handlers
@@ -2825,6 +2838,7 @@ export function PageBlockHost({
         appBlockId={appBlockId}
         appName={appName}
         slotId={PAGE_SLOT_ID}
+        canOpenPage={canOpenPage}
       />
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —

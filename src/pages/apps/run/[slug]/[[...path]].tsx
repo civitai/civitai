@@ -221,6 +221,13 @@ export default function AppPage(props: PageProps) {
           theme={theme}
           onConsentGranted={refresh}
           onRetryToken={refresh}
+          // This route's own getServerSideProps 404s unless BOTH `appBlocks`
+          // and `appBlocksPages` are on for the viewer — so anyone rendering
+          // here has provably passed the `/apps/run/` gate, and the chrome's
+          // "Recently run" shortcuts to that same route cannot be dead. (The
+          // dev tunnel, gated on `appBlocksAuthor` instead, proves nothing
+          // about pages and correctly leaves this at its false default.)
+          canOpenPage
         />
       </Box>
     </>

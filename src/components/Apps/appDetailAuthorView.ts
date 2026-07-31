@@ -24,8 +24,9 @@
  * strictly better than showing a wrong name, and there is nothing else on the
  * DTO that is a person.
  *
- * Pure so the blocking gate lives in the node `unit` project (the browser-mode
- * component suites are report-only).
+ * Pure so the coverage lives in the node `unit` project — the fast,
+ * deterministic suite CI runs on every PR (the browser-mode component suites
+ * are not run in CI at all).
  */
 
 import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';

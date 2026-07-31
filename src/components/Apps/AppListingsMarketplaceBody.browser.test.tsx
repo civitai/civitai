@@ -160,7 +160,7 @@ describe('AppListingsMarketplaceBody', () => {
   });
 
   // ── "Recently opened" rail ──────────────────────────────────────────────────
-  // Selection/target logic is pinned in the blocking unit suite
+  // Selection/target logic is pinned in the CI-run node unit suite
   // (__tests__/recentAppsRail.test.ts). What these assert is the WIRING: the
   // page really reads the store after mount, really renders the rail BELOW the
   // search/filter controls but ABOVE the result grid, and really renders NOTHING

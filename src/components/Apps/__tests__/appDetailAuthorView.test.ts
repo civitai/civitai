@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
 
 /**
- * `AppDetailsModal` AUTHOR attribution — node `unit` project (the BLOCKING
- * gate).
+ * `AppDetailsModal` AUTHOR attribution — node `unit` project: the fast,
+ * deterministic suite CI runs on every PR (the browser `component` suites are
+ * not run in CI at all).
  *
  * The regression this guards is specific and was live in prod: the modal showed
  * `by {appName}`, and `OauthClient.name` equals the APP's own title for every

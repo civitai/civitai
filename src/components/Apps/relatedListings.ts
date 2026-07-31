@@ -2,9 +2,10 @@
  * "More in <category>" DISCOVERY-RAIL selection (pure, React-free).
  *
  * Picks what the unified listing detail shows under its discovery rail. Pure so
- * the correctness gate lands in the node `unit` project — the browser-mode
- * component suites are REPORT-ONLY / non-blocking (same rationale as
- * `appListingCardView` / `appListingDetailView` / `recentAppsRail`).
+ * the correctness coverage lands in the node `unit` project — the fast,
+ * deterministic suite CI runs on every PR, whereas the browser-mode component
+ * suites are not run in CI at all (same rationale as `appListingCardView` /
+ * `appListingDetailView` / `recentAppsRail`).
  *
  * Selection policy, in order:
  *   1. SELF IS ALWAYS EXCLUDED — from both input lists, by listing id. A

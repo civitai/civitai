@@ -16,6 +16,7 @@ import {
   getRecentlyOpenedApps,
   type RecentApp,
 } from '~/components/Apps/recentlyOpenedAppsStore';
+import { selectChromeRecentApps } from '~/components/Apps/recentAppsRail';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
@@ -163,6 +164,7 @@ export function AppBlockChrome({
   modelId,
   modelName,
   slotId,
+  canOpenPage = false,
 }: {
   blockInstanceId: string;
   /** The approved AppBlock id of the running app. When present, the ⋯ menu
@@ -177,6 +179,13 @@ export function AppBlockChrome({
    *  distinction — the "Hide" item is hidden on the full-page (`app.page`)
    *  surface. Omitted → treated as a model surface (Hide shown). */
   slotId?: string;
+  /** Mirrors the viewer's `appBlocksPages` flag: may this viewer actually open
+   *  `/apps/run/<blockId>`? Gates the "Recently run" section, whose ONLY link
+   *  shape is that route — it 404s fail-closed without the flag, and the writers
+   *  that feed the recents store record flag-blind. 🔴 DEFAULTS TO FALSE (no
+   *  dead links) — a caller that can prove the viewer passed the gate opts in.
+   */
+  canOpenPage?: boolean;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -218,18 +227,17 @@ export function AppBlockChrome({
   useEffect(() => {
     setRecents(getRecentlyOpenedApps());
   }, []);
-  // `blockId` became OPTIONAL when the recents store widened to also carry
-  // OFF-SITE listings (which have no AppBlock at all — see
-  // `recentlyOpenedAppsStore`). This menu links to `/apps/run/<blockId>`, so it
-  // must show only ON-SITE entries that HAVE one; an off-site entry here would
-  // render a `/apps/run/undefined` dead link, and an off-site entry that happens
-  // to carry a stray `blockId` (hand-edited localStorage) would link to the
-  // wrong app. Both are excluded. Behaviour for every pre-existing (on-site)
-  // entry is unchanged, and the store's PER-KIND cap is what stops off-site
-  // entries from evicting the on-site ones this menu needs.
-  const recentApps = recents
-    .filter((r) => r.id !== appBlockId && r.kind !== 'offsite' && !!r.blockId)
-    .slice(0, RECENTLY_RUN_LIMIT);
+  // Which of those entries this menu may offer. The rules (off-site exclusion,
+  // the `appBlocksPages` gate that keeps a dark-flag viewer off guaranteed-404
+  // `/apps/run/` links, self-exclusion, the cap) live in the pure
+  // `selectChromeRecentApps` so the node `unit` project covers them — the
+  // browser suites are not run in CI. The store's PER-KIND cap is what stops
+  // off-site entries from evicting the on-site ones this menu needs.
+  const recentApps = selectChromeRecentApps(recents, {
+    canOpenPage,
+    currentAppBlockId: appBlockId,
+    limit: RECENTLY_RUN_LIMIT,
+  });
 
   // Controlled-Menu change handler: mirror the open state AND re-read the recents
   // store on the transition to open, so the "Recently run" list is fresh within
@@ -364,8 +372,8 @@ export function AppBlockChrome({
                   <Menu.Item
                     key={r.id}
                     component={Link}
-                    // Non-null by the `!!r.blockId` filter above.
-                    href={`/apps/run/${r.blockId as string}`}
+                    // Non-null by `selectChromeRecentApps` (ChromeRecentApp).
+                    href={`/apps/run/${r.blockId}`}
                     data-testid="app-recently-run-item"
                     leftSection={
                       r.iconUrl ? (
@@ -384,7 +392,7 @@ export function AppBlockChrome({
                         handle. `lineClamp={1}` keeps a pathologically long name
                         from blowing out the width={200} dropdown. */}
                     <Text size="sm" lineClamp={1}>
-                      {sanitizeAppChromeName(r.name) || (r.blockId as string)}
+                      {sanitizeAppChromeName(r.name) || r.blockId}
                     </Text>
                   </Menu.Item>
                 ))}
