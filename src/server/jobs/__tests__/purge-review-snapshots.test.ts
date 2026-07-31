@@ -161,22 +161,55 @@ describe('purgeExpiredReviewSnapshots — the 30-day retention boundary', () => 
   });
 
   /**
-   * The boundary is enforced by the query predicate, so prove it against the
-   * predicate itself: a row that went terminal one hour short of the window
-   * falls outside `updatedAt < cutoff` and is therefore never a candidate.
+   * The boundary is enforced by the query predicate, so this drives it through
+   * a findMany mock that actually APPLIES the where-clause the sweep builds —
+   * otherwise the assertion is tautological (it would pass for any window,
+   * including zero). `due` and `notYetDue` straddle the 30-day mark by an hour.
    */
-  it('retains a request that is not yet due (one hour short of the window)', async () => {
-    mockFindMany.mockResolvedValue([]);
+  it('purges a request that is due and RETAINS one an hour short of the window', async () => {
+    const due = row('due-app', new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS - 3600_000));
+    const notYetDue = row(
+      'not-due-app',
+      new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS + 3600_000)
+    );
+    mockFindMany.mockImplementation(async (args: { where: Record<string, any> }) =>
+      [due, notYetDue].filter(
+        (r) =>
+          args.where.status.in.includes(r.status) &&
+          r.updatedAt > args.where.updatedAt.gt &&
+          r.updatedAt < args.where.updatedAt.lt
+      )
+    );
 
-    await purgeExpiredReviewSnapshots({ now: NOW });
+    const result = await purgeExpiredReviewSnapshots({ now: NOW });
 
-    const cutoff: Date = mockFindMany.mock.calls[0][0].where.updatedAt.lt;
-    const notYetDue = new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS + 60 * 60 * 1000);
-    const due = new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS - 60 * 60 * 1000);
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+    expect(mockDelete).toHaveBeenCalledWith('due-app');
+    expect(mockDelete).not.toHaveBeenCalledWith('not-due-app');
+    expect(result.deleted).toBe(1);
+  });
 
-    expect(notYetDue.getTime() < cutoff.getTime()).toBe(false); // excluded
-    expect(due.getTime() < cutoff.getTime()).toBe(true); // included
-    expect(mockDelete).not.toHaveBeenCalled();
+  /**
+   * Same predicate-applying mock, walked forward in time: the row that was
+   * retained above becomes eligible once the full window has elapsed. Proves
+   * the boundary is a delay, not a permanent exclusion.
+   */
+  it('purges that same request once the full window HAS elapsed', async () => {
+    const notYetDue = row(
+      'not-due-app',
+      new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS + 3600_000)
+    );
+    mockFindMany.mockImplementation(async (args: { where: Record<string, any> }) =>
+      [notYetDue].filter(
+        (r) => r.updatedAt > args.where.updatedAt.gt && r.updatedAt < args.where.updatedAt.lt
+      )
+    );
+
+    const later = new Date(NOW.getTime() + 2 * 3600_000);
+    const result = await purgeExpiredReviewSnapshots({ now: later });
+
+    expect(mockDelete).toHaveBeenCalledWith('not-due-app');
+    expect(result.deleted).toBe(1);
   });
 
   it('only considers rejected/withdrawn — approved snapshots are out of scope', async () => {
