@@ -1444,11 +1444,26 @@ export async function upsertChallenge({
           }),
         },
       });
-      if (count === 0)
+      if (count === 0) {
+        // Rare by construction, so log it — otherwise there is no way to tell whether this guard
+        // has ever fired, or to distinguish a genuine race from replica lag (below).
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-upsert-status-precondition-failed',
+          challengeId: id,
+          message: `upsertChallenge aborted: challenge ${id} was no longer '${challenge.status}' at write time`,
+          readStatus: challenge.status,
+        }).catch(() => undefined);
+        // Deliberately NOT "reload and try again": `challenge.status` came from the read REPLICA,
+        // so this also fires when a transition already committed on the primary and has not
+        // replicated yet — a reload re-reads the same lagging replica and cannot clear it. It also
+        // fires when the row was deleted outright, where "status changed" is the wrong diagnosis.
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
-          message: 'Challenge status changed while saving. Reload and try again.',
+          message:
+            'This challenge changed while you were saving (it may have started, been completed, or been cancelled). Re-open it in a moment to see its current state.',
         });
+      }
       const updated = await tx.challenge.findUniqueOrThrow({ where: { id } });
 
       // Sync collection metadata if challenge has a collection

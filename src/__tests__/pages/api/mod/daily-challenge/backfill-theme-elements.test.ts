@@ -117,8 +117,13 @@ describe('backfill-theme-elements — must not clobber a challenge claimed for c
     const sql = sqlOf(mockExecuteRaw.mock.calls[0]);
     // `||` concatenation touches only themeElements, so a field written during the LLM window
     // (e.g. completingClaimedAt) survives even inside Active/Scheduled.
-    expect(sql).toMatch(/\|\|/);
     expect(sql).toMatch(/jsonb_typeof\(metadata\) = 'object'/);
+    // ORDER IS LOAD-BEARING, so pin it rather than just the presence of `||`. jsonb concatenation
+    // lets the RIGHT operand win on key collision, so the patch must come second. Swapping the
+    // operands (`patch || stored`) still contains a `||` and a jsonb_typeof, but inverts the
+    // merge: the stored value would win and `?force=true` would become a silent no-op for every
+    // challenge that already has themeElements.
+    expect(sql).toMatch(/END\s*\|\|\s*\?::jsonb/);
     // Only the themeElements patch is bound — not a rebuilt copy of the whole snapshot.
     expect(JSON.parse(mockExecuteRaw.mock.calls[0][1] as string)).toEqual({
       themeElements: ['neon', 'glow'],
@@ -134,6 +139,8 @@ describe('backfill-theme-elements — must not clobber a challenge claimed for c
     const payload = (res.json as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.backfilled).toBe(0);
     expect(payload.failures).toBe(0);
+    // Counted, so the shortfall against `total` is explained rather than silent.
+    expect(payload.skipped).toBe(1);
     expect(payload.results).toEqual([
       { id: 42, theme: 'Neon', status: 'skipped: no longer Active/Scheduled' },
     ]);

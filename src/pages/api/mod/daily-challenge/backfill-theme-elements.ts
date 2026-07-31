@@ -68,6 +68,7 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
 
   let successes = 0;
   let failures = 0;
+  let skipped = 0;
   const results: Array<{ id: number; theme: string; status: string; elements?: string[] }> = [];
 
   const tasks = toBackfill.map((challenge) => async () => {
@@ -120,6 +121,16 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
       `;
 
       if (updatedRows === 0) {
+        // The whole point of the predicate is a race nobody is watching for. Without a log the
+        // only evidence it ever fired is a reader noticing that
+        // `backfilled + failures + skipped < total` in the response JSON.
+        logToAxiom({
+          type: 'warning',
+          name: 'backfill-theme-elements-skipped',
+          challengeId: challenge.id,
+          message: `Challenge ${challenge.id} left Active/Scheduled during theme generation; metadata write skipped`,
+        });
+        skipped++;
         results.push({
           id: challenge.id,
           theme: challenge.theme,
@@ -153,11 +164,14 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
 
   await limitConcurrency(tasks, 3);
 
-  log(`Backfill complete: ${successes} successes, ${failures} failures`);
+  log(`Backfill complete: ${successes} successes, ${failures} failures, ${skipped} skipped`);
   return res.status(200).json({
     total: challenges.length,
     backfilled: successes,
     failures,
+    // Reported so `backfilled + failures` adding up to less than the attempted set is explained
+    // rather than looking like a silent shortfall.
+    skipped,
     force,
     results,
   });

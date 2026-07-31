@@ -47,7 +47,11 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn().mockResolvedValue(false),
 }));
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
+// Must resolve a promise, not undefined: the guard chains `.catch()` on it, matching how the
+// rest of challenge.service.ts calls logToAxiom.
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   claimChallengeForCompletion: vi.fn(),
