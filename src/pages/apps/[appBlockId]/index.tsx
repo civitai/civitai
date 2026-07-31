@@ -31,6 +31,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
+import { resolveLegacyAppRedirect } from '~/components/Apps/resolveLegacyAppRedirect';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -45,14 +46,36 @@ import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
 } from '~/server/services/blocks/scope-descriptions.constants';
+import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
 
 /**
- * F-E E2 — per-app marketplace detail page (`/apps/<appBlockId>`).
+ * 🔴 RETIRED (S8 / PR-2) — this route no longer renders. `getServerSideProps`
+ * redirects it to the unified store detail `/apps/store-preview/<slug>`.
  *
- * 🔒 GATING INVARIANT (E2 — same as E1, do not violate):
+ * WHY: it was a second, diverging detail surface for the same app. It rendered
+ * `by <app name>` where the store correctly renders the owner's username, and its
+ * raw bridge-less `<iframe>` "Live preview" painted a permanent light-theme panel
+ * on a dark page (nothing ever posts `BLOCK_INIT` to that frame, so the block's
+ * shell never learns the host theme). The store detail already covers this page's
+ * whole action set — "Open app" → its `open` branch, "Open live" → its `visit`
+ * fallback, and "Edit manifest" is the SIBLING route `/apps/[appBlockId]/edit*`,
+ * untouched here and independently reachable from `/apps/my-submissions` and the
+ * store card's owner Edit.
+ *
+ * REDIRECT, NOT DELETE — deliberately. The page BODY below is retained for at
+ * least one release so a stale bookmark or an external link resolves through the
+ * hop, and so the three in-repo callsites (`AppBlockCard`, `ManifestEditForm`,
+ * `liveAppDetailHref`) keep working untouched. Deleting the body and cleaning up
+ * those callsites is a tracked follow-up; keeping it out of this change is what
+ * makes this a one-file change that cannot collide with the parallel work on
+ * `appListingDetailView.ts`. The component is unreachable in the meantime (both
+ * SSR and client-side `/_next/data` navigations honour the redirect) — do not
+ * "fix" anything in it.
+ *
+ * 🔒 GATING INVARIANT (E2 — unchanged, do not violate):
  *   - The SSR resolver runs `resolveAppsPageAccess` FIRST: the `features.appBlocks`
  *     flag gate is the ONLY access control. A real anon / non-mod viewer does not
  *     satisfy the mod-segmented Flipt `app-blocks-enabled` flag, so they get
@@ -68,9 +91,42 @@ import { trpc } from '~/utils/trpc';
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  // Flag gate FIRST and ONLY (no session→login redirect): the detail page renders
-  // for a session-less request BEHIND the flag (dark today; lit at segment-widen).
-  resolver: async ({ features }) => resolveAppsPageAccess({ features }),
+  resolver: async ({ ctx, features }) => {
+    // 🔒 STORE-VISIBILITY FLAG GATE STAYS FIRST — before the route param is read
+    // and before any DB access. A viewer the flag does not grant gets the same
+    // `notFound` it gets today, and the retirement never becomes an existence
+    // oracle for them: no redirect, no `Location` header, not even a query.
+    const access = resolveAppsPageAccess({ features });
+    if ('notFound' in access) return access;
+
+    const appBlockId = typeof ctx.params?.appBlockId === 'string' ? ctx.params.appBlockId : '';
+    if (!appBlockId) return { notFound: true };
+
+    // Resolve `AppBlock.id` (the `apb_<ULID>` route param) → the store slug.
+    //
+    // 🔴 Key on `AppListing.slug`, NOT `AppBlock.blockId`. For an on-site app the
+    // two hold the same value today (`mapAppBlockToListing` mints the listing with
+    // `slug: ab.blockId`), so reading `blockId` would usually produce the same
+    // string — but it would answer the WRONG question. The destination
+    // (`appListings.getAppDetail`) resolves BY LISTING, approved-only; a pending,
+    // rejected or never-approved app has a `blockId` and no listing, so a
+    // `blockId`-keyed redirect would bounce that owner to a store URL that 404s
+    // instead of 404-ing here. Reading the listing row makes the existence of an
+    // approved listing the actual precondition of the redirect — the decided
+    // behaviour — and it stays correct if a slug ever diverges from its block id
+    // (off-site listings already choose their own slugs).
+    //
+    // `status: 'approved'` mirrors the destination's own approved-only filter, and
+    // `revisionOfId: null` is defense-in-depth: a shadow revision is a draft (so
+    // already excluded) and cannot carry an `appBlockId` (the column is UNIQUE),
+    // but never let this read reach one.
+    const listing = await dbRead.appListing.findFirst({
+      where: { appBlockId, status: 'approved', revisionOfId: null },
+      select: { slug: true },
+    });
+
+    return resolveLegacyAppRedirect({ slug: listing?.slug });
+  },
 });
 
 function slotLabel(slotId?: string): string {
