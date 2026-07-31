@@ -19,6 +19,7 @@
 
 import { randomBytes } from 'crypto';
 import { env } from '~/env/server';
+import { MAX_FILES_IN_BUNDLE } from '~/server/schema/blocks/publish-request.schema';
 
 export const FORGEJO_ORG = 'civitai-apps';
 const FORGEJO_REVIEW_ORG = 'civitai-apps-review';
@@ -280,6 +281,9 @@ export async function setCommitStatus(opts: {
  * delete-vs-update, and to look up blob SHAs for updates. Also used
  * by the W1 backfill to know what files to pull when reconstructing
  * a bundle from a live Forgejo repo.
+ *
+ * Delegates the tree read to `listRepoTreeAtRef`, so it inherits that
+ * function's pagination over trees larger than one page.
  */
 export async function listRepoTree(
   slug: string,
@@ -294,6 +298,24 @@ export async function listRepoTree(
 }
 
 /**
+ * Page size for the recursive tree listing. 1000 is the API's own ceiling
+ * for this endpoint (a larger `per_page` is silently clamped down to it), so
+ * this is the fewest round-trips a full tree read can cost.
+ */
+const TREE_PAGE_SIZE = 1000;
+
+/**
+ * Runaway guard for the tree pager — the most entries we are willing to read
+ * before giving up, derived from the submit-time file cap rather than a magic
+ * number. A tree listing returns a directory entry per folder on top of one
+ * entry per file, so allow headroom over MAX_FILES_IN_BUNDLE; a well-formed
+ * app stops long before this. Exists purely so a pathological or misbehaving
+ * repo can never spin the loop forever.
+ */
+const MAX_TREE_ENTRIES = MAX_FILES_IN_BUNDLE * 4;
+const MAX_TREE_PAGES = Math.ceil(MAX_TREE_ENTRIES / TREE_PAGE_SIZE);
+
+/**
  * Recursively list every blob in the repo at an arbitrary git ref —
  * a commit SHA (NOT just a branch name) — as Map<path, blob-sha>. Same
  * shape as `listRepoTree`, but skips the branch→commit lookup so the
@@ -302,29 +324,64 @@ export async function listRepoTree(
  *
  * Forgejo's `git/trees/<ref>` resolves a commit ref to its root tree, so
  * passing a commit SHA returns that commit's full recursive blob list.
+ *
+ * 🔴 PAGINATED. The endpoint caps a single response at TREE_PAGE_SIZE entries
+ * and flags the overflow with `truncated`, while submit-time validation accepts
+ * up to MAX_FILES_IN_BUNDLE (2000) files — so an app between 1001 and 2000
+ * files produces a tree this function MUST page through. It used to throw on
+ * `truncated` instead, which made such an app impossible to approve, diff or
+ * preview once accepted.
+ *
+ * Stop condition, in priority order — deliberately NOT "a short page means the
+ * last page", because the server is free to clamp `per_page` below what we ask
+ * for, which would make the very first page look short and end the walk early:
+ *   1. an empty page  → nothing left;
+ *   2. `total_count`  → authoritative entry total; stop once we have seen it
+ *                       all (saves the trailing empty-page round-trip);
+ *   3. `truncated`    → fallback for a response without `total_count`: keep
+ *                       paging while the flag says the tree overflows a page.
  */
 export async function listRepoTreeAtRef(
   slug: string,
   ref: string,
   org: string = FORGEJO_ORG
 ): Promise<Map<string, string>> {
-  const treeRes = await fjFetch(
-    `/api/v1/repos/${org}/${slug}/git/trees/${encodeURIComponent(ref)}?recursive=true&per_page=1000`
-  );
-  const tree = await unwrap<{
-    tree: Array<{ path: string; type: string; sha: string }>;
-    truncated?: boolean;
-  }>(treeRes);
-  if (tree.truncated) {
-    throw new Error(
-      `Forgejo tree for ${slug}@${ref} is truncated (>1000 entries); pagination not implemented`
-    );
-  }
   const result = new Map<string, string>();
-  for (const item of tree.tree) {
-    if (item.type === 'blob') result.set(item.path, item.sha);
+  let seen = 0;
+
+  for (let page = 1; page <= MAX_TREE_PAGES; page++) {
+    const treeRes = await fjFetch(
+      `/api/v1/repos/${org}/${slug}/git/trees/${encodeURIComponent(
+        ref
+      )}?recursive=true&per_page=${TREE_PAGE_SIZE}&page=${page}`
+    );
+    const tree = await unwrap<{
+      // Past the end of the tree the API answers with a null/absent list, so
+      // this is not guaranteed to be an array.
+      tree?: Array<{ path: string; type: string; sha: string }> | null;
+      truncated?: boolean;
+      total_count?: number;
+    }>(treeRes);
+
+    const entries = tree?.tree ?? [];
+    for (const item of entries) {
+      if (item.type === 'blob') result.set(item.path, item.sha);
+    }
+    seen += entries.length;
+
+    if (entries.length === 0) return result;
+    const total = typeof tree?.total_count === 'number' ? tree.total_count : undefined;
+    if (total !== undefined && total > 0) {
+      if (seen >= total) return result;
+    } else if (tree?.truncated !== true) {
+      return result;
+    }
   }
-  return result;
+
+  throw new Error(
+    `Forgejo tree for ${slug}@${ref} exceeds ${MAX_TREE_ENTRIES} entries; an app may contain at ` +
+      `most ${MAX_FILES_IN_BUNDLE} files — reduce the file count and re-submit`
+  );
 }
 
 /**

@@ -88,25 +88,16 @@ describe('listRepoTree', () => {
     expect(fm.calls[0].url).toBe(
       'https://forgejo.example/api/v1/repos/civitai-apps/hello/branches/main'
     );
-    // Recursive=true + per_page=1000.
+    // Recursive=true + per_page=1000 (the endpoint's own ceiling) + page=1.
     expect(fm.calls[1].url).toBe(
-      'https://forgejo.example/api/v1/repos/civitai-apps/hello/git/trees/commit_sha?recursive=true&per_page=1000'
+      'https://forgejo.example/api/v1/repos/civitai-apps/hello/git/trees/commit_sha?recursive=true&per_page=1000&page=1'
     );
+    // A tree that fits in one page costs exactly one tree request.
+    expect(fm.calls.filter((c) => c.url.includes('/git/trees/'))).toHaveLength(1);
     // Auth header carried.
     expect((fm.calls[0].init?.headers as Record<string, string>)['Authorization']).toBe(
       'token tok-test'
     );
-  });
-
-  it('throws when the tree is truncated (>1000 entries; no pagination yet)', async () => {
-    const { listRepoTree } = await import('../forgejo.service');
-    fm.enqueue({ commit: { id: 'commit_sha' } });
-    fm.enqueue({
-      tree: [{ path: 'a', type: 'blob', sha: 'b1' }],
-      truncated: true,
-    });
-
-    await expect(listRepoTree('hello', 'main')).rejects.toThrow(/truncated/);
   });
 
   it('URL-encodes the branch name', async () => {
@@ -121,6 +112,130 @@ describe('listRepoTree', () => {
     const { listRepoTree } = await import('../forgejo.service');
     fm.enqueue({ message: 'branch not found' }, 404);
     await expect(listRepoTree('hello', 'main')).rejects.toThrow(/404/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tree pagination. Submit-time validation accepts up to MAX_FILES_IN_BUNDLE
+// (2000) files but a single tree response holds at most 1000 entries, so an app
+// over 1000 files MUST be read across pages. Before the fix this threw on the
+// `truncated` flag, which made such an app impossible to approve / diff /
+// preview once accepted.
+//
+// The pages below are deliberately SMALLER than the requested per_page: the
+// server is free to clamp `per_page` down, so "a short page means the last
+// page" is not a safe stop condition and the walk must not end on one.
+// ---------------------------------------------------------------------------
+describe('listRepoTreeAtRef pagination', () => {
+  const treeCalls = () => fm.calls.filter((c) => c.url.includes('/git/trees/'));
+
+  it('walks every page — including the final partial one — using total_count', async () => {
+    const { listRepoTreeAtRef } = await import('../forgejo.service');
+    fm.enqueue({
+      tree: [
+        { path: 'p1-a.txt', type: 'blob', sha: 's1a' },
+        { path: 'dir', type: 'tree', sha: 'st1' },
+        { path: 'p1-b.txt', type: 'blob', sha: 's1b' },
+      ],
+      truncated: true,
+      total_count: 8,
+    });
+    fm.enqueue({
+      tree: [
+        { path: 'p2-a.txt', type: 'blob', sha: 's2a' },
+        { path: 'p2-b.txt', type: 'blob', sha: 's2b' },
+        { path: 'p2-c.txt', type: 'blob', sha: 's2c' },
+      ],
+      truncated: true,
+      total_count: 8,
+    });
+    fm.enqueue({
+      tree: [
+        { path: 'p3-a.txt', type: 'blob', sha: 's3a' },
+        { path: 'p3-b.txt', type: 'blob', sha: 's3b' },
+      ],
+      truncated: true,
+      total_count: 8,
+    });
+
+    const result = await listRepoTreeAtRef('big', 'ref_sha');
+
+    // Every page contributed — the LAST page is the one a loop that stops early
+    // loses, so assert it explicitly.
+    expect(result.get('p1-a.txt')).toBe('s1a');
+    expect(result.get('p1-b.txt')).toBe('s1b');
+    expect(result.get('p2-a.txt')).toBe('s2a');
+    expect(result.get('p2-c.txt')).toBe('s2c');
+    expect(result.get('p3-a.txt')).toBe('s3a');
+    expect(result.get('p3-b.txt')).toBe('s3b');
+    // Blobs only, all 7 of them; the directory entry is still excluded.
+    expect(result.size).toBe(7);
+    expect(result.has('dir')).toBe(false);
+
+    // page= increments, per_page stays at the endpoint ceiling, and total_count
+    // means no wasted trailing request.
+    expect(treeCalls()).toHaveLength(3);
+    expect(treeCalls()[0].url).toContain('recursive=true&per_page=1000&page=1');
+    expect(treeCalls()[1].url).toContain('recursive=true&per_page=1000&page=2');
+    expect(treeCalls()[2].url).toContain('recursive=true&per_page=1000&page=3');
+  });
+
+  it('walks every page when the response carries no total_count (truncated fallback)', async () => {
+    const { listRepoTreeAtRef } = await import('../forgejo.service');
+    fm.enqueue({
+      tree: [{ path: 'p1.txt', type: 'blob', sha: 's1' }],
+      truncated: true,
+    });
+    fm.enqueue({
+      tree: [{ path: 'p2.txt', type: 'blob', sha: 's2' }],
+      truncated: true,
+    });
+    // Short final page — must NOT be mistaken for "done"; only the empty page
+    // that follows ends the walk.
+    fm.enqueue({
+      tree: [{ path: 'p3.txt', type: 'blob', sha: 's3' }],
+      truncated: true,
+    });
+    fm.enqueue({ tree: [], truncated: true });
+
+    const result = await listRepoTreeAtRef('big', 'ref_sha');
+    expect([...result.keys()].sort()).toEqual(['p1.txt', 'p2.txt', 'p3.txt']);
+    expect(treeCalls()).toHaveLength(4);
+  });
+
+  it('tolerates a null tree past the end of the listing', async () => {
+    const { listRepoTreeAtRef } = await import('../forgejo.service');
+    fm.enqueue({ tree: [{ path: 'a.txt', type: 'blob', sha: 's1' }], truncated: true });
+    fm.enqueue({ tree: null, truncated: true });
+
+    const result = await listRepoTreeAtRef('big', 'ref_sha');
+    expect(result.get('a.txt')).toBe('s1');
+  });
+
+  it('stops after a single page when the tree is not truncated', async () => {
+    const { listRepoTreeAtRef } = await import('../forgejo.service');
+    fm.enqueue({
+      tree: [{ path: 'only.txt', type: 'blob', sha: 's1' }],
+      truncated: false,
+      total_count: 1,
+    });
+
+    const result = await listRepoTreeAtRef('small', 'ref_sha');
+    expect(result.size).toBe(1);
+    expect(treeCalls()).toHaveLength(1);
+  });
+
+  it('gives up with a limit-naming error rather than paging forever', async () => {
+    const { listRepoTreeAtRef } = await import('../forgejo.service');
+    // A server that always claims there is more: the pager must bail out at the
+    // bound instead of looping.
+    for (let i = 0; i < 20; i++) {
+      fm.enqueue({ tree: [{ path: `f${i}.txt`, type: 'blob', sha: `s${i}` }], truncated: true });
+    }
+
+    await expect(listRepoTreeAtRef('runaway', 'ref_sha')).rejects.toThrow(/at most 2000 files/);
+    // Bounded: MAX_FILES_IN_BUNDLE * 4 entries / 1000 per page = 8 pages.
+    expect(treeCalls()).toHaveLength(8);
   });
 });
 
