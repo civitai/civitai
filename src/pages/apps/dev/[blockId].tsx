@@ -258,7 +258,7 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             domain={domain}
             maxBrowsingLevel={maxBrowsingLevel}
             tokenError={error != null}
-          tokenTerminal={terminal}
+            tokenTerminal={terminal}
             viewer={viewer}
             theme={theme}
             onConsentGranted={refresh}

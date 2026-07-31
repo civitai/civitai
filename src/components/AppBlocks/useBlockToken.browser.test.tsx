@@ -59,11 +59,13 @@ function mintOk(nth: number) {
   } as unknown as Response;
 }
 const mintFail = { ok: false, status: 500, json: async () => ({}) } as unknown as Response;
+/** A TERMINAL refusal — ban / mod-delist / scope revocation / domain gate. */
+const mintForbidden = { ok: false, status: 403, json: async () => ({}) } as unknown as Response;
 const mint429 = { ok: false, status: 429, json: async () => ({}) } as unknown as Response;
 
 /** Surfaces the hook's returned contract as observable DOM attributes. */
-function TokenProbe() {
-  const r = useBlockToken(install, context);
+function TokenProbe({ instanceId = INSTANCE_ID }: { instanceId?: string }) {
+  const r = useBlockToken({ blockInstanceId: instanceId } as unknown as BlockInstall, context);
   return (
     <div
       data-testid="probe"
@@ -399,5 +401,105 @@ describe('lifecycle', () => {
 
     await vi.advanceTimersByTimeAsync(TOKEN_TTL_MS + 60_000);
     expect(fetchSpy.mock.calls.length).toBe(atUnmount);
+  });
+});
+
+describe('identity scope — the hook can outlive the app instance', () => {
+  /**
+   * 🔴 The two standalone routes (`/apps/run/[slug]`, `/apps/dev/[blockId]`) call
+   * this hook from the PAGE component, and Next does NOT remount a page on a
+   * same-route dynamic-segment navigation — so the hook instance, and every ref
+   * in it, survives an app change. The model slot is already safe (it renders
+   * with `key={install.blockInstanceId}`), which is exactly why this needs its
+   * own coverage: the safe consumer would hide the bug.
+   *
+   * Retaining a token through a failed refresh is what makes this dangerous:
+   * before that, every failure nulled the token unconditionally.
+   */
+  test('🔴 never serves the PREVIOUS app instance token after the id changes', async () => {
+    const { rerender } = await renderWithProviders(<TokenProbe instanceId="bki_app_A" />);
+    await waitForToken('tok_1');
+
+    // 🔴 The new instance's mint HANGS (never resolves). This is what isolates
+    // the identity guard: with a mint that resolves — even one that fails — the
+    // failure path nulls the token by itself, so the assertion below would pass
+    // whether or not the guard exists. A mutation defeating the guard SURVIVED
+    // the first version of this test for exactly that reason. With nothing ever
+    // resolving, the ONLY thing that can clear appA's credential is the guard.
+    fetchSpy.mockImplementation(() => new Promise<Response>(() => undefined));
+
+    // Navigate to a different app. The hook is NOT remounted (no key upstream).
+    await rerender(<TokenProbe instanceId="bki_app_B" />);
+
+    // appA's credential must be gone IMMEDIATELY — not one frame later, and not
+    // "once the new mint resolves". A stale token here is handed to appB through
+    // BLOCK_INIT / TOKEN_REFRESH.
+    expect(readToken()).toBe('');
+
+    // Still gone while the new instance has resolved nothing at all.
+    await advance(5_000);
+    expect(readToken()).toBe('');
+  });
+
+  test('the new instance gets a FULL retry budget, not the old one remainder', async () => {
+    const { rerender } = await renderWithProviders(<TokenProbe instanceId="bki_app_A" />);
+    await waitForToken('tok_1');
+
+    // Burn appA's entire automatic budget.
+    respondWith(() => mintFail);
+    await advance(REFRESH_AT_MS);
+    for (let i = 0; i < MAX_REFRESH_RETRIES; i++) {
+      await advance(REFRESH_RETRY_BACKOFF_MS[i] + 5);
+    }
+    expect(readRetrying()).toBe(false);
+
+    // Switching apps must not inherit "budget already spent" — appB would then
+    // never retry at all.
+    await rerender(<TokenProbe instanceId="bki_app_B" />);
+    await advance(50);
+    let scheduled = 0;
+    for (let i = 0; i < MAX_REFRESH_RETRIES; i++) {
+      if (readRetrying()) scheduled++;
+      await advance(REFRESH_RETRY_BACKOFF_MS[i] + 5);
+    }
+    expect(scheduled).toBe(MAX_REFRESH_RETRIES);
+  });
+});
+
+describe('🔴 a TERMINAL mint refusal (403) is not a blip', () => {
+  test('drops the held token IMMEDIATELY and settles with no retries', async () => {
+    await renderWithProviders(<TokenProbe />);
+    await waitForToken('tok_1');
+    const before = fetchSpy.mock.calls.length;
+
+    // The user was banned / the app was delisted mid-session. The mint's 4xx is
+    // the revocation signal — the block-scope middleware does NOT re-check these
+    // per request, so continuing to serve the held (still-unexpired) token would
+    // extend authorization past a decision the server already made.
+    respondWith(() => mintForbidden);
+    await advance(REFRESH_AT_MS);
+
+    expect(readToken()).toBe('');
+    expect(readRetrying()).toBe(false);
+    expect(readTerminal()).toBe(true);
+
+    // 🔴 Exactly ONE mint POST — no 3-attempt backoff against a refusal that
+    // cannot change, and no 40s of pretending the app still works.
+    expect(fetchSpy.mock.calls.length).toBe(before + 1);
+    await advance(5 * 60_000);
+    expect(fetchSpy.mock.calls.length).toBe(before + 1);
+  });
+
+  test('a 500 with the SAME held token still retains and retries (the control)', async () => {
+    await renderWithProviders(<TokenProbe />);
+    await waitForToken('tok_1');
+
+    respondWith(() => mintFail);
+    await advance(REFRESH_AT_MS);
+
+    // Same token, same moment in its lifetime — only the status differs.
+    expect(readToken()).toBe('tok_1');
+    expect(readRetrying()).toBe(true);
+    expect(readTerminal()).toBe(false);
   });
 });

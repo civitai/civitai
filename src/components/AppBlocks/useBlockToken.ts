@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  decideRefreshRetry,
-  msUntilExpiry,
-  shouldRetainTokenOnFailure,
-} from './blockTokenRetry';
+import { decideRefreshRetry, msUntilExpiry, shouldRetainTokenOnFailure } from './blockTokenRetry';
+import type { MintError } from './blockTokenRetry';
 import type { BlockInstall, SlotContext } from './types';
 
 interface UseBlockTokenResult {
@@ -78,10 +75,7 @@ const MIN_REFRESH_MS = 30 * 1000;
  * `blockInstanceId`. If a caller needs to force a refresh on context change,
  * use the returned `refresh()`.
  */
-export function useBlockToken(
-  install: BlockInstall,
-  context: SlotContext
-): UseBlockTokenResult {
+export function useBlockToken(install: BlockInstall, context: SlotContext): UseBlockTokenResult {
   const [token, setToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -107,6 +101,16 @@ export function useBlockToken(
   // on every success, so a token that refreshes cleanly for hours always gets a
   // full budget the next time something breaks.
   const retryAttemptsRef = useRef<number>(0);
+  // 🔴 IDENTITY SCOPE. The blockInstanceId the currently-held token was minted
+  // for. Everything above (token, expiry, retry budget) belongs to exactly ONE
+  // instance, and this hook can OUTLIVE an instance change: the two standalone
+  // routes call it from the PAGE component, and Next does not remount a page on
+  // a same-route dynamic-segment navigation (/apps/run/appA -> /apps/run/appB),
+  // so these refs survive. Without this guard, retaining a token through a
+  // refresh failure right after such a navigation would hand appA's credential
+  // to appB via BLOCK_INIT/TOKEN_REFRESH. (The model slot is already safe — it
+  // renders with key={install.blockInstanceId}, forcing a fresh hook instance.)
+  const heldInstanceRef = useRef<string | null>(null);
   // A request (INCLUDING the 60s jittered 429 pause inside fetchOnce) is in
   // flight. 🔴 The AUTOMATIC callers gate on this so they never abort a live
   // request: `requestToken` begins by aborting the previous controller, and
@@ -192,7 +196,14 @@ export function useBlockToken(
           if (signal.aborted) throw new Error('aborted');
           continue;
         }
-        if (!res.ok) throw new Error(`block-tokens HTTP ${res.status}`);
+        if (!res.ok) {
+          // Carry the STATUS, not just a message. Retention + retry are both
+          // status-aware now (a 403 means revoked, not "try again"), and a
+          // stringly-typed error would force them to re-parse this text.
+          const err = new Error(`block-tokens HTTP ${res.status}`) as MintError;
+          err.status = res.status;
+          throw err;
+        }
         return (await res.json()) as TokenResponse;
       }
       throw new Error('block-tokens unreachable');
@@ -203,6 +214,8 @@ export function useBlockToken(
       if (controller.signal.aborted || !mountedRef.current) return;
       // Recovered — hand the next failure episode a full retry budget.
       retryAttemptsRef.current = 0;
+      // Stamp which instance this credential belongs to (see heldInstanceRef).
+      heldInstanceRef.current = instanceId;
       tokenRef.current = data.token;
       expiresAtRef.current = data.expiresAt;
       setToken(data.token);
@@ -222,10 +235,7 @@ export function useBlockToken(
       setPending(false);
 
       const expiresAtMs = new Date(data.expiresAt).getTime();
-      const refreshDelay = Math.max(
-        expiresAtMs - Date.now() - REFRESH_LEAD_MS,
-        MIN_REFRESH_MS
-      );
+      const refreshDelay = Math.max(expiresAtMs - Date.now() - REFRESH_LEAD_MS, MIN_REFRESH_MS);
       refreshAtRef.current = Date.now() + refreshDelay;
       if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
       refreshTimeoutRef.current = setTimeout(() => {
@@ -243,6 +253,10 @@ export function useBlockToken(
       const e = err instanceof Error ? err : new Error(String(err));
       setError(e);
       setPending(false);
+      // undefined for a network/abort failure (no HTTP response) — which is
+      // treated as TRANSIENT, i.e. retained + retried. Only an explicit terminal
+      // status opts out.
+      const mintStatus = (e as MintError).status;
 
       // ── REFRESH-FAILURE RECOVERY ────────────────────────────────────────────
       // 🔴 Before this, the failure branch set `error`, nulled the token and
@@ -259,6 +273,7 @@ export function useBlockToken(
         token: tokenRef.current,
         expiresAt: expiresAtRef.current,
         now,
+        mintStatus,
       });
       if (!retained) {
         tokenRef.current = null;
@@ -269,7 +284,7 @@ export function useBlockToken(
 
       // (2) Schedule a BOUNDED automatic re-mint, or settle. Never unbounded:
       //     /api/v1/block-tokens is rate-limited 60/min per (user, instance).
-      const decision = decideRefreshRetry({ attempts: retryAttemptsRef.current });
+      const decision = decideRefreshRetry({ attempts: retryAttemptsRef.current, mintStatus });
       if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
       refreshTimeoutRef.current = null;
 
@@ -385,9 +400,30 @@ export function useBlockToken(
     await requestToken();
   }, [requestToken]);
 
+  // 🔴 IDENTITY SCOPE, ENFORCED. Drop everything held the moment the instance
+  // changes. Done synchronously DURING RENDER (not in an effect) so no consumer
+  // can observe even a single frame holding the previous app's credential —
+  // effects run after commit, which would be one render too late. Mutating refs
+  // here is the same pattern `contextRef`/`requestTokenIfIdleRef` already use,
+  // and it is idempotent under StrictMode's double render.
+  if (heldInstanceRef.current !== null && heldInstanceRef.current !== install.blockInstanceId) {
+    heldInstanceRef.current = null;
+    tokenRef.current = null;
+    expiresAtRef.current = null;
+    // A new app gets a full recovery budget, not the previous one's remainder.
+    retryAttemptsRef.current = 0;
+  }
+  // The `token`/`expiresAt` STATE still holds the previous instance's values
+  // until the new mint resolves (a plain setState can't be issued from render),
+  // so gate what we hand out on the identity actually matching. Consumers then
+  // see `token: null` and render their loading state, exactly as on a cold mount.
+  const tokenMatchesInstance = heldInstanceRef.current === install.blockInstanceId;
+  const scopedToken = tokenMatchesInstance ? token : null;
+  const scopedExpiresAt = tokenMatchesInstance ? expiresAt : null;
+
   return {
-    token,
-    expiresAt,
+    token: scopedToken,
+    expiresAt: scopedExpiresAt,
     error,
     pending,
     needsConsent,
@@ -398,7 +434,7 @@ export function useBlockToken(
     // The mint failed, nothing usable is left, and no automatic attempt is
     // coming. This — NOT a bare `error` — is what a consumer may act
     // destructively on.
-    terminal: error != null && token == null && !retrying,
+    terminal: error != null && scopedToken == null && !retrying,
     refresh,
   };
 }

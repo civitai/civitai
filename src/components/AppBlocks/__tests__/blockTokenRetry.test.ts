@@ -2,7 +2,9 @@ import { describe, expect, test } from 'vitest';
 import {
   MAX_REFRESH_RETRIES,
   REFRESH_RETRY_BACKOFF_MS,
+  TERMINAL_MINT_STATUSES,
   decideRefreshRetry,
+  isTerminalMintStatus,
   msUntilExpiry,
   shouldRetainTokenOnFailure,
 } from '~/components/AppBlocks/blockTokenRetry';
@@ -117,5 +119,51 @@ describe('msUntilExpiry — the settled-token sweep deadline', () => {
   test('returns null when there is no usable expiry to sweep at', () => {
     expect(msUntilExpiry(null, now)).toBeNull();
     expect(msUntilExpiry('nonsense', now)).toBeNull();
+  });
+});
+
+describe('🔴 terminal mint refusals — never retry, never keep serving the token', () => {
+  const now = 1_700_000_000_000;
+  const live = { token: 'tok', expiresAt: new Date(now + 5 * 60_000).toISOString(), now };
+
+  test('a terminal status settles immediately, spending NO retries', () => {
+    for (const status of TERMINAL_MINT_STATUSES) {
+      expect(decideRefreshRetry({ attempts: 0, mintStatus: status })).toEqual({ kind: 'settled' });
+    }
+  });
+
+  test('🔴 a terminal status REFUSES to retain an otherwise-live token', () => {
+    // Without this the block would keep a signature-valid, unexpired credential
+    // for the rest of its lifetime after a ban / mod-delist / scope revocation —
+    // an authorization extension introduced by a resilience feature. The mint's
+    // 4xx IS the revocation signal for those (the runtime middleware only
+    // re-checks uninstall/disable).
+    for (const status of TERMINAL_MINT_STATUSES) {
+      expect(shouldRetainTokenOnFailure({ ...live, mintStatus: status })).toBe(false);
+    }
+    // Control: the same token IS retained on a transient failure.
+    expect(shouldRetainTokenOnFailure(live)).toBe(true);
+  });
+
+  test('TRANSIENT failures keep the full retry + retention behaviour', () => {
+    // 5xx, 429 (has its own jittered in-band pause), and network/abort
+    // (status undefined) must all stay retryable and retainable.
+    for (const status of [undefined, 429, 500, 502, 503, 504]) {
+      expect(decideRefreshRetry({ attempts: 0, mintStatus: status }).kind).toBe('retry');
+      expect(shouldRetainTokenOnFailure({ ...live, mintStatus: status })).toBe(true);
+    }
+  });
+
+  test('429 is deliberately NOT terminal', () => {
+    // It is the one 4xx that explicitly means "try again later", and fetchOnce
+    // already honours it with a jittered ~60s in-band pause.
+    expect(isTerminalMintStatus(429)).toBe(false);
+    expect(TERMINAL_MINT_STATUSES).not.toContain(429);
+  });
+
+  test('isTerminalMintStatus is closed over the enumerated set', () => {
+    expect(isTerminalMintStatus(undefined)).toBe(false);
+    for (const s of [200, 418, 500, 502, 503]) expect(isTerminalMintStatus(s)).toBe(false);
+    for (const s of TERMINAL_MINT_STATUSES) expect(isTerminalMintStatus(s)).toBe(true);
   });
 });

@@ -48,6 +48,38 @@ export const MAX_REFRESH_RETRIES = 3;
  */
 export const REFRESH_RETRY_BACKOFF_MS: readonly number[] = [2_000, 8_000, 30_000];
 
+/**
+ * Mint failures the server will keep refusing. Retrying cannot help — and, the
+ * security-relevant half, CONTINUING TO SERVE the held token would extend
+ * authorization past a decision the server has already made.
+ *
+ * 🔴 WHY THIS EXISTS. The mint enforces ban, moderator delist ("Block is not
+ * approved"), account-level app access, per-viewer scope narrowing, and the
+ * `.red` domain gate — and for most of those the block-scope middleware has NO
+ * runtime re-check (only uninstall/disable are re-checked live, via
+ * `BlockRevocation`). So the mint's 4xx IS the revocation signal. Before this
+ * PR, any mint failure unmounted the block within ~0s, which incidentally
+ * destroyed the block's in-memory copy of the JWT. Retention is right for a
+ * transient 5xx/network blip and WRONG here: it would keep a signature-valid,
+ * unexpired credential live for the rest of its lifetime (~2 min normally, up to
+ * the full ~15 min if a `visibilitychange` mint is what failed, and up to 4h for
+ * a dev-tunnel token). Status-blind retention would have been an authorization
+ * extension introduced by a resilience feature.
+ *
+ * 409/422 are included as "the server rejected this request on its merits";
+ * 429 is deliberately ABSENT (it is explicitly transient and already has its own
+ * jittered in-band pause), as is every 5xx.
+ */
+export const TERMINAL_MINT_STATUSES: readonly number[] = [401, 403, 404, 409, 422];
+
+/** An Error carrying the mint response's HTTP status (absent for network/abort). */
+export type MintError = Error & { status?: number };
+
+/** True when the mint's HTTP status means "refused, and will stay refused". */
+export function isTerminalMintStatus(status: number | undefined): boolean {
+  return status !== undefined && TERMINAL_MINT_STATUSES.includes(status);
+}
+
 export type RefreshRetryDecision =
   /** Arm a backoff timer for another automatic attempt. */
   | {
@@ -68,7 +100,16 @@ export type RefreshRetryDecision =
  * `attempts` is the number of automatic attempts ALREADY performed in this
  * failure episode (0 on the first failure after a success).
  */
-export function decideRefreshRetry(args: { attempts: number }): RefreshRetryDecision {
+export function decideRefreshRetry(args: {
+  attempts: number;
+  /** HTTP status of the failed mint, when the failure was an HTTP response. */
+  mintStatus?: number;
+}): RefreshRetryDecision {
+  // 🔴 A terminal refusal settles IMMEDIATELY. Retrying a 403 cannot succeed:
+  // it just burns 3 more POSTs against a rate-limited endpoint and delays the
+  // honest terminal state by ~40s (on the model slot, 40s of animated skeleton
+  // where the documented contract is to collapse instantly).
+  if (isTerminalMintStatus(args.mintStatus)) return { kind: 'settled' };
   const attempts = Math.max(0, Math.floor(args.attempts));
   if (attempts >= MAX_REFRESH_RETRIES) return { kind: 'settled' };
   const delayMs =
@@ -104,8 +145,14 @@ export function shouldRetainTokenOnFailure(args: {
   token: string | null;
   expiresAt: string | null;
   now: number;
+  /** HTTP status of the failed mint, when the failure was an HTTP response. */
+  mintStatus?: number;
 }): boolean {
-  const { token, expiresAt, now } = args;
+  const { token, expiresAt, now, mintStatus } = args;
+  // 🔴 NEVER retain past a terminal refusal — see TERMINAL_MINT_STATUSES. This is
+  // the difference between "the network blipped, keep working" and "you have been
+  // banned/delisted, keep working anyway".
+  if (isTerminalMintStatus(mintStatus)) return false;
   if (!token || !expiresAt) return false;
   const ms = new Date(expiresAt).getTime();
   if (!Number.isFinite(ms)) return false;
