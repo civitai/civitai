@@ -11,6 +11,7 @@ import {
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
   resolveResourcePickerRequest,
+  resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
@@ -109,6 +110,65 @@ describe('resolveUngrantableConsentScopes (Issue B — un-grantable dev-preview 
     expect(
       resolveUngrantableConsentScopes(['apps:storage:read'], ['models:read:self'], undefined)
     ).toEqual(['apps:storage:read']);
+  });
+});
+
+describe('resolveReviewConsentNotice (mod review — silent REQUEST_CONSENT → visible notice)', () => {
+  const granted = ['models:read:self', 'user:read:self', 'collections:read:self'];
+
+  it('notifies and NAMES the un-granted scopes the review mint stripped', () => {
+    expect(resolveReviewConsentNotice(['buzz:read:self'], granted)).toEqual({
+      notify: true,
+      scopes: ['buzz:read:self'],
+    });
+  });
+
+  it('notifies with NO hint at all — the regression: the fire-and-forget SDK call sends none', () => {
+    // Unlike the prod path (which stays silent because it cannot tell "already
+    // granted" from "clamped"), review has nothing to tell apart: consent can
+    // never be granted here, so a hint-less request is still a dead end.
+    expect(resolveReviewConsentNotice(undefined, granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice([], granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice('nope', granted)).toEqual({ notify: true, scopes: [] });
+    expect(resolveReviewConsentNotice([1, null, ''], granted)).toEqual({
+      notify: true,
+      scopes: [],
+    });
+  });
+
+  it('stays SILENT for the benign already-granted re-request (nothing is actually blocked)', () => {
+    expect(resolveReviewConsentNotice(['models:read:self'], granted)).toEqual({
+      notify: false,
+      scopes: [],
+    });
+    expect(resolveReviewConsentNotice(['models:read:self', 'user:read:self'], granted)).toEqual({
+      notify: false,
+      scopes: [],
+    });
+  });
+
+  it('🔴 drops UNKNOWN scope strings from the mod-facing set (untrusted manifest text)', () => {
+    // The hint comes from the reviewed app's own frame. Only the fixed platform
+    // vocabulary may ever reach a string rendered at the moderator.
+    const out = resolveReviewConsentNotice(
+      ['<img src=x onerror=alert(1)>', 'totally:made:up', 'buzz:read:self'],
+      granted
+    );
+    expect(out.notify).toBe(true);
+    expect(out.scopes).toEqual(['buzz:read:self']);
+  });
+
+  it('still notifies (generically) when EVERY un-granted scope is unknown', () => {
+    const out = resolveReviewConsentNotice(['totally:made:up'], granted);
+    expect(out).toEqual({ notify: true, scopes: [] });
+  });
+
+  it('dedupes + sorts the named scopes and ignores the ones already granted', () => {
+    const out = resolveReviewConsentNotice(
+      ['social:tip:self', 'buzz:read:self', 'social:tip:self', 'models:read:self'],
+      granted
+    );
+    expect(out.scopes).toEqual(['buzz:read:self', 'social:tip:self']);
   });
 });
 

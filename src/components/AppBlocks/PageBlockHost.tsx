@@ -18,6 +18,7 @@ import {
   resolveImageUploadRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
+  resolveReviewConsentNotice,
   resolveUngrantableConsentScopes,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
@@ -694,6 +695,10 @@ export function PageBlockHost({
     });
   }, [status, autoRetrySettled, appBlockId, blockInstanceId]);
 
+  // MOD REVIEW SANDBOX — emit-once latch for the reduced-permissions notice in
+  // the consent handler below. ONE per host MOUNT (the review chrome remounts the
+  // host on a render-only ↔ run-for-real flip, so each mode gets its own notice).
+  const reviewConsentNoticeShownRef = useRef<boolean>(false);
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when
@@ -713,10 +718,6 @@ export function PageBlockHost({
   // the void and the block hung on "confirm in the Civitai dialog".
   useEffect(() => {
     const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', (payload) => {
-      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
-      // let untrusted review code pop a permission modal at the mod. Fire-and-
-      // forget ⇒ dropping it never hangs the block.
-      if (reviewMode) return;
       // PageBlockHost's local Status carries an extra terminal `'error'` variant
       // (a hard mint failure) the shared gate's HostStatus union doesn't model.
       // The gate only ever grants when status === 'ready', and `'error'` is a
@@ -727,6 +728,46 @@ export function PageBlockHost({
       // Only act on a post-handshake request; a pre-handshake block never gets a
       // modal OR a toast (same posture as the consent gate itself).
       if (gateStatus !== 'ready') return;
+
+      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
+      // let untrusted review code pop a permission modal at the mod. That stays
+      // absolute; the request is still fire-and-forget (dropping the GRANT never
+      // hangs the block). What changed: dropping it SILENTLY meant the reviewer
+      // got nothing at all — no modal, no toast, no error — while the app parked
+      // forever on its consent card, which reads as "this app is broken" rather
+      // than "the preview deliberately withholds this permission". So review mode
+      // now emits a PASSIVE, non-interactive notice (never a modal, nothing to
+      // click, no scope is granted) pointing at the existing opt-in escape hatch.
+      if (reviewMode) {
+        const notice = resolveReviewConsentNotice(payload?.scopes, grantedScopes);
+        if (!notice.notify) return;
+        // 🔴 ANTI-SPAM (required, not a nicety): the reviewed app is UNTRUSTED
+        // code and can post REQUEST_CONSENT in a loop, so one toast per message
+        // would let a hostile submission carpet-bomb the reviewing mod's screen
+        // (and bury the review chrome). Latch it to ONE notice per host mount.
+        // The stable `id` is a second, independent guard — Mantine dedupes a
+        // notification that is already displayed even if the latch is bypassed.
+        if (reviewConsentNoticeShownRef.current) return;
+        reviewConsentNoticeShownRef.current = true;
+        // `notice.scopes` is filtered to the known block-scope vocabulary, so no
+        // attacker-controlled text can reach this string; Mantine renders
+        // `message` as React text (escaped) — never as HTML.
+        const what =
+          notice.scopes.length > 0
+            ? `This app requested ${notice.scopes.join(', ')}.`
+            : 'This app requested a permission it doesn’t have here.';
+        const how = reviewRunForReal
+          ? 'Review previews always run with reduced permissions.'
+          : 'Review previews run with reduced permissions — use “Run for real…” to grant the app its real permissions.';
+        showNotification({
+          id: `review-consent-${appBlockId}`,
+          color: 'yellow',
+          title: 'Permission unavailable in review',
+          message: `${what} ${how}`,
+        });
+        return;
+      }
+
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
         dialogStore.trigger({
@@ -772,6 +813,7 @@ export function PageBlockHost({
     appName,
     onConsentGranted,
     reviewMode,
+    reviewRunForReal,
   ]);
 
   // Deep-link bridge — block requests in-page navigation. The block may push a

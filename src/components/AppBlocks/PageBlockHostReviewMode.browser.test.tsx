@@ -3,6 +3,10 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+// Type-only (erased at runtime, so it can't defeat vi.mock hoisting) — lets the
+// `importOriginal` generic below be written without an inline `import()` type,
+// which the repo's `consistent-type-imports` rule forbids.
+import type * as MantineNotifications from '@mantine/notifications';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — PageBlockHost `reviewMode` read-only gate.
@@ -35,6 +39,14 @@ const mocks = vi.hoisted(() => ({
 // AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
 // moderator gate; render the real host without a CivitaiSessionProvider.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+// Spy on the toast so the reviewMode consent-feedback path is assertable without
+// mounting the full Notifications provider. Preserve the module's other exports.
+const showNotificationSpy = vi.fn();
+vi.mock('@mantine/notifications', async (importOriginal) => {
+  const actual = await importOriginal<typeof MantineNotifications>();
+  return { ...actual, showNotification: (args: unknown) => showNotificationSpy(args) };
+});
 
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
@@ -170,6 +182,7 @@ beforeEach(() => {
   mocks.storageSet.mockClear();
   mocks.sharedAppend.mockClear();
   mocks.wildcard.mockClear();
+  showNotificationSpy.mockClear();
 });
 
 describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, never reach the mutation', () => {
@@ -287,6 +300,142 @@ describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, n
     await vi.waitFor(() => expect(mocks.viewer).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(l.last('VIEWER_RESULT')).toBeTruthy());
     l.stop();
+  });
+});
+
+describe('PageBlockHost reviewMode — REQUEST_CONSENT gives the mod feedback, never a modal', () => {
+  // THE BUG: reviewMode dropped REQUEST_CONSENT with a bare `return` ABOVE the
+  // "permission unavailable" toast, so a moderator clicking a consent-gated action
+  // in the review preview got NOTHING — no modal, no toast, no error — while the
+  // app parked forever on its consent card. The modal ban is correct and stays
+  // (a grant would re-mint the mod's token with WIDER scopes at the request of
+  // unapproved code, and the review mint's scope-stripping is deliberate); only
+  // the silence is fixed, with a passive notice pointing at "Run for real…".
+  const lastNotification = () =>
+    showNotificationSpy.mock.calls.at(-1)?.[0] as
+      | { id?: string; title?: string; message?: string }
+      | undefined;
+
+  test('a consent request the preview can never grant surfaces a notice (and NO consent modal)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    // Re-post inside waitFor: `data-block-ready` can lead the host's message-gate
+    // state by a tick, and a dropped fire-and-forget message is never retried.
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    const notice = lastNotification();
+    // Names the specific requested scope (useful to a reviewer) …
+    expect(notice?.message).toContain('buzz:read:self');
+    // … and points at the existing opt-in escape hatch.
+    expect(notice?.message).toContain('Run for real');
+    // 🔴 The security invariant: untrusted review code still cannot pop a
+    // permission modal at the moderator.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('a hint-less REQUEST_CONSENT (the fire-and-forget SDK call) still notifies', async () => {
+    // `useRequestConsent()` sends no requestId and need not send a `scopes` hint.
+    // The prod path stays silent without one (it cannot tell "already granted"
+    // from "clamped"); in review there is nothing to tell apart — consent is
+    // structurally unavailable — so the mod is told regardless.
+    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', {});
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('🔴 ANTI-SPAM: a REQUEST_CONSENT flood produces exactly ONE notice', async () => {
+    // The reviewed app is UNTRUSTED code and can post in a loop; one toast per
+    // message would let a hostile submission carpet-bomb the reviewing mod's
+    // screen and bury the review chrome. The transport's generic 30-msg/s limiter
+    // is NOT sufficient on its own — 30 toasts a second is still a carpet bomb —
+    // so the host latches the notice to one per mount. The flood below is
+    // deliberately kept UNDER that transport budget so this asserts the LATCH.
+    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    for (let i = 0; i < 4; i++) {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+      postFromBlock('REQUEST_CONSENT', {});
+    }
+    await new Promise((r) => setTimeout(r, 150));
+    expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('🔴 the mod-facing copy can only contain KNOWN scope strings (untrusted manifest text is dropped)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', {
+        scopes: ['<img src=x onerror=alert(1)>', 'totally:made:up', 'buzz:read:self'],
+      });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    const message = lastNotification()?.message ?? '';
+    expect(message).toContain('buzz:read:self');
+    expect(message).not.toContain('onerror');
+    expect(message).not.toContain('totally:made:up');
+  });
+
+  test('a benign re-request of an ALREADY-GRANTED scope stays silent', async () => {
+    // baseProps.declaredScopes carries models:read:self with nothing withheld, so
+    // the block already holds it — nothing is blocked, so nothing to report.
+    renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    postFromBlock('REQUEST_CONSENT', { scopes: ['models:read:self'] });
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(showNotificationSpy).not.toHaveBeenCalled();
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  test('in run-for-real the copy does NOT tell the mod to use "Run for real…" (they already did)', async () => {
+    renderWithProviders(
+      <PageBlockHost {...baseProps} reviewMode reviewRunForReal onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    const message = lastNotification()?.message ?? '';
+    expect(message).toContain('buzz:read:self');
+    expect(message).not.toContain('Run for real');
+  });
+
+  test('the NON-review path is unchanged (generic #3190 toast, and the modal path still works)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+
+    await vi.waitFor(() => {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['buzz:read:self'] });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // The prod un-grantable toast, NOT the review copy.
+    const notice = lastNotification();
+    expect(notice?.title).toBe('Permission unavailable');
+    expect(notice?.message).not.toContain('Run for real');
+    expect(notice?.message).not.toContain('buzz:read:self');
   });
 });
 

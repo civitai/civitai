@@ -3,6 +3,8 @@
 // (no RTL — civitai-web's unit project runs `environment: 'node'` and only
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
+import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+
 export type PageHostStatus =
   | 'loading'
   | 'ready'
@@ -64,6 +66,58 @@ export function resolveUngrantableConsentScopes(
   return Array.from(
     new Set(requested.filter((s: string) => !granted.has(s) && !missing.has(s)))
   ).sort();
+}
+
+/** What a reviewMode REQUEST_CONSENT should surface to the moderator. */
+export type ReviewConsentNotice = {
+  /** Whether the mod gets a (passive, non-interactive) notice at all. */
+  notify: boolean;
+  /**
+   * The requested scopes safe to NAME in that notice: the un-granted subset,
+   * filtered to the known block-scope vocabulary. Empty ⇒ use generic copy.
+   */
+  scopes: string[];
+};
+
+/**
+ * MOD REVIEW SANDBOX — decide what a `reviewMode` REQUEST_CONSENT tells the
+ * moderator. The review host NEVER opens a consent modal (a grant would re-mint
+ * the mod's token with WIDER scopes at the request of unapproved code), and the
+ * review mint deliberately strips the app's scopes — so in review a consent
+ * round-trip can NEVER resolve. Dropping it silently (the old behaviour) left the
+ * app parked on its consent card with zero feedback at the reviewer.
+ *
+ * Differs from `resolveUngrantableConsentScopes` in exactly one way, and that
+ * difference is the bug this fixes: with NO usable `scopes` hint the prod path
+ * must stay silent (it can't tell "already granted" from "clamped"), but in
+ * review there is nothing to tell apart — consent is structurally unavailable, so
+ * a hint-less request is still a dead end and still deserves the notice. (The
+ * SDK's `useRequestConsent()` is fire-and-forget and need not send a hint at all.)
+ *
+ * The one case that stays SILENT is the benign one the hint proves: every
+ * requested scope is already granted, so nothing is actually blocked.
+ *
+ * 🔴 `rawScopesHint` is UNTRUSTED (it comes from the reviewed app's own frame, via
+ * its manifest). The returned `scopes` are therefore filtered through
+ * `isKnownBlockScope`, so only the fixed platform vocabulary can ever reach a
+ * moderator-facing string — an attacker can't smuggle arbitrary display text into
+ * a toast aimed at the reviewer. (Callers must still render it as React text.)
+ */
+export function resolveReviewConsentNotice(
+  rawScopesHint: unknown,
+  grantedScopes: string[]
+): ReviewConsentNotice {
+  const requested = Array.isArray(rawScopesHint)
+    ? rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0)
+    : [];
+  if (requested.length === 0) return { notify: true, scopes: [] };
+
+  const granted = new Set<string>(grantedScopes);
+  const ungranted = Array.from(new Set(requested.filter((s) => !granted.has(s)))).sort();
+  // Benign: the block re-requested scopes it already holds — nothing is blocked.
+  if (ungranted.length === 0) return { notify: false, scopes: [] };
+
+  return { notify: true, scopes: ungranted.filter((s) => isKnownBlockScope(s)) };
 }
 
 // ── OPEN_RESOURCE_PICKER (Design 1 host-chrome resource picker) ──────────────
