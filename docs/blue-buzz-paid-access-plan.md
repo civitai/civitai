@@ -51,25 +51,34 @@ if (buzzType === 'blue')
 Today it is belt-and-braces — the controller passes `getAllowedAccountTypes(ctx.features)[0]`, which resolves
 to green or yellow by domain, so blue is never offered in the first place.
 
-## Decision needed: single currency, or drain blue then top up?
+## Decided: the buyer picks one currency
 
-This is the one open design question, and the client is already built for the harder option.
+@dev: "users can select to pay with blue or green on civitai.com, and blue or yellow on civitai.red."
 
-**Option A — single currency, buyer picks (recommended for v1).**
-`fromAccountTypes` stays a one-element array. Choose blue, pay entirely in blue, or the transaction fails on
-insufficient funds. One source, one destination, one transaction. Matches "same price, different currency"
-exactly.
+So the choice is **blue OR the domain currency** — never a blend, never a fallback. Confirmed against the
+code: `getAllowedAccountTypes` is purely domain-driven (`isGreen ? 'green' : 'yellow'`, and `isGreen` is the
+green color domain), and `earlyAccessPurchase` already passes a **one-element** `fromAccountTypes`. A
+purchase is single-currency today; blue just adds a second option to choose from.
 
-**Option B — drain blue, top up from yellow.**
-`BuzzTransactionButton` already computes a spend distribution across multiple types, so the UI supports it.
-But the payment then has two source colours and `toAccountType` is singular — the creator would have to be
-paid in two transactions, or the service needs a split payout. **And getting this wrong is the loophole
-above**: `fromAccountTypes: ['blue','yellow']` with the default destination silently converts blue to yellow.
+| Domain              | Buyer may pay with |
+| ------------------- | ------------------ |
+| civitai.com (green) | blue **or** green  |
+| civitai.red (red)   | blue **or** yellow |
 
-Recommend A, and note that **`getAllowedAccountTypes` must not be used on the charge path**:
-`getAllowedAccountTypes(features, ['blue'])` returns `['blue', 'yellow']`, and spend drains in array order —
-so it would spend blue first for everyone, with no choice involved. It remains the right helper for deciding
-what the client may _offer_.
+This keeps the loophole shut by construction: one source colour in, the same colour out
+(`toAccountType`), one transaction. No split payout, no partial conversion.
+
+**Two traps this rules out, both worth stating because the obvious implementation hits them:**
+
+- **Don't use `getAllowedAccountTypes` on the charge path.** `getAllowedAccountTypes(features, ['blue'])`
+  returns `['blue', 'green']`, and spend drains in array order — every buyer would silently spend blue first,
+  with no opt-in and no choice. It stays the right helper for deciding what the client may _offer_.
+- **`BuzzTransactionButton` distributes, it doesn't choose.** It takes `accountTypes`, fetches balances and
+  computes a spend distribution across them (`getBuzzTypeDistribution`) — pass it `['blue','green']` and it
+  drains rather than asks. The purchase modal therefore needs **two buttons, each with a one-element
+  `accountTypes`** ("Pay with Blue Buzz" / "Pay with Green Buzz"), which reuses the component's per-currency
+  balance and insufficient-funds handling unchanged. Rendering one button per accepted currency is the whole
+  UI change.
 
 ## Storage
 
