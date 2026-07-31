@@ -7,7 +7,7 @@ import {
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
   selectRelatedListings,
-} from '~/components/Apps/relatedListings';
+} from '~/components/Apps/related-listings';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   isMarketplaceCategory,

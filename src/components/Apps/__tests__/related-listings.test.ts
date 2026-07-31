@@ -4,7 +4,7 @@ import {
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
   selectRelatedListings,
-} from '~/components/Apps/relatedListings';
+} from '~/components/Apps/related-listings';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
