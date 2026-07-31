@@ -196,6 +196,58 @@ export const CAP_TIER_LABELS: Record<CapTier, string> = {
   gold: 'Gold',
 };
 
+/** The tier above `tier`, or null when there's nothing left to sell (gold, or an unknown tier). */
+export function nextCapTier(tier: string | null | undefined): CapTier | null {
+  // founder isn't in CAP_TIERS — it charges as bronze, so it upgrades like bronze.
+  const current = tier === 'founder' ? 'bronze' : (tier as CapTier);
+  const i = CAP_TIERS.indexOf(current);
+  if (i < 0) return CAP_TIERS[1] ?? null; // unknown/lapsed prices as free, so the next step is bronze
+  return i < CAP_TIERS.length - 1 ? CAP_TIERS[i + 1] : null;
+}
+
+/**
+ * The row a creator should see highlighted as "you". founder isn't in CAP_TIERS (it charges as bronze), and
+ * an unknown or lapsed tier prices as free — without this, those creators open the table and find no row
+ * marked as theirs.
+ */
+export function highlightCapTier(tier: string | null | undefined): CapTier {
+  if (tier === 'founder') return 'bronze';
+  return CAP_TIERS.includes(tier as CapTier) ? (tier as CapTier) : 'free';
+}
+
+/**
+ * Per-tier ceilings for ONE input, computed by the caller with the same expression that bounds that
+ * input. Passing the function rather than a precomputed table is what stops the upsell from quoting a
+ * number the field beside it contradicts — model type and media type are already baked into .
+ */
+export function capUpsellRows(
+  capFor: (tier: CapTier) => number
+): { tier: CapTier; label: string; cap: number }[] {
+  return CAP_TIERS.map((tier) => ({ tier, label: CAP_TIER_LABELS[tier], cap: capFor(tier) }));
+}
+
+/** How close to the ceiling a value has to be before the upgrade nudge is worth showing. */
+export const CAP_UPSELL_THRESHOLD = 0.8;
+
+/**
+ * Whether to offer "want to charge more?" beside a capped input. True only once the creator is actually
+ * pressing against the ceiling — an empty or comfortably-low value gets no nudge, and neither does a tier
+ * with nothing above it. Shared so the onsite form and Creator Studio surface it at the same moment.
+ */
+export function shouldUpsellCap({
+  value,
+  cap,
+  tier,
+}: {
+  value: number | null | undefined;
+  cap: number;
+  tier: string | null | undefined;
+}): boolean {
+  if (!nextCapTier(tier)) return false;
+  if (!Number.isFinite(cap) || cap <= 0) return false;
+  return (value ?? 0) >= cap * CAP_UPSELL_THRESHOLD;
+}
+
 /** One tier's ceilings on one media axis. `null` = unlimited (Infinity doesn't survive serialization). */
 export type TierCapAmounts = {
   /** Per-generation licensing fee ceilings, in Buzz. */

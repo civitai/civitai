@@ -24,6 +24,7 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 
+import { CapUpsell } from '~/components/Buzz/CapUpsell';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
@@ -1025,8 +1026,17 @@ export function ModelVersionUpsertForm({
                             <Text size="xs" c="yellow.5">
                               This price is above your membership&apos;s{' '}
                               {paidAccessCap.toLocaleString()} Buzz cap. You can keep or lower it,
-                              but not raise it — upgrade to charge more.
+                              but not raise it.
                             </Text>
+                          )}
+                          {!currentUser?.isModerator && (
+                            <CapUpsell
+                              value={paidAccessConfig?.accessPrice}
+                              cap={tierPriceCap}
+                              capTier={feeCapTier}
+                              capFor={(t) => maxPaidAccessPrice(t, feeMediaType)}
+                              title="Price for access"
+                            />
                           )}
                           {!isGenOnly && (
                             <>
@@ -1224,10 +1234,20 @@ export function ModelVersionUpsertForm({
                   </Text>
                 </Group>
               </Input.Wrapper>
+              {!currentUser?.isModerator && (
+                <CapUpsell
+                  value={feeRatio.buzz}
+                  cap={maxFeeBuzzForRatio(feeCapTier, model?.type, feeRatio.images, feeMediaType)}
+                  capTier={feeCapTier}
+                  capFor={(t) => maxFeeBuzzForRatio(t, model?.type, feeRatio.images, feeMediaType)}
+                  title="Licensing fee"
+                  perLabel={`${feeRatio.images} generation${feeRatio.images === 1 ? '' : 's'}`}
+                />
+              )}
               {currentLicensingFee > licensingFeeCap && (
                 <Text size="xs" c="yellow.5">
                   This fee is above your membership&apos;s {licensingFeeCap} Buzz cap for this model
-                  type. You can keep or lower it, but not raise it — upgrade to charge more.
+                  type. You can keep or lower it, but not raise it.
                 </Text>
               )}
               {showLicensingFeeSettlementCurrency && (

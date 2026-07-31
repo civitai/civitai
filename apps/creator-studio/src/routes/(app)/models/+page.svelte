@@ -49,6 +49,7 @@
   } from '$lib/monetization/fee';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
+  import CapUpsell from '$lib/components/CapUpsell.svelte';
   import NumberInput from '$lib/components/NumberInput.svelte';
   import PaidAccessBulkBar from '$lib/components/PaidAccessBulkBar.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
@@ -1020,6 +1021,22 @@
             </Select.Root>
             <span class="text-xs text-dark-2">generations</span>
             <Button type="submit" size="sm" class="ml-auto">Save fee</Button>
+            <div class="w-full">
+              <CapUpsell
+                value={feeBuzz}
+                cap={maxFeeBuzzForRatio(
+                  data.caps.capTier,
+                  editingType,
+                  Number(feeImages),
+                  editingMediaType
+                )}
+                capTier={data.caps.capTier}
+                capFor={(t) =>
+                  maxFeeBuzzForRatio(t, editingType, Number(feeImages), editingMediaType)}
+                title="Licensing fee"
+                perLabel="{feeImages} generation{feeImages === '1' ? '' : 's'}"
+              />
+            </div>
             <p class="w-full text-xs text-dark-2">
               Suggested for {editingType}: {suggested.buzz} ⚡ / {suggested.images === 1
                 ? 'generation'

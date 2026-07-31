@@ -9,6 +9,7 @@
   import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import { SheetFooter } from '@civitai/ui/components/ui/sheet/index.js';
   import NumberInput from '$lib/components/NumberInput.svelte';
+  import CapUpsell from '$lib/components/CapUpsell.svelte';
   import {
     MIN_ACCESS_PRICE,
     MIN_GENERATION_PRICE,
@@ -334,6 +335,15 @@
               Your membership allows up to {priceCap.toLocaleString()} ⚡.
             {/if}
           </span>
+          <div>
+            <CapUpsell
+              value={ea.accessPrice}
+              cap={priceCap ?? Infinity}
+              capTier={caps.capTier}
+              capFor={(t) => maxPaidAccessPrice(t, capMediaType(version.baseModel))}
+              title="Price for access"
+            />
+          </div>
           {#if overCap}
             <span class="text-xs text-yellow-5">
               This price is above your membership's cap. You can keep or lower it, but not raise it
