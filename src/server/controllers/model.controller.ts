@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
-import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
+import {
+  getCachedCapTier,
+  getPaidAccess,
+  toModelVersionPaidAccessDto,
+} from '~/server/services/paid-access.service';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
@@ -340,6 +344,13 @@ export const getModelHandler = async ({
       if (ownerHidesAnything)
         ownerHasMembership = await hasValidCreatorMembershipCached(model.user.id);
     }
+    // Buyers see the capped price (what they'll be charged); the OWNER must see the stored one, because
+    // this DTO is what the edit form initializes from. One lookup covers the whole list — every version of
+    // a model shares its owner.
+    const ownerCapTier =
+      !isOwner && Object.values(paidAccessByVersion).some(Boolean)
+        ? await getCachedCapTier(model.user.id)
+        : undefined;
     const modelHidden = gateHiddenMetrics(metricPrivacyEnabled, () =>
       resolveModelHiddenMetrics({
         modelMeta: model.meta,
@@ -432,7 +443,7 @@ export const getModelHandler = async ({
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        paidAccess: toModelVersionPaidAccessDto(paidAccess),
+        paidAccess: toModelVersionPaidAccessDto(paidAccess, ownerCapTier),
         donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,

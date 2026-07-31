@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
+  effectivePaidAccessPrice,
   gatePrices,
   isPaidAccessActive,
   maxPaidAccessPrice,
@@ -223,13 +224,37 @@ export async function assertPaidAccessCaps({
 
 /** Map a ModelVersion's PaidAccess row to the read DTO the client loads (null = no gate). */
 export function toModelVersionPaidAccessDto(
-  row: PaidAccessRow | undefined
+  row: PaidAccessRow | undefined,
+  ownerTier?: string | null
 ): ModelVersionPaidAccessDto | null {
   if (!row) return null;
   return {
     endsAt: row.endsAt,
     timeframeDays: row.timeframeDays ?? null,
-    terms: row.terms as ModelVersionTerms,
+    // Shown at the same price the buyer will actually be charged (earlyAccessPurchase clamps to the same
+    // cap), so a lapsed owner's gate can't advertise more than it bills. Callers that can't resolve the
+    // owner's tier pass nothing and get the stored terms — the charge is still clamped either way.
+    terms: ownerTier === undefined ? (row.terms as ModelVersionTerms) : cappedTerms(row, ownerTier),
+  };
+}
+
+/** Terms with every chargeable price lowered to the owner's current cap. */
+function cappedTerms(row: PaidAccessRow, ownerTier: string | null): ModelVersionTerms {
+  const terms = row.terms as ModelVersionTerms;
+  const paidGen = terms.generation && !('free' in terms.generation) ? terms.generation : undefined;
+  return {
+    ...terms,
+    ...(terms.download
+      ? {
+          download: {
+            ...terms.download,
+            price: effectivePaidAccessPrice(terms.download.price, ownerTier),
+          },
+        }
+      : {}),
+    ...(paidGen?.price != null
+      ? { generation: { ...paidGen, price: effectivePaidAccessPrice(paidGen.price, ownerTier) } }
+      : {}),
   };
 }
 

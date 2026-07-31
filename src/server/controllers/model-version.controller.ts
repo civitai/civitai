@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { maxLicensingFee, raisesOverCap } from '@civitai/buzz';
 import {
   assertPaidAccessCaps,
+  getCachedCapTier,
   getPaidAccess,
   toModelVersionPaidAccessDto,
 } from '~/server/services/paid-access.service';
@@ -297,7 +298,13 @@ const loadModelVersion = async ({
       licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
       canGenerate,
       wildcardSetId,
-      paidAccess: toModelVersionPaidAccessDto(paidAccess),
+      // Buyers see the capped price (what they'll be charged); the OWNER must see the stored one, because
+      // this DTO is what the edit form initializes from — capping it would have them save the lowered value
+      // back and permanently lose the original.
+      paidAccess: toModelVersionPaidAccessDto(
+        paidAccess,
+        paidAccess && !isOwnerOrMod ? await getCachedCapTier(version.model.user.id) : undefined
+      ),
       donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,

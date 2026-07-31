@@ -27,6 +27,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 import {
   assertPaidAccessInput,
   materializePaidAccessEndsAt,
+  toModelVersionPaidAccessDto,
   toPublicPaidAccessDto,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
@@ -214,5 +215,73 @@ describe('toPublicPaidAccessDto — the v1 public API view', () => {
     const dto = toPublicPaidAccessDto(row({ endsAt: null, timeframeDays: null }));
     expect(dto).not.toHaveProperty('terms');
     expect(dto).not.toHaveProperty('ownerId');
+  });
+});
+
+// Free tier caps paid access at 500 buzz; an unknown/lapsed tier resolves to that same cap.
+describe('toModelVersionPaidAccessDto — buyer-facing price capping', () => {
+  const gate = (terms: object) =>
+    ({
+      entityType: 'ModelVersion',
+      entityId: 1,
+      ownerId: 1,
+      endsAt: null,
+      timeframeDays: null,
+      terms,
+    } as Parameters<typeof toModelVersionPaidAccessDto>[0]);
+
+  it('returns the stored terms untouched when no tier is supplied (the owner/edit-form path)', () => {
+    const terms = { download: { price: 5000 } };
+    expect(toModelVersionPaidAccessDto(gate(terms))?.terms).toEqual(terms);
+  });
+
+  it('lowers the download price to the tier cap for a lapsed owner', () => {
+    expect(toModelVersionPaidAccessDto(gate({ download: { price: 5000 } }), null)?.terms).toEqual({
+      download: { price: 500 },
+    });
+  });
+
+  it('leaves a price already under the cap alone', () => {
+    expect(toModelVersionPaidAccessDto(gate({ download: { price: 300 } }), null)?.terms).toEqual({
+      download: { price: 300 },
+    });
+  });
+
+  it('caps a paid generation tier and keeps trialLimit', () => {
+    expect(
+      toModelVersionPaidAccessDto(
+        gate({ download: { price: 5000 }, generation: { price: 2000, trialLimit: 5 } }),
+        null
+      )?.terms
+    ).toEqual({ download: { price: 500 }, generation: { price: 500, trialLimit: 5 } });
+  });
+
+  // A paid generation tier with no explicit price falls back to the download price at charge time, so the
+  // display must NOT invent one — capping the download alone keeps the two in step.
+  it('does not invent a generation price when the tier relies on the download fallback', () => {
+    expect(
+      toModelVersionPaidAccessDto(
+        gate({ download: { price: 5000 }, generation: { trialLimit: 5 } }),
+        null
+      )?.terms
+    ).toEqual({ download: { price: 500 }, generation: { trialLimit: 5 } });
+  });
+
+  it('never turns a free generation grant into a paid one', () => {
+    expect(
+      toModelVersionPaidAccessDto(
+        gate({ download: { price: 5000 }, generation: { free: true } }),
+        null
+      )?.terms
+    ).toEqual({ download: { price: 500 }, generation: { free: true } });
+  });
+
+  it('caps a generation-only gate without inventing a download tier', () => {
+    const capped = toModelVersionPaidAccessDto(
+      gate({ generation: { price: 3000, trialLimit: 10 } }),
+      null
+    )?.terms;
+    expect(capped).toEqual({ generation: { price: 500, trialLimit: 10 } });
+    expect(capped).not.toHaveProperty('download');
   });
 });
