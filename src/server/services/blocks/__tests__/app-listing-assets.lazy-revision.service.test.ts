@@ -24,8 +24,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * The DB is an in-memory FAKE rather than call-shape stubs, deliberately: the
  * assertion that matters is "the PARENT's rows are still there afterwards", and only
- * a store that actually holds rows can make that claim honestly. It backs BOTH
- * `dbRead` and `dbWrite`, so the REAL `beginListingRevision` clone runs against it.
+ * a store that actually holds rows can make that claim honestly. One store backs both
+ * pools, so the REAL `beginListingRevision` clone runs against it.
+ *
+ * 🔴 `dbRead` and `dbWrite` are DISTINCT fakes over that store (`readDb` / `db`), with
+ * a `store.replicaLagsOn` set the REPLICA cannot see. They used to be the same object,
+ * which made every "this read must go to the PRIMARY" claim in the service
+ * unfalsifiable — a guard nothing could break is a guard nothing verifies.
  */
 
 type ListingRow = {
@@ -69,11 +74,20 @@ type ImageRow = {
   nsfwLevel: number;
 };
 
-const { store, db, ids } = vi.hoisted(() => {
+const { store, db, readDb, ids } = vi.hoisted(() => {
   const store = {
     listings: [] as ListingRow[],
     shots: [] as ShotRow[],
     images: [] as ImageRow[],
+    /**
+     * 🔴 REPLICA LAG. Ids (listing OR screenshot row) the REPLICA has not received
+     * yet. `dbRead` below hides them; `dbWrite` still serves them — i.e. exactly the
+     * read-after-write condition that decides whether a just-minted shadow's rows are
+     * reachable. Without a `dbRead` that can differ from `dbWrite` the pool routing is
+     * structurally untestable, which is why the two used to be the SAME fake and this
+     * whole class of bug (#3476) could not be pinned here.
+     */
+    replicaLagsOn: new Set<string>(),
   };
   const ids = { n: 0 };
 
@@ -147,6 +161,33 @@ const { store, db, ids } = vi.hoisted(() => {
       if (i < 0) throw new Error(`no screenshot ${args.where.id}`);
       return store.shots.splice(i, 1)[0];
     }),
+    // The LISTING-SCOPED write forms. A compound `{ id, appListingId }` filter is the
+    // whole point: it must match ZERO rows once `applyApprovedRevision` has reparented
+    // the shadow's rows onto the live parent.
+    updateMany: vi.fn(
+      async (args: { where: { id?: string; appListingId?: string }; data: Partial<ShotRow> }) => {
+        const rows = store.shots.filter(
+          (s) =>
+            (args.where.id === undefined || s.id === args.where.id) &&
+            (args.where.appListingId === undefined || s.appListingId === args.where.appListingId)
+        );
+        for (const r of rows) Object.assign(r, args.data);
+        return { count: rows.length };
+      }
+    ),
+    deleteMany: vi.fn(async (args: { where: { id?: string; appListingId?: string } }) => {
+      const keep: ShotRow[] = [];
+      let count = 0;
+      for (const s of store.shots) {
+        const hit =
+          (args.where.id === undefined || s.id === args.where.id) &&
+          (args.where.appListingId === undefined || s.appListingId === args.where.appListingId);
+        if (hit) count += 1;
+        else keep.push(s);
+      }
+      store.shots = keep;
+      return { count };
+    }),
   };
 
   const image = {
@@ -168,10 +209,66 @@ const { store, db, ids } = vi.hoisted(() => {
     }),
   };
 
-  return { store, db, ids };
+  /**
+   * The REPLICA. Same store, but rows in `store.replicaLagsOn` are invisible —
+   * replication has not caught up. Only the READ surface is modelled; every write in
+   * the service goes through `dbWrite` by construction, and a write landing here would
+   * be a bug worth failing on.
+   */
+  const lagging = (id: string) => store.replicaLagsOn.has(id);
+  const readDb = {
+    appListing: {
+      findUnique: vi.fn(async (args: { where: Record<string, unknown> }) => {
+        const row = store.listings.find((l) => matchListing(l, args.where));
+        return row && !lagging(row.id) ? row : null;
+      }),
+      findFirst: vi.fn(async (args: { where: Record<string, unknown> }) => {
+        const row = store.listings.find((l) => matchListing(l, args.where));
+        return row && !lagging(row.id) ? row : null;
+      }),
+      findMany: vi.fn(async () => [] as ListingRow[]),
+    },
+    appListingScreenshot: {
+      findUnique: vi.fn(
+        async (args: { where: { id: string }; select?: Record<string, unknown> }) => {
+          const row = store.shots.find((s) => s.id === args.where.id);
+          if (!row || lagging(row.id) || lagging(row.appListingId)) return null;
+          if (args.select && 'appListing' in args.select) {
+            const listing = store.listings.find((l) => l.id === row.appListingId) ?? null;
+            return { ...row, appListing: listing };
+          }
+          return row;
+        }
+      ),
+      findMany: vi.fn(
+        async (args: {
+          where: { appListingId?: string };
+          orderBy?: { order?: 'asc' | 'desc' };
+        }) => {
+          let rows = store.shots.filter(
+            (s) => s.appListingId === args.where.appListingId && !lagging(s.id)
+          );
+          if (args.orderBy?.order === 'desc') rows = [...rows].sort((a, b) => b.order - a.order);
+          else rows = [...rows].sort((a, b) => a.order - b.order);
+          return rows.map((r) => ({ ...r }));
+        }
+      ),
+      count: vi.fn(
+        async (args: { where: { appListingId?: string } }) =>
+          store.shots.filter((s) => s.appListingId === args.where.appListingId && !lagging(s.id))
+            .length
+      ),
+    },
+    image,
+  };
+
+  return { store, db, readDb, ids };
 });
 
-vi.mock('~/server/db/client', () => ({ dbRead: db, dbWrite: db }));
+// 🔴 dbRead and dbWrite are DISTINCT fakes over one store. They used to be the same
+// object, which silently made every "reads the primary" claim in this module
+// unfalsifiable.
+vi.mock('~/server/db/client', () => ({ dbRead: readDb, dbWrite: db }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_gen_${++ids.n}`,
   newAppListingPublishRequestId: () => `alpr_gen_${++ids.n}`,
@@ -252,6 +349,7 @@ beforeEach(() => {
   store.listings = [];
   store.shots = [];
   store.images = [];
+  store.replicaLagsOn = new Set();
 });
 
 // ---------------------------------------------------------------------------
@@ -511,5 +609,207 @@ describe('matchClonedScreenshotRow', () => {
     expect(matchClonedScreenshotRow({ imageId: null, order: 9 }, nulls)).toBeNull();
     // …but an exact (null, order) pair is unambiguous and DOES match.
     expect(matchClonedScreenshotRow({ imageId: null, order: 1 }, nulls)).toBe('s2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 READ-AFTER-WRITE on the row-id-keyed procs.
+//
+// The client now receives freshly-minted SHADOW row ids sourced from the PRIMARY
+// (`getMyListingForApp` probes `dbWrite` for the shadow). `resolveOwnerScreenshotTarget`
+// then read the screenshot row AND its listing off the REPLICA, so under replication
+// lag the owner's second edit 404'd on a row that demonstrably exists — the same class
+// of bug #3476 fixed for `loadListingEditView`, whose window this change widened by
+// moving the mint onto the write path.
+// ---------------------------------------------------------------------------
+
+/** A live parent + its shadow revision, cloned rows and all. */
+function seedShadowWithClonedRows() {
+  store.listings.push(listing());
+  store.listings.push(
+    listing({
+      id: 'apl_shadow',
+      status: 'draft',
+      revisionOfId: PARENT_ID,
+      appBlockId: null,
+      slug: 'rev-x',
+    })
+  );
+  seedShot('apls_parent_a', PARENT_ID, 300, 0);
+  seedShot('apls_parent_b', PARENT_ID, 301, 1);
+  seedShot('apls_shadow_a', 'apl_shadow', 300, 0);
+  seedShot('apls_shadow_b', 'apl_shadow', 301, 1);
+}
+
+/**
+ * What `applyApprovedRevision` does to the screenshot rows: drop the parent's set,
+ * then REPARENT the shadow's rows onto the parent (`updateMany appListingId →
+ * parentId`). After this, a row id resolved a moment ago as a SHADOW row is a row on
+ * the LIVE listing.
+ */
+function simulateApprovalReparent(shadowId: string) {
+  store.shots = store.shots.filter((s) => s.appListingId !== PARENT_ID);
+  for (const s of store.shots) if (s.appListingId === shadowId) s.appListingId = PARENT_ID;
+}
+
+describe('replica lag — a shadow row id must not 404 on the pool that cannot see it yet', () => {
+  it('🔴 removeScreenshot resolves a JUST-MINTED shadow row the replica has not received', () => {
+    seedShadowWithClonedRows();
+    // Replication has not caught up on the shadow listing or its cloned rows.
+    store.replicaLagsOn = new Set(['apl_shadow', 'apls_shadow_a', 'apls_shadow_b']);
+
+    return removeListingScreenshot({ screenshotId: 'apls_shadow_a' }, OWNER).then((res) => {
+      expect(res).toEqual({ removed: 'apls_shadow_a' });
+      // It came off the SHADOW…
+      expect(shotsOf('apl_shadow').map((s) => s.id)).toEqual(['apls_shadow_b']);
+      // …and the live listing is untouched.
+      expect(shotsOf(PARENT_ID).map((s) => s.id)).toEqual(['apls_parent_a', 'apls_parent_b']);
+    });
+  });
+
+  it('🔴 updateScreenshotCaption likewise — neither the row read nor the listing read may trust the replica', async () => {
+    seedShadowWithClonedRows();
+    store.replicaLagsOn = new Set(['apl_shadow', 'apls_shadow_a', 'apls_shadow_b']);
+
+    await updateListingScreenshotCaption(
+      { screenshotId: 'apls_shadow_b', caption: 'staged on the revision' },
+      OWNER
+    );
+
+    expect(store.shots.find((s) => s.id === 'apls_shadow_b')!.caption).toBe(
+      'staged on the revision'
+    );
+    // The live row that shares the image keeps its own caption.
+    expect(store.shots.find((s) => s.id === 'apls_parent_b')!.caption).toBeNull();
+  });
+
+  it('a row that exists on NEITHER pool is still a genuine NOT_FOUND', async () => {
+    seedShadowWithClonedRows();
+    await expect(removeListingScreenshot({ screenshotId: 'apls_nope' }, OWNER)).rejects.toThrow(
+      /Screenshot not found/
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 🔴 LISTING-SCOPED WRITES.
+//
+// `applyApprovedRevision` REPARENTS the shadow's screenshot rows onto the live parent.
+// A moderator approving between the resolve and the write turns a resolved SHADOW row
+// id into a PARENT row id — and the writes were `delete({ where: { id } })` /
+// `update({ where: { id } })`, i.e. they would have landed on the LIVE served listing.
+// Scoping every write to `{ id, appListingId: <resolved listing> }` and requiring
+// `count === 1` makes that structurally impossible rather than merely improbable.
+// ---------------------------------------------------------------------------
+
+describe('the reparent race — a resolved row id that became a LIVE row must not be written', () => {
+  it('🔴 removeScreenshot refuses instead of deleting off the live listing', async () => {
+    seedShadowWithClonedRows();
+    // Approve lands right after the ownership/target resolve reads the listing.
+    vi.mocked(readDb.appListing.findUnique).mockImplementationOnce(async (args: unknown) => {
+      const id = (args as { where: { id?: string } }).where.id;
+      const row = store.listings.find((l) => l.id === id) ?? null;
+      simulateApprovalReparent('apl_shadow');
+      return row;
+    });
+
+    await expect(removeListingScreenshot({ screenshotId: 'apls_shadow_a' }, OWNER)).rejects.toThrow(
+      /no longer available on your revision/
+    );
+
+    // The row survived — it is now a LIVE screenshot and nothing deleted it.
+    expect(shotsOf(PARENT_ID).map((s) => s.id)).toEqual(['apls_shadow_a', 'apls_shadow_b']);
+  });
+
+  it('🔴 updateScreenshotCaption refuses instead of re-captioning a live row', async () => {
+    seedShadowWithClonedRows();
+    vi.mocked(readDb.appListing.findUnique).mockImplementationOnce(async (args: unknown) => {
+      const id = (args as { where: { id?: string } }).where.id;
+      const row = store.listings.find((l) => l.id === id) ?? null;
+      simulateApprovalReparent('apl_shadow');
+      return row;
+    });
+
+    await expect(
+      updateListingScreenshotCaption({ screenshotId: 'apls_shadow_a', caption: 'oops' }, OWNER)
+    ).rejects.toThrow(/no longer available on your revision/);
+
+    expect(store.shots.find((s) => s.id === 'apls_shadow_a')!.caption).toBeNull();
+  });
+
+  it('🔴 reorderScreenshots refuses instead of re-ordering the live listing', async () => {
+    seedShadowWithClonedRows();
+    // The approve lands AFTER the permutation check's primary read — the only window
+    // in which the scoped write is the thing that saves the live listing.
+    vi.mocked(db.appListingScreenshot.findMany).mockImplementationOnce(async (args: unknown) => {
+      const where = (args as { where: { appListingId?: string } }).where;
+      const rows = store.shots
+        .filter((s) => s.appListingId === where.appListingId)
+        .map((r) => ({ ...r }));
+      simulateApprovalReparent('apl_shadow');
+      return rows;
+    });
+
+    await expect(
+      reorderListingScreenshots(
+        { listingId: 'apl_shadow', orderedIds: ['apls_shadow_b', 'apls_shadow_a'] },
+        OWNER
+      )
+    ).rejects.toThrow(/no longer available on your revision/);
+
+    // The now-live rows kept their original order — the reorder did not land.
+    expect(shotsOf(PARENT_ID).map((s) => [s.id, s.order])).toEqual([
+      ['apls_shadow_a', 0],
+      ['apls_shadow_b', 1],
+    ]);
+  });
+
+  it('the ordinary (unraced) reorder still works and writes exactly the resolved listing', async () => {
+    seedShadowWithClonedRows();
+    const res = await reorderListingScreenshots(
+      { listingId: 'apl_shadow', orderedIds: ['apls_shadow_b', 'apls_shadow_a'] },
+      OWNER
+    );
+    expect(res).toEqual({ reordered: 2 });
+    expect(shotsOf('apl_shadow').map((s) => s.id)).toEqual(['apls_shadow_b', 'apls_shadow_a']);
+    // The live listing's ordering is untouched.
+    expect(shotsOf(PARENT_ID).map((s) => [s.id, s.order])).toEqual([
+      ['apls_parent_a', 0],
+      ['apls_parent_b', 1],
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Return-shape contract (FIX 5): these two procs answer with the row they actually
+// WROTE, which is NOT the id the caller passed when this call minted the shadow.
+// ---------------------------------------------------------------------------
+
+describe('row-id-keyed procs return the RESOLVED row id, not an echo of the input', () => {
+  it('🔴 removeScreenshot reports the SHADOW clone it deleted, not the parent id it was given', async () => {
+    store.listings.push(listing());
+    seedShot('apls_parent_a', PARENT_ID, 300, 0);
+
+    const res = await removeListingScreenshot({ screenshotId: 'apls_parent_a' }, OWNER);
+
+    // Deliberate: echoing back `apls_parent_a` would report deleting a row off the
+    // LIVE listing — a deletion that must never happen and here did not.
+    expect(res.removed).not.toBe('apls_parent_a');
+    expect(shotsOf(PARENT_ID).map((s) => s.id)).toEqual(['apls_parent_a']);
+    expect(shotsOf(shadow()!.id)).toEqual([]);
+  });
+
+  it('🔴 updateScreenshotCaption reports the SHADOW clone it wrote', async () => {
+    store.listings.push(listing());
+    seedShot('apls_parent_a', PARENT_ID, 300, 0);
+
+    const res = await updateListingScreenshotCaption(
+      { screenshotId: 'apls_parent_a', caption: 'hello' },
+      OWNER
+    );
+
+    expect(res.id).not.toBe('apls_parent_a');
+    expect(store.shots.find((s) => s.id === res.id)!.appListingId).toBe(shadow()!.id);
+    expect(store.shots.find((s) => s.id === 'apls_parent_a')!.caption).toBeNull();
   });
 });

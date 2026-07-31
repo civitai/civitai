@@ -418,9 +418,7 @@ export function matchClonedScreenshotRow(
   source: { imageId: number | null; order: number },
   candidates: { id: string; imageId: number | null; order: number }[]
 ): string | null {
-  const exact = candidates.filter(
-    (c) => c.imageId === source.imageId && c.order === source.order
-  );
+  const exact = candidates.filter((c) => c.imageId === source.imageId && c.order === source.order);
   if (exact.length === 1) return exact[0].id;
   if (source.imageId != null) {
     const byImage = candidates.filter((c) => c.imageId === source.imageId);
@@ -436,6 +434,31 @@ export function matchClonedScreenshotRow(
  * BAD_REQUEST if any id can't be matched, so an unmappable request is refused rather
  * than applied to the wrong row (and never to the parent's).
  */
+/**
+ * 🔴 A row-id-keyed write matched NOTHING under the listing it was RESOLVED against.
+ *
+ * Every screenshot write below is scoped `{ id, appListingId: <resolved listing> }`
+ * rather than `{ id }`, because the resolved id can stop belonging to that listing
+ * between the resolve and the write: `applyApprovedRevision` REPARENTS the shadow's
+ * rows onto the live parent (`updateMany({ where: { appListingId: shadowId } }, {
+ * appListingId: parentId })`). A moderator approving in that window would turn a
+ * resolved SHADOW row id into a PARENT row id — and an unscoped
+ * `delete({ where: { id } })` would then delete a screenshot off the LIVE served
+ * listing, which is the exact hazard the whole re-map exists to prevent. Scoping the
+ * write makes it structurally impossible: the write matches 0 rows and this throws,
+ * instead of hitting the parent.
+ *
+ * Same client-facing copy as the fail-closed re-map — from the owner's side it is the
+ * same situation (their revision moved under them; refresh and retry).
+ */
+function throwScreenshotNoLongerOnRevision(): never {
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message:
+      'This screenshot is no longer available on your revision. Refresh the page and try again.',
+  });
+}
+
 async function remapScreenshotRowIds(args: {
   screenshotIds: string[];
   sourceListingId: string;
@@ -865,7 +888,10 @@ export async function setListingIcon(
   user: SessionUser
 ): Promise<SetListingIconResult> {
   // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
-  const listing = await resolveOwnerAssetEditTarget(await loadOwnedListing(args.listingId, user), user);
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
@@ -884,7 +910,10 @@ export async function setListingCover(
   user: SessionUser
 ): Promise<SetListingCoverResult> {
   // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
-  const listing = await resolveOwnerAssetEditTarget(await loadOwnedListing(args.listingId, user), user);
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
@@ -903,7 +932,10 @@ export async function addListingScreenshot(
   user: SessionUser
 ): Promise<AddListingScreenshotResult> {
   // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
-  const listing = await resolveOwnerAssetEditTarget(await loadOwnedListing(args.listingId, user), user);
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'screenshot', user, {
     allowPending: true,
@@ -958,7 +990,10 @@ export async function reorderListingScreenshots(
   user: SessionUser
 ): Promise<{ reordered: number }> {
   // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
-  const listing = await resolveOwnerAssetEditTarget(await loadOwnedListing(args.listingId, user), user);
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
   assertOwnerAssetEditable(listing, user);
   // 🔴 `orderedIds` are PARENT row ids whenever the mint above just happened. Re-key
   // them onto the shadow's clones BEFORE the permutation check — otherwise the check
@@ -991,11 +1026,19 @@ export async function reorderListingScreenshots(
       message: 'orderedIds must be exactly the listing’s current screenshot ids',
     });
   }
-  await dbWrite.$transaction(
+  // 🔴 LISTING-SCOPED writes (see `throwScreenshotNoLongerOnRevision`): if an approve
+  // reparents the shadow's rows onto the live parent between the check above and here,
+  // every `updateMany` matches 0 rows — the live listing's ordering is left alone and
+  // the owner is told to refresh, instead of the reorder silently landing on it.
+  const results = await dbWrite.$transaction(
     orderedIds.map((id, index) =>
-      dbWrite.appListingScreenshot.update({ where: { id }, data: { order: index } })
+      dbWrite.appListingScreenshot.updateMany({
+        where: { id, appListingId: listing.id },
+        data: { order: index },
+      })
     )
   );
+  if (results.some((r) => r.count !== 1)) throwScreenshotNoLongerOnRevision();
   return { reordered: orderedIds.length };
 }
 
@@ -1018,15 +1061,31 @@ async function resolveOwnerScreenshotTarget(
   screenshotId: string,
   user: SessionUser
 ): Promise<{ screenshotId: string; listing: OwnedListing }> {
-  const shot = await dbRead.appListingScreenshot.findUnique({
-    where: { id: screenshotId },
-    select: { id: true, appListingId: true, appListing: { select: { userId: true } } },
-  });
+  const select = {
+    id: true,
+    appListingId: true,
+    appListing: { select: { userId: true } },
+  } as const;
+  // 🔴 READ-AFTER-WRITE. The replica answers first, but a MISS off the replica is NOT
+  // authoritative here: once the first mutation mints the shadow, `getMyListingForApp`
+  // re-projects the SHADOW's row ids from the PRIMARY, so the very next call arrives
+  // holding ids for rows INSERTed milliseconds ago. Trusting a lagging replica turns
+  // the owner's second edit into a spurious `NOT_FOUND: Screenshot not found` — the
+  // same class of bug #3476 fixed for `loadListingEditView`, whose window this PR
+  // widened by moving the mint onto the write path. A hit on the replica means the row
+  // is old, and its listing (created in the SAME clone transaction) is old too, so the
+  // pool that answered is also the right pool for the listing load.
+  let db: typeof dbRead = dbRead;
+  let shot = await dbRead.appListingScreenshot.findUnique({ where: { id: screenshotId }, select });
+  if (!shot) {
+    db = dbWrite;
+    shot = await dbWrite.appListingScreenshot.findUnique({ where: { id: screenshotId }, select });
+  }
   if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
   if (shot.appListing.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
   }
-  const sourceListing = await loadOwnedListing(shot.appListingId, user);
+  const sourceListing = await loadOwnedListing(shot.appListingId, user, db);
   const listing = await resolveOwnerAssetEditTarget(sourceListing, user);
   if (listing.id === shot.appListingId) return { screenshotId, listing };
   const [mapped] = await remapScreenshotRowIds({
@@ -1037,22 +1096,47 @@ async function resolveOwnerScreenshotTarget(
   return { screenshotId: mapped, listing };
 }
 
+/**
+ * Set/clear a screenshot's caption.
+ *
+ * 🔴 RETURN-SHAPE NOTE — `id` is the row that was actually written, which is NOT
+ * necessarily `args.screenshotId`. When this call is the owner's FIRST edit of a live
+ * approved listing it mints the shadow revision and re-keys the caller's PARENT row id
+ * onto the shadow's clone ({@link resolveOwnerScreenshotTarget}); the returned id is
+ * that clone's. Reporting the caller's own id back would name a row this call did not
+ * touch — on the live listing — so the resolved id is the honest answer. Any caller
+ * that echoes or compares it (the `civitai` CLI is wire-reachable here under
+ * `AppBlocksSubmit`) must treat it as the NEW id, not a round-trip of its input. The
+ * INPUT schema is unchanged, so no released client breaks.
+ */
 export async function updateListingScreenshotCaption(
   args: { screenshotId: string; caption?: string | null },
   user: SessionUser
 ): Promise<{ id: string }> {
   const { screenshotId, listing } = await resolveOwnerScreenshotTarget(args.screenshotId, user);
   assertOwnerAssetEditable(listing, user);
-  await dbWrite.appListingScreenshot.update({
-    where: { id: screenshotId },
+  // 🔴 LISTING-SCOPED write — see `throwScreenshotNoLongerOnRevision`.
+  const { count } = await dbWrite.appListingScreenshot.updateMany({
+    where: { id: screenshotId, appListingId: listing.id },
     data: { caption: args.caption ?? null },
   });
+  if (count !== 1) throwScreenshotNoLongerOnRevision();
+  // NB: `id` is the RESOLVED row id, which differs from `args.screenshotId` whenever
+  // this call minted the shadow (the parent row id was re-keyed onto its clone).
   return { id: screenshotId };
 }
 
 /**
  * Remove a screenshot, then RE-PACK the remaining orders to a contiguous 0..n-1
  * so no gaps accumulate (the read path can rely on dense ordering).
+ *
+ * 🔴 RETURN-SHAPE NOTE — `removed` is the row that was actually deleted, which is NOT
+ * necessarily `args.screenshotId`: a first edit of a live listing mints the shadow and
+ * re-keys the caller's PARENT row id onto the clone, and it is the CLONE that is
+ * deleted (deleting the parent's row is the data-loss hazard this whole path exists to
+ * prevent). Echoing the caller's id back would therefore report a deletion that did not
+ * happen. Same wire-contract note as {@link updateListingScreenshotCaption}: input
+ * schema unchanged, only the returned id can differ from the one passed in.
  */
 export async function removeListingScreenshot(
   args: { screenshotId: string },
@@ -1066,7 +1150,14 @@ export async function removeListingScreenshot(
   // review) — edits go through a shadow revision. Mods bypass (curation). Evaluated
   // on the RESOLVED target, so a re-map that failed to leave the parent throws here.
   assertOwnerAssetEditable(listing, user);
-  await dbWrite.appListingScreenshot.delete({ where: { id: screenshotId } });
+  // 🔴 LISTING-SCOPED delete — see `throwScreenshotNoLongerOnRevision`. This is the
+  // one write where the reparent race is destructive: an unscoped
+  // `delete({ where: { id } })` would remove the row from the LIVE listing it had just
+  // been moved onto.
+  const { count } = await dbWrite.appListingScreenshot.deleteMany({
+    where: { id: screenshotId, appListingId: listing.id },
+  });
+  if (count !== 1) throwScreenshotNoLongerOnRevision();
   // (no re-derive: removal/reorder/caption can never RAISE the derived rating)
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).

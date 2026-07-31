@@ -49,7 +49,10 @@ import { getOffsiteReviewChecklist } from '~/components/Apps/offsiteReviewCheckl
 import {
   assetSlotDriftLabel,
   computeListingRevisionDrift,
+  driftPanelState,
+  identicalAssetsNotice,
   listingAssetSnapshot,
+  revisionApplyScope,
   screenshotDriftSummary,
   type AssetSlotDrift,
 } from '~/components/Apps/listingRevisionDrift';
@@ -994,7 +997,19 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
   // 🔴 Only compare once BOTH sides have loaded. An unloaded parent read as "empty"
   // would flag every revision as a destructive replace — warning fatigue that makes
   // the real signal worthless.
-  const drift = live && proposed ? computeListingRevisionDrift(live, proposed) : null;
+  //
+  // 🔴 The apply scope is threaded from the row's KIND. An off-site apply also copies
+  // the listing scalars (name/tagline/description/category/link + the requested OAuth
+  // SCOPES), so the "changes nothing" claim below is licensed only for onsite. See
+  // `listingRevisionDrift`.
+  const applyScope = revisionApplyScope(request.kind);
+  const drift =
+    live && proposed ? computeListingRevisionDrift(live, proposed, { applyScope }) : null;
+  // 🔴 `retry: false` on both queries means an error is TERMINAL. Without this the
+  // panel sat on an indefinite "Comparing with the live listing…" spinner — a mod
+  // next to the destructive-replace case would see a spinner, not "could not load".
+  const driftError = parentAssetsQuery.error ?? shadowAssetsQuery.error ?? null;
+  const panelState = driftPanelState({ hasError: driftError != null, drift });
 
   return (
     <Stack gap="xs" data-testid="apps-listing-revision-drift">
@@ -1010,11 +1025,40 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
         labelPosition="left"
       />
       <Text size="xs" c="dimmed">
-        This is a revision of a LIVE listing. Approving REPLACES the media below —
-        screenshots are replaced wholesale, not merged.
+        This is a revision of a LIVE listing. Approving REPLACES the media below — screenshots are
+        replaced wholesale, not merged.
+        {applyScope === 'assets-and-scalars' &&
+          ' Approving ALSO copies this revision’s name, tagline, description, category, link and requested OAuth scopes onto the live listing; those are not compared here.'}
       </Text>
 
-      {drift == null ? (
+      {panelState === 'error' ? (
+        <Alert
+          color="orange"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          title="Couldn’t load the live listing"
+          data-testid="apps-listing-revision-drift-error"
+        >
+          <Stack gap={6} align="flex-start">
+            <Text size="sm">
+              The before/after comparison is unavailable. Approving still REPLACES the live media
+              wholesale — review manually before deciding.
+            </Text>
+            <Button
+              size="compact-xs"
+              variant="light"
+              loading={parentAssetsQuery.isFetching || shadowAssetsQuery.isFetching}
+              onClick={() => {
+                void parentAssetsQuery.refetch();
+                void shadowAssetsQuery.refetch();
+              }}
+              data-testid="apps-listing-revision-drift-retry"
+            >
+              Retry
+            </Button>
+          </Stack>
+        </Alert>
+      ) : panelState === 'loading' || drift == null ? (
         <Group gap={8} data-testid="apps-listing-revision-drift-loading">
           <Loader size={14} />
           <Text size="xs" c="dimmed">
@@ -1034,17 +1078,23 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
               <Text size="sm">{screenshotDriftSummary(drift.screenshots)}.</Text>
             </Alert>
           )}
-          {!drift.hasChanges && (
+          {/* 🔴 The claim is KIND-SCOPED. `noOpApproval` (grey, "changes nothing") is
+              reachable only when the compared set IS the apply set — onsite. An
+              off-site revision with identical media still copies its scalars,
+              INCLUDING the requested OAuth scopes, so it gets the amber notice that
+              names what was not compared instead of a false all-clear. */}
+          {!drift.assetsChanged && (
             <Alert
-              color="gray"
+              color={drift.noOpApproval ? 'gray' : 'yellow'}
               variant="light"
               icon={<IconInfoCircle size={16} />}
-              data-testid="apps-listing-revision-drift-none"
+              data-testid={
+                drift.noOpApproval
+                  ? 'apps-listing-revision-drift-none'
+                  : 'apps-listing-revision-drift-assets-only'
+              }
             >
-              <Text size="sm">
-                This revision’s media is IDENTICAL to what is live — approving changes
-                nothing.
-              </Text>
+              <Text size="sm">{identicalAssetsNotice(drift)}</Text>
             </Alert>
           )}
           <Group gap={12} data-testid="apps-listing-revision-drift-badges">

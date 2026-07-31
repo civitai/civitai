@@ -42,6 +42,11 @@ const { mockDb, ids } = vi.hoisted(() => ({
       createMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
       update: vi.fn(async (args: { where: unknown; data: unknown }) => args.data),
       delete: vi.fn(async (..._a: unknown[]) => ({})),
+      // The LISTING-SCOPED write forms the row-id-keyed procs now use — a bare
+      // `{ id }` write could land on the live parent after an approve reparents the
+      // shadow's rows (`applyApprovedRevision`).
+      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
+      deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },
     $transaction: vi.fn(async (ops: unknown[]) => Promise.all(ops as Promise<unknown>[])),
   },
@@ -73,6 +78,8 @@ function resetDb() {
   mockDb.appListingScreenshot.createMany.mockReset().mockResolvedValue({ count: 0 });
   mockDb.appListingScreenshot.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
   mockDb.appListingScreenshot.delete.mockReset().mockResolvedValue({});
+  mockDb.appListingScreenshot.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  mockDb.appListingScreenshot.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockDb.$transaction.mockReset().mockImplementation(async (arg: unknown) => {
     // Interactive (callback) form: run it with mockDb as the tx client (dbRead ===
     // dbWrite === mockDb here). Array form: resolve the batched ops.
@@ -487,15 +494,17 @@ describe('screenshot CRUD', () => {
       owner
     );
     expect(res.reordered).toBe(3);
-    expect(mockDb.appListingScreenshot.update).toHaveBeenCalledTimes(3);
-    const orders = mockDb.appListingScreenshot.update.mock.calls.map(
-      (c) => (c[0] as { where: { id: string }; data: { order: number } })
+    expect(mockDb.appListingScreenshot.updateMany).toHaveBeenCalledTimes(3);
+    const orders = mockDb.appListingScreenshot.updateMany.mock.calls.map(
+      (c) => c[0] as { where: { id: string; appListingId: string }; data: { order: number } }
     );
     expect(orders.map((o) => [o.where.id, o.data.order])).toEqual([
       ['c', 0],
       ['a', 1],
       ['b', 2],
     ]);
+    // 🔴 Every write is scoped to the RESOLVED listing, not the bare row id.
+    expect(orders.every((o) => o.where.appListingId === 'apl_1')).toBe(true);
   });
 
   it('updateScreenshotCaption enforces ownership via the parent listing', async () => {
@@ -506,8 +515,11 @@ describe('screenshot CRUD', () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, status: 'draft', revisionOfId: null });
     const { updateListingScreenshotCaption } = await import('../app-listing-assets.service');
     await updateListingScreenshotCaption({ screenshotId: 'a', caption: 'hi' }, owner);
-    expect(mockDb.appListingScreenshot.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'a' }, data: { caption: 'hi' } })
+    expect(mockDb.appListingScreenshot.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'a', appListingId: 'apl_1' },
+        data: { caption: 'hi' },
+      })
     );
     // non-owner rejected
     await expect(
@@ -524,7 +536,9 @@ describe('screenshot CRUD', () => {
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, owner);
     expect(res.removed).toBe('b');
-    expect(mockDb.appListingScreenshot.delete).toHaveBeenCalledWith({ where: { id: 'b' } });
+    expect(mockDb.appListingScreenshot.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'b', appListingId: 'apl_1' },
+    });
     const orders = mockDb.appListingScreenshot.update.mock.calls.map(
       (c) => c[0] as { where: { id: string }; data: { order: number } }
     );
@@ -563,7 +577,7 @@ describe('screenshot CRUD', () => {
     await expect(removeListingScreenshot({ screenshotId: 'b' }, owner)).rejects.toThrow(
       /live; edit its assets through a revision/
     );
-    expect(mockDb.appListingScreenshot.delete).not.toHaveBeenCalled();
+    expect(mockDb.appListingScreenshot.deleteMany).not.toHaveBeenCalled();
   });
 
   it('removeScreenshot ALLOWS removal on a SHADOW revision draft (revisionOfId set)', async () => {
@@ -582,7 +596,11 @@ describe('screenshot CRUD', () => {
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, owner);
     expect(res.removed).toBe('b');
-    expect(mockDb.appListingScreenshot.delete).toHaveBeenCalledWith({ where: { id: 'b' } });
+    // Scoped to the SHADOW, so an approve that reparents its rows makes this a no-op
+    // rather than a delete off the live parent.
+    expect(mockDb.appListingScreenshot.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'b', appListingId: 'apl_shadow' },
+    });
   });
 
   it('a MODERATOR bypasses the guard (may curate a live approved listing)', async () => {
@@ -828,7 +846,7 @@ describe('screenshot CRUD', () => {
     await expect(removeListingScreenshot({ screenshotId: 'b' }, otherUser)).rejects.toThrow(
       /do not own/
     );
-    expect(mockDb.appListingScreenshot.delete).not.toHaveBeenCalled();
+    expect(mockDb.appListingScreenshot.deleteMany).not.toHaveBeenCalled();
   });
 
   it('completeness ignores a null-imageId screenshot row (deleted Image → SetNull)', async () => {
