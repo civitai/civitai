@@ -153,25 +153,39 @@ export async function countUserPermanentAccessVersions(
 // Busted from clearSessionCache, which Stripe's webhook reaches via refreshSession on every subscription
 // change, so an upgrade/downgrade/lapse applies on the next read; the TTL is only a missed-webhook backstop.
 type CachedCapTier = { userId: number; tier: string | null };
-const capTierCache = createCachedObject<CachedCapTier>({
-  key: REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER,
-  idKey: 'userId',
-  ttl: CacheTTL.hour,
-  // Money gate: SWR off so a bust truly clears rather than serving one more stale price.
-  staleWhileRevalidate: false,
-  lookupFn: async (ids) => {
-    const userIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
-    if (!userIds.length) return {};
-    const rows = await Promise.all(
-      userIds.map(async (userId) => ({ userId, tier: await getCapTier(userId) }))
-    );
-    return Object.fromEntries(rows.map((r) => [String(r.userId), r]));
-  },
-});
+// Lazily created (on first use) rather than at module load, for exactly the reason the
+// paidAccessCaches comment above gives: a top-level createCachedObject() runs during module
+// evaluation, so ANY test that wholesale-mocks `~/server/utils/cache-helpers` or
+// `~/server/redis/client` and merely imports this service transitively fails at COLLECTION —
+// before a single test runs — with "No createCachedObject export is defined on the mock" or
+// "Cannot read properties of undefined (reading 'PAID_ACCESS_CAP_TIER')". ~130 suites mock
+// those modules wholesale, so this is a broad tripwire, not a hypothetical.
+function createCapTierCache() {
+  return createCachedObject<CachedCapTier>({
+    key: REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER,
+    idKey: 'userId',
+    ttl: CacheTTL.hour,
+    // Money gate: SWR off so a bust truly clears rather than serving one more stale price.
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const userIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
+      if (!userIds.length) return {};
+      const rows = await Promise.all(
+        userIds.map(async (userId) => ({ userId, tier: await getCapTier(userId) }))
+      );
+      return Object.fromEntries(rows.map((r) => [String(r.userId), r]));
+    },
+  });
+}
+
+let capTierCacheInstance: ReturnType<typeof createCapTierCache> | undefined;
+function capTierCache() {
+  return (capTierCacheInstance ??= createCapTierCache());
+}
 
 /** The owner tier a buyer's price is clamped against. Cached — see capTierCache. */
 export async function getCachedCapTier(userId: number): Promise<string | null> {
-  return (await capTierCache.fetch([userId]))[userId]?.tier ?? null;
+  return (await capTierCache().fetch([userId]))[userId]?.tier ?? null;
 }
 
 /** Per-tier paid-access caps (CU 868kj4q4j). Shared because the tRPC handler and the REST endpoint both write gates. */
