@@ -40,6 +40,8 @@ export function DeleteCard() {
   const [membershipWarningModalOpen, setMembershipWarningModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [wipeModalOpen, setWipeModalOpen] = useState(false);
+  const [imagesModalOpen, setImagesModalOpen] = useState(false);
+  const [wipeModels, setWipeModels] = useState(false);
   const [confirmDeleteInput, setConfirmDeleteInput] = useState('');
 
   const handleDeleteClick = () => {
@@ -60,15 +62,27 @@ export function DeleteCard() {
     setTimeout(() => setWipeModalOpen(true), 200); // Ensure it doesn't re-trigger same modal
   };
 
-  const handleWipeDecision = (wipeModels: boolean) => {
+  const handleWipeDecision = (wipe: boolean) => {
+    setWipeModels(wipe);
     setWipeModalOpen(false);
+    setTimeout(() => setImagesModalOpen(true), 200);
+  };
+
+  const handleImageDecision = (removeImages: boolean) => {
+    setImagesModalOpen(false);
     if (currentUser) {
-      deleteAccountMutation.mutateAsync({ id: currentUser.id, removeModels: wipeModels });
+      deleteAccountMutation.mutateAsync({
+        id: currentUser.id,
+        removeModels: wipeModels,
+        removeImages,
+      });
     }
   };
 
   const handleCancelAll = () => {
     setWipeModalOpen(false); // Fully cancels the process
+    setImagesModalOpen(false);
+    setWipeModels(false);
     setConfirmDeleteInput(''); // Reset input field
   };
 
@@ -182,6 +196,34 @@ export function DeleteCard() {
               </Button>
               <Button color="red" onClick={() => handleWipeDecision(false)}>
                 No
+              </Button>
+            </Group>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={imagesModalOpen}
+        onClose={() => setImagesModalOpen(false)}
+        title="Your images"
+        centered
+      >
+        <Stack>
+          <Text>
+            Your images will be deleted either way — this choice only controls when. Delete now
+            removes them immediately. Delete after 7 days hides them right away and deletes them
+            automatically once the window closes; until then, a moderator can still restore them.
+          </Text>
+          <Group justify="space-between">
+            <Button variant="default" onClick={handleCancelAll}>
+              Stop! Go back!
+            </Button>
+            <Group>
+              <Button color="red" onClick={() => handleImageDecision(true)}>
+                Delete now
+              </Button>
+              <Button color="red" variant="outline" onClick={() => handleImageDecision(false)}>
+                Delete after 7 days
               </Button>
             </Group>
           </Group>

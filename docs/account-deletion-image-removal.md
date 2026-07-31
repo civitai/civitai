@@ -42,11 +42,27 @@ no authorization. **No soft-delete option removes a saved direct CDN link.** Onl
 `deleteImageFromS3`, inside `deleteImages()`, does. Since the goal is preventing leaked
 content, reversibility was traded away deliberately.
 
-### Scope: every image the user owns
+### Scope: every image the user owns, with a user-facing timing choice
 
 All ratings, all attachments. ClickUp's Option B (R+ only) is dropped — with a full hard
-delete the rating filter adds branching for no benefit. No showcase carve-out. No new
-user-facing toggle.
+delete the rating filter adds branching for no benefit. No showcase carve-out.
+
+The account-deletion flow now asks a second question, alongside the existing "wipe your
+models?" one: `removeImages` on `deleteUserSchema`, recorded as `User.meta.imageRemoval`
+(`'immediate' | 'grace'`, defaulting to `'immediate'` so callers that omit the field, including
+the pre-existing backlog of already-deleted accounts, keep today's hard-delete behavior). Both
+branches still end in deletion — this is a timing choice, not a retention one:
+
+- **Immediate (`removeImages: true`).** The drain job hard-deletes the images as soon as it
+  reaches the account, same as before this choice existed.
+- **Grace (`removeImages: false`).** The drain job blocks the images (`ingestion = 'Blocked'`)
+  instead of deleting them. That's the same `Image.ingestion = 'Blocked'` lever the "Hard
+  delete, not soft delete" section above rejected as a *general* solution — rejected there
+  because it silently arms a 7-day hard delete and overloads moderation semantics onto a
+  voluntary action. Here it's used deliberately for the branch the user explicitly asked to
+  delay: the 7-day countdown is the point, and `blockedFor: 'moderated'` is accurate because a
+  moderator can undo it during the window. The existing `remove-blocked-images` job purges them
+  after 7 days, counted from the block's `updatedAt`.
 
 ### Execution: background drain, worklist derived from `User.deletedAt`
 
@@ -137,6 +153,12 @@ These are accepted, not open questions.
   failed object delete leaves a public CDN url with no row to retry from. The failure is now
   logged (`delete-image-from-s3-failed`, with the image id and url) rather than swallowed, but
   it is not retried — recovery means replaying those log lines.
+- The grace branch is a database-only state change. The S3 object and its CDN URL stay fully
+  reachable by direct link for the whole 7 days, because `ingestion='Blocked'` hides content in
+  the application but does not touch storage. Raised and accepted by the product owner.
+- Both branches end in deletion. "Grace" buys a 7-day window in which the images are hidden and
+  a moderator can still reverse the block, not indefinite retention. This differs from
+  `removeModels: false`, which keeps models live permanently.
 
 ## Open items
 
