@@ -312,8 +312,18 @@ export { nsfwLevelFromContentRating };
  * Load a listing and assert the caller owns it (or is a moderator). Throws
  * NOT_FOUND for a missing listing, FORBIDDEN for a non-owner non-mod.
  */
-async function loadOwnedListing(listingId: string, user: SessionUser): Promise<OwnedListing> {
-  const listing = await dbRead.appListing.findUnique({
+async function loadOwnedListing(
+  listingId: string,
+  user: SessionUser,
+  /**
+   * Pool override. Defaults to the replica. Pass `dbWrite` when the row may have
+   * been INSERTed milliseconds ago — i.e. a shadow this request just minted
+   * ({@link resolveOwnerAssetEditTarget}); the replica would miss it and the load
+   * would 404 the owner's very first edit.
+   */
+  db: typeof dbRead = dbRead
+): Promise<OwnedListing> {
+  const listing = await db.appListing.findUnique({
     where: { id: listingId },
     select: {
       id: true,
@@ -334,6 +344,126 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
   }
   return listing;
+}
+
+// ---------------------------------------------------------------------------
+// LAZY shadow-revision minting — "a shadow exists once you EDIT, not once you LOOK".
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the EFFECTIVE target of an OWNER asset mutation, minting the shadow
+ * revision on the FIRST edit.
+ *
+ * `getMyListingForApp` no longer creates a shadow just to render the media editor
+ * (a `.query` that writes; measured on prod as 78% of approved onsite parents
+ * carrying a never-edited shadow, self-refilling on every page view). So the id the
+ * client hands an asset proc is the LIVE PARENT until the first mutation. This is
+ * where that mutation becomes a revision:
+ *
+ *   - moderator → returns the listing UNCHANGED. Mods deliberately curate the live
+ *     row ({@link assertOwnerAssetEditable}'s bypass + {@link
+ *     reDeriveContentRatingForModLiveEdit}); auto-staging their edit on a shadow
+ *     would silently change what "mod edits a live listing" means.
+ *   - not `approved`, or already a shadow → UNCHANGED (edited in place, as before).
+ *   - owner + `approved` + not a shadow → `beginListingRevision` (idempotent: reuses
+ *     an in-flight shadow) and the shadow becomes the target.
+ *
+ * Read back from the PRIMARY — the shadow may have been INSERTed microseconds ago.
+ *
+ * 🔴 Callers MUST still run {@link assertOwnerAssetEditable} on the RESOLVED target.
+ * That is the defence-in-depth that makes this fail CLOSED: if this ever returns the
+ * live parent for an owner (a bug here, a `beginListingRevision` that resolved to the
+ * wrong row), the guard throws BAD_REQUEST instead of mutating the served listing.
+ */
+async function resolveOwnerAssetEditTarget(
+  listing: OwnedListing,
+  user: SessionUser
+): Promise<OwnedListing> {
+  if (user.isModerator) return listing;
+  if (listing.status !== 'approved' || listing.revisionOfId != null) return listing;
+  // Dynamic import: `offsite-listing.service` imports THIS module (the floor gates),
+  // so a static import would close a cycle at module-eval time.
+  const { beginListingRevision } = await import('~/server/services/blocks/offsite-listing.service');
+  const { shadowId } = await beginListingRevision({ listingId: listing.id, userId: user.id });
+  return loadOwnedListing(shadowId, user, dbWrite);
+}
+
+/**
+ * Match ONE screenshot row against the clone-set of another listing — the pure core
+ * of the parent-row-id re-map.
+ *
+ * 🔴 WHY THIS EXISTS. `removeListingScreenshot` / `updateListingScreenshotCaption` /
+ * `reorderListingScreenshots` take `AppListingScreenshot` ROW ids. Before a shadow
+ * exists the ids the client holds are the LIVE PARENT's rows — so a "remove
+ * screenshot" issued against them would delete a row from the listing that is
+ * currently being served, bypassing moderator review entirely. That is the exact
+ * data-loss hazard the 🔴 SECURITY note on `GetMyListingForAppResult.assets` warns
+ * about. Under lazy creation the write path therefore re-keys the row id onto the
+ * freshly-cloned shadow row before mutating anything.
+ *
+ * `beginListingRevision` clones each parent screenshot with the SAME `imageId`,
+ * `order` and `caption`, so immediately after a mint the mapping is exact. Matching
+ * is deliberately conservative and FAILS CLOSED (`null` → the caller throws and asks
+ * the client to refresh) rather than guessing:
+ *
+ *   1. exactly one candidate with the same `(imageId, order)` — the fresh-clone case;
+ *   2. else exactly one candidate with the same non-null `imageId` — survives a
+ *      reorder on the shadow (a second tab) that moved the row;
+ *   3. else `null` — ambiguous (the same image attached twice) or gone.
+ *
+ * Re-keying on `imageId` rather than changing the procs' signatures keeps the wire
+ * contract (and the `civitai` CLI's `AppBlocksSubmit`-scoped calls) unchanged.
+ */
+export function matchClonedScreenshotRow(
+  source: { imageId: number | null; order: number },
+  candidates: { id: string; imageId: number | null; order: number }[]
+): string | null {
+  const exact = candidates.filter(
+    (c) => c.imageId === source.imageId && c.order === source.order
+  );
+  if (exact.length === 1) return exact[0].id;
+  if (source.imageId != null) {
+    const byImage = candidates.filter((c) => c.imageId === source.imageId);
+    if (byImage.length === 1) return byImage[0].id;
+  }
+  return null;
+}
+
+/**
+ * Re-map screenshot ROW ids from `sourceListingId` onto `targetListingId` (the shadow
+ * that {@link resolveOwnerAssetEditTarget} just minted). Reads BOTH sides from the
+ * PRIMARY — the target's rows were created in the mint transaction. Throws
+ * BAD_REQUEST if any id can't be matched, so an unmappable request is refused rather
+ * than applied to the wrong row (and never to the parent's).
+ */
+async function remapScreenshotRowIds(args: {
+  screenshotIds: string[];
+  sourceListingId: string;
+  targetListingId: string;
+}): Promise<string[]> {
+  const [sourceRows, targetRows] = await Promise.all([
+    dbWrite.appListingScreenshot.findMany({
+      where: { appListingId: args.sourceListingId },
+      select: { id: true, imageId: true, order: true },
+    }),
+    dbWrite.appListingScreenshot.findMany({
+      where: { appListingId: args.targetListingId },
+      select: { id: true, imageId: true, order: true },
+    }),
+  ]);
+  const sourceById = new Map(sourceRows.map((r) => [r.id, r]));
+  return args.screenshotIds.map((id) => {
+    const source = sourceById.get(id);
+    const mapped = source ? matchClonedScreenshotRow(source, targetRows) : null;
+    if (!mapped) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          'This screenshot is no longer available on your revision. Refresh the page and try again.',
+      });
+    }
+    return mapped;
+  });
 }
 
 /**
@@ -734,13 +864,14 @@ export async function setListingIcon(
   args: { listingId: string; imageId: number },
   user: SessionUser
 ): Promise<SetListingIconResult> {
-  const listing = await loadOwnedListing(args.listingId, user);
+  // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
+  const listing = await resolveOwnerAssetEditTarget(await loadOwnedListing(args.listingId, user), user);
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({
-      where: { id: args.listingId },
+      where: { id: listing.id },
       data: { iconId: validated.imageId },
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
@@ -752,13 +883,14 @@ export async function setListingCover(
   args: { listingId: string; imageId: number },
   user: SessionUser
 ): Promise<SetListingCoverResult> {
-  const listing = await loadOwnedListing(args.listingId, user);
+  // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
+  const listing = await resolveOwnerAssetEditTarget(await loadOwnedListing(args.listingId, user), user);
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({
-      where: { id: args.listingId },
+      where: { id: listing.id },
       data: { coverId: validated.imageId },
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
@@ -770,7 +902,8 @@ export async function addListingScreenshot(
   args: { listingId: string; imageId: number; caption?: string | null },
   user: SessionUser
 ): Promise<AddListingScreenshotResult> {
-  const listing = await loadOwnedListing(args.listingId, user);
+  // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
+  const listing = await resolveOwnerAssetEditTarget(await loadOwnedListing(args.listingId, user), user);
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'screenshot', user, {
     allowPending: true,
@@ -784,13 +917,13 @@ export async function addListingScreenshot(
   // replica lag two concurrent adds could both pass `count < 8` (a 9th row) or
   // compute the same `order`.
   const existing = await dbWrite.appListingScreenshot.findMany({
-    where: { appListingId: args.listingId },
+    where: { appListingId: listing.id },
     select: { order: true },
     orderBy: { order: 'desc' },
     take: 1,
   });
   const count = await dbWrite.appListingScreenshot.count({
-    where: { appListingId: args.listingId },
+    where: { appListingId: listing.id },
   });
   if (count >= MAX_LISTING_SCREENSHOTS) {
     throw new TRPCError({
@@ -804,7 +937,7 @@ export async function addListingScreenshot(
     await tx.appListingScreenshot.create({
       data: {
         id,
-        appListingId: args.listingId,
+        appListingId: listing.id,
         imageId,
         order: nextOrder,
         caption: args.caption ?? null,
@@ -824,20 +957,34 @@ export async function reorderListingScreenshots(
   args: { listingId: string; orderedIds: string[] },
   user: SessionUser
 ): Promise<{ reordered: number }> {
-  assertOwnerAssetEditable(await loadOwnedListing(args.listingId, user), user);
+  // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
+  const listing = await resolveOwnerAssetEditTarget(await loadOwnedListing(args.listingId, user), user);
+  assertOwnerAssetEditable(listing, user);
+  // 🔴 `orderedIds` are PARENT row ids whenever the mint above just happened. Re-key
+  // them onto the shadow's clones BEFORE the permutation check — otherwise the check
+  // fails (parent ids aren't in the shadow's set) or, worse without the retarget,
+  // reorders the LIVE listing's rows.
+  const orderedIds =
+    listing.id === args.listingId
+      ? args.orderedIds
+      : await remapScreenshotRowIds({
+          screenshotIds: args.orderedIds,
+          sourceListingId: args.listingId,
+          targetListingId: listing.id,
+        });
   // Read the current set from dbWrite (primary): under replica lag the reorder
   // could target a just-deleted id (P2025 → 500 after the delete committed) or
   // miss a just-added row.
   const current = await dbWrite.appListingScreenshot.findMany({
-    where: { appListingId: args.listingId },
+    where: { appListingId: listing.id },
     select: { id: true },
   });
   const currentIds = new Set(current.map((s) => s.id));
-  const nextIds = new Set(args.orderedIds);
+  const nextIds = new Set(orderedIds);
   const samePermutation =
     currentIds.size === nextIds.size &&
-    args.orderedIds.length === current.length &&
-    args.orderedIds.every((id) => currentIds.has(id));
+    orderedIds.length === current.length &&
+    orderedIds.every((id) => currentIds.has(id));
   if (!samePermutation) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
@@ -845,34 +992,62 @@ export async function reorderListingScreenshots(
     });
   }
   await dbWrite.$transaction(
-    args.orderedIds.map((id, index) =>
+    orderedIds.map((id, index) =>
       dbWrite.appListingScreenshot.update({ where: { id }, data: { order: index } })
     )
   );
-  return { reordered: args.orderedIds.length };
+  return { reordered: orderedIds.length };
+}
+
+/**
+ * Resolve a ROW-ID-keyed screenshot mutation onto its EFFECTIVE row.
+ *
+ * 🔴 THE data-loss guard for lazy shadow creation. `screenshotId` is an
+ * `AppListingScreenshot` row id, and before a shadow exists the client holds the
+ * LIVE PARENT's row ids — so this is the one place where a stale id could delete /
+ * reorder / re-caption a row off the listing that is currently being served, with no
+ * moderator review. It loads the row, enforces ownership, mints the shadow via
+ * {@link resolveOwnerAssetEditTarget}, and RE-KEYS the row id onto the shadow's clone
+ * ({@link matchClonedScreenshotRow}) — failing closed if it can't.
+ *
+ * Returns the row id + listing id the caller must use. Callers MUST run
+ * {@link assertOwnerAssetEditable} on the returned `listing` (defence in depth: it
+ * throws if the resolution ever yields the live parent for an owner).
+ */
+async function resolveOwnerScreenshotTarget(
+  screenshotId: string,
+  user: SessionUser
+): Promise<{ screenshotId: string; listing: OwnedListing }> {
+  const shot = await dbRead.appListingScreenshot.findUnique({
+    where: { id: screenshotId },
+    select: { id: true, appListingId: true, appListing: { select: { userId: true } } },
+  });
+  if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
+  if (shot.appListing.userId !== user.id && !user.isModerator) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
+  }
+  const sourceListing = await loadOwnedListing(shot.appListingId, user);
+  const listing = await resolveOwnerAssetEditTarget(sourceListing, user);
+  if (listing.id === shot.appListingId) return { screenshotId, listing };
+  const [mapped] = await remapScreenshotRowIds({
+    screenshotIds: [screenshotId],
+    sourceListingId: shot.appListingId,
+    targetListingId: listing.id,
+  });
+  return { screenshotId: mapped, listing };
 }
 
 export async function updateListingScreenshotCaption(
   args: { screenshotId: string; caption?: string | null },
   user: SessionUser
 ): Promise<{ id: string }> {
-  const shot = await dbRead.appListingScreenshot.findUnique({
-    where: { id: args.screenshotId },
-    select: {
-      id: true,
-      appListing: { select: { userId: true, status: true, revisionOfId: true } },
-    },
-  });
-  if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
-  if (shot.appListing.userId !== user.id && !user.isModerator) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
-  }
-  assertOwnerAssetEditable(shot.appListing, user);
+  const { screenshotId, listing } = await resolveOwnerScreenshotTarget(args.screenshotId, user);
+  assertOwnerAssetEditable(listing, user);
   await dbWrite.appListingScreenshot.update({
-    where: { id: args.screenshotId },
+    where: { id: screenshotId },
     data: { caption: args.caption ?? null },
   });
-  return { id: args.screenshotId };
+  return { id: screenshotId };
 }
 
 /**
@@ -883,22 +1058,15 @@ export async function removeListingScreenshot(
   args: { screenshotId: string },
   user: SessionUser
 ): Promise<{ removed: string }> {
-  const shot = await dbRead.appListingScreenshot.findUnique({
-    where: { id: args.screenshotId },
-    select: {
-      id: true,
-      appListingId: true,
-      appListing: { select: { userId: true, status: true, revisionOfId: true } },
-    },
-  });
-  if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
-  if (shot.appListing.userId !== user.id && !user.isModerator) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
-  }
+  // 🔴 Re-key a PARENT row id onto the (lazily minted) shadow's clone BEFORE deleting
+  // anything — a delete against a parent row id would destroy a screenshot off the
+  // LIVE served listing with no moderator review. Fails closed if unmappable.
+  const { screenshotId, listing } = await resolveOwnerScreenshotTarget(args.screenshotId, user);
   // 🔴 Never delete a screenshot from a LIVE approved listing directly (bypasses
-  // review) — edits go through a shadow revision. Mods bypass (curation).
-  assertOwnerAssetEditable(shot.appListing, user);
-  await dbWrite.appListingScreenshot.delete({ where: { id: args.screenshotId } });
+  // review) — edits go through a shadow revision. Mods bypass (curation). Evaluated
+  // on the RESOLVED target, so a re-map that failed to leave the parent throws here.
+  assertOwnerAssetEditable(listing, user);
+  await dbWrite.appListingScreenshot.delete({ where: { id: screenshotId } });
   // (no re-derive: removal/reorder/caption can never RAISE the derived rating)
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).
@@ -906,7 +1074,7 @@ export async function removeListingScreenshot(
   // may still return the just-deleted row → an `update` on it would P2025/500
   // after the delete already committed.
   const remaining = await dbWrite.appListingScreenshot.findMany({
-    where: { appListingId: shot.appListingId },
+    where: { appListingId: listing.id },
     select: { id: true },
     orderBy: { order: 'asc' },
   });
@@ -917,7 +1085,7 @@ export async function removeListingScreenshot(
       )
     );
   }
-  return { removed: args.screenshotId };
+  return { removed: screenshotId };
 }
 
 export type ListingAssetsView = {

@@ -9,7 +9,7 @@ import {
  * `getMyListingForApp` — the owner-gated `appBlockId` → `AppListing.id` resolver
  * for the on-site listing-media owner page. Covers the contract branches:
  *   - owner happy-path → `{ appListingId, status, contentRating, hasPendingRevision,
- *     shadowId, assets }`
+ *     shadowId, editTargetId, editBlockedReason, assets }`
  *   - a listing owned by ANOTHER user → NOT_OWNED (router maps → FORBIDDEN)
  *   - no listing row for the app → NOT_FOUND
  * plus the pending-revision flag (a queued shadow-revision request flips it true).
@@ -20,10 +20,15 @@ import {
  * floor (icon+cover attached) could never be met, and "Submit for review" was
  * permanently disabled — the on-site listing-media flow was uncompletable for
  * everyone. The tests below pin that the proc projects the assets the editor's floor
- * check needs, and that they come from the SHADOW revision (the editable target),
- * never the live parent — returning the parent's `AppListingScreenshot` row ids
- * would let a "remove screenshot" delete a row off the LIVE listing, bypassing
- * moderator review.
+ * check needs, and that they come from the SHADOW revision WHEN ONE EXISTS.
+ *
+ * 🔴 REGRESSION GUARD — LAZY shadow creation. This proc is a `.query` and must NOT
+ * WRITE. It used to call `beginListingRevision`, so merely OPENING the media tab
+ * minted a `draft` `AppListing`: measured on prod 2026-07-30, 7 shadows existed and
+ * 7/7 had `updated_at == created_at` (never written since their clone tx), 6 minted
+ * that day by page views alone, three of them 1.5 s apart. 78% of approved onsite
+ * parents carried a shadow representing no edit, and deleting them just refilled on
+ * the next view. The shadow is now minted by the first asset MUTATION.
  *
  * DB is fully mocked — no real Prisma. `getEdgeUrl` + the id generators are stubbed.
  */
@@ -144,6 +149,21 @@ function wireFindUnique(opts: {
   mockWrite.appListing.findUnique.mockImplementation(impl(false));
 }
 
+/**
+ * Wire the SHADOW-existence probe. It reads the PRIMARY (`dbWrite`) on purpose: the
+ * client invalidates this query after every asset mutation, and the FIRST mutation is
+ * what mints the shadow — so the very next call is a read-after-write on a row
+ * inserted milliseconds ago, and missing it on a lagging replica would re-project the
+ * PARENT's rows (and their screenshot row ids) just as the shadow started diverging.
+ */
+function withShadow(shadowId: string | null) {
+  mockWrite.appListing.findFirst.mockImplementation(async (args: unknown) => {
+    const a = args as { where?: { revisionOfId?: string } };
+    if (a.where?.revisionOfId != null) return shadowId ? { id: shadowId } : null;
+    return null;
+  });
+}
+
 /** The listing ids whose `loadListingEditView` read landed on a given pool. */
 function editViewReads(client: { appListing: { findUnique: { mock: { calls: unknown[][] } } } }) {
   return client.appListing.findUnique.mock.calls
@@ -171,8 +191,8 @@ describe('getMyListingForApp', () => {
       owned: ownedRow(),
       viewByListingId: { apl_shadow: editViewRow('apls_shadow') },
     });
-    // An in-flight shadow already exists → beginListingRevision reuses it.
-    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    // An in-flight shadow already exists → it is reused (never a second one).
+    withShadow('apl_shadow');
 
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
@@ -182,7 +202,12 @@ describe('getMyListingForApp', () => {
       contentRating: 'pg13',
       hasPendingRevision: false,
       shadowId: 'apl_shadow',
+      editTargetId: 'apl_shadow',
+      editBlockedReason: null,
     });
+    // Reuse, not re-create: the UNIQUE index on revision_of_id (one shadow per parent)
+    // is never even challenged.
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
     // Resolved by the @unique appBlockId, not by id.
     expect(mockRead.appListing.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { appBlockId: 'my-block' } })
@@ -195,7 +220,7 @@ describe('getMyListingForApp', () => {
       owned: ownedRow({ contentRating: 'g' }),
       viewByListingId: { apl_shadow: editViewRow('apls_shadow') },
     });
-    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    withShadow('apl_shadow');
     mockRead.appListingPublishRequest.findFirst.mockResolvedValue({ id: 'alpr_pending' });
 
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
@@ -242,7 +267,7 @@ describe('getMyListingForApp', () => {
       owned: ownedRow(),
       viewByListingId: { apl_shadow: editViewRow('apls_shadow') },
     });
-    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    withShadow('apl_shadow');
 
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
@@ -270,7 +295,7 @@ describe('getMyListingForApp', () => {
         apl_shadow: editViewRow('apls_SHADOW', { iconId: 2, icon: { url: 'shadow-icon' } }),
       },
     });
-    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    withShadow('apl_shadow');
 
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
@@ -291,32 +316,71 @@ describe('getMyListingForApp', () => {
     expect(editViewReads(mockRead)).toEqual([]);
   });
 
-  it('🔴 creates the shadow when none exists yet and reads THAT one (first entry)', async () => {
+  // -------------------------------------------------------------------------
+  // 🔴 LAZY CREATION — the read must NOT mint a shadow. This is a `.query`.
+  // -------------------------------------------------------------------------
+
+  it('🔴 NO shadow yet → projects the PARENT’s assets and creates NOTHING', async () => {
+    wireFindUnique({
+      entry: {
+        id: 'apl_onsite',
+        userId: OWNER,
+        status: 'approved',
+        contentRating: 'pg13',
+        revisionOfId: null,
+      },
+      owned: ownedRow(),
+      viewByListingId: { apl_onsite: editViewRow('apls_PARENT') },
+    });
+    withShadow(null);
+
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+
+    // 🔴 THE GUARD: opening the media tab writes NOTHING. On prod this write-in-a-query
+    // produced 7 shadows, 7/7 never edited (updated_at == created_at), 6 minted in one
+    // day by page views alone — and they refilled the instant anyone looked again.
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    expect(mockWrite.appListingScreenshot.createMany).not.toHaveBeenCalled();
+    expect(res.shadowId).toBeNull();
+    // …and the editor still sees real assets to edit + a target to mutate: the PARENT.
+    // Safe only because the WRITE side re-keys any parent screenshot row id onto the
+    // shadow it mints (see the app-listing-assets lazy-mint suite).
+    expect(res.editTargetId).toBe('apl_onsite');
+    expect(res.editBlockedReason).toBeNull();
+    expect(res.assets.icon.imageId).toBe(137918008);
+    expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_PARENT']);
+    // No shadow ⇒ no read-after-write ⇒ the edit-view read stays on the replica.
+    expect(editViewReads(mockRead)).toEqual(['apl_onsite']);
+    expect(editViewReads(mockWrite)).toEqual([]);
+  });
+
+  it('🔴 the shadow-existence probe reads the PRIMARY (read-after-write on the first edit)', async () => {
     wireFindUnique({
       entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
       owned: ownedRow(),
       viewByListingId: {
         apl_onsite: editViewRow('apls_PARENT'),
-        // beginListingRevision mints `apl_new_1` (stubbed id gen, first call).
-        apl_new_1: editViewRow('apls_FRESH_SHADOW'),
+        apl_shadow: editViewRow('apls_SHADOW'),
       },
+      // The shadow was INSERTed on the primary microseconds ago (the owner's first
+      // asset mutation) — the replica has not caught up.
+      replicaLagsOn: ['apl_shadow'],
     });
-    // No shadow yet: the read probe and the in-transaction race re-check both miss,
-    // then the post-transaction "winner" re-read returns the row we just created.
+    // The replica does NOT see the shadow; the primary does.
     mockRead.appListing.findFirst.mockResolvedValue(null);
-    mockWrite.appListing.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValue({ id: 'apl_new_1' });
+    withShadow('apl_shadow');
 
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
-    expect(mockWrite.appListing.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ revisionOfId: 'apl_onsite', status: 'draft' }),
-      })
+    // Probing the REPLICA here would report "no shadow" and hand the client the LIVE
+    // parent's rows right after the shadow started diverging — the client invalidates
+    // this query after every mutation, so that is the common case, not a rare one.
+    expect(res.shadowId).toBe('apl_shadow');
+    expect(res.editTargetId).toBe('apl_shadow');
+    expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_SHADOW']);
+    expect(mockWrite.appListing.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { revisionOfId: 'apl_onsite' } })
     );
-    expect(res.shadowId).toBe('apl_new_1');
-    expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_FRESH_SHADOW']);
   });
 
   it('a NON-approved listing has no shadow — assets come from the listing itself', async () => {
@@ -329,101 +393,111 @@ describe('getMyListingForApp', () => {
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
     expect(res.shadowId).toBeNull();
-    // No shadow was opened for a draft (beginListingRevision would reject it anyway).
+    // No shadow is ever opened for a draft — it is edited IN PLACE, unchanged.
     expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    expect(res.editTargetId).toBe('apl_onsite');
+    expect(res.editBlockedReason).toBeNull();
     expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_OWN']);
     // Nothing was written, so nothing needs the primary.
     expect(editViewReads(mockRead)).toEqual(['apl_onsite']);
     expect(editViewReads(mockWrite)).toEqual([]);
+    // A draft has no shadow to probe for at all.
+    expect(mockWrite.appListing.findFirst).not.toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // 🔴 READ-AFTER-WRITE: a SHADOW is INSERTed on the PRIMARY, so ANY read of one
-  // goes back to the primary — the predicate is "the target is a shadow", NOT
-  // "this call created it". `created: false` says only that another caller minted
-  // it, which here is routinely microseconds ago and in a different request (the
-  // editor's own client-side `beginListingRevision`, `getMyListingForEdit`, a second
-  // tab). Reading a shadow off the replica misses under lag → `loadListingEditView`
-  // throws NOT_FOUND → tRPC NOT_FOUND → the editor's query is `retry: false` and it
-  // renders <NotFound/>, discarding the editor and any in-flight upload. The client
-  // invalidates on every asset mutation, so the exposure is per-mutation.
-  // -------------------------------------------------------------------------
-
-  it('🔴 reads a FRESHLY-CREATED shadow from the PRIMARY, not the lagging replica', async () => {
+  it('a PENDING listing is likewise edited in place (unchanged)', async () => {
     wireFindUnique({
-      entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
-      owned: ownedRow(),
-      viewByListingId: {
-        apl_onsite: editViewRow('apls_PARENT'),
-        apl_new_1: editViewRow('apls_FRESH_SHADOW'),
-      },
-      // The shadow was INSERTed on the primary this instant — the replica misses it.
-      replicaLagsOn: ['apl_new_1'],
+      entry: { id: 'apl_onsite', userId: OWNER, status: 'pending', contentRating: 'g' },
+      viewByListingId: { apl_onsite: editViewRow('apls_OWN') },
     });
-    mockRead.appListing.findFirst.mockResolvedValue(null);
-    mockWrite.appListing.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValue({ id: 'apl_new_1' });
 
-    // Routed to the replica this REJECTS with NOT_FOUND instead of resolving.
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
-    expect(res.shadowId).toBe('apl_new_1');
-    expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_FRESH_SHADOW']);
-    // …and it got there by reading the PRIMARY, never the replica.
-    expect(editViewReads(mockWrite)).toEqual(['apl_new_1']);
-    expect(editViewReads(mockRead)).toEqual([]);
+    expect(res).toMatchObject({
+      status: 'pending',
+      shadowId: null,
+      editTargetId: 'apl_onsite',
+      editBlockedReason: null,
+    });
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
   });
 
-  it('🔴 a REUSED (pre-existing) shadow ALSO reads from the PRIMARY — `created` is not a visibility claim', async () => {
+  // -------------------------------------------------------------------------
+  // 🔴 The editability VERDICT. The client used to learn "this listing can't be
+  // revised" from the on-mount `beginListingRevision`'s INVALID_REVISION, which is
+  // the only thing that kept the media editor from mounting against a removed /
+  // rejected listing. Lazy creation removes that call, so the verdict must arrive on
+  // the READ — otherwise the owner gets a fully-functional editor over a dead
+  // listing (or a blank page).
+  // -------------------------------------------------------------------------
+
+  it.each([
+    ['removed', 'this listing has been removed by a moderator and can no longer be edited'],
+    ['rejected', 'this listing was rejected; submit a new listing instead of editing it'],
+  ])('🔴 a %s listing returns an inline editBlockedReason, not a blank page', async (
+    status,
+    expected
+  ) => {
+    wireFindUnique({
+      entry: { id: 'apl_onsite', userId: OWNER, status, contentRating: 'g', revisionOfId: null },
+      viewByListingId: { apl_onsite: editViewRow('apls_OWN') },
+    });
+
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+
+    expect(res.editBlockedReason).toBe(expected);
+    expect(res.status).toBe(status);
+    // It is a VERDICT, not a throw — the page still renders (alert + no editor), which
+    // is what the "don't collapse to NotFound" narrowing exists to preserve.
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('🔴 an internal SHADOW resolved directly is not an editable page', async () => {
+    wireFindUnique({
+      entry: {
+        id: 'apl_shadow',
+        userId: OWNER,
+        status: 'draft',
+        contentRating: 'g',
+        revisionOfId: 'apl_onsite',
+      },
+      viewByListingId: { apl_shadow: editViewRow('apls_SHADOW') },
+    });
+
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+
+    expect(res.editBlockedReason).toBe(
+      'this listing is an internal revision draft and cannot be edited directly'
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // 🔴 READ-AFTER-WRITE: a SHADOW is INSERTed on the PRIMARY (by the owner's first
+  // asset mutation), so ANY read of one goes back to the primary — the predicate is
+  // "the target is a shadow", not "this call created it". Reading a shadow off the
+  // replica misses under lag → `loadListingEditView` throws NOT_FOUND → tRPC
+  // NOT_FOUND → the editor's query is `retry: false` and it renders <NotFound/>,
+  // discarding the editor and any in-flight upload. The client invalidates on every
+  // asset mutation, so the exposure is per-mutation.
+  // -------------------------------------------------------------------------
+
+  it('🔴 a shadow ALWAYS reads from the PRIMARY, never the replica', async () => {
     wireFindUnique({
       entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
       owned: ownedRow(),
       viewByListingId: { apl_shadow: editViewRow('apls_shadow') },
     });
-    // An in-flight shadow already exists → `beginListingRevision` returns created:false.
-    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    withShadow('apl_shadow');
 
     const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
 
     expect(res.shadowId).toBe('apl_shadow');
-    // The routing predicate is "the target is a SHADOW", not "I inserted it". `created:
-    // false` only says another caller minted it — which in this flow is routinely
-    // microseconds ago and in a different request (the editor's own client-side
-    // `beginListingRevision`, `getMyListingForEdit`, a second tab). Only shadow reads
-    // move to the primary; the in-place draft/pending read below stays on the replica.
+    // Only shadow reads move to the primary; the in-place draft/pending read (and an
+    // approved parent with no shadow yet) stays on the replica.
     expect(editViewReads(mockWrite)).toEqual(['apl_shadow']);
     expect(editViewReads(mockRead)).toEqual([]);
   });
 
-  it('🔴 a REUSED shadow the replica has NOT caught up on still returns its assets (no NOT_FOUND)', async () => {
-    wireFindUnique({
-      entry: { id: 'apl_onsite', userId: OWNER, status: 'approved', contentRating: 'pg13' },
-      owned: ownedRow(),
-      viewByListingId: {
-        apl_onsite: editViewRow('apls_PARENT'),
-        apl_shadow: editViewRow('apls_SHADOW'),
-      },
-      // The shadow exists on the PRIMARY (a concurrent request minted it microseconds
-      // ago) but has not replicated yet. `beginListingRevision` reports created:FALSE.
-      replicaLagsOn: ['apl_shadow'],
-    });
-    // The idempotency probe reads the replica, misses, and the in-tx re-check on the
-    // primary finds the concurrent winner → returns { created: false }.
-    mockRead.appListing.findFirst.mockResolvedValue(null);
-    mockWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
-
-    // Routed by `created` this reads the lagging replica → NOT_FOUND → the editor
-    // renders <NotFound /> (retry:false) and the in-flight upload is discarded.
-    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
-
-    expect(res.shadowId).toBe('apl_shadow');
-    expect(res.assets.screenshots.map((s) => s.id)).toEqual(['apls_SHADOW']);
-    expect(editViewReads(mockWrite)).toEqual(['apl_shadow']);
-    expect(editViewReads(mockRead)).toEqual([]);
-    // And it never fell back to the live parent's rows.
-    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
-  });
 });
 
 // W13 draft-at-submit — a FIRST-version app has no AppBlock yet, so the owner-media

@@ -24,7 +24,10 @@ const { mockDb, ids } = vi.hoisted(() => ({
   mockDb: {
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The lazy-mint shadow probe (`beginListingRevision`'s idempotent reuse).
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      create: vi.fn(async (args: { data: unknown }) => args.data),
       update: vi.fn(async (args: { data: unknown }) => ({ ...(args as object) })),
     },
     image: {
@@ -57,7 +60,9 @@ const mod = { id: 7, isModerator: true } as never;
 function resetDb() {
   ids.n = 0;
   mockDb.appListing.findUnique.mockReset().mockResolvedValue(null);
+  mockDb.appListing.findFirst.mockReset().mockResolvedValue(null);
   mockDb.appListing.findMany.mockReset().mockResolvedValue([]);
+  mockDb.appListing.create.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
   mockDb.appListing.update.mockReset().mockResolvedValue({});
   mockDb.image.findUnique.mockReset().mockResolvedValue(null);
   mockDb.image.findMany.mockReset().mockResolvedValue([]);
@@ -495,8 +500,10 @@ describe('screenshot CRUD', () => {
 
   it('updateScreenshotCaption enforces ownership via the parent listing', async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
-      id: 'a', appListing: { userId: 42 },
+      id: 'a', appListingId: 'apl_1', appListing: { userId: 42 },
     });
+    // An in-place-editable (draft) listing → no shadow, no row-id re-map.
+    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, status: 'draft', revisionOfId: null });
     const { updateListingScreenshotCaption } = await import('../app-listing-assets.service');
     await updateListingScreenshotCaption({ screenshotId: 'a', caption: 'hi' }, owner);
     expect(mockDb.appListingScreenshot.update).toHaveBeenCalledWith(
@@ -512,6 +519,7 @@ describe('screenshot CRUD', () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b', appListingId: 'apl_1', appListing: { userId: 42 },
     });
+    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, status: 'draft', revisionOfId: null });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([{ id: 'a' }, { id: 'c' }]);
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, owner);
@@ -527,17 +535,30 @@ describe('screenshot CRUD', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 🔴 Owner asset-edit guard (audit #3010): a LIVE approved, non-shadow listing
-  // must NOT have its assets mutated directly by its owner — that would bypass mod
-  // review. Edits route through a shadow revision (revisionOfId != null). Mods bypass.
+  // 🔴 Owner asset-edit guard (audit #3010): an owner's asset mutation must never
+  // land on a LIVE approved, non-shadow listing — that bypasses mod review.
+  //
+  // Under LAZY shadow creation the owner is no longer REFUSED: the mutation mints
+  // (or reuses) the shadow and applies there — see
+  // `app-listing-assets.lazy-revision.service.test.ts`, which asserts end-to-end
+  // against an in-memory store that the parent's rows survive untouched. What
+  // remains here is the guard's role as FAIL-CLOSED defence in depth: it runs on the
+  // RESOLVED target, so if the resolution ever yields the live parent the write is
+  // still refused. Mods bypass (deliberate live curation).
   // -------------------------------------------------------------------------
 
-  it('removeScreenshot REFUSES a live approved (non-shadow) listing for a non-mod owner', async () => {
+  it('🔴 removeScreenshot STILL REFUSES when the resolve yields the LIVE listing (fail-closed)', async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b',
       appListingId: 'apl_live',
-      appListing: { userId: 42, status: 'approved', revisionOfId: null },
+      appListing: { userId: 42 },
     });
+    const live = { ...listingRow, id: 'apl_live', status: 'approved', revisionOfId: null };
+    mockDb.appListing.findUnique.mockResolvedValue(live);
+    // FAULT INJECTION: the shadow probe resolves to the PARENT's own id, so the
+    // "shadow" the resolver loads back IS the live listing. The guard is the last
+    // thing between that and a delete off the served listing.
+    mockDb.appListing.findFirst.mockResolvedValue({ id: 'apl_live' });
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     await expect(removeListingScreenshot({ screenshotId: 'b' }, owner)).rejects.toThrow(
       /live; edit its assets through a revision/
@@ -549,7 +570,13 @@ describe('screenshot CRUD', () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b',
       appListingId: 'apl_shadow',
-      appListing: { userId: 42, status: 'draft', revisionOfId: 'apl_parent' },
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_shadow',
+      status: 'draft',
+      revisionOfId: 'apl_parent',
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
@@ -562,20 +589,30 @@ describe('screenshot CRUD', () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b',
       appListingId: 'apl_live',
-      appListing: { userId: 42, status: 'approved', revisionOfId: null },
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_live',
+      status: 'approved',
+      revisionOfId: null,
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, mod);
     expect(res.removed).toBe('b');
+    // A mod's edit is NOT staged on a shadow — nothing was cloned.
+    expect(mockDb.appListing.create).not.toHaveBeenCalled();
   });
 
-  it('setIcon REFUSES a live approved (non-shadow) listing for a non-mod owner (no write)', async () => {
+  it('🔴 setIcon STILL REFUSES when the resolve yields the LIVE listing (fail-closed)', async () => {
     mockDb.appListing.findUnique.mockResolvedValue({
       ...listingRow,
       status: 'approved',
       revisionOfId: null,
     });
+    // Same fault injection: the "shadow" resolves back to the live parent.
+    mockDb.appListing.findFirst.mockResolvedValue({ id: 'apl_1' });
     const { setListingIcon } = await import('../app-listing-assets.service');
     await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
       /live; edit its assets through a revision/
@@ -692,7 +729,7 @@ describe('screenshot CRUD', () => {
       expect.objectContaining({ where: { id: 'apl_1' }, data: { iconId: 9 } })
     );
     // A shadow revision would be a NEW AppListing row (revisionOfId set) — never created.
-    expect(mockDb.appListing.create).toBeUndefined();
+    expect(mockDb.appListing.create).not.toHaveBeenCalled();
   });
 
   // A TERMINAL ingestion failure stays BAD_REQUEST, so the client stops polling
