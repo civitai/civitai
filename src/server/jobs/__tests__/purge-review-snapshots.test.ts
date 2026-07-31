@@ -166,12 +166,12 @@ describe('purgeExpiredReviewSnapshots — the 30-day retention boundary', () => 
    * otherwise the assertion is tautological (it would pass for any window,
    * including zero). `due` and `notYetDue` straddle the 30-day mark by an hour.
    */
-  it('purges a request that is due and RETAINS one an hour short of the window', async () => {
-    const due = row('due-app', new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS - 3600_000));
-    const notYetDue = row(
-      'not-due-app',
-      new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS + 3600_000)
-    );
+  it('purges a request terminal 31 days ago and RETAINS one terminal 29 days ago', async () => {
+    // ABSOLUTE dates, deliberately not derived from the constant: fixtures
+    // expressed relative to REVIEW_SNAPSHOT_PURGE_AFTER_MS move with it, so
+    // they would straddle the boundary for ANY window value including zero.
+    const due = row('due-app', new Date('2026-06-30T00:00:00.000Z')); // 31d before NOW
+    const notYetDue = row('not-due-app', new Date('2026-07-02T00:00:00.000Z')); // 29d before NOW
     mockFindMany.mockImplementation(async (args: { where: Record<string, any> }) =>
       [due, notYetDue].filter(
         (r) =>
@@ -194,18 +194,15 @@ describe('purgeExpiredReviewSnapshots — the 30-day retention boundary', () => 
    * retained above becomes eligible once the full window has elapsed. Proves
    * the boundary is a delay, not a permanent exclusion.
    */
-  it('purges that same request once the full window HAS elapsed', async () => {
-    const notYetDue = row(
-      'not-due-app',
-      new Date(NOW.getTime() - REVIEW_SNAPSHOT_PURGE_AFTER_MS + 3600_000)
-    );
+  it('purges that same 29-day-old request once the clock reaches day 31', async () => {
+    const notYetDue = row('not-due-app', new Date('2026-07-02T00:00:00.000Z'));
     mockFindMany.mockImplementation(async (args: { where: Record<string, any> }) =>
       [notYetDue].filter(
         (r) => r.updatedAt > args.where.updatedAt.gt && r.updatedAt < args.where.updatedAt.lt
       )
     );
 
-    const later = new Date(NOW.getTime() + 2 * 3600_000);
+    const later = new Date('2026-08-02T00:00:00.000Z'); // 31d after the decision
     const result = await purgeExpiredReviewSnapshots({ now: later });
 
     expect(mockDelete).toHaveBeenCalledWith('not-due-app');
