@@ -97,6 +97,7 @@ import {
   CHALLENGE_ENTRY_HOUSE_CUT,
   CHALLENGE_JOB_BATCH_SIZE,
   CHALLENGE_JOB_CONCURRENCY,
+  isDefaultJudgingRubric,
 } from '~/shared/constants/challenge.constants';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { withRetries } from '~/utils/errorHandling';
@@ -668,14 +669,13 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
-  // Any challenge that stores judgingCategories is judged by them; those without fall back to the
-  // default theme/wittiness/humor/aesthetic rubric (generateReview resolves DEFAULT_CATEGORY_ROWS
-  // from the DB). Parse defensively — a malformed value falls back to the fixed schema instead of
-  // failing the review.
+  // Parse defensively — a malformed value falls back to the fixed schema instead of failing the
+  // review. A default-split rubric also resolves to `undefined` (see isDefaultJudgingRubric).
   const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
     challengeRecord?.judgingCategories
   );
-  const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
+  const parsedCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
+  const userCategories = isDefaultJudgingRubric(parsedCategories) ? undefined : parsedCategories;
 
   // Get judging config from ChallengeJudge (or cached default judge if not assigned)
   const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;

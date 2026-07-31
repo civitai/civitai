@@ -14,6 +14,9 @@ vi.mock('~/server/redis/client', () => ({ redis: {}, REDIS_KEYS: {} }));
 
 const { resolveChallengeReviewInputs } = await import('./challenge-helpers');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
+const { DEFAULT_CATEGORY_ROWS, isDefaultJudgingRubric } = await import(
+  '~/shared/constants/challenge.constants'
+);
 
 // Stored shape: label/criteria were derived server-side at write time and persisted.
 const VALID_CATEGORIES = [
@@ -69,6 +72,29 @@ describe('resolveChallengeReviewInputs — categories resolution', () => {
     expect(categories).toBeUndefined();
   });
 
+  // Post-backfill every challenge stores a rubric, so the default split must keep resolving to
+  // `undefined` — otherwise daily reviews would start emitting label-cased score keys.
+  it('the seeded default rubric falls back to the fixed rubric', async () => {
+    const { categories } = await resolveChallengeReviewInputs({
+      source: ChallengeSource.System,
+      judgingCategories: DEFAULT_CATEGORY_ROWS,
+      allowedNsfwLevel: 1,
+    });
+    expect(categories).toBeUndefined();
+  });
+
+  it('a custom rubric that merely shares the default keys is still used', async () => {
+    const reweighted = DEFAULT_CATEGORY_ROWS.map((row) =>
+      row.key === 'theme' ? { ...row, weight: 60 } : row.key === 'aesthetic' ? { ...row, weight: 10 } : row
+    );
+    const { categories } = await resolveChallengeReviewInputs({
+      source: ChallengeSource.User,
+      judgingCategories: reweighted,
+      allowedNsfwLevel: 1,
+    });
+    expect(categories?.map((c) => c.key)).toEqual(['theme', 'wittiness', 'humor', 'aesthetic']);
+  });
+
   it('maps key/label/criteria to the key/name/criteria shape generateReview expects', async () => {
     const { categories } = await resolveChallengeReviewInputs({
       source: ChallengeSource.User,
@@ -82,6 +108,33 @@ describe('resolveChallengeReviewInputs — categories resolution', () => {
         criteria: expect.any(String),
       })
     );
+  });
+});
+
+describe('isDefaultJudgingRubric', () => {
+  it('matches the default rows regardless of row order', () => {
+    expect(isDefaultJudgingRubric(DEFAULT_CATEGORY_ROWS)).toBe(true);
+    expect(isDefaultJudgingRubric([...DEFAULT_CATEGORY_ROWS].reverse())).toBe(true);
+  });
+
+  it('rejects a rubric with a different weight, key set, or size', () => {
+    expect(
+      isDefaultJudgingRubric(
+        DEFAULT_CATEGORY_ROWS.map((r) => (r.key === 'humor' ? { ...r, weight: 16 } : r))
+      )
+    ).toBe(false);
+    expect(isDefaultJudgingRubric(DEFAULT_CATEGORY_ROWS.slice(0, 3))).toBe(false);
+    expect(
+      isDefaultJudgingRubric(
+        DEFAULT_CATEGORY_ROWS.map((r) => (r.key === 'humor' ? { ...r, key: 'horror' } : r))
+      )
+    ).toBe(false);
+  });
+
+  it('rejects empty and nullish rubrics', () => {
+    expect(isDefaultJudgingRubric([])).toBe(false);
+    expect(isDefaultJudgingRubric(null)).toBe(false);
+    expect(isDefaultJudgingRubric(undefined)).toBe(false);
   });
 });
 
