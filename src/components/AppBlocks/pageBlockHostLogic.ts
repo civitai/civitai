@@ -651,3 +651,88 @@ export function decideAutoRetry(args: {
 
   return { kind: 'retry', attempt: attempts + 1, maxAttempts, delayMs, remint };
 }
+
+// ── MID-SESSION CREDENTIAL-LOSS render beacon ────────────────────────────────
+//
+// 🔴 THE GAP THIS CLOSES (measured on production 2026-07-31): a real revocation
+// teardown was driven end-to-end against a live app and the platform recorded
+// ZERO error beacons. Its only record of the incident was the earlier,
+// successful `ok` impression — so from the metric's point of view the app was
+// perfectly healthy while it was, in fact, dead in every viewer's tab.
+//
+// WHY IT WAS ZERO. The host's ONE-beacon-per-mount rule is enforced by a single
+// emit-once ref shared by the `ok` impression and the launch-FAILURE beacon.
+// A host that reached `ready` has already spent that ref on `ok`, so when the
+// `tokenTerminal` effect later tears it down to `error`, the failure beacon is
+// inert BY CONSTRUCTION — not by accident, and not fixable by relaxing the ref
+// (that would retroactively double-count impressions and corrupt the denominator
+// the alert is built on, which is "page loads").
+//
+// THE FIX IS A SECOND, INDEPENDENT AT-MOST-ONCE CHANNEL. The mid-session beacon
+// gets its OWN ref, so:
+//   - the `ok` impression already sent is untouched (analytics unchanged);
+//   - the teardown is reported exactly once per mount;
+//   - it is tagged `token_lost_midsession`, which no launch failure can emit,
+//     so the two are trivially separable in PromQL.
+// A mount that loses its credential mid-session therefore emits TWO beacons —
+// `ok` then `error{error_class="token_lost_midsession"}` — and that is the
+// intended, documented shape: they describe two DIFFERENT events (the load
+// succeeded; the session was later revoked), not one event counted twice.
+
+/** Inputs to the mid-session credential-loss beacon decision. */
+export type MidSessionLossBeaconArgs = {
+  /** The COMMITTED host status (never read inside a setStatus updater). */
+  status: PageHostStatus;
+  /** True once this mount has observed `status === 'ready'` at least once. */
+  reachedReady: boolean;
+  /** `useBlockToken.terminal`: the mint has PERMANENTLY failed. */
+  tokenTerminal: boolean;
+  /** Whether a usable token remains. */
+  hasToken: boolean;
+  /** Whether this mount's mid-session beacon has ALREADY been emitted. */
+  alreadyEmitted: boolean;
+};
+
+/**
+ * Decide whether to emit the mid-session credential-loss render beacon.
+ *
+ * TRUE requires ALL of:
+ *   1. `reachedReady` — the block DID launch. Without this the failure is a
+ *      LAUNCH failure, already covered by the existing failure beacon under its
+ *      own class ('error'/'no_token'/…); emitting here too would double-count.
+ *   2. `status === 'error'` — the host has actually been torn down. `'error'` is
+ *      reachable from exactly two places in PageBlockHost: `loading → error`
+ *      (launch-time mint failure) and `ready → error` (this case). Requiring
+ *      `reachedReady` picks out the second. Deliberately NOT `'fatal'` /
+ *      `'timeout'` / `'no_token'`: those describe the BLOCK failing, not its
+ *      credential being revoked, and mis-tagging them would make the class lie.
+ *   3. `tokenTerminal && !hasToken` — the credential loss is SETTLED. The
+ *      upstream hook retries a failed refresh on a bounded backoff and keeps a
+ *      still-valid token while it does, so a transient blip must never reach
+ *      here. This mirrors the teardown effect's own gate exactly: emitting on a
+ *      weaker condition than the one that tore the host down would report an
+ *      event that never happened to the user.
+ *   4. `!alreadyEmitted` — at most once per mount, independent of the impression
+ *      ref. Re-renders (token prop churn, retry-budget updates) re-run the
+ *      effect; without this every one of them would fire another beacon.
+ */
+export function shouldEmitMidSessionLossBeacon(args: MidSessionLossBeaconArgs): boolean {
+  const { status, reachedReady, tokenTerminal, hasToken, alreadyEmitted } = args;
+  if (alreadyEmitted) return false;
+  if (!reachedReady) return false;
+  if (status !== 'error') return false;
+  if (!tokenTerminal || hasToken) return false;
+  return true;
+}
+
+/**
+ * The `errorClass` the mid-session beacon carries. Distinct from every
+ * launch-failure class so `sum by(error_class)` separates "never launched" from
+ * "launched, then revoked".
+ *
+ * 🔴 MUST be a member of KNOWN_ERROR_CLASSES in
+ * `~/server/metrics/app-block-runtime.metrics` — the beacon route clamps anything
+ * else to 'other', which would silently merge this signal back into the generic
+ * bucket. Pinned by a test in `__tests__/pageBlockHostLogic.test.ts`.
+ */
+export const MID_SESSION_LOSS_ERROR_CLASS = 'token_lost_midsession';

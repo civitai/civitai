@@ -314,7 +314,19 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
 
   it('preserves each KNOWN error_class on the label', async () => {
     const handler = (await import('~/pages/api/track/block-render')).default;
-    for (const ec of ['fatal', 'no_token', 'error', 'error_boundary'] as const) {
+    for (const ec of [
+      'fatal',
+      'no_token',
+      'error',
+      'error_boundary',
+      // MID-SESSION credential loss (PageBlockHost). Distinct from every launch
+      // failure above because it describes a page load that ALREADY SUCCEEDED and
+      // was later torn down (delist/suspend/revoke). It has to survive the
+      // allowlist as itself: bucketed to 'other' it would be indistinguishable
+      // from client garbage, which is what made the 2026-07-31 production
+      // revocation unattributable.
+      'token_lost_midsession',
+    ] as const) {
       const before = await renderCounterValue('apb_test', 'app.page', 'error', ec);
       await handler(
         makeReq({

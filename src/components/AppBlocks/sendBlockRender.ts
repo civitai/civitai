@@ -23,9 +23,25 @@ export type BlockRenderBeaconInput = {
   // iframe never reaching BLOCK_READY within its timeout). Drives the
   // `civitai_app_block_renders_total{result}` prom counter server-side.
   status?: 'ok' | 'error';
-  // Optional low-cardinality failure discriminator (e.g. 'timeout', 'fatal',
-  // 'no_token', 'error_boundary'). Accepted + bounded server-side; reserved for a
-  // future ClickHouse column (NOT a prom label, NOT in the CH insert today).
+  // Optional low-cardinality failure discriminator: 'timeout' | 'fatal' |
+  // 'no_token' | 'error' | 'error_boundary' | 'token_lost_midsession'.
+  //
+  // This DRIVES the `error_class` label on the `civitai_app_block_renders_total`
+  // prom counter — it is the only thing that can say WHY a render failed, so an
+  // alert on that counter can name a cause instead of just "something broke".
+  // (The stale comment this replaces said "NOT a prom label"; the label landed in
+  // #3119 and the doc never caught up.)
+  //
+  // 🔴 It is CLAMPED server-side to a code-owned allowlist (KNOWN_ERROR_CLASSES in
+  // ~/server/metrics/app-block-runtime.metrics — anything else becomes 'other'),
+  // so a value added here is INERT for observability until it is added there too.
+  //
+  // It is STILL not a ClickHouse column, and that half of the old comment is
+  // verified rather than inherited: both writers (the /api/track/block-render
+  // beacon route and the track.blockRender tRPC procedure) destructure
+  // `status`/`errorClass` OUT before handing the rest to the tracker, and
+  // `Tracker.blockRender`'s parameter type has no field for either. So it drives
+  // the prom label only.
   errorClass?: string;
 };
 

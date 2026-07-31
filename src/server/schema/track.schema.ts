@@ -68,7 +68,7 @@ export const blockRenderSchema = z.object({
   // timeout). Drives the `civitai_app_block_renders_total{result}` prom counter.
   status: z.enum(['ok', 'error']).default('ok'),
   // Optional low-cardinality failure discriminator (e.g. 'timeout', 'fatal',
-  // 'no_token', 'error', 'error_boundary'). Drives the bounded `error_class`
+  // 'no_token', 'error', 'error_boundary', 'token_lost_midsession'). Drives the bounded `error_class`
   // label on `civitai_app_block_renders_total` (via `normalizeErrorClass`, which
   // clamps any value outside the known set to 'other'). It is STILL stripped from
   // the ClickHouse insert — it never reaches the tracker payload, only the prom

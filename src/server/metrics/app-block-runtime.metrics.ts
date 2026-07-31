@@ -73,9 +73,30 @@ const KNOWN_SLOT_IDS = new Set([
  *   - no_token       — the block token never resolved
  *   - error          — a hard token-mint failure (PageBlockHost only)
  *   - error_boundary — the host React tree threw (BlockErrorBoundary caught it)
+ *   - token_lost_midsession — the host had ALREADY reached `ready` and then lost its
+ *                      credential terminally (delist/suspend/revoke → the mint
+ *                      settled on a terminal 4xx with nothing usable left). This is
+ *                      the ONLY class that describes a teardown of a page load that
+ *                      had already SUCCEEDED, which is exactly why it must be
+ *                      distinguishable from the launch-failure classes above: on the
+ *                      wire it arrives as a SECOND beacon for a mount whose first
+ *                      beacon said `ok`. See the mid-session effect in PageBlockHost.
  * Anything else is bucketed to 'other'. A successful render uses 'none'.
+ *
+ * 🔴 THE ALLOWLIST IS THE CARDINALITY BOUND. `errorClass` arrives in a public,
+ * client-supplied beacon body (schema-capped at 64 chars but otherwise free-form).
+ * Adding a member here is the ONLY way a new value can become a prom label — every
+ * other string collapses to the single 'other' bucket in `normalizeErrorClass`
+ * below. Keep this set small and code-owned; never derive it from input.
  */
-const KNOWN_ERROR_CLASSES = new Set(['timeout', 'fatal', 'no_token', 'error', 'error_boundary']);
+const KNOWN_ERROR_CLASSES = new Set([
+  'timeout',
+  'fatal',
+  'no_token',
+  'error',
+  'error_boundary',
+  'token_lost_midsession',
+]);
 
 /**
  * Clamp a client-supplied slotId to the enumerated slot set (unknown → 'other')
@@ -195,17 +216,18 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     // default buckets are fine for this REST surface
   );
 
-  // Cardinality: renders_total ≈ (A+1) × 5 slot_id × 7 error_class ≈ 1785 at
+  // Cardinality: renders_total ≈ (A+1) × 5 slot_id × 8 error_class ≈ 2040 at
   // A=50, where A = approved apps (+1 for the 'other' bucket), slot_id = 4 known
-  // + 'other', and error_class = 'none' + 5 known + 'other' (7). `result` is NOT
+  // + 'other', and error_class = 'none' + 6 known + 'other' (8). `result` is NOT
   // an independent multiplier — it's coupled to error_class ('none' pairs only
-  // with result=ok; the 5-known+'other' pair only with result=error), so the 7
+  // with result=ok; the 6-known+'other' pair only with result=error), so the 8
   // error_class values already encode the result split. Every factor is strictly
-  // bounded, so the series count stays small.
+  // bounded (see the KNOWN_* sets + boundAppBlockIdLabel), so the series count
+  // stays small and CANNOT be grown by client input — only by a code change here.
   const rendersTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_renders_total',
-    'App Block host render/impression outcomes by app, slot, result (ok|error), and error_class (none when ok; timeout|fatal|no_token|error|error_boundary|other on error)',
+    'App Block host render/impression outcomes by app, slot, result (ok|error), and error_class (none when ok; timeout|fatal|no_token|error|error_boundary|token_lost_midsession|other on error)',
     ['app_block_id', 'slot_id', 'result', 'error_class']
   );
 
